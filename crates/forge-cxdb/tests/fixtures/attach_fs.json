@@ -1,6 +1,0 @@
-{
-  "name": "attach_fs",
-  "msg_type": 10,
-  "flags": 0,
-  "payload_hex": "6300000000000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-}

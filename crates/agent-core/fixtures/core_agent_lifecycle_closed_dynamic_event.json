@@ -1,0 +1,9 @@
+{
+  "kind": "forge.core_agent.lifecycle.closed",
+  "version": 1,
+  "payload": {
+    "kind": {
+      "lifecycle": "closed"
+    }
+  }
+}

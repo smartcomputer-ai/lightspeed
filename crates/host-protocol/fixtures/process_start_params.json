@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "sh",
+    "-lc",
+    "cat"
+  ],
+  "cwd": "/workspace",
+  "env": {
+    "RUST_LOG": "debug"
+  },
+  "pipeStdin": true,
+  "processId": "proc-1",
+  "stdin": "aW5wdXQK",
+  "timeoutMs": 60000,
+  "tty": false
+}

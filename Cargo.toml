@@ -1,10 +1,14 @@
 [workspace]
 members = [
-    "crates/forge-llm",
-    "crates/forge-agent",
-    "crates/forge-attractor",
-    "crates/forge-cxdb",
-    "crates/forge-cxdb-runtime",
-    "crates/forge-cli",
+    "crates/host-client",
+    "crates/host-protocol",
+    "crates/llm-clients",
+    "crates/agent-api",
+    "crates/agent-core",
+    "crates/llm-runtime",
+    "crates/agent-runtime",
+    "crates/agent-tools",
+    "crates/agent-eval",
+    "crates/cli",
 ]
 resolver = "2"

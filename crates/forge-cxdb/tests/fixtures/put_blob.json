@@ -1,6 +1,0 @@
-{
-  "name": "put_blob",
-  "msg_type": 11,
-  "flags": 0,
-  "payload_hex": "0c82c44eaf4c3639df7c38503f60a5b609679ddc490c20ea74b4e514a4c25abf0a00000068656c6c6f20626c6f62"
-}

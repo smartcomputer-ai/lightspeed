@@ -1,6 +1,0 @@
-{
-  "name": "hello_tag",
-  "msg_type": 1,
-  "flags": 0,
-  "payload_hex": "01000b00746573742d636c69656e7400000000"
-}

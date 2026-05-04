@@ -1,6 +1,0 @@
-{
-  "name": "get_last_default",
-  "msg_type": 6,
-  "flags": 0,
-  "payload_hex": "01000000000000000a00000000000000"
-}

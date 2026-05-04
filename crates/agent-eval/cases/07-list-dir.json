@@ -1,0 +1,30 @@
+{
+  "id": "list-dir",
+  "description": "List directory entries with list_dir.",
+  "prompt": "Call list_dir with path tree. Then answer exactly LIST=OK.",
+  "setup": {
+    "files": [
+      {
+        "path": "tree/a.txt",
+        "content": "a\n"
+      },
+      {
+        "path": "tree/b/c.txt",
+        "content": "c\n"
+      }
+    ]
+  },
+  "expect": {
+    "tool_called": ["host.list_dir"],
+    "assistant_contains": ["LIST=OK"],
+    "tool_output_contains": ["a.txt", "b/"]
+  },
+  "eval": {
+    "runs": 1,
+    "min_pass_rate": 1.0
+  },
+  "run": {
+    "max_tokens": 768,
+    "allowed_tools": ["host.list_dir"]
+  }
+}

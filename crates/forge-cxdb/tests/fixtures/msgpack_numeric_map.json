@@ -1,5 +1,0 @@
-{
-  "name": "msgpack_numeric_map",
-  "payload_hex": "83cf0000000000000002a374776fcf0000000000000001a36f6e65cf0000000000000003a57468726565",
-  "notes": "Map with numeric keys for ordering test."
-}

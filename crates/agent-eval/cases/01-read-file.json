@@ -1,0 +1,26 @@
+{
+  "id": "read-file",
+  "description": "Read a seeded note and return the exact phrase.",
+  "prompt": "Use the available file-reading tool to open notes/fruit.txt. Reply exactly FRUIT=pear-9421 using the file contents.",
+  "setup": {
+    "files": [
+      {
+        "path": "notes/fruit.txt",
+        "content": "pear-9421"
+      }
+    ]
+  },
+  "expect": {
+    "tool_called": ["host.read_file"],
+    "assistant_contains": ["FRUIT=pear-9421"],
+    "tool_output_contains": ["pear-9421"]
+  },
+  "eval": {
+    "runs": 1,
+    "min_pass_rate": 1.0
+  },
+  "run": {
+    "max_tokens": 768,
+    "allowed_tools": ["host.read_file"]
+  }
+}

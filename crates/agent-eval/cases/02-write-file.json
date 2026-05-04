@@ -1,0 +1,27 @@
+{
+  "id": "write-file",
+  "description": "Write a new file with the canonical write_file tool.",
+  "prompt": "Call write_file with exactly this JSON object: {\"path\":\"notes/generated.txt\",\"content\":\"beta-5512\"}. Then answer exactly WROTE=beta-5512.",
+  "setup": {
+    "files": []
+  },
+  "expect": {
+    "tool_called": ["host.write_file"],
+    "assistant_contains": ["WROTE=beta-5512"],
+    "tool_output_contains": ["Wrote", "notes/generated.txt"],
+    "files": [
+      {
+        "path": "notes/generated.txt",
+        "equals": "beta-5512"
+      }
+    ]
+  },
+  "eval": {
+    "runs": 1,
+    "min_pass_rate": 1.0
+  },
+  "run": {
+    "max_tokens": 768,
+    "allowed_tools": ["host.write_file"]
+  }
+}

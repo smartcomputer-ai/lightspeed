@@ -1,0 +1,34 @@
+{
+  "id": "glob-configs",
+  "description": "Match config files with glob.",
+  "prompt": "Call glob with pattern configs/*.toml and path /. Then answer exactly GLOB=OK.",
+  "setup": {
+    "files": [
+      {
+        "path": "configs/app.dev.toml",
+        "content": "name = \"dev\"\n"
+      },
+      {
+        "path": "configs/app.prod.toml",
+        "content": "name = \"prod\"\n"
+      },
+      {
+        "path": "notes/readme.txt",
+        "content": "not a config\n"
+      }
+    ]
+  },
+  "expect": {
+    "tool_called": ["host.glob"],
+    "assistant_contains": ["GLOB=OK"],
+    "tool_output_contains": ["configs/app.dev.toml", "configs/app.prod.toml"]
+  },
+  "eval": {
+    "runs": 1,
+    "min_pass_rate": 1.0
+  },
+  "run": {
+    "max_tokens": 768,
+    "allowed_tools": ["host.glob"]
+  }
+}

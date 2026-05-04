@@ -7,7 +7,7 @@
 notes-world/
 .playwright-mcp/
 .tmp/
-data/
+refs/
 
 # ===========================================================================
 # Rust.gitignore

@@ -1,0 +1,905 @@
+//! Native Anthropic Messages API client.
+//!
+//! API reference:
+//! - <https://platform.claude.com/docs/en/api/messages/create>
+//! - <https://platform.claude.com/docs/en/api/messages/count_tokens>
+//! - <https://platform.claude.com/docs/en/build-with-claude/streaming>
+
+use crate::error::{
+    ConfigurationError, DecodeError, LlmApiError, ProviderHttpError, StreamError, TransportError,
+};
+use crate::transport::http::{join_url, normalize_base_url};
+use crate::transport::{ApiResponse, ApiStreamEvent, HeaderSnapshot, HttpClient, HttpClientConfig};
+use crate::{SseEvent, SseParser};
+use bytes::Bytes;
+use futures_util::{Stream, StreamExt};
+use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
+use reqwest::{Method, Url};
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::{BTreeMap, VecDeque};
+use std::pin::Pin;
+
+pub const API_KIND: &str = "anthropic:messages";
+pub const DEFAULT_ANTHROPIC_VERSION: &str = "2023-06-01";
+const DEFAULT_BASE_URL: &str = "https://api.anthropic.com/v1";
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Config {
+    pub api_key: String,
+    pub base_url: String,
+    pub anthropic_version: String,
+    pub beta_headers: Vec<String>,
+    pub http: HttpClientConfig,
+}
+
+impl Config {
+    pub fn new(api_key: impl Into<String>) -> Self {
+        Self {
+            api_key: api_key.into(),
+            base_url: DEFAULT_BASE_URL.to_string(),
+            anthropic_version: DEFAULT_ANTHROPIC_VERSION.to_string(),
+            beta_headers: Vec::new(),
+            http: HttpClientConfig::default(),
+        }
+    }
+
+    pub fn from_env() -> Result<Self, LlmApiError> {
+        let api_key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
+            ConfigurationError::new("ANTHROPIC_API_KEY must be set for anthropic:messages")
+        })?;
+        if api_key.trim().is_empty() {
+            return Err(ConfigurationError::new("ANTHROPIC_API_KEY is set but empty").into());
+        }
+
+        let mut config = Self::new(api_key);
+        if let Ok(base_url) = std::env::var("ANTHROPIC_BASE_URL") {
+            config.base_url = base_url;
+        }
+        if let Ok(version) = std::env::var("ANTHROPIC_VERSION") {
+            config.anthropic_version = version;
+        }
+        if let Ok(beta_headers) = std::env::var("ANTHROPIC_BETA") {
+            config.beta_headers = split_beta_headers(&beta_headers);
+        }
+        Ok(config)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Client {
+    http: HttpClient,
+    messages_url: Url,
+    count_tokens_url: Url,
+}
+
+impl Client {
+    pub fn new(config: Config) -> Result<Self, LlmApiError> {
+        let base_url = normalize_base_url(&config.base_url)?;
+        let messages_url = join_url(&base_url, "messages")?;
+        let count_tokens_url = join_url(&base_url, "messages/count_tokens")?;
+        let mut headers = HeaderMap::new();
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        headers.insert(
+            "x-api-key",
+            HeaderValue::from_str(&config.api_key).map_err(|err| {
+                ConfigurationError::new(format!("invalid Anthropic API key header: {err}"))
+            })?,
+        );
+        headers.insert(
+            "anthropic-version",
+            HeaderValue::from_str(&config.anthropic_version).map_err(|err| {
+                ConfigurationError::new(format!("invalid anthropic-version header: {err}"))
+            })?,
+        );
+        if !config.beta_headers.is_empty() {
+            headers.insert(
+                "anthropic-beta",
+                HeaderValue::from_str(&config.beta_headers.join(",")).map_err(|err| {
+                    ConfigurationError::new(format!("invalid anthropic-beta header: {err}"))
+                })?,
+            );
+        }
+
+        Ok(Self {
+            http: HttpClient::with_headers(config.http, headers)?,
+            messages_url,
+            count_tokens_url,
+        })
+    }
+
+    pub async fn create(
+        &self,
+        mut request: CreateMessageRequest,
+    ) -> Result<ApiResponse<Message>, LlmApiError> {
+        request.stream = Some(false);
+        let response = self
+            .http
+            .request(Method::POST, self.messages_url.clone())
+            .json(&request)
+            .send()
+            .await
+            .map_err(map_reqwest_error)?;
+
+        let status = response.status();
+        let headers = HeaderSnapshot::from_headermap(response.headers());
+        let body = response.text().await.map_err(map_reqwest_error)?;
+        parse_json_response(status, headers, body, "Anthropic message")
+    }
+
+    pub async fn stream(
+        &self,
+        mut request: CreateMessageRequest,
+    ) -> Result<MessageStream, LlmApiError> {
+        request.stream = Some(true);
+        let response = self
+            .http
+            .request(Method::POST, self.messages_url.clone())
+            .json(&request)
+            .send()
+            .await
+            .map_err(map_reqwest_error)?;
+
+        let status = response.status();
+        let headers = HeaderSnapshot::from_headermap(response.headers());
+        if !status.is_success() {
+            let body = response.text().await.map_err(map_reqwest_error)?;
+            return Err(parse_provider_http_error(status, headers, body).into());
+        }
+
+        Ok(MessageStream::new(Box::pin(response.bytes_stream())))
+    }
+
+    pub async fn count_tokens(
+        &self,
+        request: CountTokensRequest,
+    ) -> Result<ApiResponse<CountTokensResponse>, LlmApiError> {
+        let response = self
+            .http
+            .request(Method::POST, self.count_tokens_url.clone())
+            .json(&request)
+            .send()
+            .await
+            .map_err(map_reqwest_error)?;
+
+        let status = response.status();
+        let headers = HeaderSnapshot::from_headermap(response.headers());
+        let body = response.text().await.map_err(map_reqwest_error)?;
+        parse_json_response(status, headers, body, "Anthropic count tokens response")
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CreateMessageRequest {
+    pub model: String,
+    pub max_tokens: u64,
+    pub messages: Vec<MessageParam>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system: Option<SystemContent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_sequences: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<Thinking>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<Tool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_k: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub container: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mcp_servers: Option<Value>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl CreateMessageRequest {
+    pub fn user_text(model: impl Into<String>, text: impl Into<String>, max_tokens: u64) -> Self {
+        Self {
+            model: model.into(),
+            max_tokens,
+            messages: vec![MessageParam::user(text)],
+            system: None,
+            metadata: None,
+            stop_sequences: None,
+            stream: None,
+            temperature: None,
+            thinking: None,
+            tool_choice: None,
+            tools: None,
+            top_k: None,
+            top_p: None,
+            service_tier: None,
+            container: None,
+            mcp_servers: None,
+            extra: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct CountTokensRequest {
+    pub model: String,
+    pub messages: Vec<MessageParam>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system: Option<SystemContent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<Thinking>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<Tool>>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl CountTokensRequest {
+    pub fn user_text(model: impl Into<String>, text: impl Into<String>) -> Self {
+        Self {
+            model: model.into(),
+            messages: vec![MessageParam::user(text)],
+            ..Self::default()
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum SystemContent {
+    Text(String),
+    Blocks(Vec<ContentBlockParam>),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MessageParam {
+    pub role: MessageRole,
+    pub content: MessageParamContent,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl MessageParam {
+    pub fn user(text: impl Into<String>) -> Self {
+        Self {
+            role: MessageRole::User,
+            content: MessageParamContent::Text(text.into()),
+            extra: BTreeMap::new(),
+        }
+    }
+
+    pub fn assistant(blocks: Vec<ContentBlockParam>) -> Self {
+        Self {
+            role: MessageRole::Assistant,
+            content: MessageParamContent::Blocks(blocks),
+            extra: BTreeMap::new(),
+        }
+    }
+
+    pub fn user_blocks(blocks: Vec<ContentBlockParam>) -> Self {
+        Self {
+            role: MessageRole::User,
+            content: MessageParamContent::Blocks(blocks),
+            extra: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageRole {
+    User,
+    Assistant,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum MessageParamContent {
+    Text(String),
+    Blocks(Vec<ContentBlockParam>),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ContentBlockParam {
+    Text(TextBlockParam),
+    ToolUse(ToolUseBlockParam),
+    ToolResult(ToolResultBlockParam),
+    Thinking(ThinkingBlockParam),
+    RedactedThinking(RedactedThinkingBlockParam),
+    Raw(Value),
+}
+
+impl ContentBlockParam {
+    pub fn text(text: impl Into<String>) -> Self {
+        Self::Text(TextBlockParam {
+            r#type: "text".to_string(),
+            text: text.into(),
+            cache_control: None,
+            extra: BTreeMap::new(),
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TextBlockParam {
+    #[serde(rename = "type")]
+    pub r#type: String,
+    pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_control: Option<Value>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ToolUseBlockParam {
+    #[serde(rename = "type")]
+    pub r#type: String,
+    pub id: String,
+    pub name: String,
+    pub input: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_control: Option<Value>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ToolResultBlockParam {
+    #[serde(rename = "type")]
+    pub r#type: String,
+    pub tool_use_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_error: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_control: Option<Value>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ThinkingBlockParam {
+    #[serde(rename = "type")]
+    pub r#type: String,
+    pub thinking: String,
+    pub signature: String,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RedactedThinkingBlockParam {
+    #[serde(rename = "type")]
+    pub r#type: String,
+    pub data: String,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Tool {
+    Custom(ToolDefinition),
+    Raw(Value),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ToolDefinition {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub input_schema: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_control: Option<Value>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl ToolDefinition {
+    pub fn new(name: impl Into<String>, input_schema: Value) -> Self {
+        Self {
+            name: name.into(),
+            description: None,
+            input_schema,
+            cache_control: None,
+            extra: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ToolChoice {
+    #[serde(rename = "type")]
+    pub r#type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disable_parallel_tool_use: Option<bool>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl ToolChoice {
+    pub fn auto() -> Self {
+        Self::mode("auto")
+    }
+
+    pub fn any() -> Self {
+        Self::mode("any")
+    }
+
+    pub fn none() -> Self {
+        Self::mode("none")
+    }
+
+    pub fn tool(name: impl Into<String>) -> Self {
+        Self {
+            r#type: "tool".to_string(),
+            name: Some(name.into()),
+            disable_parallel_tool_use: None,
+            extra: BTreeMap::new(),
+        }
+    }
+
+    fn mode(r#type: impl Into<String>) -> Self {
+        Self {
+            r#type: r#type.into(),
+            name: None,
+            disable_parallel_tool_use: None,
+            extra: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Thinking {
+    #[serde(rename = "type")]
+    pub r#type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub budget_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display: Option<String>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl Thinking {
+    pub fn enabled(budget_tokens: u64) -> Self {
+        Self {
+            r#type: "enabled".to_string(),
+            budget_tokens: Some(budget_tokens),
+            display: None,
+            extra: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Message {
+    pub id: String,
+    #[serde(default)]
+    pub r#type: Option<String>,
+    #[serde(default)]
+    pub role: Option<String>,
+    #[serde(default)]
+    pub content: Vec<ContentBlock>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub stop_reason: Option<StopReason>,
+    #[serde(default)]
+    pub stop_sequence: Option<String>,
+    #[serde(default)]
+    pub usage: Option<Usage>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl Message {
+    pub fn output_text(&self) -> String {
+        self.content
+            .iter()
+            .filter(|block| block.r#type == "text")
+            .filter_map(|block| block.text.as_deref())
+            .collect::<Vec<_>>()
+            .join("")
+    }
+
+    pub fn tool_uses(&self) -> impl Iterator<Item = ToolUseRef<'_>> {
+        self.content
+            .iter()
+            .filter(|block| block.r#type == "tool_use")
+            .filter_map(ToolUseRef::from_block)
+    }
+
+    pub fn thinking_blocks(&self) -> impl Iterator<Item = &ContentBlock> {
+        self.content
+            .iter()
+            .filter(|block| block.r#type == "thinking" || block.r#type == "redacted_thinking")
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ContentBlock {
+    #[serde(rename = "type")]
+    pub r#type: String,
+    #[serde(default)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub thinking: Option<String>,
+    #[serde(default)]
+    pub signature: Option<String>,
+    #[serde(default)]
+    pub data: Option<String>,
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub input: Option<Value>,
+    #[serde(default)]
+    pub tool_use_id: Option<String>,
+    #[serde(default)]
+    pub content: Option<Value>,
+    #[serde(default)]
+    pub is_error: Option<bool>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ToolUseRef<'a> {
+    pub id: &'a str,
+    pub name: &'a str,
+    pub input: Option<&'a Value>,
+}
+
+impl<'a> ToolUseRef<'a> {
+    fn from_block(block: &'a ContentBlock) -> Option<Self> {
+        Some(Self {
+            id: block.id.as_deref()?,
+            name: block.name.as_deref()?,
+            input: block.input.as_ref(),
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StopReason {
+    EndTurn,
+    MaxTokens,
+    StopSequence,
+    ToolUse,
+    PauseTurn,
+    Refusal,
+    ModelContextWindow,
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Usage {
+    #[serde(default)]
+    pub input_tokens: Option<u64>,
+    #[serde(default)]
+    pub output_tokens: Option<u64>,
+    #[serde(default)]
+    pub cache_creation_input_tokens: Option<u64>,
+    #[serde(default)]
+    pub cache_read_input_tokens: Option<u64>,
+    #[serde(default)]
+    pub server_tool_use: Option<Value>,
+    #[serde(default)]
+    pub service_tier: Option<String>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl Usage {
+    pub fn total_tokens(&self) -> Option<u64> {
+        Some(self.input_tokens? + self.output_tokens?)
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct CountTokensResponse {
+    #[serde(default)]
+    pub input_tokens: Option<u64>,
+    #[serde(default)]
+    pub cache_creation_input_tokens: Option<u64>,
+    #[serde(default)]
+    pub cache_read_input_tokens: Option<u64>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct StreamEvent {
+    #[serde(rename = "type")]
+    #[serde(default)]
+    pub r#type: String,
+    #[serde(default)]
+    pub index: Option<u64>,
+    #[serde(default)]
+    pub message: Option<Message>,
+    #[serde(default)]
+    pub content_block: Option<ContentBlock>,
+    #[serde(default)]
+    pub delta: Option<StreamDelta>,
+    #[serde(default)]
+    pub usage: Option<Usage>,
+    #[serde(default)]
+    pub error: Option<AnthropicError>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl StreamEvent {
+    pub fn is_terminal(&self) -> bool {
+        matches!(self.r#type.as_str(), "message_stop" | "error")
+    }
+
+    pub fn text_delta(&self) -> Option<&str> {
+        self.delta
+            .as_ref()
+            .filter(|delta| delta.r#type == "text_delta")
+            .and_then(|delta| delta.text.as_deref())
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct StreamDelta {
+    #[serde(rename = "type")]
+    #[serde(default)]
+    pub r#type: String,
+    #[serde(default)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub thinking: Option<String>,
+    #[serde(default)]
+    pub signature: Option<String>,
+    #[serde(default)]
+    pub partial_json: Option<String>,
+    #[serde(default)]
+    pub stop_reason: Option<StopReason>,
+    #[serde(default)]
+    pub stop_sequence: Option<String>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AnthropicError {
+    #[serde(default)]
+    pub r#type: Option<String>,
+    #[serde(default)]
+    pub message: Option<String>,
+}
+
+type ByteStream = Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>>;
+
+pub struct MessageStream {
+    inner: ByteStream,
+    parser: SseParser,
+    pending: VecDeque<ApiStreamEvent<StreamEvent>>,
+    done: bool,
+}
+
+impl MessageStream {
+    fn new(inner: ByteStream) -> Self {
+        Self {
+            inner,
+            parser: SseParser::new(),
+            pending: VecDeque::new(),
+            done: false,
+        }
+    }
+
+    pub async fn next_event(&mut self) -> Result<Option<ApiStreamEvent<StreamEvent>>, LlmApiError> {
+        loop {
+            if let Some(event) = self.pending.pop_front() {
+                return Ok(Some(event));
+            }
+            if self.done {
+                return Ok(None);
+            }
+
+            match self.inner.next().await {
+                Some(Ok(bytes)) => {
+                    let chunk = std::str::from_utf8(&bytes).map_err(|err| {
+                        StreamError::new(
+                            format!("Anthropic stream emitted invalid UTF-8: {err}"),
+                            false,
+                        )
+                    })?;
+                    let events = self.parser.push(chunk);
+                    for event in events {
+                        let parsed = parse_sse_event(event)?;
+                        self.pending.push_back(parsed);
+                    }
+                }
+                Some(Err(err)) => {
+                    return Err(StreamError::new(
+                        format!("Anthropic stream read failed: {err}"),
+                        true,
+                    )
+                    .into());
+                }
+                None => {
+                    self.done = true;
+                    if let Some(event) = std::mem::take(&mut self.parser).finish() {
+                        let parsed = parse_sse_event(event)?;
+                        self.pending.push_back(parsed);
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub fn parse_sse_event(sse: SseEvent) -> Result<ApiStreamEvent<StreamEvent>, LlmApiError> {
+    let raw_json: Value = serde_json::from_str(&sse.data).map_err(|err| {
+        DecodeError::with_raw(
+            format!("invalid Anthropic stream event JSON: {err}"),
+            sse.data.clone(),
+        )
+    })?;
+    let mut parsed: StreamEvent = serde_json::from_value(raw_json.clone()).map_err(|err| {
+        DecodeError::with_raw(
+            format!("Anthropic stream event has unexpected shape: {err}"),
+            raw_json.to_string(),
+        )
+    })?;
+    if parsed.r#type.is_empty()
+        && let Some(event_name) = &sse.event
+    {
+        parsed.r#type = event_name.clone();
+    }
+    Ok(ApiStreamEvent::new(parsed, sse, Some(raw_json)))
+}
+
+fn map_reqwest_error(err: reqwest::Error) -> LlmApiError {
+    TransportError::new(err.to_string(), err.is_connect() || err.is_request()).into()
+}
+
+fn parse_json_response<T: DeserializeOwned>(
+    status: reqwest::StatusCode,
+    headers: HeaderSnapshot,
+    body: String,
+    context: &str,
+) -> Result<ApiResponse<T>, LlmApiError> {
+    if !status.is_success() {
+        return Err(parse_provider_http_error(status, headers, body).into());
+    }
+
+    let raw_json: Value = serde_json::from_str(&body)
+        .map_err(|err| DecodeError::with_raw(format!("invalid Anthropic JSON: {err}"), body))?;
+    let parsed: T = serde_json::from_value(raw_json.clone()).map_err(|err| {
+        DecodeError::with_raw(
+            format!("{context} did not match expected shape: {err}"),
+            raw_json.to_string(),
+        )
+    })?;
+    Ok(ApiResponse::new(parsed, raw_json, status, headers))
+}
+
+fn parse_provider_http_error(
+    status: reqwest::StatusCode,
+    headers: HeaderSnapshot,
+    body: String,
+) -> ProviderHttpError {
+    let raw_json = serde_json::from_str::<Value>(&body).ok();
+    let error = raw_json.as_ref().and_then(|value| value.get("error"));
+    let error_type = error
+        .and_then(|value| value.get("type"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let message = error
+        .and_then(|value| value.get("message"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| body.clone());
+
+    ProviderHttpError::new(API_KIND, status, message.clone(), headers).with_provider_details(
+        None,
+        error_type,
+        Some(message),
+        raw_json,
+        Some(body),
+    )
+}
+
+fn split_beta_headers(value: &str) -> Vec<String> {
+    value
+        .split([',', ' '])
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn message_helpers_extract_text_usage_and_tool_uses() {
+        let message: Message = serde_json::from_value(json!({
+            "id": "msg_1",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-sonnet-4-5",
+            "stop_reason": "tool_use",
+            "content": [
+                { "type": "text", "text": "Checking" },
+                {
+                    "type": "tool_use",
+                    "id": "toolu_1",
+                    "name": "get_weather",
+                    "input": { "city": "Zurich" }
+                }
+            ],
+            "usage": {
+                "input_tokens": 3,
+                "output_tokens": 4,
+                "cache_read_input_tokens": 2
+            }
+        }))
+        .expect("message");
+
+        assert_eq!(message.output_text(), "Checking");
+        assert_eq!(message.stop_reason, Some(StopReason::ToolUse));
+        assert_eq!(
+            message.usage.as_ref().and_then(Usage::total_tokens),
+            Some(7)
+        );
+        let tools = message.tool_uses().collect::<Vec<_>>();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "get_weather");
+        assert_eq!(
+            tools[0].input.and_then(|input| input.get("city")),
+            Some(&json!("Zurich"))
+        );
+    }
+
+    #[test]
+    fn parse_sse_event_preserves_raw_json_and_event_type() {
+        let sse = SseEvent {
+            event: Some("content_block_delta".to_string()),
+            data: r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}"#
+                .to_string(),
+            id: None,
+            retry: None,
+        };
+
+        let parsed = parse_sse_event(sse).expect("parse");
+
+        assert_eq!(parsed.parsed.r#type, "content_block_delta");
+        assert_eq!(parsed.parsed.text_delta(), Some("hi"));
+        assert_eq!(
+            parsed
+                .raw_json
+                .as_ref()
+                .and_then(|raw| raw.get("delta"))
+                .and_then(|delta| delta.get("text"))
+                .and_then(Value::as_str),
+            Some("hi")
+        );
+    }
+}
