@@ -1,0 +1,26 @@
+{
+  "id": "grep-token",
+  "description": "Find a token with grep.",
+  "prompt": "Call grep with pattern needle-7711 and path logs. You may omit case_sensitive. Then answer exactly GREP=needle-7711.",
+  "setup": {
+    "files": [
+      {
+        "path": "logs/app.log",
+        "content": "INFO boot\nINFO needle-7711 reached\nINFO done\n"
+      }
+    ]
+  },
+  "expect": {
+    "tool_called": ["host.grep"],
+    "assistant_contains": ["GREP=needle-7711"],
+    "tool_output_contains": ["needle-7711"]
+  },
+  "eval": {
+    "runs": 1,
+    "min_pass_rate": 1.0
+  },
+  "run": {
+    "max_tokens": 768,
+    "allowed_tools": ["host.grep"]
+  }
+}

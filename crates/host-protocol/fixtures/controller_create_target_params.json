@@ -1,0 +1,10 @@
+{
+  "request": {
+    "providerType": "smolvm",
+    "spec": {
+      "cpus": 2,
+      "image": "forge-dev"
+    },
+    "type": "provider"
+  }
+}

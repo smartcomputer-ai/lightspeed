@@ -1,0 +1,32 @@
+{
+  "id": "edit-file",
+  "description": "Edit an existing file with edit_file.",
+  "prompt": "Call edit_file with path docs/plan.txt, old_string draft, new_string final. You may omit replace_all. Then answer exactly EDIT=final.",
+  "setup": {
+    "files": [
+      {
+        "path": "docs/plan.txt",
+        "content": "phase: draft\n"
+      }
+    ]
+  },
+  "expect": {
+    "tool_called": ["host.edit_file"],
+    "assistant_contains": ["EDIT=final"],
+    "tool_output_contains": ["Replaced 1 match"],
+    "files": [
+      {
+        "path": "docs/plan.txt",
+        "contains": "phase: final"
+      }
+    ]
+  },
+  "eval": {
+    "runs": 1,
+    "min_pass_rate": 1.0
+  },
+  "run": {
+    "max_tokens": 768,
+    "allowed_tools": ["host.edit_file"]
+  }
+}

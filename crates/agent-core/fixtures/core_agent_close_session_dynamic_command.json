@@ -1,0 +1,5 @@
+{
+  "kind": "forge.core_agent.command",
+  "version": 1,
+  "payload": "close_session"
+}

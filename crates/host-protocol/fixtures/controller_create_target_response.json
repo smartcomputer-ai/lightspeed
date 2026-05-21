@@ -1,0 +1,47 @@
+{
+  "connection": {
+    "capabilities": {
+      "filesystemRead": true,
+      "filesystemWrite": true,
+      "processOutputNotifications": true,
+      "processOutputPolling": true,
+      "processPty": false,
+      "processStart": true,
+      "processStdin": true,
+      "processTerminate": true
+    },
+    "defaultCwd": "/workspace",
+    "endpoint": "wss://host.example/data/sandbox-123",
+    "scope": {
+      "sessionId": "sandbox-123",
+      "type": "session"
+    },
+    "targetId": "sandbox-123",
+    "transport": {
+      "type": "webSocket"
+    }
+  },
+  "target": {
+    "capabilities": {
+      "filesystemRead": true,
+      "filesystemWrite": true,
+      "processOutputNotifications": true,
+      "processOutputPolling": true,
+      "processPty": false,
+      "processStart": true,
+      "processStdin": true,
+      "processTerminate": true
+    },
+    "defaultCwd": "/workspace",
+    "displayName": "forge dev",
+    "metadata": {
+      "provider": "smolvm"
+    },
+    "scope": {
+      "sessionId": "sandbox-123",
+      "type": "session"
+    },
+    "status": "ready",
+    "targetId": "sandbox-123"
+  }
+}

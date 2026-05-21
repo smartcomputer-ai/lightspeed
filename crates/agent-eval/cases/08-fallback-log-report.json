@@ -1,0 +1,38 @@
+{
+  "id": "fallback-log-report",
+  "description": "Resolve a task file, read a fallback log, and write a derived report.",
+  "prompt": "Call list_dir with path jobs to find the task file, then read jobs/task-418.json. It contains fallback_log, needle, and report_path. Read fallback_log with read_file, extract the token from the line containing \"acquired\", then write report_path with exact text RESULT=<token>\\n. Do not write the report until the task file and log read have both succeeded. Then answer exactly CHAIN=OK.",
+  "setup": {
+    "files": [
+      {
+        "path": "jobs/task-418.json",
+        "content": "{\n  \"fallback_log\": \"logs/fallback.log\",\n  \"needle\": \"token-8831\",\n  \"report_path\": \"reports/final.txt\"\n}\n"
+      },
+      {
+        "path": "logs/fallback.log",
+        "content": "INFO boot\nINFO token-8831 acquired\nINFO done\n"
+      }
+    ]
+  },
+  "expect": {
+    "tool_called": ["host.list_dir", "host.read_file", "host.write_file"],
+    "assistant_contains": ["CHAIN=OK"],
+    "tool_output_contains": ["task-418.json", "INFO token-8831 acquired", "Wrote"],
+    "files": [
+      {
+        "path": "reports/final.txt",
+        "equals": "RESULT=token-8831\n"
+      }
+    ]
+  },
+  "eval": {
+    "runs": 1,
+    "min_pass_rate": 1.0
+  },
+  "run": {
+    "max_tokens": 1024,
+    "max_turns": 12,
+    "max_tool_rounds": 8,
+    "allowed_tools": ["host.list_dir", "host.read_file", "host.write_file"]
+  }
+}

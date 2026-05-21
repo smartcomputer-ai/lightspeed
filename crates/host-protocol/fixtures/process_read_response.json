@@ -1,0 +1,18 @@
+{
+  "chunks": [
+    {
+      "chunk": "b2sK",
+      "seq": 1,
+      "stream": "stdout"
+    },
+    {
+      "chunk": "d2Fybgo=",
+      "seq": 2,
+      "stream": "stderr"
+    }
+  ],
+  "closed": true,
+  "exited": true,
+  "exitCode": 0,
+  "nextSeq": 3
+}

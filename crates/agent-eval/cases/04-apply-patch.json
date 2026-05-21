@@ -1,0 +1,32 @@
+{
+  "id": "apply-patch",
+  "description": "Patch an existing file in place.",
+  "prompt": "Call apply_patch with a patch that updates docs/status.txt from 'status: TODO' to 'status: DONE' using *** Begin Patch / *** End Patch format. Then answer exactly PATCH=DONE.",
+  "setup": {
+    "files": [
+      {
+        "path": "docs/status.txt",
+        "content": "status: TODO\n"
+      }
+    ]
+  },
+  "expect": {
+    "tool_called": ["host.apply_patch"],
+    "assistant_contains": ["PATCH=DONE"],
+    "tool_output_contains": ["updated"],
+    "files": [
+      {
+        "path": "docs/status.txt",
+        "contains": "status: DONE"
+      }
+    ]
+  },
+  "eval": {
+    "runs": 1,
+    "min_pass_rate": 1.0
+  },
+  "run": {
+    "max_tokens": 1024,
+    "allowed_tools": ["host.read_file", "host.apply_patch"]
+  }
+}

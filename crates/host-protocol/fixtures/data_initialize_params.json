@@ -1,0 +1,9 @@
+{
+  "clientName": "forge-test",
+  "protocolVersion": 1,
+  "resumeConnectionId": "conn-prev",
+  "scope": {
+    "sessionId": "sandbox-123",
+    "type": "session"
+  }
+}
