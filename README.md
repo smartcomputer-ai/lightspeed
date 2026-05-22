@@ -4,14 +4,14 @@ Forge is an SDK for building agent runtimes around a deterministic, event-source
 
 The current focus is a small deterministic loop that can plan an agent session, record domain events, rebuild state by replaying a session log, and drive LLM/tool work through runtime-provided async traits.
 
-That shape is meant to work well for agents running in durable workflow systems such as Temporal, hosted services, or other controlled runtimes where the agent should not assume direct ownership of an OS process, sandbox, or VM (like mosr coding agents do nowadays).
+That shape is meant to work well for agents running in durable workflow systems such as Temporal, hosted services, or other controlled runtimes where the agent should not assume direct ownership of an OS process, sandbox, or VM (like most coding agents do nowadays).
 
 ## New Direction
 > Previously this repo hosted an implementation of the Attractor runtime according to StrongDM's [spec](https://github.com/strongdm/attractor), with the goal to build a dark software factory. 
 
 We sinced moved towards building agents that orchestrate workflows directly, instead of deterministic workflow DAGs like Atrractor. But for that to work, agents have to be able to run outside sandboxes or VMs to orchestrate coding agents inside the guest-OSes.
 
-We belive running and coordination agents at scale are best managed by durable workflow engines like [Temporal](https://temporal.io/) or [Inngest](https://www.inngest.com/). Unfortunately there is no good agent runtimes or SDKs to build agents on such platforms. So this project is attempting to close that gap.
+We belive running and coordination agents at scale are best managed by durable workflow engines like [Temporal](https://temporal.io/) or [Inngest](https://www.inngest.com/). Unfortunately there is no good agent runtimes or SDKs to build agents on such platforms. So this project is attempting to close this gap.
 
 ## Design Principles
 - Keep the core deterministic. `agent-core` owns the generic session log and
@@ -47,9 +47,12 @@ We belive running and coordination agents at scale are best managed by durable w
 
 Prerequisites:
 
-- Rust toolchain with edition 2024 support
+- Rust toolchain with edition 2024 support (e.g. [rustup](https://rustup.rs/))
 - `OPENAI_API_KEY` for live OpenAI-backed chat and eval runs
 - `ANTHROPIC_API_KEY` for live Anthropic client tests
+
+Easiest is to just copy the `.env_example` file to `.env` and set the vars in there. To get started, only `OPENAI_API_KEY` must be set.
+
 
 Build and test:
 
