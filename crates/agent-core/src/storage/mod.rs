@@ -12,7 +12,10 @@ pub use crate::session::{
     AgentHandle, DynamicSessionEntry, DynamicUncommittedSessionEvent, SessionEntry,
     UncommittedSessionEvent,
 };
-pub use blobs::{BlobInfo, BlobStore, BlobStoreError, BlobWrite, InMemoryBlobStore};
+pub use blobs::{
+    BlobCacheLimits, BlobCacheStats, BlobInfo, BlobStore, BlobStoreError, BlobWrite,
+    CachedBlobStore, InMemoryBlobCache, InMemoryBlobStore,
+};
 pub use session::{
     AppendSessionEvents, AppendSessionEventsResult, CreateSession, InMemorySessionStore,
     ListAgentSessions, ReadSessionEvents, SessionPage, SessionRecord, SessionStore,
