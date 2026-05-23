@@ -293,6 +293,7 @@ dependencies = [
  "ratatui",
  "serde",
  "serde_json",
+ "store-fs",
  "tempfile",
  "tokio",
  "unicode-width 0.2.0",

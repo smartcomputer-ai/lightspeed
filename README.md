@@ -68,6 +68,10 @@ Run the local chat CLI:
 cargo run -p cli -- chat --new
 ```
 
+The local chat CLI stores session logs and CAS blobs under
+`<workdir>/.forge/` by default, so a session can be reopened with
+`--session <session-id>`.
+
 The `cli` package builds the `forge` binary, so installed usage remains:
 
 ```bash

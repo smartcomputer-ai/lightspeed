@@ -14,7 +14,7 @@ use agent_core::{
     ContextConfig, ModelProviderOptions, ModelSelection, OpenAiReasoningConfig,
     OpenAiResponsesRequestDefaults, ProviderApiKind, ProviderRequestDefaults, RunConfig,
     RunnerStores, SessionConfig, TurnConfig,
-    storage::{BlobStore, BlobWrite, InMemoryBlobStore, InMemorySessionStore},
+    storage::{BlobStore, BlobWrite, CachedBlobStore},
 };
 use agent_runtime::api::LocalAgentApi;
 use agent_tools::{
@@ -30,6 +30,7 @@ use clap::Args;
 use llm_clients::openai::responses as oai;
 use llm_runtime::{LlmAdapterRegistry, LlmRuntime, OpenAiResponsesLlmAdapter};
 use serde_json::Value;
+use store_fs::FsStore;
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
 
@@ -47,10 +48,10 @@ use crate::chat::session::{new_session_id, validate_session_id};
 
 #[derive(Args, Debug, Clone)]
 pub(crate) struct ChatArgs {
-    /// Session ID to use for this process-local chat.
+    /// Session ID to open or create in the local Forge store.
     #[arg(long)]
     session: Option<String>,
-    /// Start with a fresh process-local session ID.
+    /// Start with a fresh local session ID.
     #[arg(long)]
     new: bool,
     /// Provider ID for the model adapter.
@@ -181,6 +182,9 @@ fn chat_provider_request_timeout() -> Duration {
     Duration::from_secs(60 * 60)
 }
 
+const CHAT_BLOB_CACHE_MAX_BYTES: u64 = 64 * 1024 * 1024;
+const CHAT_BLOB_CACHE_MAX_ENTRIES: usize = 4096;
+
 impl ChatSessionDriver {
     pub(crate) async fn open(options: ChatSessionDriverOptions) -> Result<(Self, Vec<ChatEvent>)> {
         let session_id = validate_session_id(&options.session_id)?;
@@ -194,7 +198,7 @@ impl ChatSessionDriver {
             .await?,
         );
         let started = api
-            .start_session(SessionStartParams {
+            .open_or_start_session(SessionStartParams {
                 session_id: Some(session_id.clone()),
                 cwd: Some(options.workdir.clone()),
                 model: Some(ModelConfig {
@@ -282,7 +286,7 @@ impl ChatSessionDriver {
             })]),
             ChatCommand::PauseSession | ChatCommand::ResumeSession => {
                 Ok(vec![ChatEvent::Error(ChatErrorView {
-                    message: "pause/resume is not implemented for process-local Forge sessions".into(),
+                    message: "pause/resume is not implemented for local Forge sessions".into(),
                     action: None,
                 })])
             }
@@ -359,7 +363,7 @@ impl ChatSessionDriver {
     async fn submit_user_message(&mut self, text: String) -> Result<Vec<ChatEvent>> {
         if !self.is_quiescent() {
             return Ok(vec![ChatEvent::Error(ChatErrorView {
-                message: "a run is already active in this process-local session".into(),
+                message: "a run is already active in this local session".into(),
                 action: Some("wait for it to finish before submitting another message".into()),
             })]);
         }
@@ -694,7 +698,7 @@ impl ChatSessionDriver {
         let session_id = validate_session_id(&session_id)?;
         if !self.sessions.contains(&session_id) {
             return Ok(vec![ChatEvent::Error(ChatErrorView {
-                message: format!("unknown process-local session: {session_id}"),
+                message: format!("unknown loaded session: {session_id}"),
                 action: Some("use /new to create a session in this process".into()),
             })]);
         }
@@ -818,8 +822,15 @@ async fn build_local_api(
     workdir: &str,
 ) -> Result<LocalAgentApi> {
     let model = model_selection(settings)?;
-    let blobs = Arc::new(InMemoryBlobStore::new());
-    let sessions = Arc::new(InMemorySessionStore::new());
+    let fs_store = FsStore::open_project(workdir)
+        .await
+        .with_context(|| format!("open Forge store under '{workdir}/.forge'"))?;
+    let sessions = Arc::new(fs_store.sessions().clone());
+    let blobs = Arc::new(CachedBlobStore::with_limits(
+        fs_store.blobs().clone(),
+        CHAT_BLOB_CACHE_MAX_BYTES,
+        CHAT_BLOB_CACHE_MAX_ENTRIES,
+    ));
     let instructions_ref = match selected_prompt_text(prompt_config, tool_mode) {
         Some(prompt) => Some(
             blobs

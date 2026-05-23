@@ -14,6 +14,7 @@ llm-runtime = { path = "../llm-runtime" }
 agent-runtime = { path = "../agent-runtime" }
 agent-tools = { path = "../agent-tools" }
 llm-clients = { path = "../llm-clients" }
+store-fs = { path = "../store-fs" }
 futures-util = "0.3"
 pulldown-cmark = "0.10"
 serde = { version = "1", features = ["derive"] }

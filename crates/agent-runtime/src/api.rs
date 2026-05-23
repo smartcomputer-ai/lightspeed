@@ -14,10 +14,10 @@ use std::{
 };
 
 use agent_api::{
-    AgentApiError, AgentApiOutcome, AgentApiService, AgentNotification, ClientCapabilities,
-    EventCursor, EventJoinsView, InitializeParams, InitializeResponse, InputItem, ModelConfig,
-    RunStartParams, RunStartResponse, RunStatus as ApiRunStatus, RunView as ApiRunView,
-    ServerCapabilities, ServerInfo, SessionEventKindView, SessionEventView,
+    AgentApiError, AgentApiErrorKind, AgentApiOutcome, AgentApiService, AgentNotification,
+    ClientCapabilities, EventCursor, EventJoinsView, InitializeParams, InitializeResponse,
+    InputItem, ModelConfig, RunStartParams, RunStartResponse, RunStatus as ApiRunStatus,
+    RunView as ApiRunView, ServerCapabilities, ServerInfo, SessionEventKindView, SessionEventView,
     SessionEventsReadParams, SessionEventsReadResponse, SessionItemView, SessionReadParams,
     SessionReadResponse, SessionStartParams, SessionStartResponse,
     SessionStatus as ApiSessionStatus, SessionView as ApiSessionView, ToolBatchView,
@@ -178,6 +178,37 @@ impl LocalAgentApi {
         default_config: SessionConfig,
     ) -> Self {
         Self::builder(stores, llm, default_config).build()
+    }
+
+    pub async fn open_or_start_session(
+        &self,
+        params: SessionStartParams,
+    ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError> {
+        match self.start_session(params.clone()).await {
+            Ok(outcome) => Ok(outcome),
+            Err(error)
+                if matches!(error.kind, AgentApiErrorKind::Conflict)
+                    && params.session_id.is_some() =>
+            {
+                let session_id =
+                    SessionId::try_new(params.session_id.expect("checked session id present"))
+                        .map_err(|error| {
+                            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+                        })?;
+                self.write_session_metadata(
+                    session_id.clone(),
+                    LocalSessionMetadata { cwd: params.cwd },
+                )?;
+                let state = self
+                    .runner
+                    .load_state(&session_id)
+                    .await
+                    .map_err(map_runner_error)?;
+                let session = self.project_session(&session_id, &state).await?;
+                Ok(AgentApiOutcome::new(SessionStartResponse { session }))
+            }
+            Err(error) => Err(error),
+        }
     }
 
     fn allocate_session_id(&self) -> SessionId {
