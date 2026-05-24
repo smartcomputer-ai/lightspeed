@@ -15,22 +15,29 @@ pub enum BlobStoreError {
     Store { message: String },
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct BlobWrite {
-    pub bytes: Vec<u8>,
-    pub child_refs: Vec<BlobRef>,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BlobInfo {
     pub blob_ref: BlobRef,
     pub byte_len: u64,
-    pub child_refs: Vec<BlobRef>,
 }
 
 #[async_trait]
 pub trait BlobStore: Send + Sync {
-    async fn put_bytes(&self, write: BlobWrite) -> Result<BlobRef, BlobStoreError>;
+    async fn put_bytes(&self, bytes: Vec<u8>) -> Result<BlobRef, BlobStoreError>;
+
+    /// Stores a batch of blobs and returns one ref per input blob, preserving
+    /// input order.
+    ///
+    /// Implementations may optimize batch layout, for example by writing small
+    /// blobs into immutable packs. This operation is not required to be atomic:
+    /// if it returns an error, some earlier writes may already be durable.
+    async fn put_many(&self, blobs: Vec<Vec<u8>>) -> Result<Vec<BlobRef>, BlobStoreError> {
+        let mut blob_refs = Vec::with_capacity(blobs.len());
+        for bytes in blobs {
+            blob_refs.push(self.put_bytes(bytes).await?);
+        }
+        Ok(blob_refs)
+    }
 
     async fn read_bytes(&self, blob_ref: &BlobRef) -> Result<Vec<u8>, BlobStoreError>;
 
@@ -51,8 +58,12 @@ impl<T> BlobStore for Arc<T>
 where
     T: BlobStore + ?Sized,
 {
-    async fn put_bytes(&self, write: BlobWrite) -> Result<BlobRef, BlobStoreError> {
-        self.as_ref().put_bytes(write).await
+    async fn put_bytes(&self, bytes: Vec<u8>) -> Result<BlobRef, BlobStoreError> {
+        self.as_ref().put_bytes(bytes).await
+    }
+
+    async fn put_many(&self, blobs: Vec<Vec<u8>>) -> Result<Vec<BlobRef>, BlobStoreError> {
+        self.as_ref().put_many(blobs).await
     }
 
     async fn read_bytes(&self, blob_ref: &BlobRef) -> Result<Vec<u8>, BlobStoreError> {
@@ -297,13 +308,13 @@ impl<S> BlobStore for CachedBlobStore<S>
 where
     S: BlobStore,
 {
-    async fn put_bytes(&self, write: BlobWrite) -> Result<BlobRef, BlobStoreError> {
-        let expected_ref = BlobRef::from_bytes(&write.bytes);
+    async fn put_bytes(&self, bytes: Vec<u8>) -> Result<BlobRef, BlobStoreError> {
+        let expected_ref = BlobRef::from_bytes(&bytes);
         let cache_bytes = self
             .cache
-            .can_store_bytes(write.bytes.len() as u64)
-            .then(|| write.bytes.clone());
-        let blob_ref = self.inner.put_bytes(write).await?;
+            .can_store_bytes(bytes.len() as u64)
+            .then(|| bytes.clone());
+        let blob_ref = self.inner.put_bytes(bytes).await?;
         if blob_ref != expected_ref {
             return Err(BlobStoreError::Store {
                 message: format!(
@@ -320,6 +331,50 @@ where
         }
 
         Ok(blob_ref)
+    }
+
+    async fn put_many(&self, blobs: Vec<Vec<u8>>) -> Result<Vec<BlobRef>, BlobStoreError> {
+        let mut expected = Vec::with_capacity(blobs.len());
+        let mut cache_bytes = Vec::with_capacity(blobs.len());
+        for bytes in &blobs {
+            expected.push(BlobRef::from_bytes(bytes));
+            cache_bytes.push(
+                self.cache
+                    .can_store_bytes(bytes.len() as u64)
+                    .then(|| bytes.clone()),
+            );
+        }
+
+        let blob_refs = self.inner.put_many(blobs).await?;
+        if blob_refs.len() != expected.len() {
+            return Err(BlobStoreError::Store {
+                message: format!(
+                    "blob store returned {} refs for {} writes",
+                    blob_refs.len(),
+                    expected.len()
+                ),
+            });
+        }
+
+        for ((blob_ref, expected_ref), bytes) in
+            blob_refs.iter().zip(expected.iter()).zip(cache_bytes)
+        {
+            if blob_ref != expected_ref {
+                return Err(BlobStoreError::Store {
+                    message: format!(
+                        "blob store returned non-canonical ref: expected {expected_ref}, got {blob_ref}"
+                    ),
+                });
+            }
+            if let Some(bytes) = bytes {
+                self.cache.insert_bytes(blob_ref.clone(), bytes);
+            }
+            if let Ok(info) = self.inner.stat_blob(blob_ref).await {
+                self.cache.insert_info(info);
+            }
+        }
+
+        Ok(blob_refs)
     }
 
     async fn read_bytes(&self, blob_ref: &BlobRef) -> Result<Vec<u8>, BlobStoreError> {
@@ -373,29 +428,22 @@ impl InMemoryBlobStore {
     }
 
     pub async fn insert_text(&self, text: impl Into<String>) -> BlobRef {
-        self.put_bytes(BlobWrite {
-            bytes: text.into().into_bytes(),
-            child_refs: Vec::new(),
-        })
-        .await
-        .expect("in-memory blob write should not fail")
+        self.put_bytes(text.into().into_bytes())
+            .await
+            .expect("in-memory blob write should not fail")
     }
 }
 
 #[async_trait]
 impl BlobStore for InMemoryBlobStore {
-    async fn put_bytes(&self, write: BlobWrite) -> Result<BlobRef, BlobStoreError> {
-        let blob_ref = BlobRef::from_bytes(&write.bytes);
+    async fn put_bytes(&self, bytes: Vec<u8>) -> Result<BlobRef, BlobStoreError> {
+        let blob_ref = BlobRef::from_bytes(&bytes);
         let info = BlobInfo {
             blob_ref: blob_ref.clone(),
-            byte_len: write.bytes.len() as u64,
-            child_refs: write.child_refs,
+            byte_len: bytes.len() as u64,
         };
         let mut inner = self.inner.write().expect("blob store lock poisoned");
-        inner
-            .bytes_by_ref
-            .entry(blob_ref.clone())
-            .or_insert(write.bytes);
+        inner.bytes_by_ref.entry(blob_ref.clone()).or_insert(bytes);
         inner.info_by_ref.entry(blob_ref.clone()).or_insert(info);
         Ok(blob_ref)
     }
@@ -451,17 +499,11 @@ mod tests {
     async fn in_memory_blob_store_dedupes_and_reads_text() {
         let store = InMemoryBlobStore::new();
         let first = store
-            .put_bytes(BlobWrite {
-                bytes: b"hello".to_vec(),
-                child_refs: Vec::new(),
-            })
+            .put_bytes(b"hello".to_vec())
             .await
             .expect("write blob");
         let second = store
-            .put_bytes(BlobWrite {
-                bytes: b"hello".to_vec(),
-                child_refs: Vec::new(),
-            })
+            .put_bytes(b"hello".to_vec())
             .await
             .expect("write blob");
 
@@ -470,28 +512,6 @@ mod tests {
         assert_eq!(
             store.stat_blob(&first).await.expect("stat blob").byte_len,
             5
-        );
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn in_memory_blob_store_records_explicit_child_refs() {
-        let store = InMemoryBlobStore::new();
-        let child = BlobRef::from_bytes(b"child");
-        let parent = store
-            .put_bytes(BlobWrite {
-                bytes: b"parent".to_vec(),
-                child_refs: vec![child.clone()],
-            })
-            .await
-            .expect("write blob");
-
-        assert_eq!(
-            store
-                .stat_blob(&parent)
-                .await
-                .expect("stat blob")
-                .child_refs,
-            vec![child]
         );
     }
 
@@ -521,7 +541,6 @@ mod tests {
         let info = BlobInfo {
             blob_ref: blob_ref.clone(),
             byte_len: 5,
-            child_refs: Vec::new(),
         };
 
         cache.insert_blob(info.clone(), b"large".to_vec());
@@ -536,10 +555,7 @@ mod tests {
     async fn cached_blob_store_reads_through_then_hits_cache() {
         let inner = CountingBlobStore::new();
         let blob_ref = inner
-            .put_bytes(BlobWrite {
-                bytes: b"hello".to_vec(),
-                child_refs: Vec::new(),
-            })
+            .put_bytes(b"hello".to_vec())
             .await
             .expect("write blob");
         inner.reset_counts();
@@ -559,66 +575,49 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn cached_blob_store_stats_through_then_hits_cache() {
         let inner = CountingBlobStore::new();
-        let child = BlobRef::from_bytes(b"child");
         let blob_ref = inner
-            .put_bytes(BlobWrite {
-                bytes: b"hello".to_vec(),
-                child_refs: vec![child.clone()],
-            })
+            .put_bytes(b"hello".to_vec())
             .await
             .expect("write blob");
         inner.reset_counts();
         let store = CachedBlobStore::with_limits(inner.clone(), 1024, 8);
 
         assert_eq!(
-            store
-                .stat_blob(&blob_ref)
-                .await
-                .expect("stat first")
-                .child_refs,
-            vec![child.clone()]
+            store.stat_blob(&blob_ref).await.expect("stat first"),
+            BlobInfo {
+                blob_ref: blob_ref.clone(),
+                byte_len: 5,
+            }
         );
         assert_eq!(
-            store
-                .stat_blob(&blob_ref)
-                .await
-                .expect("stat second")
-                .child_refs,
-            vec![child]
+            store.stat_blob(&blob_ref).await.expect("stat second"),
+            BlobInfo {
+                blob_ref: blob_ref.clone(),
+                byte_len: 5,
+            }
         );
         assert_eq!(inner.stat_count(), 1);
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn cached_blob_store_put_uses_backing_store_metadata() {
-        let inner = InMemoryBlobStore::new();
-        let first_child = BlobRef::from_bytes(b"first-child");
-        let second_child = BlobRef::from_bytes(b"second-child");
-        let store = CachedBlobStore::with_limits(inner, 1024, 8);
-
-        let blob_ref = store
-            .put_bytes(BlobWrite {
-                bytes: b"same".to_vec(),
-                child_refs: vec![first_child.clone()],
-            })
+    async fn cached_blob_store_put_many_populates_cache() {
+        let inner = CountingBlobStore::new();
+        let store = CachedBlobStore::with_limits(inner.clone(), 1024, 8);
+        let refs = store
+            .put_many(vec![b"alpha".to_vec(), b"beta".to_vec()])
             .await
-            .expect("write first");
-        store
-            .put_bytes(BlobWrite {
-                bytes: b"same".to_vec(),
-                child_refs: vec![second_child],
-            })
-            .await
-            .expect("write duplicate");
+            .expect("put many");
+        inner.reset_counts();
 
         assert_eq!(
-            store
-                .stat_blob(&blob_ref)
-                .await
-                .expect("stat cached blob")
-                .child_refs,
-            vec![first_child]
+            store.read_bytes(&refs[0]).await.expect("read alpha"),
+            b"alpha".to_vec()
         );
+        assert_eq!(
+            store.read_bytes(&refs[1]).await.expect("read beta"),
+            b"beta".to_vec()
+        );
+        assert_eq!(inner.read_count(), 0);
     }
 
     #[derive(Clone, Default)]
@@ -654,8 +653,8 @@ mod tests {
 
     #[async_trait]
     impl BlobStore for CountingBlobStore {
-        async fn put_bytes(&self, write: BlobWrite) -> Result<BlobRef, BlobStoreError> {
-            self.inner.put_bytes(write).await
+        async fn put_bytes(&self, bytes: Vec<u8>) -> Result<BlobRef, BlobStoreError> {
+            self.inner.put_bytes(bytes).await
         }
 
         async fn read_bytes(&self, blob_ref: &BlobRef) -> Result<Vec<u8>, BlobStoreError> {

@@ -13,7 +13,7 @@ use agent_core::{
     ContextConfig, ModelProviderOptions, ModelSelection, OpenAiResponsesRequestDefaults,
     ProviderApiKind, ProviderRequestDefaults, RunConfig, RunnerStores, SessionConfig,
     ToolProfileId, TurnConfig,
-    storage::{BlobStore, BlobWrite, InMemoryBlobStore, InMemorySessionStore},
+    storage::{BlobStore, InMemoryBlobStore, InMemorySessionStore},
 };
 use agent_runtime::api::LocalAgentApi;
 use agent_tools::{
@@ -455,10 +455,7 @@ async fn build_runtime(
     let sessions = Arc::new(InMemorySessionStore::new());
     let instructions_ref = Some(
         blobs
-            .put_bytes(BlobWrite {
-                bytes: EVAL_INSTRUCTIONS.as_bytes().to_vec(),
-                child_refs: Vec::new(),
-            })
+            .put_bytes(EVAL_INSTRUCTIONS.as_bytes().to_vec())
             .await
             .context("store eval instructions")?,
     );
@@ -575,7 +572,7 @@ fn session_config(
 async fn store_tool_documents(blobs: &dyn BlobStore, documents: &[ToolDocument]) -> Result<()> {
     for document in documents {
         let blob_ref = blobs
-            .put_bytes(document.blob_write())
+            .put_bytes(document.blob_bytes())
             .await
             .context("store tool document")?;
         if blob_ref != document.blob_ref {

@@ -16,7 +16,7 @@ use crate::{
     ToolInvocationResult, TurnEvent, TurnOutcome, UncommittedContextItem,
     UncommittedCoreAgentEvent,
     runner::{RunnerError, RunnerQuiescence},
-    storage::{AppendSessionEvents, BlobStore, BlobStoreError, BlobWrite, SessionStore},
+    storage::{AppendSessionEvents, BlobStore, BlobStoreError, SessionStore},
 };
 
 pub struct CoreAgentWorkflow<'a> {
@@ -558,10 +558,5 @@ async fn write_error_blob(
     blobs: &dyn BlobStore,
     message: impl Into<String>,
 ) -> Result<BlobRef, BlobStoreError> {
-    blobs
-        .put_bytes(BlobWrite {
-            bytes: message.into().into_bytes(),
-            child_refs: Vec::new(),
-        })
-        .await
+    blobs.put_bytes(message.into().into_bytes()).await
 }

@@ -223,7 +223,7 @@ fn session_config() -> SessionConfig {
 async fn store_tool_documents(blobs: &InMemoryBlobStore, documents: &[ToolDocument]) {
     for document in documents {
         let blob_ref = blobs
-            .put_bytes(document.blob_write())
+            .put_bytes(document.blob_bytes())
             .await
             .expect("store tool document");
         assert_eq!(blob_ref, document.blob_ref);

@@ -1,7 +1,4 @@
-use agent_core::{
-    BlobRef,
-    storage::{BlobStore, BlobWrite},
-};
+use agent_core::{BlobRef, storage::BlobStore};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -24,13 +21,7 @@ pub async fn read_json(blobs: &dyn BlobStore, blob_ref: &BlobRef) -> LlmAdapterR
 }
 
 pub async fn put_bytes(blobs: &dyn BlobStore, bytes: Vec<u8>) -> LlmAdapterResult<BlobRef> {
-    blobs
-        .put_bytes(BlobWrite {
-            bytes,
-            child_refs: Vec::new(),
-        })
-        .await
-        .map_err(Into::into)
+    blobs.put_bytes(bytes).await.map_err(Into::into)
 }
 
 pub async fn put_text(blobs: &dyn BlobStore, text: impl Into<String>) -> LlmAdapterResult<BlobRef> {

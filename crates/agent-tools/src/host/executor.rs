@@ -3,7 +3,6 @@
 use agent_core::{
     CoreAgentIoError, CoreAgentTools, ToolCallStatus, ToolInvocationBatchRequest,
     ToolInvocationBatchResult, ToolInvocationRequest, ToolInvocationResult, ToolName,
-    storage::BlobWrite,
 };
 use async_trait::async_trait;
 use serde_json::Value;
@@ -158,10 +157,7 @@ impl InlineHostToolRuntime {
         bytes: Vec<u8>,
     ) -> Result<agent_core::BlobRef, CoreAgentIoError> {
         ctx.blobs
-            .put_bytes(BlobWrite {
-                bytes,
-                child_refs: Vec::new(),
-            })
+            .put_bytes(bytes)
             .await
             .map_err(|error| io_error(format!("failed to write tool blob: {error}")))
     }
@@ -374,10 +370,7 @@ mod tests {
         .expect("profile");
         let runtime = InlineHostToolRuntime::new(ctx, profile.catalog);
         let args_ref = blobs
-            .put_bytes(BlobWrite {
-                bytes: br#"{"path":"/file.txt","offset":null,"limit":null}"#.to_vec(),
-                child_refs: Vec::new(),
-            })
+            .put_bytes(br#"{"path":"/file.txt","offset":null,"limit":null}"#.to_vec())
             .await
             .expect("write args");
 
@@ -410,10 +403,7 @@ mod tests {
         .expect("profile");
         let runtime = InlineHostToolRuntime::new(ctx, profile.catalog);
         let args_ref = blobs
-            .put_bytes(BlobWrite {
-                bytes: br#"{"path":"/file.txt","offset":null,"limit":null}"#.to_vec(),
-                child_refs: Vec::new(),
-            })
+            .put_bytes(br#"{"path":"/file.txt","offset":null,"limit":null}"#.to_vec())
             .await
             .expect("write args");
 
@@ -473,10 +463,7 @@ mod tests {
             profile.catalog,
         );
         let args_ref = blobs
-            .put_bytes(BlobWrite {
-                bytes: br#"{"path":"/file.txt","offset":null,"limit":null}"#.to_vec(),
-                child_refs: Vec::new(),
-            })
+            .put_bytes(br#"{"path":"/file.txt","offset":null,"limit":null}"#.to_vec())
             .await
             .expect("write args");
 

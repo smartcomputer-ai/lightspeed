@@ -6,10 +6,9 @@ use std::{
 
 use agent_core::{
     BlobRef,
-    storage::{BlobInfo, BlobStore, BlobStoreError, BlobWrite},
+    storage::{BlobInfo, BlobStore, BlobStoreError},
 };
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use tokio::{fs, sync::Mutex};
 
 #[derive(Clone)]
@@ -18,17 +17,9 @@ pub struct FsBlobStore {
     lock: Arc<Mutex<()>>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct BlobMetadata {
-    blob_ref: BlobRef,
-    byte_len: u64,
-    child_refs: Vec<BlobRef>,
-}
-
 struct BlobPaths {
     dir: PathBuf,
     data: PathBuf,
-    metadata: PathBuf,
 }
 
 impl FsBlobStore {
@@ -67,7 +58,6 @@ impl FsBlobStore {
         let dir = self.blob_root().join("sha256").join(prefix);
         Ok(BlobPaths {
             data: dir.join(format!("{digest}.bin")),
-            metadata: dir.join(format!("{digest}.json")),
             dir,
         })
     }
@@ -75,14 +65,9 @@ impl FsBlobStore {
 
 #[async_trait]
 impl BlobStore for FsBlobStore {
-    async fn put_bytes(&self, write: BlobWrite) -> Result<BlobRef, BlobStoreError> {
-        let blob_ref = BlobRef::from_bytes(&write.bytes);
+    async fn put_bytes(&self, bytes: Vec<u8>) -> Result<BlobRef, BlobStoreError> {
+        let blob_ref = BlobRef::from_bytes(&bytes);
         let paths = self.blob_paths(&blob_ref)?;
-        let metadata = BlobMetadata {
-            blob_ref: blob_ref.clone(),
-            byte_len: write.bytes.len() as u64,
-            child_refs: write.child_refs,
-        };
 
         let _guard = self.lock.lock().await;
         fs::create_dir_all(&paths.dir)
@@ -93,16 +78,9 @@ impl BlobStore for FsBlobStore {
             .await
             .map_err(|error| blob_io_error("stat blob bytes", &paths.data, error))?
         {
-            crate::atomic_write(&paths.data, &write.bytes)
+            crate::atomic_write(&paths.data, &bytes)
                 .await
                 .map_err(|error| blob_io_error("write blob bytes", &paths.data, error))?;
-        }
-
-        if !crate::path_exists(&paths.metadata)
-            .await
-            .map_err(|error| blob_io_error("stat blob metadata", &paths.metadata, error))?
-        {
-            write_blob_metadata(&paths.metadata, &metadata).await?;
         }
 
         Ok(blob_ref)
@@ -130,28 +108,13 @@ impl BlobStore for FsBlobStore {
 
     async fn has_blob(&self, blob_ref: &BlobRef) -> Result<bool, BlobStoreError> {
         let paths = self.blob_paths(blob_ref)?;
-        let has_bytes = crate::path_exists(&paths.data)
+        crate::path_exists(&paths.data)
             .await
-            .map_err(|error| blob_io_error("stat blob bytes", &paths.data, error))?;
-        let has_metadata = crate::path_exists(&paths.metadata)
-            .await
-            .map_err(|error| blob_io_error("stat blob metadata", &paths.metadata, error))?;
-        Ok(has_bytes && has_metadata)
+            .map_err(|error| blob_io_error("stat blob bytes", &paths.data, error))
     }
 
     async fn stat_blob(&self, blob_ref: &BlobRef) -> Result<BlobInfo, BlobStoreError> {
         let paths = self.blob_paths(blob_ref)?;
-        let metadata = read_blob_metadata(&paths.metadata, blob_ref).await?;
-        if &metadata.blob_ref != blob_ref {
-            return Err(BlobStoreError::Store {
-                message: format!(
-                    "blob metadata '{}' references '{}', expected '{blob_ref}'",
-                    paths.metadata.display(),
-                    metadata.blob_ref
-                ),
-            });
-        }
-
         let data_metadata = fs::metadata(&paths.data).await.map_err(|error| {
             if error.kind() == io::ErrorKind::NotFound {
                 BlobStoreError::NotFound {
@@ -161,49 +124,12 @@ impl BlobStore for FsBlobStore {
                 blob_io_error("stat blob bytes", &paths.data, error)
             }
         })?;
-        if data_metadata.len() != metadata.byte_len {
-            return Err(BlobStoreError::Store {
-                message: format!(
-                    "blob byte length mismatch for {blob_ref}: metadata {}, file {}",
-                    metadata.byte_len,
-                    data_metadata.len()
-                ),
-            });
-        }
 
         Ok(BlobInfo {
             blob_ref: blob_ref.clone(),
-            byte_len: metadata.byte_len,
-            child_refs: metadata.child_refs,
+            byte_len: data_metadata.len(),
         })
     }
-}
-
-async fn write_blob_metadata(path: &Path, metadata: &BlobMetadata) -> Result<(), BlobStoreError> {
-    let bytes = serde_json::to_vec_pretty(metadata).map_err(|error| BlobStoreError::Store {
-        message: format!("serialize blob metadata for '{}': {error}", path.display()),
-    })?;
-    crate::atomic_write(path, &bytes)
-        .await
-        .map_err(|error| blob_io_error("write blob metadata", path, error))
-}
-
-async fn read_blob_metadata(
-    path: &Path,
-    blob_ref: &BlobRef,
-) -> Result<BlobMetadata, BlobStoreError> {
-    let bytes = fs::read(path).await.map_err(|error| {
-        if error.kind() == io::ErrorKind::NotFound {
-            BlobStoreError::NotFound {
-                blob_ref: blob_ref.clone(),
-            }
-        } else {
-            blob_io_error("read blob metadata", path, error)
-        }
-    })?;
-    serde_json::from_slice(&bytes).map_err(|error| BlobStoreError::Store {
-        message: format!("decode blob metadata '{}': {error}", path.display()),
-    })
 }
 
 fn sha256_hex(blob_ref: &BlobRef) -> Result<&str, BlobStoreError> {
@@ -237,20 +163,22 @@ mod tests {
     use agent_core::storage::BlobStore;
 
     #[tokio::test(flavor = "current_thread")]
-    async fn fs_blob_store_persists_bytes_and_metadata() {
+    async fn fs_blob_store_persists_bytes() {
         let temp_dir = tempfile::tempdir().expect("temp dir");
         let store = FsBlobStore::open(temp_dir.path())
             .await
             .expect("open store");
-        let child = BlobRef::from_bytes(b"child");
 
         let blob_ref = store
-            .put_bytes(BlobWrite {
-                bytes: b"hello".to_vec(),
-                child_refs: vec![child.clone()],
-            })
+            .put_bytes(b"hello".to_vec())
             .await
             .expect("write blob");
+        let paths = store.blob_paths(&blob_ref).expect("blob paths");
+        assert!(
+            !crate::path_exists(&paths.data.with_extension("json"))
+                .await
+                .expect("stat blob sidecar")
+        );
 
         let reopened = FsBlobStore::open(temp_dir.path())
             .await
@@ -265,7 +193,6 @@ mod tests {
             BlobInfo {
                 blob_ref,
                 byte_len: 5,
-                child_refs: vec![child],
             }
         );
     }
@@ -278,24 +205,21 @@ mod tests {
             .expect("open store");
 
         let first = store
-            .put_bytes(BlobWrite {
-                bytes: b"same".to_vec(),
-                child_refs: vec![BlobRef::from_bytes(b"first-child")],
-            })
+            .put_bytes(b"same".to_vec())
             .await
             .expect("write first");
         let second = store
-            .put_bytes(BlobWrite {
-                bytes: b"same".to_vec(),
-                child_refs: vec![BlobRef::from_bytes(b"second-child")],
-            })
+            .put_bytes(b"same".to_vec())
             .await
             .expect("write second");
 
         assert_eq!(first, second);
         assert_eq!(
-            store.stat_blob(&first).await.expect("stat blob").child_refs,
-            vec![BlobRef::from_bytes(b"first-child")]
+            store.stat_blob(&first).await.expect("stat blob"),
+            BlobInfo {
+                blob_ref: first,
+                byte_len: 4,
+            }
         );
     }
 }

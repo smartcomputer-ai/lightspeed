@@ -31,7 +31,7 @@ use agent_core::{
     LlmGenerationStatus, ModelSelection, ProviderApiKind, RunEvent, RunId, RunStatus, RunnerError,
     RunnerQuiescence, RunnerStores, SessionConfig, SessionId, SessionRunner, ToolCallStatus,
     ToolConfigEvent, ToolEvent, ToolExecutionTarget, ToolProfileId, ToolRegistry, TurnEvent,
-    storage::{BlobStoreError, BlobWrite, CreateSession, ReadSessionEvents, SessionStoreError},
+    storage::{BlobStoreError, CreateSession, ReadSessionEvents, SessionStoreError},
 };
 use async_trait::async_trait;
 use serde_json::Value;
@@ -1036,10 +1036,7 @@ impl AgentApiService for LocalAgentApi {
         let input_ref = self
             .stores
             .blobs
-            .put_bytes(BlobWrite {
-                bytes: input_text.into_bytes(),
-                child_refs: Vec::new(),
-            })
+            .put_bytes(input_text.into_bytes())
             .await
             .map_err(map_blob_store_error)?;
 

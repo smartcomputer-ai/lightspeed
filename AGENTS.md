@@ -26,6 +26,7 @@ cargo test -p agent-core
 cargo test -p agent-api
 cargo test -p agent-runtime
 cargo test -p agent-tools
+cargo test -p store-blob
 cargo test -p store-fs
 cargo test -p llm-runtime
 cargo test -p llm-clients
@@ -62,6 +63,8 @@ cargo run -p cli -- chat --new --json "summarize this repository"
 - `crates/agent-runtime/` — local runtime composition over the core runner and
   CoreAgent LLM/tool traits.
 - `crates/agent-tools/` — optional host filesystem/process tool package.
+- `crates/store-blob/` — object-store-backed CAS blob adapter with packed batch
+  writes.
 - `crates/store-fs/` — filesystem-backed session log and content-addressed blob
   store adapters.
 - `crates/agent-eval/` — eval harness for local agent/tool workflows.

@@ -8,6 +8,7 @@ members = [
     "crates/llm-runtime",
     "crates/agent-runtime",
     "crates/agent-tools",
+    "crates/store-blob",
     "crates/store-fs",
     "crates/agent-eval",
     "crates/cli",

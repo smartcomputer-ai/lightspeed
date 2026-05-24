@@ -2,9 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use agent_core::{
-    BlobRef, ToolName, ToolParallelism, ToolProfileId, ToolRegistry, storage::BlobWrite,
-};
+use agent_core::{BlobRef, ToolName, ToolParallelism, ToolProfileId, ToolRegistry};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -32,11 +30,8 @@ impl ToolDocument {
         }
     }
 
-    pub fn blob_write(&self) -> BlobWrite {
-        BlobWrite {
-            bytes: self.bytes.clone(),
-            child_refs: Vec::new(),
-        }
+    pub fn blob_bytes(&self) -> Vec<u8> {
+        self.bytes.clone()
     }
 
     pub fn text_lossy(&self) -> String {

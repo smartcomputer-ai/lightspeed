@@ -68,7 +68,8 @@ Target interface:
 ```rust
 #[async_trait]
 pub trait BlobStore: Send + Sync {
-    async fn put_bytes(&self, write: BlobWrite) -> Result<BlobRef, BlobStoreError>;
+    async fn put_bytes(&self, bytes: Vec<u8>) -> Result<BlobRef, BlobStoreError>;
+    async fn put_many(&self, blobs: Vec<Vec<u8>>) -> Result<Vec<BlobRef>, BlobStoreError>;
     async fn read_bytes(&self, blob_ref: &BlobRef) -> Result<Vec<u8>, BlobStoreError>;
     async fn has_blob(&self, blob_ref: &BlobRef) -> Result<bool, BlobStoreError>;
     async fn stat_blob(&self, blob_ref: &BlobRef) -> Result<BlobInfo, BlobStoreError>;
@@ -78,15 +79,9 @@ pub trait BlobStore: Send + Sync {
 Supporting types:
 
 ```rust
-pub struct BlobWrite {
-    pub bytes: Vec<u8>,
-    pub child_refs: Vec<BlobRef>,
-}
-
 pub struct BlobInfo {
     pub blob_ref: BlobRef,
     pub byte_len: u64,
-    pub child_refs: Vec<BlobRef>,
 }
 ```
 
@@ -94,9 +89,8 @@ Notes:
 
 - `put_bytes` computes the hash from the exact bytes and returns the canonical
   `BlobRef`.
-- If a caller supplies child refs, they describe explicit reachability edges
-  for GC/provenance. Blob stores must not discover edges by scanning arbitrary
-  JSON/text/bytes.
+- Blob storage is byte-only. GC/provenance edges should be recorded through a
+  separate optional edge API, not embedded in each byte write.
 - `read_text` can be a convenience helper on top of `read_bytes`, not a core
   storage primitive.
 - The initial in-memory implementation may store `bytes_by_ref` and
@@ -131,7 +125,7 @@ artifact metadata.
 ### In scope
 
 - Add `BlobRef` as the replacement for `ArtifactRef`.
-- Add `storage::BlobStore`, `BlobWrite`, `BlobInfo`, `BlobStoreError`, and
+- Add `storage::BlobStore`, `BlobInfo`, `BlobStoreError`, and
   `InMemoryBlobStore`.
 - Replace model fields that currently use `ArtifactRef` with `BlobRef`.
 - Replace `storage::ArtifactStore` usage with `storage::BlobStore`.
@@ -159,8 +153,7 @@ Planned `crates/forge-agent/src/` changes:
   - add `BlobRef::parse`, `BlobRef::new_unchecked_for_tests`, and
     `BlobRef::as_str`
 - `storage/blobs.rs`
-  - `BlobStore`, `BlobWrite`, `BlobInfo`, `BlobStoreError`,
-    `InMemoryBlobStore`
+  - `BlobStore`, `BlobInfo`, `BlobStoreError`, `InMemoryBlobStore`
 - `storage/mod.rs`
   - export blob storage contracts
   - stop exporting artifact storage contracts
@@ -250,19 +243,19 @@ Implementation:
 
 - Add `storage::BlobStore` and in-memory implementation.
 - Support put/read/has/stat.
-- Record explicit child refs supplied at write time.
+- Keep blob writes byte-only; graph edges are out of band.
 
 Acceptance:
 
 - Writing identical bytes returns the same `BlobRef`.
 - Reading verifies identity by hash in implementations that materialize bytes.
-- `BlobInfo` includes byte length and explicit child refs.
+- `BlobInfo` includes byte length.
 
 Implementation:
 
-- Added `storage::BlobStore`, `BlobWrite`, `BlobInfo`, `BlobStoreError`, and
+- Added `storage::BlobStore`, `BlobInfo`, `BlobStoreError`, and
   `InMemoryBlobStore`.
-- In-memory storage dedupes by blob hash and records explicit child refs.
+- In-memory storage dedupes by blob hash and records byte length metadata.
 
 ### [x] G3. Wire tools to BlobStore
 

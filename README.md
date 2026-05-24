@@ -38,6 +38,7 @@ We belive running and coordination agents at scale are best managed by durable w
 | `agent-api` | `crates/agent-api` | Client-facing session/run/item API types, views, and notifications |
 | `agent-runtime` | `crates/agent-runtime` | Local runtime composition over the core runner and CoreAgent LLM/tool traits |
 | `agent-tools` | `crates/agent-tools` | Optional host filesystem/process tool package |
+| `store-blob` | `crates/store-blob` | Object-store-backed CAS blob adapter with packed batch writes |
 | `store-fs` | `crates/store-fs` | Filesystem-backed session log and content-addressed blob store adapters |
 | `agent-eval` | `crates/agent-eval` | Eval harness for local agent/tool workflows |
 | `llm-runtime` | `crates/llm-runtime` | CoreAgent LLM runtime over provider-native clients |

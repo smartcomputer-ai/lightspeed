@@ -14,7 +14,7 @@ use agent_core::{
     ContextConfig, ModelProviderOptions, ModelSelection, OpenAiReasoningConfig,
     OpenAiResponsesRequestDefaults, ProviderApiKind, ProviderRequestDefaults, RunConfig,
     RunnerStores, SessionConfig, TurnConfig,
-    storage::{BlobStore, BlobWrite, CachedBlobStore},
+    storage::{BlobStore, CachedBlobStore},
 };
 use agent_runtime::api::LocalAgentApi;
 use agent_tools::{
@@ -834,10 +834,7 @@ async fn build_local_api(
     let instructions_ref = match selected_prompt_text(prompt_config, tool_mode) {
         Some(prompt) => Some(
             blobs
-                .put_bytes(BlobWrite {
-                    bytes: prompt.as_bytes().to_vec(),
-                    child_refs: Vec::new(),
-                })
+                .put_bytes(prompt.as_bytes().to_vec())
                 .await
                 .context("store chat instructions")?,
         ),
@@ -959,7 +956,7 @@ fn session_config(
 async fn store_tool_documents(blobs: &dyn BlobStore, documents: &[ToolDocument]) -> Result<()> {
     for document in documents {
         let blob_ref = blobs
-            .put_bytes(document.blob_write())
+            .put_bytes(document.blob_bytes())
             .await
             .context("store tool document")?;
         if blob_ref != document.blob_ref {

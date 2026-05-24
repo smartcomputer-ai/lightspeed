@@ -9,7 +9,6 @@
 //! .forge/
 //!   cas/
 //!     sha256/<prefix>/<digest>.bin
-//!     sha256/<prefix>/<digest>.json
 //!   sessions/
 //!     <percent-encoded-session-id>/
 //!       session.json
