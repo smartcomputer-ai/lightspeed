@@ -15,7 +15,6 @@ pub(crate) fn new_session_id() -> String {
 }
 
 pub(crate) fn validate_session_id(value: &str) -> Result<String> {
-    agent_core::SessionId::try_new(value.to_string())
-        .with_context(|| format!("invalid session id '{value}'"))?;
+    api::validate_session_id(value).with_context(|| format!("invalid session id '{value}'"))?;
     Ok(value.to_string())
 }

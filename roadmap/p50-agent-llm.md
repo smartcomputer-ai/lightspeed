@@ -34,7 +34,7 @@
 - Added an ignored OpenAI Responses live smoke test for the agent adapter under
   `crates/forge-agent-llm/tests/`, matching the `forge-llm` env/root `.env`
   pattern and failing loudly when explicitly run without credentials.
-- Added `crates/forge-agent-runtime` with an inline effect router that composes
+- Added the local runtime crate with an inline effect router that composes
   LLM and host-tool executors for local SDK use.
 - Added a local cross-crate runtime test that drives a full
   LLM -> host tool -> LLM loop using fake OpenAI Responses and real

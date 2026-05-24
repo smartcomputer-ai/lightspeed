@@ -1,4 +1,4 @@
-use agent_core::{
+use engine::{
     BlobRef,
     session::{EventSeq, SessionPosition},
     storage::{BlobStoreError, SessionStoreError},

@@ -636,7 +636,7 @@ First end-to-end slice is implemented:
   facts instead of aborting the drive. The planner can then retry, change the
   context window, change strategy, or eventually emit a terminal run failure.
 - `RunnerQuiescence::WaitingOnEffects` and receipt admission are removed.
-- `agent-api`, `agent-runtime`, CLI, and eval wiring no longer expose or depend
+- `agent-api`, `agent-local`, CLI, and eval wiring no longer expose or depend
   on core effect lifecycle events.
 - `model/effects.rs`, `runner/effects.rs`, `EffectId`, effect joins, and the
   temporary adapter bridges have been deleted.

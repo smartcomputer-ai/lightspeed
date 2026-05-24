@@ -102,21 +102,24 @@ Boundary with `forge-agent`:
   core and `forge-llm`: it materializes provider-native requests from planned
   `LlmRequest` values and blob-backed context, calls the provider client, stores
   raw/native outputs, and extracts reducer facts.
-- `forge-agent-tools` owns optional standard tool packages such as host
+- `tools` owns optional standard tool packages such as host
   filesystem/process tools. The core sees durable tool specs and planned tool
   invocation batches; the runtime executes them through a tool trait.
 - Tool calls can carry a semantic execution target such as `host:local` or
   `host:sandbox_123`. The core records the selected target on the tool call
   start event/request, but host lifecycle, health, credentials, and VM/container
   dispatch stay with runtime/tool adapters.
-- `forge-agent-runtime` composes the core runner with concrete LLM/tool
-  adapters for local SDK use. Production runners can reuse the same adapters
-  behind process or Temporal activity dispatch.
-- `forge-agent-api` owns the client-facing session/run/item protocol. It must
+- `test-support` owns the fast in-process runner harness for tests and evals.
+  It is not a production runtime and should not expose the client-facing API
+  service boundary.
+- `api` owns the client-facing session/run/item protocol. It must
   not expose core reducer internals such as `SessionEventKind`, `RunId`,
   `BlobRef`, tool/LLM execution requests, or provider-native request objects. Local runners,
   hosted/Temporal gateways, CLIs, TUIs, editors, and web frontends should meet
   at this boundary.
+- `api-projection` is the explicit bridge from CoreAgent state/events/blob
+  refs to `api` views. It depends on the engine and API, while `api` remains
+  independent of reducer internals.
 - The LLM adapter is intentionally thin: it converts one committed
   provider-native `LlmRequest` plus the resolved context-window items into one
   native provider request, stores raw/native outputs in the agent's blob store,
@@ -195,14 +198,20 @@ First Forge API cut:
   is the replayable source for CLI/TUI refresh, reconnect, polling, long-polling,
   SSE, and JSON-RPC subscriptions. It is distinct from later ephemeral token or
   tool-output streaming deltas.
-- `run/start` appends user input and returns the projected run. The API run
+- `session/close` closes an idle session and returns the projected closed
+  session view. It rejects sessions with active or queued work.
+- `run/start` appends user input plus optional typed run config and returns
+  after the submitted run is accepted/started or observed terminal. The API run
   corresponds to a user submission/core run, not a single model reducer turn,
-  because one run may require multiple model/tool rounds.
+  because one run may require multiple model/tool rounds. Clients follow
+  `session/events/read` or refresh `session/read` for progress and final output.
+- `run/cancel` requests cancellation of an active run and returns the projected
+  run view once cancellation has been accepted or observed.
 - API projection DTOs should be named as views (`SessionView`, `RunView`,
   `SessionItemView`) to keep them distinct from reducer state models such as
   `SessionState`, `RunState`, and provider-native context items.
 - Notifications include `session/started`, `session/status/changed`,
   `run/started`, `item/completed`, `run/completed`, and `error`.
 - The local implementation may run in-process with the CLI at first, but the
-  CLI must consume only `forge-agent-api` types so moving the server behind
+  CLI must consume only `api` types so moving the server behind
   stdio, UDS, HTTP, or Temporal does not change the UI contract.

@@ -12,7 +12,7 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Chat with a local in-process Forge agent.
+    /// Chat through a Forge API gateway.
     Chat(chat::ChatArgs),
 }
 
@@ -43,6 +43,8 @@ mod tests {
             "medium",
             "--workdir",
             ".",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
             "hello",
         ])
         .expect("parse chat");
@@ -50,14 +52,16 @@ mod tests {
     }
 
     #[test]
-    fn chat_parse_accepts_prompt_options() {
-        let cli =
-            Cli::try_parse_from(["forge", "chat", "--new", "--prompt-profile", "local-coding"])
-                .expect("parse prompt profile");
-        assert!(matches!(cli.command, Command::Chat(_)));
-
-        let cli = Cli::try_parse_from(["forge", "chat", "--new", "--prompt", "be concise"])
-            .expect("parse inline prompt");
+    fn chat_parse_accepts_remote_api_url() {
+        let cli = Cli::try_parse_from([
+            "forge",
+            "chat",
+            "--new",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
+            "hello",
+        ])
+        .expect("parse api url");
         assert!(matches!(cli.command, Command::Chat(_)));
     }
 }

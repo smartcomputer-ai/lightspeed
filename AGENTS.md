@@ -6,9 +6,10 @@ Note: `CLAUDE.md` is a symlink to `AGENTS.md`.
 
 ## Project Shape
 
-Forge is an SDK for building agent runtimes around a deterministic,
-event-sourced core. The current direction is a fundamental agent SDK, not an
-Attractor/factory pipeline runner.
+Forge is moving toward a single hosted agent product built around a
+deterministic, event-sourced engine and a Temporal-backed runtime. The current
+direction is product-first, not a general agent SDK or an Attractor/factory
+pipeline runner.
 
 Use these files as the index:
 
@@ -22,15 +23,19 @@ Use these files as the index:
 ```bash
 cargo build
 cargo test
-cargo test -p agent-core
-cargo test -p agent-api
-cargo test -p agent-runtime
-cargo test -p agent-tools
+cargo test -p engine
+cargo test -p api
+cargo test -p api-projection
+cargo test -p workflow
+cargo test -p worker
+cargo test -p gateway
+cargo test -p test-support
+cargo test -p tools
 cargo test -p store-fs
 cargo test -p store-pg
 cargo test -p llm-runtime
 cargo test -p llm-clients
-cargo test -p agent-eval
+cargo test -p eval
 cargo test -p cli --tests
 cargo test -p llm-clients test_name
 cargo test -p llm-clients -- --nocapture
@@ -48,33 +53,42 @@ cargo test -p llm-runtime --test openai_responses_live -- --ignored
 CLI usage:
 
 ```bash
-cargo run -p cli -- chat --new
-cargo run -p cli -- chat --new "summarize this repository"
-cargo run -p cli -- chat --new --json "summarize this repository"
+cargo run -p cli -- chat --api-url http://127.0.0.1:18080/rpc --new
+cargo run -p cli -- chat --api-url http://127.0.0.1:18080/rpc --new "summarize this repository"
+cargo run -p cli -- chat --api-url http://127.0.0.1:18080/rpc --new --json "summarize this repository"
+# Run worker and gateway in separate shells before using --api-url.
+cargo run -p worker
+cargo run -p gateway
+cargo run -p cli -- chat --api-url http://127.0.0.1:18080/rpc --session session_1 "hello"
 ```
 
 ## Crates
 
-- `crates/agent-core/` — deterministic session kernel plus built-in CoreAgent:
+- `crates/engine/` — deterministic session kernel plus built-in CoreAgent:
   dynamic session log storage, CoreAgent command/event/state models, planning,
-  codecs, storage traits, runner contracts.
-- `crates/agent-api/` — client-facing session/run/item API types, views, and
+  codecs, storage traits, and the substrate-neutral drive machine.
+- `crates/api/` — client-facing session/run/item API types, views, and
   notifications.
-- `crates/agent-runtime/` — local runtime composition over the core runner and
-  CoreAgent LLM/tool traits.
-- `crates/agent-tools/` — optional host filesystem/process tool package.
+- `crates/api-projection/` — shared CoreAgent-to-`api` projection
+  helpers for local and workflow-backed gateways.
+- `crates/workflow/` — Temporal workflow, signals, queries, and activity DTOs.
+- `crates/worker/` — Temporal worker binary and activity implementations.
+- `crates/gateway/` — HTTP/JSON-RPC gateway over Temporal and Pg/CAS.
+- `crates/test-support/` — fast in-process runner harness for tests/evals. It
+  is not a production runtime and must not expose an `AgentApiService`.
+- `crates/tools/` — optional host filesystem/process tool package.
 - `crates/store-fs/` — filesystem-backed session log and content-addressed blob
   store adapters.
 - `crates/store-pg/` — PostgreSQL-backed session store and CAS catalog schema.
-- `crates/agent-eval/` — eval harness for local agent/tool workflows.
+- `crates/eval/` — eval harness for agent/tool workflows.
 - `crates/llm-runtime/` — CoreAgent LLM runtime from planned requests to
   provider-native client calls.
 - `crates/llm-clients/` — provider-native OpenAI and Anthropic API clients.
-- `crates/cli/` — command-line chat host over the local runtime.
+- `crates/cli/` — command-line chat client for the API gateway.
 
 ## Architecture Rules
 
-- Keep `agent-core` deterministic. It should not execute provider calls, shell
+- Keep `engine` deterministic. It should not execute provider calls, shell
   commands, filesystem operations, network I/O, or workflow activities.
 - Execute side effects outside the core through runtime adapters, workflow
   activities, or tool packages. CoreAgent uses separate LLM and tool traits
@@ -83,8 +97,11 @@ cargo run -p cli -- chat --new --json "summarize this repository"
   Do not rebuild a fake universal LLM message model.
 - Parse only reducer facts needed for deterministic branching; keep other
   provider-native data opaque/blob-backed.
-- Keep clients on `agent-api`. CLIs, TUIs, editors, hosted gateways, and future
+- Keep clients on `api`. CLIs, TUIs, editors, hosted gateways, and future
   Temporal frontends should not consume reducer internals directly.
+- Treat hosted `run/start` as an acceptance/start boundary, not a final-output
+  boundary. Clients should follow `session/events/read` or refresh
+  `session/read` for progress and completion.
 - Preserve Rust 2024 and the existing crate-local `thiserror` error style.
 - Use `tokio` current-thread tests where async tests are needed.
 

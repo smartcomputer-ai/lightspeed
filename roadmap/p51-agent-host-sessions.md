@@ -201,7 +201,7 @@ per-call target tools can come later.
 
 ## Runtime Responsibilities
 
-`agent-runtime` / `agent-tools` resolve targets to live capabilities.
+`agent-local` / `agent-tools` resolve targets to live capabilities.
 
 For host targets, the runtime maps:
 

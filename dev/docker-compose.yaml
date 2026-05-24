@@ -53,7 +53,30 @@ services:
     depends_on:
       - minio
 
+  temporal:
+    image: ${TEMPORAL_IMAGE:-temporalio/admin-tools:latest}
+    container_name: ${TEMPORAL_CONTAINER_NAME:-forge-temporal}
+    restart: unless-stopped
+    command:
+      [
+        "temporal",
+        "server",
+        "start-dev",
+        "--ip",
+        "0.0.0.0",
+        "--ui-ip",
+        "0.0.0.0",
+        "--db-filename",
+        "/home/temporal/temporal.db",
+      ]
+    ports:
+      - "${TEMPORAL_PORT:-7233}:7233"
+      - "${TEMPORAL_UI_PORT:-8233}:8233"
+    volumes:
+      - temporal-data:/home/temporal
+
 volumes:
   postgres-data:
   pgadmin-data:
   minio-data:
+  temporal-data:

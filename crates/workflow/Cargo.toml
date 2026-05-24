@@ -1,0 +1,16 @@
+[package]
+name = "workflow"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+engine = { path = "../engine" }
+anyhow = "1"
+futures = "0.3"
+futures-util = "0.3"
+serde = { version = "1", features = ["derive"] }
+temporalio-client = "0.4.0"
+temporalio-common = "0.4.0"
+temporalio-macros = "0.4.0"
+temporalio-sdk = "0.4.0"
+temporalio-sdk-core = "0.4.0"

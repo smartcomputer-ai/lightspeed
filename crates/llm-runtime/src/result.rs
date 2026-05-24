@@ -1,4 +1,4 @@
-use agent_core::{
+use engine::{
     BlobRef, LlmFinish, LlmGenerationFacts, LlmGenerationResult, LlmGenerationStatus, RunId, TurnId,
 };
 

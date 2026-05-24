@@ -1,9 +1,9 @@
 use std::{collections::BTreeMap, sync::Arc};
 
-use agent_core::{
+use async_trait::async_trait;
+use engine::{
     CoreAgentIoError, CoreAgentLlm, LlmGenerationRequest, LlmGenerationResult, ProviderApiKind,
 };
-use async_trait::async_trait;
 
 use crate::{
     error::LlmAdapterResult,

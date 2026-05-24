@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use agent_core::{
+use engine::{
     BlobRef, ContextItem, ContextItemId, ContextItemKind, ContextItemSource, ContextMessageRole,
     LlmFinish, LlmGenerationRequest, LlmGenerationStatus, LlmRequest, LlmRequestKind,
     ModelProviderOptions, ModelSelection, OpenAiResponsesRequest, ProviderApiKind,

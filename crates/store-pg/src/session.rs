@@ -1,11 +1,11 @@
-use agent_core::{
+use async_trait::async_trait;
+use engine::{
     session::{AgentHandle, DynamicSessionEntry, EventSeq, SessionId, SessionPosition},
     storage::{
         AppendSessionEvents, AppendSessionEventsResult, CreateSession, ListAgentSessions,
         ReadSessionEvents, SessionPage, SessionRecord, SessionStore, SessionStoreError,
     },
 };
-use async_trait::async_trait;
 use sqlx::Row;
 
 use crate::{

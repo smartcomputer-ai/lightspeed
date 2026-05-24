@@ -12,7 +12,7 @@ use tokio::sync::mpsc;
 use crate::chat::driver::ChatSessionDriver;
 use crate::chat::protocol::{
     ChatCommand, ChatDelta, ChatErrorView, ChatEvent, ChatMessageView, ChatProgressStatus,
-    LOCAL_WORLD_ID,
+    GATEWAY_WORLD_ID,
 };
 use crate::chat::tui::app_event::UiEvent;
 use crate::chat::tui::app_event_sender::AppEventSender;
@@ -30,7 +30,7 @@ pub(crate) async fn run_shell(
     show_tool_details: bool,
 ) -> Result<()> {
     let view_options = ChatTuiViewOptions {
-        world_id: LOCAL_WORLD_ID.into(),
+        world_id: GATEWAY_WORLD_ID.into(),
         session_id: driver.session_id().to_string(),
         show_tool_details,
     };
@@ -500,7 +500,7 @@ fn status_allows_run_control(status: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_api::RunStatus;
+    use api::RunStatus;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;

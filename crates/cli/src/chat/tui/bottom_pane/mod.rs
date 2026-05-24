@@ -438,7 +438,7 @@ fn slash_popup_owns_key(key: &KeyEvent) -> bool {
 mod tests {
     use super::*;
     use crate::chat::protocol::{ChatRunView, run_status};
-    use agent_api::RunStatus;
+    use api::RunStatus;
     use crossterm::event::{KeyCode, KeyModifiers};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
