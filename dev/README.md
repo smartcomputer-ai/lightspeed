@@ -44,6 +44,13 @@ dev/local/minio-ensure.sh
 dev/local/minio-reset.sh
 ```
 
+Run the `store-pg` live integration tests against this stack:
+
+```bash
+source dev/local/env.sh
+cargo test -p store-pg --test store_pg_live -- --ignored
+```
+
 ## Runtime Environment
 
 Export local settings into the current shell:
