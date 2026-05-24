@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/common.sh"
+
+compose up -d postgres pgadmin minio
+
+echo "Waiting for Postgres..."
+until compose exec -T postgres pg_isready -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" >/dev/null 2>&1; do
+  sleep 1
+done
+
+echo "Waiting for MinIO..."
+until "${SCRIPT_DIR}/minio-ensure.sh" >/dev/null 2>&1; do
+  sleep 1
+done
+
+echo "Checking pgAdmin..."
+for _ in {1..30}; do
+  if [[ "$(docker inspect -f '{{.State.Running}} {{.State.Restarting}}' "${PGADMIN_CONTAINER_NAME:-forge-pgadmin}" 2>/dev/null)" == "true false" ]]; then
+    break
+  fi
+  sleep 1
+done
+
+if [[ "$(docker inspect -f '{{.State.Running}} {{.State.Restarting}}' "${PGADMIN_CONTAINER_NAME:-forge-pgadmin}" 2>/dev/null)" != "true false" ]]; then
+  echo "pgAdmin did not start cleanly. Recent logs:" >&2
+  compose logs --tail=80 pgadmin >&2
+  exit 1
+fi
+
+cat <<EOF
+
+Forge local infra is up.
+
+Postgres:
+  url:     ${FORGE_TEST_POSTGRES_URL}
+  pgAdmin: http://localhost:${PGADMIN_PORT}
+
+Blobstore:
+  bucket:        ${FORGE_OBJECT_STORE_BUCKET}
+  S3 endpoint:   ${FORGE_OBJECT_STORE_ENDPOINT}
+  MinIO console: http://localhost:${MINIO_CONSOLE_PORT}
+
+Suggested env:
+  source dev/local/env.sh
+EOF

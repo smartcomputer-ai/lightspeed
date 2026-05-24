@@ -1,0 +1,59 @@
+name: ${COMPOSE_PROJECT_NAME:-forge-dev}
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:17}
+    container_name: ${POSTGRES_CONTAINER_NAME:-forge-postgres}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-forge}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-forge}
+      POSTGRES_DB: ${POSTGRES_DB:-forge}
+    ports:
+      - "${POSTGRES_PORT:-15432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  pgadmin:
+    image: ${PGADMIN_IMAGE:-dpage/pgadmin4:8}
+    container_name: ${PGADMIN_CONTAINER_NAME:-forge-pgadmin}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    environment:
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+    ports:
+      - "${PGADMIN_PORT:-15080}:80"
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+
+  minio:
+    image: ${MINIO_IMAGE:-quay.io/minio/minio}
+    container_name: ${MINIO_CONTAINER_NAME:-forge-minio}
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "${MINIO_API_PORT:-29000}:9000"
+      - "${MINIO_CONSOLE_PORT:-29001}:9001"
+    volumes:
+      - minio-data:/data
+
+  mc:
+    image: ${MINIO_MC_IMAGE:-quay.io/minio/mc}
+    profiles: ["tools"]
+    depends_on:
+      - minio
+
+volumes:
+  postgres-data:
+  pgadmin-data:
+  minio-data:
