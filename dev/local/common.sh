@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+  SCRIPT_PATH="${BASH_SOURCE[0]}"
+elif [[ -n "${ZSH_VERSION:-}" ]]; then
+  SCRIPT_PATH="${(%):-%x}"
+else
+  SCRIPT_PATH="$0"
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${SCRIPT_PATH}")" && pwd)"
 DEV_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${DEV_DIR}/.." && pwd)"
 COMPOSE_FILE="${DEV_DIR}/docker-compose.yaml"
