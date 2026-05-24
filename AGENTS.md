@@ -28,6 +28,7 @@ cargo test -p agent-runtime
 cargo test -p agent-tools
 cargo test -p store-blob
 cargo test -p store-fs
+cargo test -p store-pg
 cargo test -p llm-runtime
 cargo test -p llm-clients
 cargo test -p agent-eval
@@ -67,6 +68,7 @@ cargo run -p cli -- chat --new --json "summarize this repository"
   writes.
 - `crates/store-fs/` — filesystem-backed session log and content-addressed blob
   store adapters.
+- `crates/store-pg/` — PostgreSQL-backed session store and CAS catalog schema.
 - `crates/agent-eval/` — eval harness for local agent/tool workflows.
 - `crates/llm-runtime/` — CoreAgent LLM runtime from planned requests to
   provider-native client calls.
