@@ -13,8 +13,8 @@ pub use crate::session::{
     UncommittedSessionEvent,
 };
 pub use blobs::{
-    BlobCacheLimits, BlobCacheStats, BlobInfo, BlobStore, BlobStoreError, CachedBlobStore,
-    InMemoryBlobCache, InMemoryBlobStore,
+    BlobCacheLimits, BlobCacheStats, BlobEdge, BlobGraphStore, BlobInfo, BlobStore, BlobStoreError,
+    CachedBlobStore, InMemoryBlobCache, InMemoryBlobStore, SessionBlobRoot,
 };
 pub use session::{
     AppendSessionEvents, AppendSessionEventsResult, CreateSession, InMemorySessionStore,

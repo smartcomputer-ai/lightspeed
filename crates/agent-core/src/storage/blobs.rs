@@ -1,6 +1,9 @@
 //! Content-addressed blob storage contract.
 
-use crate::BlobRef;
+use crate::{
+    BlobRef,
+    session::{EventSeq, SessionId},
+};
 use async_trait::async_trait;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::{Arc, RwLock};
@@ -19,6 +22,63 @@ pub enum BlobStoreError {
 pub struct BlobInfo {
     pub blob_ref: BlobRef,
     pub byte_len: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SessionBlobRoot {
+    pub session_id: SessionId,
+    pub blob_ref: BlobRef,
+    pub root_kind: String,
+    pub first_seq: Option<EventSeq>,
+    pub last_seq: Option<EventSeq>,
+}
+
+impl SessionBlobRoot {
+    pub fn new(session_id: SessionId, blob_ref: BlobRef, root_kind: impl Into<String>) -> Self {
+        Self {
+            session_id,
+            blob_ref,
+            root_kind: root_kind.into(),
+            first_seq: None,
+            last_seq: None,
+        }
+    }
+
+    pub fn for_seq(
+        session_id: SessionId,
+        blob_ref: BlobRef,
+        root_kind: impl Into<String>,
+        seq: EventSeq,
+    ) -> Self {
+        Self {
+            session_id,
+            blob_ref,
+            root_kind: root_kind.into(),
+            first_seq: Some(seq),
+            last_seq: Some(seq),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlobEdge {
+    pub parent: BlobRef,
+    pub child: BlobRef,
+    pub edge_kind: String,
+}
+
+impl BlobEdge {
+    pub fn new(parent: BlobRef, child: BlobRef, edge_kind: impl Into<String>) -> Self {
+        Self {
+            parent,
+            child,
+            edge_kind: edge_kind.into(),
+        }
+    }
+
+    pub fn contains(parent: BlobRef, child: BlobRef) -> Self {
+        Self::new(parent, child, "contains")
+    }
 }
 
 #[async_trait]
@@ -53,6 +113,21 @@ pub trait BlobStore: Send + Sync {
     }
 }
 
+/// Best-effort reachability metadata for future CAS garbage collection.
+///
+/// Implementations should treat this as metadata recorded by code that already
+/// understands why a blob exists. It is not part of canonical content hashing,
+/// and blob stores should not try to infer edges from opaque bytes.
+#[async_trait]
+pub trait BlobGraphStore: Send + Sync {
+    async fn record_session_blob_roots(
+        &self,
+        roots: Vec<SessionBlobRoot>,
+    ) -> Result<(), BlobStoreError>;
+
+    async fn record_blob_edges(&self, edges: Vec<BlobEdge>) -> Result<(), BlobStoreError>;
+}
+
 #[async_trait]
 impl<T> BlobStore for Arc<T>
 where
@@ -76,6 +151,23 @@ where
 
     async fn stat_blob(&self, blob_ref: &BlobRef) -> Result<BlobInfo, BlobStoreError> {
         self.as_ref().stat_blob(blob_ref).await
+    }
+}
+
+#[async_trait]
+impl<T> BlobGraphStore for Arc<T>
+where
+    T: BlobGraphStore + ?Sized,
+{
+    async fn record_session_blob_roots(
+        &self,
+        roots: Vec<SessionBlobRoot>,
+    ) -> Result<(), BlobStoreError> {
+        self.as_ref().record_session_blob_roots(roots).await
+    }
+
+    async fn record_blob_edges(&self, edges: Vec<BlobEdge>) -> Result<(), BlobStoreError> {
+        self.as_ref().record_blob_edges(edges).await
     }
 }
 
