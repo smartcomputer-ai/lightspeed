@@ -11,6 +11,7 @@ pub use path::{FsPath, FsPathError};
 pub use read_only::ReadOnlyFileSystem;
 pub use scoped::ScopedFileSystem;
 pub use scoped_local::ScopedLocalFileSystem;
+pub use vfs::VfsSnapshotFileSystem;
 
 pub mod access;
 pub mod local;
@@ -19,6 +20,7 @@ pub mod path;
 pub mod read_only;
 pub mod scoped;
 pub mod scoped_local;
+pub mod vfs;
 
 pub type FsResult<T> = Result<T, FsError>;
 

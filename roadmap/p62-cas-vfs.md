@@ -2,7 +2,7 @@
 
 **Status**
 - Accepted direction
-- Partially implemented: G1-G2 in `crates/vfs`
+- Partially implemented: G1-G2 plus read-only G3a in `crates/vfs` and `crates/tools`
 
 ## Goal
 
@@ -599,11 +599,11 @@ later.
 
 ### G3: CAS Filesystem Adapter
 
-- Implement lookup, read, stat, and list operations over a snapshot ref.
+- Done: implement lookup, read, stat, and list operations over a snapshot ref.
+- Done: add a read-only `tools::host::fs::FileSystem` adapter over a snapshot.
 - Implement write, create directory, remove, and copy against a writable
-  workspace overlay.
-- Add `tools` adapter implementing `FileSystem` if needed by existing grep/glob
-  and edit/apply-patch helpers.
+  workspace overlay, extending the `tools` adapter path so existing grep/glob
+  and edit/apply-patch helpers can use it.
 - Add tests for nested directories, missing paths, invalid paths, UTF-8 reads,
   writes, removes, copies, and read-only mount failures.
 

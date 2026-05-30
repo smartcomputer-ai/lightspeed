@@ -135,6 +135,15 @@ pub enum VfsError {
         existing: &'static str,
     },
 
+    #[error("vfs path not found: {path}")]
+    NotFound { path: VfsPath },
+
+    #[error("vfs path is not a file: {path}")]
+    NotAFile { path: VfsPath },
+
+    #[error("vfs path is not a directory: {path}")]
+    NotADirectory { path: VfsPath },
+
     #[error("vfs snapshot limit exceeded for {limit}: value {value} is greater than max {max}")]
     LimitExceeded {
         limit: &'static str,
@@ -321,23 +330,59 @@ pub struct CreateVfsSnapshotResult {
     pub manifest: VfsSnapshotManifest,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VfsNode<'a> {
+    File(&'a VfsFile),
+    Directory(&'a VfsDirectory),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VfsPathMetadata {
+    pub is_directory: bool,
+    pub is_file: bool,
+    pub size_bytes: Option<u64>,
+    pub media_type: Option<String>,
+    pub executable: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VfsDirectoryListingEntry {
+    pub file_name: String,
+    pub is_directory: bool,
+    pub is_file: bool,
+    pub size_bytes: Option<u64>,
+}
+
 pub async fn create_inline_snapshot(
     blobs: &(impl BlobStore + ?Sized),
     request: CreateInlineSnapshotRequest,
 ) -> Result<CreateVfsSnapshotResult, VfsError> {
     validate_inline_files(&request.files, request.limits)?;
 
-    let mut manifest = VfsSnapshotManifest::empty();
+    let mut staged_files = Vec::with_capacity(request.files.len());
+    let mut file_bytes = Vec::with_capacity(request.files.len());
     for file in request.files {
-        let size_bytes = file.bytes.len() as u64;
-        let blob_ref = blobs.put_bytes(file.bytes).await?;
+        staged_files.push((
+            file.path,
+            file.bytes.len() as u64,
+            file.media_type,
+            file.executable,
+        ));
+        file_bytes.push(file.bytes);
+    }
+
+    let blob_refs = blobs.put_many(file_bytes).await?;
+    let mut manifest = VfsSnapshotManifest::empty();
+    for ((path, size_bytes, media_type, executable), blob_ref) in
+        staged_files.into_iter().zip(blob_refs)
+    {
         let vfs_file = VfsFile {
             blob_ref,
             size_bytes,
-            media_type: file.media_type,
-            executable: file.executable,
+            media_type,
+            executable,
         };
-        insert_file(&mut manifest.root, &file.path, vfs_file)?;
+        insert_file(&mut manifest.root, &path, vfs_file)?;
         manifest.totals.files += 1;
         manifest.totals.bytes += size_bytes;
     }
@@ -350,6 +395,14 @@ pub async fn create_inline_snapshot(
     })
 }
 
+pub async fn read_snapshot_manifest(
+    blobs: &(impl BlobStore + ?Sized),
+    snapshot_ref: &BlobRef,
+) -> Result<VfsSnapshotManifest, VfsError> {
+    let bytes = blobs.read_bytes(snapshot_ref).await?;
+    decode_snapshot_manifest(&bytes)
+}
+
 pub fn encode_snapshot_manifest(manifest: &VfsSnapshotManifest) -> Result<Vec<u8>, VfsError> {
     manifest.validate()?;
     serde_json::to_vec(manifest).map_err(|source| VfsError::EncodeManifest { source })
@@ -360,6 +413,108 @@ pub fn decode_snapshot_manifest(bytes: &[u8]) -> Result<VfsSnapshotManifest, Vfs
         serde_json::from_slice(bytes).map_err(|source| VfsError::DecodeManifest { source })?;
     manifest.validate()?;
     Ok(manifest)
+}
+
+pub fn lookup_snapshot_path<'a>(
+    manifest: &'a VfsSnapshotManifest,
+    path: &VfsPath,
+) -> Result<VfsNode<'a>, VfsError> {
+    if path.is_root() {
+        return Ok(VfsNode::Directory(&manifest.root));
+    }
+
+    let mut current = &manifest.root;
+    let components = path.components();
+    for (index, component) in components.iter().enumerate() {
+        let entry = current
+            .entries
+            .get(*component)
+            .ok_or_else(|| VfsError::NotFound { path: path.clone() })?;
+        let is_last = index == components.len() - 1;
+        match (entry, is_last) {
+            (VfsEntry::File(file), true) => return Ok(VfsNode::File(file)),
+            (VfsEntry::Directory(directory), true) => return Ok(VfsNode::Directory(directory)),
+            (VfsEntry::Directory(directory), false) => current = directory,
+            (VfsEntry::File(_), false) => {
+                return Err(VfsError::NotADirectory { path: path.clone() });
+            }
+        }
+    }
+
+    Err(VfsError::NotFound { path: path.clone() })
+}
+
+pub async fn read_snapshot_file(
+    blobs: &(impl BlobStore + ?Sized),
+    manifest: &VfsSnapshotManifest,
+    path: &VfsPath,
+) -> Result<Vec<u8>, VfsError> {
+    let file = match lookup_snapshot_path(manifest, path)? {
+        VfsNode::File(file) => file,
+        VfsNode::Directory(_) => return Err(VfsError::NotAFile { path: path.clone() }),
+    };
+    let bytes = blobs.read_bytes(&file.blob_ref).await?;
+    if bytes.len() as u64 != file.size_bytes {
+        return Err(VfsError::InvalidManifest {
+            message: format!(
+                "file size mismatch for {path}: manifest has {}, blob has {}",
+                file.size_bytes,
+                bytes.len()
+            ),
+        });
+    }
+    Ok(bytes)
+}
+
+pub fn list_snapshot_directory(
+    manifest: &VfsSnapshotManifest,
+    path: &VfsPath,
+) -> Result<Vec<VfsDirectoryListingEntry>, VfsError> {
+    let directory = match lookup_snapshot_path(manifest, path)? {
+        VfsNode::Directory(directory) => directory,
+        VfsNode::File(_) => return Err(VfsError::NotADirectory { path: path.clone() }),
+    };
+
+    Ok(directory
+        .entries
+        .iter()
+        .map(|(file_name, entry)| match entry {
+            VfsEntry::File(file) => VfsDirectoryListingEntry {
+                file_name: file_name.clone(),
+                is_directory: false,
+                is_file: true,
+                size_bytes: Some(file.size_bytes),
+            },
+            VfsEntry::Directory(_) => VfsDirectoryListingEntry {
+                file_name: file_name.clone(),
+                is_directory: true,
+                is_file: false,
+                size_bytes: None,
+            },
+        })
+        .collect())
+}
+
+pub fn stat_snapshot_path(
+    manifest: &VfsSnapshotManifest,
+    path: &VfsPath,
+) -> Result<VfsPathMetadata, VfsError> {
+    match lookup_snapshot_path(manifest, path)? {
+        VfsNode::File(file) => Ok(VfsPathMetadata {
+            is_directory: false,
+            is_file: true,
+            size_bytes: Some(file.size_bytes),
+            media_type: file.media_type.clone(),
+            executable: file.executable,
+        }),
+        VfsNode::Directory(_) => Ok(VfsPathMetadata {
+            is_directory: true,
+            is_file: false,
+            size_bytes: None,
+            media_type: None,
+            executable: false,
+        }),
+    }
 }
 
 fn validate_inline_files(files: &[InlineFile], limits: VfsSnapshotLimits) -> Result<(), VfsError> {
@@ -588,6 +743,90 @@ mod tests {
             VfsEntry::Directory(_) => panic!("build.sh should be a file"),
         };
         assert!(build.executable);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn snapshot_read_helpers_resolve_paths() {
+        let blobs = InMemoryBlobStore::new();
+        let result = create_inline_snapshot(
+            &blobs,
+            CreateInlineSnapshotRequest::new(vec![
+                InlineFile::new("README.md", b"hello\n".to_vec()).unwrap(),
+                InlineFile::new("src/lib.rs", b"pub fn f() {}\n".to_vec())
+                    .unwrap()
+                    .with_media_type("text/rust"),
+            ]),
+        )
+        .await
+        .unwrap();
+
+        let loaded = read_snapshot_manifest(&blobs, &result.snapshot_ref)
+            .await
+            .unwrap();
+        assert_eq!(loaded, result.manifest);
+
+        assert!(matches!(
+            lookup_snapshot_path(&loaded, &VfsPath::root()).unwrap(),
+            VfsNode::Directory(_)
+        ));
+        assert_eq!(
+            read_snapshot_file(&blobs, &loaded, &VfsPath::parse("/README.md").unwrap())
+                .await
+                .unwrap(),
+            b"hello\n"
+        );
+
+        let root_entries = list_snapshot_directory(&loaded, &VfsPath::root()).unwrap();
+        assert_eq!(
+            root_entries,
+            vec![
+                VfsDirectoryListingEntry {
+                    file_name: "README.md".to_string(),
+                    is_directory: false,
+                    is_file: true,
+                    size_bytes: Some(6),
+                },
+                VfsDirectoryListingEntry {
+                    file_name: "src".to_string(),
+                    is_directory: true,
+                    is_file: false,
+                    size_bytes: None,
+                },
+            ]
+        );
+
+        let metadata = stat_snapshot_path(&loaded, &VfsPath::parse("src/lib.rs").unwrap()).unwrap();
+        assert!(metadata.is_file);
+        assert!(!metadata.is_directory);
+        assert_eq!(metadata.size_bytes, Some(14));
+        assert_eq!(metadata.media_type.as_deref(), Some("text/rust"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn snapshot_read_helpers_report_missing_and_wrong_kind_paths() {
+        let blobs = InMemoryBlobStore::new();
+        let result = create_inline_snapshot(
+            &blobs,
+            CreateInlineSnapshotRequest::new(vec![
+                InlineFile::new("README.md", b"hello\n".to_vec()).unwrap(),
+                InlineFile::new("src/lib.rs", b"pub fn f() {}\n".to_vec()).unwrap(),
+            ]),
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(
+            lookup_snapshot_path(&result.manifest, &VfsPath::parse("/missing").unwrap()),
+            Err(VfsError::NotFound { .. })
+        ));
+        assert!(matches!(
+            read_snapshot_file(&blobs, &result.manifest, &VfsPath::parse("/src").unwrap()).await,
+            Err(VfsError::NotAFile { .. })
+        ));
+        assert!(matches!(
+            list_snapshot_directory(&result.manifest, &VfsPath::parse("/README.md").unwrap()),
+            Err(VfsError::NotADirectory { .. })
+        ));
     }
 
     #[tokio::test(flavor = "current_thread")]
