@@ -38,8 +38,35 @@ impl AdmitCommand for CoreAdmitCommand {
                     CoreAgentEventKind::Lifecycle(CoreAgentLifecycleEvent::Opened { config }),
                 )])
             }
-            CoreAgentCommand::UpdateSessionConfig { config } => {
+            CoreAgentCommand::PatchSessionConfig {
+                expected_revision,
+                patch,
+            } => {
                 require_open(state)?;
+                if state.runs.active.is_some() || !state.runs.queued.is_empty() {
+                    return reject(
+                        CommandRejectionKind::ActiveWork,
+                        "session config can only change while no run is active or queued",
+                    );
+                }
+                if let Some(expected_revision) = expected_revision {
+                    let actual_revision = state.lifecycle.config_revision;
+                    if expected_revision != actual_revision {
+                        return reject(
+                            CommandRejectionKind::InvalidConfiguration,
+                            format!(
+                                "expected config revision {}, got {}",
+                                expected_revision, actual_revision
+                            ),
+                        );
+                    }
+                }
+                let current = state.lifecycle.config.as_ref().ok_or_else(|| {
+                    CommandError::Domain(DomainError::InvariantViolation(
+                        "open session is missing config".to_owned(),
+                    ))
+                })?;
+                let config = patch.apply_to(current);
                 validate_config_update_for_state(state, &config)
                     .map_err(command_rejection_from_domain)?;
                 let revision = state

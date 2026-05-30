@@ -731,7 +731,6 @@ fn session_config(
             reserve_output_tokens: None,
             compaction_enabled: false,
         },
-        tool_profile_id: None,
     }
 }
 

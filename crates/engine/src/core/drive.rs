@@ -448,9 +448,10 @@ fn validate_tool_batch_result(result: &ToolInvocationBatchResult) -> Result<(), 
 mod tests {
     use super::*;
     use crate::{
-        BlobRef, ContextConfig, ContextItemSource, CoreAgentCommand, LlmGenerationFacts,
-        ModelProviderOptions, ModelSelection, ProviderApiKind, ProviderRequestDefaults, RunConfig,
-        SessionConfig, TurnConfig,
+        BlobRef, CommandRejectionKind, ContextConfig, ContextConfigPatch, ContextItemSource,
+        CoreAgentCommand, LlmGenerationFacts, ModelProviderOptions, ModelSelection,
+        OptionalConfigPatch, ProviderApiKind, ProviderRequestDefaults, RunConfig, SessionConfig,
+        SessionConfigPatch, TurnConfig, TurnConfigPatch,
     };
 
     fn config() -> SessionConfig {
@@ -479,7 +480,6 @@ mod tests {
                 reserve_output_tokens: None,
                 compaction_enabled: false,
             },
-            tool_profile_id: None,
         }
     }
 
@@ -550,6 +550,87 @@ mod tests {
 
         assert_eq!(entries.len(), 1);
         assert_eq!(drive.state().lifecycle.status, CoreAgentStatus::Open);
+    }
+
+    #[test]
+    fn patch_session_config_updates_full_config_snapshot() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let open = drive
+            .admit_command(CoreAgentCommand::OpenSession { config: config() }, 10)
+            .expect("open");
+        commit_action(&mut drive, open);
+
+        let instructions_ref = BlobRef::from_bytes(b"new instructions");
+        let patch = SessionConfigPatch {
+            turn: TurnConfigPatch {
+                max_output_tokens: Some(OptionalConfigPatch::Set(2048)),
+                ..TurnConfigPatch::default()
+            },
+            context: ContextConfigPatch {
+                instructions_ref: Some(OptionalConfigPatch::Set(instructions_ref.clone())),
+                compaction_enabled: Some(true),
+                ..ContextConfigPatch::default()
+            },
+            ..SessionConfigPatch::default()
+        };
+        let action = drive
+            .admit_command(
+                CoreAgentCommand::PatchSessionConfig {
+                    expected_revision: Some(0),
+                    patch,
+                },
+                20,
+            )
+            .expect("patch config");
+        commit_action(&mut drive, action);
+
+        let config = drive
+            .state()
+            .lifecycle
+            .config
+            .as_ref()
+            .expect("session config");
+        assert_eq!(drive.state().lifecycle.config_revision, 1);
+        assert_eq!(config.turn.max_output_tokens, Some(2048));
+        assert_eq!(config.context.instructions_ref, Some(instructions_ref));
+        assert!(config.context.compaction_enabled);
+    }
+
+    #[test]
+    fn patch_session_config_rejects_queued_work() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let open = drive
+            .admit_command(CoreAgentCommand::OpenSession { config: config() }, 10)
+            .expect("open");
+        commit_action(&mut drive, open);
+        let request = drive
+            .admit_command(
+                CoreAgentCommand::RequestRun {
+                    submission_id: None,
+                    input_ref: BlobRef::from_bytes(b"input"),
+                    run_config: run_config(),
+                },
+                20,
+            )
+            .expect("request run");
+        commit_action(&mut drive, request);
+
+        let error = drive
+            .admit_command(
+                CoreAgentCommand::PatchSessionConfig {
+                    expected_revision: Some(0),
+                    patch: SessionConfigPatch::default(),
+                },
+                30,
+            )
+            .expect_err("patch must reject queued work");
+
+        let CoreAgentDriveError::Command(crate::CommandError::Rejected(rejection)) = error else {
+            panic!("expected rejected command");
+        };
+        assert_eq!(rejection.kind, CommandRejectionKind::ActiveWork);
     }
 
     #[test]

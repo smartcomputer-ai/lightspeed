@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     BlobRef, CoreAgentState, DomainError, ModelProviderOptions, ModelSelection, ProviderApiKind,
-    ProviderRequestDefaults, ToolProfileId,
+    ProviderRequestDefaults,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -11,7 +11,6 @@ pub struct SessionConfig {
     pub run: RunConfig,
     pub turn: TurnConfig,
     pub context: ContextConfig,
-    pub tool_profile_id: Option<ToolProfileId>,
 }
 
 impl SessionConfig {
@@ -28,10 +27,164 @@ pub(crate) fn validate_config_update_for_state(
     config: &SessionConfig,
 ) -> Result<(), DomainError> {
     let current = current_config(state)?;
+    validate_session_is_idle_for_config_update(state)?;
     config.validate_provider_compatibility()?;
     validate_session_api_kind_is_pinned(&current.model.api_kind, &config.model.api_kind)?;
     validate_active_context_api_kind(state, &config.model.api_kind)?;
     Ok(())
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionConfigPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<ModelSelection>,
+    #[serde(default, skip_serializing_if = "RunConfigPatch::is_empty")]
+    pub run: RunConfigPatch,
+    #[serde(default, skip_serializing_if = "TurnConfigPatch::is_empty")]
+    pub turn: TurnConfigPatch,
+    #[serde(default, skip_serializing_if = "ContextConfigPatch::is_empty")]
+    pub context: ContextConfigPatch,
+}
+
+impl SessionConfigPatch {
+    pub fn apply_to(&self, config: &SessionConfig) -> SessionConfig {
+        let mut next = config.clone();
+        if let Some(model) = self.model.clone() {
+            next.model = model;
+        }
+        self.run.apply_to(&mut next.run);
+        self.turn.apply_to(&mut next.turn);
+        self.context.apply_to(&mut next.context);
+        next
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.model.is_none()
+            && self.run.is_empty()
+            && self.turn.is_empty()
+            && self.context.is_empty()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "op", content = "value")]
+pub enum OptionalConfigPatch<T> {
+    Set(T),
+    Clear,
+}
+
+impl<T: Clone> OptionalConfigPatch<T> {
+    pub fn apply_to(&self, value: &mut Option<T>) {
+        match self {
+            Self::Set(next) => *value = Some(next.clone()),
+            Self::Clear => *value = None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunConfigPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_turns: Option<OptionalConfigPatch<u32>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tool_rounds: Option<OptionalConfigPatch<u32>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_override: Option<OptionalConfigPatch<ModelSelection>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<OptionalConfigPatch<u32>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_request_defaults: Option<OptionalConfigPatch<ProviderRequestDefaults>>,
+}
+
+impl RunConfigPatch {
+    pub fn apply_to(&self, config: &mut RunConfig) {
+        apply_optional_config_patch(&mut config.max_turns, &self.max_turns);
+        apply_optional_config_patch(&mut config.max_tool_rounds, &self.max_tool_rounds);
+        apply_optional_config_patch(&mut config.model_override, &self.model_override);
+        apply_optional_config_patch(&mut config.max_output_tokens, &self.max_output_tokens);
+        apply_optional_config_patch(
+            &mut config.provider_request_defaults,
+            &self.provider_request_defaults,
+        );
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.max_turns.is_none()
+            && self.max_tool_rounds.is_none()
+            && self.model_override.is_none()
+            && self.max_output_tokens.is_none()
+            && self.provider_request_defaults.is_none()
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TurnConfigPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<OptionalConfigPatch<u32>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_request_defaults: Option<ProviderRequestDefaults>,
+}
+
+impl TurnConfigPatch {
+    pub fn apply_to(&self, config: &mut TurnConfig) {
+        apply_optional_config_patch(&mut config.max_output_tokens, &self.max_output_tokens);
+        if let Some(defaults) = self.provider_request_defaults.clone() {
+            config.provider_request_defaults = defaults;
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.max_output_tokens.is_none() && self.provider_request_defaults.is_none()
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextConfigPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instructions_ref: Option<OptionalConfigPatch<BlobRef>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_context_tokens: Option<OptionalConfigPatch<u32>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_context_tokens: Option<OptionalConfigPatch<u32>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reserve_output_tokens: Option<OptionalConfigPatch<u32>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction_enabled: Option<bool>,
+}
+
+impl ContextConfigPatch {
+    pub fn apply_to(&self, config: &mut ContextConfig) {
+        apply_optional_config_patch(&mut config.instructions_ref, &self.instructions_ref);
+        apply_optional_config_patch(&mut config.max_context_tokens, &self.max_context_tokens);
+        apply_optional_config_patch(
+            &mut config.target_context_tokens,
+            &self.target_context_tokens,
+        );
+        apply_optional_config_patch(
+            &mut config.reserve_output_tokens,
+            &self.reserve_output_tokens,
+        );
+        if let Some(compaction_enabled) = self.compaction_enabled {
+            config.compaction_enabled = compaction_enabled;
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.instructions_ref.is_none()
+            && self.max_context_tokens.is_none()
+            && self.target_context_tokens.is_none()
+            && self.reserve_output_tokens.is_none()
+            && self.compaction_enabled.is_none()
+    }
+}
+
+fn apply_optional_config_patch<T: Clone>(
+    value: &mut Option<T>,
+    patch: &Option<OptionalConfigPatch<T>>,
+) {
+    if let Some(patch) = patch {
+        patch.apply_to(value);
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -136,6 +289,16 @@ fn current_config(state: &CoreAgentState) -> Result<&SessionConfig, DomainError>
         .config
         .as_ref()
         .ok_or_else(|| DomainError::InvariantViolation("open session is missing config".to_owned()))
+}
+
+fn validate_session_is_idle_for_config_update(state: &CoreAgentState) -> Result<(), DomainError> {
+    if state.runs.active.is_some() || !state.runs.queued.is_empty() {
+        Err(DomainError::InvariantViolation(
+            "session config can only change while no run is active or queued".to_owned(),
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 fn validate_session_api_kind_is_pinned(

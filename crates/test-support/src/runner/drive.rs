@@ -456,7 +456,6 @@ mod tests {
                 reserve_output_tokens: None,
                 compaction_enabled: false,
             },
-            tool_profile_id: None,
         }
     }
 

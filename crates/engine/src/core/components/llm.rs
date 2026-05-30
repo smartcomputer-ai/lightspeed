@@ -230,7 +230,7 @@ pub(crate) fn build_llm_request(
 
     let request_config = session_config_for_run(config, &active_run.run_config);
     let resolved_window = crate::core::components::context::resolve_context_window(state, window)?;
-    let (tools, tool_choice) = selected_tools_and_choice(state, &request_config, &model.api_kind)?;
+    let (tools, tool_choice) = selected_tools_and_choice(state, &model.api_kind)?;
     let kind = match (
         &model.api_kind,
         &request_config.turn.provider_request_defaults,
@@ -321,15 +321,9 @@ fn session_config_for_run(config: &SessionConfig, run_config: &RunConfig) -> Ses
 
 fn selected_tools_and_choice(
     state: &CoreAgentState,
-    config: &SessionConfig,
     api_kind: &ProviderApiKind,
 ) -> Result<(Vec<ToolSpec>, Option<ToolChoice>), PlanningError> {
-    let Some(profile_id) = state
-        .tooling
-        .selected_profile_id
-        .as_ref()
-        .or(config.tool_profile_id.as_ref())
-    else {
+    let Some(profile_id) = state.tooling.selected_profile_id.as_ref() else {
         return Ok((Vec::new(), None));
     };
     let Some(profile) = state.tooling.registry.profiles.get(profile_id) else {
@@ -681,7 +675,6 @@ mod tests {
                 reserve_output_tokens: None,
                 compaction_enabled: false,
             },
-            tool_profile_id: None,
         };
         let run_config = RunConfig {
             max_output_tokens: Some(2048),

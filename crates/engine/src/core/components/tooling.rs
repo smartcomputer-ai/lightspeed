@@ -201,14 +201,7 @@ pub(crate) fn validate_registry_keeps_active_profile(
     state: &CoreAgentState,
     registry: &ToolRegistry,
 ) -> Result<(), DomainError> {
-    let profile_id = state.tooling.selected_profile_id.as_ref().or_else(|| {
-        state
-            .lifecycle
-            .config
-            .as_ref()
-            .and_then(|config| config.tool_profile_id.as_ref())
-    });
-    if let Some(profile_id) = profile_id {
+    if let Some(profile_id) = state.tooling.selected_profile_id.as_ref() {
         validate_profile_exists(registry, profile_id)?;
     }
     Ok(())
@@ -992,13 +985,7 @@ fn initial_tool_call_state(state: &CoreAgentState, call: &ObservedToolCall) -> T
 }
 
 fn initial_tool_call_status(state: &CoreAgentState, call: &ObservedToolCall) -> ToolCallStatus {
-    let Some(profile_id) = state.tooling.selected_profile_id.as_ref().or_else(|| {
-        state
-            .lifecycle
-            .config
-            .as_ref()
-            .and_then(|config| config.tool_profile_id.as_ref())
-    }) else {
+    let Some(profile_id) = state.tooling.selected_profile_id.as_ref() else {
         return ToolCallStatus::Unavailable;
     };
     let Some(profile) = state.tooling.registry.profiles.get(profile_id) else {

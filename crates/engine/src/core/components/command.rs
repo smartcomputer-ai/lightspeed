@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    BlobRef, RunConfig, SessionConfig, SubmissionId, ToolExecutionTarget, ToolProfileId,
-    ToolRegistry,
+    BlobRef, RunConfig, SessionConfig, SessionConfigPatch, SubmissionId, ToolExecutionTarget,
+    ToolProfileId, ToolRegistry,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -11,8 +11,9 @@ pub enum CoreAgentCommand {
     OpenSession {
         config: SessionConfig,
     },
-    UpdateSessionConfig {
-        config: SessionConfig,
+    PatchSessionConfig {
+        expected_revision: Option<u64>,
+        patch: SessionConfigPatch,
     },
     SetToolRegistry {
         registry: ToolRegistry,
