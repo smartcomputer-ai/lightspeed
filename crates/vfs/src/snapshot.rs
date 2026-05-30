@@ -2,7 +2,7 @@ use engine::{BlobRef, storage::BlobStore};
 use std::collections::BTreeSet;
 
 use crate::{
-    manifest::{VfsDirectory, VfsEntry, VfsError, VfsFile, VfsSnapshotManifest},
+    manifest::{VfsDirectory, VfsEntry, VfsError, VfsFile, VfsSnapshotManifest, VfsTotals},
     path::VfsPath,
 };
 
@@ -169,6 +169,18 @@ pub async fn read_snapshot_manifest(
     decode_snapshot_manifest(&bytes)
 }
 
+pub async fn commit_snapshot_manifest(
+    blobs: &(impl BlobStore + ?Sized),
+    manifest: VfsSnapshotManifest,
+) -> Result<CreateVfsSnapshotResult, VfsError> {
+    let manifest_bytes = encode_snapshot_manifest(&manifest)?;
+    let snapshot_ref = blobs.put_bytes(manifest_bytes).await?;
+    Ok(CreateVfsSnapshotResult {
+        snapshot_ref,
+        manifest,
+    })
+}
+
 pub fn encode_snapshot_manifest(manifest: &VfsSnapshotManifest) -> Result<Vec<u8>, VfsError> {
     manifest.validate()?;
     serde_json::to_vec(manifest).map_err(|source| VfsError::EncodeManifest { source })
@@ -283,6 +295,150 @@ pub fn stat_snapshot_path(
     }
 }
 
+pub async fn write_manifest_file(
+    blobs: &(impl BlobStore + ?Sized),
+    manifest: &mut VfsSnapshotManifest,
+    path: &VfsPath,
+    contents: Vec<u8>,
+    media_type: Option<String>,
+    executable: bool,
+) -> Result<(), VfsError> {
+    ensure_file_write_target(manifest, path)?;
+
+    let size_bytes = contents.len() as u64;
+    let blob_ref = blobs.put_bytes(contents).await?;
+    replace_file_entry(
+        manifest,
+        path,
+        VfsFile {
+            blob_ref,
+            size_bytes,
+            media_type,
+            executable,
+        },
+    )
+}
+
+pub fn create_manifest_directory(
+    manifest: &mut VfsSnapshotManifest,
+    path: &VfsPath,
+    recursive: bool,
+) -> Result<(), VfsError> {
+    let components = path.components();
+    if components.is_empty() {
+        return if recursive {
+            Ok(())
+        } else {
+            Err(VfsError::AlreadyExists { path: path.clone() })
+        };
+    }
+
+    if recursive {
+        let mut current = &mut manifest.root;
+        for index in 0..components.len() {
+            let component = components[index];
+            let current_path = path_from_components(&components[..=index]);
+            let entry = current
+                .entries
+                .entry(component.to_owned())
+                .or_insert_with(|| VfsEntry::Directory(VfsDirectory::default()));
+            match entry {
+                VfsEntry::Directory(directory) => current = directory,
+                VfsEntry::File(_) => {
+                    return Err(VfsError::NotADirectory { path: current_path });
+                }
+            }
+        }
+        return Ok(());
+    }
+
+    let parent = parent_directory_mut(&mut manifest.root, &components)?;
+    let name = components[components.len() - 1];
+    if parent.entries.contains_key(name) {
+        return Err(VfsError::AlreadyExists { path: path.clone() });
+    }
+    parent.entries.insert(
+        name.to_owned(),
+        VfsEntry::Directory(VfsDirectory::default()),
+    );
+    Ok(())
+}
+
+pub fn remove_manifest_path(
+    manifest: &mut VfsSnapshotManifest,
+    path: &VfsPath,
+    recursive: bool,
+    force: bool,
+) -> Result<(), VfsError> {
+    let components = path.components();
+    if components.is_empty() {
+        return Err(VfsError::InvalidOperation {
+            message: "cannot remove vfs root".to_owned(),
+        });
+    }
+
+    let parent = match parent_directory_mut(&mut manifest.root, &components) {
+        Ok(parent) => parent,
+        Err(VfsError::NotFound { .. }) if force => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    let name = components[components.len() - 1];
+    let Some(entry) = parent.entries.get(name) else {
+        return if force {
+            Ok(())
+        } else {
+            Err(VfsError::NotFound { path: path.clone() })
+        };
+    };
+    if let VfsEntry::Directory(directory) = entry
+        && !recursive
+        && !directory.entries.is_empty()
+    {
+        return Err(VfsError::DirectoryNotEmpty { path: path.clone() });
+    }
+
+    let entry = parent
+        .entries
+        .remove(name)
+        .expect("entry existence was checked before removal");
+    let totals = entry_totals(&entry)?;
+    subtract_totals(&mut manifest.totals, totals)?;
+    Ok(())
+}
+
+pub fn copy_manifest_path(
+    manifest: &mut VfsSnapshotManifest,
+    source: &VfsPath,
+    destination: &VfsPath,
+    recursive: bool,
+) -> Result<(), VfsError> {
+    let source_entry = match lookup_snapshot_path(manifest, source)? {
+        VfsNode::File(file) => VfsEntry::File(file.clone()),
+        VfsNode::Directory(directory) => VfsEntry::Directory(directory.clone()),
+    };
+
+    match source_entry {
+        VfsEntry::File(file) => {
+            ensure_file_write_target(manifest, destination)?;
+            replace_file_entry(manifest, destination, file)
+        }
+        VfsEntry::Directory(directory) => {
+            if !recursive {
+                return Err(VfsError::InvalidOperation {
+                    message: "copy requires recursive: true when source is a directory".to_owned(),
+                });
+            }
+            if path_starts_with(destination, source) {
+                return Err(VfsError::InvalidOperation {
+                    message: "cannot copy a directory to itself or one of its descendants"
+                        .to_owned(),
+                });
+            }
+            insert_or_replace_entry(manifest, destination, VfsEntry::Directory(directory))
+        }
+    }
+}
+
 fn validate_inline_files(files: &[InlineFile], limits: VfsSnapshotLimits) -> Result<(), VfsError> {
     if files.len() as u64 > limits.max_files {
         return Err(VfsError::LimitExceeded {
@@ -389,6 +545,173 @@ fn insert_file(
         }),
         Some(VfsEntry::File(_)) => Err(VfsError::DuplicatePath { path: path.clone() }),
     }
+}
+
+fn ensure_file_write_target(
+    manifest: &VfsSnapshotManifest,
+    path: &VfsPath,
+) -> Result<(), VfsError> {
+    let components = path.components();
+    if components.is_empty() {
+        return Err(VfsError::RootFile);
+    }
+    let parent = parent_directory(&manifest.root, &components)?;
+    let name = components[components.len() - 1];
+    match parent.entries.get(name) {
+        Some(VfsEntry::Directory(_)) => Err(VfsError::NotAFile { path: path.clone() }),
+        Some(VfsEntry::File(_)) | None => Ok(()),
+    }
+}
+
+fn replace_file_entry(
+    manifest: &mut VfsSnapshotManifest,
+    path: &VfsPath,
+    file: VfsFile,
+) -> Result<(), VfsError> {
+    insert_or_replace_entry(manifest, path, VfsEntry::File(file))
+}
+
+fn insert_or_replace_entry(
+    manifest: &mut VfsSnapshotManifest,
+    path: &VfsPath,
+    entry: VfsEntry,
+) -> Result<(), VfsError> {
+    let components = path.components();
+    if components.is_empty() {
+        return Err(VfsError::PathConflict {
+            path: path.clone(),
+            existing: "directory",
+        });
+    }
+
+    let added_totals = entry_totals(&entry)?;
+    let parent = parent_directory_mut(&mut manifest.root, &components)?;
+    let name = components[components.len() - 1].to_owned();
+    let removed_totals = parent
+        .entries
+        .insert(name, entry)
+        .map(|entry| entry_totals(&entry))
+        .transpose()?;
+    if let Some(totals) = removed_totals {
+        subtract_totals(&mut manifest.totals, totals)?;
+    }
+    add_totals(&mut manifest.totals, added_totals)?;
+    Ok(())
+}
+
+fn parent_directory<'a>(
+    root: &'a VfsDirectory,
+    components: &[&str],
+) -> Result<&'a VfsDirectory, VfsError> {
+    directory_at(root, &components[..components.len().saturating_sub(1)])
+}
+
+fn parent_directory_mut<'a>(
+    root: &'a mut VfsDirectory,
+    components: &[&str],
+) -> Result<&'a mut VfsDirectory, VfsError> {
+    directory_at_mut(root, &components[..components.len().saturating_sub(1)])
+}
+
+fn directory_at<'a>(
+    root: &'a VfsDirectory,
+    components: &[&str],
+) -> Result<&'a VfsDirectory, VfsError> {
+    let mut current = root;
+    for index in 0..components.len() {
+        let component = components[index];
+        let current_path = path_from_components(&components[..=index]);
+        match current.entries.get(component) {
+            Some(VfsEntry::Directory(directory)) => current = directory,
+            Some(VfsEntry::File(_)) => return Err(VfsError::NotADirectory { path: current_path }),
+            None => return Err(VfsError::NotFound { path: current_path }),
+        }
+    }
+    Ok(current)
+}
+
+fn directory_at_mut<'a>(
+    root: &'a mut VfsDirectory,
+    components: &[&str],
+) -> Result<&'a mut VfsDirectory, VfsError> {
+    let mut current = root;
+    for index in 0..components.len() {
+        let component = components[index];
+        let current_path = path_from_components(&components[..=index]);
+        match current.entries.get_mut(component) {
+            Some(VfsEntry::Directory(directory)) => current = directory,
+            Some(VfsEntry::File(_)) => return Err(VfsError::NotADirectory { path: current_path }),
+            None => return Err(VfsError::NotFound { path: current_path }),
+        }
+    }
+    Ok(current)
+}
+
+fn entry_totals(entry: &VfsEntry) -> Result<VfsTotals, VfsError> {
+    match entry {
+        VfsEntry::File(file) => Ok(VfsTotals {
+            files: 1,
+            bytes: file.size_bytes,
+        }),
+        VfsEntry::Directory(directory) => directory_totals(directory),
+    }
+}
+
+fn directory_totals(directory: &VfsDirectory) -> Result<VfsTotals, VfsError> {
+    let mut totals = VfsTotals::default();
+    for entry in directory.entries.values() {
+        add_totals(&mut totals, entry_totals(entry)?)?;
+    }
+    Ok(totals)
+}
+
+fn add_totals(totals: &mut VfsTotals, delta: VfsTotals) -> Result<(), VfsError> {
+    totals.files = totals
+        .files
+        .checked_add(delta.files)
+        .ok_or_else(|| invalid_totals("file count overflowed u64"))?;
+    totals.bytes = totals
+        .bytes
+        .checked_add(delta.bytes)
+        .ok_or_else(|| invalid_totals("byte total overflowed u64"))?;
+    Ok(())
+}
+
+fn subtract_totals(totals: &mut VfsTotals, delta: VfsTotals) -> Result<(), VfsError> {
+    totals.files = totals
+        .files
+        .checked_sub(delta.files)
+        .ok_or_else(|| invalid_totals("file count underflowed u64"))?;
+    totals.bytes = totals
+        .bytes
+        .checked_sub(delta.bytes)
+        .ok_or_else(|| invalid_totals("byte total underflowed u64"))?;
+    Ok(())
+}
+
+fn invalid_totals(message: impl Into<String>) -> VfsError {
+    VfsError::InvalidManifest {
+        message: message.into(),
+    }
+}
+
+fn path_from_components(components: &[&str]) -> VfsPath {
+    if components.is_empty() {
+        return VfsPath::root();
+    }
+    VfsPath::parse(format!("/{}", components.join("/")))
+        .expect("components from a VfsPath must build a valid VfsPath")
+}
+
+fn path_starts_with(path: &VfsPath, base: &VfsPath) -> bool {
+    if base.is_root() {
+        return true;
+    }
+    path == base
+        || path
+            .as_str()
+            .strip_prefix(base.as_str())
+            .is_some_and(|suffix| suffix.starts_with('/'))
 }
 
 #[cfg(test)]
@@ -530,6 +853,122 @@ mod tests {
         assert!(matches!(
             list_snapshot_directory(&result.manifest, &VfsPath::parse("/README.md").unwrap()),
             Err(VfsError::NotADirectory { .. })
+        ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn mutable_snapshot_helpers_write_replace_and_commit_files() {
+        let blobs = InMemoryBlobStore::new();
+        let mut manifest = VfsSnapshotManifest::empty();
+
+        create_manifest_directory(&mut manifest, &VfsPath::parse("/src").unwrap(), false).unwrap();
+        write_manifest_file(
+            &blobs,
+            &mut manifest,
+            &VfsPath::parse("/src/lib.rs").unwrap(),
+            b"one".to_vec(),
+            Some("text/rust".to_owned()),
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(manifest.totals, VfsTotals { files: 1, bytes: 3 });
+        assert_eq!(
+            read_snapshot_file(&blobs, &manifest, &VfsPath::parse("/src/lib.rs").unwrap())
+                .await
+                .unwrap(),
+            b"one"
+        );
+
+        write_manifest_file(
+            &blobs,
+            &mut manifest,
+            &VfsPath::parse("/src/lib.rs").unwrap(),
+            b"two two".to_vec(),
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(manifest.totals, VfsTotals { files: 1, bytes: 7 });
+
+        let committed = commit_snapshot_manifest(&blobs, manifest.clone())
+            .await
+            .unwrap();
+        assert_eq!(committed.manifest, manifest);
+        assert_eq!(
+            read_snapshot_manifest(&blobs, &committed.snapshot_ref)
+                .await
+                .unwrap(),
+            manifest
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn mutable_snapshot_helpers_copy_remove_and_create_directories() {
+        let blobs = InMemoryBlobStore::new();
+        let result = create_inline_snapshot(
+            &blobs,
+            CreateInlineSnapshotRequest::new(vec![
+                InlineFile::new("README.md", b"hello\n".to_vec()).unwrap(),
+                InlineFile::new("src/lib.rs", b"pub fn f() {}\n".to_vec()).unwrap(),
+            ]),
+        )
+        .await
+        .unwrap();
+        let mut manifest = result.manifest;
+
+        copy_manifest_path(
+            &mut manifest,
+            &VfsPath::parse("/src").unwrap(),
+            &VfsPath::parse("/copy").unwrap(),
+            true,
+        )
+        .unwrap();
+        assert!(matches!(
+            lookup_snapshot_path(&manifest, &VfsPath::parse("/copy/lib.rs").unwrap()),
+            Ok(VfsNode::File(_))
+        ));
+        assert_eq!(manifest.totals.files, 3);
+        assert!(matches!(
+            copy_manifest_path(
+                &mut manifest,
+                &VfsPath::parse("/README.md").unwrap(),
+                &VfsPath::parse("/copy").unwrap(),
+                false
+            ),
+            Err(VfsError::NotAFile { .. })
+        ));
+
+        assert!(matches!(
+            remove_manifest_path(
+                &mut manifest,
+                &VfsPath::parse("/src").unwrap(),
+                false,
+                false
+            ),
+            Err(VfsError::DirectoryNotEmpty { .. })
+        ));
+        remove_manifest_path(&mut manifest, &VfsPath::parse("/src").unwrap(), true, false).unwrap();
+        assert!(matches!(
+            lookup_snapshot_path(&manifest, &VfsPath::parse("/src").unwrap()),
+            Err(VfsError::NotFound { .. })
+        ));
+        assert_eq!(manifest.totals.files, 2);
+
+        create_manifest_directory(
+            &mut manifest,
+            &VfsPath::parse("/generated/out").unwrap(),
+            true,
+        )
+        .unwrap();
+        assert!(matches!(
+            create_manifest_directory(&mut manifest, &VfsPath::parse("/copy").unwrap(), false),
+            Err(VfsError::AlreadyExists { .. })
+        ));
+        assert!(matches!(
+            create_manifest_directory(&mut manifest, &VfsPath::root(), false),
+            Err(VfsError::AlreadyExists { .. })
         ));
     }
 

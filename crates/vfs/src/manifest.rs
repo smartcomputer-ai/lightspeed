@@ -18,6 +18,9 @@ pub enum VfsError {
     #[error("duplicate vfs path: {path}")]
     DuplicatePath { path: VfsPath },
 
+    #[error("vfs path already exists: {path}")]
+    AlreadyExists { path: VfsPath },
+
     #[error("vfs path conflicts with an existing {existing}: {path}")]
     PathConflict {
         path: VfsPath,
@@ -32,6 +35,12 @@ pub enum VfsError {
 
     #[error("vfs path is not a directory: {path}")]
     NotADirectory { path: VfsPath },
+
+    #[error("vfs directory is not empty: {path}")]
+    DirectoryNotEmpty { path: VfsPath },
+
+    #[error("invalid vfs operation: {message}")]
+    InvalidOperation { message: String },
 
     #[error("vfs snapshot limit exceeded for {limit}: value {value} is greater than max {max}")]
     LimitExceeded {

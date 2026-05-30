@@ -2,7 +2,8 @@
 
 **Status**
 - Accepted direction
-- Partially implemented: G1-G2, root catalog types/traits, plus read-only G3a in `crates/vfs` and `crates/tools`
+- Partially implemented: G1-G2.5, first-cut G3, and first-cut G4 in
+  `crates/vfs`, `crates/tools`, `crates/store-fs`, and `crates/store-pg`
 
 ## Goal
 
@@ -668,19 +669,29 @@ later.
 
 - Done: implement lookup, read, stat, and list operations over a snapshot ref.
 - Done: add a read-only `tools::host::fs::FileSystem` adapter over a snapshot.
-- Implement write, create directory, remove, and copy against a writable
-  workspace overlay, extending the `tools` adapter path so existing grep/glob
-  and edit/apply-patch helpers can use it.
-- Add tests for nested directories, missing paths, invalid paths, UTF-8 reads,
-  writes, removes, copies, and read-only mount failures.
+- Done: add a writable `VfsWorkspaceFileSystem` over a `VfsWorkspaceStore`
+  head. The first implementation rewrites a full manifest and advances the
+  workspace head after every mutating filesystem operation.
+- Done: support write, create directory, remove, and copy through the writable
+  adapter.
+- Done: verify existing `read_file`, `write_file`, `edit_file`,
+  `apply_patch`, `grep`, `glob`, and `list_dir` tools against a VFS workspace.
+- Remaining: mount-table adapter that resolves mixed read-only snapshots and
+  writable workspaces under one filesystem namespace.
+- Remaining: enforce workspace quotas and mount policy limits.
 
 ### G4: Workspace Commit
 
-- Commit writable workspace overlays into immutable snapshot manifests.
-- Return new snapshot refs after mutating operations or at explicit commit
-  boundaries.
-- Add tests that the base snapshot is unchanged after writes.
-- Add tests that committed snapshots are readable after runtime restart.
+- Done: commit writable workspace state into immutable snapshot manifests.
+- Done: advance workspace heads with compare-and-set revision checks.
+- Done: make revision conflicts fail clearly instead of losing updates.
+- Done: add tests that the base snapshot is unchanged after writes.
+- Done: add tests that a reloaded workspace filesystem reads the committed
+  head snapshot.
+- Remaining: expose new snapshot refs or workspace revisions in mutating tool
+  results once the API/tool result contract grows that field.
+- Remaining: replace full-tree rewrite with a real overlay only if benchmarks
+  or product workflows need it.
 
 ### G5: Host Directory Snapshot
 
