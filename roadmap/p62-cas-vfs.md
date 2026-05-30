@@ -2,7 +2,7 @@
 
 **Status**
 - Accepted direction
-- Partially implemented: G1-G2 plus read-only G3a in `crates/vfs` and `crates/tools`
+- Partially implemented: G1-G2, root catalog types/traits, plus read-only G3a in `crates/vfs` and `crates/tools`
 
 ## Goal
 
@@ -237,10 +237,68 @@ pub struct VfsSnapshotRecord {
     pub display_name: Option<String>,
     pub created_at_ms: i64,
 }
+
+pub struct VfsSnapshotSource {
+    pub kind: String,
+    pub subject: Option<String>,
+    pub metadata_ref: Option<BlobRef>,
+}
 ```
 
 `VfsSnapshotRecord` can live in Pg or another runtime store. The manifest
 should remain stable for the same tree contents.
+
+`VfsSnapshotSource` is descriptive provenance only. `kind` values such as
+`skill`, `upload`, `host_directory`, or `workspace_commit` are runtime/product
+conventions, not VFS schema variants. Put provider-specific details in a
+metadata blob referenced by `metadata_ref`.
+
+### Root Ref Catalog
+
+CAS snapshots are immutable. A `snapshot_ref` is the manifest `BlobRef`; it
+does not know whether it is latest or mounted anywhere. Mutable root refs live
+in a catalog outside CAS.
+
+First-cut catalog records:
+
+```rust
+pub struct VfsWorkspaceRecord {
+    pub workspace_id: VfsWorkspaceId,
+    pub base_snapshot_ref: Option<BlobRef>,
+    pub head_snapshot_ref: BlobRef,
+    pub revision: u64,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+pub struct VfsMountRecord {
+    pub session_id: SessionId,
+    pub mount_path: VfsPath,
+    pub source: VfsMountSource,
+    pub access: VfsMountAccess,
+}
+
+pub enum VfsMountSource {
+    Snapshot { snapshot_ref: BlobRef },
+    Workspace { workspace_id: VfsWorkspaceId },
+}
+```
+
+Use compare-and-set semantics when advancing a workspace head:
+
+```rust
+pub struct CompareAndSetVfsWorkspaceHead {
+    pub workspace_id: VfsWorkspaceId,
+    pub expected_revision: u64,
+    pub new_head_snapshot_ref: BlobRef,
+    pub updated_at_ms: i64,
+}
+```
+
+This prevents concurrent mutating tools from losing updates. Temporal workflow
+state may cache these records, but the durable authority should be a runtime
+catalog store. `store-fs` can implement this as JSON files for local/dev, and
+`store-pg` can implement it as hosted tables.
 
 ### Mount
 
@@ -596,6 +654,15 @@ later.
 - Done: implement inline-file snapshot creation over `BlobStore`.
 - Done: compute file blob refs and write the manifest to CAS.
 - Done: add limits for file count, total bytes, single file bytes, and depth.
+
+### G2.5: Root Ref Catalog Contracts
+
+- Done: define snapshot metadata records.
+- Done: define workspace head records with revisioned compare-and-set requests.
+- Done: define mount records for session-visible snapshot/workspace roots.
+- Done: define catalog/workspace/mount store traits.
+- Implement `store-fs` JSON-backed catalog records.
+- Implement `store-pg` catalog tables for hosted use.
 
 ### G3: CAS Filesystem Adapter
 
