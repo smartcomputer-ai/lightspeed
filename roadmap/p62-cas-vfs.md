@@ -129,7 +129,6 @@ pub struct VfsDirectory {
 pub enum VfsEntry {
     File(VfsFile),
     Directory(VfsDirectory),
-    Symlink(VfsSymlink),
 }
 
 pub struct VfsFile {
@@ -139,9 +138,6 @@ pub struct VfsFile {
     pub executable: bool,
 }
 
-pub struct VfsSymlink {
-    pub target: String,
-}
 ```
 
 The manifest itself is stored in CAS. Its `BlobRef` is the snapshot ref.
@@ -293,7 +289,6 @@ First-cut materialization behavior:
 - write files with safe permissions,
 - create directories before files,
 - optionally set executable mode where supported,
-- refuse symlinks unless symlink policy explicitly allows them,
 - return the target id and materialized root path.
 
 Do not let a model infer that `/skills/foo/...` exists inside a VM unless that
@@ -303,17 +298,20 @@ reported.
 ## Symlink Policy
 
 Skills and repo snapshots may contain symlinks. Symlinks are also a common
-escape vector. Use a conservative first cut:
+escape vector and complicate mount isolation, replay, and materialization.
+Skip them in v1.
 
-- Snapshotting from a host target may record symlinks only when the link target
-  is relative and stays inside the snapshotted root after lexical resolution.
-- Absolute symlinks and `..` escapes are rejected or copied as inert metadata.
-- Materialization may skip symlinks by default and return a warning.
-- A later trusted-target mode can preserve safe symlinks when the host
-  implementation supports `O_NOFOLLOW`-style checks.
+First-cut policy:
 
-For skills specifically, rejecting unsafe symlinks is preferable to silently
-following them.
+- Snapshot/import skips symlink entries and records warnings.
+- VFS manifests do not contain symlink nodes.
+- VFS read/list operations do not resolve symlinks.
+- Writable VFS tools do not create symlinks.
+- Materialization has no symlinks to recreate.
+
+Later, if a real workflow needs symlinks, add support only for safe relative
+symlinks that resolve within the same mounted root. Never allow cross-root or
+cross-mount symlink traversal.
 
 ## Filesystem Adapter
 
@@ -394,10 +392,90 @@ Limits:
 - maximum single file bytes,
 - maximum directory depth,
 - optional allowed extensions/media types,
-- symlink policy.
+- maximum skipped symlink warnings.
 
 When snapshotting from a host target, all reads happen through the host
 filesystem abstraction, not through the worker's local filesystem.
+
+## CLI-Local Snapshot And Materialization
+
+Local files where the CLI runs need a different path from host-target files.
+The gateway usually cannot read or write the CLI user's filesystem. Even when
+the gateway happens to run on the same machine during development, the product
+contract should not depend on that.
+
+### Snapshot Local CLI Files
+
+For local CLI snapshotting, the CLI is the filesystem reader and the gateway is
+the CAS authority:
+
+```text
+cli walks local path
+  -> applies ignore rules, limits, and symlink-skip policy
+  -> uploads file bytes to gateway/CAS
+  -> sends VFS manifest commit request with blob refs
+  -> gateway validates refs, limits, and manifest shape
+  -> gateway stores manifest and returns snapshot_ref
+```
+
+For small snapshots, a single `vfs/snapshot/create` request may carry inline
+files. For larger trees, use a staged upload:
+
+```text
+blob/put or vfs/blob/put
+vfs/snapshot/commit
+```
+
+The CLI should normalize paths before sending them, but the gateway must still
+validate every path and enforce limits. Client-side validation is for fast
+feedback only.
+
+### Materialize To Local CLI Files
+
+Materializing a snapshot to the CLI user's local filesystem is also
+client-side:
+
+```text
+cli asks gateway for snapshot manifest
+  -> cli downloads needed blobs
+  -> cli writes files under a user-selected local destination
+```
+
+The gateway should not attempt to write to the CLI's local filesystem. This
+implies a read/download API in addition to host-target materialization:
+
+```text
+vfs/snapshot/read
+blob/get or vfs/blob/get
+```
+
+Local CLI materialization must still enforce safe destination rules:
+
+- require an explicit destination,
+- refuse to write outside that destination,
+- avoid overwriting unless the user requested it,
+- skip symlinks because v1 snapshots do not contain symlink nodes,
+- preserve executable bits only where the local platform supports them.
+
+### Host Target Snapshot/Materialization
+
+Host targets are the later but important path:
+
+```text
+cli -> gateway: snapshot host directory
+gateway/worker -> host target: read/list files
+gateway/worker -> CAS: write blobs + manifest
+
+cli -> gateway: materialize snapshot/workspace to host target
+gateway/worker -> host target: write files under controlled destination
+```
+
+So the boundary rule is:
+
+```text
+CLI local filesystem: CLI reads/writes bytes, gateway stores/serves CAS.
+Host target filesystem: gateway/worker reads/writes through host abstraction.
+```
 
 ## Materialization API
 
@@ -494,6 +572,7 @@ later.
 
 - All VFS paths must normalize before use.
 - All host snapshotting must stay inside an explicitly allowed root.
+- Host snapshot/import must skip symlinks and report warnings.
 - Snapshot creation must enforce size and file-count limits before writing
   unbounded data into CAS.
 - Writable workspaces must enforce quotas on total bytes, file count, and
@@ -539,7 +618,7 @@ later.
 ### G5: Host Directory Snapshot
 
 - Snapshot a directory through a `HostToolContext` or remote host filesystem.
-- Enforce scoped roots and symlink policy.
+- Enforce scoped roots and skip symlinks with warnings.
 - Add tests with in-memory and scoped local filesystems.
 
 ### G6: Materialization
@@ -554,6 +633,8 @@ later.
 
 - Add internal gateway/worker service helpers for snapshot, workspace, commit,
   and materialization.
+- Add CLI-local upload/download APIs for snapshot creation and local
+  materialization.
 - Add public API only when a product surface needs direct VFS access.
 - Project VFS-backed context items with useful previews.
 
@@ -573,9 +654,11 @@ Required tests:
 - size/depth/file-count limits fail clearly,
 - writable workspace quotas fail clearly,
 - host snapshotting cannot escape the configured root,
+- host snapshotting skips symlinks and records warnings,
+- CLI-local snapshotting uploads blobs and commits a validated manifest,
+- CLI-local materialization writes only under the selected destination,
 - materialization does not write outside its destination,
-- materialization handles executable bits conservatively,
-- materialization either rejects or safely handles symlinks.
+- materialization handles executable bits conservatively.
 
 ## Open Questions
 
