@@ -1,4 +1,4 @@
-use agent_core::{BlobRef, storage::BlobStore};
+use engine::{BlobRef, storage::BlobStore};
 use serde::Serialize;
 use serde_json::Value;
 

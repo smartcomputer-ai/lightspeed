@@ -1,89 +1,78 @@
-use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
+use std::collections::BTreeSet;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 use std::time::{Duration, Instant};
 
-use agent_api::{
-    AgentApiOutcome, AgentApiService, EventCursor, InputItem, ModelConfig, RunStartParams,
-    RunStartResponse, SessionEventKindView, SessionEventView, SessionEventsReadParams,
-    SessionItemView, SessionReadParams, SessionStartParams, SessionView, ToolBatchView,
-    ToolCallEventView, ToolCallView, ToolItemStatus,
-};
-use agent_core::{
-    ContextConfig, ModelProviderOptions, ModelSelection, OpenAiReasoningConfig,
-    OpenAiResponsesRequestDefaults, ProviderApiKind, ProviderRequestDefaults, RunConfig,
-    RunnerStores, SessionConfig, TurnConfig,
-    storage::{BlobStore, CachedBlobStore},
-};
-use agent_runtime::api::LocalAgentApi;
-use agent_tools::{
-    host::{
-        HostToolContext, HostToolTargets, InlineHostToolRuntime,
-        fs::{FsPath, ScopedLocalFileSystem},
-        profiles::{HostToolPreset, resolve_host_profile_for_model},
-    },
-    runtime::ToolDocument,
-};
 use anyhow::{Context, Result, anyhow};
+use api::{
+    AgentApiError, AgentApiErrorKind, AgentApiOutcome, EventCursor, InputItem, JsonRpcRequest,
+    JsonRpcResponse, METHOD_RUN_START, METHOD_SESSION_EVENTS_READ, METHOD_SESSION_READ,
+    METHOD_SESSION_START, ModelConfig, ReasoningEffort as ApiReasoningEffort, RequestId,
+    RunStartConfig, RunStartParams, RunStartResponse, SessionEventKindView, SessionEventView,
+    SessionEventsReadParams, SessionEventsReadResponse, SessionItemView, SessionReadParams,
+    SessionReadResponse, SessionStartConfig, SessionStartParams, SessionStartResponse, SessionView,
+    ToolBatchView, ToolCallEventView, ToolCallView, ToolItemStatus,
+};
 use clap::Args;
-use llm_clients::openai::responses as oai;
-use llm_runtime::{LlmAdapterRegistry, LlmRuntime, OpenAiResponsesLlmAdapter};
+use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
-use store_fs::FsStore;
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
 
 use crate::chat::preview::compact_preview;
-use crate::chat::prompts::selected_prompt_text;
 use crate::chat::protocol::{
     ChatCommand, ChatConnectionInfo, ChatDelta, ChatDraftSettings, ChatErrorView, ChatEvent,
-    ChatMessageView, ChatProgressStatus, ChatPromptConfig, ChatPromptProfile, ChatReasoningView,
-    ChatRunView, ChatSessionSummary, ChatSettingsView, ChatStatus, ChatToolCallDisplayView,
-    ChatToolCallView, ChatToolChainView, ChatToolDisplayGroup, ChatToolMode, ChatTurn,
-    DEFAULT_CHAT_REASONING_EFFORT, LOCAL_WORLD_ID, reasoning_effort_label, run_status,
+    ChatMessageView, ChatProgressStatus, ChatReasoningView, ChatRunView, ChatSessionSummary,
+    ChatSettingsView, ChatStatus, ChatToolCallDisplayView, ChatToolCallView, ChatToolChainView,
+    ChatToolDisplayGroup, ChatTurn, DEFAULT_CHAT_REASONING_EFFORT, GATEWAY_WORLD_ID, run_status,
     session_lifecycle,
 };
 use crate::chat::session::{new_session_id, validate_session_id};
 
 #[derive(Args, Debug, Clone)]
 pub(crate) struct ChatArgs {
-    /// Session ID to open or create in the local Forge store.
+    /// Session ID to open or create through the configured Forge API.
     #[arg(long)]
     session: Option<String>,
-    /// Start with a fresh local session ID.
+    /// Start with a fresh session ID.
     #[arg(long)]
     new: bool,
     /// Provider ID for the model adapter.
-    #[arg(long, default_value = crate::chat::protocol::DEFAULT_CHAT_PROVIDER)]
+    #[arg(
+        long,
+        env = "FORGE_CHAT_PROVIDER",
+        default_value = crate::chat::protocol::DEFAULT_CHAT_PROVIDER
+    )]
     provider: String,
-    /// Provider API kind. The local runtime currently supports openai:responses.
-    #[arg(long = "api-kind", default_value = crate::chat::protocol::DEFAULT_CHAT_API_KIND)]
+    /// Provider API kind.
+    #[arg(
+        long = "api-kind",
+        env = "FORGE_CHAT_API_KIND",
+        default_value = crate::chat::protocol::DEFAULT_CHAT_API_KIND
+    )]
     api_kind: String,
     /// Model name.
-    #[arg(long, default_value = crate::chat::protocol::DEFAULT_CHAT_MODEL)]
+    #[arg(
+        long,
+        env = "FORGE_CHAT_MODEL",
+        default_value = crate::chat::protocol::DEFAULT_CHAT_MODEL
+    )]
     model: String,
     /// Reasoning effort: low, medium, high, or none.
-    #[arg(long, default_value = "high")]
+    #[arg(long, env = "FORGE_CHAT_REASONING_EFFORT", default_value = "high")]
     effort: Option<String>,
     /// Max output token limit.
-    #[arg(long)]
+    #[arg(long, env = "FORGE_CHAT_MAX_TOKENS")]
     max_tokens: Option<u32>,
-    /// Tool surface to expose to the agent.
-    #[arg(long, value_enum, default_value = "local-coding")]
-    tools: ChatToolMode,
     /// Working directory for local file tools. Defaults to the current directory.
     #[arg(long)]
     workdir: Option<PathBuf>,
-    /// Prompt profile to install.
-    #[arg(long, value_enum, conflicts_with_all = ["prompt_file", "prompt"])]
-    prompt_profile: Option<ChatPromptProfile>,
-    /// Read the prompt to install from a file.
-    #[arg(long, conflicts_with_all = ["prompt_profile", "prompt"])]
-    prompt_file: Option<PathBuf>,
-    /// Inline prompt text to install.
-    #[arg(long = "prompt", conflicts_with_all = ["prompt_profile", "prompt_file"])]
-    prompt: Option<String>,
+    /// JSON-RPC agent API URL.
+    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    api_url: String,
     /// Show full completed tool call arguments and results in the TUI.
     #[arg(long)]
     show_tool_details: bool,
@@ -97,7 +86,6 @@ pub(crate) struct ChatArgs {
 pub(crate) async fn handle(args: ChatArgs) -> Result<()> {
     let draft = draft_settings(&args)?;
     let workdir = resolve_chat_workdir(args.workdir)?;
-    let prompt_config = resolve_prompt_config(args.prompt_profile, args.prompt_file, args.prompt)?;
     let session_id = if args.new {
         new_session_id()
     } else if let Some(session_id) = args.session {
@@ -110,9 +98,8 @@ pub(crate) async fn handle(args: ChatArgs) -> Result<()> {
     let (mut driver, initial_events) = ChatSessionDriver::open(ChatSessionDriverOptions {
         session_id,
         draft_settings: draft,
-        tool_mode: args.tools,
-        prompt_config,
         workdir,
+        api_url: args.api_url,
     })
     .await?;
 
@@ -158,13 +145,12 @@ pub(crate) async fn handle(args: ChatArgs) -> Result<()> {
 pub(crate) struct ChatSessionDriverOptions {
     pub session_id: String,
     pub draft_settings: ChatDraftSettings,
-    pub tool_mode: ChatToolMode,
-    pub prompt_config: ChatPromptConfig,
     pub workdir: String,
+    pub api_url: String,
 }
 
 pub(crate) struct ChatSessionDriver {
-    api: Arc<LocalAgentApi>,
+    api: ChatAgentApi,
     session_id: String,
     settings: ChatDraftSettings,
     event_cursor: Option<EventCursor>,
@@ -176,36 +162,130 @@ pub(crate) struct ChatSessionDriver {
 }
 
 type PendingRunHandle =
-    JoinHandle<std::result::Result<AgentApiOutcome<RunStartResponse>, agent_api::AgentApiError>>;
+    JoinHandle<std::result::Result<AgentApiOutcome<RunStartResponse>, api::AgentApiError>>;
 
-fn chat_provider_request_timeout() -> Duration {
-    Duration::from_secs(60 * 60)
+type ChatAgentApi = Arc<HttpAgentApi>;
+
+struct HttpAgentApi {
+    endpoint: String,
+    client: reqwest::Client,
+    next_id: AtomicU64,
 }
 
-const CHAT_BLOB_CACHE_MAX_BYTES: u64 = 64 * 1024 * 1024;
-const CHAT_BLOB_CACHE_MAX_ENTRIES: usize = 4096;
+impl HttpAgentApi {
+    fn new(endpoint: impl Into<String>) -> Self {
+        Self {
+            endpoint: endpoint.into(),
+            client: reqwest::Client::new(),
+            next_id: AtomicU64::new(1),
+        }
+    }
+
+    async fn open_or_start_session(
+        &self,
+        params: SessionStartParams,
+    ) -> std::result::Result<AgentApiOutcome<SessionStartResponse>, AgentApiError> {
+        match self.start_session(params.clone()).await {
+            Ok(outcome) => Ok(outcome),
+            Err(error)
+                if matches!(error.kind, AgentApiErrorKind::Conflict)
+                    && params.session_id.is_some() =>
+            {
+                self.read_session(SessionReadParams {
+                    session_id: params.session_id.expect("checked session id present"),
+                })
+                .await
+                .map(|outcome| {
+                    AgentApiOutcome::with_notifications(
+                        SessionStartResponse {
+                            session: outcome.result.session,
+                        },
+                        outcome.notifications,
+                    )
+                })
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn start_session(
+        &self,
+        params: SessionStartParams,
+    ) -> std::result::Result<AgentApiOutcome<SessionStartResponse>, AgentApiError> {
+        self.request(METHOD_SESSION_START, params).await
+    }
+
+    async fn read_session(
+        &self,
+        params: SessionReadParams,
+    ) -> std::result::Result<AgentApiOutcome<SessionReadResponse>, AgentApiError> {
+        self.request(METHOD_SESSION_READ, params).await
+    }
+
+    async fn read_session_events(
+        &self,
+        params: SessionEventsReadParams,
+    ) -> std::result::Result<AgentApiOutcome<SessionEventsReadResponse>, AgentApiError> {
+        self.request(METHOD_SESSION_EVENTS_READ, params).await
+    }
+
+    async fn start_run(
+        &self,
+        params: RunStartParams,
+    ) -> std::result::Result<AgentApiOutcome<RunStartResponse>, AgentApiError> {
+        self.request(METHOD_RUN_START, params).await
+    }
+
+    async fn request<P, R>(
+        &self,
+        method: &str,
+        params: P,
+    ) -> std::result::Result<AgentApiOutcome<R>, AgentApiError>
+    where
+        P: Serialize,
+        R: DeserializeOwned,
+    {
+        let id = RequestId::Number(self.next_id.fetch_add(1, Ordering::Relaxed));
+        let request = JsonRpcRequest {
+            id,
+            method: method.to_owned(),
+            params: Some(serde_json::to_value(params).map_err(|error| {
+                AgentApiError::invalid_request(format!("failed to encode API params: {error}"))
+            })?),
+        };
+        let response = self
+            .client
+            .post(&self.endpoint)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|error| AgentApiError::internal(format!("API request failed: {error}")))?
+            .error_for_status()
+            .map_err(|error| AgentApiError::internal(format!("API request failed: {error}")))?
+            .json::<JsonRpcResponse>()
+            .await
+            .map_err(|error| AgentApiError::internal(format!("invalid API response: {error}")))?;
+        if let Some(error) = response.error {
+            return Err(agent_error_from_json_rpc(error));
+        }
+        let value = response
+            .result
+            .ok_or_else(|| AgentApiError::internal("JSON-RPC response missing result"))?;
+        serde_json::from_value::<AgentApiOutcome<R>>(value)
+            .map_err(|error| AgentApiError::internal(format!("invalid API result: {error}")))
+    }
+}
 
 impl ChatSessionDriver {
     pub(crate) async fn open(options: ChatSessionDriverOptions) -> Result<(Self, Vec<ChatEvent>)> {
         let session_id = validate_session_id(&options.session_id)?;
-        let api = Arc::new(
-            build_local_api(
-                &options.draft_settings,
-                options.tool_mode,
-                &options.prompt_config,
-                &options.workdir,
-            )
-            .await?,
-        );
+        let api = build_chat_api(&options).await?;
         let started = api
             .open_or_start_session(SessionStartParams {
                 session_id: Some(session_id.clone()),
                 cwd: Some(options.workdir.clone()),
-                model: Some(ModelConfig {
-                    provider_id: options.draft_settings.provider.clone(),
-                    api_kind: options.draft_settings.api_kind.clone(),
-                    model: options.draft_settings.model.clone(),
-                }),
+                model: Some(model_config(&options.draft_settings)),
+                config: Some(session_start_config(&options.draft_settings)),
             })
             .await
             .map_err(api_error)?;
@@ -222,7 +302,7 @@ impl ChatSessionDriver {
             pending_run: None,
         };
         let mut events = vec![ChatEvent::Connected(ChatConnectionInfo {
-            world_id: LOCAL_WORLD_ID.into(),
+            world_id: GATEWAY_WORLD_ID.into(),
             session_id,
             journal_next_from: None,
             settings: driver.settings_view(),
@@ -259,13 +339,13 @@ impl ChatSessionDriver {
             ChatCommand::SetDraftReasoningEffort { effort } => self.set_effort(effort).await,
             ChatCommand::SetDraftMaxTokens { max_tokens } => self.set_max_tokens(max_tokens).await,
             ChatCommand::ListSessions => Ok(vec![ChatEvent::SessionsListed {
-                world_id: LOCAL_WORLD_ID.into(),
+                world_id: GATEWAY_WORLD_ID.into(),
                 sessions: self
                     .sessions
                     .iter()
                     .map(|session_id| ChatSessionSummary {
                         session_id: session_id.clone(),
-                        status: Some(agent_api::SessionStatus::Idle),
+                        status: Some(api::SessionStatus::Idle),
                         lifecycle: Some(crate::chat::protocol::ChatSessionLifecycle::Idle),
                         updated_at_ns: None,
                         run_count: 0,
@@ -277,16 +357,20 @@ impl ChatSessionDriver {
             }]),
             ChatCommand::NewSession => self.new_session().await,
             ChatCommand::SteerRun { .. } => Ok(vec![ChatEvent::Error(ChatErrorView {
-                message: "steering an active run is not implemented by the first local Forge API boundary".into(),
+                message:
+                    "steering an active run is not implemented by the current Forge API boundary"
+                        .into(),
                 action: Some("wait for the run to finish and submit a follow-up message".into()),
             })]),
             ChatCommand::InterruptRun { .. } => Ok(vec![ChatEvent::Error(ChatErrorView {
-                message: "interrupt is not implemented by the first local Forge API boundary".into(),
-                action: Some("cancel support belongs at the API boundary and will be added there".into()),
+                message: "interrupt is not implemented by the current Forge API boundary".into(),
+                action: Some(
+                    "cancel support belongs at the API boundary and will be added there".into(),
+                ),
             })]),
             ChatCommand::PauseSession | ChatCommand::ResumeSession => {
                 Ok(vec![ChatEvent::Error(ChatErrorView {
-                    message: "pause/resume is not implemented for local Forge sessions".into(),
+                    message: "pause/resume is not implemented for Forge API sessions".into(),
                     action: None,
                 })])
             }
@@ -363,19 +447,21 @@ impl ChatSessionDriver {
     async fn submit_user_message(&mut self, text: String) -> Result<Vec<ChatEvent>> {
         if !self.is_quiescent() {
             return Ok(vec![ChatEvent::Error(ChatErrorView {
-                message: "a run is already active in this local session".into(),
+                message: "a run is already active in this session".into(),
                 action: Some("wait for it to finish before submitting another message".into()),
             })]);
         }
 
         let events = vec![self.status_event("working")];
 
-        let api = Arc::clone(&self.api);
+        let api = self.api.clone();
         let session_id = self.session_id.clone();
+        let config = run_start_config(&self.settings);
         self.pending_run = Some(tokio::spawn(async move {
             api.start_run(RunStartParams {
                 session_id,
                 input: vec![InputItem::Text { text }],
+                config: Some(config),
             })
             .await
         }));
@@ -405,7 +491,7 @@ impl ChatSessionDriver {
                 action: None,
             })]),
             Err(error) => Ok(vec![ChatEvent::Error(ChatErrorView {
-                message: format!("local run task failed: {error}"),
+                message: format!("run task failed: {error}"),
                 action: None,
             })]),
         }
@@ -447,7 +533,7 @@ impl ChatSessionDriver {
         if let Some(active_run) = session
             .runs
             .iter()
-            .find(|run| matches!(run.status, agent_api::RunStatus::Running))
+            .find(|run| matches!(run.status, api::RunStatus::Running))
         {
             events.push(run_event_from_view(
                 active_run,
@@ -515,7 +601,7 @@ impl ChatSessionDriver {
             SessionEventKindView::RunStarted { run_id, .. } => {
                 events.push(ChatEvent::RunChanged(self.run_view_from_status(
                     run_id,
-                    agent_api::RunStatus::Running,
+                    api::RunStatus::Running,
                     event.observed_at_ms,
                 )));
                 events.push(self.status_event("running"));
@@ -523,7 +609,7 @@ impl ChatSessionDriver {
             SessionEventKindView::RunCompleted { run_id, .. } => {
                 events.push(ChatEvent::RunChanged(self.run_view_from_status(
                     run_id,
-                    agent_api::RunStatus::Completed,
+                    api::RunStatus::Completed,
                     event.observed_at_ms,
                 )));
                 events.push(self.status_event("finishing"));
@@ -531,7 +617,7 @@ impl ChatSessionDriver {
             SessionEventKindView::RunFailed { run_id, message } => {
                 events.push(ChatEvent::RunChanged(self.run_view_from_status(
                     run_id,
-                    agent_api::RunStatus::Failed,
+                    api::RunStatus::Failed,
                     event.observed_at_ms,
                 )));
                 events.push(ChatEvent::Error(ChatErrorView {
@@ -542,7 +628,7 @@ impl ChatSessionDriver {
             SessionEventKindView::RunCancelled { run_id } => {
                 events.push(ChatEvent::RunChanged(self.run_view_from_status(
                     run_id,
-                    agent_api::RunStatus::Cancelled,
+                    api::RunStatus::Cancelled,
                     event.observed_at_ms,
                 )));
                 events.push(self.status_event("cancelled"));
@@ -601,7 +687,7 @@ impl ChatSessionDriver {
     fn run_view_from_status(
         &self,
         run_id: &str,
-        status: agent_api::RunStatus,
+        status: api::RunStatus,
         observed_at_ms: u64,
     ) -> ChatRunView {
         ChatRunView {
@@ -675,11 +761,8 @@ impl ChatSessionDriver {
             .start_session(SessionStartParams {
                 session_id: Some(session_id.clone()),
                 cwd: Some(self.workdir.clone()),
-                model: Some(ModelConfig {
-                    provider_id: self.settings.provider.clone(),
-                    api_kind: self.settings.api_kind.clone(),
-                    model: self.settings.model.clone(),
-                }),
+                model: Some(model_config(&self.settings)),
+                config: Some(session_start_config(&self.settings)),
             })
             .await
             .map_err(api_error)?;
@@ -772,7 +855,7 @@ impl ChatSessionDriver {
     }
 
     fn model_locked(&self) -> bool {
-        !self.turns.is_empty()
+        self.run_active()
     }
 
     fn run_active(&self) -> bool {
@@ -815,155 +898,8 @@ impl ChatSessionDriver {
     }
 }
 
-async fn build_local_api(
-    settings: &ChatDraftSettings,
-    tool_mode: ChatToolMode,
-    prompt_config: &ChatPromptConfig,
-    workdir: &str,
-) -> Result<LocalAgentApi> {
-    let model = model_selection(settings)?;
-    let fs_store = FsStore::open_project(workdir)
-        .await
-        .with_context(|| format!("open Forge store under '{workdir}/.forge'"))?;
-    let sessions = Arc::new(fs_store.sessions().clone());
-    let blobs = Arc::new(CachedBlobStore::with_limits(
-        fs_store.blobs().clone(),
-        CHAT_BLOB_CACHE_MAX_BYTES,
-        CHAT_BLOB_CACHE_MAX_ENTRIES,
-    ));
-    let instructions_ref = match selected_prompt_text(prompt_config, tool_mode) {
-        Some(prompt) => Some(
-            blobs
-                .put_bytes(prompt.as_bytes().to_vec())
-                .await
-                .context("store chat instructions")?,
-        ),
-        None => None,
-    };
-
-    let default_config = session_config(settings, model.clone(), instructions_ref);
-    let mut openai_config = oai::Config::from_env()?;
-    openai_config.http.request_timeout = chat_provider_request_timeout();
-    let openai_client = oai::Client::new(openai_config).context("create OpenAI client")?;
-    let llm_adapter = Arc::new(OpenAiResponsesLlmAdapter::new(
-        Arc::new(openai_client),
-        blobs.clone(),
-    ));
-    let llm_executor = Arc::new(LlmRuntime::new(
-        LlmAdapterRegistry::new()
-            .with_generation_adapter(ProviderApiKind::OpenAiResponses, llm_adapter),
-    ));
-
-    let fs = Arc::new(
-        ScopedLocalFileSystem::read_write(workdir)
-            .with_context(|| format!("open chat workspace '{workdir}'"))?,
-    );
-    let host_ctx = HostToolContext::new(fs, None, blobs.clone()).with_cwd(FsPath::root());
-    let preset = match tool_mode {
-        ChatToolMode::None => None,
-        ChatToolMode::Inspect | ChatToolMode::Workspace | ChatToolMode::LocalCoding => {
-            Some(HostToolPreset::DirectFs)
-        }
-    };
-    let mut tool_registry = None;
-    let mut tool_profile_id = None;
-    let mut tool_executor = None;
-    if let Some(preset) = preset {
-        let host_profile = resolve_host_profile_for_model(&host_ctx, &model, preset)
-            .context("build host tools")?;
-        store_tool_documents(blobs.as_ref(), &host_profile.documents).await?;
-        tool_executor = Some(Arc::new(InlineHostToolRuntime::new(
-            host_ctx,
-            host_profile.catalog.clone(),
-        )));
-        tool_registry = Some(host_profile.registry);
-        tool_profile_id = Some(host_profile.profile_id);
-    }
-
-    let stores = RunnerStores::new(sessions, blobs);
-    let mut builder = LocalAgentApi::builder(stores, llm_executor, default_config);
-    if let Some(tool_executor) = tool_executor {
-        builder = builder.with_tools(tool_executor);
-    }
-    if let Some(registry) = tool_registry {
-        builder = builder
-            .with_tool_registry(registry)
-            .with_default_tool_target(HostToolTargets::local_execution_target());
-    }
-    if let Some(profile_id) = tool_profile_id {
-        builder = builder.with_tool_profile_id(profile_id);
-    }
-    Ok(builder.build())
-}
-
-fn model_selection(settings: &ChatDraftSettings) -> Result<ModelSelection> {
-    let api_kind = match settings.api_kind.as_str() {
-        "openai:responses" | "openai_responses" | "openAiResponses" => {
-            ProviderApiKind::OpenAiResponses
-        }
-        other => {
-            return Err(anyhow!(
-                "local chat currently supports only openai:responses, got {other}"
-            ));
-        }
-    };
-    Ok(ModelSelection {
-        api_kind,
-        provider_id: settings.provider.clone(),
-        model: settings.model.clone(),
-        options: ModelProviderOptions::None,
-    })
-}
-
-fn session_config(
-    settings: &ChatDraftSettings,
-    model: ModelSelection,
-    instructions_ref: Option<agent_core::BlobRef>,
-) -> SessionConfig {
-    SessionConfig {
-        model,
-        run: RunConfig {
-            max_turns: None,
-            max_tool_rounds: None,
-            model_override: None,
-        },
-        turn: TurnConfig {
-            max_output_tokens: settings.max_tokens,
-            provider_request_defaults: ProviderRequestDefaults::OpenAiResponses(
-                OpenAiResponsesRequestDefaults {
-                    reasoning: settings
-                        .reasoning_effort
-                        .map(|effort| OpenAiReasoningConfig {
-                            effort: Some(reasoning_effort_label(Some(effort)).to_string()),
-                            summary: Some("auto".to_string()),
-                            extra: BTreeMap::new(),
-                        }),
-                    ..OpenAiResponsesRequestDefaults::default()
-                },
-            ),
-        },
-        context: ContextConfig {
-            instructions_ref,
-            max_context_tokens: None,
-            target_context_tokens: None,
-            reserve_output_tokens: None,
-            compaction_enabled: false,
-        },
-        tool_profile_id: None,
-    }
-}
-
-async fn store_tool_documents(blobs: &dyn BlobStore, documents: &[ToolDocument]) -> Result<()> {
-    for document in documents {
-        let blob_ref = blobs
-            .put_bytes(document.blob_bytes())
-            .await
-            .context("store tool document")?;
-        if blob_ref != document.blob_ref {
-            return Err(anyhow!("tool document blob ref mismatch"));
-        }
-    }
-    Ok(())
+async fn build_chat_api(options: &ChatSessionDriverOptions) -> Result<ChatAgentApi> {
+    Ok(Arc::new(HttpAgentApi::new(options.api_url.clone())))
 }
 
 fn project_turns(session: &SessionView, settings: &ChatDraftSettings) -> Vec<ChatTurn> {
@@ -1022,13 +958,13 @@ fn project_active_tool_chains(
     session
         .runs
         .iter()
-        .filter(|run| matches!(run.status, agent_api::RunStatus::Running))
+        .filter(|run| matches!(run.status, api::RunStatus::Running))
         .flat_map(project_tool_chains)
         .filter(|chain| !tool_chain_terminal(chain))
         .collect()
 }
 
-fn project_tool_chains(run: &agent_api::RunView) -> Vec<ChatToolChainView> {
+fn project_tool_chains(run: &api::RunView) -> Vec<ChatToolChainView> {
     run.tool_batches
         .iter()
         .map(|batch| project_tool_batch(&run.id, batch))
@@ -1102,13 +1038,13 @@ fn tool_call_from_batch(index: usize, call: &ToolCallView) -> ChatToolCallView {
     }
 }
 
-fn tool_display_from_api(display: &agent_api::ToolCallDisplayView) -> ChatToolCallDisplayView {
+fn tool_display_from_api(display: &api::ToolCallDisplayView) -> ChatToolCallDisplayView {
     ChatToolCallDisplayView {
         group: match display.group {
-            agent_api::ToolCallDisplayGroup::Explore => ChatToolDisplayGroup::Explore,
-            agent_api::ToolCallDisplayGroup::Edit => ChatToolDisplayGroup::Edit,
-            agent_api::ToolCallDisplayGroup::Execute => ChatToolDisplayGroup::Execute,
-            agent_api::ToolCallDisplayGroup::Other => ChatToolDisplayGroup::Other,
+            api::ToolCallDisplayGroup::Explore => ChatToolDisplayGroup::Explore,
+            api::ToolCallDisplayGroup::Edit => ChatToolDisplayGroup::Edit,
+            api::ToolCallDisplayGroup::Execute => ChatToolDisplayGroup::Execute,
+            api::ToolCallDisplayGroup::Other => ChatToolDisplayGroup::Other,
         },
         verb: display.verb.clone(),
         target: display.target.clone(),
@@ -1171,13 +1107,13 @@ fn summary_from_session(session: &SessionView) -> ChatSessionSummary {
         active_run: session
             .runs
             .iter()
-            .find(|run| matches!(run.status, agent_api::RunStatus::Running))
+            .find(|run| matches!(run.status, api::RunStatus::Running))
             .map(|run| run.id.clone()),
     }
 }
 
 fn run_event_from_view(
-    run: &agent_api::RunView,
+    run: &api::RunView,
     settings: &ChatDraftSettings,
     fallback_seq: u64,
 ) -> ChatEvent {
@@ -1240,13 +1176,13 @@ fn should_timeout_after_inactivity(
     deadline.expired(now) && !pending_run_in_flight
 }
 
-fn session_status_text(status: agent_api::SessionStatus) -> &'static str {
+fn session_status_text(status: api::SessionStatus) -> &'static str {
     match status {
-        agent_api::SessionStatus::NotLoaded => "not loaded",
-        agent_api::SessionStatus::Idle => "idle",
-        agent_api::SessionStatus::Active => "active",
-        agent_api::SessionStatus::Closed => "closed",
-        agent_api::SessionStatus::Error => "error",
+        api::SessionStatus::NotLoaded => "not loaded",
+        api::SessionStatus::Idle => "idle",
+        api::SessionStatus::Active => "active",
+        api::SessionStatus::Closed => "closed",
+        api::SessionStatus::Error => "error",
     }
 }
 
@@ -1265,6 +1201,41 @@ fn draft_settings(args: &ChatArgs) -> Result<ChatDraftSettings> {
     })
 }
 
+fn model_config(settings: &ChatDraftSettings) -> ModelConfig {
+    ModelConfig {
+        provider_id: settings.provider.clone(),
+        api_kind: settings.api_kind.clone(),
+        model: settings.model.clone(),
+    }
+}
+
+fn session_start_config(settings: &ChatDraftSettings) -> SessionStartConfig {
+    SessionStartConfig {
+        max_output_tokens: settings.max_tokens,
+        reasoning_effort: api_reasoning_effort(settings),
+    }
+}
+
+fn run_start_config(settings: &ChatDraftSettings) -> RunStartConfig {
+    RunStartConfig {
+        model: Some(model_config(settings)),
+        max_output_tokens: settings.max_tokens,
+        reasoning_effort: api_reasoning_effort(settings),
+    }
+}
+
+fn api_reasoning_effort(settings: &ChatDraftSettings) -> Option<ApiReasoningEffort> {
+    if settings.api_kind != "openai:responses" {
+        return None;
+    }
+    Some(match settings.reasoning_effort {
+        None => ApiReasoningEffort::None,
+        Some(crate::chat::protocol::ReasoningEffort::Low) => ApiReasoningEffort::Low,
+        Some(crate::chat::protocol::ReasoningEffort::Medium) => ApiReasoningEffort::Medium,
+        Some(crate::chat::protocol::ReasoningEffort::High) => ApiReasoningEffort::High,
+    })
+}
+
 fn resolve_chat_workdir(workdir: Option<PathBuf>) -> Result<String> {
     let path = match workdir {
         Some(path) if path.is_absolute() => path,
@@ -1277,28 +1248,6 @@ fn resolve_chat_workdir(workdir: Option<PathBuf>) -> Result<String> {
         .canonicalize()
         .with_context(|| format!("resolve chat workdir '{}'", path.display()))?;
     Ok(path.to_string_lossy().into_owned())
-}
-
-fn resolve_prompt_config(
-    profile: Option<ChatPromptProfile>,
-    file: Option<PathBuf>,
-    prompt: Option<String>,
-) -> Result<ChatPromptConfig> {
-    if let Some(profile) = profile {
-        return Ok(match profile {
-            ChatPromptProfile::None => ChatPromptConfig::None,
-            ChatPromptProfile::LocalCoding => ChatPromptConfig::Profile(profile),
-        });
-    }
-    if let Some(path) = file {
-        let content = fs::read_to_string(&path)
-            .with_context(|| format!("read prompt file '{}'", path.display()))?;
-        return Ok(ChatPromptConfig::Inline(content));
-    }
-    if let Some(prompt) = prompt {
-        return Ok(ChatPromptConfig::Inline(prompt));
-    }
-    Ok(ChatPromptConfig::Auto)
 }
 
 fn print_event(event: &ChatEvent) -> Result<()> {
@@ -1400,8 +1349,19 @@ fn displayable_reasoning_text(text: &str) -> bool {
     true
 }
 
-fn api_error(error: agent_api::AgentApiError) -> anyhow::Error {
+fn api_error(error: api::AgentApiError) -> anyhow::Error {
     anyhow!("{error}")
+}
+
+fn agent_error_from_json_rpc(error: api::JsonRpcError) -> AgentApiError {
+    let kind = match error.code {
+        -32602 => AgentApiErrorKind::InvalidRequest,
+        -32004 => AgentApiErrorKind::NotFound,
+        -32009 => AgentApiErrorKind::Conflict,
+        -32010 => AgentApiErrorKind::Rejected,
+        _ => AgentApiErrorKind::Internal,
+    };
+    AgentApiError::new(kind, error.message)
 }
 
 #[cfg(test)]
@@ -1410,9 +1370,9 @@ mod tests {
 
     #[test]
     fn project_tool_chains_preserves_forge_tool_call_details() {
-        let run = agent_api::RunView {
+        let run = api::RunView {
             id: "run_7".into(),
-            status: agent_api::RunStatus::Running,
+            status: api::RunStatus::Running,
             input: Vec::new(),
             items: Vec::new(),
             tool_batches: vec![ToolBatchView {
@@ -1427,8 +1387,8 @@ mod tests {
                     output: Some(r#"{"ok":true}"#.into()),
                     is_error: false,
                     status: ToolItemStatus::Succeeded,
-                    display: Some(agent_api::ToolCallDisplayView {
-                        group: agent_api::ToolCallDisplayGroup::Explore,
+                    display: Some(api::ToolCallDisplayView {
+                        group: api::ToolCallDisplayGroup::Explore,
                         verb: "Read".into(),
                         target: Some("README.md".into()),
                         detail: None,
@@ -1478,14 +1438,14 @@ mod tests {
 
         let session = SessionView {
             id: "session_1".into(),
-            status: agent_api::SessionStatus::Active,
+            status: api::SessionStatus::Active,
             cwd: None,
             model: None,
             created_at_ms: 0,
             updated_at_ms: 0,
-            runs: vec![agent_api::RunView {
+            runs: vec![api::RunView {
                 id: "run_1".into(),
-                status: agent_api::RunStatus::Running,
+                status: api::RunStatus::Running,
                 input: Vec::new(),
                 items: Vec::new(),
                 tool_batches: vec![
@@ -1524,14 +1484,14 @@ mod tests {
     fn project_turns_prefers_visible_reasoning_summary_over_opaque_state() {
         let session = SessionView {
             id: "session_1".into(),
-            status: agent_api::SessionStatus::Idle,
+            status: api::SessionStatus::Idle,
             cwd: None,
             model: None,
             created_at_ms: 0,
             updated_at_ms: 0,
-            runs: vec![agent_api::RunView {
+            runs: vec![api::RunView {
                 id: "run_1".into(),
-                status: agent_api::RunStatus::Completed,
+                status: api::RunStatus::Completed,
                 input: Vec::new(),
                 items: vec![
                     SessionItemView::SystemEvent {
@@ -1569,14 +1529,14 @@ mod tests {
     fn project_turns_hides_opaque_reasoning_state_markers() {
         let session = SessionView {
             id: "session_1".into(),
-            status: agent_api::SessionStatus::Idle,
+            status: api::SessionStatus::Idle,
             cwd: None,
             model: None,
             created_at_ms: 0,
             updated_at_ms: 0,
-            runs: vec![agent_api::RunView {
+            runs: vec![api::RunView {
                 id: "run_1".into(),
-                status: agent_api::RunStatus::Completed,
+                status: api::RunStatus::Completed,
                 input: Vec::new(),
                 items: vec![SessionItemView::SystemEvent {
                     id: "item_1".into(),
@@ -1616,7 +1576,7 @@ mod tests {
     }
 
     #[test]
-    fn inactivity_timeout_waits_for_in_flight_local_run_task() {
+    fn inactivity_timeout_waits_for_in_flight_run_task() {
         let start = Instant::now();
         let deadline = InactivityDeadline::new(start, Duration::from_secs(10));
         let expired = start + Duration::from_secs(11);
@@ -1644,45 +1604,27 @@ mod tests {
     }
 
     #[test]
-    fn local_chat_provider_request_timeout_allows_long_responses() {
-        assert_eq!(
-            chat_provider_request_timeout(),
-            Duration::from_secs(60 * 60)
-        );
+    fn run_start_config_sends_model_generation_and_disabled_reasoning() {
+        let mut settings =
+            draft_settings(&chat_args_with_effort(Some("none"))).expect("draft settings");
+        settings.max_tokens = Some(2048);
+
+        let config = run_start_config(&settings);
+
+        assert_eq!(config.model.expect("model").model, "gpt-5.5");
+        assert_eq!(config.max_output_tokens, Some(2048));
+        assert_eq!(config.reasoning_effort, Some(ApiReasoningEffort::None));
     }
 
     #[test]
-    fn session_config_requests_reasoning_summaries_when_effort_is_set() {
-        let settings = ChatDraftSettings {
-            provider: "openai".into(),
-            api_kind: "openai:responses".into(),
-            model: "gpt-5.5".into(),
-            reasoning_effort: Some(crate::chat::protocol::ReasoningEffort::Low),
-            max_tokens: None,
-        };
-        let model = ModelSelection {
-            api_kind: ProviderApiKind::OpenAiResponses,
-            provider_id: "openai".into(),
-            model: "gpt-5.5".into(),
-            options: ModelProviderOptions::None,
-        };
+    fn run_start_config_omits_reasoning_for_non_responses_api_kinds() {
+        let mut settings =
+            draft_settings(&chat_args_with_effort(Some("high"))).expect("draft settings");
+        settings.api_kind = "anthropic:messages".to_owned();
 
-        let config = session_config(&settings, model, None);
+        let config = run_start_config(&settings);
 
-        assert_eq!(config.run.max_turns, None);
-        assert_eq!(config.run.max_tool_rounds, None);
-        let ProviderRequestDefaults::OpenAiResponses(defaults) =
-            config.turn.provider_request_defaults
-        else {
-            panic!("expected openai responses defaults");
-        };
-        let reasoning = defaults.reasoning.expect("reasoning config");
-        assert_eq!(reasoning.effort.as_deref(), Some("low"));
-        assert_eq!(reasoning.summary.as_deref(), Some("auto"));
-        assert_eq!(
-            defaults.include,
-            vec![agent_core::OPENAI_RESPONSES_REASONING_ENCRYPTED_CONTENT_INCLUDE.to_owned()]
-        );
+        assert_eq!(config.reasoning_effort, None);
     }
 
     fn chat_args_with_effort(effort: Option<&str>) -> ChatArgs {
@@ -1694,11 +1636,8 @@ mod tests {
             model: "gpt-5.5".into(),
             effort: effort.map(str::to_string),
             max_tokens: None,
-            tools: ChatToolMode::LocalCoding,
             workdir: None,
-            prompt_profile: None,
-            prompt_file: None,
-            prompt: None,
+            api_url: "http://127.0.0.1:18080/rpc".into(),
             show_tool_details: false,
             json: false,
             message: Vec::new(),
@@ -1714,8 +1653,8 @@ mod tests {
                 tool_name: "read_file".into(),
                 arguments_ref: "sha256:args".into(),
                 arguments: Some(r#"{"path":"src/lib.rs"}"#.into()),
-                display: Some(agent_api::ToolCallDisplayView {
-                    group: agent_api::ToolCallDisplayGroup::Explore,
+                display: Some(api::ToolCallDisplayView {
+                    group: api::ToolCallDisplayGroup::Explore,
                     verb: "Read".into(),
                     target: Some("src/lib.rs".into()),
                     detail: None,

@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
-use agent_core::{
+use engine::{
     BlobRef,
     session::{
         AgentHandle, DynamicEvent, DynamicJoins, DynamicUncommittedSessionEvent, EventSeq,

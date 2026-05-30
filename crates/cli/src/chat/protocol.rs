@@ -1,8 +1,8 @@
-use agent_api::{RunStatus, SessionStatus};
+use api::{RunStatus, SessionStatus};
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 
-pub(crate) const LOCAL_WORLD_ID: &str = "local";
+pub(crate) const GATEWAY_WORLD_ID: &str = "gateway";
 pub(crate) const DEFAULT_CHAT_PROVIDER: &str = "openai";
 pub(crate) const DEFAULT_CHAT_API_KIND: &str = "openai:responses";
 pub(crate) const DEFAULT_CHAT_MODEL: &str = "gpt-5.5";
@@ -23,30 +23,6 @@ pub(crate) enum ReasoningEffort {
     Low,
     Medium,
     High,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
-pub(crate) enum ChatToolMode {
-    None,
-    Inspect,
-    Workspace,
-    #[default]
-    LocalCoding,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub(crate) enum ChatPromptProfile {
-    None,
-    LocalCoding,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub(crate) enum ChatPromptConfig {
-    #[default]
-    Auto,
-    None,
-    Profile(ChatPromptProfile),
-    Inline(String),
 }
 
 impl Default for ChatDraftSettings {

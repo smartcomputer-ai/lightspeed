@@ -1,4 +1,4 @@
-use agent_core::{BlobRef, storage::BlobStoreError};
+use engine::{BlobRef, storage::BlobStoreError};
 use object_store::{ObjectStoreExt, PutPayload, path::Path as ObjectPath};
 
 use crate::{

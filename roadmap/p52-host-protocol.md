@@ -468,7 +468,7 @@ controller or SDK layer later.
 - Define filesystem params/results.
 - Define process params/results and output/lifecycle notification types.
 - Add serde round-trip tests and JSON fixtures for the data plane.
-- Keep the crate independent from `agent-core`, `agent-runtime`, and
+- Keep the crate independent from `agent-core`, `agent-local`, and
   `agent-tools`.
 
 ### [x] G2. Add Controller-Plane `host-protocol` Types

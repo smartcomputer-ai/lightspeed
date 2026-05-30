@@ -121,8 +121,8 @@ impl ListSelectionView {
     }
 
     pub(crate) fn model(current: &str, editable: bool) -> Self {
-        let disabled_reason = (!editable)
-            .then(|| "model switching is locked after a run has been accepted".to_string());
+        let disabled_reason =
+            (!editable).then(|| "model switching is locked while a run is active".to_string());
         let mut choices = MODEL_CHOICES
             .iter()
             .map(|value| (*value).to_string())
@@ -150,8 +150,8 @@ impl ListSelectionView {
     }
 
     pub(crate) fn provider(current: &str, editable: bool) -> Self {
-        let disabled_reason = (!editable)
-            .then(|| "provider switching is locked after a run has been accepted".to_string());
+        let disabled_reason =
+            (!editable).then(|| "provider switching is locked while a run is active".to_string());
         let mut choices = PROVIDER_CHOICES
             .iter()
             .map(|value| (*value).to_string())
@@ -432,9 +432,7 @@ mod tests {
         let mut picker = ListSelectionView::model(DEFAULT_CHAT_MODEL, false);
         assert_eq!(
             picker.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
-            ListSelectionAction::Rejected(
-                "model switching is locked after a run has been accepted".into()
-            )
+            ListSelectionAction::Rejected("model switching is locked while a run is active".into())
         );
     }
 

@@ -34,7 +34,7 @@
   infrastructure, not built-in-agent state.
 - Dynamic CoreAgent serde fixtures pin representative lifecycle and tool event
   envelopes.
-- `agent-runtime` now has an explicit projection boundary for deriving API
+- `agent-local` now has an explicit projection boundary for deriving API
   session/run/item views from committed CoreAgent events instead of treating
   reducer state as the canonical transcript.
 - P54 now stops at the Rust session kernel and CoreAgent modularization layer.

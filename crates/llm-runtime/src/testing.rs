@@ -1,4 +1,4 @@
-use agent_core::{ContextItem, ProviderApiKind, ResolvedContextWindow, TokenEstimate};
+use engine::{ContextItem, ProviderApiKind, ResolvedContextWindow, TokenEstimate};
 
 pub fn resolved_context_window(
     api_kind: ProviderApiKind,

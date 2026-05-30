@@ -4,14 +4,14 @@ use std::{
     sync::Arc,
 };
 
-use agent_core::{
+use async_trait::async_trait;
+use engine::{
     session::{DynamicSessionEntry, EventSeq, SessionId, SessionPosition},
     storage::{
         AppendSessionEvents, AppendSessionEventsResult, CreateSession, ListAgentSessions,
         ReadSessionEvents, SessionPage, SessionRecord, SessionStore, SessionStoreError,
     },
 };
-use async_trait::async_trait;
 use tokio::{fs, io::AsyncWriteExt, sync::Mutex};
 
 #[derive(Clone)]
@@ -409,10 +409,10 @@ fn session_io_error(action: &str, path: &Path, error: io::Error) -> SessionStore
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_core::session::{
+    use engine::session::{
         AgentHandle, DynamicEvent, DynamicJoins, DynamicUncommittedSessionEvent,
     };
-    use agent_core::storage::SessionStore;
+    use engine::storage::SessionStore;
 
     fn open_event(at_ms: u64) -> DynamicUncommittedSessionEvent {
         DynamicUncommittedSessionEvent {

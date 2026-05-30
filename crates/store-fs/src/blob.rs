@@ -4,11 +4,11 @@ use std::{
     sync::Arc,
 };
 
-use agent_core::{
+use async_trait::async_trait;
+use engine::{
     BlobRef,
     storage::{BlobInfo, BlobStore, BlobStoreError},
 };
-use async_trait::async_trait;
 use tokio::{fs, sync::Mutex};
 
 #[derive(Clone)]
@@ -160,7 +160,7 @@ fn blob_io_error(action: &str, path: &Path, error: io::Error) -> BlobStoreError 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_core::storage::BlobStore;
+    use engine::storage::BlobStore;
 
     #[tokio::test(flavor = "current_thread")]
     async fn fs_blob_store_persists_bytes() {

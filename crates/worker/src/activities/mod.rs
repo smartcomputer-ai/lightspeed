@@ -1,0 +1,227 @@
+use std::sync::Arc;
+
+use engine::{BlobRef, LlmGenerationResult, ToolInvocationBatchResult};
+use temporalio_macros::activities;
+use temporalio_sdk::activities::{ActivityContext, ActivityError};
+
+use crate::{
+    ACTIVITY_APPEND_EVENTS, ACTIVITY_CREATE_OR_LOAD_SESSION, ACTIVITY_LLM_GENERATE,
+    ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB, ACTIVITY_TOOL_INVOKE_BATCH, AppendEventsRequest,
+    CreateOrLoadSessionRequest, CreateOrLoadSessionResult, LlmGenerateActivityRequest,
+    PutBlobRequest, ReadBlobRequest, ReadBlobResult, ToolInvokeBatchActivityRequest,
+};
+
+mod common;
+mod llm;
+mod state;
+mod storage;
+mod tools;
+
+pub use state::{ActivityState, LlmActivityDeps, StorageActivityDeps, ToolActivityDeps};
+
+pub struct WorkerActivities {
+    state: Arc<ActivityState>,
+}
+
+impl WorkerActivities {
+    pub fn new(state: ActivityState) -> Self {
+        Self {
+            state: Arc::new(state),
+        }
+    }
+
+    pub async fn from_env() -> anyhow::Result<Self> {
+        Ok(Self::new(ActivityState::from_env().await?))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::BTreeMap, sync::Arc};
+
+    use engine::{
+        CoreAgentLlm, CoreAgentTools, LlmGenerationRequest, LlmRequest, LlmRequestKind,
+        ModelProviderOptions, ModelSelection, OpenAiResponsesRequest, ProviderApiKind,
+        ResolvedContextWindow, RunId, SessionId, ToolBatchId, ToolCallStatus,
+        ToolInvocationBatchRequest, ToolInvocationRequest, TurnId,
+        storage::{BlobStore, InMemoryBlobStore, InMemorySessionStore, SessionStore},
+    };
+
+    use crate::{FAKE_TOOL_NAME, FakeLlm, FakeTools};
+
+    use super::*;
+
+    #[test]
+    fn activity_names_match_workflow_definitions() {
+        assert_eq!(
+            WorkerActivities::create_or_load_session.name(),
+            workflow::WorkflowActivities::create_or_load_session.name()
+        );
+        assert_eq!(
+            WorkerActivities::put_blob.name(),
+            workflow::WorkflowActivities::put_blob.name()
+        );
+        assert_eq!(
+            WorkerActivities::read_blob.name(),
+            workflow::WorkflowActivities::read_blob.name()
+        );
+        assert_eq!(
+            WorkerActivities::append_events.name(),
+            workflow::WorkflowActivities::append_events.name()
+        );
+        assert_eq!(
+            WorkerActivities::llm_generate.name(),
+            workflow::WorkflowActivities::llm_generate.name()
+        );
+        assert_eq!(
+            WorkerActivities::tool_invoke_batch.name(),
+            workflow::WorkflowActivities::tool_invoke_batch.name()
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn injected_fake_state_runs_llm_and_tools_without_env() {
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let session_store: Arc<dyn SessionStore> = sessions;
+        let blob_store: Arc<dyn BlobStore> = blobs.clone();
+        let llm = Arc::new(FakeLlm::new(blob_store.clone())) as Arc<dyn CoreAgentLlm>;
+        let tools = Arc::new(FakeTools::new(blob_store.clone())) as Arc<dyn CoreAgentTools>;
+        let state = ActivityState::new(session_store, blob_store, llm, tools);
+
+        let generated = llm::generate(
+            state.llm(),
+            LlmGenerateActivityRequest {
+                request: fake_llm_request(),
+            },
+        )
+        .await
+        .expect("generate fake tool call");
+        let tool_call = generated.facts.tool_calls.first().expect("fake tool call");
+
+        let invoked = tools::invoke_batch(
+            state.tools(),
+            ToolInvokeBatchActivityRequest {
+                request: ToolInvocationBatchRequest {
+                    session_id: SessionId::new("session-test"),
+                    run_id: RunId::new(1),
+                    turn_id: TurnId::new(1),
+                    batch_id: ToolBatchId::new(1),
+                    calls: vec![ToolInvocationRequest {
+                        call_id: tool_call.call_id.clone(),
+                        tool_name: tool_call.tool_name.clone(),
+                        arguments_ref: tool_call.arguments_ref.clone(),
+                        execution_target: None,
+                    }],
+                },
+            },
+        )
+        .await
+        .expect("invoke fake tool");
+
+        let result = invoked.results.first().expect("tool result");
+        assert_eq!(result.status, ToolCallStatus::Succeeded);
+        let output_ref = result.output_ref.as_ref().expect("output ref");
+        let output = blobs.read_text(output_ref).await.expect("tool output");
+        assert!(output.contains(FAKE_TOOL_NAME));
+    }
+
+    fn fake_llm_request() -> LlmGenerationRequest {
+        LlmGenerationRequest {
+            session_id: SessionId::new("session-test"),
+            run_id: RunId::new(1),
+            turn_id: TurnId::new(1),
+            request: LlmRequest {
+                model: ModelSelection {
+                    api_kind: ProviderApiKind::OpenAiResponses,
+                    provider_id: "fake".to_owned(),
+                    model: "fake-agent".to_owned(),
+                    options: ModelProviderOptions::None,
+                },
+                request_fingerprint: "fake-agent-test".to_owned(),
+                kind: LlmRequestKind::OpenAiResponses(OpenAiResponsesRequest {
+                    instructions_ref: None,
+                    input_window: ResolvedContextWindow {
+                        api_kind: ProviderApiKind::OpenAiResponses,
+                        items: Vec::new(),
+                        token_estimate: None,
+                    },
+                    previous_response_id: None,
+                    tools: Vec::new(),
+                    tool_choice: None,
+                    reasoning: None,
+                    text: None,
+                    include: Vec::new(),
+                    max_output_tokens: None,
+                    max_tool_calls: None,
+                    temperature: None,
+                    top_p: None,
+                    metadata: BTreeMap::new(),
+                    parallel_tool_calls: None,
+                    store: None,
+                    stream: None,
+                    truncation: None,
+                    context_management: None,
+                    extra: BTreeMap::new(),
+                }),
+            },
+        }
+    }
+}
+
+#[activities]
+impl WorkerActivities {
+    #[activity(name = ACTIVITY_CREATE_OR_LOAD_SESSION)]
+    pub async fn create_or_load_session(
+        self: Arc<Self>,
+        _ctx: ActivityContext,
+        request: CreateOrLoadSessionRequest,
+    ) -> Result<CreateOrLoadSessionResult, ActivityError> {
+        storage::create_or_load_session(self.state.storage(), request).await
+    }
+
+    #[activity(name = ACTIVITY_PUT_BLOB)]
+    pub async fn put_blob(
+        self: Arc<Self>,
+        _ctx: ActivityContext,
+        request: PutBlobRequest,
+    ) -> Result<BlobRef, ActivityError> {
+        storage::put_blob(self.state.storage(), request).await
+    }
+
+    #[activity(name = ACTIVITY_READ_BLOB)]
+    pub async fn read_blob(
+        self: Arc<Self>,
+        _ctx: ActivityContext,
+        request: ReadBlobRequest,
+    ) -> Result<ReadBlobResult, ActivityError> {
+        storage::read_blob(self.state.storage(), request).await
+    }
+
+    #[activity(name = ACTIVITY_APPEND_EVENTS)]
+    pub async fn append_events(
+        self: Arc<Self>,
+        _ctx: ActivityContext,
+        request: AppendEventsRequest,
+    ) -> Result<engine::storage::AppendSessionEventsResult, ActivityError> {
+        storage::append_events(self.state.storage(), request).await
+    }
+
+    #[activity(name = ACTIVITY_LLM_GENERATE)]
+    pub async fn llm_generate(
+        self: Arc<Self>,
+        _ctx: ActivityContext,
+        request: LlmGenerateActivityRequest,
+    ) -> Result<LlmGenerationResult, ActivityError> {
+        llm::generate(self.state.llm(), request).await
+    }
+
+    #[activity(name = ACTIVITY_TOOL_INVOKE_BATCH)]
+    pub async fn tool_invoke_batch(
+        self: Arc<Self>,
+        _ctx: ActivityContext,
+        request: ToolInvokeBatchActivityRequest,
+    ) -> Result<ToolInvocationBatchResult, ActivityError> {
+        tools::invoke_batch(self.state.tools(), request).await
+    }
+}

@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
-use agent_core::{
+use async_trait::async_trait;
+use engine::{
     BlobRef, ContextItem, ContextItemKind, ContextItemSource, ContextMessageRole, LlmFinish,
     LlmGenerationFacts, LlmGenerationRequest, LlmGenerationResult, LlmGenerationStatus,
     LlmRequestKind, LlmUsage, ObservedToolCall, OpenAiResponsesRequest, OpenAiResponsesToolChoice,
     ProviderApiKind, ProviderNativeToolExecution, TokenEstimate, TokenEstimateQuality, ToolCallId,
     ToolKind, ToolName, ToolSpec, UncommittedContextItem, storage::BlobStore,
 };
-use async_trait::async_trait;
 use llm_clients::{ApiResponse, openai::responses as oai};
 use serde_json::Value;
 
@@ -570,7 +570,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
 
-    use agent_core::{
+    use engine::{
         ContextItemId, CoreAgentLlm, FunctionToolSpec, LlmGenerationRequest, LlmRequest,
         ModelProviderOptions, ModelSelection, OpenAiReasoningConfig, ResolvedContextWindow, RunId,
         SessionId, ToolParallelism, TurnId, storage::InMemoryBlobStore,

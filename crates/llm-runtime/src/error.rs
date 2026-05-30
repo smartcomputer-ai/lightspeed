@@ -1,4 +1,4 @@
-use agent_core::{BlobRef, ContextItemId, ProviderApiKind};
+use engine::{BlobRef, ContextItemId, ProviderApiKind};
 use thiserror::Error;
 
 pub type LlmAdapterResult<T> = Result<T, LlmAdapterError>;
@@ -30,8 +30,8 @@ pub enum LlmAdapterError {
     Provider { message: String },
 }
 
-impl From<agent_core::storage::BlobStoreError> for LlmAdapterError {
-    fn from(error: agent_core::storage::BlobStoreError) -> Self {
+impl From<engine::storage::BlobStoreError> for LlmAdapterError {
+    fn from(error: engine::storage::BlobStoreError) -> Self {
         Self::BlobStore {
             message: error.to_string(),
         }
