@@ -15,6 +15,7 @@ pub const PROTOCOL_VERSION: &str = "forge.agent.api.v1";
 
 pub const METHOD_INITIALIZE: &str = "initialize";
 pub const METHOD_SESSION_START: &str = "session/start";
+pub const METHOD_SESSION_UPDATE: &str = "session/update";
 pub const METHOD_SESSION_READ: &str = "session/read";
 pub const METHOD_SESSION_EVENTS_READ: &str = "session/events/read";
 pub const METHOD_SESSION_CLOSE: &str = "session/close";
@@ -84,6 +85,11 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: SessionStartParams,
     ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError>;
+
+    async fn update_session(
+        &self,
+        params: SessionUpdateParams,
+    ) -> Result<AgentApiOutcome<SessionUpdateResponse>, AgentApiError>;
 
     async fn read_session(
         &self,
@@ -186,23 +192,139 @@ pub struct ServerCapabilities {
 pub struct SessionStartParams {
     pub session_id: Option<SessionId>,
     pub cwd: Option<String>,
-    pub model: Option<ModelConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub config: Option<SessionStartConfig>,
+    pub config: Option<SessionConfigInput>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SessionStartConfig {
+pub struct SessionConfigInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<InstructionsSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<ModelConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<GenerationConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<ContextConfigInput>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_defaults: Option<RunDefaultsConfig>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum InstructionsSource {
+    Text { text: String },
+    BlobRef { blob_ref: String },
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GenerationConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_output_tokens: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<ReasoningEffort>,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextConfigInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_context_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_context_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reserve_output_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction_enabled: Option<bool>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunDefaultsConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_turns: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tool_rounds: Option<u32>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionStartResponse {
+    pub session: SessionView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionUpdateParams {
+    pub session_id: SessionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_config_revision: Option<u64>,
+    #[serde(default)]
+    pub patch: SessionConfigPatchInput,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionConfigPatchInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<FieldPatch<InstructionsSource>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<ModelConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<GenerationConfigPatch>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<ContextConfigPatchInput>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_defaults: Option<RunDefaultsPatch>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "op", content = "value")]
+pub enum FieldPatch<T> {
+    Set(T),
+    Clear,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GenerationConfigPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<FieldPatch<u32>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<ReasoningEffort>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextConfigPatchInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_context_tokens: Option<FieldPatch<u32>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_context_tokens: Option<FieldPatch<u32>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reserve_output_tokens: Option<FieldPatch<u32>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction_enabled: Option<bool>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunDefaultsPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_turns: Option<FieldPatch<u32>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tool_rounds: Option<FieldPatch<u32>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionUpdateResponse {
     pub session: SessionView,
 }
 
@@ -437,9 +559,18 @@ pub struct RunStartConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<ModelConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_output_tokens: Option<u32>,
+    pub generation: Option<GenerationConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reasoning_effort: Option<ReasoningEffort>,
+    pub limits: Option<RunLimitsConfig>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunLimitsConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_turns: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tool_rounds: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -484,11 +615,32 @@ pub struct SessionView {
     pub id: SessionId,
     pub status: SessionStatus,
     pub cwd: Option<String>,
-    pub model: Option<ModelConfig>,
+    pub config_revision: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<SessionConfigView>,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
     #[serde(default)]
     pub runs: Vec<RunView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionConfigView {
+    pub model: ModelConfig,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<InstructionsView>,
+    pub generation: GenerationConfig,
+    pub context: ContextConfigInput,
+    pub run_defaults: RunDefaultsConfig,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstructionsView {
+    pub blob_ref: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -859,6 +1011,10 @@ pub async fn dispatch_json_rpc(
             Ok(params) => json_rpc_outcome(id, service.start_session(params).await),
             Err(error) => JsonRpcResponse::failure(id, error),
         },
+        METHOD_SESSION_UPDATE => match json_rpc_params::<SessionUpdateParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.update_session(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
         METHOD_SESSION_READ => match json_rpc_params::<SessionReadParams>(request.params) {
             Ok(params) => json_rpc_outcome(id, service.read_session(params).await),
             Err(error) => JsonRpcResponse::failure(id, error),
@@ -1018,6 +1174,37 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_session_update() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_SESSION_UPDATE.to_owned(),
+                params: Some(json!({
+                    "sessionId": "session_1",
+                    "expectedConfigRevision": 0,
+                    "patch": {
+                        "instructions": {
+                            "op": "set",
+                            "value": {
+                                "type": "text",
+                                "text": "answer tersely"
+                            }
+                        }
+                    }
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["session"]["id"],
+            json!("session_1")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn dispatch_json_rpc_routes_run_cancel() {
         let response = dispatch_json_rpc(
             &TestService,
@@ -1055,8 +1242,10 @@ mod tests {
                             "apiKind": "openai:responses",
                             "model": "gpt-5.5"
                         },
-                        "maxOutputTokens": 1024,
-                        "reasoningEffort": "high"
+                        "generation": {
+                            "maxOutputTokens": 1024,
+                            "reasoningEffort": "high"
+                        }
                     }
                 })),
             },
@@ -1286,6 +1475,15 @@ mod tests {
             Err(AgentApiError::internal("not implemented"))
         }
 
+        async fn update_session(
+            &self,
+            params: SessionUpdateParams,
+        ) -> Result<AgentApiOutcome<SessionUpdateResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(SessionUpdateResponse {
+                session: test_session(params.session_id, SessionStatus::Idle),
+            }))
+        }
+
         async fn read_session(
             &self,
             _params: SessionReadParams,
@@ -1315,8 +1513,9 @@ mod tests {
         ) -> Result<AgentApiOutcome<RunStartResponse>, AgentApiError> {
             let config = params.config.expect("run config");
             assert_eq!(params.session_id, "session_1");
-            assert_eq!(config.max_output_tokens, Some(1024));
-            assert_eq!(config.reasoning_effort, Some(ReasoningEffort::High));
+            let generation = config.generation.expect("generation");
+            assert_eq!(generation.max_output_tokens, Some(1024));
+            assert_eq!(generation.reasoning_effort, Some(ReasoningEffort::High));
             assert_eq!(config.model.expect("model").model, "gpt-5.5");
             Ok(AgentApiOutcome::new(RunStartResponse {
                 run: test_run("run_1".to_owned(), RunStatus::Running),
@@ -1338,7 +1537,8 @@ mod tests {
             id,
             status,
             cwd: None,
-            model: None,
+            config_revision: 0,
+            config: None,
             created_at_ms: 1,
             updated_at_ms: 2,
             runs: Vec::new(),

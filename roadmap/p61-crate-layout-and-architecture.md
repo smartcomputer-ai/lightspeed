@@ -306,6 +306,7 @@ Keep the public API product-shaped and typed for now:
 ```text
 initialize
 session/start
+session/update
 session/read
 session/events/read
 session/close
@@ -326,6 +327,11 @@ client follows session/events/read or streaming notifications
 The gateway waits only until the submitted run is visible as active or
 terminal. One-shot terminal output should be produced by clients such as the
 CLI, not by extra gateway helper binaries.
+
+`session/start` carries product-level config fields rather than exposing
+CoreAgent's internal `SessionConfig` directly. `session/update` is patch-shaped
+and revision-checked, so clients can update instructions, model/generation,
+context, or run defaults without read/merge/write replacement races.
 
 ## Migration Plan
 

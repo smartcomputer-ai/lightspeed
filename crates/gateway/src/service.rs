@@ -9,11 +9,14 @@ use std::{
 
 use api::{
     AgentApiError, AgentApiErrorKind, AgentApiOutcome, AgentApiService, ClientCapabilities,
-    InitializeParams, InitializeResponse, ModelConfig, ReasoningEffort, RunCancelParams,
-    RunCancelResponse, RunStartConfig, RunStartParams, RunStartResponse, RunView,
-    ServerCapabilities, ServerInfo, SessionCloseParams, SessionCloseResponse,
-    SessionEventsReadParams, SessionEventsReadResponse, SessionReadParams, SessionReadResponse,
-    SessionStartConfig, SessionStartParams, SessionStartResponse, SessionView,
+    ContextConfigInput as ApiContextConfigInput, ContextConfigPatchInput, FieldPatch,
+    GenerationConfig, GenerationConfigPatch, InitializeParams, InitializeResponse,
+    InstructionsSource, ModelConfig, ReasoningEffort, RunCancelParams, RunCancelResponse,
+    RunDefaultsConfig, RunDefaultsPatch, RunLimitsConfig, RunStartConfig, RunStartParams,
+    RunStartResponse, RunView, ServerCapabilities, ServerInfo, SessionCloseParams,
+    SessionCloseResponse, SessionConfigInput, SessionConfigPatchInput, SessionEventsReadParams,
+    SessionEventsReadResponse, SessionReadParams, SessionReadResponse, SessionStartParams,
+    SessionStartResponse, SessionUpdateParams, SessionUpdateResponse, SessionView,
 };
 use api_projection::{
     CoreAgentProjector, MAX_EVENT_PAGE_LIMIT, ProjectSession, api_kind_from_str, api_run_id,
@@ -22,9 +25,11 @@ use api_projection::{
 };
 use async_trait::async_trait;
 use engine::{
-    BlobRef, CommandCodec, CoreAgentCommand, CoreAgentStatus, ModelProviderOptions, ModelSelection,
-    OpenAiReasoningConfig, OpenAiResponsesRequestDefaults, ProviderApiKind,
-    ProviderRequestDefaults, RunConfig, RunId, RunStatus, SessionConfig, SessionId, SubmissionId,
+    AnthropicMessagesRequestDefaults, BlobRef, CommandCodec, ContextConfigPatch, CoreAgentCommand,
+    CoreAgentStatus, ModelProviderOptions, ModelSelection, OpenAiCompletionsRequestDefaults,
+    OpenAiReasoningConfig, OpenAiResponsesRequestDefaults, OptionalConfigPatch, ProviderApiKind,
+    ProviderRequestDefaults, RunConfig, RunConfigPatch, RunId, RunStatus, SessionConfig,
+    SessionConfigPatch, SessionId, SubmissionId, TurnConfigPatch,
     storage::{BlobStore, BlobStoreError, ReadSessionEvents, SessionStore},
 };
 use store_pg::PgStore;
@@ -228,21 +233,95 @@ impl GatewayAgentApi {
         }
     }
 
-    fn session_config_for_start(
+    async fn session_config_for_start(
         &self,
-        model: Option<ModelConfig>,
-        api_config: Option<SessionStartConfig>,
+        api_config: Option<SessionConfigInput>,
     ) -> Result<SessionConfig, AgentApiError> {
         let mut config =
             default_session_config(self.default_model.clone(), self.instructions_ref.clone());
-        if let Some(model) = model {
-            config.model = model_selection_from_api(model)?;
-        }
-        apply_session_start_config(&mut config, api_config)?;
+        self.apply_session_config_input(&mut config, api_config)
+            .await?;
         config
             .validate_provider_compatibility()
             .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
         Ok(config)
+    }
+
+    async fn apply_session_config_input(
+        &self,
+        config: &mut SessionConfig,
+        api_config: Option<SessionConfigInput>,
+    ) -> Result<(), AgentApiError> {
+        let Some(api_config) = api_config else {
+            return Ok(());
+        };
+        if let Some(instructions) = api_config.instructions {
+            config.context.instructions_ref =
+                Some(self.instructions_ref_from_source(instructions).await?);
+        }
+        if let Some(model) = api_config.model {
+            let previous_api_kind = config.model.api_kind.clone();
+            config.model = model_selection_from_api(model)?;
+            if config.model.api_kind != previous_api_kind {
+                config.turn.provider_request_defaults =
+                    default_provider_request_defaults(&config.model.api_kind);
+            }
+        }
+        apply_generation_config(config, api_config.generation)?;
+        apply_context_config(&mut config.context, api_config.context);
+        apply_run_defaults_config(&mut config.run, api_config.run_defaults);
+        Ok(())
+    }
+
+    async fn instructions_ref_from_source(
+        &self,
+        source: InstructionsSource,
+    ) -> Result<BlobRef, AgentApiError> {
+        match source {
+            InstructionsSource::Text { text } => self
+                .store
+                .put_bytes(text.into_bytes())
+                .await
+                .map_err(map_blob_store_error),
+            InstructionsSource::BlobRef { blob_ref } => {
+                let blob_ref = BlobRef::parse(blob_ref)
+                    .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
+                let exists = self
+                    .store
+                    .has_blob(&blob_ref)
+                    .await
+                    .map_err(map_blob_store_error)?;
+                if exists {
+                    Ok(blob_ref)
+                } else {
+                    Err(AgentApiError::invalid_request(format!(
+                        "instructions blob not found: {blob_ref}"
+                    )))
+                }
+            }
+        }
+    }
+
+    async fn core_session_patch_from_api(
+        &self,
+        current: &SessionConfig,
+        patch: SessionConfigPatchInput,
+    ) -> Result<SessionConfigPatch, AgentApiError> {
+        let instructions_ref = match patch.instructions {
+            Some(FieldPatch::Set(source)) => Some(OptionalConfigPatch::Set(
+                self.instructions_ref_from_source(source).await?,
+            )),
+            Some(FieldPatch::Clear) => Some(OptionalConfigPatch::Clear),
+            None => None,
+        };
+        let model = patch.model.map(model_selection_from_api).transpose()?;
+        let turn = turn_config_patch_from_api(current, patch.generation)?;
+        Ok(SessionConfigPatch {
+            model,
+            run: run_config_patch_from_api(patch.run_defaults),
+            turn,
+            context: context_config_patch_from_api(instructions_ref, patch.context),
+        })
     }
 
     fn projector(&self) -> CoreAgentProjector<'_> {
@@ -352,10 +431,43 @@ impl GatewayAgentApi {
                 }
             }
             match self.project_session_by_id(session_id).await {
-                Ok(session) if session.model.is_some() => return Ok(session),
+                Ok(session) if session.config.is_some() => return Ok(session),
                 Ok(_) => {}
                 Err(error) if is_not_found(&error) => {}
                 Err(error) => return Err(error),
+            }
+            tokio::time::sleep(self.poll_interval).await;
+        }
+    }
+
+    async fn wait_for_config_revision(
+        &self,
+        session_id: &SessionId,
+        target_revision: u64,
+        baseline_failures: usize,
+    ) -> Result<SessionView, AgentApiError> {
+        let started = Instant::now();
+        loop {
+            if started.elapsed() > self.operation_timeout {
+                return Err(AgentApiError::internal(format!(
+                    "timed out waiting for agent session config update: {session_id}"
+                )));
+            }
+            if let Some(status) = self.query_status_optional(session_id).await? {
+                if status.admission_failures.len() > baseline_failures {
+                    if let Some(failure) = status.admission_failures.last() {
+                        return Err(map_admission_failure_to_api_error(failure));
+                    }
+                }
+                if let Some(error) = status.last_error {
+                    return Err(AgentApiError::internal(format!(
+                        "agent workflow reported error: {error}"
+                    )));
+                }
+            }
+            let session = self.project_session_by_id(session_id).await?;
+            if session.config_revision >= target_revision {
+                return Ok(session);
             }
             tokio::time::sleep(self.poll_interval).await;
         }
@@ -549,7 +661,6 @@ impl AgentApiService for GatewayAgentApi {
         let SessionStartParams {
             session_id,
             cwd,
-            model,
             config,
         } = params;
         let session_id = match session_id {
@@ -558,7 +669,7 @@ impl AgentApiService for GatewayAgentApi {
             })?,
             None => self.allocate_session_id(),
         };
-        let session_config = self.session_config_for_start(model, config)?;
+        let session_config = self.session_config_for_start(config).await?;
         self.write_session_metadata(session_id.clone(), GatewaySessionMetadata { cwd })?;
         self.client
             .start_workflow(
@@ -570,6 +681,74 @@ impl AgentApiService for GatewayAgentApi {
             .map_err(map_workflow_start_error)?;
         let session = self.wait_for_open_session(&session_id).await?;
         Ok(AgentApiOutcome::new(SessionStartResponse { session }))
+    }
+
+    async fn update_session(
+        &self,
+        params: SessionUpdateParams,
+    ) -> Result<AgentApiOutcome<SessionUpdateResponse>, AgentApiError> {
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let loaded = self.load_session_state(&session_id).await?;
+        if loaded.state.lifecycle.status != CoreAgentStatus::Open {
+            return Err(AgentApiError::rejected(format!(
+                "session is not open: {session_id}"
+            )));
+        }
+        if loaded.state.runs.active.is_some() || !loaded.state.runs.queued.is_empty() {
+            return Err(AgentApiError::rejected(
+                "session config can only change while no run is active or queued",
+            ));
+        }
+        let current_config = loaded.state.lifecycle.config.as_ref().ok_or_else(|| {
+            AgentApiError::invalid_request(format!("session is missing config: {session_id}"))
+        })?;
+        if let Some(expected) = params.expected_config_revision {
+            let actual = loaded.state.lifecycle.config_revision;
+            if expected != actual {
+                return Err(AgentApiError::conflict(format!(
+                    "expected config revision {expected}, got {actual}"
+                )));
+            }
+        }
+        let patch = self
+            .core_session_patch_from_api(current_config, params.patch)
+            .await?;
+        if patch.is_empty() {
+            return Ok(AgentApiOutcome::new(SessionUpdateResponse {
+                session: self.project_session_by_id(&session_id).await?,
+            }));
+        }
+        let baseline_failures = self
+            .query_status_optional(&session_id)
+            .await?
+            .map(|status| status.admission_failures.len())
+            .unwrap_or(0);
+        let target_revision = loaded
+            .state
+            .lifecycle
+            .config_revision
+            .checked_add(1)
+            .ok_or_else(|| AgentApiError::internal("config revision exhausted"))?;
+        let command = engine::CoreAgentCodec
+            .encode_command(&CoreAgentCommand::PatchSessionConfig {
+                expected_revision: Some(loaded.state.lifecycle.config_revision),
+                patch,
+            })
+            .map_err(|error| AgentApiError::internal(error.to_string()))?;
+        self.workflow_handle(&session_id)
+            .signal(
+                AgentSessionWorkflow::submit_admission,
+                AgentAdmission { command },
+                WorkflowSignalOptions::default(),
+            )
+            .await
+            .map_err(map_workflow_interaction_error)?;
+        let session = self
+            .wait_for_config_revision(&session_id, target_revision, baseline_failures)
+            .await?;
+        Ok(AgentApiOutcome::new(SessionUpdateResponse { session }))
     }
 
     async fn read_session(
@@ -760,17 +939,17 @@ impl AgentApiService for GatewayAgentApi {
     }
 }
 
-fn apply_session_start_config(
+fn apply_generation_config(
     config: &mut SessionConfig,
-    api_config: Option<SessionStartConfig>,
+    generation: Option<GenerationConfig>,
 ) -> Result<(), AgentApiError> {
-    let Some(api_config) = api_config else {
+    let Some(generation) = generation else {
         return Ok(());
     };
-    if let Some(max_output_tokens) = api_config.max_output_tokens {
+    if let Some(max_output_tokens) = generation.max_output_tokens {
         config.turn.max_output_tokens = Some(max_output_tokens);
     }
-    if let Some(effort) = api_config.reasoning_effort {
+    if let Some(effort) = generation.reasoning_effort {
         config.turn.provider_request_defaults = provider_defaults_with_reasoning(
             &config.model.api_kind,
             &config.turn.provider_request_defaults,
@@ -778,6 +957,39 @@ fn apply_session_start_config(
         )?;
     }
     Ok(())
+}
+
+fn apply_context_config(
+    config: &mut engine::ContextConfig,
+    context: Option<ApiContextConfigInput>,
+) {
+    let Some(context) = context else {
+        return;
+    };
+    if let Some(max_context_tokens) = context.max_context_tokens {
+        config.max_context_tokens = Some(max_context_tokens);
+    }
+    if let Some(target_context_tokens) = context.target_context_tokens {
+        config.target_context_tokens = Some(target_context_tokens);
+    }
+    if let Some(reserve_output_tokens) = context.reserve_output_tokens {
+        config.reserve_output_tokens = Some(reserve_output_tokens);
+    }
+    if let Some(compaction_enabled) = context.compaction_enabled {
+        config.compaction_enabled = compaction_enabled;
+    }
+}
+
+fn apply_run_defaults_config(config: &mut RunConfig, run_defaults: Option<RunDefaultsConfig>) {
+    let Some(run_defaults) = run_defaults else {
+        return;
+    };
+    if let Some(max_turns) = run_defaults.max_turns {
+        config.max_turns = Some(max_turns);
+    }
+    if let Some(max_tool_rounds) = run_defaults.max_tool_rounds {
+        config.max_tool_rounds = Some(max_tool_rounds);
+    }
 }
 
 fn apply_run_start_config(
@@ -796,19 +1008,93 @@ fn apply_run_start_config(
     } else {
         session_config.model.api_kind.clone()
     };
-    if let Some(max_output_tokens) = api_config.max_output_tokens {
-        run_config.max_output_tokens = Some(max_output_tokens);
+    if let Some(generation) = api_config.generation {
+        if let Some(max_output_tokens) = generation.max_output_tokens {
+            run_config.max_output_tokens = Some(max_output_tokens);
+        }
+        if let Some(effort) = generation.reasoning_effort {
+            run_config.provider_request_defaults = Some(provider_defaults_with_reasoning(
+                &effective_api_kind,
+                &session_config.turn.provider_request_defaults,
+                effort,
+            )?);
+        }
     }
-    if let Some(effort) = api_config.reasoning_effort {
-        run_config.provider_request_defaults = Some(provider_defaults_with_reasoning(
-            &effective_api_kind,
-            &session_config.turn.provider_request_defaults,
-            effort,
-        )?);
+    if let Some(limits) = api_config.limits {
+        apply_run_limits_config(run_config, limits);
     }
     run_config
         .validate_provider_compatibility(&session_config.model.api_kind)
         .map_err(|error| AgentApiError::invalid_request(error.to_string()))
+}
+
+fn apply_run_limits_config(run_config: &mut RunConfig, limits: RunLimitsConfig) {
+    if let Some(max_turns) = limits.max_turns {
+        run_config.max_turns = Some(max_turns);
+    }
+    if let Some(max_tool_rounds) = limits.max_tool_rounds {
+        run_config.max_tool_rounds = Some(max_tool_rounds);
+    }
+}
+
+fn run_config_patch_from_api(patch: Option<RunDefaultsPatch>) -> RunConfigPatch {
+    let Some(patch) = patch else {
+        return RunConfigPatch::default();
+    };
+    RunConfigPatch {
+        max_turns: patch.max_turns.map(optional_patch_from_api),
+        max_tool_rounds: patch.max_tool_rounds.map(optional_patch_from_api),
+        ..RunConfigPatch::default()
+    }
+}
+
+fn turn_config_patch_from_api(
+    current: &SessionConfig,
+    patch: Option<GenerationConfigPatch>,
+) -> Result<TurnConfigPatch, AgentApiError> {
+    let Some(patch) = patch else {
+        return Ok(TurnConfigPatch::default());
+    };
+    let provider_request_defaults = patch
+        .reasoning_effort
+        .map(|effort| {
+            provider_defaults_with_reasoning(
+                &current.model.api_kind,
+                &current.turn.provider_request_defaults,
+                effort,
+            )
+        })
+        .transpose()?;
+    Ok(TurnConfigPatch {
+        max_output_tokens: patch.max_output_tokens.map(optional_patch_from_api),
+        provider_request_defaults,
+    })
+}
+
+fn context_config_patch_from_api(
+    instructions_ref: Option<OptionalConfigPatch<BlobRef>>,
+    patch: Option<ContextConfigPatchInput>,
+) -> ContextConfigPatch {
+    let Some(patch) = patch else {
+        return ContextConfigPatch {
+            instructions_ref,
+            ..ContextConfigPatch::default()
+        };
+    };
+    ContextConfigPatch {
+        instructions_ref,
+        max_context_tokens: patch.max_context_tokens.map(optional_patch_from_api),
+        target_context_tokens: patch.target_context_tokens.map(optional_patch_from_api),
+        reserve_output_tokens: patch.reserve_output_tokens.map(optional_patch_from_api),
+        compaction_enabled: patch.compaction_enabled,
+    }
+}
+
+fn optional_patch_from_api<T>(patch: FieldPatch<T>) -> OptionalConfigPatch<T> {
+    match patch {
+        FieldPatch::Set(value) => OptionalConfigPatch::Set(value),
+        FieldPatch::Clear => OptionalConfigPatch::Clear,
+    }
 }
 
 fn model_selection_from_api(model: ModelConfig) -> Result<ModelSelection, AgentApiError> {
@@ -818,6 +1104,20 @@ fn model_selection_from_api(model: ModelConfig) -> Result<ModelSelection, AgentA
         model: model.model,
         options: ModelProviderOptions::None,
     })
+}
+
+fn default_provider_request_defaults(api_kind: &ProviderApiKind) -> ProviderRequestDefaults {
+    match api_kind {
+        ProviderApiKind::OpenAiResponses => {
+            ProviderRequestDefaults::OpenAiResponses(OpenAiResponsesRequestDefaults::default())
+        }
+        ProviderApiKind::AnthropicMessages => {
+            ProviderRequestDefaults::AnthropicMessages(AnthropicMessagesRequestDefaults::default())
+        }
+        ProviderApiKind::OpenAiCompletions => {
+            ProviderRequestDefaults::OpenAiCompletions(OpenAiCompletionsRequestDefaults::default())
+        }
+    }
 }
 
 fn provider_defaults_with_reasoning(
@@ -942,9 +1242,9 @@ mod tests {
     fn session_start_config_maps_reasoning_and_max_output_tokens() {
         let mut config = default_session_config(openai_model(), None);
 
-        apply_session_start_config(
+        apply_generation_config(
             &mut config,
-            Some(SessionStartConfig {
+            Some(GenerationConfig {
                 max_output_tokens: Some(2048),
                 reasoning_effort: Some(ReasoningEffort::High),
             }),
@@ -976,8 +1276,11 @@ mod tests {
                     api_kind: "openai:responses".to_owned(),
                     model: "gpt-5.5-mini".to_owned(),
                 }),
-                max_output_tokens: Some(1024),
-                reasoning_effort: Some(ReasoningEffort::Medium),
+                generation: Some(GenerationConfig {
+                    max_output_tokens: Some(1024),
+                    reasoning_effort: Some(ReasoningEffort::Medium),
+                }),
+                limits: None,
             }),
         )
         .expect("apply run config");

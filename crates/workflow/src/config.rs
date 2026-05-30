@@ -1,7 +1,8 @@
 use std::{collections::BTreeMap, time::Duration};
 
 use engine::{
-    BlobRef, ContextConfig, FunctionToolSpec, ModelSelection, OpenAiResponsesRequestDefaults,
+    AnthropicMessagesRequestDefaults, BlobRef, ContextConfig, FunctionToolSpec, ModelSelection,
+    OpenAiCompletionsRequestDefaults, OpenAiResponsesRequestDefaults, ProviderApiKind,
     ProviderRequestDefaults, RunConfig, SessionConfig, ToolChoice, ToolChoiceMode, ToolKind,
     ToolName, ToolParallelism, ToolProfile, ToolProfileId, ToolRegistry, ToolSpec,
     ToolTargetRequirement, TurnConfig,
@@ -31,14 +32,13 @@ pub fn default_session_config(
     model: ModelSelection,
     instructions_ref: Option<BlobRef>,
 ) -> SessionConfig {
+    let provider_request_defaults = default_provider_request_defaults(&model.api_kind);
     SessionConfig {
         model,
         run: default_run_config(),
         turn: TurnConfig {
             max_output_tokens: None,
-            provider_request_defaults: ProviderRequestDefaults::OpenAiResponses(
-                OpenAiResponsesRequestDefaults::default(),
-            ),
+            provider_request_defaults,
         },
         context: ContextConfig {
             instructions_ref,
@@ -47,6 +47,20 @@ pub fn default_session_config(
             reserve_output_tokens: None,
             compaction_enabled: false,
         },
+    }
+}
+
+fn default_provider_request_defaults(api_kind: &ProviderApiKind) -> ProviderRequestDefaults {
+    match api_kind {
+        ProviderApiKind::OpenAiResponses => {
+            ProviderRequestDefaults::OpenAiResponses(OpenAiResponsesRequestDefaults::default())
+        }
+        ProviderApiKind::AnthropicMessages => {
+            ProviderRequestDefaults::AnthropicMessages(AnthropicMessagesRequestDefaults::default())
+        }
+        ProviderApiKind::OpenAiCompletions => {
+            ProviderRequestDefaults::OpenAiCompletions(OpenAiCompletionsRequestDefaults::default())
+        }
     }
 }
 

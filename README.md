@@ -145,9 +145,9 @@ cargo run -p cli -- chat --new
 That starts an interactive TUI session. `FORGE_API_URL` is exported by
 `dev/local/env.sh`, so you do not need to pass `--api-url`.
 
-For OpenAI-backed chat, the CLI sends the provider/model settings with each
-run. Use `--model ...` on a command, or set `FORGE_CHAT_MODEL`, if you want a
-specific model.
+For OpenAI-backed chat, the CLI sends typed session/run configuration through
+the API. Use `--model ...` on a command, or set `FORGE_CHAT_MODEL`, if you want
+a specific model.
 
 To send one message and exit:
 
@@ -207,12 +207,14 @@ actions are fulfilled through activities.
 The hosted `run/start` path is asynchronous at the API boundary: it returns
 after the workflow has accepted and started or observed the run, while clients
 continue following `session/events/read` or refreshing `session/read` for tool
-activity and final output. `session/start` and `run/start` both accept typed
-model/generation settings, and the CLI sends its draft model, reasoning effort,
-and max-output token settings through that API boundary. The gateway owns
-API-to-command conversion for `run/start`: it writes run input to CAS, builds
-`CoreAgentCommand::RequestRun`, wraps the encoded core command as a workflow
-admission, and signals the workflow.
+activity and final output. `session/start` accepts a product-level config block
+for model, instructions, generation, context, and run defaults; instructions can
+be supplied as inline text or an existing CAS blob ref. `session/update` applies
+revision-checked patches to idle sessions without requiring clients to resubmit
+the full config. `run/start` accepts typed per-run model, generation, and limit
+overrides. The gateway owns API-to-command conversion for `run/start`: it writes
+run input to CAS, builds `CoreAgentCommand::RequestRun`, wraps the encoded core
+command as a workflow admission, and signals the workflow.
 
 ## Testing
 

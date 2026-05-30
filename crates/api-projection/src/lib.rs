@@ -7,8 +7,9 @@
 use std::collections::BTreeMap;
 
 use api::{
-    AgentApiError, EventCursor, EventJoinsView, InputItem, ModelConfig, RunStatus as ApiRunStatus,
-    RunView, SessionEventKindView, SessionEventView, SessionItemView,
+    AgentApiError, ContextConfigInput, EventCursor, EventJoinsView, GenerationConfig, InputItem,
+    InstructionsView, ModelConfig, ReasoningEffort, RunDefaultsConfig, RunStatus as ApiRunStatus,
+    RunView, SessionConfigView, SessionEventKindView, SessionEventView, SessionItemView,
     SessionStatus as ApiSessionStatus, SessionView, ToolBatchView, ToolCallDisplayGroup,
     ToolCallDisplayView, ToolCallEventView, ToolCallView, ToolExecutionTargetView, ToolItemStatus,
 };
@@ -17,9 +18,9 @@ use engine::{
     ContextEvent, ContextItem, ContextItemKind, ContextItemSource, ContextMessageRole,
     CoreAgentCodec, CoreAgentEntry, CoreAgentEventKind, CoreAgentJoins, CoreAgentLifecycleEvent,
     CoreAgentState, CoreAgentStatus, CoreApplyEvent, EventSeq, LlmGenerationStatus,
-    ModelProviderOptions, ModelSelection, ObservedToolCall, ProviderApiKind, RunEvent, RunId,
-    RunStatus, SessionConfig, SessionId, ToolBatchId, ToolCallStatus, ToolConfigEvent, ToolEvent,
-    TurnEvent, TurnId,
+    ModelProviderOptions, ModelSelection, ObservedToolCall, ProviderApiKind,
+    ProviderRequestDefaults, RunEvent, RunId, RunStatus, SessionConfig, SessionId, ToolBatchId,
+    ToolCallStatus, ToolConfigEvent, ToolEvent, TurnEvent, TurnId,
     storage::{
         BlobStore, BlobStoreError, DynamicSessionEntry, ReadSessionEvents, SessionRecord,
         SessionStore, SessionStoreError,
@@ -66,16 +67,17 @@ impl<'a> CoreAgentProjector<'a> {
             );
         }
 
+        let config = match params.state.lifecycle.config.as_ref() {
+            Some(config) => Some(self.project_session_config(config).await?),
+            None => None,
+        };
+
         Ok(SessionView {
             id: params.session_id.as_str().to_owned(),
             status: session_status(params.state),
             cwd: params.cwd,
-            model: params
-                .state
-                .lifecycle
-                .config
-                .as_ref()
-                .map(|config| model_to_api(&config.model)),
+            config_revision: params.state.lifecycle.config_revision,
+            config,
             created_at_ms: params.record.created_at_ms,
             updated_at_ms: params.record.updated_at_ms,
             runs,
@@ -152,6 +154,37 @@ impl<'a> CoreAgentProjector<'a> {
                     .unwrap_or_else(|| "context item".to_owned()),
             }),
         }
+    }
+
+    pub async fn project_session_config(
+        &self,
+        config: &SessionConfig,
+    ) -> Result<SessionConfigView, AgentApiError> {
+        let instructions = match config.context.instructions_ref.as_ref() {
+            Some(blob_ref) => Some(InstructionsView {
+                blob_ref: blob_ref.as_str().to_owned(),
+                text: Some(self.read_blob_text(blob_ref).await?),
+            }),
+            None => None,
+        };
+        Ok(SessionConfigView {
+            model: model_to_api(&config.model),
+            instructions,
+            generation: GenerationConfig {
+                max_output_tokens: config.turn.max_output_tokens,
+                reasoning_effort: reasoning_effort_to_api(&config.turn.provider_request_defaults),
+            },
+            context: ContextConfigInput {
+                max_context_tokens: config.context.max_context_tokens,
+                target_context_tokens: config.context.target_context_tokens,
+                reserve_output_tokens: config.context.reserve_output_tokens,
+                compaction_enabled: Some(config.context.compaction_enabled),
+            },
+            run_defaults: RunDefaultsConfig {
+                max_turns: config.run.max_turns,
+                max_tool_rounds: config.run.max_tool_rounds,
+            },
+        })
     }
 
     pub async fn project_entry(
@@ -699,6 +732,24 @@ pub fn model_to_api(model: &ModelSelection) -> ModelConfig {
         provider_id: model.provider_id.clone(),
         api_kind: api_kind_to_str(&model.api_kind).to_owned(),
         model: model.model.clone(),
+    }
+}
+
+fn reasoning_effort_to_api(defaults: &ProviderRequestDefaults) -> Option<ReasoningEffort> {
+    match defaults {
+        ProviderRequestDefaults::OpenAiResponses(defaults) => {
+            match defaults
+                .reasoning
+                .as_ref()
+                .and_then(|reasoning| reasoning.effort.as_deref().map(str::to_ascii_lowercase))
+            {
+                Some(value) if value == "low" => Some(ReasoningEffort::Low),
+                Some(value) if value == "medium" => Some(ReasoningEffort::Medium),
+                Some(value) if value == "high" => Some(ReasoningEffort::High),
+                Some(_) | None => None,
+            }
+        }
+        _ => None,
     }
 }
 

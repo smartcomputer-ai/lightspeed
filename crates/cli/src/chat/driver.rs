@@ -8,13 +8,14 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
 use api::{
-    AgentApiError, AgentApiErrorKind, AgentApiOutcome, EventCursor, InputItem, JsonRpcRequest,
-    JsonRpcResponse, METHOD_RUN_START, METHOD_SESSION_EVENTS_READ, METHOD_SESSION_READ,
-    METHOD_SESSION_START, ModelConfig, ReasoningEffort as ApiReasoningEffort, RequestId,
-    RunStartConfig, RunStartParams, RunStartResponse, SessionEventKindView, SessionEventView,
-    SessionEventsReadParams, SessionEventsReadResponse, SessionItemView, SessionReadParams,
-    SessionReadResponse, SessionStartConfig, SessionStartParams, SessionStartResponse, SessionView,
-    ToolBatchView, ToolCallEventView, ToolCallView, ToolItemStatus,
+    AgentApiError, AgentApiErrorKind, AgentApiOutcome, EventCursor, GenerationConfig, InputItem,
+    JsonRpcRequest, JsonRpcResponse, METHOD_RUN_START, METHOD_SESSION_EVENTS_READ,
+    METHOD_SESSION_READ, METHOD_SESSION_START, ModelConfig, ReasoningEffort as ApiReasoningEffort,
+    RequestId, RunStartConfig, RunStartParams, RunStartResponse, SessionConfigInput,
+    SessionEventKindView, SessionEventView, SessionEventsReadParams, SessionEventsReadResponse,
+    SessionItemView, SessionReadParams, SessionReadResponse, SessionStartParams,
+    SessionStartResponse, SessionView, ToolBatchView, ToolCallEventView, ToolCallView,
+    ToolItemStatus,
 };
 use clap::Args;
 use serde::{Serialize, de::DeserializeOwned};
@@ -284,7 +285,6 @@ impl ChatSessionDriver {
             .open_or_start_session(SessionStartParams {
                 session_id: Some(session_id.clone()),
                 cwd: Some(options.workdir.clone()),
-                model: Some(model_config(&options.draft_settings)),
                 config: Some(session_start_config(&options.draft_settings)),
             })
             .await
@@ -761,7 +761,6 @@ impl ChatSessionDriver {
             .start_session(SessionStartParams {
                 session_id: Some(session_id.clone()),
                 cwd: Some(self.workdir.clone()),
-                model: Some(model_config(&self.settings)),
                 config: Some(session_start_config(&self.settings)),
             })
             .await
@@ -1100,10 +1099,13 @@ fn summary_from_session(session: &SessionView) -> ChatSessionSummary {
         updated_at_ns: Some(session.updated_at_ms.saturating_mul(1_000_000)),
         run_count: session.runs.len() as u64,
         provider: session
-            .model
+            .config
             .as_ref()
-            .map(|model| model.provider_id.clone()),
-        model: session.model.as_ref().map(|model| model.model.clone()),
+            .map(|config| config.model.provider_id.clone()),
+        model: session
+            .config
+            .as_ref()
+            .map(|config| config.model.model.clone()),
         active_run: session
             .runs
             .iter()
@@ -1209,16 +1211,26 @@ fn model_config(settings: &ChatDraftSettings) -> ModelConfig {
     }
 }
 
-fn session_start_config(settings: &ChatDraftSettings) -> SessionStartConfig {
-    SessionStartConfig {
-        max_output_tokens: settings.max_tokens,
-        reasoning_effort: api_reasoning_effort(settings),
+fn session_start_config(settings: &ChatDraftSettings) -> SessionConfigInput {
+    SessionConfigInput {
+        instructions: None,
+        model: Some(model_config(settings)),
+        generation: Some(generation_config(settings)),
+        context: None,
+        run_defaults: None,
     }
 }
 
 fn run_start_config(settings: &ChatDraftSettings) -> RunStartConfig {
     RunStartConfig {
         model: Some(model_config(settings)),
+        generation: Some(generation_config(settings)),
+        limits: None,
+    }
+}
+
+fn generation_config(settings: &ChatDraftSettings) -> GenerationConfig {
+    GenerationConfig {
         max_output_tokens: settings.max_tokens,
         reasoning_effort: api_reasoning_effort(settings),
     }
@@ -1440,7 +1452,8 @@ mod tests {
             id: "session_1".into(),
             status: api::SessionStatus::Active,
             cwd: None,
-            model: None,
+            config_revision: 0,
+            config: None,
             created_at_ms: 0,
             updated_at_ms: 0,
             runs: vec![api::RunView {
@@ -1486,7 +1499,8 @@ mod tests {
             id: "session_1".into(),
             status: api::SessionStatus::Idle,
             cwd: None,
-            model: None,
+            config_revision: 0,
+            config: None,
             created_at_ms: 0,
             updated_at_ms: 0,
             runs: vec![api::RunView {
@@ -1531,7 +1545,8 @@ mod tests {
             id: "session_1".into(),
             status: api::SessionStatus::Idle,
             cwd: None,
-            model: None,
+            config_revision: 0,
+            config: None,
             created_at_ms: 0,
             updated_at_ms: 0,
             runs: vec![api::RunView {
@@ -1612,8 +1627,9 @@ mod tests {
         let config = run_start_config(&settings);
 
         assert_eq!(config.model.expect("model").model, "gpt-5.5");
-        assert_eq!(config.max_output_tokens, Some(2048));
-        assert_eq!(config.reasoning_effort, Some(ApiReasoningEffort::None));
+        let generation = config.generation.expect("generation");
+        assert_eq!(generation.max_output_tokens, Some(2048));
+        assert_eq!(generation.reasoning_effort, Some(ApiReasoningEffort::None));
     }
 
     #[test]
@@ -1624,7 +1640,10 @@ mod tests {
 
         let config = run_start_config(&settings);
 
-        assert_eq!(config.reasoning_effort, None);
+        assert_eq!(
+            config.generation.expect("generation").reasoning_effort,
+            None
+        );
     }
 
     fn chat_args_with_effort(effort: Option<&str>) -> ChatArgs {

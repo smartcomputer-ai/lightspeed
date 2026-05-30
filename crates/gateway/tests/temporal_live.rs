@@ -8,7 +8,8 @@ use std::{
 
 use api::{
     AgentApiErrorKind, AgentApiService, InitializeParams, InputItem, RunStartParams, RunStatus,
-    SessionEventsReadParams, SessionItemView, SessionReadParams, SessionStartParams, SessionStatus,
+    SessionConfigInput, SessionEventsReadParams, SessionItemView, SessionReadParams,
+    SessionStartParams, SessionStatus,
 };
 use api_projection::model_to_api;
 use engine::{
@@ -161,8 +162,10 @@ async fn run_fake_live_client(
         .start_session(SessionStartParams {
             session_id: Some(session_id.as_str().to_owned()),
             cwd: None,
-            model: Some(model_to_api(&model)),
-            config: None,
+            config: Some(SessionConfigInput {
+                model: Some(model_to_api(&model)),
+                ..SessionConfigInput::default()
+            }),
         })
         .await?;
     assert_eq!(started.result.session.id, session_id.as_str());
@@ -237,8 +240,10 @@ async fn run_continue_as_new_live_client(
     api.start_session(SessionStartParams {
         session_id: Some(session_id.as_str().to_owned()),
         cwd: None,
-        model: Some(model_to_api(&model)),
-        config: None,
+        config: Some(SessionConfigInput {
+            model: Some(model_to_api(&model)),
+            ..SessionConfigInput::default()
+        }),
     })
     .await?;
 
@@ -328,8 +333,10 @@ async fn run_admission_failure_live_client(
     api.start_session(SessionStartParams {
         session_id: Some(session_id.as_str().to_owned()),
         cwd: None,
-        model: Some(model_to_api(&model)),
-        config: None,
+        config: Some(SessionConfigInput {
+            model: Some(model_to_api(&model)),
+            ..SessionConfigInput::default()
+        }),
     })
     .await?;
 
@@ -431,8 +438,10 @@ async fn run_openai_live_client(
     api.start_session(SessionStartParams {
         session_id: Some(session_id.as_str().to_owned()),
         cwd: None,
-        model: Some(model_to_api(&model)),
-        config: None,
+        config: Some(SessionConfigInput {
+            model: Some(model_to_api(&model)),
+            ..SessionConfigInput::default()
+        }),
     })
     .await?;
 
