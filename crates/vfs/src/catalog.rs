@@ -212,7 +212,7 @@ pub struct VfsMountTable {
 }
 
 #[async_trait]
-pub trait VfsSnapshotCatalog: Send + Sync {
+pub trait VfsSnapshotStore: Send + Sync {
     async fn record_snapshot(&self, record: VfsSnapshotRecord) -> Result<(), VfsCatalogError>;
 
     async fn read_snapshot(
@@ -255,9 +255,9 @@ pub trait VfsMountStore: Send + Sync {
     ) -> Result<(), VfsCatalogError>;
 }
 
-pub trait VfsCatalogStore: VfsSnapshotCatalog + VfsWorkspaceStore + VfsMountStore {}
+pub trait VfsCatalogStore: VfsSnapshotStore + VfsWorkspaceStore + VfsMountStore {}
 
-impl<T> VfsCatalogStore for T where T: VfsSnapshotCatalog + VfsWorkspaceStore + VfsMountStore {}
+impl<T> VfsCatalogStore for T where T: VfsSnapshotStore + VfsWorkspaceStore + VfsMountStore {}
 
 #[cfg(test)]
 mod tests {

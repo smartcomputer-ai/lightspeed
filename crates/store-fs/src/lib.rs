@@ -13,6 +13,10 @@
 //!     <percent-encoded-session-id>/
 //!       session.json
 //!       events.jsonl
+//!   vfs/
+//!     snapshots/<percent-encoded-snapshot-ref>.json
+//!     workspaces/<percent-encoded-workspace-id>.json
+//!     mounts/<percent-encoded-session-id>/<percent-encoded-mount-path>.json
 //! ```
 //!
 //! Session logs are append-oriented JSONL files with one committed
@@ -21,6 +25,7 @@
 
 mod blob;
 mod session;
+mod vfs;
 
 use std::{
     io,
@@ -34,6 +39,7 @@ use tokio::fs;
 
 pub use blob::FsBlobStore;
 pub use session::FsSessionStore;
+pub use vfs::FsVfsCatalogStore;
 
 pub const FORGE_DIR: &str = ".forge";
 
@@ -42,6 +48,7 @@ pub struct FsStore {
     root: Arc<PathBuf>,
     sessions: FsSessionStore,
     blobs: FsBlobStore,
+    vfs: FsVfsCatalogStore,
 }
 
 impl FsStore {
@@ -50,7 +57,8 @@ impl FsStore {
         Self {
             root: Arc::new(root.clone()),
             sessions: FsSessionStore::new(root.clone()),
-            blobs: FsBlobStore::new(root),
+            blobs: FsBlobStore::new(root.clone()),
+            vfs: FsVfsCatalogStore::new(root),
         }
     }
 
@@ -80,6 +88,10 @@ impl FsStore {
         &self.blobs
     }
 
+    pub fn vfs(&self) -> &FsVfsCatalogStore {
+        &self.vfs
+    }
+
     pub fn into_parts(self) -> (FsSessionStore, FsBlobStore) {
         (self.sessions, self.blobs)
     }
@@ -88,6 +100,7 @@ impl FsStore {
 async fn ensure_layout(root: &Path) -> io::Result<()> {
     fs::create_dir_all(sessions_dir(root)).await?;
     fs::create_dir_all(cas_dir(root)).await?;
+    fs::create_dir_all(vfs_dir(root)).await?;
     Ok(())
 }
 
@@ -101,6 +114,10 @@ fn sessions_dir(root: &Path) -> PathBuf {
 
 fn cas_dir(root: &Path) -> PathBuf {
     root.join("cas")
+}
+
+fn vfs_dir(root: &Path) -> PathBuf {
+    root.join("vfs")
 }
 
 async fn path_exists(path: &Path) -> io::Result<bool> {

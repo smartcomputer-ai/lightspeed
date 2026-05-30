@@ -661,8 +661,8 @@ later.
 - Done: define workspace head records with revisioned compare-and-set requests.
 - Done: define mount records for session-visible snapshot/workspace roots.
 - Done: define catalog/workspace/mount store traits.
-- Implement `store-fs` JSON-backed catalog records.
-- Implement `store-pg` catalog tables for hosted use.
+- Done: implement `store-fs` JSON-backed catalog records.
+- Done: implement `store-pg` catalog tables for hosted use.
 
 ### G3: CAS Filesystem Adapter
 

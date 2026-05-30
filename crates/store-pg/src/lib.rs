@@ -7,6 +7,7 @@ mod blob;
 mod object;
 mod session;
 mod shared;
+mod vfs;
 
 use std::sync::Arc;
 
