@@ -212,9 +212,11 @@ for model, instructions, generation, context, and run defaults; instructions can
 be supplied as inline text or an existing CAS blob ref. `session/update` applies
 revision-checked patches to idle sessions without requiring clients to resubmit
 the full config. `run/start` accepts typed per-run model, generation, and limit
-overrides. The gateway owns API-to-command conversion for `run/start`: it writes
-run input to CAS, builds `CoreAgentCommand::RequestRun`, wraps the encoded core
-command as a workflow admission, and signals the workflow.
+overrides, and input can be supplied as inline text or an existing text CAS blob
+ref. The gateway owns API-to-command conversion for `run/start`: it writes
+inline run input to CAS or validates the supplied ref, builds
+`CoreAgentCommand::RequestRun`, wraps the encoded core command as a workflow
+admission, and signals the workflow.
 
 ## Testing
 

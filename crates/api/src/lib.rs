@@ -731,6 +731,7 @@ pub enum RunStatus {
 )]
 pub enum InputItem {
     Text { text: String },
+    TextRef { blob_ref: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -332,6 +332,8 @@ CLI, not by extra gateway helper binaries.
 CoreAgent's internal `SessionConfig` directly. `session/update` is patch-shaped
 and revision-checked, so clients can update instructions, model/generation,
 context, or run defaults without read/merge/write replacement races.
+`run/start` input accepts either inline text or a text CAS blob ref; single refs
+are passed through to CoreAgent after validation.
 
 ## Migration Plan
 

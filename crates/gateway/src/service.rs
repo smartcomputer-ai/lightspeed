@@ -10,7 +10,7 @@ use std::{
 use api::{
     AgentApiError, AgentApiErrorKind, AgentApiOutcome, AgentApiService, ClientCapabilities,
     ContextConfigInput as ApiContextConfigInput, ContextConfigPatchInput, FieldPatch,
-    GenerationConfig, GenerationConfigPatch, InitializeParams, InitializeResponse,
+    GenerationConfig, GenerationConfigPatch, InitializeParams, InitializeResponse, InputItem,
     InstructionsSource, ModelConfig, ReasoningEffort, RunCancelParams, RunCancelResponse,
     RunDefaultsConfig, RunDefaultsPatch, RunLimitsConfig, RunStartConfig, RunStartParams,
     RunStartResponse, RunView, ServerCapabilities, ServerInfo, SessionCloseParams,
@@ -20,7 +20,7 @@ use api::{
 };
 use api_projection::{
     CoreAgentProjector, MAX_EVENT_PAGE_LIMIT, ProjectSession, api_kind_from_str, api_run_id,
-    decode_dynamic_entry, event_cursor, event_page_limit, input_text, map_session_store_error,
+    decode_dynamic_entry, event_cursor, event_page_limit, map_session_store_error,
     parse_api_run_id, read_all_session_entries, replay_core_agent_state,
 };
 use async_trait::async_trait;
@@ -853,16 +853,11 @@ impl AgentApiService for GatewayAgentApi {
         let session_id = SessionId::try_new(params.session_id).map_err(|error| {
             AgentApiError::invalid_request(format!("invalid session id: {error}"))
         })?;
-        let text = input_text(&params.input)?;
         let submission_id = self.allocate_submission_id();
         let run_config = self
             .run_config_for_start(&session_id, params.config)
             .await?;
-        let input_ref = self
-            .store
-            .put_bytes(text.into_bytes())
-            .await
-            .map_err(map_blob_store_error)?;
+        let input_ref = run_input_ref_from_api(self.store.as_ref(), &params.input).await?;
         let command = engine::CoreAgentCodec
             .encode_command(&CoreAgentCommand::RequestRun {
                 submission_id: Some(submission_id.clone()),
@@ -937,6 +932,62 @@ impl AgentApiService for GatewayAgentApi {
             .await?;
         Ok(AgentApiOutcome::new(RunCancelResponse { run }))
     }
+}
+
+async fn run_input_ref_from_api(
+    store: &dyn BlobStore,
+    input: &[InputItem],
+) -> Result<BlobRef, AgentApiError> {
+    if let [InputItem::TextRef { blob_ref }] = input {
+        let blob_ref = parse_blob_ref(blob_ref)?;
+        let text = store
+            .read_text(&blob_ref)
+            .await
+            .map_err(map_input_blob_store_error)?;
+        if text.trim().is_empty() {
+            return Err(empty_run_input_error());
+        }
+        return Ok(blob_ref);
+    }
+
+    let mut parts = Vec::new();
+    for item in input {
+        match item {
+            InputItem::Text { text } => {
+                let text = text.trim();
+                if !text.is_empty() {
+                    parts.push(text.to_owned());
+                }
+            }
+            InputItem::TextRef { blob_ref } => {
+                let blob_ref = parse_blob_ref(blob_ref)?;
+                let text = store
+                    .read_text(&blob_ref)
+                    .await
+                    .map_err(map_input_blob_store_error)?;
+                let text = text.trim();
+                if !text.is_empty() {
+                    parts.push(text.to_owned());
+                }
+            }
+        }
+    }
+
+    if parts.is_empty() {
+        return Err(empty_run_input_error());
+    }
+    store
+        .put_bytes(parts.join("\n\n").into_bytes())
+        .await
+        .map_err(map_blob_store_error)
+}
+
+fn parse_blob_ref(value: &str) -> Result<BlobRef, AgentApiError> {
+    BlobRef::parse(value).map_err(|error| AgentApiError::invalid_request(error.to_string()))
+}
+
+fn empty_run_input_error() -> AgentApiError {
+    AgentApiError::invalid_request("run/start input must contain at least one non-empty text item")
 }
 
 fn apply_generation_config(
@@ -1180,6 +1231,15 @@ fn map_blob_store_error(error: BlobStoreError) -> AgentApiError {
     }
 }
 
+fn map_input_blob_store_error(error: BlobStoreError) -> AgentApiError {
+    match error {
+        BlobStoreError::NotFound { blob_ref } => {
+            AgentApiError::invalid_request(format!("run/start input blob not found: {blob_ref}"))
+        }
+        BlobStoreError::Store { message } => AgentApiError::invalid_request(message),
+    }
+}
+
 fn map_workflow_start_error(error: WorkflowStartError) -> AgentApiError {
     match error {
         WorkflowStartError::AlreadyStarted { .. } => {
@@ -1302,6 +1362,49 @@ mod tests {
         assert_eq!(
             defaults.reasoning.expect("reasoning").effort.as_deref(),
             Some("medium")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn run_input_ref_from_api_preserves_single_text_ref() {
+        let store = engine::storage::InMemoryBlobStore::new();
+        let blob_ref = store.insert_text("hello from cas").await;
+
+        let input_ref = run_input_ref_from_api(
+            &store,
+            &[InputItem::TextRef {
+                blob_ref: blob_ref.as_str().to_owned(),
+            }],
+        )
+        .await
+        .expect("input ref");
+
+        assert_eq!(input_ref, blob_ref);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn run_input_ref_from_api_joins_text_and_refs() {
+        let store = engine::storage::InMemoryBlobStore::new();
+        let blob_ref = store.insert_text(" second ").await;
+
+        let input_ref = run_input_ref_from_api(
+            &store,
+            &[
+                InputItem::Text {
+                    text: " first ".to_owned(),
+                },
+                InputItem::TextRef {
+                    blob_ref: blob_ref.as_str().to_owned(),
+                },
+            ],
+        )
+        .await
+        .expect("input ref");
+
+        assert_ne!(input_ref, blob_ref);
+        assert_eq!(
+            store.read_text(&input_ref).await.expect("stored input"),
+            "first\n\nsecond"
         );
     }
 

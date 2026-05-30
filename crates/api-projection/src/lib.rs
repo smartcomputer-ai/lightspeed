@@ -620,13 +620,22 @@ pub fn replay_core_agent_state(
 }
 
 pub fn input_text(input: &[InputItem]) -> Result<String, AgentApiError> {
-    let parts = input
-        .iter()
-        .map(|item| match item {
-            InputItem::Text { text } => text.trim(),
-        })
-        .filter(|text| !text.is_empty())
-        .collect::<Vec<_>>();
+    let mut parts = Vec::new();
+    for item in input {
+        match item {
+            InputItem::Text { text } => {
+                let text = text.trim();
+                if !text.is_empty() {
+                    parts.push(text);
+                }
+            }
+            InputItem::TextRef { .. } => {
+                return Err(AgentApiError::invalid_request(
+                    "run/start textRef input requires blob store resolution",
+                ));
+            }
+        }
+    }
     if parts.is_empty() {
         return Err(AgentApiError::invalid_request(
             "run/start input must contain at least one non-empty text item",
@@ -1041,6 +1050,16 @@ mod tests {
         .expect("valid input");
 
         assert_eq!(text, "first\n\nsecond");
+    }
+
+    #[test]
+    fn input_text_rejects_unresolved_text_refs() {
+        let error = input_text(&[InputItem::TextRef {
+            blob_ref: BlobRef::from_bytes(b"hello").as_str().to_owned(),
+        }])
+        .expect_err("text refs require store resolution");
+
+        assert_eq!(error.kind, api::AgentApiErrorKind::InvalidRequest);
     }
 
     fn entry(seq: u64, items: Vec<ContextItem>) -> CoreAgentEntry {
