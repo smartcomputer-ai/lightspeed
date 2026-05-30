@@ -1,6 +1,7 @@
 //! Filesystem adapters over CAS-backed VFS snapshots and workspaces.
 
 use std::{
+    collections::{BTreeMap, BTreeSet},
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -133,6 +134,205 @@ impl VfsWorkspaceFileSystem {
             .await
             .map_err(|error| map_vfs_error(error, request_path))?;
         self.commit_head(record, manifest).await
+    }
+}
+
+#[derive(Clone)]
+pub struct MountedVfsFileSystem {
+    blobs: Arc<dyn BlobStore>,
+    workspace_store: Arc<dyn ::vfs::VfsWorkspaceStore>,
+    mounts: Arc<Vec<::vfs::VfsMountRecord>>,
+}
+
+#[derive(Clone, Debug)]
+struct ResolvedMount {
+    mount: ::vfs::VfsMountRecord,
+    inner_path: FsPath,
+}
+
+impl MountedVfsFileSystem {
+    pub fn new(
+        blobs: Arc<dyn BlobStore>,
+        workspace_store: Arc<dyn ::vfs::VfsWorkspaceStore>,
+        mut mounts: Vec<::vfs::VfsMountRecord>,
+    ) -> FsResult<Self> {
+        validate_mounts(&mounts)?;
+        mounts.sort_by(|left, right| {
+            right
+                .mount_path
+                .depth()
+                .cmp(&left.mount_path.depth())
+                .then_with(|| left.mount_path.cmp(&right.mount_path))
+        });
+        Ok(Self {
+            blobs,
+            workspace_store,
+            mounts: Arc::new(mounts),
+        })
+    }
+
+    pub fn from_mount_table(
+        blobs: Arc<dyn BlobStore>,
+        workspace_store: Arc<dyn ::vfs::VfsWorkspaceStore>,
+        mount_table: ::vfs::VfsMountTable,
+    ) -> FsResult<Self> {
+        Self::new(blobs, workspace_store, mount_table.mounts)
+    }
+
+    pub fn mounts(&self) -> &[::vfs::VfsMountRecord] {
+        self.mounts.as_slice()
+    }
+
+    fn resolve_mount(&self, path: &FsPath) -> FsResult<Option<ResolvedMount>> {
+        let vfs_path = fs_path_to_vfs_path(path)?;
+        for mount in self.mounts.iter() {
+            if vfs_path_starts_with(&vfs_path, &mount.mount_path) {
+                return Ok(Some(ResolvedMount {
+                    mount: mount.clone(),
+                    inner_path: vfs_path_to_fs_path(&strip_mount_path(
+                        &vfs_path,
+                        &mount.mount_path,
+                    )?)?,
+                }));
+            }
+        }
+        Ok(None)
+    }
+
+    async fn file_system_for_mount(
+        &self,
+        mount: &::vfs::VfsMountRecord,
+        request_path: &FsPath,
+    ) -> FsResult<Box<dyn FileSystem>> {
+        match &mount.source {
+            ::vfs::VfsMountSource::Snapshot { snapshot_ref } => {
+                let fs = VfsSnapshotFileSystem::new(self.blobs.clone(), snapshot_ref.clone())
+                    .await
+                    .map_err(|error| map_vfs_error(error, request_path))?;
+                Ok(Box::new(fs))
+            }
+            ::vfs::VfsMountSource::Workspace { workspace_id } => {
+                Ok(Box::new(VfsWorkspaceFileSystem::new(
+                    self.blobs.clone(),
+                    self.workspace_store.clone(),
+                    workspace_id.clone(),
+                )))
+            }
+        }
+    }
+
+    fn writable_workspace_for_mount(
+        &self,
+        mount: &::vfs::VfsMountRecord,
+        request_path: &FsPath,
+    ) -> FsResult<VfsWorkspaceFileSystem> {
+        if !mount.access.is_writable() {
+            return Err(FsError::PermissionDenied {
+                path: request_path.clone(),
+            });
+        }
+        match &mount.source {
+            ::vfs::VfsMountSource::Workspace { workspace_id } => Ok(VfsWorkspaceFileSystem::new(
+                self.blobs.clone(),
+                self.workspace_store.clone(),
+                workspace_id.clone(),
+            )),
+            ::vfs::VfsMountSource::Snapshot { .. } => Err(FsError::PermissionDenied {
+                path: request_path.clone(),
+            }),
+        }
+    }
+
+    fn synthetic_directory_entries(&self, path: &FsPath) -> FsResult<Vec<ReadDirectoryEntry>> {
+        let vfs_path = fs_path_to_vfs_path(path)?;
+        let mut entries = BTreeMap::new();
+        for mount in self.mounts.iter() {
+            if let Some(file_name) = immediate_mount_child(&vfs_path, &mount.mount_path) {
+                entries.insert(
+                    file_name.to_owned(),
+                    ReadDirectoryEntry {
+                        file_name: file_name.to_owned(),
+                        is_directory: true,
+                        is_file: false,
+                    },
+                );
+            }
+        }
+        Ok(entries.into_values().collect())
+    }
+
+    fn synthetic_metadata(&self, path: &FsPath) -> FsResult<Option<FileMetadata>> {
+        if self.synthetic_directory_entries(path)?.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(directory_metadata()))
+    }
+
+    async fn copy_generic(
+        &self,
+        source_path: &FsPath,
+        destination_path: &FsPath,
+        options: CopyOptions,
+    ) -> FsResult<()> {
+        let source_path = fs_path_key(source_path)?;
+        let destination_path = fs_path_key(destination_path)?;
+        let source_metadata = self.get_metadata(&source_path).await?;
+        if source_metadata.is_file {
+            let bytes = self.read_file(&source_path).await?;
+            return self.write_file(&destination_path, bytes).await;
+        }
+        if !source_metadata.is_directory {
+            return Err(FsError::InvalidInput {
+                message: format!("path is neither a file nor a directory: {source_path}"),
+            });
+        }
+        if !options.recursive {
+            return Err(FsError::InvalidInput {
+                message: "copy requires recursive: true when source is a directory".to_owned(),
+            });
+        }
+        if destination_path.starts_with(&source_path) {
+            return Err(FsError::InvalidInput {
+                message: "cannot copy a directory to itself or one of its descendants".to_owned(),
+            });
+        }
+        self.copy_directory_generic(&source_path, &destination_path)
+            .await
+    }
+
+    async fn copy_directory_generic(
+        &self,
+        source_path: &FsPath,
+        destination_path: &FsPath,
+    ) -> FsResult<()> {
+        let mut stack = vec![(source_path.clone(), destination_path.clone(), false)];
+        while let Some((source, destination, visited)) = stack.pop() {
+            if visited {
+                let bytes = self.read_file(&source).await?;
+                self.write_file(&destination, bytes).await?;
+                continue;
+            }
+
+            let metadata = self.get_metadata(&source).await?;
+            if metadata.is_file {
+                stack.push((source, destination, true));
+                continue;
+            }
+
+            self.remove(&destination, RemoveOptions::recursive().force())
+                .await?;
+            self.create_directory(&destination, CreateDirectoryOptions::single())
+                .await?;
+
+            let mut entries = self.read_directory(&source).await?;
+            entries.sort_by(|left, right| right.file_name.cmp(&left.file_name));
+            for entry in entries {
+                let source_child = source.join(&entry.file_name)?;
+                let destination_child = destination.join(&entry.file_name)?;
+                stack.push((source_child, destination_child, entry.is_file));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -304,18 +504,232 @@ impl FileSystem for VfsWorkspaceFileSystem {
     }
 }
 
-fn fs_path_to_vfs_path(path: &FsPath) -> FsResult<::vfs::VfsPath> {
-    if path.has_unresolved_parent() {
-        return Err(FsError::InvalidInput {
-            message: format!("vfs path cannot contain unresolved parent components: {path}"),
-        });
+#[async_trait]
+impl FileSystem for MountedVfsFileSystem {
+    fn access_policy(&self) -> FileAccessPolicy {
+        if self.mounts.iter().any(|mount| mount.access.is_writable()) {
+            FileAccessPolicy::FullReadWrite
+        } else {
+            FileAccessPolicy::FullReadOnly
+        }
     }
+
+    async fn read_file(&self, path: &FsPath) -> FsResult<Vec<u8>> {
+        if let Some(resolved) = self.resolve_mount(path)? {
+            let fs = self.file_system_for_mount(&resolved.mount, path).await?;
+            return fs.read_file(&resolved.inner_path).await;
+        }
+        if self.synthetic_metadata(path)?.is_some() {
+            return Err(FsError::InvalidInput {
+                message: format!("path is not a file: {path}"),
+            });
+        }
+        Err(FsError::NotFound { path: path.clone() })
+    }
+
+    async fn write_file(&self, path: &FsPath, contents: Vec<u8>) -> FsResult<()> {
+        let Some(resolved) = self.resolve_mount(path)? else {
+            return Err(FsError::PermissionDenied { path: path.clone() });
+        };
+        let fs = self.writable_workspace_for_mount(&resolved.mount, path)?;
+        fs.write_file(&resolved.inner_path, contents).await
+    }
+
+    async fn create_directory(
+        &self,
+        path: &FsPath,
+        options: CreateDirectoryOptions,
+    ) -> FsResult<()> {
+        if let Some(resolved) = self.resolve_mount(path)? {
+            let fs = self.writable_workspace_for_mount(&resolved.mount, path)?;
+            return fs.create_directory(&resolved.inner_path, options).await;
+        }
+        if self.synthetic_metadata(path)?.is_some() {
+            return if options.recursive {
+                Ok(())
+            } else {
+                Err(FsError::AlreadyExists { path: path.clone() })
+            };
+        }
+        Err(FsError::PermissionDenied { path: path.clone() })
+    }
+
+    async fn get_metadata(&self, path: &FsPath) -> FsResult<FileMetadata> {
+        if let Some(resolved) = self.resolve_mount(path)? {
+            let fs = self.file_system_for_mount(&resolved.mount, path).await?;
+            return fs.get_metadata(&resolved.inner_path).await;
+        }
+        if let Some(metadata) = self.synthetic_metadata(path)? {
+            return Ok(metadata);
+        }
+        Err(FsError::NotFound { path: path.clone() })
+    }
+
+    async fn read_directory(&self, path: &FsPath) -> FsResult<Vec<ReadDirectoryEntry>> {
+        if let Some(resolved) = self.resolve_mount(path)? {
+            let fs = self.file_system_for_mount(&resolved.mount, path).await?;
+            return fs.read_directory(&resolved.inner_path).await;
+        }
+        let entries = self.synthetic_directory_entries(path)?;
+        if !entries.is_empty() {
+            return Ok(entries);
+        }
+        Err(FsError::NotFound { path: path.clone() })
+    }
+
+    async fn remove(&self, path: &FsPath, options: RemoveOptions) -> FsResult<()> {
+        let Some(resolved) = self.resolve_mount(path)? else {
+            return Err(FsError::PermissionDenied { path: path.clone() });
+        };
+        let fs = self.writable_workspace_for_mount(&resolved.mount, path)?;
+        fs.remove(&resolved.inner_path, options).await
+    }
+
+    async fn copy(
+        &self,
+        source_path: &FsPath,
+        destination_path: &FsPath,
+        options: CopyOptions,
+    ) -> FsResult<()> {
+        if let (Some(source), Some(destination)) = (
+            self.resolve_mount(source_path)?,
+            self.resolve_mount(destination_path)?,
+        ) && source.mount.mount_path == destination.mount.mount_path
+        {
+            let fs = self.writable_workspace_for_mount(&destination.mount, destination_path)?;
+            return fs
+                .copy(&source.inner_path, &destination.inner_path, options)
+                .await;
+        }
+        self.copy_generic(source_path, destination_path, options)
+            .await
+    }
+}
+
+fn fs_path_to_vfs_path(path: &FsPath) -> FsResult<::vfs::VfsPath> {
+    let path = fs_path_key(path)?;
     if path.is_root() {
         return Ok(::vfs::VfsPath::root());
     }
     ::vfs::VfsPath::parse(path.as_str()).map_err(|error| FsError::InvalidInput {
         message: error.to_string(),
     })
+}
+
+fn fs_path_key(path: &FsPath) -> FsResult<FsPath> {
+    if path.has_unresolved_parent() {
+        return Err(FsError::InvalidInput {
+            message: format!("vfs path cannot contain unresolved parent components: {path}"),
+        });
+    }
+    if path.is_absolute() {
+        Ok(path.clone())
+    } else if path.is_root() {
+        Ok(FsPath::root())
+    } else {
+        FsPath::new(format!("/{}", path.as_str())).map_err(Into::into)
+    }
+}
+
+fn vfs_path_to_fs_path(path: &::vfs::VfsPath) -> FsResult<FsPath> {
+    FsPath::new(path.as_str()).map_err(Into::into)
+}
+
+fn strip_mount_path(
+    path: &::vfs::VfsPath,
+    mount_path: &::vfs::VfsPath,
+) -> FsResult<::vfs::VfsPath> {
+    if mount_path.is_root() {
+        return Ok(path.clone());
+    }
+    if path == mount_path {
+        return Ok(::vfs::VfsPath::root());
+    }
+    let suffix = path
+        .as_str()
+        .strip_prefix(mount_path.as_str())
+        .ok_or_else(|| FsError::InvalidInput {
+            message: format!("path {path} is not under mount {mount_path}"),
+        })?;
+    ::vfs::VfsPath::parse(suffix).map_err(|error| FsError::InvalidInput {
+        message: error.to_string(),
+    })
+}
+
+fn validate_mounts(mounts: &[::vfs::VfsMountRecord]) -> FsResult<()> {
+    let mut seen = BTreeSet::new();
+    for mount in mounts {
+        if !seen.insert(mount.mount_path.clone()) {
+            return Err(FsError::InvalidInput {
+                message: format!("duplicate vfs mount path: {}", mount.mount_path),
+            });
+        }
+        if mount.access.is_writable()
+            && matches!(mount.source, ::vfs::VfsMountSource::Snapshot { .. })
+        {
+            return Err(FsError::InvalidInput {
+                message: format!("snapshot mount cannot be writable: {}", mount.mount_path),
+            });
+        }
+    }
+
+    let mounts = mounts.iter().collect::<Vec<_>>();
+    for (index, left) in mounts.iter().enumerate() {
+        for right in mounts.iter().skip(index + 1) {
+            if vfs_path_starts_with(&left.mount_path, &right.mount_path)
+                || vfs_path_starts_with(&right.mount_path, &left.mount_path)
+            {
+                return Err(FsError::InvalidInput {
+                    message: format!(
+                        "nested vfs mounts are not supported: {} and {}",
+                        left.mount_path, right.mount_path
+                    ),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn immediate_mount_child<'a>(
+    parent: &::vfs::VfsPath,
+    mount_path: &'a ::vfs::VfsPath,
+) -> Option<&'a str> {
+    let parent_components = parent.components();
+    let mount_components = mount_path.components();
+    if parent_components.len() >= mount_components.len() {
+        return None;
+    }
+    if parent_components
+        .iter()
+        .zip(mount_components.iter())
+        .all(|(left, right)| left == right)
+    {
+        Some(mount_components[parent_components.len()])
+    } else {
+        None
+    }
+}
+
+fn vfs_path_starts_with(path: &::vfs::VfsPath, base: &::vfs::VfsPath) -> bool {
+    if base.is_root() {
+        return true;
+    }
+    path == base
+        || path
+            .as_str()
+            .strip_prefix(base.as_str())
+            .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
+fn directory_metadata() -> FileMetadata {
+    FileMetadata {
+        is_directory: true,
+        is_file: false,
+        is_symlink: false,
+        created_at_ms: 0,
+        modified_at_ms: 0,
+    }
 }
 
 fn now_ms() -> FsResult<i64> {
@@ -395,7 +809,7 @@ mod tests {
 
     use ::vfs::VfsWorkspaceStore;
     use async_trait::async_trait;
-    use engine::storage::InMemoryBlobStore;
+    use engine::{SessionId, storage::InMemoryBlobStore};
     use tokio::sync::Mutex;
 
     use super::*;
@@ -531,6 +945,99 @@ mod tests {
             .expect("create workspace");
         let fs = VfsWorkspaceFileSystem::new(blobs.clone(), store, workspace_id.clone());
         (blobs, fs, workspace_id, snapshot.snapshot_ref)
+    }
+
+    async fn create_test_snapshot(
+        blobs: &InMemoryBlobStore,
+        files: Vec<::vfs::InlineFile>,
+    ) -> ::vfs::CreateVfsSnapshotResult {
+        ::vfs::create_inline_snapshot(blobs, ::vfs::CreateInlineSnapshotRequest::new(files))
+            .await
+            .expect("create snapshot")
+    }
+
+    async fn create_test_workspace(
+        store: &TestWorkspaceStore,
+        workspace_id: &str,
+        snapshot_ref: BlobRef,
+    ) -> ::vfs::VfsWorkspaceId {
+        let workspace_id = ::vfs::VfsWorkspaceId::new(workspace_id);
+        store
+            .create_workspace(::vfs::CreateVfsWorkspaceRecord {
+                workspace_id: workspace_id.clone(),
+                base_snapshot_ref: Some(snapshot_ref.clone()),
+                head_snapshot_ref: snapshot_ref,
+                created_at_ms: 1,
+            })
+            .await
+            .expect("create workspace");
+        workspace_id
+    }
+
+    fn mount_record(
+        session_id: &SessionId,
+        mount_path: &str,
+        source: ::vfs::VfsMountSource,
+        access: ::vfs::VfsMountAccess,
+    ) -> ::vfs::VfsMountRecord {
+        ::vfs::VfsMountRecord {
+            session_id: session_id.clone(),
+            mount_path: ::vfs::VfsPath::parse(mount_path).unwrap(),
+            source,
+            access,
+        }
+    }
+
+    async fn test_mounted_fs() -> (
+        Arc<InMemoryBlobStore>,
+        Arc<TestWorkspaceStore>,
+        MountedVfsFileSystem,
+        ::vfs::VfsWorkspaceId,
+    ) {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let store = Arc::new(TestWorkspaceStore::default());
+        let session_id = SessionId::new("session_1");
+
+        let skill_snapshot = create_test_snapshot(
+            blobs.as_ref(),
+            vec![
+                ::vfs::InlineFile::new("SKILL.md", b"# Rust Skill\n".to_vec()).unwrap(),
+                ::vfs::InlineFile::new("references/info.md", b"reference\n".to_vec()).unwrap(),
+            ],
+        )
+        .await;
+        let workspace_snapshot = create_test_snapshot(blobs.as_ref(), Vec::new()).await;
+        let workspace_id = create_test_workspace(
+            store.as_ref(),
+            "workspace_1",
+            workspace_snapshot.snapshot_ref,
+        )
+        .await;
+        let fs = MountedVfsFileSystem::new(
+            blobs.clone(),
+            store.clone(),
+            vec![
+                mount_record(
+                    &session_id,
+                    "/skills/rust",
+                    ::vfs::VfsMountSource::Snapshot {
+                        snapshot_ref: skill_snapshot.snapshot_ref,
+                    },
+                    ::vfs::VfsMountAccess::ReadOnly,
+                ),
+                mount_record(
+                    &session_id,
+                    "/workspace",
+                    ::vfs::VfsMountSource::Workspace {
+                        workspace_id: workspace_id.clone(),
+                    },
+                    ::vfs::VfsMountAccess::ReadWrite,
+                ),
+            ],
+        )
+        .expect("mounted fs");
+
+        (blobs, store, fs, workspace_id)
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -880,6 +1387,287 @@ mod tests {
         )
         .await
         .expect("list through tool");
+        assert_eq!(listing.entries.len(), 2);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn mounted_vfs_file_system_lists_synthetic_directories_and_routes_mounts() {
+        let (_blobs, _store, fs, workspace_id) = test_mounted_fs().await;
+
+        assert_eq!(fs.access_policy(), FileAccessPolicy::FullReadWrite);
+        assert_eq!(
+            fs.read_directory(&FsPath::root()).await.expect("list root"),
+            vec![
+                ReadDirectoryEntry {
+                    file_name: "skills".to_owned(),
+                    is_directory: true,
+                    is_file: false,
+                },
+                ReadDirectoryEntry {
+                    file_name: "workspace".to_owned(),
+                    is_directory: true,
+                    is_file: false,
+                },
+            ]
+        );
+        assert_eq!(
+            fs.read_directory(&FsPath::new("/skills").unwrap())
+                .await
+                .expect("list synthetic skills"),
+            vec![ReadDirectoryEntry {
+                file_name: "rust".to_owned(),
+                is_directory: true,
+                is_file: false,
+            }]
+        );
+        assert!(
+            fs.get_metadata(&FsPath::new("/skills").unwrap())
+                .await
+                .expect("stat synthetic skills")
+                .is_directory
+        );
+        assert_eq!(
+            fs.read_file_text(&FsPath::new("/skills/rust/SKILL.md").unwrap())
+                .await
+                .expect("read skill"),
+            "# Rust Skill\n"
+        );
+
+        assert!(matches!(
+            fs.write_file(
+                &FsPath::new("/skills/rust/SKILL.md").unwrap(),
+                b"updated".to_vec()
+            )
+            .await,
+            Err(FsError::PermissionDenied { .. })
+        ));
+        fs.write_file(
+            &FsPath::new("/workspace/out.txt").unwrap(),
+            b"out\n".to_vec(),
+        )
+        .await
+        .expect("write workspace");
+        assert_eq!(
+            fs.read_file_text(&FsPath::new("/workspace/out.txt").unwrap())
+                .await
+                .expect("read workspace file"),
+            "out\n"
+        );
+
+        let record = fs
+            .workspace_store
+            .read_workspace(&workspace_id)
+            .await
+            .expect("read workspace");
+        assert_eq!(record.revision, 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn mounted_vfs_file_system_rejects_invalid_mount_tables() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let store = Arc::new(TestWorkspaceStore::default());
+        let session_id = SessionId::new("session_1");
+        let snapshot_ref = BlobRef::from_bytes(b"snapshot");
+        let workspace_id = ::vfs::VfsWorkspaceId::new("workspace_1");
+
+        let duplicate = vec![
+            mount_record(
+                &session_id,
+                "/workspace",
+                ::vfs::VfsMountSource::Workspace {
+                    workspace_id: workspace_id.clone(),
+                },
+                ::vfs::VfsMountAccess::ReadWrite,
+            ),
+            mount_record(
+                &session_id,
+                "/workspace",
+                ::vfs::VfsMountSource::Workspace {
+                    workspace_id: workspace_id.clone(),
+                },
+                ::vfs::VfsMountAccess::ReadWrite,
+            ),
+        ];
+        assert!(matches!(
+            MountedVfsFileSystem::new(blobs.clone(), store.clone(), duplicate),
+            Err(FsError::InvalidInput { .. })
+        ));
+
+        let nested = vec![
+            mount_record(
+                &session_id,
+                "/skills",
+                ::vfs::VfsMountSource::Snapshot {
+                    snapshot_ref: snapshot_ref.clone(),
+                },
+                ::vfs::VfsMountAccess::ReadOnly,
+            ),
+            mount_record(
+                &session_id,
+                "/skills/rust",
+                ::vfs::VfsMountSource::Snapshot {
+                    snapshot_ref: snapshot_ref.clone(),
+                },
+                ::vfs::VfsMountAccess::ReadOnly,
+            ),
+        ];
+        assert!(matches!(
+            MountedVfsFileSystem::new(blobs.clone(), store.clone(), nested),
+            Err(FsError::InvalidInput { .. })
+        ));
+
+        let writable_snapshot = vec![mount_record(
+            &session_id,
+            "/skills/rust",
+            ::vfs::VfsMountSource::Snapshot { snapshot_ref },
+            ::vfs::VfsMountAccess::ReadWrite,
+        )];
+        assert!(matches!(
+            MountedVfsFileSystem::new(blobs, store, writable_snapshot),
+            Err(FsError::InvalidInput { .. })
+        ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn mounted_vfs_file_system_copies_across_mounts() {
+        let (_blobs, _store, fs, _workspace_id) = test_mounted_fs().await;
+
+        fs.copy(
+            &FsPath::new("/skills/rust/SKILL.md").unwrap(),
+            &FsPath::new("/workspace/SKILL-copy.md").unwrap(),
+            CopyOptions::file(),
+        )
+        .await
+        .expect("copy file across mounts");
+        assert_eq!(
+            fs.read_file_text(&FsPath::new("/workspace/SKILL-copy.md").unwrap())
+                .await
+                .expect("read copied skill"),
+            "# Rust Skill\n"
+        );
+
+        fs.copy(
+            &FsPath::new("/skills/rust").unwrap(),
+            &FsPath::new("/workspace/skill-copy").unwrap(),
+            CopyOptions::recursive(),
+        )
+        .await
+        .expect("copy directory across mounts");
+        assert_eq!(
+            fs.read_file_text(&FsPath::new("/workspace/skill-copy/references/info.md").unwrap())
+                .await
+                .expect("read copied reference"),
+            "reference\n"
+        );
+
+        assert!(matches!(
+            fs.copy(
+                &FsPath::new("/workspace/SKILL-copy.md").unwrap(),
+                &FsPath::new("/skills/rust/generated.md").unwrap(),
+                CopyOptions::file(),
+            )
+            .await,
+            Err(FsError::PermissionDenied { .. })
+        ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn existing_file_tools_work_against_mounted_vfs_file_system() {
+        let (blobs, _store, fs, _workspace_id) = test_mounted_fs().await;
+        let ctx = HostToolContext::new(Arc::new(fs.clone()), None, blobs)
+            .with_cwd(FsPath::new("/workspace").unwrap());
+
+        let skill = invoke_read_file(
+            &ctx,
+            ReadFileArgs {
+                path: FsPath::new("/skills/rust/SKILL.md").unwrap(),
+                offset: None,
+                limit: None,
+            },
+        )
+        .await
+        .expect("read skill through mounted fs");
+        assert_eq!(skill.text, "# Rust Skill");
+
+        invoke_write_file(
+            &ctx,
+            WriteFileArgs {
+                path: FsPath::new("src/lib.rs").unwrap(),
+                content: "pub fn alpha() {}\n".to_owned(),
+            },
+        )
+        .await
+        .expect("write workspace through mounted fs");
+        invoke_edit_file(
+            &ctx,
+            EditFileArgs {
+                path: FsPath::new("src/lib.rs").unwrap(),
+                old_string: "alpha".to_owned(),
+                new_string: "beta".to_owned(),
+                replace_all: false,
+            },
+        )
+        .await
+        .expect("edit workspace through mounted fs");
+        invoke_apply_patch(
+            &ctx,
+            ApplyPatchArgs {
+                patch: "*** Begin Patch\n*** Add File: notes.md\n+mounted\n*** End Patch"
+                    .to_owned(),
+            },
+        )
+        .await
+        .expect("patch workspace through mounted fs");
+
+        let grep = invoke_grep(
+            &ctx,
+            GrepArgs {
+                pattern: "beta".to_owned(),
+                path: Some(FsPath::root()),
+                include: Some("*.rs".to_owned()),
+                case_sensitive: true,
+                max_depth: None,
+                limit: None,
+            },
+        )
+        .await
+        .expect("grep mounted fs");
+        assert_eq!(
+            grep.matches
+                .iter()
+                .map(|match_| match_.path.clone())
+                .collect::<Vec<_>>(),
+            vec![FsPath::new("/workspace/src/lib.rs").unwrap()]
+        );
+
+        let glob = invoke_glob(
+            &ctx,
+            GlobArgs {
+                pattern: "**/*.md".to_owned(),
+                path: Some(FsPath::root()),
+                max_depth: None,
+                limit: None,
+            },
+        )
+        .await
+        .expect("glob mounted fs");
+        assert_eq!(
+            glob.matches,
+            vec![
+                FsPath::new("/skills/rust/SKILL.md").unwrap(),
+                FsPath::new("/skills/rust/references/info.md").unwrap(),
+                FsPath::new("/workspace/notes.md").unwrap(),
+            ]
+        );
+
+        let listing = invoke_list_dir(
+            &ctx,
+            ListDirArgs {
+                path: FsPath::root(),
+            },
+        )
+        .await
+        .expect("list mounted root");
         assert_eq!(listing.entries.len(), 2);
     }
 }

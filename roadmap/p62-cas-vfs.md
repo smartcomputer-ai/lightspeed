@@ -676,8 +676,11 @@ later.
   adapter.
 - Done: verify existing `read_file`, `write_file`, `edit_file`,
   `apply_patch`, `grep`, `glob`, and `list_dir` tools against a VFS workspace.
-- Remaining: mount-table adapter that resolves mixed read-only snapshots and
-  writable workspaces under one filesystem namespace.
+- Done: add a mount-table filesystem adapter that resolves mixed read-only
+  snapshots and writable workspaces under one filesystem namespace, including
+  synthetic parent directories such as `/skills`.
+- Done: route cross-mount file and recursive directory copy into writable
+  workspace destinations.
 - Remaining: enforce workspace quotas and mount policy limits.
 
 ### G4: Workspace Commit

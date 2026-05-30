@@ -11,7 +11,7 @@ pub use path::{FsPath, FsPathError};
 pub use read_only::ReadOnlyFileSystem;
 pub use scoped::ScopedFileSystem;
 pub use scoped_local::ScopedLocalFileSystem;
-pub use vfs::{VfsSnapshotFileSystem, VfsWorkspaceFileSystem};
+pub use vfs::{MountedVfsFileSystem, VfsSnapshotFileSystem, VfsWorkspaceFileSystem};
 
 pub mod access;
 pub mod local;
