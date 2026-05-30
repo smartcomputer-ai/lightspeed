@@ -2,7 +2,7 @@
 
 **Status**
 - Accepted direction
-- Not implemented
+- Partially implemented: G1-G2 in `crates/vfs`
 
 ## Goal
 
@@ -587,15 +587,15 @@ later.
 
 ### G1: VFS Manifest Model
 
-- Add a VFS crate with path normalization and manifest types.
-- Add encode/decode helpers for `VfsSnapshotManifest`.
-- Add round-trip tests and path validation tests.
+- Done: add a VFS crate with path normalization and manifest types.
+- Done: add encode/decode helpers for `VfsSnapshotManifest`.
+- Done: add round-trip tests and path validation tests.
 
 ### G2: Snapshot Writer
 
-- Implement inline-file snapshot creation over `BlobStore`.
-- Compute file blob refs and write the manifest to CAS.
-- Add limits for file count, total bytes, and depth.
+- Done: implement inline-file snapshot creation over `BlobStore`.
+- Done: compute file blob refs and write the manifest to CAS.
+- Done: add limits for file count, total bytes, single file bytes, and depth.
 
 ### G3: CAS Filesystem Adapter
 

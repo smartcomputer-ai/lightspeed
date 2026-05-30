@@ -5,6 +5,7 @@ members = [
     "crates/llm-clients",
     "crates/api",
     "crates/engine",
+    "crates/vfs",
     "crates/api-projection",
     "crates/workflow",
     "crates/worker",

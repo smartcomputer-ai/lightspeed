@@ -1,0 +1,713 @@
+//! CAS-backed virtual filesystem models and snapshot helpers.
+//!
+//! This crate owns deterministic VFS path and manifest structures plus helpers
+//! that write immutable snapshot manifests into an injected [`BlobStore`].
+//! Host filesystem access, materialization, and process execution live outside
+//! this crate.
+
+use engine::{
+    BlobRef,
+    storage::{BlobStore, BlobStoreError},
+};
+use serde::{Deserialize, Serialize};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+};
+use thiserror::Error;
+
+pub const VFS_SNAPSHOT_SCHEMA_VERSION: &str = "forge.vfs.snapshot.v1";
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct VfsPath(String);
+
+impl VfsPath {
+    pub fn parse(value: impl AsRef<str>) -> Result<Self, VfsPathError> {
+        let value = value.as_ref();
+        if value.is_empty() {
+            return Err(VfsPathError::Empty);
+        }
+        if value.as_bytes().contains(&0) {
+            return Err(VfsPathError::ContainsNul {
+                path: value.to_owned(),
+            });
+        }
+        if value == "/" {
+            return Ok(Self("/".to_owned()));
+        }
+
+        let trimmed = value.strip_prefix('/').unwrap_or(value);
+        if trimmed.is_empty() {
+            return Err(VfsPathError::InvalidComponent {
+                path: value.to_owned(),
+                component: String::new(),
+            });
+        }
+
+        let mut components = Vec::new();
+        for component in trimmed.split('/') {
+            if component.is_empty() || component == "." || component == ".." {
+                return Err(VfsPathError::InvalidComponent {
+                    path: value.to_owned(),
+                    component: component.to_owned(),
+                });
+            }
+            components.push(component);
+        }
+
+        Ok(Self(format!("/{}", components.join("/"))))
+    }
+
+    pub fn root() -> Self {
+        Self("/".to_owned())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn is_root(&self) -> bool {
+        self.0 == "/"
+    }
+
+    pub fn depth(&self) -> usize {
+        self.components().len()
+    }
+
+    pub fn components(&self) -> Vec<&str> {
+        if self.is_root() {
+            Vec::new()
+        } else {
+            self.0.trim_start_matches('/').split('/').collect()
+        }
+    }
+}
+
+impl fmt::Display for VfsPath {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl TryFrom<&str> for VfsPath {
+    type Error = VfsPathError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        Self::parse(value)
+    }
+}
+
+impl TryFrom<String> for VfsPath {
+    type Error = VfsPathError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::parse(value)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Error)]
+pub enum VfsPathError {
+    #[error("vfs path must not be empty")]
+    Empty,
+
+    #[error("vfs path contains a NUL byte: {path}")]
+    ContainsNul { path: String },
+
+    #[error("vfs path has an invalid component '{component}': {path}")]
+    InvalidComponent { path: String, component: String },
+}
+
+#[derive(Debug, Error)]
+pub enum VfsError {
+    #[error(transparent)]
+    InvalidPath(#[from] VfsPathError),
+
+    #[error("vfs file path cannot be the root path")]
+    RootFile,
+
+    #[error("duplicate vfs path: {path}")]
+    DuplicatePath { path: VfsPath },
+
+    #[error("vfs path conflicts with an existing {existing}: {path}")]
+    PathConflict {
+        path: VfsPath,
+        existing: &'static str,
+    },
+
+    #[error("vfs snapshot limit exceeded for {limit}: value {value} is greater than max {max}")]
+    LimitExceeded {
+        limit: &'static str,
+        value: u64,
+        max: u64,
+    },
+
+    #[error("invalid vfs snapshot manifest: {message}")]
+    InvalidManifest { message: String },
+
+    #[error("failed to encode vfs snapshot manifest: {source}")]
+    EncodeManifest {
+        #[source]
+        source: serde_json::Error,
+    },
+
+    #[error("failed to decode vfs snapshot manifest: {source}")]
+    DecodeManifest {
+        #[source]
+        source: serde_json::Error,
+    },
+
+    #[error(transparent)]
+    BlobStore(#[from] BlobStoreError),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VfsSnapshotManifest {
+    pub schema_version: String,
+    pub root: VfsDirectory,
+    pub totals: VfsTotals,
+}
+
+impl VfsSnapshotManifest {
+    pub fn empty() -> Self {
+        Self {
+            schema_version: VFS_SNAPSHOT_SCHEMA_VERSION.to_owned(),
+            root: VfsDirectory::default(),
+            totals: VfsTotals::default(),
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), VfsError> {
+        if self.schema_version != VFS_SNAPSHOT_SCHEMA_VERSION {
+            return Err(VfsError::InvalidManifest {
+                message: format!("unsupported schema version '{}'", self.schema_version),
+            });
+        }
+        let mut totals = VfsTotals::default();
+        validate_directory(&self.root, &mut totals)?;
+        if totals != self.totals {
+            return Err(VfsError::InvalidManifest {
+                message: format!(
+                    "manifest totals do not match tree contents: expected {:?}, computed {:?}",
+                    self.totals, totals
+                ),
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VfsDirectory {
+    #[serde(default)]
+    pub entries: BTreeMap<String, VfsEntry>,
+}
+
+impl VfsDirectory {
+    pub fn entry(&self, name: &str) -> Option<&VfsEntry> {
+        self.entries.get(name)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum VfsEntry {
+    File(VfsFile),
+    Directory(VfsDirectory),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VfsFile {
+    pub blob_ref: BlobRef,
+    pub size_bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_type: Option<String>,
+    pub executable: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VfsTotals {
+    pub files: u64,
+    pub bytes: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InlineFile {
+    pub path: VfsPath,
+    pub bytes: Vec<u8>,
+    pub media_type: Option<String>,
+    pub executable: bool,
+}
+
+impl InlineFile {
+    pub fn new(path: impl AsRef<str>, bytes: impl Into<Vec<u8>>) -> Result<Self, VfsError> {
+        Ok(Self {
+            path: VfsPath::parse(path)?,
+            bytes: bytes.into(),
+            media_type: None,
+            executable: false,
+        })
+    }
+
+    pub fn with_media_type(mut self, media_type: impl Into<String>) -> Self {
+        self.media_type = Some(media_type.into());
+        self
+    }
+
+    pub fn executable(mut self, executable: bool) -> Self {
+        self.executable = executable;
+        self
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VfsSnapshotLimits {
+    pub max_files: u64,
+    pub max_total_bytes: u64,
+    pub max_single_file_bytes: u64,
+    pub max_depth: usize,
+}
+
+impl VfsSnapshotLimits {
+    pub const fn new(
+        max_files: u64,
+        max_total_bytes: u64,
+        max_single_file_bytes: u64,
+        max_depth: usize,
+    ) -> Self {
+        Self {
+            max_files,
+            max_total_bytes,
+            max_single_file_bytes,
+            max_depth,
+        }
+    }
+}
+
+impl Default for VfsSnapshotLimits {
+    fn default() -> Self {
+        Self {
+            max_files: 10_000,
+            max_total_bytes: 512 * 1024 * 1024,
+            max_single_file_bytes: 128 * 1024 * 1024,
+            max_depth: 64,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CreateInlineSnapshotRequest {
+    pub files: Vec<InlineFile>,
+    pub limits: VfsSnapshotLimits,
+}
+
+impl CreateInlineSnapshotRequest {
+    pub fn new(files: Vec<InlineFile>) -> Self {
+        Self {
+            files,
+            limits: VfsSnapshotLimits::default(),
+        }
+    }
+
+    pub fn with_limits(mut self, limits: VfsSnapshotLimits) -> Self {
+        self.limits = limits;
+        self
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CreateVfsSnapshotResult {
+    pub snapshot_ref: BlobRef,
+    pub manifest: VfsSnapshotManifest,
+}
+
+pub async fn create_inline_snapshot(
+    blobs: &(impl BlobStore + ?Sized),
+    request: CreateInlineSnapshotRequest,
+) -> Result<CreateVfsSnapshotResult, VfsError> {
+    validate_inline_files(&request.files, request.limits)?;
+
+    let mut manifest = VfsSnapshotManifest::empty();
+    for file in request.files {
+        let size_bytes = file.bytes.len() as u64;
+        let blob_ref = blobs.put_bytes(file.bytes).await?;
+        let vfs_file = VfsFile {
+            blob_ref,
+            size_bytes,
+            media_type: file.media_type,
+            executable: file.executable,
+        };
+        insert_file(&mut manifest.root, &file.path, vfs_file)?;
+        manifest.totals.files += 1;
+        manifest.totals.bytes += size_bytes;
+    }
+
+    let manifest_bytes = encode_snapshot_manifest(&manifest)?;
+    let snapshot_ref = blobs.put_bytes(manifest_bytes).await?;
+    Ok(CreateVfsSnapshotResult {
+        snapshot_ref,
+        manifest,
+    })
+}
+
+pub fn encode_snapshot_manifest(manifest: &VfsSnapshotManifest) -> Result<Vec<u8>, VfsError> {
+    manifest.validate()?;
+    serde_json::to_vec(manifest).map_err(|source| VfsError::EncodeManifest { source })
+}
+
+pub fn decode_snapshot_manifest(bytes: &[u8]) -> Result<VfsSnapshotManifest, VfsError> {
+    let manifest: VfsSnapshotManifest =
+        serde_json::from_slice(bytes).map_err(|source| VfsError::DecodeManifest { source })?;
+    manifest.validate()?;
+    Ok(manifest)
+}
+
+fn validate_inline_files(files: &[InlineFile], limits: VfsSnapshotLimits) -> Result<(), VfsError> {
+    if files.len() as u64 > limits.max_files {
+        return Err(VfsError::LimitExceeded {
+            limit: "files",
+            value: files.len() as u64,
+            max: limits.max_files,
+        });
+    }
+
+    let mut total_bytes = 0u64;
+    let mut seen = BTreeSet::new();
+    for file in files {
+        if file.path.is_root() {
+            return Err(VfsError::RootFile);
+        }
+        if !seen.insert(file.path.clone()) {
+            return Err(VfsError::DuplicatePath {
+                path: file.path.clone(),
+            });
+        }
+        if file.path.depth() > limits.max_depth {
+            return Err(VfsError::LimitExceeded {
+                limit: "depth",
+                value: file.path.depth() as u64,
+                max: limits.max_depth as u64,
+            });
+        }
+        let file_bytes = file.bytes.len() as u64;
+        if file_bytes > limits.max_single_file_bytes {
+            return Err(VfsError::LimitExceeded {
+                limit: "single_file_bytes",
+                value: file_bytes,
+                max: limits.max_single_file_bytes,
+            });
+        }
+        total_bytes = total_bytes
+            .checked_add(file_bytes)
+            .ok_or(VfsError::LimitExceeded {
+                limit: "total_bytes",
+                value: u64::MAX,
+                max: limits.max_total_bytes,
+            })?;
+        if total_bytes > limits.max_total_bytes {
+            return Err(VfsError::LimitExceeded {
+                limit: "total_bytes",
+                value: total_bytes,
+                max: limits.max_total_bytes,
+            });
+        }
+    }
+
+    let mut root = VfsDirectory::default();
+    for file in files {
+        insert_file(
+            &mut root,
+            &file.path,
+            VfsFile {
+                blob_ref: BlobRef::default(),
+                size_bytes: file.bytes.len() as u64,
+                media_type: file.media_type.clone(),
+                executable: file.executable,
+            },
+        )?;
+    }
+
+    Ok(())
+}
+
+fn insert_file(
+    directory: &mut VfsDirectory,
+    path: &VfsPath,
+    file: VfsFile,
+) -> Result<(), VfsError> {
+    let components = path.components();
+    if components.is_empty() {
+        return Err(VfsError::RootFile);
+    }
+
+    let mut current = directory;
+    for component in &components[..components.len() - 1] {
+        let entry = current
+            .entries
+            .entry((*component).to_owned())
+            .or_insert_with(|| VfsEntry::Directory(VfsDirectory::default()));
+        match entry {
+            VfsEntry::Directory(directory) => {
+                current = directory;
+            }
+            VfsEntry::File(_) => {
+                return Err(VfsError::PathConflict {
+                    path: path.clone(),
+                    existing: "file",
+                });
+            }
+        }
+    }
+
+    let filename = components[components.len() - 1].to_owned();
+    match current.entries.insert(filename, VfsEntry::File(file)) {
+        None => Ok(()),
+        Some(VfsEntry::Directory(_)) => Err(VfsError::PathConflict {
+            path: path.clone(),
+            existing: "directory",
+        }),
+        Some(VfsEntry::File(_)) => Err(VfsError::DuplicatePath { path: path.clone() }),
+    }
+}
+
+fn validate_directory(directory: &VfsDirectory, totals: &mut VfsTotals) -> Result<(), VfsError> {
+    for (name, entry) in &directory.entries {
+        validate_name(name)?;
+        match entry {
+            VfsEntry::File(file) => {
+                totals.files += 1;
+                totals.bytes =
+                    totals
+                        .bytes
+                        .checked_add(file.size_bytes)
+                        .ok_or(VfsError::InvalidManifest {
+                            message: "file byte total overflowed u64".to_owned(),
+                        })?;
+            }
+            VfsEntry::Directory(directory) => validate_directory(directory, totals)?,
+        }
+    }
+    Ok(())
+}
+
+fn validate_name(name: &str) -> Result<(), VfsError> {
+    if name.is_empty() || name == "." || name == ".." || name.as_bytes().contains(&0) {
+        return Err(VfsError::InvalidManifest {
+            message: format!("invalid directory entry name '{name}'"),
+        });
+    }
+    if name.contains('/') {
+        return Err(VfsError::InvalidManifest {
+            message: format!("directory entry name contains '/': '{name}'"),
+        });
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use engine::storage::InMemoryBlobStore;
+
+    #[test]
+    fn vfs_path_normalizes_relative_and_absolute_paths() {
+        assert_eq!(VfsPath::parse("foo/bar").unwrap().as_str(), "/foo/bar");
+        assert_eq!(VfsPath::parse("/foo/bar").unwrap().as_str(), "/foo/bar");
+        assert_eq!(VfsPath::parse("/").unwrap(), VfsPath::root());
+        assert_eq!(
+            VfsPath::parse("foo bar/baz.txt").unwrap().as_str(),
+            "/foo bar/baz.txt"
+        );
+    }
+
+    #[test]
+    fn vfs_path_rejects_unsafe_components() {
+        assert!(matches!(VfsPath::parse(""), Err(VfsPathError::Empty)));
+        assert!(matches!(
+            VfsPath::parse("foo//bar"),
+            Err(VfsPathError::InvalidComponent { .. })
+        ));
+        assert!(matches!(
+            VfsPath::parse("foo/./bar"),
+            Err(VfsPathError::InvalidComponent { .. })
+        ));
+        assert!(matches!(
+            VfsPath::parse("foo/../bar"),
+            Err(VfsPathError::InvalidComponent { .. })
+        ));
+        assert!(matches!(
+            VfsPath::parse("foo/\0/bar"),
+            Err(VfsPathError::ContainsNul { .. })
+        ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn inline_snapshot_writes_file_blobs_and_manifest() {
+        let blobs = InMemoryBlobStore::new();
+        let request = CreateInlineSnapshotRequest::new(vec![
+            InlineFile::new("README.md", b"# hello\n".to_vec())
+                .unwrap()
+                .with_media_type("text/markdown"),
+            InlineFile::new("src/lib.rs", b"pub fn ok() {}\n".to_vec()).unwrap(),
+            InlineFile::new("scripts/build.sh", b"#!/bin/sh\n".to_vec())
+                .unwrap()
+                .executable(true),
+        ]);
+
+        let result = create_inline_snapshot(&blobs, request).await.unwrap();
+        assert_eq!(result.manifest.schema_version, VFS_SNAPSHOT_SCHEMA_VERSION);
+        assert_eq!(
+            result.manifest.totals,
+            VfsTotals {
+                files: 3,
+                bytes: 33
+            }
+        );
+
+        let manifest_bytes = blobs.read_bytes(&result.snapshot_ref).await.unwrap();
+        let decoded = decode_snapshot_manifest(&manifest_bytes).unwrap();
+        assert_eq!(decoded, result.manifest);
+
+        let readme = match decoded.root.entry("README.md").unwrap() {
+            VfsEntry::File(file) => file,
+            VfsEntry::Directory(_) => panic!("README.md should be a file"),
+        };
+        assert_eq!(readme.media_type.as_deref(), Some("text/markdown"));
+        assert_eq!(readme.size_bytes, 8);
+        assert_eq!(
+            blobs.read_bytes(&readme.blob_ref).await.unwrap(),
+            b"# hello\n"
+        );
+
+        let scripts = match decoded.root.entry("scripts").unwrap() {
+            VfsEntry::Directory(directory) => directory,
+            VfsEntry::File(_) => panic!("scripts should be a directory"),
+        };
+        let build = match scripts.entry("build.sh").unwrap() {
+            VfsEntry::File(file) => file,
+            VfsEntry::Directory(_) => panic!("build.sh should be a file"),
+        };
+        assert!(build.executable);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn inline_snapshot_allows_empty_tree() {
+        let blobs = InMemoryBlobStore::new();
+        let result = create_inline_snapshot(&blobs, CreateInlineSnapshotRequest::new(Vec::new()))
+            .await
+            .unwrap();
+
+        assert_eq!(result.manifest, VfsSnapshotManifest::empty());
+        assert!(blobs.has_blob(&result.snapshot_ref).await.unwrap());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn inline_snapshot_rejects_duplicate_paths_before_writing() {
+        let blobs = InMemoryBlobStore::new();
+        let request = CreateInlineSnapshotRequest::new(vec![
+            InlineFile::new("a.txt", b"one".to_vec()).unwrap(),
+            InlineFile::new("/a.txt", b"two".to_vec()).unwrap(),
+        ]);
+
+        let error = create_inline_snapshot(&blobs, request).await.unwrap_err();
+        assert!(matches!(error, VfsError::DuplicatePath { .. }));
+        assert!(!blobs.has_blob(&BlobRef::from_bytes(b"one")).await.unwrap());
+        assert!(!blobs.has_blob(&BlobRef::from_bytes(b"two")).await.unwrap());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn inline_snapshot_rejects_file_directory_conflicts_before_writing() {
+        let blobs = InMemoryBlobStore::new();
+        let request = CreateInlineSnapshotRequest::new(vec![
+            InlineFile::new("src", b"file".to_vec()).unwrap(),
+            InlineFile::new("src/lib.rs", b"nested".to_vec()).unwrap(),
+        ]);
+
+        let error = create_inline_snapshot(&blobs, request).await.unwrap_err();
+        assert!(matches!(
+            error,
+            VfsError::PathConflict {
+                existing: "file",
+                ..
+            }
+        ));
+        assert!(!blobs.has_blob(&BlobRef::from_bytes(b"file")).await.unwrap());
+        assert!(
+            !blobs
+                .has_blob(&BlobRef::from_bytes(b"nested"))
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn inline_snapshot_enforces_limits_before_writing() {
+        let blobs = InMemoryBlobStore::new();
+        let request = CreateInlineSnapshotRequest::new(vec![
+            InlineFile::new("one.txt", b"1234".to_vec()).unwrap(),
+            InlineFile::new("two.txt", b"56".to_vec()).unwrap(),
+        ])
+        .with_limits(VfsSnapshotLimits::new(10, 5, 10, 10));
+
+        let error = create_inline_snapshot(&blobs, request).await.unwrap_err();
+        assert!(matches!(
+            error,
+            VfsError::LimitExceeded {
+                limit: "total_bytes",
+                value: 6,
+                max: 5
+            }
+        ));
+        assert!(!blobs.has_blob(&BlobRef::from_bytes(b"1234")).await.unwrap());
+        assert!(!blobs.has_blob(&BlobRef::from_bytes(b"56")).await.unwrap());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn inline_snapshot_rejects_root_file_and_deep_paths() {
+        let blobs = InMemoryBlobStore::new();
+        let root_request =
+            CreateInlineSnapshotRequest::new(vec![InlineFile::new("/", b"root".to_vec()).unwrap()]);
+        assert!(matches!(
+            create_inline_snapshot(&blobs, root_request)
+                .await
+                .unwrap_err(),
+            VfsError::RootFile
+        ));
+
+        let deep_request = CreateInlineSnapshotRequest::new(vec![
+            InlineFile::new("a/b/c", b"deep".to_vec()).unwrap(),
+        ])
+        .with_limits(VfsSnapshotLimits::new(10, 100, 100, 2));
+        assert!(matches!(
+            create_inline_snapshot(&blobs, deep_request)
+                .await
+                .unwrap_err(),
+            VfsError::LimitExceeded { limit: "depth", .. }
+        ));
+    }
+
+    #[test]
+    fn manifest_encode_decode_validates_schema_and_totals() {
+        let mut manifest = VfsSnapshotManifest::empty();
+        manifest.schema_version = "wrong".to_owned();
+        assert!(matches!(
+            encode_snapshot_manifest(&manifest),
+            Err(VfsError::InvalidManifest { .. })
+        ));
+
+        let mut manifest = VfsSnapshotManifest::empty();
+        manifest.root.entries.insert(
+            "file.txt".to_owned(),
+            VfsEntry::File(VfsFile {
+                blob_ref: BlobRef::from_bytes(b"file"),
+                size_bytes: 4,
+                media_type: None,
+                executable: false,
+            }),
+        );
+        assert!(matches!(
+            encode_snapshot_manifest(&manifest),
+            Err(VfsError::InvalidManifest { .. })
+        ));
+    }
+}
