@@ -3,6 +3,9 @@
 **Status**
 - Accepted direction
 - Depends on P62 for CAS-backed skill resource trees
+- Depends on a minimal runtime-context lane in `engine`/provider
+  materialization. This can be delivered through P71 or an equivalent narrow
+  engine change; it does not require the whole prompt-management roadmap.
 - Not implemented
 
 ## Goal
@@ -14,11 +17,16 @@ A skill is a reusable bundle of agent instructions and optional resources. In
 Forge, skills should be:
 
 - discoverable from product, user, repo, and host-target sources,
-- synced or snapshotted into CAS/VFS,
-- visible through compact catalog context,
-- activated explicitly or by model request,
+- available from immutable CAS/VFS snapshots or editable VFS workspaces,
+- visible through compact runtime-guidance catalog items, separate from base
+  instructions,
+- mounted so referenced docs/scripts/assets are available through ordinary file
+  tools, with published skills read-only and authoring roots writable by
+  policy,
+- activated by loading the relevant `SKILL.md` into context,
 - target-aware when installed inside a VM/sandbox,
-- replayable because activated skill content is pinned by CAS refs.
+- replayable because catalog snapshots, mounted resource snapshots, and loaded
+  skill content are pinned by CAS refs.
 
 ## Context
 
@@ -49,6 +57,12 @@ over CAS and host targets, not as engine-local process state.
 - Do not implement Claude's inline shell expansion in `SKILL.md` for v1.
 - Do not build a marketplace or plugin distribution system in this roadmap.
 - Do not make all skill content permanently visible in every model request.
+- Do not implement skill activation approval in the first version. Treat
+  discovered skills as valid to activate; future policy can filter discovery or
+  add explicit approval gates.
+- Do not let activation depend on unpinned mutable host or workspace state;
+  every catalog render, tool read, or injected skill body must record the exact
+  content refs it used.
 
 ## Existing Implementations To Reference
 
@@ -167,16 +181,22 @@ Forge should support the Agent Skills pattern, but with stricter runtime
 boundaries:
 
 - Discovery happens in gateway/worker/runtime services.
-- Skill directories are snapshotted into CAS/VFS.
-- The engine records only catalog refs, activation refs, context items, and
-  tool config.
+- Published skill roots or skill bundles are snapshotted into CAS/VFS and
+  mounted read-only before the model is asked to use them.
+- Editable skill roots can live in writable VFS workspaces so the model can
+  author or revise skills with ordinary file tools.
+- The engine records only catalog refs, VFS mount/tool config, activation or
+  read refs, and configured runtime context items.
 - Host-installed skills are discovered through the selected host target, not by
   reading the worker's local filesystem.
+- The host-target discovery/materialization slices can use traits and
+  in-memory/scoped filesystems for tests before real VM/sandbox filesystem and
+  process adapters are wired.
 - Skill scripts require a real process target and materialized files.
 
 Skills are not a new deterministic engine module in v1. They are a product
-feature implemented by runtime services and ordinary CoreAgent context/tool
-mechanisms.
+feature implemented by runtime services, VFS mounts, ordinary filesystem tools,
+and CoreAgent context mechanisms.
 
 ## Skill Sources
 
@@ -219,6 +239,37 @@ Candidate roots:
 Support `.forge/skills` as the native Forge location. Support `.agents/skills`
 for compatibility with the broader Agent Skills convention. Support Codex and
 Claude roots when compatibility mode is enabled.
+
+If the project checkout is mounted as a writable VFS workspace, repository
+skills should be discovered from that workspace mount rather than only from an
+immutable snapshot. This allows the model to edit existing project skills or
+author new ones with ordinary workspace write tools.
+
+### Editable Workspace Skills
+
+Skills can also live in configured writable VFS workspaces, for example:
+
+```text
+/workspace/.forge/skills/
+/workspace/.agents/skills/
+/skills/drafts/
+```
+
+This is the authoring path for user- or project-owned skills. A model can
+create a new skill directory, edit `SKILL.md`, add references, or revise
+scripts/assets through normal VFS write tools when policy allows writes to that
+workspace.
+
+Workspace-sourced skills are mutable, so catalog and activation must use
+snapshot semantics:
+
+- catalog refresh reads the current workspace head and records the exact refs
+  used for metadata and rendered catalog context;
+- newly authored skills become catalog-selectable only after a catalog refresh;
+- activation pins the exact `SKILL.md` contents loaded for the model, even if
+  the workspace changes later;
+- publishing a workspace-authored skill to system/org/user distribution is a
+  separate product workflow, not implicit activation.
 
 ### Host-Installed Skills
 
@@ -300,6 +351,12 @@ pub struct SkillId(String);
 pub enum SkillSource {
     Cas {
         snapshot_ref: BlobRef,
+        skill_path: VfsPath,
+    },
+    Workspace {
+        workspace_id: VfsWorkspaceId,
+        root_path: VfsPath,
+        skill_path: VfsPath,
     },
     HostPath {
         target: ToolExecutionTarget,
@@ -320,7 +377,8 @@ pub enum SkillSource {
 Recommended ID forms:
 
 ```text
-skill:cas:<snapshot-digest>
+skill:cas:<snapshot-digest>:<path-digest>
+skill:workspace:<workspace-id>:<path-digest>
 skill:host:<target-namespace>:<target-id>:<path-digest>
 skill:plugin:<plugin-id>:<skill-name>
 ```
@@ -343,20 +401,50 @@ pub struct SkillMetadata {
     pub trust: SkillTrustLevel,
     pub interface: Option<SkillInterface>,
     pub dependencies: SkillDependencies,
-    pub snapshot_ref: Option<BlobRef>,
+    pub location: SkillLocation,
     pub skill_doc_ref: Option<BlobRef>,
-    pub resource_root_ref: Option<BlobRef>,
+}
+
+pub enum SkillLocation {
+    MountedSnapshot {
+        source_snapshot_ref: BlobRef,
+        source_mount_path: VfsPath,
+        skill_dir_path: VfsPath,
+        skill_doc_path: VfsPath,
+    },
+    MountedWorkspace {
+        workspace_id: VfsWorkspaceId,
+        workspace_head_ref: BlobRef,
+        source_mount_path: VfsPath,
+        skill_dir_path: VfsPath,
+        skill_doc_path: VfsPath,
+    },
+    Remote {
+        source_id: String,
+        skill_name: String,
+    },
 }
 ```
 
-`snapshot_ref` points to the P62 VFS snapshot for the skill directory when the
-skill has been synced to CAS.
+`MountedSnapshot.source_snapshot_ref` points to the P62 VFS snapshot for the
+skill source root or bundle. It does not have to be a one-skill snapshot. A
+single mounted snapshot can contain many skill directories.
+
+`MountedWorkspace.workspace_id` and `workspace_head_ref` identify the writable
+workspace and the head snapshot observed when the catalog entry was built.
+
+`source_mount_path`, `skill_dir_path`, and `skill_doc_path` are paths inside
+the mounted VFS view, for example `/skills/system/openai-docs` and
+`/skills/system/openai-docs/SKILL.md`, or
+`/workspace/.forge/skills/deploy-review/SKILL.md`.
 
 `skill_doc_ref` points at the `SKILL.md` body or full markdown payload.
+It is recorded when the catalog builder or activation path has read and pinned
+that exact file.
 
-`resource_root_ref` is normally the same as `snapshot_ref`, but leaving it
-separate allows future remote skills whose instructions and resources arrive
-through different channels.
+For future remote skills whose instructions and resources arrive through
+different channels, add separate resource refs then. Do not force that
+complexity into the v1 local/CAS/VFS path.
 
 ### Skill Catalog Snapshot
 
@@ -374,23 +462,312 @@ pub struct SkillCatalogSnapshot {
 Store the catalog snapshot in CAS. The rendered model-visible skill list should
 also be stored in CAS when it becomes part of a run context.
 
+```rust
+pub struct RenderedSkillCatalogContext {
+    pub catalog_ref: BlobRef,
+    pub rendered_ref: BlobRef,
+    pub included_skill_ids: Vec<SkillId>,
+    pub omitted_skill_ids: Vec<SkillId>,
+    pub truncated_description_count: u64,
+    pub budget: SkillCatalogContextBudget,
+}
+```
+
+`rendered_ref` points at the exact compact catalog text inserted into model
+context. It is separate from `catalog_ref` because one catalog snapshot can be
+rendered differently for different context budgets or target scopes.
+
+### Runtime Guidance Context Items
+
+Forge needs a context lane that is neither `instructions_ref` nor normal user
+history. Skills should use that lane.
+
+`SessionConfig.context.instructions_ref` remains the base instruction/system
+prompt mechanism. It should not contain the rendered skills catalog.
+
+Current repo state is partway there:
+
+- `ContextItemSource::Runtime { label }` already exists and can identify
+  runtime-originated context items;
+- `ContextConfig` currently has only instruction and context-budget fields, so
+  it cannot yet configure ordered runtime items with lifecycle/provenance;
+- context-window planning and provider materialization do not yet have a
+  first-class contract for "always include this runtime guidance before
+  conversation history";
+- compaction does not yet have a general semantic-item reinsertion path.
+
+This is the main prerequisite for skills. It is not a large external system,
+but it is core engine/runtime plumbing. P71 may provide the broader prompt
+management context for this, but P63 only needs the narrow piece: configured
+runtime context items with pinned refs, ordering, lifecycle, and provider
+lowering. Do not block read-only skill catalog work on the full P71 prompt
+bundle/editor surface.
+
+Add an ordered runtime-context mechanism, conceptually:
+
+```rust
+pub struct RuntimeContextItemConfig {
+    pub label: String,
+    pub kind: RuntimeContextKind,
+    pub authority: RuntimeContextAuthority,
+    pub native_item_ref: BlobRef,
+    pub media_type: Option<String>,
+    pub provider_kind: Option<String>,
+    pub provenance_ref: Option<BlobRef>,
+    pub lifecycle: RuntimeContextLifecycle,
+}
+
+pub enum RuntimeContextKind {
+    SkillCatalog,
+    SkillActivation,
+    RuntimeGuidance,
+}
+
+pub enum RuntimeContextAuthority {
+    RuntimeGuidance,
+    UserRequested,
+    ToolObservation,
+}
+
+pub enum RuntimeContextLifecycle {
+    InitialReinjectable,
+    TurnSticky,
+    RunSticky,
+    SessionSticky,
+    TranscriptOnly,
+}
+```
+
+`InitialReinjectable` means re-render or reinsert from the active catalog
+snapshot/config before requests and after compaction. It does not mean rescan
+mutable host files before every turn.
+
+Lifecycle controls request planning and reinsertion eligibility. It must not
+be used to delete or rewrite session history, tool results, or already-recorded
+provider requests.
+
+The exact engine shape can reuse `ContextItemSource::Runtime { label }`, add a
+provider-neutral runtime context kind, or add provider-visible roles where
+needed. The important contract is:
+
+- runtime context items are part of the request context, not
+  conversation history;
+- they are ordered before normal user/assistant/tool history;
+- catalog/runtime-guidance items are not summarized during compaction;
+- they can be regenerated or reinserted from pinned refs after compaction;
+- provider adapters render them with provider-native semantics.
+
+Implement provider lowering for OpenAI Responses first; the skills catalog
+should render as a developer message there. Keep the semantic model suitable
+for Anthropic Messages as future adapter work, where the same semantic item can
+render as a synthetic runtime/meta user message, such as a Claude-style
+`<system-reminder>`. For provider APIs without a separable runtime-guidance
+lane, the adapter must use an explicit configured fallback or fail clearly for
+skills-enabled sessions. Do not silently fold the catalog into
+`instructions_ref`.
+
+### Catalog Lifecycle And Context Injection
+
+Skill headers are read during runtime catalog discovery, not inside `engine`.
+
+Discovery reads each candidate `SKILL.md` enough to parse YAML frontmatter
+(`name`, `description`, and optional short description) and reads optional
+metadata such as `agents/forge.yaml` or compatible `agents/openai.yaml`.
+For CAS/VFS snapshot sources this should happen through VFS snapshot reads and
+the blob store. For writable workspace sources it should happen through the VFS
+workspace mount at a recorded workspace head. For host-target sources it should
+happen through the selected host filesystem abstraction, followed by
+snapshotting the source root into CAS/VFS.
+
+Recommended refresh points:
+
+- session open, after skills config and initial VFS mounts are known;
+- explicit `skills/list` or catalog refresh with `force_refresh`;
+- skills config changes;
+- host-target catalog refresh when a target is added or a user asks to refresh.
+
+Do not rescan mutable host files during each model turn. A run should use the
+active catalog snapshot and mounted source refs it was prepared with.
+Writable VFS workspaces are session state, not external host state, but they
+are still mutable. Workspace-authored skill changes should become catalog
+metadata only through explicit catalog refresh or another product-controlled
+refresh boundary.
+
+The compact catalog rendered for the model is runtime guidance, not real user
+history and not base instructions:
+
+1. Build the active `SkillCatalogSnapshot`.
+2. Render a compact catalog under the active budget.
+3. Store both `catalog_ref` and `rendered_ref`.
+4. Configure the rendered catalog as an initial runtime context item, for
+   example `ContextItemSource::Runtime { label: "skills_catalog" }` with
+   `provider_kind = "forge.skills.catalog_context.v1"`.
+5. Insert that configured item into every model request before the
+   conversation window.
+
+Record the source `catalog_ref` and rendered catalog blob/report so
+`session/read` can explain which skills were visible. Do not represent the
+catalog as a normal user message, and do not append it to
+`SessionConfig.context.instructions_ref`.
+
+Explicit skill activation is different from the compact catalog. A selected
+skill's `SKILL.md` body may be injected as a separate skill context block or
+returned through the ordinary `read_file` tool result.
+
+### Compaction And Re-Injection
+
+Runtime guidance context items should behave like canonical runtime context,
+not transcript content.
+
+Pre-turn or manual compaction should compact only the conversation/tool history
+that is eligible for summarization. It should not ask the compaction model to
+preserve the skills catalog. The next model turn rebuilds the request from the
+current `SessionConfig.context` plus the compacted conversation state, so the
+current skills catalog is reinserted from `rendered_ref` or regenerated from
+the active `catalog_ref`.
+
+Mid-turn compaction should insert fresh runtime context before the last real
+user item in the replacement request context. Remote/provider compaction
+outputs must not be trusted to carry forward provider-lowered runtime guidance
+items; drop those lowered copies from the compacted transcript and reinsert the
+current canonical semantic items.
+
+This keeps skill catalog visibility independent from summaries. If the active
+catalog changes, future runs or refreshed turns use the new rendered catalog;
+already-recorded provider requests still point at the `rendered_ref` they used.
+
+Activated skill bodies are different from the catalog. Do not automatically
+reinsert every previously activated skill after compaction. Reinsert an
+activated body only when its skill-context retention state is still active and
+its retention policy says the exact body should remain available.
+
+When reinserting, deduplicate by the pinned `loaded_context_ref`. If the
+original tool result or explicit runtime context item with that same
+`loaded_context_ref` is still present in the planned request window, do not add
+a second copy. If the retention state is inactive, the activation is just
+ordinary history: compaction may summarize or omit it, and the model can read
+the cataloged `SKILL.md` again if the skill becomes relevant later.
+
 ### Skill Activation
 
 ```rust
+pub struct SkillActivationId(String);
+
 pub struct SkillActivation {
+    pub activation_id: SkillActivationId,
     pub skill_id: SkillId,
     pub name: String,
     pub target: Option<ToolExecutionTarget>,
     pub activation_reason: SkillActivationReason,
     pub arguments: Option<String>,
+    pub catalog_ref: BlobRef,
+    pub loaded_from: SkillActivationSource,
+    pub load_record: SkillLoadRecord,
     pub skill_doc_ref: BlobRef,
-    pub resource_root_ref: Option<BlobRef>,
+    pub loaded_context_ref: BlobRef,
     pub materialized_root: Option<MaterializedSkillRoot>,
+}
+
+pub enum SkillActivationSource {
+    MountedSnapshot {
+        source_snapshot_ref: BlobRef,
+        source_mount_path: VfsPath,
+        skill_dir_path: VfsPath,
+        skill_doc_path: VfsPath,
+    },
+    MountedWorkspace {
+        workspace_id: VfsWorkspaceId,
+        workspace_head_ref: BlobRef,
+        source_mount_path: VfsPath,
+        skill_dir_path: VfsPath,
+        skill_doc_path: VfsPath,
+    },
+    Remote {
+        source_id: String,
+        skill_name: String,
+    },
+}
+
+pub enum SkillLoadRecord {
+    VfsReadFile {
+        call_id: ToolCallId,
+        output_ref: BlobRef,
+        model_visible_output_ref: BlobRef,
+        full_file: bool,
+    },
+    RuntimeInjected {
+        context_ref: BlobRef,
+    },
+}
+
+pub struct SkillContextRetention {
+    pub activation_id: SkillActivationId,
+    pub skill_id: SkillId,
+    pub scope: SkillRetentionScope,
+    pub policy: SkillRetentionPolicy,
+    pub state: SkillRetentionState,
+}
+
+pub enum SkillRetentionScope {
+    Turn,
+    Run,
+    Session,
+}
+
+pub enum SkillRetentionPolicy {
+    NeverReinsert,
+    ReinsertWhenOriginalOmitted,
+    AlwaysIncludeWhileActive,
+}
+
+pub enum SkillRetentionState {
+    Active,
+    Inactive {
+        reason: SkillDeactivationReason,
+    },
+}
+
+pub enum SkillDeactivationReason {
+    TurnCompleted,
+    RunCompleted,
+    ExplicitDeactivate,
+    SkillDisabled,
+    PolicyRevoked,
+    SessionClosed,
 }
 ```
 
-Activation pins the skill content. If the source is a host path, activation
-must snapshot the skill into CAS before injecting it into context.
+Activation pins the selected `SKILL.md` content and records how it was loaded.
+It does not make the skill folder appear. Enabled skill roots should already be
+available through VFS mounts before the model can use them: read-only mounts
+for published sources, or writable workspace mounts for authoring sources.
+
+For workspace-sourced skills, `SkillActivationSource::MountedWorkspace` records
+the workspace id and head snapshot observed by the read/injection that produced
+the loaded body. This may be newer than the catalog's workspace head if the
+workspace changed after catalog refresh. Projection should show that difference
+instead of pretending catalog metadata and loaded body came from the same
+workspace revision.
+
+An activation record is historical and immutable. `SkillContextRetention` is
+the separate request-planning state that says whether the loaded body is still
+eligible for sticky reinsertion, for how long, and under which policy.
+Deactivation changes retention state only. It must not delete the activation
+record, remove historical tool results, or mutate provider requests that
+already included the body.
+
+If a model reads a cataloged `skill_doc_path` through the ordinary VFS
+`read_file` tool, the runtime may emit this activation record from that tool
+call. If a user explicitly selects a skill through UI/CLI, the runtime may read
+the same `skill_doc_path` before the model turn and inject the loaded
+`SKILL.md` as runtime context. In both cases, retention is policy-driven and
+can be disabled, run-scoped, session-pinned, or one-shot without changing the
+activation record itself.
+
+Multiple skills may have active retention at the same time. Activation is
+additive, not a global mode switch. If two retained skill bodies conflict,
+normal instruction priority, trust level, and recency rules apply; the runtime
+should surface the ambiguity in projection rather than silently picking one.
 
 ## Target Scoping
 
@@ -418,7 +795,8 @@ Skill discovery and activation must be target-aware:
 ```text
 discover skills for host:vm-123
   -> read configured roots through host:vm-123 filesystem
-  -> snapshot discovered skill directories into CAS/VFS
+  -> snapshot discovered skill roots into CAS/VFS
+  -> mount snapshots read-only under /skills/<source-id>
   -> catalog entries carry target = host:vm-123
 ```
 
@@ -429,14 +807,73 @@ A model-visible skill list should show target scope when ambiguity matters:
 - deploy-review (global) - Review hosted deploy manifests.
 ```
 
-The current core default target machinery is useful for this. A skill
-activation tool can use `ToolTargetRequirement::Optional { namespace: "host" }`
-so the active default host target is attached to the tool call when present.
+The current core default target machinery is useful for explicit activation
+helpers and future materialization requests. If an optional
+`forge.skill.activate` helper is added, it can use
+`ToolTargetRequirement::Optional { namespace: "host" }` so the active default
+host target is attached to the tool call when present.
 
 For explicit non-default target activation, the activation arguments should
 also accept a target id. If model-selected per-call execution targets become a
 common need beyond skills, extend the core tool-call target model later instead
 of adding skill-specific routing hacks.
+
+## Skill Root Mounts
+
+Mount skill roots or skill bundles, not only individual skill directories.
+The mount source can be an immutable snapshot or a writable workspace.
+
+Examples:
+
+```text
+/skills/system/
+  openai-docs/SKILL.md
+  skill-creator/SKILL.md
+  imagegen/SKILL.md
+
+/skills/repo-main/
+  deploy-review/SKILL.md
+  release-notes/SKILL.md
+
+/workspace/.forge/skills/
+  draft-skill/SKILL.md
+  draft-skill/references/example.md
+```
+
+A catalog entry points at one skill directory inside a mounted root:
+
+```text
+source_snapshot_ref = sha256:...
+source_mount_path   = /skills/system
+skill_dir_path      = /skills/system/openai-docs
+skill_doc_path      = /skills/system/openai-docs/SKILL.md
+```
+
+For a workspace-authored skill, the catalog entry points into the writable
+workspace mount and records the workspace head observed during refresh:
+
+```text
+workspace_id       = vfsws_...
+workspace_head_ref = sha256:...
+source_mount_path  = /workspace
+skill_dir_path     = /workspace/.forge/skills/draft-skill
+skill_doc_path     = /workspace/.forge/skills/draft-skill/SKILL.md
+```
+
+Prefer one snapshot/mount per source root or product-managed bundle. Fall back
+to one snapshot/mount per skill only when policy isolation, source shape, or
+size limits require it.
+
+Current P62 VFS mounts are explicit session records. A snapshot ref is not a
+model-visible path until it is mounted. P62 also rejects nested mounts, so do
+not mount `/skills` and then child mounts under `/skills/...`. Mount concrete
+source roots such as `/skills/system` and `/skills/repo-main`; the mounted VFS
+adapter can synthesize parent directories for listing.
+
+Published/system/org/user skill mounts should be read-only. Editable skill
+roots should live under writable workspace mounts, for example
+`/workspace/.forge/skills` or a dedicated writable `/skills/drafts` mount.
+Mutating tools must still fail on read-only skill mounts.
 
 ## Discovery
 
@@ -461,26 +898,31 @@ Output:
 Discovery steps:
 
 1. Resolve skill roots for the requested target or global source.
-2. List candidate directories.
-3. Read `SKILL.md` frontmatter.
-4. Validate name, description, policy, dependencies, and size limits.
-5. Snapshot the skill directory into P62 VFS when allowed.
-6. Store metadata and warnings in a catalog snapshot.
-7. Render a compact catalog for model context.
+2. Snapshot host/product source roots into P62 VFS when allowed, or select the
+   configured VFS workspace mount for editable roots.
+3. Mount immutable snapshots read-only at stable session paths; keep workspace
+   roots under their writable workspace mounts.
+4. List candidate skill directories inside those mounted snapshot or workspace
+   roots.
+5. Read `SKILL.md` frontmatter.
+6. Validate name, description, policy, dependencies, and size limits.
+7. Store metadata, resolved `SkillLocation`, pinned `SKILL.md` refs when read,
+   and warnings in a catalog snapshot.
+8. Render a compact catalog for model context.
 
 For host targets, all filesystem reads must go through the host abstraction.
 
 ## Progressive Disclosure
 
-Initial model context should include only compact metadata:
+Initial runtime guidance context should include only compact metadata:
 
 ```text
 ## Skills
 Available skills:
-- openai-docs: Use when ...
-- deploy-review [host:vm-123]: Use when ...
+- openai-docs: Use when ... Path: /skills/system/openai-docs/SKILL.md
+- deploy-review [host:vm-123]: Use when ... Path: /skills/vm-123/deploy-review/SKILL.md
 
-Use forge.skill.activate to load a skill before following its workflow.
+When a skill is relevant, read its `SKILL.md` before following its workflow.
 ```
 
 Do not inject all `SKILL.md` bodies by default.
@@ -498,43 +940,39 @@ If the catalog exceeds budget:
 
 ## Activation
 
-First-cut activation should be a tool/runtime effect:
+Activation is the act of loading a selected skill's `SKILL.md` into the model
+context and recording the pinned content refs. It is not the act of mounting
+the skill folder. Enabled skills should already be available through mounted
+snapshot or workspace roots as part of catalog/session preparation.
 
-```text
-forge.skill.activate
-```
+There are two activation paths:
 
-Input schema:
+1. Model-selected activation: the model reads the cataloged `skill_doc_path`
+   through the ordinary VFS `read_file` tool. The tool result contains the
+   `SKILL.md` contents. The runtime can recognize that path as a cataloged
+   skill doc and record a `SkillActivation`.
+2. Explicit user activation: UI/CLI selection such as `$deploy-review` resolves
+   a skill by id or unambiguous name before the model turn. The runtime reads
+   that same `skill_doc_path` and injects a skill context item directly, saving
+   a tool round.
 
-```json
-{
-  "type": "object",
-  "properties": {
-    "skill_id": { "type": "string" },
-    "name": { "type": "string" },
-    "target": {
-      "type": "object",
-      "properties": {
-        "namespace": { "type": "string" },
-        "id": { "type": "string" }
-      }
-    },
-    "arguments": { "type": "string" },
-    "materialize": { "type": "boolean" }
-  }
-}
-```
-
-Resolution rules:
+Resolution rules for explicit activation:
 
 - Prefer `skill_id` when provided.
 - If only `name` is provided, it must be unambiguous within the active catalog
   and target scope.
-- If a host target is required, use the call execution target, explicit target
-  argument, or session default target.
-- If the source is a host path, snapshot it into CAS before activation.
-- If `materialize = true`, materialize the P62 VFS snapshot into the selected
-  host target and include the materialized root path in the activation result.
+- If a host target is required, use the explicit target argument or session
+  default target.
+- Resolve to the cataloged `skill_doc_path`; do not rescan mutable host files
+  during activation.
+- If the skill comes from a writable VFS workspace, read through the workspace
+  mount at the request's planned workspace head and pin the exact body that was
+  loaded. If the workspace changed since catalog refresh, projection should
+  report that the activation body came from a newer workspace head than the
+  catalog metadata. Explicit name/id activation may require a refresh when
+  policy wants catalog metadata and body to match exactly.
+- Materialization is separate from activation. Only materialize resources into
+  a real host target when scripts/assets need a process-visible path.
 
 Model-visible result:
 
@@ -543,35 +981,182 @@ Model-visible result:
 <name>deploy-review</name>
 <id>skill:host:host:vm-123:...</id>
 <target>host:vm-123</target>
-<path>/skills/deploy-review/SKILL.md</path>
+<path>/skills/vm-123/deploy-review/SKILL.md</path>
 ... contents of SKILL.md ...
 </skill>
 ```
 
 The exact wrapper can be provider-specific, but the content should be a normal
-context item recorded in the session log.
+context item or tool result recorded in the session log.
+
+Current VFS `read_file` data:
+
+- successful tool calls already produce `ToolCallResult.output_ref`,
+  `model_visible_output_ref`, and generic `effects`;
+- `output_ref` is structured JSON for `ReadFileResult`, including requested
+  path, resolved path, selected text, line start/count, total lines, truncation,
+  and bytes read;
+- `model_visible_output_ref` is the model-facing text returned from the tool;
+- VFS effects currently record workspace commits from mutating tools, not file
+  read provenance.
+
+Therefore model-selected skill activation can initially key off:
+
+1. successful `read_file`,
+2. `ReadFileResult.resolved_path` matching a cataloged `skill_doc_path`,
+3. a complete read of the file (`line_start == 1` and `truncated == false`).
+
+If the read is partial, treat it as an ordinary file read, or record a partial
+read observation, but do not claim the full skill body was activated. To record
+the exact workspace head used by a workspace-backed `read_file`, add a narrow
+VFS read-provenance effect such as `forge.vfs.read_file.v1` containing
+`workspace_id`, `workspace_head_ref`, `mount_path`, and resolved path. Snapshot
+reads can similarly include `snapshot_ref` when useful. The activation record
+should reuse that tool result/effect data instead of inventing a separate
+parallel read log. When a full `SKILL.md` read is recognized, derive
+`skill_doc_ref` from the loaded `ReadFileResult.text` bytes unless the tool
+result/effect already exposes the underlying file blob ref.
+
+`forge.skill.activate` is optional in v1. It is useful as an API/runtime helper
+for explicit UI activation or resolving by name, and could later host approval
+workflows if product policy needs them. It should not be required for
+model-selected skills. The normal path for model-selected skills is
+`read_file` on the mounted `SKILL.md`.
+
+## Activation Lifetime
+
+Do not model skills as a single active mode. A session/run can have multiple
+active skill-context retention records.
+
+Distinguish four concepts:
+
+- The skill catalog is compact runtime guidance listing available skills and
+  mounted `SKILL.md` paths.
+- `SkillActivation` is the durable record that a skill body was loaded from
+  pinned content.
+- `SkillContextRetention` is the active or inactive request-planning state that
+  decides whether the loaded body should be considered for future inclusion.
+- The request context window is the subset actually included in one provider
+  request after budget planning.
+
+`Run` scoped means "eligible for sticky reinsertion during the current run." It
+does not mean "remove the skill from history after the run." When the run
+finishes, the retention state becomes inactive or is dropped from the active
+set. Historical tool results, explicit context items, activation records, and
+provider requests remain immutable. A later request may still include the old
+tool result if normal transcript selection includes it; it is just no longer
+proactively reinserted because of skill retention.
+
+Recommended default scopes:
+
+- Model-selected activation through VFS `read_file` is `Run` scoped with
+  `ReinsertWhenOriginalOmitted`. A narrower first implementation may use
+  `NeverReinsert` and rely on ordinary transcript/tool-result inclusion until
+  runtime context reinsertion is fully wired.
+- Explicit `$skill` or slash-style activation in a run input is `Run` scoped
+  with `ReinsertWhenOriginalOmitted` unless the UI/API explicitly pins it.
+- UI/API pinned skills are `Session` scoped. They can use
+  `AlwaysIncludeWhileActive` when the user expects a persistent working mode,
+  but `ReinsertWhenOriginalOmitted` is the safer default under tight budgets.
+- One-shot helper injections can use `Turn` scope or `NeverReinsert`.
+
+Run-scoped retention remains active through all model/tool turns in the current
+run, including compaction, and becomes inactive when the run completes.
+Session-scoped retention remains active until explicit deactivation, skills
+config changes disable it, policy revokes it, or the session closes.
+Turn-scoped retention becomes inactive after the next model request.
+
+Context pressure is not the same as deactivation. If active skill bodies exceed
+the request budget, the context planner may omit lower-priority active skills
+from a particular request and record an inclusion report or warning. It should
+not silently mark them deactivated. Priority should prefer user-pinned skills,
+explicit user-selected skills, recently activated skills, and higher-trust
+skills. A model can reload an omitted skill by reading its cataloged
+`SKILL.md` again.
+
+The planner should avoid duplicating a skill body. If the same
+`loaded_context_ref` is already present as a tool result or runtime item in the
+planned request window, the active retention record is satisfied for that
+request and no additional skill block should be inserted.
+
+Add an explicit deactivate path when clients need it:
+
+```text
+skills/deactivate
+```
+
+Deactivation stops future sticky reinsertion. It does not delete historical
+activation records, tool results, explicit runtime items, or provider requests
+that already included the skill.
 
 ## Engine Integration
 
-Keep v1 minimal:
+Keep v1 minimal, but add the semantic context lane needed for provider-neutral
+skill behavior:
 
-- Use `CoreAgentCommand::SetToolRegistry` to expose `forge.skill.activate`.
-- Use existing tool result flow to return activated skill instructions.
-- Store activation outputs as CAS blobs like any other tool result.
+- Add runtime context items to `ContextConfig`, separate from
+  `instructions_ref`.
+- Add semantic runtime context kinds such as `SkillCatalog` and
+  `SkillActivation`.
+- Teach context-window planning and provider request materialization to include
+  runtime guidance context before normal conversation history.
+- Use existing VFS mount/tool configuration so the model can read mounted
+  skill files with ordinary filesystem tools.
+- Use existing tool result flow when the model reads a `SKILL.md`.
+- Store explicit activation outputs and `read_file` results as CAS blobs like
+  any other tool result.
+- Record immutable activation metadata separately from retention/request
+  planning state. Projection can derive model-selected activation from
+  cataloged `SKILL.md` reads until a stronger typed event is needed.
 
-Recommended near-term engine improvement:
+Recommended runtime context item for the catalog:
+
+```rust
+ContextItemSource::Runtime { label: "skills_catalog".to_string() }
+RuntimeContextKind::SkillCatalog
+RuntimeContextAuthority::RuntimeGuidance
+RuntimeContextLifecycle::InitialReinjectable
+provider_kind = Some("forge.skills.catalog_context.v1".to_string())
+```
+
+Recommended runtime context item for an active skill body:
+
+```rust
+ContextItemSource::Runtime { label: "skill_activation".to_string() }
+RuntimeContextKind::SkillActivation
+RuntimeContextAuthority::ToolObservation // or UserRequested
+RuntimeContextLifecycle::RunSticky       // or SessionSticky / TurnSticky
+provider_kind = Some("forge.skill.activation.v1".to_string())
+```
+
+This item is emitted only when the context planner decides to include or
+reinsert an active skill body. Its lifecycle mirrors
+`SkillContextRetention.scope`; it is not the lifecycle of the immutable
+`SkillActivation` record.
+
+Recommended near-term engine improvements for explicit activations and
+retention:
 
 ```rust
 CoreAgentCommand::RecordRuntimeContextItems {
     items: Vec<UncommittedContextItem>,
 }
+
+CoreAgentCommand::RecordSkillActivations {
+    activations: Vec<SkillActivation>,
+}
+
+CoreAgentCommand::UpdateSkillContextRetention {
+    retention: Vec<SkillContextRetention>,
+}
 ```
 
 This would let the runtime admit activated skill content as context without
-pretending the activation is just an ordinary tool result. It also helps API
-projection and compaction.
+pretending the activation is just an ordinary tool result. It also lets
+deactivation stop future sticky reinsertion without rewriting history.
 
-First implementation can use:
+If explicit activation needs to inject content before a model turn, the first
+implementation can use:
 
 ```rust
 ContextItemSource::Runtime { label: "skill_activation".to_string() }
@@ -588,6 +1173,8 @@ ContextItemKind::Skill {
 ```
 
 Do not add commands such as `ScanSkills` or `ReadSkillFile` to the engine.
+Do not add a special engine command for model-selected skill activation when a
+normal VFS file read already expresses the behavior.
 
 ## Public API
 
@@ -598,6 +1185,7 @@ Candidate methods:
 ```text
 skills/list
 skills/activate
+skills/deactivate
 session/skills/list
 session/skills/configure
 ```
@@ -605,11 +1193,12 @@ session/skills/configure
 Recommended v1:
 
 - `skills/list` for UI/CLI discovery before or during a session.
-- `session/read` projection includes active skill catalog summary and activated
-  skills.
-- Activation during model execution uses the tool path.
+- `session/read` projection includes active skill catalog summary, immutable
+  skill activations, and active/inactive skill-context retention state.
+- Activation during model execution uses ordinary VFS `read_file` on the
+  cataloged `SKILL.md` path.
 - Manual user activation can be encoded as run input or a future
-  `skills/activate` method that records runtime context.
+  `skills/activate` method that records runtime context and retention policy.
 
 `skills/list` request shape:
 
@@ -641,11 +1230,32 @@ pub struct SkillsConfig {
     pub include_system: bool,
     pub compatibility: SkillCompatibilityConfig,
     pub roots: Vec<SkillRootConfig>,
+    pub workspace_roots: Vec<SkillWorkspaceRootConfig>,
     pub disabled: Vec<SkillSelector>,
-    pub allow_implicit_activation: bool,
+    pub allow_implicit_selection: bool,
+    pub allow_workspace_authoring: bool,
     pub activation_policy: SkillActivationPolicy,
+    pub default_model_retention_scope: SkillRetentionScope,
+    pub default_model_retention_policy: SkillRetentionPolicy,
+    pub max_active_skills: Option<u32>,
 }
 ```
+
+Workspace roots are configured VFS workspace paths that may contain skills and
+may be writable:
+
+```rust
+pub struct SkillWorkspaceRootConfig {
+    pub workspace_id: VfsWorkspaceId,
+    pub root_path: VfsPath,
+    pub writable: bool,
+    pub auto_catalog_refresh: bool,
+}
+```
+
+Default `auto_catalog_refresh` to false. Explicit refresh keeps catalog changes
+under user/product control and avoids treating every workspace write as a
+prompt-surface change.
 
 Compatibility config:
 
@@ -668,17 +1278,18 @@ Instruction-only skills require only CAS/VFS reads.
 
 Reference-only skills require:
 
-- VFS read/list/search tools, or
-- host filesystem reads if the skill lives only on a host target.
+- VFS read/list/search tools over the mounted skill root.
 
 Script-backed skills require:
 
 - process capability on the selected host target,
-- materialized skill resources visible to that process,
+- materialized skill resources visible to that process when the process cannot
+  read directly from the VFS adapter,
 - an interpreter such as `bash`, `python3`, or `node` if the script depends on
   one.
 
-Forge should make this explicit in activation:
+Forge should make this explicit when a selected skill has scripts but the
+current target cannot run them:
 
 ```text
 This skill has scripts but target host:vm-123 has no process capability.
@@ -697,9 +1308,11 @@ Rules:
 
 - `allowed-tools` or `dependencies.tools` is a requested capability set.
 - The session/user/tenant policy decides what is actually available.
-- Project and host-installed skills are untrusted unless policy says otherwise.
-- Activating an untrusted skill may require approval.
-- Scripts require separate approval or policy grants.
+- Project and host-installed skills are less trusted than system/user skills,
+  but v1 does not implement activation approval. Discovery/configuration is the
+  policy boundary: if a skill is discovered into the active catalog, assume it
+  is valid to activate.
+- Scripts require separate policy grants.
 - Remote/MCP skills must not run embedded shell renderers.
 
 Trust levels:
@@ -718,111 +1331,265 @@ pub enum SkillTrustLevel {
 Default posture:
 
 - system/org/user skills can be implicitly suggested,
-- project/host skills can be listed but may require approval before activation,
-- remote skills require explicit install/approval.
+- project/host skills can be listed and activated once discovered,
+- remote skills require explicit install/configuration before discovery.
 
-## Target-Scoped Catalog Refresh
+## Mutable Catalog Refresh
 
-Host-installed skills may change while a session is running.
+Host-installed skills and workspace-authored skills may change while a session
+is running.
 
 Use snapshot semantics:
 
 - catalog refresh can discover new metadata,
-- activation pins current content into CAS,
+- catalog refresh writes a new skill-root snapshot and updates mount/catalog
+  paths for future runs when the source is an external host path,
+- catalog refresh over a writable workspace records the workspace head snapshot
+  and makes newly authored or edited skills catalog-selectable,
+- reading or explicitly activating `SKILL.md` pins that exact file content into
+  CAS,
 - existing activations do not change when source files change,
 - session replay uses the pinned activation refs.
 
 If a host target emits filesystem-change notifications, the gateway can emit a
 `skills/changed` notification and refresh the target catalog. Do not require
-watching for v1; explicit refresh is enough.
+watching for v1; explicit refresh is enough. For workspace sources, ordinary
+VFS write tool effects already expose new workspace revisions; the catalog does
+not need to refresh automatically after every write.
 
 ## Interaction With P62 VFS
 
 P63 should use P62 like this:
 
 ```text
-Skill source directory
+Published skill source root or bundle
   -> P62 snapshot_ref
-  -> SkillMetadata.snapshot_ref
-  -> model-visible virtual path /skills/<id>/SKILL.md
-  -> optional materialization into host target for scripts/assets
+  -> read-only session mount at /skills/<source-id>
+  -> SkillMetadata.location = MountedSnapshot {
+       source_snapshot_ref,
+       source_mount_path,
+       skill_dir_path,
+       skill_doc_path
+     }
+  -> model reads /skills/<source-id>/<skill>/SKILL.md with VFS tools
+  -> optional materialization into host target only for scripts/assets
+
+Editable skill source root
+  -> writable VFS workspace mount, such as /workspace
+  -> SkillMetadata.location = MountedWorkspace {
+       workspace_id,
+       workspace_head_ref at catalog refresh,
+       source_mount_path,
+       skill_dir_path,
+       skill_doc_path
+     }
+  -> model edits /workspace/.forge/skills/<skill>/... with VFS tools
+  -> catalog refresh makes new/edited skills selectable
+  -> activation reads and pins exact SKILL.md body from the workspace
 ```
 
 The model should be able to read skill references through VFS tools without
 knowing whether the skill originated in CAS, a database, or a VM.
 
+Do not assume a snapshot ref is itself a model-visible path. It becomes
+file-like only through a VFS mount. A workspace ref is also not a plain path;
+it becomes file-like through its writable mount. Prefer multi-skill mounts at
+source-root, bundle, or workspace-root granularity; use one-skill mounts only
+for isolation or source-shape reasons.
+
 ## Implementation Slices
+
+The phases are ordered from prerequisite/core behavior to broader product
+surface. G0-G4 are the essential first usable layer. G5-G9 can be added as the
+product needs them; they should not force complexity into the initial engine
+model.
+
+### G0: Runtime Context Prerequisite
+
+Essential.
+
+- Add or confirm the minimal runtime-context lane: ordered runtime context
+  items with pinned refs, provider kind, lifecycle, and provenance.
+- Keep runtime guidance separate from `instructions_ref` and normal transcript
+  history.
+- Teach context-window planning to place runtime guidance before conversation
+  history.
+- Implement OpenAI Responses lowering first, rendering the skills catalog as a
+  developer message.
+- Ensure compaction reinserts canonical runtime context from pinned refs rather
+  than relying on summaries to preserve it.
+- This may be implemented as a narrow subset of P71; it does not require prompt
+  bundle editing, prompt workspaces, or the full prompt-management UI.
 
 ### G1: Skill Model And Parser
 
 - Add skill metadata structs outside `engine`.
+- Use discriminated location/source structs rather than many optional fields.
 - Parse `SKILL.md` YAML frontmatter.
 - Parse optional `agents/forge.yaml`.
 - Accept compatible Codex `agents/openai.yaml` fields where straightforward.
 - Add validation tests for names, descriptions, malformed YAML, and missing
   fields.
 
-### G2: CAS/VFS Skill Snapshot
+### G2: Read-Only CAS/VFS Skill Roots
 
-- Snapshot skill directories into P62 VFS.
-- Store `SKILL.md` body and root snapshot refs.
+Essential.
+
+- Snapshot skill roots or bundles into P62 VFS.
+- Support multiple skills inside one snapshot/mount.
+- Mount enabled skill roots read-only at stable session paths.
+- Store root snapshot refs, mount paths, skill directory paths, and `SKILL.md`
+  refs.
 - Add size/depth/file-count limits.
-- Add tests for scripts/references/assets trees.
+- Add tests for scripts/references/assets trees and multiple skills in one
+  mounted root.
 
 ### G3: Global Catalog
 
 - Load product/system and configured user/org skills from CAS/VFS.
 - Render a compact model-visible catalog with budget enforcement.
-- Store catalog snapshots in CAS.
+- Store catalog snapshots and rendered catalog context reports in CAS.
+- Configure the rendered catalog as an initial runtime context item before a
+  run starts.
+- Reinsert or regenerate the configured catalog context after compaction, not
+  through the compaction summary.
 
-### G4: Host Target Discovery
+### G4: Model-Selected Activation Through VFS Reads
+
+Essential.
+
+- Treat ordinary VFS `read_file` calls against cataloged `SKILL.md` paths as
+  model-selected activation.
+- Reuse current tool result data: `output_ref`, `model_visible_output_ref`, and
+  parsed `ReadFileResult.resolved_path`.
+- Count the read as full activation only when it starts at line 1 and is not
+  truncated.
+- Record activation metadata with catalog ref, resolved source/location, tool
+  output refs, and `SKILL.md` blob/content ref.
+- Add a narrow VFS read-provenance effect if needed to record exact
+  workspace-head or snapshot provenance for the read.
+- Default model-selected activation to run-scoped retention with
+  `ReinsertWhenOriginalOmitted`, unless the first implementation chooses
+  `NeverReinsert` to keep the core smaller.
+- Add tests that activation/read pins skill content even if the source changes
+  after the catalog snapshot.
+
+### G5: Explicit User Activation And Retention
+
+Useful, but can follow the core path.
+
+- For explicit UI/CLI selection, resolve by skill id or unambiguous name and
+  pre-read the cataloged `SKILL.md`.
+- Return or inject a model-visible skill block for explicit activation.
+- Record retention separately from activation, with default run-scoped
+  retention, session-pinned retention, and explicit deactivation.
+- Support multiple active skill-context retention records.
+- Reinsert activated bodies after compaction only when active retention policy
+  requires it, and do not duplicate the body when the original
+  `loaded_context_ref` is already in the request window.
+- Add `skills/deactivate` only when a client has persistent/session-pinned
+  skills to manage.
+
+### G6: Writable Workspace Skill Authoring
+
+Needs more product validation.
+
+- Support configured writable VFS workspace roots for skill authoring.
+- Discover configured workspace skill roots from writable VFS mounts when
+  authoring is enabled.
+- Store workspace ids, mount paths, skill paths, and observed head refs in the
+  catalog.
+- For workspace-sourced activations, record the workspace id/head observed by
+  the read or runtime injection that loaded the body.
+- Add tests that authored or edited workspace skills become catalog-visible
+  only after catalog refresh.
+
+### G7: Host Target Discovery
+
+Broader target-scoped layer.
 
 - Discover skills through a selected `ToolExecutionTarget`.
 - Support `.forge/skills` and `.agents/skills` first.
 - Add Codex/Claude compatibility roots behind config.
-- Snapshot host skills into CAS.
+- Snapshot host skill roots into CAS and mount the snapshots read-only.
 - Add tests with in-memory/scoped host filesystems.
+- Wire real VM/sandbox host filesystem discovery when host-target filesystem
+  adapters are available.
 
-### G5: Activation Tool
+### G8: Materialization For Scripts
 
-- Register `forge.skill.activate`.
-- Resolve by skill id or unambiguous name.
-- Return a model-visible skill block.
-- Record activation output as a context item/tool result.
-- Add tests that activation pins host skill content even if source files change
-  afterward.
-
-### G6: Materialization For Scripts
+Needs more policy and target work.
 
 - Integrate P62 materialization.
-- Include materialized root path in activation when requested and allowed.
+- Include materialized root path when script execution requests it and policy
+  allows it.
 - Validate process capability and interpreter availability where practical.
 - Add tests for no-process target, read-only target, and materialization
   warnings.
+- Wire real VM/sandbox materialization when host-target filesystem/process
+  adapters are available.
 
-### G7: API And Projection
+### G9: API And Projection
+
+Product surface.
 
 - Add `skills/list` if needed by CLI/UI.
-- Project active catalogs and activated skills through `session/read`.
+- Project active catalog refs, rendered catalog refs/reports, and activated
+  skills with their retention state through `session/read`.
 - Emit warnings for invalid skills and catalog truncation.
 
 ## Verification
 
-Required tests:
+Core tests for G0-G4:
 
 - parse valid Forge skill,
 - reject invalid frontmatter,
 - tolerate optional metadata read failures with warnings,
 - enforce size/depth limits,
+- snapshot and mount a skill root containing multiple skills,
 - build catalog with duplicate names across targets,
 - render catalog within budget,
+- configure rendered catalog as runtime guidance rather than instructions or
+  real user input,
+- materialize the skills catalog as an OpenAI Responses developer message,
+- reinsert configured catalog context after compaction without relying on the
+  compaction summary,
+- expose cataloged `skill_doc_path` values under read-only VFS mounts,
+- treat `read_file` of a cataloged `SKILL.md` as activation,
+- do not treat partial/truncated `SKILL.md` reads as full activation,
+- record activation using existing tool result refs and resolved path,
+- add/read VFS provenance effect when exact read-time snapshot or workspace
+  head cannot be recovered from existing data,
+- activation survives later source file mutation.
+
+Expanded-phase tests:
+
 - resolve explicit `skill_id`,
 - reject ambiguous name activation,
-- snapshot host skill before activation,
-- activation survives later host file mutation,
+- explicit UI/CLI activation pre-reads the same `SKILL.md`,
+- reinsert an activated skill body after compaction only when active retention
+  policy requires exact reinsertion,
+- avoid duplicating an activated skill body when the original tool result or
+  runtime item with the same `loaded_context_ref` is still in the request
+  window,
+- allow multiple active skill-context retention records in one run,
+- mark run-scoped retention inactive when the run completes without deleting
+  history, tool results, or provider requests,
+- keep session-pinned retention active until explicit deactivation or
+  config/policy removal,
+- allow completed/inactive activations to remain as historical records without
+  sticky reinsertion,
+- discover skills under a configured writable VFS workspace root,
+- expose cataloged `skill_doc_path` values under writable workspace mounts when
+  authoring is enabled,
+- create a new workspace skill with VFS write tools and make it
+  catalog-selectable after explicit refresh,
+- edit a workspace skill and verify existing catalog/activation refs remain
+  pinned until refresh or reactivation,
+- materialize the skills catalog as an Anthropic Messages runtime/meta user
+  message or other explicit configured fallback when that adapter is built,
 - scripts are unavailable without process capability,
-- materialized script paths point at target-local roots,
-- untrusted skill activation follows policy.
+- materialized script paths point at target-local roots.
 
 ## Open Questions
 
@@ -837,5 +1604,6 @@ Required tests:
   Recommendation: enable `.agents/skills`; make `.codex/skills` and
   `.claude/skills` explicit compatibility modes.
 - Should activation be a tool or an API command?
-  Recommendation: tool for model-driven activation; API method later for UI
-  and manual user activation.
+  Recommendation: neither is required for model-driven activation. Use
+  ordinary VFS file reads for model-selected skills. Add an API/runtime helper
+  only for UI/CLI explicit activation or name resolution.
