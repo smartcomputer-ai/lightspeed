@@ -3,12 +3,14 @@
 mod activities;
 mod config;
 mod fake;
+mod vfs_tools;
 
 pub use activities::{
     ActivityState, LlmActivityDeps, StorageActivityDeps, ToolActivityDeps, WorkerActivities,
 };
 pub use config::pg_store_from_env;
 pub use fake::{FakeLlm, FakeTools};
+pub use vfs_tools::SessionMountedVfsTools;
 pub use workflow::{
     ACTIVITY_APPEND_EVENTS, ACTIVITY_CREATE_OR_LOAD_SESSION, ACTIVITY_LLM_GENERATE,
     ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB, ACTIVITY_TOOL_INVOKE_BATCH, AgentSessionWorkflow,

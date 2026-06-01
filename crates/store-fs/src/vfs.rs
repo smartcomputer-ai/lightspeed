@@ -11,7 +11,7 @@ use tokio::{fs, sync::Mutex};
 
 use ::vfs::{
     CompareAndSetVfsWorkspaceHead, CreateVfsWorkspaceRecord, VfsCatalogError, VfsMountRecord,
-    VfsMountStore, VfsPath, VfsSnapshotRecord, VfsSnapshotStore, VfsWorkspaceId,
+    VfsMountSource, VfsMountStore, VfsPath, VfsSnapshotRecord, VfsSnapshotStore, VfsWorkspaceId,
     VfsWorkspaceRecord, VfsWorkspaceStore,
 };
 
@@ -94,6 +94,73 @@ impl FsVfsCatalogStore {
             "{}.json",
             crate::encode_component(mount_path.as_str())
         ))
+    }
+
+    async fn remove_workspace_mounts_locked(
+        &self,
+        workspace_id: &VfsWorkspaceId,
+    ) -> Result<(), VfsCatalogError> {
+        let root = self.mounts_root();
+        let mut sessions = match fs::read_dir(&root).await {
+            Ok(read_dir) => read_dir,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(catalog_io_error("read vfs mounts directory", &root, error)),
+        };
+
+        while let Some(session_entry) = sessions
+            .next_entry()
+            .await
+            .map_err(|error| catalog_io_error("read vfs mounts directory", &root, error))?
+        {
+            let session_dir = session_entry.path();
+            let file_type = session_entry.file_type().await.map_err(|error| {
+                catalog_io_error("stat vfs session mounts directory", &session_dir, error)
+            })?;
+            if !file_type.is_dir() {
+                continue;
+            }
+
+            let mut mounts = match fs::read_dir(&session_dir).await {
+                Ok(read_dir) => read_dir,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(catalog_io_error(
+                        "read vfs session mounts directory",
+                        &session_dir,
+                        error,
+                    ));
+                }
+            };
+            while let Some(mount_entry) = mounts.next_entry().await.map_err(|error| {
+                catalog_io_error("read vfs session mounts directory", &session_dir, error)
+            })? {
+                let path = mount_entry.path();
+                let file_type = mount_entry
+                    .file_type()
+                    .await
+                    .map_err(|error| catalog_io_error("stat vfs mount record", &path, error))?;
+                if !file_type.is_file() {
+                    continue;
+                }
+                if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                    continue;
+                }
+
+                let mount: VfsMountRecord =
+                    read_required_json("mount", "unknown", "read vfs mount record", &path).await?;
+                if matches!(
+                    &mount.source,
+                    VfsMountSource::Workspace {
+                        workspace_id: mounted_workspace_id
+                    } if mounted_workspace_id == workspace_id
+                ) {
+                    fs::remove_file(&path).await.map_err(|error| {
+                        catalog_io_error("delete vfs mount record", &path, error)
+                    })?;
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -179,10 +246,12 @@ impl VfsWorkspaceStore for FsVfsCatalogStore {
             &path,
         )
         .await?;
-        if workspace.revision != request.expected_revision {
+        if let Some(expected_revision) = request.expected_revision
+            && workspace.revision != expected_revision
+        {
             return Err(VfsCatalogError::RevisionConflict {
                 workspace_id: request.workspace_id,
-                expected_revision: request.expected_revision,
+                expected_revision,
                 actual_revision: workspace.revision,
             });
         }
@@ -200,6 +269,26 @@ impl VfsWorkspaceStore for FsVfsCatalogStore {
                 })?;
         workspace.updated_at_ms = request.updated_at_ms;
         write_json("write vfs workspace record", &path, &workspace).await?;
+        Ok(workspace)
+    }
+
+    async fn delete_workspace(
+        &self,
+        workspace_id: &VfsWorkspaceId,
+    ) -> Result<VfsWorkspaceRecord, VfsCatalogError> {
+        let _guard = self.lock.lock().await;
+        let path = self.workspace_path(workspace_id);
+        let workspace: VfsWorkspaceRecord = read_required_json(
+            "workspace",
+            workspace_id.as_str(),
+            "read vfs workspace record",
+            &path,
+        )
+        .await?;
+        fs::remove_file(&path)
+            .await
+            .map_err(|error| catalog_io_error("delete vfs workspace record", &path, error))?;
+        self.remove_workspace_mounts_locked(workspace_id).await?;
         Ok(workspace)
     }
 }
@@ -379,7 +468,7 @@ mod tests {
         let updated = store
             .compare_and_set_head(CompareAndSetVfsWorkspaceHead {
                 workspace_id: workspace_id.clone(),
-                expected_revision: 0,
+                expected_revision: Some(0),
                 new_head_snapshot_ref: next_ref.clone(),
                 updated_at_ms: 4,
             })
@@ -391,7 +480,7 @@ mod tests {
             store
                 .compare_and_set_head(CompareAndSetVfsWorkspaceHead {
                     workspace_id: workspace_id.clone(),
-                    expected_revision: 0,
+                    expected_revision: Some(0),
                     new_head_snapshot_ref: BlobRef::from_bytes(b"stale"),
                     updated_at_ms: 5,
                 })
@@ -414,7 +503,9 @@ mod tests {
         let workspace_mount = VfsMountRecord {
             session_id: session_id.clone(),
             mount_path: VfsPath::parse("/workspace").unwrap(),
-            source: VfsMountSource::Workspace { workspace_id },
+            source: VfsMountSource::Workspace {
+                workspace_id: workspace_id.clone(),
+            },
             access: VfsMountAccess::ReadWrite,
         };
         store
@@ -435,7 +526,20 @@ mod tests {
             .expect("remove mount");
         assert_eq!(
             store.list_mounts(&session_id).await.expect("list mounts"),
-            vec![workspace_mount]
+            vec![workspace_mount.clone()]
+        );
+        let deleted = store
+            .delete_workspace(&workspace_id)
+            .await
+            .expect("delete workspace");
+        assert_eq!(deleted.workspace_id, workspace_id);
+        assert!(matches!(
+            store.read_workspace(&deleted.workspace_id).await,
+            Err(VfsCatalogError::NotFound { .. })
+        ));
+        assert_eq!(
+            store.list_mounts(&session_id).await.expect("list mounts"),
+            Vec::<VfsMountRecord>::new()
         );
     }
 

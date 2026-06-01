@@ -8,7 +8,7 @@ use llm_clients::openai::responses as oai;
 use llm_runtime::{LlmAdapterRegistry, LlmRuntime, OpenAiResponsesLlmAdapter};
 use store_pg::PgStore;
 
-use crate::{FakeLlm, FakeTools, pg_store_from_env};
+use crate::{FakeLlm, FakeTools, SessionMountedVfsTools, pg_store_from_env};
 
 #[derive(Clone)]
 pub struct StorageActivityDeps {
@@ -69,7 +69,7 @@ impl ActivityState {
         let store = pg_store_from_env().await?;
         let blobs: Arc<dyn BlobStore> = store.clone();
         let llm = llm_from_env(blobs.clone())?;
-        let tools = Arc::new(FakeTools::new(blobs)) as Arc<dyn CoreAgentTools>;
+        let tools = tools_from_env(store.clone(), blobs)?;
         Ok(Self::from_pg_store(store, llm, tools))
     }
 
@@ -83,6 +83,18 @@ impl ActivityState {
 
     pub(super) fn tools(&self) -> &ToolActivityDeps {
         &self.tools
+    }
+}
+
+fn tools_from_env(
+    store: Arc<PgStore>,
+    blobs: Arc<dyn BlobStore>,
+) -> anyhow::Result<Arc<dyn CoreAgentTools>> {
+    let tool_mode = env::var("FORGE_TOOLS").unwrap_or_else(|_| "vfs".to_owned());
+    match tool_mode.as_str() {
+        "vfs" => Ok(Arc::new(SessionMountedVfsTools::from_pg_store(store))),
+        "fake" => Ok(Arc::new(FakeTools::new(blobs))),
+        other => Err(anyhow::anyhow!("unsupported FORGE_TOOLS value: {other}")),
     }
 }
 

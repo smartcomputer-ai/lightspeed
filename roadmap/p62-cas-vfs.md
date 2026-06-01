@@ -8,8 +8,9 @@
   G6.
 - Deferred until a concrete product write/sync surface exists: G3 workspace
   quotas and mount policy limits.
-- Next product slice: G7 higher-level CLI-local sync/workspace/projection hooks
-  on top of the implemented snapshot upload and materialization primitives.
+- G7 now has first-cut CLI-local snapshot/materialize plus session VFS
+  workspace/mount APIs and hosted worker VFS tool execution. Higher-level
+  bidirectional sync remains future work.
 
 ## Goal
 
@@ -291,21 +292,24 @@ pub enum VfsMountSource {
 }
 ```
 
-Use compare-and-set semantics when advancing a workspace head:
+Use compare-and-set semantics when an expected revision is supplied while
+advancing a workspace head:
 
 ```rust
 pub struct CompareAndSetVfsWorkspaceHead {
     pub workspace_id: VfsWorkspaceId,
-    pub expected_revision: u64,
+    pub expected_revision: Option<u64>,
     pub new_head_snapshot_ref: BlobRef,
     pub updated_at_ms: i64,
 }
 ```
 
-This prevents concurrent mutating tools from losing updates. Temporal workflow
-state may cache these records, but the durable authority should be a runtime
-catalog store. `store-fs` can implement this as JSON files for local/dev, and
-`store-pg` can implement it as hosted tables.
+This prevents concurrent mutating tools from losing updates when they know the
+base revision; callers can omit `expected_revision` for an intentional
+last-writer-wins update. Temporal workflow state may cache these records, but
+the durable authority should be a runtime catalog store. `store-fs` can
+implement this as JSON files for local/dev, and `store-pg` can implement it as
+hosted tables.
 
 ### Mount
 
@@ -760,8 +764,19 @@ gateway/CAS remains the authority for blobs and manifests.
   manifest, downloads blobs through `blob/get`, skips local files whose digest
   already matches, writes only below the selected destination, refuses
   destination symlink traversal, and applies executable bits conservatively.
-- Remaining: add internal gateway helpers for workspace creation and workspace
-  commit.
+- Done: add API/gateway helpers for `vfs/workspace/create`,
+  `vfs/workspace/read`, `vfs/workspace/update`, `vfs/workspace/delete`,
+  `vfs/mount/put`, `vfs/mount/delete`, and `vfs/mount/list`.
+- Done: project session VFS mounts through `SessionView` so clients can see
+  mounted paths, sources, access modes, workspace heads, and revisions.
+- Done: add explicit CLI commands for workspace create/read/update/delete and
+  session mount put/delete/list.
+- Done: add `forge chat --mount <dir>`, which snapshots a local directory,
+  creates a writable workspace, mounts it at `/workspace` by default, and starts
+  the chat against that VFS cwd.
+- Done: hosted worker tool execution can load session VFS mounts and run the
+  existing DirectFs host tools over `MountedVfsFileSystem`; `FORGE_TOOLS=fake`
+  remains available for dev/test fallback.
 - Extend CLI-local sync so snapshot/upload and materialize/download can be
   composed into higher-level bidirectional flows.
 - Add public API only when a product surface needs direct VFS access.

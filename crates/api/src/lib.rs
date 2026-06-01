@@ -29,6 +29,13 @@ pub const METHOD_BLOB_GET: &str = "blob/get";
 pub const METHOD_BLOB_HAS_MANY: &str = "blob/has_many";
 pub const METHOD_VFS_SNAPSHOT_COMMIT: &str = "vfs/snapshot/commit";
 pub const METHOD_VFS_SNAPSHOT_READ: &str = "vfs/snapshot/read";
+pub const METHOD_VFS_WORKSPACE_CREATE: &str = "vfs/workspace/create";
+pub const METHOD_VFS_WORKSPACE_READ: &str = "vfs/workspace/read";
+pub const METHOD_VFS_WORKSPACE_UPDATE: &str = "vfs/workspace/update";
+pub const METHOD_VFS_WORKSPACE_DELETE: &str = "vfs/workspace/delete";
+pub const METHOD_VFS_MOUNT_PUT: &str = "vfs/mount/put";
+pub const METHOD_VFS_MOUNT_LIST: &str = "vfs/mount/list";
+pub const METHOD_VFS_MOUNT_DELETE: &str = "vfs/mount/delete";
 
 pub const NOTIFY_SESSION_STARTED: &str = "session/started";
 pub const NOTIFY_SESSION_STATUS_CHANGED: &str = "session/status/changed";
@@ -153,6 +160,41 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: VfsSnapshotReadParams,
     ) -> Result<AgentApiOutcome<VfsSnapshotReadResponse>, AgentApiError>;
+
+    async fn create_vfs_workspace(
+        &self,
+        params: VfsWorkspaceCreateParams,
+    ) -> Result<AgentApiOutcome<VfsWorkspaceCreateResponse>, AgentApiError>;
+
+    async fn read_vfs_workspace(
+        &self,
+        params: VfsWorkspaceReadParams,
+    ) -> Result<AgentApiOutcome<VfsWorkspaceReadResponse>, AgentApiError>;
+
+    async fn update_vfs_workspace(
+        &self,
+        params: VfsWorkspaceUpdateParams,
+    ) -> Result<AgentApiOutcome<VfsWorkspaceUpdateResponse>, AgentApiError>;
+
+    async fn delete_vfs_workspace(
+        &self,
+        params: VfsWorkspaceDeleteParams,
+    ) -> Result<AgentApiOutcome<VfsWorkspaceDeleteResponse>, AgentApiError>;
+
+    async fn put_vfs_mount(
+        &self,
+        params: VfsMountPutParams,
+    ) -> Result<AgentApiOutcome<VfsMountPutResponse>, AgentApiError>;
+
+    async fn delete_vfs_mount(
+        &self,
+        params: VfsMountDeleteParams,
+    ) -> Result<AgentApiOutcome<VfsMountDeleteResponse>, AgentApiError>;
+
+    async fn list_vfs_mounts(
+        &self,
+        params: VfsMountListParams,
+    ) -> Result<AgentApiOutcome<VfsMountListResponse>, AgentApiError>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -725,6 +767,161 @@ pub struct VfsSnapshotReadResponse {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct VfsWorkspaceCreateParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
+    pub snapshot_ref: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsWorkspaceCreateResponse {
+    pub workspace: VfsWorkspaceView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsWorkspaceReadParams {
+    pub workspace_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsWorkspaceReadResponse {
+    pub workspace: VfsWorkspaceView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsWorkspaceUpdateParams {
+    pub workspace_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_revision: Option<u64>,
+    pub snapshot_ref: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsWorkspaceUpdateResponse {
+    pub workspace: VfsWorkspaceView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsWorkspaceDeleteParams {
+    pub workspace_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsWorkspaceDeleteResponse {
+    pub workspace: VfsWorkspaceView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsWorkspaceView {
+    pub workspace_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_snapshot_ref: Option<String>,
+    pub head_snapshot_ref: String,
+    pub revision: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum VfsMountSourceInput {
+    Snapshot { snapshot_ref: String },
+    Workspace { workspace_id: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum VfsMountSourceView {
+    Snapshot {
+        snapshot_ref: String,
+    },
+    Workspace {
+        workspace_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        head_snapshot_ref: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        revision: Option<u64>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum VfsMountAccess {
+    ReadOnly,
+    ReadWrite,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsMountView {
+    pub mount_path: String,
+    pub source: VfsMountSourceView,
+    pub access: VfsMountAccess,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsMountPutParams {
+    pub session_id: SessionId,
+    pub mount_path: String,
+    pub source: VfsMountSourceInput,
+    pub access: VfsMountAccess,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsMountPutResponse {
+    pub mount: VfsMountView,
+    pub session: SessionView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsMountDeleteParams {
+    pub session_id: SessionId,
+    pub mount_path: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsMountDeleteResponse {
+    pub mount_path: String,
+    pub session: SessionView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsMountListParams {
+    pub session_id: SessionId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsMountListResponse {
+    #[serde(default)]
+    pub mounts: Vec<VfsMountView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ModelConfig {
     pub provider_id: String,
     pub api_kind: String,
@@ -753,6 +950,8 @@ pub struct SessionView {
     pub updated_at_ms: u64,
     #[serde(default)]
     pub runs: Vec<RunView>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vfs_mounts: Vec<VfsMountView>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1207,6 +1406,42 @@ pub async fn dispatch_json_rpc(
                 Err(error) => JsonRpcResponse::failure(id, error),
             }
         }
+        METHOD_VFS_WORKSPACE_CREATE => {
+            match json_rpc_params::<VfsWorkspaceCreateParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.create_vfs_workspace(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
+        METHOD_VFS_WORKSPACE_READ => {
+            match json_rpc_params::<VfsWorkspaceReadParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.read_vfs_workspace(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
+        METHOD_VFS_WORKSPACE_UPDATE => {
+            match json_rpc_params::<VfsWorkspaceUpdateParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.update_vfs_workspace(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
+        METHOD_VFS_WORKSPACE_DELETE => {
+            match json_rpc_params::<VfsWorkspaceDeleteParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.delete_vfs_workspace(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
+        METHOD_VFS_MOUNT_PUT => match json_rpc_params::<VfsMountPutParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.put_vfs_mount(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
+        METHOD_VFS_MOUNT_DELETE => match json_rpc_params::<VfsMountDeleteParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.delete_vfs_mount(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
+        METHOD_VFS_MOUNT_LIST => match json_rpc_params::<VfsMountListParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.list_vfs_mounts(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
         other => JsonRpcResponse::failure(id, JsonRpcError::method_not_found(other)),
     }
 }
@@ -1475,6 +1710,160 @@ mod tests {
         assert_eq!(
             response.result.expect("result")["result"]["snapshotRef"],
             json!(format!("sha256:{}", "2".repeat(64)))
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_vfs_workspace_create() {
+        let snapshot_ref = format!("sha256:{}", "2".repeat(64));
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_VFS_WORKSPACE_CREATE.to_owned(),
+                params: Some(json!({
+                    "workspaceId": "workspace_1",
+                    "snapshotRef": snapshot_ref
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["workspace"]["workspaceId"],
+            json!("workspace_1")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_vfs_workspace_read() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_VFS_WORKSPACE_READ.to_owned(),
+                params: Some(json!({ "workspaceId": "workspace_1" })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["workspace"]["revision"],
+            json!(4)
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_vfs_workspace_update() {
+        let snapshot_ref = format!("sha256:{}", "4".repeat(64));
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_VFS_WORKSPACE_UPDATE.to_owned(),
+                params: Some(json!({
+                    "workspaceId": "workspace_1",
+                    "expectedRevision": 4,
+                    "snapshotRef": snapshot_ref
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["workspace"]["revision"],
+            json!(5)
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_vfs_workspace_update_without_expected_revision() {
+        let snapshot_ref = format!("sha256:{}", "4".repeat(64));
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_VFS_WORKSPACE_UPDATE.to_owned(),
+                params: Some(json!({
+                    "workspaceId": "workspace_1",
+                    "snapshotRef": snapshot_ref
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["workspace"]["revision"],
+            json!(5)
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_vfs_workspace_delete() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_VFS_WORKSPACE_DELETE.to_owned(),
+                params: Some(json!({ "workspaceId": "workspace_1" })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["workspace"]["workspaceId"],
+            json!("workspace_1")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_vfs_mount_put() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_VFS_MOUNT_PUT.to_owned(),
+                params: Some(json!({
+                    "sessionId": "session_1",
+                    "mountPath": "/workspace",
+                    "source": { "type": "workspace", "workspaceId": "workspace_1" },
+                    "access": "readWrite"
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["mount"]["source"]["workspaceId"],
+            json!("workspace_1")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_vfs_mount_delete() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_VFS_MOUNT_DELETE.to_owned(),
+                params: Some(json!({
+                    "sessionId": "session_1",
+                    "mountPath": "/workspace"
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["mountPath"],
+            json!("/workspace")
         );
     }
 
@@ -1831,6 +2220,120 @@ mod tests {
                 bytes: 0,
             }))
         }
+
+        async fn create_vfs_workspace(
+            &self,
+            params: VfsWorkspaceCreateParams,
+        ) -> Result<AgentApiOutcome<VfsWorkspaceCreateResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(VfsWorkspaceCreateResponse {
+                workspace: VfsWorkspaceView {
+                    workspace_id: params
+                        .workspace_id
+                        .unwrap_or_else(|| "workspace_test".to_owned()),
+                    base_snapshot_ref: Some(params.snapshot_ref.clone()),
+                    head_snapshot_ref: params.snapshot_ref,
+                    revision: 0,
+                },
+            }))
+        }
+
+        async fn read_vfs_workspace(
+            &self,
+            params: VfsWorkspaceReadParams,
+        ) -> Result<AgentApiOutcome<VfsWorkspaceReadResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(VfsWorkspaceReadResponse {
+                workspace: VfsWorkspaceView {
+                    workspace_id: params.workspace_id,
+                    base_snapshot_ref: Some(format!("sha256:{}", "2".repeat(64))),
+                    head_snapshot_ref: format!("sha256:{}", "3".repeat(64)),
+                    revision: 4,
+                },
+            }))
+        }
+
+        async fn update_vfs_workspace(
+            &self,
+            params: VfsWorkspaceUpdateParams,
+        ) -> Result<AgentApiOutcome<VfsWorkspaceUpdateResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(VfsWorkspaceUpdateResponse {
+                workspace: VfsWorkspaceView {
+                    workspace_id: params.workspace_id,
+                    base_snapshot_ref: Some(format!("sha256:{}", "2".repeat(64))),
+                    head_snapshot_ref: params.snapshot_ref,
+                    revision: params.expected_revision.unwrap_or(4) + 1,
+                },
+            }))
+        }
+
+        async fn delete_vfs_workspace(
+            &self,
+            params: VfsWorkspaceDeleteParams,
+        ) -> Result<AgentApiOutcome<VfsWorkspaceDeleteResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(VfsWorkspaceDeleteResponse {
+                workspace: VfsWorkspaceView {
+                    workspace_id: params.workspace_id,
+                    base_snapshot_ref: Some(format!("sha256:{}", "2".repeat(64))),
+                    head_snapshot_ref: format!("sha256:{}", "3".repeat(64)),
+                    revision: 4,
+                },
+            }))
+        }
+
+        async fn put_vfs_mount(
+            &self,
+            params: VfsMountPutParams,
+        ) -> Result<AgentApiOutcome<VfsMountPutResponse>, AgentApiError> {
+            let mount = VfsMountView {
+                mount_path: params.mount_path,
+                source: match params.source {
+                    VfsMountSourceInput::Snapshot { snapshot_ref } => {
+                        VfsMountSourceView::Snapshot { snapshot_ref }
+                    }
+                    VfsMountSourceInput::Workspace { workspace_id } => {
+                        VfsMountSourceView::Workspace {
+                            workspace_id,
+                            head_snapshot_ref: Some(format!("sha256:{}", "3".repeat(64))),
+                            revision: Some(0),
+                        }
+                    }
+                },
+                access: params.access,
+            };
+            Ok(AgentApiOutcome::new(VfsMountPutResponse {
+                mount: mount.clone(),
+                session: SessionView {
+                    vfs_mounts: vec![mount],
+                    ..test_session(params.session_id, SessionStatus::Idle)
+                },
+            }))
+        }
+
+        async fn delete_vfs_mount(
+            &self,
+            params: VfsMountDeleteParams,
+        ) -> Result<AgentApiOutcome<VfsMountDeleteResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(VfsMountDeleteResponse {
+                mount_path: params.mount_path,
+                session: test_session(params.session_id, SessionStatus::Idle),
+            }))
+        }
+
+        async fn list_vfs_mounts(
+            &self,
+            params: VfsMountListParams,
+        ) -> Result<AgentApiOutcome<VfsMountListResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(VfsMountListResponse {
+                mounts: vec![VfsMountView {
+                    mount_path: "/workspace".to_owned(),
+                    source: VfsMountSourceView::Workspace {
+                        workspace_id: format!("workspace_{}", params.session_id),
+                        head_snapshot_ref: Some(format!("sha256:{}", "3".repeat(64))),
+                        revision: Some(0),
+                    },
+                    access: VfsMountAccess::ReadWrite,
+                }],
+            }))
+        }
     }
 
     fn test_session(id: SessionId, status: SessionStatus) -> SessionView {
@@ -1843,6 +2346,7 @@ mod tests {
             created_at_ms: 1,
             updated_at_ms: 2,
             runs: Vec::new(),
+            vfs_mounts: Vec::new(),
         }
     }
 

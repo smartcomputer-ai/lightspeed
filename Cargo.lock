@@ -1015,6 +1015,7 @@ dependencies = [
  "temporalio-sdk",
  "temporalio-sdk-core",
  "tokio",
+ "tools",
  "uuid",
  "vfs",
  "worker",
@@ -4805,7 +4806,9 @@ dependencies = [
  "temporalio-sdk-core",
  "test-support",
  "tokio",
+ "tools",
  "uuid",
+ "vfs",
  "workflow",
 ]
 

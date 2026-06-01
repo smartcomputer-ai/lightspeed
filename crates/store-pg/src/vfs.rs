@@ -198,10 +198,12 @@ impl VfsWorkspaceStore for PgStore {
             });
         };
         let current = workspace_record_from_row(&row)?;
-        if current.revision != request.expected_revision {
+        if let Some(expected_revision) = request.expected_revision
+            && current.revision != expected_revision
+        {
             return Err(VfsCatalogError::RevisionConflict {
                 workspace_id: request.workspace_id,
-                expected_revision: request.expected_revision,
+                expected_revision,
                 actual_revision: current.revision,
             });
         }
@@ -244,6 +246,41 @@ impl VfsWorkspaceStore for PgStore {
         tx.commit()
             .await
             .map_err(|error| catalog_sql_error("commit vfs workspace transaction", error))?;
+        workspace_record_from_row(&row)
+    }
+
+    async fn delete_workspace(
+        &self,
+        workspace_id: &VfsWorkspaceId,
+    ) -> Result<VfsWorkspaceRecord, VfsCatalogError> {
+        self.ensure_universe()
+            .await
+            .map_err(|error| catalog_store_error("ensure universe", error))?;
+        let row = sqlx::query(
+            r#"
+            DELETE FROM vfs_workspaces
+            WHERE universe_id = $1 AND workspace_id = $2
+            RETURNING
+                workspace_id,
+                base_snapshot_digest,
+                head_snapshot_digest,
+                revision,
+                created_at_ms,
+                updated_at_ms
+            "#,
+        )
+        .bind(self.config.universe_id)
+        .bind(workspace_id.as_str())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|error| catalog_sql_error("delete vfs workspace", error))?;
+
+        let Some(row) = row else {
+            return Err(VfsCatalogError::NotFound {
+                kind: "workspace",
+                id: workspace_id.to_string(),
+            });
+        };
         workspace_record_from_row(&row)
     }
 }

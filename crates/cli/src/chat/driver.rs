@@ -65,6 +65,12 @@ pub(crate) struct ChatArgs {
     /// Working directory for local file tools. Defaults to the current directory.
     #[arg(long)]
     workdir: Option<PathBuf>,
+    /// Snapshot a local directory, create a VFS workspace, and mount it for this chat.
+    #[arg(long)]
+    mount: Option<PathBuf>,
+    /// VFS path used for --mount. Defaults to /workspace.
+    #[arg(long = "mount-path", default_value = "/workspace")]
+    mount_path: String,
     /// JSON-RPC agent API URL.
     #[arg(long = "api-url", env = "FORGE_API_URL")]
     api_url: String,
@@ -80,7 +86,18 @@ pub(crate) struct ChatArgs {
 
 pub(crate) async fn handle(args: ChatArgs) -> Result<()> {
     let draft = draft_settings(&args)?;
-    let workdir = resolve_chat_workdir(args.workdir)?;
+    if args.mount.is_some() && args.workdir.is_some() {
+        return Err(anyhow!(
+            "--workdir cannot be used with --mount; use --mount-path for the VFS cwd"
+        ));
+    }
+    let mount = args.mount.clone();
+    let mount_path = args.mount_path.clone();
+    let workdir = if mount.is_some() {
+        mount_path.clone()
+    } else {
+        resolve_chat_workdir(args.workdir)?
+    };
     let session_id = if args.new {
         new_session_id()
     } else if let Some(session_id) = args.session {
@@ -90,13 +107,17 @@ pub(crate) async fn handle(args: ChatArgs) -> Result<()> {
     };
 
     let message = (!args.message.is_empty()).then(|| args.message.join(" "));
-    let (mut driver, initial_events) = ChatSessionDriver::open(ChatSessionDriverOptions {
+    let (mut driver, mut initial_events) = ChatSessionDriver::open(ChatSessionDriverOptions {
         session_id,
         draft_settings: draft,
         workdir,
         api_url: args.api_url,
     })
     .await?;
+    if let Some(directory) = mount {
+        let events = driver.mount_local_directory(directory, mount_path).await?;
+        initial_events.extend(events);
+    }
 
     if args.json {
         if let Some(message) = message {
@@ -213,6 +234,37 @@ impl ChatSessionDriver {
             detail: None,
             settings: self.settings_view(),
         })
+    }
+
+    pub(crate) async fn mount_local_directory(
+        &mut self,
+        directory: PathBuf,
+        mount_path: String,
+    ) -> Result<Vec<ChatEvent>> {
+        if !self.is_quiescent() {
+            return Err(anyhow!("cannot mount a directory while a run is active"));
+        }
+        let summary = crate::vfs_transfer::upload_snapshot_directory(
+            self.api.as_ref(),
+            directory,
+            crate::vfs_transfer::SnapshotUploadOptions::default(),
+        )
+        .await
+        .context("failed to upload chat mount directory")?;
+        let workspace =
+            crate::vfs_cli::create_workspace_from_snapshot(self.api.as_ref(), summary.snapshot_ref)
+                .await
+                .context("failed to create chat mount workspace")?;
+        crate::vfs_cli::mount_workspace(
+            self.api.as_ref(),
+            self.session_id.clone(),
+            mount_path.clone(),
+            workspace.workspace_id,
+        )
+        .await
+        .context("failed to mount chat workspace")?;
+        self.workdir = mount_path;
+        self.refresh().await
     }
 
     pub(crate) async fn handle_command(&mut self, command: ChatCommand) -> Result<Vec<ChatEvent>> {
@@ -1353,6 +1405,7 @@ mod tests {
                     },
                 ],
             }],
+            vfs_mounts: Vec::new(),
         };
 
         let settings = ChatDraftSettings {
@@ -1396,6 +1449,7 @@ mod tests {
                 ],
                 tool_batches: Vec::new(),
             }],
+            vfs_mounts: Vec::new(),
         };
         let settings = ChatDraftSettings {
             provider: "openai".into(),
@@ -1436,6 +1490,7 @@ mod tests {
                 }],
                 tool_batches: Vec::new(),
             }],
+            vfs_mounts: Vec::new(),
         };
         let settings = ChatDraftSettings {
             provider: "openai".into(),
@@ -1533,6 +1588,8 @@ mod tests {
             effort: effort.map(str::to_string),
             max_tokens: None,
             workdir: None,
+            mount: None,
+            mount_path: "/workspace".into(),
             api_url: "http://127.0.0.1:18080/rpc".into(),
             show_tool_details: false,
             json: false,

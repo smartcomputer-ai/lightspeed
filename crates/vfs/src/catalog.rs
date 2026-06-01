@@ -172,7 +172,8 @@ pub struct CreateVfsWorkspaceRecord {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CompareAndSetVfsWorkspaceHead {
     pub workspace_id: VfsWorkspaceId,
-    pub expected_revision: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_revision: Option<u64>,
     pub new_head_snapshot_ref: BlobRef,
     pub updated_at_ms: i64,
 }
@@ -236,6 +237,11 @@ pub trait VfsWorkspaceStore: Send + Sync {
     async fn compare_and_set_head(
         &self,
         request: CompareAndSetVfsWorkspaceHead,
+    ) -> Result<VfsWorkspaceRecord, VfsCatalogError>;
+
+    async fn delete_workspace(
+        &self,
+        workspace_id: &VfsWorkspaceId,
     ) -> Result<VfsWorkspaceRecord, VfsCatalogError>;
 }
 

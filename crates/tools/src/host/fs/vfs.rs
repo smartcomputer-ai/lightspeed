@@ -123,7 +123,7 @@ impl VfsWorkspaceFileSystem {
             .workspace_store
             .compare_and_set_head(::vfs::CompareAndSetVfsWorkspaceHead {
                 workspace_id: current.workspace_id,
-                expected_revision: current.revision,
+                expected_revision: Some(current.revision),
                 new_head_snapshot_ref: result.snapshot_ref,
                 updated_at_ms: now_ms()?,
             })
@@ -969,10 +969,13 @@ mod tests {
                     id: request.workspace_id.to_string(),
                 }
             })?;
-            if self.force_revision_conflict || record.revision != request.expected_revision {
+            let revision_conflict = request
+                .expected_revision
+                .is_some_and(|expected_revision| record.revision != expected_revision);
+            if self.force_revision_conflict || revision_conflict {
                 return Err(::vfs::VfsCatalogError::RevisionConflict {
                     workspace_id: request.workspace_id,
-                    expected_revision: request.expected_revision,
+                    expected_revision: request.expected_revision.unwrap_or(record.revision),
                     actual_revision: record.revision + u64::from(self.force_revision_conflict),
                 });
             }
@@ -980,6 +983,20 @@ mod tests {
             record.revision += 1;
             record.updated_at_ms = request.updated_at_ms;
             Ok(record.clone())
+        }
+
+        async fn delete_workspace(
+            &self,
+            workspace_id: &::vfs::VfsWorkspaceId,
+        ) -> Result<::vfs::VfsWorkspaceRecord, ::vfs::VfsCatalogError> {
+            self.records
+                .lock()
+                .await
+                .remove(workspace_id)
+                .ok_or_else(|| ::vfs::VfsCatalogError::NotFound {
+                    kind: "workspace",
+                    id: workspace_id.to_string(),
+                })
         }
     }
 

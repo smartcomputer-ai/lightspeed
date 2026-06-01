@@ -82,6 +82,7 @@ impl<'a> CoreAgentProjector<'a> {
             created_at_ms: params.record.created_at_ms,
             updated_at_ms: params.record.updated_at_ms,
             runs,
+            vfs_mounts: Vec::new(),
         })
     }
 

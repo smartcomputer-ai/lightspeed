@@ -4,11 +4,17 @@ use api::{
     AgentApiError, AgentApiErrorKind, AgentApiOutcome, BlobGetParams, BlobGetResponse,
     BlobHasManyParams, BlobHasManyResponse, BlobPutManyParams, BlobPutManyResponse, JsonRpcRequest,
     JsonRpcResponse, METHOD_BLOB_GET, METHOD_BLOB_HAS_MANY, METHOD_BLOB_PUT_MANY, METHOD_RUN_START,
-    METHOD_SESSION_EVENTS_READ, METHOD_SESSION_READ, METHOD_SESSION_START,
-    METHOD_VFS_SNAPSHOT_COMMIT, METHOD_VFS_SNAPSHOT_READ, RequestId, RunStartParams,
+    METHOD_SESSION_EVENTS_READ, METHOD_SESSION_READ, METHOD_SESSION_START, METHOD_VFS_MOUNT_DELETE,
+    METHOD_VFS_MOUNT_LIST, METHOD_VFS_MOUNT_PUT, METHOD_VFS_SNAPSHOT_COMMIT,
+    METHOD_VFS_SNAPSHOT_READ, METHOD_VFS_WORKSPACE_CREATE, METHOD_VFS_WORKSPACE_DELETE,
+    METHOD_VFS_WORKSPACE_READ, METHOD_VFS_WORKSPACE_UPDATE, RequestId, RunStartParams,
     RunStartResponse, SessionEventsReadParams, SessionEventsReadResponse, SessionReadParams,
-    SessionReadResponse, SessionStartParams, SessionStartResponse, VfsSnapshotCommitParams,
-    VfsSnapshotCommitResponse, VfsSnapshotReadParams, VfsSnapshotReadResponse,
+    SessionReadResponse, SessionStartParams, SessionStartResponse, VfsMountDeleteParams,
+    VfsMountDeleteResponse, VfsMountListParams, VfsMountListResponse, VfsMountPutParams,
+    VfsMountPutResponse, VfsSnapshotCommitParams, VfsSnapshotCommitResponse, VfsSnapshotReadParams,
+    VfsSnapshotReadResponse, VfsWorkspaceCreateParams, VfsWorkspaceCreateResponse,
+    VfsWorkspaceDeleteParams, VfsWorkspaceDeleteResponse, VfsWorkspaceReadParams,
+    VfsWorkspaceReadResponse, VfsWorkspaceUpdateParams, VfsWorkspaceUpdateResponse,
 };
 use serde::{Serialize, de::DeserializeOwned};
 
@@ -115,6 +121,55 @@ impl HttpAgentApi {
         params: VfsSnapshotReadParams,
     ) -> Result<AgentApiOutcome<VfsSnapshotReadResponse>, AgentApiError> {
         self.request(METHOD_VFS_SNAPSHOT_READ, params).await
+    }
+
+    pub(crate) async fn create_vfs_workspace(
+        &self,
+        params: VfsWorkspaceCreateParams,
+    ) -> Result<AgentApiOutcome<VfsWorkspaceCreateResponse>, AgentApiError> {
+        self.request(METHOD_VFS_WORKSPACE_CREATE, params).await
+    }
+
+    pub(crate) async fn read_vfs_workspace(
+        &self,
+        params: VfsWorkspaceReadParams,
+    ) -> Result<AgentApiOutcome<VfsWorkspaceReadResponse>, AgentApiError> {
+        self.request(METHOD_VFS_WORKSPACE_READ, params).await
+    }
+
+    pub(crate) async fn update_vfs_workspace(
+        &self,
+        params: VfsWorkspaceUpdateParams,
+    ) -> Result<AgentApiOutcome<VfsWorkspaceUpdateResponse>, AgentApiError> {
+        self.request(METHOD_VFS_WORKSPACE_UPDATE, params).await
+    }
+
+    pub(crate) async fn delete_vfs_workspace(
+        &self,
+        params: VfsWorkspaceDeleteParams,
+    ) -> Result<AgentApiOutcome<VfsWorkspaceDeleteResponse>, AgentApiError> {
+        self.request(METHOD_VFS_WORKSPACE_DELETE, params).await
+    }
+
+    pub(crate) async fn put_vfs_mount(
+        &self,
+        params: VfsMountPutParams,
+    ) -> Result<AgentApiOutcome<VfsMountPutResponse>, AgentApiError> {
+        self.request(METHOD_VFS_MOUNT_PUT, params).await
+    }
+
+    pub(crate) async fn delete_vfs_mount(
+        &self,
+        params: VfsMountDeleteParams,
+    ) -> Result<AgentApiOutcome<VfsMountDeleteResponse>, AgentApiError> {
+        self.request(METHOD_VFS_MOUNT_DELETE, params).await
+    }
+
+    pub(crate) async fn list_vfs_mounts(
+        &self,
+        params: VfsMountListParams,
+    ) -> Result<AgentApiOutcome<VfsMountListResponse>, AgentApiError> {
+        self.request(METHOD_VFS_MOUNT_LIST, params).await
     }
 
     async fn request<P, R>(

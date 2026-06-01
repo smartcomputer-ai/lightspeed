@@ -4,7 +4,7 @@ use std::{
     collections::BTreeMap,
     env,
     sync::{Arc, RwLock},
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use api::{
@@ -19,8 +19,13 @@ use api::{
     SessionCloseResponse, SessionConfigInput, SessionConfigPatchInput, SessionEventsReadParams,
     SessionEventsReadResponse, SessionReadParams, SessionReadResponse, SessionStartParams,
     SessionStartResponse, SessionUpdateParams, SessionUpdateResponse, SessionView,
-    VfsSnapshotCommitParams, VfsSnapshotCommitResponse, VfsSnapshotReadParams,
-    VfsSnapshotReadResponse,
+    VfsMountAccess as ApiVfsMountAccess, VfsMountDeleteParams, VfsMountDeleteResponse,
+    VfsMountListParams, VfsMountListResponse, VfsMountPutParams, VfsMountPutResponse,
+    VfsMountSourceInput, VfsMountSourceView, VfsMountView, VfsSnapshotCommitParams,
+    VfsSnapshotCommitResponse, VfsSnapshotReadParams, VfsSnapshotReadResponse,
+    VfsWorkspaceCreateParams, VfsWorkspaceCreateResponse, VfsWorkspaceDeleteParams,
+    VfsWorkspaceDeleteResponse, VfsWorkspaceReadParams, VfsWorkspaceReadResponse,
+    VfsWorkspaceUpdateParams, VfsWorkspaceUpdateResponse, VfsWorkspaceView,
 };
 use api_projection::{
     CoreAgentProjector, MAX_EVENT_PAGE_LIMIT, ProjectSession, api_kind_from_str, api_run_id,
@@ -41,6 +46,19 @@ use store_pg::PgStore;
 use temporalio_client::{
     Client, WorkflowHandle, WorkflowQueryOptions, WorkflowSignalOptions, WorkflowStartOptions,
     errors::WorkflowInteractionError, errors::WorkflowQueryError, errors::WorkflowStartError,
+};
+use tools::{
+    host::{
+        HostToolContext, HostToolTargets,
+        fs::{FsPath, MountedVfsFileSystem},
+        profiles::{HostToolPreset, resolve_host_profile},
+    },
+    runtime::ToolDocument,
+};
+use vfs::{
+    CompareAndSetVfsWorkspaceHead, CreateVfsWorkspaceRecord, VfsCatalogError, VfsMountAccess,
+    VfsMountRecord, VfsMountSource, VfsMountStore, VfsPath, VfsSnapshotRecord, VfsSnapshotSource,
+    VfsSnapshotStore, VfsWorkspaceId, VfsWorkspaceRecord, VfsWorkspaceStore,
 };
 
 use crate::{
@@ -371,7 +389,8 @@ impl GatewayAgentApi {
     ) -> Result<SessionView, AgentApiError> {
         let loaded = self.load_session_state(session_id).await?;
         let metadata = self.session_metadata(session_id)?;
-        self.projector()
+        let mut session = self
+            .projector()
             .project_session(ProjectSession {
                 session_id,
                 state: &loaded.state,
@@ -379,7 +398,9 @@ impl GatewayAgentApi {
                 entries: &loaded.entries,
                 cwd: metadata.cwd,
             })
-            .await
+            .await?;
+        session.vfs_mounts = self.project_vfs_mounts(session_id).await?;
+        Ok(session)
     }
 
     async fn project_run_by_id(
@@ -401,6 +422,422 @@ impl GatewayAgentApi {
         self.projector()
             .project_run(&loaded.entries, run_id, status)
             .await
+    }
+
+    async fn project_vfs_mounts(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Vec<VfsMountView>, AgentApiError> {
+        let mounts = self
+            .store
+            .list_mounts(session_id)
+            .await
+            .map_err(map_vfs_catalog_error)?;
+        let mut views = Vec::with_capacity(mounts.len());
+        for mount in mounts {
+            views.push(self.vfs_mount_view(mount).await?);
+        }
+        Ok(views)
+    }
+
+    async fn vfs_mount_view(&self, mount: VfsMountRecord) -> Result<VfsMountView, AgentApiError> {
+        Ok(VfsMountView {
+            mount_path: mount.mount_path.as_str().to_owned(),
+            source: match mount.source {
+                VfsMountSource::Snapshot { snapshot_ref } => VfsMountSourceView::Snapshot {
+                    snapshot_ref: snapshot_ref.as_str().to_owned(),
+                },
+                VfsMountSource::Workspace { workspace_id } => {
+                    let workspace = self
+                        .store
+                        .read_workspace(&workspace_id)
+                        .await
+                        .map_err(map_vfs_catalog_error)?;
+                    VfsMountSourceView::Workspace {
+                        workspace_id: workspace.workspace_id.as_str().to_owned(),
+                        head_snapshot_ref: Some(workspace.head_snapshot_ref.as_str().to_owned()),
+                        revision: Some(workspace.revision),
+                    }
+                }
+            },
+            access: api_vfs_mount_access(mount.access),
+        })
+    }
+
+    async fn create_vfs_workspace_record(
+        &self,
+        params: VfsWorkspaceCreateParams,
+    ) -> Result<VfsWorkspaceRecord, AgentApiError> {
+        let snapshot_ref = parse_blob_ref(&params.snapshot_ref)?;
+        let _manifest = vfs::read_snapshot_manifest(self.store.as_ref(), &snapshot_ref)
+            .await
+            .map_err(map_vfs_read_error)?;
+        self.record_vfs_snapshot_if_missing(
+            snapshot_ref.clone(),
+            VfsSnapshotSource::new("api_snapshot").with_subject("vfs/workspace/create"),
+            params.display_name,
+        )
+        .await?;
+
+        let workspace_id = match params.workspace_id {
+            Some(workspace_id) => VfsWorkspaceId::try_new(workspace_id).map_err(|error| {
+                AgentApiError::invalid_request(format!("invalid vfs workspace id: {error}"))
+            })?,
+            None => self.allocate_vfs_workspace_id(),
+        };
+        self.store
+            .create_workspace(CreateVfsWorkspaceRecord {
+                workspace_id,
+                base_snapshot_ref: Some(snapshot_ref.clone()),
+                head_snapshot_ref: snapshot_ref,
+                created_at_ms: now_ms()?,
+            })
+            .await
+            .map_err(map_vfs_catalog_error)
+    }
+
+    async fn read_vfs_workspace_record(
+        &self,
+        params: VfsWorkspaceReadParams,
+    ) -> Result<VfsWorkspaceRecord, AgentApiError> {
+        let workspace_id = parse_vfs_workspace_id(params.workspace_id)?;
+        self.store
+            .read_workspace(&workspace_id)
+            .await
+            .map_err(map_vfs_catalog_error)
+    }
+
+    async fn update_vfs_workspace_record(
+        &self,
+        params: VfsWorkspaceUpdateParams,
+    ) -> Result<VfsWorkspaceRecord, AgentApiError> {
+        let workspace_id = parse_vfs_workspace_id(params.workspace_id)?;
+        let snapshot_ref = parse_blob_ref(&params.snapshot_ref)?;
+        vfs::read_snapshot_manifest(self.store.as_ref(), &snapshot_ref)
+            .await
+            .map_err(map_vfs_read_error)?;
+        self.record_vfs_snapshot_if_missing(
+            snapshot_ref.clone(),
+            VfsSnapshotSource::new("api_workspace_update").with_subject("vfs/workspace/update"),
+            params.display_name,
+        )
+        .await?;
+        self.store
+            .compare_and_set_head(CompareAndSetVfsWorkspaceHead {
+                workspace_id,
+                expected_revision: params.expected_revision,
+                new_head_snapshot_ref: snapshot_ref,
+                updated_at_ms: now_ms()?,
+            })
+            .await
+            .map_err(map_vfs_catalog_error)
+    }
+
+    async fn delete_vfs_workspace_record(
+        &self,
+        params: VfsWorkspaceDeleteParams,
+    ) -> Result<VfsWorkspaceRecord, AgentApiError> {
+        let workspace_id = parse_vfs_workspace_id(params.workspace_id)?;
+        self.store
+            .delete_workspace(&workspace_id)
+            .await
+            .map_err(map_vfs_catalog_error)
+    }
+
+    async fn record_vfs_snapshot(
+        &self,
+        snapshot_ref: BlobRef,
+        source: VfsSnapshotSource,
+        display_name: Option<String>,
+    ) -> Result<(), AgentApiError> {
+        self.store
+            .record_snapshot(VfsSnapshotRecord {
+                snapshot_ref,
+                source,
+                display_name,
+                created_at_ms: now_ms()?,
+            })
+            .await
+            .map_err(map_vfs_catalog_error)
+    }
+
+    async fn record_vfs_snapshot_if_missing(
+        &self,
+        snapshot_ref: BlobRef,
+        source: VfsSnapshotSource,
+        display_name: Option<String>,
+    ) -> Result<(), AgentApiError> {
+        match self.store.read_snapshot(&snapshot_ref).await {
+            Ok(_) => Ok(()),
+            Err(VfsCatalogError::NotFound { .. }) => {
+                self.record_vfs_snapshot(snapshot_ref, source, display_name)
+                    .await
+            }
+            Err(error) => Err(map_vfs_catalog_error(error)),
+        }
+    }
+
+    fn allocate_vfs_workspace_id(&self) -> VfsWorkspaceId {
+        VfsWorkspaceId::new(format!("workspace_{}", uuid::Uuid::new_v4().simple()))
+    }
+
+    async fn put_vfs_mount_record(
+        &self,
+        params: VfsMountPutParams,
+    ) -> Result<(VfsMountRecord, SessionView), AgentApiError> {
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let mount_path = VfsPath::parse(&params.mount_path).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid vfs mount path: {error}"))
+        })?;
+        let access = core_vfs_mount_access(params.access);
+        let source = self
+            .validate_vfs_mount_source(params.source, access)
+            .await?;
+
+        let loaded = self.load_session_state(&session_id).await?;
+        if loaded.state.lifecycle.status != CoreAgentStatus::Open {
+            return Err(AgentApiError::rejected(format!(
+                "session is not open: {session_id}"
+            )));
+        }
+        if loaded.state.runs.active.is_some() || !loaded.state.runs.queued.is_empty() {
+            return Err(AgentApiError::rejected(
+                "vfs mounts can only change while no run is active or queued",
+            ));
+        }
+
+        let record = VfsMountRecord {
+            session_id: session_id.clone(),
+            mount_path,
+            source,
+            access,
+        };
+        let mut candidate_mounts = self
+            .store
+            .list_mounts(&session_id)
+            .await
+            .map_err(map_vfs_catalog_error)?;
+        candidate_mounts.retain(|mount| mount.mount_path != record.mount_path);
+        candidate_mounts.push(record.clone());
+        self.validate_vfs_mount_table(candidate_mounts.clone())?;
+
+        self.store
+            .put_mount(record.clone())
+            .await
+            .map_err(map_vfs_catalog_error)?;
+        let session = self
+            .configure_vfs_host_tools(&session_id, &loaded, candidate_mounts)
+            .await?;
+        Ok((record, session))
+    }
+
+    async fn delete_vfs_mount_record(
+        &self,
+        params: VfsMountDeleteParams,
+    ) -> Result<(String, SessionView), AgentApiError> {
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let mount_path = VfsPath::parse(&params.mount_path).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid vfs mount path: {error}"))
+        })?;
+
+        let loaded = self.load_session_state(&session_id).await?;
+        if loaded.state.lifecycle.status != CoreAgentStatus::Open {
+            return Err(AgentApiError::rejected(format!(
+                "session is not open: {session_id}"
+            )));
+        }
+        if loaded.state.runs.active.is_some() || !loaded.state.runs.queued.is_empty() {
+            return Err(AgentApiError::rejected(
+                "vfs mounts can only change while no run is active or queued",
+            ));
+        }
+
+        let mut candidate_mounts = self
+            .store
+            .list_mounts(&session_id)
+            .await
+            .map_err(map_vfs_catalog_error)?;
+        let original_len = candidate_mounts.len();
+        candidate_mounts.retain(|mount| mount.mount_path != mount_path);
+        if candidate_mounts.len() == original_len {
+            return Err(AgentApiError::not_found(format!(
+                "vfs catalog mount not found: {session_id}:{mount_path}"
+            )));
+        }
+
+        self.validate_vfs_mount_table(candidate_mounts.clone())?;
+        self.store
+            .remove_mount(&session_id, &mount_path)
+            .await
+            .map_err(map_vfs_catalog_error)?;
+        let session = self
+            .configure_vfs_host_tools(&session_id, &loaded, candidate_mounts)
+            .await?;
+        Ok((mount_path.as_str().to_owned(), session))
+    }
+
+    async fn validate_vfs_mount_source(
+        &self,
+        source: VfsMountSourceInput,
+        access: VfsMountAccess,
+    ) -> Result<VfsMountSource, AgentApiError> {
+        match source {
+            VfsMountSourceInput::Snapshot { snapshot_ref } => {
+                if access.is_writable() {
+                    return Err(AgentApiError::invalid_request(
+                        "snapshot vfs mounts must be read-only",
+                    ));
+                }
+                let snapshot_ref = parse_blob_ref(&snapshot_ref)?;
+                vfs::read_snapshot_manifest(self.store.as_ref(), &snapshot_ref)
+                    .await
+                    .map_err(map_vfs_read_error)?;
+                self.record_vfs_snapshot_if_missing(
+                    snapshot_ref.clone(),
+                    VfsSnapshotSource::new("api_mount").with_subject("vfs/mount/put"),
+                    None,
+                )
+                .await?;
+                Ok(VfsMountSource::Snapshot { snapshot_ref })
+            }
+            VfsMountSourceInput::Workspace { workspace_id } => {
+                let workspace_id = VfsWorkspaceId::try_new(workspace_id).map_err(|error| {
+                    AgentApiError::invalid_request(format!("invalid vfs workspace id: {error}"))
+                })?;
+                let workspace = self
+                    .store
+                    .read_workspace(&workspace_id)
+                    .await
+                    .map_err(map_vfs_catalog_error)?;
+                vfs::read_snapshot_manifest(self.store.as_ref(), &workspace.head_snapshot_ref)
+                    .await
+                    .map_err(map_vfs_read_error)?;
+                Ok(VfsMountSource::Workspace { workspace_id })
+            }
+        }
+    }
+
+    fn validate_vfs_mount_table(&self, mounts: Vec<VfsMountRecord>) -> Result<(), AgentApiError> {
+        let blobs: Arc<dyn BlobStore> = self.store.clone();
+        let workspace_store: Arc<dyn VfsWorkspaceStore> = self.store.clone();
+        MountedVfsFileSystem::new(blobs, workspace_store, mounts)
+            .map(|_| ())
+            .map_err(map_fs_error)
+    }
+
+    async fn configure_vfs_host_tools(
+        &self,
+        session_id: &SessionId,
+        loaded: &LoadedSession,
+        mounts: Vec<VfsMountRecord>,
+    ) -> Result<SessionView, AgentApiError> {
+        let session_config = loaded.state.lifecycle.config.as_ref().ok_or_else(|| {
+            AgentApiError::invalid_request(format!("session is missing config: {session_id}"))
+        })?;
+        let blobs: Arc<dyn BlobStore> = self.store.clone();
+        let workspace_store: Arc<dyn VfsWorkspaceStore> = self.store.clone();
+        let fs = MountedVfsFileSystem::new(blobs.clone(), workspace_store, mounts)
+            .map_err(map_fs_error)?;
+        let cwd = mounted_vfs_cwd(fs.mounts())?;
+        let ctx = HostToolContext::new(Arc::new(fs), None, blobs.clone()).with_cwd(cwd);
+        let target = tools::runtime::ToolTarget::from(&session_config.model);
+        let profile = resolve_host_profile(&ctx, &target, HostToolPreset::DirectFs)
+            .map_err(|error| AgentApiError::internal(format!("build vfs host tools: {error}")))?;
+        store_tool_documents(blobs.as_ref(), &profile.documents).await?;
+
+        let mut registry = loaded.state.tooling.registry.clone();
+        for (tool_name, spec) in profile.registry.tools {
+            registry.tools.insert(tool_name, spec);
+        }
+        for (profile_id, tool_profile) in profile.registry.profiles {
+            registry.profiles.insert(profile_id, tool_profile);
+        }
+
+        let baseline_failures = self
+            .query_status_optional(session_id)
+            .await?
+            .map(|status| status.admission_failures.len())
+            .unwrap_or(0);
+        self.submit_core_command(session_id, CoreAgentCommand::SetToolRegistry { registry })
+            .await?;
+        self.submit_core_command(
+            session_id,
+            CoreAgentCommand::SetDefaultToolTarget {
+                target: HostToolTargets::local_execution_target(),
+            },
+        )
+        .await?;
+        self.submit_core_command(
+            session_id,
+            CoreAgentCommand::SelectToolProfile {
+                profile_id: profile.profile_id.clone(),
+            },
+        )
+        .await?;
+        self.wait_for_vfs_tooling(session_id, &profile.profile_id, baseline_failures)
+            .await
+    }
+
+    async fn submit_core_command(
+        &self,
+        session_id: &SessionId,
+        command: CoreAgentCommand,
+    ) -> Result<(), AgentApiError> {
+        let command = engine::CoreAgentCodec
+            .encode_command(&command)
+            .map_err(|error| AgentApiError::internal(error.to_string()))?;
+        self.workflow_handle(session_id)
+            .signal(
+                AgentSessionWorkflow::submit_admission,
+                AgentAdmission { command },
+                WorkflowSignalOptions::default(),
+            )
+            .await
+            .map_err(map_workflow_interaction_error)
+    }
+
+    async fn wait_for_vfs_tooling(
+        &self,
+        session_id: &SessionId,
+        profile_id: &engine::ToolProfileId,
+        baseline_failures: usize,
+    ) -> Result<SessionView, AgentApiError> {
+        let started = Instant::now();
+        loop {
+            if started.elapsed() > self.operation_timeout {
+                return Err(AgentApiError::internal(format!(
+                    "timed out waiting for vfs host tools to configure: {session_id}"
+                )));
+            }
+            if let Some(status) = self.query_status_optional(session_id).await? {
+                if status.admission_failures.len() > baseline_failures {
+                    if let Some(failure) = status.admission_failures.last() {
+                        return Err(map_admission_failure_to_api_error(failure));
+                    }
+                }
+                if let Some(error) = status.last_error {
+                    return Err(AgentApiError::internal(format!(
+                        "agent workflow reported error: {error}"
+                    )));
+                }
+            }
+            let loaded = self.load_session_state(session_id).await?;
+            let selected = loaded.state.tooling.selected_profile_id.as_ref() == Some(profile_id);
+            let target = loaded
+                .state
+                .tooling
+                .routing
+                .default_targets
+                .get(tools::host::HOST_TARGET_NAMESPACE);
+            if selected && target == Some(&HostToolTargets::local_execution_target()) {
+                return self.project_session_by_id(session_id).await;
+            }
+            tokio::time::sleep(self.poll_interval).await;
+        }
     }
 
     async fn run_config_for_start(
@@ -978,9 +1415,15 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: VfsSnapshotCommitParams,
     ) -> Result<AgentApiOutcome<VfsSnapshotCommitResponse>, AgentApiError> {
-        commit_vfs_snapshot(self.store.as_ref(), params)
-            .await
-            .map(AgentApiOutcome::new)
+        let response = commit_vfs_snapshot(self.store.as_ref(), params).await?;
+        let snapshot_ref = parse_blob_ref(&response.snapshot_ref)?;
+        self.record_vfs_snapshot(
+            snapshot_ref,
+            VfsSnapshotSource::new("api_commit").with_subject("vfs/snapshot/commit"),
+            None,
+        )
+        .await?;
+        Ok(AgentApiOutcome::new(response))
     }
 
     async fn read_vfs_snapshot(
@@ -990,6 +1433,85 @@ impl AgentApiService for GatewayAgentApi {
         read_vfs_snapshot(self.store.as_ref(), params)
             .await
             .map(AgentApiOutcome::new)
+    }
+
+    async fn create_vfs_workspace(
+        &self,
+        params: VfsWorkspaceCreateParams,
+    ) -> Result<AgentApiOutcome<VfsWorkspaceCreateResponse>, AgentApiError> {
+        let workspace = self.create_vfs_workspace_record(params).await?;
+        Ok(AgentApiOutcome::new(VfsWorkspaceCreateResponse {
+            workspace: vfs_workspace_view(workspace),
+        }))
+    }
+
+    async fn read_vfs_workspace(
+        &self,
+        params: VfsWorkspaceReadParams,
+    ) -> Result<AgentApiOutcome<VfsWorkspaceReadResponse>, AgentApiError> {
+        let workspace = self.read_vfs_workspace_record(params).await?;
+        Ok(AgentApiOutcome::new(VfsWorkspaceReadResponse {
+            workspace: vfs_workspace_view(workspace),
+        }))
+    }
+
+    async fn update_vfs_workspace(
+        &self,
+        params: VfsWorkspaceUpdateParams,
+    ) -> Result<AgentApiOutcome<VfsWorkspaceUpdateResponse>, AgentApiError> {
+        let workspace = self.update_vfs_workspace_record(params).await?;
+        Ok(AgentApiOutcome::new(VfsWorkspaceUpdateResponse {
+            workspace: vfs_workspace_view(workspace),
+        }))
+    }
+
+    async fn delete_vfs_workspace(
+        &self,
+        params: VfsWorkspaceDeleteParams,
+    ) -> Result<AgentApiOutcome<VfsWorkspaceDeleteResponse>, AgentApiError> {
+        let workspace = self.delete_vfs_workspace_record(params).await?;
+        Ok(AgentApiOutcome::new(VfsWorkspaceDeleteResponse {
+            workspace: vfs_workspace_view(workspace),
+        }))
+    }
+
+    async fn put_vfs_mount(
+        &self,
+        params: VfsMountPutParams,
+    ) -> Result<AgentApiOutcome<VfsMountPutResponse>, AgentApiError> {
+        let (mount, session) = self.put_vfs_mount_record(params).await?;
+        Ok(AgentApiOutcome::new(VfsMountPutResponse {
+            mount: self.vfs_mount_view(mount).await?,
+            session,
+        }))
+    }
+
+    async fn delete_vfs_mount(
+        &self,
+        params: VfsMountDeleteParams,
+    ) -> Result<AgentApiOutcome<VfsMountDeleteResponse>, AgentApiError> {
+        let (mount_path, session) = self.delete_vfs_mount_record(params).await?;
+        Ok(AgentApiOutcome::new(VfsMountDeleteResponse {
+            mount_path,
+            session,
+        }))
+    }
+
+    async fn list_vfs_mounts(
+        &self,
+        params: VfsMountListParams,
+    ) -> Result<AgentApiOutcome<VfsMountListResponse>, AgentApiError> {
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        self.store
+            .load_session(&session_id)
+            .await
+            .map_err(map_session_store_error)?
+            .ok_or_else(|| AgentApiError::not_found(format!("session not found: {session_id}")))?;
+        Ok(AgentApiOutcome::new(VfsMountListResponse {
+            mounts: self.project_vfs_mounts(&session_id).await?,
+        }))
     }
 }
 
@@ -1113,6 +1635,62 @@ async fn read_vfs_snapshot(
     })
 }
 
+fn vfs_workspace_view(record: VfsWorkspaceRecord) -> VfsWorkspaceView {
+    VfsWorkspaceView {
+        workspace_id: record.workspace_id.as_str().to_owned(),
+        base_snapshot_ref: record
+            .base_snapshot_ref
+            .map(|blob_ref| blob_ref.as_str().to_owned()),
+        head_snapshot_ref: record.head_snapshot_ref.as_str().to_owned(),
+        revision: record.revision,
+    }
+}
+
+fn api_vfs_mount_access(access: VfsMountAccess) -> ApiVfsMountAccess {
+    match access {
+        VfsMountAccess::ReadOnly => ApiVfsMountAccess::ReadOnly,
+        VfsMountAccess::ReadWrite => ApiVfsMountAccess::ReadWrite,
+    }
+}
+
+fn core_vfs_mount_access(access: ApiVfsMountAccess) -> VfsMountAccess {
+    match access {
+        ApiVfsMountAccess::ReadOnly => VfsMountAccess::ReadOnly,
+        ApiVfsMountAccess::ReadWrite => VfsMountAccess::ReadWrite,
+    }
+}
+
+fn mounted_vfs_cwd(mounts: &[VfsMountRecord]) -> Result<FsPath, AgentApiError> {
+    let cwd = if mounts
+        .iter()
+        .any(|mount| mount.mount_path.as_str() == "/workspace")
+    {
+        "/workspace"
+    } else {
+        "/"
+    };
+    FsPath::new(cwd).map_err(|error| AgentApiError::internal(error.to_string()))
+}
+
+async fn store_tool_documents(
+    blobs: &dyn BlobStore,
+    documents: &[ToolDocument],
+) -> Result<(), AgentApiError> {
+    for document in documents {
+        let blob_ref = blobs
+            .put_bytes(document.blob_bytes())
+            .await
+            .map_err(map_blob_store_error)?;
+        if blob_ref != document.blob_ref {
+            return Err(AgentApiError::internal(format!(
+                "tool document blob ref mismatch: expected {}, got {}",
+                document.blob_ref, blob_ref
+            )));
+        }
+    }
+    Ok(())
+}
+
 async fn run_input_ref_from_api(
     store: &dyn BlobStore,
     input: &[InputItem],
@@ -1163,6 +1741,12 @@ async fn run_input_ref_from_api(
 
 fn parse_blob_ref(value: &str) -> Result<BlobRef, AgentApiError> {
     BlobRef::parse(value).map_err(|error| AgentApiError::invalid_request(error.to_string()))
+}
+
+fn parse_vfs_workspace_id(value: String) -> Result<VfsWorkspaceId, AgentApiError> {
+    VfsWorkspaceId::try_new(value).map_err(|error| {
+        AgentApiError::invalid_request(format!("invalid vfs workspace id: {error}"))
+    })
 }
 
 fn decode_base64(value: &str, field: impl AsRef<str>) -> Result<Vec<u8>, AgentApiError> {
@@ -1437,6 +2021,15 @@ fn openai_reasoning(effort: &str) -> OpenAiReasoningConfig {
     }
 }
 
+fn now_ms() -> Result<i64, AgentApiError> {
+    let ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| AgentApiError::internal(format!("system clock is before epoch: {error}")))?
+        .as_millis();
+    i64::try_from(ms)
+        .map_err(|_| AgentApiError::internal("current timestamp does not fit in i64 milliseconds"))
+}
+
 fn is_not_found(error: &AgentApiError) -> bool {
     matches!(error.kind, AgentApiErrorKind::NotFound)
 }
@@ -1490,6 +2083,43 @@ fn map_vfs_read_error(error: vfs::VfsError) -> AgentApiError {
     match error {
         vfs::VfsError::BlobStore(error) => map_blob_read_error(error),
         error => AgentApiError::invalid_request(error.to_string()),
+    }
+}
+
+fn map_vfs_catalog_error(error: VfsCatalogError) -> AgentApiError {
+    match error {
+        VfsCatalogError::AlreadyExists { kind, id } => {
+            AgentApiError::conflict(format!("vfs catalog {kind} already exists: {id}"))
+        }
+        VfsCatalogError::NotFound { kind, id } => {
+            AgentApiError::not_found(format!("vfs catalog {kind} not found: {id}"))
+        }
+        VfsCatalogError::RevisionConflict { .. } => AgentApiError::conflict(error.to_string()),
+        VfsCatalogError::InvalidInput { message } => AgentApiError::invalid_request(message),
+        VfsCatalogError::Store { message } => AgentApiError::internal(message),
+    }
+}
+
+fn map_fs_error(error: tools::host::fs::FsError) -> AgentApiError {
+    match error {
+        tools::host::fs::FsError::InvalidPath(error) => {
+            AgentApiError::invalid_request(error.to_string())
+        }
+        tools::host::fs::FsError::InvalidInput { message } => {
+            AgentApiError::invalid_request(message)
+        }
+        tools::host::fs::FsError::NotFound { path } => {
+            AgentApiError::not_found(format!("vfs path not found: {path}"))
+        }
+        tools::host::fs::FsError::AlreadyExists { path } => {
+            AgentApiError::conflict(format!("vfs path already exists: {path}"))
+        }
+        tools::host::fs::FsError::PermissionDenied { path } => {
+            AgentApiError::rejected(format!("vfs permission denied: {path}"))
+        }
+        tools::host::fs::FsError::Unsupported { message }
+        | tools::host::fs::FsError::InvalidData { message }
+        | tools::host::fs::FsError::Failed { message } => AgentApiError::internal(message),
     }
 }
 

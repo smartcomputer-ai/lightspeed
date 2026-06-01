@@ -287,7 +287,7 @@ async fn pg_live_vfs_catalog_tracks_workspace_heads_and_mounts() {
     let updated = store
         .compare_and_set_head(CompareAndSetVfsWorkspaceHead {
             workspace_id: workspace_id.clone(),
-            expected_revision: 0,
+            expected_revision: Some(0),
             new_head_snapshot_ref: next_ref,
             updated_at_ms: 4,
         })
@@ -298,7 +298,7 @@ async fn pg_live_vfs_catalog_tracks_workspace_heads_and_mounts() {
         store
             .compare_and_set_head(CompareAndSetVfsWorkspaceHead {
                 workspace_id: workspace_id.clone(),
-                expected_revision: 0,
+                expected_revision: Some(0),
                 new_head_snapshot_ref: snapshot_ref.clone(),
                 updated_at_ms: 5,
             })
@@ -344,7 +344,20 @@ async fn pg_live_vfs_catalog_tracks_workspace_heads_and_mounts() {
         .expect("remove mount");
     assert_eq!(
         store.list_mounts(&session_id).await.expect("list mounts"),
-        vec![workspace_mount]
+        vec![workspace_mount.clone()]
+    );
+    let deleted = store
+        .delete_workspace(&workspace_id)
+        .await
+        .expect("delete workspace");
+    assert_eq!(deleted.workspace_id, workspace_id);
+    assert!(matches!(
+        store.read_workspace(&deleted.workspace_id).await,
+        Err(VfsCatalogError::NotFound { .. })
+    ));
+    assert_eq!(
+        store.list_mounts(&session_id).await.expect("list mounts"),
+        Vec::<VfsMountRecord>::new()
     );
 }
 
