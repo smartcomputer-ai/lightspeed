@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use engine::ToolEffect;
 
 use crate::host::fs::{
     CopyOptions, CreateDirectoryOptions, FileAccessPolicy, FileMetadata, FileSystem, FsError,
@@ -139,6 +140,10 @@ impl FileSystem for ScopedFileSystem {
         self.inner
             .copy(&resolved_source, &resolved_destination, options)
             .await
+    }
+
+    fn drain_tool_effects(&self) -> Vec<ToolEffect> {
+        self.inner.drain_tool_effects()
     }
 }
 

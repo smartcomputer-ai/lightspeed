@@ -4,6 +4,12 @@
 - Accepted direction
 - Partially implemented: G1-G2.5, first-cut G3, and first-cut G4 in
   `crates/vfs`, `crates/tools`, `crates/store-fs`, and `crates/store-pg`
+- Deferred until real VM host targets exist: G5 and the host-target portion of
+  G6.
+- Deferred until a concrete product write/sync surface exists: G3 workspace
+  quotas and mount policy limits.
+- Next product slice: G7 CLI-local upload/download/sync APIs so the user's
+  computer can snapshot to CAS, materialize from CAS, and sync by digest.
 
 ## Goal
 
@@ -518,7 +524,9 @@ Local CLI materialization must still enforce safe destination rules:
 
 ### Host Target Snapshot/Materialization
 
-Host targets are the later but important path:
+Host targets are the later but important path. Defer this work until Forge has
+real VM host targets and a stable host filesystem protocol; do not implement it
+by treating the gateway or worker's local filesystem as a stand-in for a VM.
 
 ```text
 cli -> gateway: snapshot host directory
@@ -536,7 +544,9 @@ CLI local filesystem: CLI reads/writes bytes, gateway stores/serves CAS.
 Host target filesystem: gateway/worker reads/writes through host abstraction.
 ```
 
-## Materialization API
+## Host Target Materialization API
+
+Deferred until real VM host targets exist.
 
 Materialization is also a runtime activity:
 
@@ -681,7 +691,10 @@ later.
   synthetic parent directories such as `/skills`.
 - Done: route cross-mount file and recursive directory copy into writable
   workspace destinations.
-- Remaining: enforce workspace quotas and mount policy limits.
+- Deferred until a concrete product write/sync surface exists: enforce
+  workspace quotas and mount policy limits. This is still required before any
+  user-facing sync can accidentally stream unbounded data into CAS, but the
+  exact policy should be shaped by that surface.
 
 ### G4: Workspace Commit
 
@@ -691,18 +704,34 @@ later.
 - Done: add tests that the base snapshot is unchanged after writes.
 - Done: add tests that a reloaded workspace filesystem reads the committed
   head snapshot.
-- Remaining: expose new snapshot refs or workspace revisions in mutating tool
-  results once the API/tool result contract grows that field.
+- Done: first version exposes new snapshot refs and workspace revisions as
+  structured, non-model-visible tool effects on mutating VFS workspace tool
+  results.
 - Remaining: replace full-tree rewrite with a real overlay only if benchmarks
   or product workflows need it.
 
-### G5: Host Directory Snapshot
+Implementation note: expose commit refs as structured, non-model-visible tool
+result metadata. Prefer a generic tool-effect contract over embedding VFS
+knowledge in `engine`; for VFS commits, carry the workspace id, new snapshot
+manifest ref, and new revision inline. Do not write a separate effect blob just
+to link this metadata; use refs only when the effect naturally points at an
+existing CAS object or the metadata is too large for the event/result shape.
+
+### G5: Host Directory Snapshot (Deferred)
+
+Deferred until real VM host targets exist. This should use the eventual VM or
+remote host filesystem protocol rather than the gateway or worker's local
+filesystem.
 
 - Snapshot a directory through a `HostToolContext` or remote host filesystem.
 - Enforce scoped roots and skip symlinks with warnings.
 - Add tests with in-memory and scoped local filesystems.
 
-### G6: Materialization
+### G6: Host Target Materialization (Deferred)
+
+Deferred until real VM host targets exist. CLI-local materialization belongs in
+G7 because the CLI, not the gateway or worker, has access to the user's
+filesystem.
 
 - Materialize a snapshot or workspace into a host target.
 - Make materialization idempotent by snapshot or committed workspace digest.
@@ -710,12 +739,23 @@ later.
 - Add tests with an in-memory/local host implementation first; remote-host
   materialization can follow when host protocol coverage is ready.
 
-### G7: API And Projection Hooks
+### G7: CLI-Local API And Projection Hooks
 
-- Add internal gateway/worker service helpers for snapshot, workspace, commit,
-  and materialization.
+Do this before host-target snapshot/materialization. The goal is for the CLI on
+the user's computer to be the local filesystem reader/writer while the
+gateway/CAS remains the authority for blobs and manifests.
+
+- Done: first-cut JSON-RPC gateway helpers for `blob/put`, `blob/put_many`,
+  `blob/get`, `blob/has_many`, `vfs/snapshot/commit`, and
+  `vfs/snapshot/read`, including manifest shape validation, referenced-blob
+  existence and size checks, and a larger configurable gateway request body
+  limit for local uploads.
+- Remaining: add internal gateway helpers for workspace creation and workspace
+  commit.
 - Add CLI-local upload/download APIs for snapshot creation and local
   materialization.
+- Add CLI-local sync flows that compare content digests so repeated snapshots
+  and materializations transfer only changed blobs where possible.
 - Add public API only when a product surface needs direct VFS access.
 - Project VFS-backed context items with useful previews.
 
@@ -733,13 +773,23 @@ Required tests:
 - snapshot writer deduplicates identical file content through existing CAS
   semantics,
 - size/depth/file-count limits fail clearly,
-- writable workspace quotas fail clearly,
-- host snapshotting cannot escape the configured root,
-- host snapshotting skips symlinks and records warnings,
 - CLI-local snapshotting uploads blobs and commits a validated manifest,
 - CLI-local materialization writes only under the selected destination,
-- materialization does not write outside its destination,
-- materialization handles executable bits conservatively.
+- CLI-local sync preserves unchanged files by digest where practical,
+- CLI-local materialization does not write outside its destination,
+- CLI-local materialization handles executable bits conservatively.
+
+Deferred host-target tests:
+
+- host snapshotting cannot escape the configured root,
+- host snapshotting skips symlinks and records warnings,
+- host-target materialization does not write outside its destination,
+- host-target materialization handles executable bits conservatively.
+
+Deferred quota/policy tests:
+
+- writable workspace quotas fail clearly once a product write/sync surface
+  defines the relevant limits.
 
 ## Open Questions
 

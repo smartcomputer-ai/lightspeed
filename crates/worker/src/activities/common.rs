@@ -66,6 +66,7 @@ pub(super) async fn failed_tool_batch_result(
             output_ref: None,
             model_visible_output_ref: Some(error_ref.clone()),
             error_ref: Some(error_ref),
+            effects: Vec::new(),
         });
     }
     Ok(ToolInvocationBatchResult {

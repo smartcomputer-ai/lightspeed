@@ -52,6 +52,7 @@ impl InlineHostToolRuntime {
             Ok(ctx) => ctx,
             Err(error) => return self.target_error_result(call, error).await,
         };
+        ctx.fs.drain_tool_effects();
         let arguments = match self.read_arguments(ctx, call).await {
             Ok(arguments) => arguments,
             Err(error) => return self.failed_result(ctx, call, error).await,
@@ -105,12 +106,16 @@ impl InlineHostToolRuntime {
             )
             .await?;
 
+        let mut effects = output.effects;
+        effects.extend(ctx.fs.drain_tool_effects());
+
         Ok(ToolInvocationResult {
             call_id: call.call_id.clone(),
             status: ToolCallStatus::Succeeded,
             output_ref: Some(output_ref),
             model_visible_output_ref: Some(model_visible_output_ref),
             error_ref: None,
+            effects,
         })
     }
 
@@ -137,6 +142,7 @@ impl InlineHostToolRuntime {
             output_ref: None,
             model_visible_output_ref: Some(error_ref.clone()),
             error_ref: Some(error_ref),
+            effects: ctx.fs.drain_tool_effects(),
         })
     }
 
@@ -206,8 +212,12 @@ impl ToolRuntime for InlineHostToolRuntime {
                     "targetless host runtime invocation requires configured host target {LOCAL_HOST_TARGET_ID}"
                 ),
             })?;
-        self.invoke_json_with_context(ctx, tool_name, arguments)
-            .await
+        ctx.fs.drain_tool_effects();
+        let mut output = self
+            .invoke_json_with_context(ctx, tool_name, arguments)
+            .await?;
+        output.effects.extend(ctx.fs.drain_tool_effects());
+        Ok(output)
     }
 }
 

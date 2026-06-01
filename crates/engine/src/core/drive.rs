@@ -423,6 +423,7 @@ pub fn tool_batch_result_proposals(
                         output_ref: result_item.output_ref,
                         model_visible_output_ref: result_item.model_visible_output_ref,
                         error_ref: result_item.error_ref,
+                        effects: result_item.effects,
                     },
                 }),
             )

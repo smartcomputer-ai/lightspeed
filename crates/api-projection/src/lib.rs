@@ -11,7 +11,8 @@ use api::{
     InstructionsView, ModelConfig, ReasoningEffort, RunDefaultsConfig, RunStatus as ApiRunStatus,
     RunView, SessionConfigView, SessionEventKindView, SessionEventView, SessionItemView,
     SessionStatus as ApiSessionStatus, SessionView, ToolBatchView, ToolCallDisplayGroup,
-    ToolCallDisplayView, ToolCallEventView, ToolCallView, ToolExecutionTargetView, ToolItemStatus,
+    ToolCallDisplayView, ToolCallEventView, ToolCallView, ToolEffectView, ToolExecutionTargetView,
+    ToolItemStatus,
 };
 use engine::{ApplyEvent, ToolExecutionTarget};
 use engine::{
@@ -379,6 +380,7 @@ impl<'a> CoreAgentProjector<'a> {
                     batch_id: api_tool_batch_id(*batch_id),
                     call_id: result.call_id.as_str().to_owned(),
                     status: core_tool_status_to_api_status(result.status),
+                    effects: tool_effects_to_api(&result.effects),
                 }),
                 ToolEvent::BatchCompleted {
                     run_id,
@@ -418,6 +420,7 @@ impl<'a> CoreAgentProjector<'a> {
         run_id: RunId,
     ) -> Result<Vec<ToolBatchView>, AgentApiError> {
         let result_by_call = self.project_tool_results_for_run(context_items).await?;
+        let effect_by_call = tool_effects_for_run(projection, run_id);
         let mut batches = Vec::new();
         let mut completed_batches = BTreeMap::new();
 
@@ -446,6 +449,10 @@ impl<'a> CoreAgentProjector<'a> {
                             status: result
                                 .map(|result| result.status)
                                 .unwrap_or(ToolItemStatus::Running),
+                            effects: effect_by_call
+                                .get(call.call_id.as_str())
+                                .cloned()
+                                .unwrap_or_default(),
                             display: tool_call_display(call.tool_name.as_str(), &arguments),
                         });
                     }
@@ -876,6 +883,40 @@ fn tool_execution_target_to_api(target: &ToolExecutionTarget) -> ToolExecutionTa
         namespace: target.namespace.clone(),
         id: target.id.clone(),
     }
+}
+
+fn tool_effects_for_run(
+    projection: &CoreAgentProjection<'_>,
+    run_id: RunId,
+) -> BTreeMap<String, Vec<ToolEffectView>> {
+    let mut effects = BTreeMap::new();
+    for entry in projection.entries() {
+        let CoreAgentEventKind::Tool(ToolEvent::CallCompleted {
+            run_id: event_run_id,
+            result,
+            ..
+        }) = &entry.event.kind
+        else {
+            continue;
+        };
+        if *event_run_id == run_id && !result.effects.is_empty() {
+            effects.insert(
+                result.call_id.as_str().to_owned(),
+                tool_effects_to_api(&result.effects),
+            );
+        }
+    }
+    effects
+}
+
+fn tool_effects_to_api(effects: &[engine::ToolEffect]) -> Vec<ToolEffectView> {
+    effects
+        .iter()
+        .map(|effect| ToolEffectView {
+            kind: effect.kind.clone(),
+            data: effect.data.clone(),
+        })
+        .collect()
 }
 
 fn tool_call_display(tool_name: &str, arguments: &str) -> Option<ToolCallDisplayView> {

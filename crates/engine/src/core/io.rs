@@ -11,6 +11,8 @@
 //! hold `Send + Sync` async adapters should fulfill `CoreAgentAction` values
 //! directly instead of implementing these traits inside the workflow.
 
+use std::collections::BTreeMap;
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -96,12 +98,22 @@ impl ToolInvocationBatchResult {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ToolEffect {
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub data: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolInvocationResult {
     pub call_id: ToolCallId,
     pub status: ToolCallStatus,
     pub output_ref: Option<BlobRef>,
     pub model_visible_output_ref: Option<BlobRef>,
     pub error_ref: Option<BlobRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effects: Vec<ToolEffect>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Error)]

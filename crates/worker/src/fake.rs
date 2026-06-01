@@ -162,6 +162,7 @@ impl CoreAgentTools for FakeTools {
                     output_ref: None,
                     model_visible_output_ref: Some(error_ref.clone()),
                     error_ref: Some(error_ref),
+                    effects: Vec::new(),
                 });
                 continue;
             }
@@ -192,6 +193,7 @@ impl CoreAgentTools for FakeTools {
                 output_ref: Some(output_ref.clone()),
                 model_visible_output_ref: Some(output_ref),
                 error_ref: None,
+                effects: Vec::new(),
             });
         }
         Ok(ToolInvocationBatchResult {

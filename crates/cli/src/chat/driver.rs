@@ -1405,6 +1405,7 @@ mod tests {
                     output: Some(r#"{"ok":true}"#.into()),
                     is_error: false,
                     status: ToolItemStatus::Succeeded,
+                    effects: Vec::new(),
                     display: Some(api::ToolCallDisplayView {
                         group: api::ToolCallDisplayGroup::Explore,
                         verb: "Read".into(),
@@ -1450,6 +1451,7 @@ mod tests {
                 output: None,
                 is_error: false,
                 status,
+                effects: Vec::new(),
                 display: None,
             }
         }

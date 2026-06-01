@@ -1,6 +1,7 @@
 //! Filesystem capability boundary.
 
 use async_trait::async_trait;
+use engine::ToolEffect;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -163,4 +164,8 @@ pub trait FileSystem: Send + Sync {
         destination_path: &FsPath,
         options: CopyOptions,
     ) -> FsResult<()>;
+
+    fn drain_tool_effects(&self) -> Vec<ToolEffect> {
+        Vec::new()
+    }
 }

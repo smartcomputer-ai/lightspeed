@@ -2,13 +2,13 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use async_trait::async_trait;
 use engine::{
-    BlobRef,
+    BlobRef, ToolEffect,
     storage::{BlobStore, BlobStoreError},
 };
 
@@ -63,6 +63,7 @@ pub struct VfsWorkspaceFileSystem {
     blobs: Arc<dyn BlobStore>,
     workspace_store: Arc<dyn ::vfs::VfsWorkspaceStore>,
     workspace_id: ::vfs::VfsWorkspaceId,
+    effects: ToolEffectLog,
 }
 
 impl VfsWorkspaceFileSystem {
@@ -75,6 +76,21 @@ impl VfsWorkspaceFileSystem {
             blobs,
             workspace_store,
             workspace_id,
+            effects: ToolEffectLog::default(),
+        }
+    }
+
+    fn with_effect_log(
+        blobs: Arc<dyn BlobStore>,
+        workspace_store: Arc<dyn ::vfs::VfsWorkspaceStore>,
+        workspace_id: ::vfs::VfsWorkspaceId,
+        effects: ToolEffectLog,
+    ) -> Self {
+        Self {
+            blobs,
+            workspace_store,
+            workspace_id,
+            effects,
         }
     }
 
@@ -103,7 +119,8 @@ impl VfsWorkspaceFileSystem {
         let result = ::vfs::commit_snapshot_manifest(self.blobs.as_ref(), manifest)
             .await
             .map_err(|error| map_vfs_error(error, &FsPath::root()))?;
-        self.workspace_store
+        let updated = self
+            .workspace_store
             .compare_and_set_head(::vfs::CompareAndSetVfsWorkspaceHead {
                 workspace_id: current.workspace_id,
                 expected_revision: current.revision,
@@ -112,6 +129,7 @@ impl VfsWorkspaceFileSystem {
             })
             .await
             .map_err(map_vfs_catalog_error)?;
+        self.effects.record(vfs_workspace_commit_effect(&updated));
         Ok(())
     }
 
@@ -142,12 +160,37 @@ pub struct MountedVfsFileSystem {
     blobs: Arc<dyn BlobStore>,
     workspace_store: Arc<dyn ::vfs::VfsWorkspaceStore>,
     mounts: Arc<Vec<::vfs::VfsMountRecord>>,
+    effects: ToolEffectLog,
 }
 
 #[derive(Clone, Debug)]
 struct ResolvedMount {
     mount: ::vfs::VfsMountRecord,
     inner_path: FsPath,
+}
+
+const VFS_WORKSPACE_COMMIT_EFFECT_KIND: &str = "forge.vfs.workspace_commit.v1";
+
+#[derive(Clone, Default)]
+struct ToolEffectLog {
+    effects: Arc<Mutex<Vec<ToolEffect>>>,
+}
+
+impl ToolEffectLog {
+    fn record(&self, effect: ToolEffect) {
+        self.effects
+            .lock()
+            .expect("tool effect log poisoned")
+            .push(effect);
+    }
+
+    fn drain(&self) -> Vec<ToolEffect> {
+        self.effects
+            .lock()
+            .expect("tool effect log poisoned")
+            .drain(..)
+            .collect()
+    }
 }
 
 impl MountedVfsFileSystem {
@@ -168,6 +211,7 @@ impl MountedVfsFileSystem {
             blobs,
             workspace_store,
             mounts: Arc::new(mounts),
+            effects: ToolEffectLog::default(),
         })
     }
 
@@ -212,10 +256,11 @@ impl MountedVfsFileSystem {
                 Ok(Box::new(fs))
             }
             ::vfs::VfsMountSource::Workspace { workspace_id } => {
-                Ok(Box::new(VfsWorkspaceFileSystem::new(
+                Ok(Box::new(VfsWorkspaceFileSystem::with_effect_log(
                     self.blobs.clone(),
                     self.workspace_store.clone(),
                     workspace_id.clone(),
+                    self.effects.clone(),
                 )))
             }
         }
@@ -232,11 +277,14 @@ impl MountedVfsFileSystem {
             });
         }
         match &mount.source {
-            ::vfs::VfsMountSource::Workspace { workspace_id } => Ok(VfsWorkspaceFileSystem::new(
-                self.blobs.clone(),
-                self.workspace_store.clone(),
-                workspace_id.clone(),
-            )),
+            ::vfs::VfsMountSource::Workspace { workspace_id } => {
+                Ok(VfsWorkspaceFileSystem::with_effect_log(
+                    self.blobs.clone(),
+                    self.workspace_store.clone(),
+                    workspace_id.clone(),
+                    self.effects.clone(),
+                ))
+            }
             ::vfs::VfsMountSource::Snapshot { .. } => Err(FsError::PermissionDenied {
                 path: request_path.clone(),
             }),
@@ -502,6 +550,10 @@ impl FileSystem for VfsWorkspaceFileSystem {
         })
         .await
     }
+
+    fn drain_tool_effects(&self) -> Vec<ToolEffect> {
+        self.effects.drain()
+    }
 }
 
 #[async_trait]
@@ -603,6 +655,10 @@ impl FileSystem for MountedVfsFileSystem {
         }
         self.copy_generic(source_path, destination_path, options)
             .await
+    }
+
+    fn drain_tool_effects(&self) -> Vec<ToolEffect> {
+        self.effects.drain()
     }
 }
 
@@ -744,6 +800,23 @@ fn now_ms() -> FsResult<i64> {
     })
 }
 
+fn vfs_workspace_commit_effect(record: &::vfs::VfsWorkspaceRecord) -> ToolEffect {
+    ToolEffect {
+        kind: VFS_WORKSPACE_COMMIT_EFFECT_KIND.to_owned(),
+        data: BTreeMap::from([
+            (
+                "workspace_id".to_owned(),
+                record.workspace_id.as_str().to_owned(),
+            ),
+            (
+                "snapshot_ref".to_owned(),
+                record.head_snapshot_ref.as_str().to_owned(),
+            ),
+            ("revision".to_owned(), record.revision.to_string()),
+        ]),
+    }
+}
+
 fn map_vfs_error(error: ::vfs::VfsError, request_path: &FsPath) -> FsError {
     match error {
         ::vfs::VfsError::NotFound { .. } => FsError::NotFound {
@@ -809,18 +882,26 @@ mod tests {
 
     use ::vfs::VfsWorkspaceStore;
     use async_trait::async_trait;
-    use engine::{SessionId, storage::InMemoryBlobStore};
+    use engine::{
+        CoreAgentTools, RunId, SessionId, ToolBatchId, ToolCallId, ToolCallStatus,
+        ToolInvocationBatchRequest, ToolInvocationRequest, ToolName, TurnId,
+        storage::{BlobStore, InMemoryBlobStore},
+    };
     use tokio::sync::Mutex;
 
     use super::*;
     use crate::host::{
         context::HostToolContext,
+        executor::InlineHostToolRuntime,
+        profiles::{HostToolPreset, resolve_host_profile},
+        targets::HostToolTargets,
         tools::{
             ApplyPatchArgs, EditFileArgs, GlobArgs, GrepArgs, ListDirArgs, ReadFileArgs,
             WriteFileArgs, invoke_apply_patch, invoke_edit_file, invoke_glob, invoke_grep,
             invoke_list_dir, invoke_read_file, invoke_write_file,
         },
     };
+    use crate::runtime::ToolTarget;
 
     #[derive(Debug, Default)]
     struct TestWorkspaceStore {
@@ -1282,6 +1363,103 @@ mod tests {
             .expect_err("write should conflict");
         assert!(
             matches!(error, FsError::Failed { message } if message.contains("revision conflict"))
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn vfs_workspace_file_system_records_commit_effects() {
+        let store = Arc::new(TestWorkspaceStore::default());
+        let (_blobs, fs, workspace_id, _base_snapshot_ref) =
+            test_workspace_fs(store.clone(), Vec::new()).await;
+
+        fs.write_file(&FsPath::new("/README.md").unwrap(), b"updated\n".to_vec())
+            .await
+            .expect("write file");
+
+        let record = store
+            .read_workspace(&workspace_id)
+            .await
+            .expect("read workspace");
+        let effects = fs.drain_tool_effects();
+        assert_eq!(effects.len(), 1);
+        assert_eq!(effects[0].kind, VFS_WORKSPACE_COMMIT_EFFECT_KIND);
+        assert_eq!(
+            effects[0].data.get("workspace_id").map(String::as_str),
+            Some(workspace_id.as_str())
+        );
+        assert_eq!(
+            effects[0].data.get("snapshot_ref").map(String::as_str),
+            Some(record.head_snapshot_ref.as_str())
+        );
+        assert_eq!(
+            effects[0].data.get("revision").map(String::as_str),
+            Some("1")
+        );
+        assert!(fs.drain_tool_effects().is_empty());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn inline_runtime_surfaces_vfs_workspace_commit_effects() {
+        let store = Arc::new(TestWorkspaceStore::default());
+        let (blobs, fs, workspace_id, _base_snapshot_ref) =
+            test_workspace_fs(store.clone(), Vec::new()).await;
+        let ctx = HostToolContext::new(Arc::new(fs), None, blobs.clone());
+        let profile = resolve_host_profile(
+            &ctx,
+            &ToolTarget::api_kind(engine::ProviderApiKind::OpenAiResponses),
+            HostToolPreset::DirectFs,
+        )
+        .expect("profile");
+        let runtime = InlineHostToolRuntime::new(ctx, profile.catalog);
+        let args_ref = blobs
+            .put_bytes(br#"{"path":"/README.md","content":"updated\n"}"#.to_vec())
+            .await
+            .expect("write args");
+
+        let result = CoreAgentTools::invoke_batch(
+            &runtime,
+            ToolInvocationBatchRequest {
+                session_id: SessionId::new("session_1"),
+                run_id: RunId::new(1),
+                turn_id: TurnId::new(1),
+                batch_id: ToolBatchId::new(1),
+                calls: vec![ToolInvocationRequest {
+                    call_id: ToolCallId::new("call_1"),
+                    tool_name: ToolName::new("write_file"),
+                    arguments_ref: args_ref,
+                    execution_target: Some(HostToolTargets::local_execution_target()),
+                }],
+            },
+        )
+        .await
+        .expect("invoke batch")
+        .single_result()
+        .expect("single result");
+
+        let record = store
+            .read_workspace(&workspace_id)
+            .await
+            .expect("read workspace");
+        assert_eq!(result.status, ToolCallStatus::Succeeded);
+        assert_eq!(result.effects.len(), 1);
+        assert_eq!(result.effects[0].kind, VFS_WORKSPACE_COMMIT_EFFECT_KIND);
+        assert_eq!(
+            result.effects[0]
+                .data
+                .get("workspace_id")
+                .map(String::as_str),
+            Some(workspace_id.as_str())
+        );
+        assert_eq!(
+            result.effects[0]
+                .data
+                .get("snapshot_ref")
+                .map(String::as_str),
+            Some(record.head_snapshot_ref.as_str())
+        );
+        assert_eq!(
+            result.effects[0].data.get("revision").map(String::as_str),
+            Some("1")
         );
     }
 

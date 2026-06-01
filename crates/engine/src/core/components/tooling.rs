@@ -6,7 +6,7 @@ use crate::{
     ActiveRun, BlobRef, ContextEvent, ContextItem, ContextItemId, ContextItemKind,
     ContextItemSource, CoreAgentEventKind, CoreAgentEventProposal, CoreAgentJoins, CoreAgentState,
     CoreAgentStatus, DomainError, PlanNext, PlanningError, ProviderApiKind, RunId, RunStatus,
-    ToolBatchId, ToolCallId, ToolName, ToolProfileId, TurnId, TurnOutcome, TurnStatus,
+    ToolBatchId, ToolCallId, ToolEffect, ToolName, ToolProfileId, TurnId, TurnOutcome, TurnStatus,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -566,6 +566,8 @@ pub struct ToolCallResult {
     pub output_ref: Option<BlobRef>,
     pub model_visible_output_ref: Option<BlobRef>,
     pub error_ref: Option<BlobRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effects: Vec<ToolEffect>,
 }
 
 pub(crate) fn tool_result_context_item_exists(
@@ -1041,6 +1043,7 @@ fn unavailable_tool_result(call: &ObservedToolCall) -> ToolCallResult {
         output_ref: None,
         model_visible_output_ref: Some(error_ref.clone()),
         error_ref: Some(error_ref),
+        effects: Vec::new(),
     }
 }
 

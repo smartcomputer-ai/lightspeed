@@ -8,9 +8,11 @@ workflow = { path = "../workflow" }
 api = { path = "../api" }
 api-projection = { path = "../api-projection" }
 engine = { path = "../engine" }
+vfs = { path = "../vfs" }
 anyhow = "1"
 async-trait = "0.1"
 axum = "0.7"
+base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }
 dotenvy = "0.15"
 serde_json = "1"

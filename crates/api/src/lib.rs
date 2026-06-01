@@ -5,6 +5,8 @@
 //! workflow gateway, or another substrate while clients keep speaking the same
 //! session/run/item protocol.
 
+use std::collections::BTreeMap;
+
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -21,6 +23,12 @@ pub const METHOD_SESSION_EVENTS_READ: &str = "session/events/read";
 pub const METHOD_SESSION_CLOSE: &str = "session/close";
 pub const METHOD_RUN_START: &str = "run/start";
 pub const METHOD_RUN_CANCEL: &str = "run/cancel";
+pub const METHOD_BLOB_PUT: &str = "blob/put";
+pub const METHOD_BLOB_PUT_MANY: &str = "blob/put_many";
+pub const METHOD_BLOB_GET: &str = "blob/get";
+pub const METHOD_BLOB_HAS_MANY: &str = "blob/has_many";
+pub const METHOD_VFS_SNAPSHOT_COMMIT: &str = "vfs/snapshot/commit";
+pub const METHOD_VFS_SNAPSHOT_READ: &str = "vfs/snapshot/read";
 
 pub const NOTIFY_SESSION_STARTED: &str = "session/started";
 pub const NOTIFY_SESSION_STATUS_CHANGED: &str = "session/status/changed";
@@ -115,6 +123,36 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: RunCancelParams,
     ) -> Result<AgentApiOutcome<RunCancelResponse>, AgentApiError>;
+
+    async fn put_blob(
+        &self,
+        params: BlobPutParams,
+    ) -> Result<AgentApiOutcome<BlobPutResponse>, AgentApiError>;
+
+    async fn put_blobs(
+        &self,
+        params: BlobPutManyParams,
+    ) -> Result<AgentApiOutcome<BlobPutManyResponse>, AgentApiError>;
+
+    async fn get_blob(
+        &self,
+        params: BlobGetParams,
+    ) -> Result<AgentApiOutcome<BlobGetResponse>, AgentApiError>;
+
+    async fn has_blobs(
+        &self,
+        params: BlobHasManyParams,
+    ) -> Result<AgentApiOutcome<BlobHasManyResponse>, AgentApiError>;
+
+    async fn commit_vfs_snapshot(
+        &self,
+        params: VfsSnapshotCommitParams,
+    ) -> Result<AgentApiOutcome<VfsSnapshotCommitResponse>, AgentApiError>;
+
+    async fn read_vfs_snapshot(
+        &self,
+        params: VfsSnapshotReadParams,
+    ) -> Result<AgentApiOutcome<VfsSnapshotReadResponse>, AgentApiError>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -517,6 +555,8 @@ pub enum SessionEventKindView {
         batch_id: String,
         call_id: String,
         status: ToolItemStatus,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        effects: Vec<ToolEffectView>,
     },
     ToolBatchCompleted {
         run_id: RunId,
@@ -590,6 +630,97 @@ pub struct RunCancelParams {
 #[serde(rename_all = "camelCase")]
 pub struct RunCancelResponse {
     pub run: RunView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlobPutParams {
+    pub bytes_base64: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlobPutResponse {
+    pub blob_ref: String,
+    pub bytes: u64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlobPutManyParams {
+    #[serde(default)]
+    pub blobs: Vec<BlobPutParams>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlobPutManyResponse {
+    #[serde(default)]
+    pub blobs: Vec<BlobPutResponse>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlobGetParams {
+    pub blob_ref: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlobGetResponse {
+    pub blob_ref: String,
+    pub bytes_base64: String,
+    pub bytes: u64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlobHasManyParams {
+    #[serde(default)]
+    pub blob_refs: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlobHasItem {
+    pub blob_ref: String,
+    pub exists: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlobHasManyResponse {
+    #[serde(default)]
+    pub blobs: Vec<BlobHasItem>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsSnapshotCommitParams {
+    pub manifest: Value,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsSnapshotCommitResponse {
+    pub snapshot_ref: String,
+    pub files: u64,
+    pub bytes: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsSnapshotReadParams {
+    pub snapshot_ref: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsSnapshotReadResponse {
+    pub snapshot_ref: String,
+    pub manifest: Value,
+    pub files: u64,
+    pub bytes: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -688,8 +819,18 @@ pub struct ToolCallView {
     #[serde(default)]
     pub is_error: bool,
     pub status: ToolItemStatus,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effects: Vec<ToolEffectView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display: Option<ToolCallDisplayView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolEffectView {
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub data: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1038,6 +1179,34 @@ pub async fn dispatch_json_rpc(
             Ok(params) => json_rpc_outcome(id, service.cancel_run(params).await),
             Err(error) => JsonRpcResponse::failure(id, error),
         },
+        METHOD_BLOB_PUT => match json_rpc_params::<BlobPutParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.put_blob(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
+        METHOD_BLOB_PUT_MANY => match json_rpc_params::<BlobPutManyParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.put_blobs(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
+        METHOD_BLOB_GET => match json_rpc_params::<BlobGetParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.get_blob(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
+        METHOD_BLOB_HAS_MANY => match json_rpc_params::<BlobHasManyParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.has_blobs(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
+        METHOD_VFS_SNAPSHOT_COMMIT => {
+            match json_rpc_params::<VfsSnapshotCommitParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.commit_vfs_snapshot(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
+        METHOD_VFS_SNAPSHOT_READ => {
+            match json_rpc_params::<VfsSnapshotReadParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.read_vfs_snapshot(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
         other => JsonRpcResponse::failure(id, JsonRpcError::method_not_found(other)),
     }
 }
@@ -1260,6 +1429,55 @@ mod tests {
         );
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_blob_put_many() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_BLOB_PUT_MANY.to_owned(),
+                params: Some(json!({
+                    "blobs": [
+                        { "bytesBase64": "aGVsbG8=" },
+                        { "bytesBase64": "d29ybGQ=" }
+                    ]
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["blobs"][1]["bytes"],
+            json!(8)
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_vfs_snapshot_commit() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_VFS_SNAPSHOT_COMMIT.to_owned(),
+                params: Some(json!({
+                    "manifest": {
+                        "schema_version": "forge.vfs.snapshot.v1",
+                        "root": { "entries": {} },
+                        "totals": { "files": 0, "bytes": 0 }
+                    }
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["snapshotRef"],
+            json!(format!("sha256:{}", "2".repeat(64)))
+        );
+    }
+
     #[test]
     fn session_event_serializes_with_cursor_and_kind() {
         let event = SessionEventView {
@@ -1367,6 +1585,7 @@ mod tests {
                     output: Some("ok".to_owned()),
                     is_error: false,
                     status: ToolItemStatus::Succeeded,
+                    effects: Vec::new(),
                     display: Some(ToolCallDisplayView {
                         group: ToolCallDisplayGroup::Explore,
                         verb: "Read".to_owned(),
@@ -1529,6 +1748,87 @@ mod tests {
         ) -> Result<AgentApiOutcome<RunCancelResponse>, AgentApiError> {
             Ok(AgentApiOutcome::new(RunCancelResponse {
                 run: test_run(params.run_id, RunStatus::Cancelled),
+            }))
+        }
+
+        async fn put_blob(
+            &self,
+            params: BlobPutParams,
+        ) -> Result<AgentApiOutcome<BlobPutResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(BlobPutResponse {
+                blob_ref: format!("sha256:{}", "1".repeat(64)),
+                bytes: params.bytes_base64.len() as u64,
+            }))
+        }
+
+        async fn put_blobs(
+            &self,
+            params: BlobPutManyParams,
+        ) -> Result<AgentApiOutcome<BlobPutManyResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(BlobPutManyResponse {
+                blobs: params
+                    .blobs
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, blob)| BlobPutResponse {
+                        blob_ref: format!("sha256:{index:064x}"),
+                        bytes: blob.bytes_base64.len() as u64,
+                    })
+                    .collect(),
+            }))
+        }
+
+        async fn get_blob(
+            &self,
+            params: BlobGetParams,
+        ) -> Result<AgentApiOutcome<BlobGetResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(BlobGetResponse {
+                blob_ref: params.blob_ref,
+                bytes_base64: "aGVsbG8=".to_owned(),
+                bytes: 5,
+            }))
+        }
+
+        async fn has_blobs(
+            &self,
+            params: BlobHasManyParams,
+        ) -> Result<AgentApiOutcome<BlobHasManyResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(BlobHasManyResponse {
+                blobs: params
+                    .blob_refs
+                    .into_iter()
+                    .map(|blob_ref| BlobHasItem {
+                        blob_ref,
+                        exists: true,
+                    })
+                    .collect(),
+            }))
+        }
+
+        async fn commit_vfs_snapshot(
+            &self,
+            _params: VfsSnapshotCommitParams,
+        ) -> Result<AgentApiOutcome<VfsSnapshotCommitResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(VfsSnapshotCommitResponse {
+                snapshot_ref: format!("sha256:{}", "2".repeat(64)),
+                files: 1,
+                bytes: 5,
+            }))
+        }
+
+        async fn read_vfs_snapshot(
+            &self,
+            params: VfsSnapshotReadParams,
+        ) -> Result<AgentApiOutcome<VfsSnapshotReadResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(VfsSnapshotReadResponse {
+                snapshot_ref: params.snapshot_ref,
+                manifest: json!({
+                    "schema_version": "forge.vfs.snapshot.v1",
+                    "root": { "entries": {} },
+                    "totals": { "files": 0, "bytes": 0 }
+                }),
+                files: 0,
+                bytes: 0,
             }))
         }
     }

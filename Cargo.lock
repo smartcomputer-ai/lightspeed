@@ -1000,6 +1000,7 @@ dependencies = [
  "api-projection",
  "async-trait",
  "axum",
+ "base64",
  "clap",
  "dotenvy",
  "engine",
@@ -1011,6 +1012,7 @@ dependencies = [
  "temporalio-sdk-core",
  "tokio",
  "uuid",
+ "vfs",
  "worker",
  "workflow",
 ]

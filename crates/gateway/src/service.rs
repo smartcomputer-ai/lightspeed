@@ -8,7 +8,9 @@ use std::{
 };
 
 use api::{
-    AgentApiError, AgentApiErrorKind, AgentApiOutcome, AgentApiService, ClientCapabilities,
+    AgentApiError, AgentApiErrorKind, AgentApiOutcome, AgentApiService, BlobGetParams,
+    BlobGetResponse, BlobHasItem, BlobHasManyParams, BlobHasManyResponse, BlobPutManyParams,
+    BlobPutManyResponse, BlobPutParams, BlobPutResponse, ClientCapabilities,
     ContextConfigInput as ApiContextConfigInput, ContextConfigPatchInput, FieldPatch,
     GenerationConfig, GenerationConfigPatch, InitializeParams, InitializeResponse, InputItem,
     InstructionsSource, ModelConfig, ReasoningEffort, RunCancelParams, RunCancelResponse,
@@ -17,6 +19,8 @@ use api::{
     SessionCloseResponse, SessionConfigInput, SessionConfigPatchInput, SessionEventsReadParams,
     SessionEventsReadResponse, SessionReadParams, SessionReadResponse, SessionStartParams,
     SessionStartResponse, SessionUpdateParams, SessionUpdateResponse, SessionView,
+    VfsSnapshotCommitParams, VfsSnapshotCommitResponse, VfsSnapshotReadParams,
+    VfsSnapshotReadResponse,
 };
 use api_projection::{
     CoreAgentProjector, MAX_EVENT_PAGE_LIMIT, ProjectSession, api_kind_from_str, api_run_id,
@@ -24,6 +28,7 @@ use api_projection::{
     parse_api_run_id, read_all_session_entries, replay_core_agent_state,
 };
 use async_trait::async_trait;
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use engine::{
     AnthropicMessagesRequestDefaults, BlobRef, CommandCodec, ContextConfigPatch, CoreAgentCommand,
     CoreAgentStatus, ModelProviderOptions, ModelSelection, OpenAiCompletionsRequestDefaults,
@@ -932,6 +937,180 @@ impl AgentApiService for GatewayAgentApi {
             .await?;
         Ok(AgentApiOutcome::new(RunCancelResponse { run }))
     }
+
+    async fn put_blob(
+        &self,
+        params: BlobPutParams,
+    ) -> Result<AgentApiOutcome<BlobPutResponse>, AgentApiError> {
+        put_blob(self.store.as_ref(), params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn put_blobs(
+        &self,
+        params: BlobPutManyParams,
+    ) -> Result<AgentApiOutcome<BlobPutManyResponse>, AgentApiError> {
+        put_blobs(self.store.as_ref(), params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn get_blob(
+        &self,
+        params: BlobGetParams,
+    ) -> Result<AgentApiOutcome<BlobGetResponse>, AgentApiError> {
+        get_blob(self.store.as_ref(), params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn has_blobs(
+        &self,
+        params: BlobHasManyParams,
+    ) -> Result<AgentApiOutcome<BlobHasManyResponse>, AgentApiError> {
+        has_blobs(self.store.as_ref(), params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn commit_vfs_snapshot(
+        &self,
+        params: VfsSnapshotCommitParams,
+    ) -> Result<AgentApiOutcome<VfsSnapshotCommitResponse>, AgentApiError> {
+        commit_vfs_snapshot(self.store.as_ref(), params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn read_vfs_snapshot(
+        &self,
+        params: VfsSnapshotReadParams,
+    ) -> Result<AgentApiOutcome<VfsSnapshotReadResponse>, AgentApiError> {
+        read_vfs_snapshot(self.store.as_ref(), params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+}
+
+async fn put_blob(
+    store: &dyn BlobStore,
+    params: BlobPutParams,
+) -> Result<BlobPutResponse, AgentApiError> {
+    let bytes = decode_base64(&params.bytes_base64, "bytesBase64")?;
+    let byte_len = u64::try_from(bytes.len())
+        .map_err(|_| AgentApiError::invalid_request("blob byte length does not fit in u64"))?;
+    let blob_ref = store.put_bytes(bytes).await.map_err(map_blob_store_error)?;
+    Ok(BlobPutResponse {
+        blob_ref: blob_ref.as_str().to_owned(),
+        bytes: byte_len,
+    })
+}
+
+async fn put_blobs(
+    store: &dyn BlobStore,
+    params: BlobPutManyParams,
+) -> Result<BlobPutManyResponse, AgentApiError> {
+    let mut byte_lens = Vec::with_capacity(params.blobs.len());
+    let mut blobs = Vec::with_capacity(params.blobs.len());
+    for (index, blob) in params.blobs.into_iter().enumerate() {
+        let bytes = decode_base64(&blob.bytes_base64, format!("blobs[{index}].bytesBase64"))?;
+        byte_lens.push(u64::try_from(bytes.len()).map_err(|_| {
+            AgentApiError::invalid_request(format!(
+                "blobs[{index}] byte length does not fit in u64"
+            ))
+        })?);
+        blobs.push(bytes);
+    }
+    let blob_refs = store.put_many(blobs).await.map_err(map_blob_store_error)?;
+    Ok(BlobPutManyResponse {
+        blobs: blob_refs
+            .into_iter()
+            .zip(byte_lens)
+            .map(|(blob_ref, bytes)| BlobPutResponse {
+                blob_ref: blob_ref.as_str().to_owned(),
+                bytes,
+            })
+            .collect(),
+    })
+}
+
+async fn get_blob(
+    store: &dyn BlobStore,
+    params: BlobGetParams,
+) -> Result<BlobGetResponse, AgentApiError> {
+    let blob_ref = parse_blob_ref(&params.blob_ref)?;
+    let bytes = store
+        .read_bytes(&blob_ref)
+        .await
+        .map_err(map_blob_read_error)?;
+    let byte_len = u64::try_from(bytes.len())
+        .map_err(|_| AgentApiError::internal("blob byte length does not fit in u64"))?;
+    Ok(BlobGetResponse {
+        blob_ref: blob_ref.as_str().to_owned(),
+        bytes_base64: BASE64.encode(bytes),
+        bytes: byte_len,
+    })
+}
+
+async fn has_blobs(
+    store: &dyn BlobStore,
+    params: BlobHasManyParams,
+) -> Result<BlobHasManyResponse, AgentApiError> {
+    let mut blobs = Vec::with_capacity(params.blob_refs.len());
+    for blob_ref in params.blob_refs {
+        let blob_ref = parse_blob_ref(&blob_ref)?;
+        let exists = store
+            .has_blob(&blob_ref)
+            .await
+            .map_err(map_blob_store_error)?;
+        blobs.push(BlobHasItem {
+            blob_ref: blob_ref.as_str().to_owned(),
+            exists,
+        });
+    }
+    Ok(BlobHasManyResponse { blobs })
+}
+
+async fn commit_vfs_snapshot(
+    store: &dyn BlobStore,
+    params: VfsSnapshotCommitParams,
+) -> Result<VfsSnapshotCommitResponse, AgentApiError> {
+    let manifest: vfs::VfsSnapshotManifest =
+        serde_json::from_value(params.manifest).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid vfs snapshot manifest: {error}"))
+        })?;
+    manifest
+        .validate()
+        .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
+    validate_vfs_manifest_blob_refs(store, &manifest).await?;
+    let totals = manifest.totals.clone();
+    let result = vfs::commit_snapshot_manifest(store, manifest)
+        .await
+        .map_err(map_vfs_commit_error)?;
+    Ok(VfsSnapshotCommitResponse {
+        snapshot_ref: result.snapshot_ref.as_str().to_owned(),
+        files: totals.files,
+        bytes: totals.bytes,
+    })
+}
+
+async fn read_vfs_snapshot(
+    store: &dyn BlobStore,
+    params: VfsSnapshotReadParams,
+) -> Result<VfsSnapshotReadResponse, AgentApiError> {
+    let snapshot_ref = parse_blob_ref(&params.snapshot_ref)?;
+    let manifest = vfs::read_snapshot_manifest(store, &snapshot_ref)
+        .await
+        .map_err(map_vfs_read_error)?;
+    let manifest_value = serde_json::to_value(&manifest)
+        .map_err(|error| AgentApiError::internal(format!("failed to encode manifest: {error}")))?;
+    Ok(VfsSnapshotReadResponse {
+        snapshot_ref: snapshot_ref.as_str().to_owned(),
+        files: manifest.totals.files,
+        bytes: manifest.totals.bytes,
+        manifest: manifest_value,
+    })
 }
 
 async fn run_input_ref_from_api(
@@ -984,6 +1163,57 @@ async fn run_input_ref_from_api(
 
 fn parse_blob_ref(value: &str) -> Result<BlobRef, AgentApiError> {
     BlobRef::parse(value).map_err(|error| AgentApiError::invalid_request(error.to_string()))
+}
+
+fn decode_base64(value: &str, field: impl AsRef<str>) -> Result<Vec<u8>, AgentApiError> {
+    BASE64.decode(value).map_err(|error| {
+        AgentApiError::invalid_request(format!("invalid base64 in {}: {error}", field.as_ref()))
+    })
+}
+
+async fn validate_vfs_manifest_blob_refs(
+    store: &dyn BlobStore,
+    manifest: &vfs::VfsSnapshotManifest,
+) -> Result<(), AgentApiError> {
+    let mut refs = BTreeMap::new();
+    collect_vfs_manifest_blob_refs(&manifest.root, &mut refs)?;
+    for (blob_ref, expected_bytes) in refs {
+        let info = store
+            .stat_blob(&blob_ref)
+            .await
+            .map_err(map_vfs_manifest_blob_error)?;
+        if info.byte_len != expected_bytes {
+            return Err(AgentApiError::invalid_request(format!(
+                "vfs manifest file size for {blob_ref} is {expected_bytes}, but stored blob size is {}",
+                info.byte_len
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn collect_vfs_manifest_blob_refs(
+    directory: &vfs::VfsDirectory,
+    refs: &mut BTreeMap<BlobRef, u64>,
+) -> Result<(), AgentApiError> {
+    for entry in directory.entries.values() {
+        match entry {
+            vfs::VfsEntry::File(file) => {
+                if let Some(existing) = refs.insert(file.blob_ref.clone(), file.size_bytes)
+                    && existing != file.size_bytes
+                {
+                    return Err(AgentApiError::invalid_request(format!(
+                        "vfs manifest references blob {} with conflicting sizes: {existing} and {}",
+                        file.blob_ref, file.size_bytes
+                    )));
+                }
+            }
+            vfs::VfsEntry::Directory(directory) => {
+                collect_vfs_manifest_blob_refs(directory, refs)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn empty_run_input_error() -> AgentApiError {
@@ -1231,6 +1461,38 @@ fn map_blob_store_error(error: BlobStoreError) -> AgentApiError {
     }
 }
 
+fn map_blob_read_error(error: BlobStoreError) -> AgentApiError {
+    match error {
+        BlobStoreError::NotFound { blob_ref } => {
+            AgentApiError::not_found(format!("blob not found: {blob_ref}"))
+        }
+        BlobStoreError::Store { message } => AgentApiError::internal(message),
+    }
+}
+
+fn map_vfs_manifest_blob_error(error: BlobStoreError) -> AgentApiError {
+    match error {
+        BlobStoreError::NotFound { blob_ref } => AgentApiError::invalid_request(format!(
+            "vfs manifest references missing blob: {blob_ref}"
+        )),
+        BlobStoreError::Store { message } => AgentApiError::internal(message),
+    }
+}
+
+fn map_vfs_commit_error(error: vfs::VfsError) -> AgentApiError {
+    match error {
+        vfs::VfsError::BlobStore(error) => map_blob_store_error(error),
+        error => AgentApiError::invalid_request(error.to_string()),
+    }
+}
+
+fn map_vfs_read_error(error: vfs::VfsError) -> AgentApiError {
+    match error {
+        vfs::VfsError::BlobStore(error) => map_blob_read_error(error),
+        error => AgentApiError::invalid_request(error.to_string()),
+    }
+}
+
 fn map_input_blob_store_error(error: BlobStoreError) -> AgentApiError {
     match error {
         BlobStoreError::NotFound { blob_ref } => {
@@ -1406,6 +1668,122 @@ mod tests {
             store.read_text(&input_ref).await.expect("stored input"),
             "first\n\nsecond"
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn blob_api_helpers_put_get_and_check_many() {
+        let store = engine::storage::InMemoryBlobStore::new();
+
+        let put = put_blobs(
+            &store,
+            BlobPutManyParams {
+                blobs: vec![
+                    BlobPutParams {
+                        bytes_base64: BASE64.encode(b"hello"),
+                    },
+                    BlobPutParams {
+                        bytes_base64: BASE64.encode(b"world"),
+                    },
+                ],
+            },
+        )
+        .await
+        .expect("put blobs");
+        assert_eq!(put.blobs.len(), 2);
+        assert_eq!(put.blobs[0].bytes, 5);
+
+        let has = has_blobs(
+            &store,
+            BlobHasManyParams {
+                blob_refs: vec![
+                    put.blobs[0].blob_ref.clone(),
+                    BlobRef::from_bytes(b"missing").as_str().to_owned(),
+                ],
+            },
+        )
+        .await
+        .expect("has blobs");
+        assert_eq!(
+            has.blobs.iter().map(|item| item.exists).collect::<Vec<_>>(),
+            vec![true, false]
+        );
+
+        let read = get_blob(
+            &store,
+            BlobGetParams {
+                blob_ref: put.blobs[1].blob_ref.clone(),
+            },
+        )
+        .await
+        .expect("get blob");
+        assert_eq!(read.bytes_base64, BASE64.encode(b"world"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn vfs_snapshot_api_helpers_commit_and_read_manifest() {
+        let store = engine::storage::InMemoryBlobStore::new();
+        let snapshot = vfs::create_inline_snapshot(
+            &store,
+            vfs::CreateInlineSnapshotRequest::new(vec![
+                vfs::InlineFile::new("README.md", b"hello\n".to_vec()).unwrap(),
+            ]),
+        )
+        .await
+        .expect("create snapshot");
+        let manifest = serde_json::to_value(snapshot.manifest).expect("manifest json");
+
+        let committed = commit_vfs_snapshot(
+            &store,
+            VfsSnapshotCommitParams {
+                manifest: manifest.clone(),
+            },
+        )
+        .await
+        .expect("commit snapshot");
+        assert_eq!(committed.files, 1);
+        assert_eq!(committed.bytes, 6);
+
+        let read = read_vfs_snapshot(
+            &store,
+            VfsSnapshotReadParams {
+                snapshot_ref: committed.snapshot_ref,
+            },
+        )
+        .await
+        .expect("read snapshot");
+        assert_eq!(read.manifest, manifest);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn vfs_snapshot_commit_rejects_missing_file_blob_refs() {
+        let store = engine::storage::InMemoryBlobStore::new();
+        let missing_ref = BlobRef::from_bytes(b"missing");
+        let manifest = vfs::VfsSnapshotManifest {
+            schema_version: vfs::VFS_SNAPSHOT_SCHEMA_VERSION.to_owned(),
+            root: vfs::VfsDirectory {
+                entries: BTreeMap::from([(
+                    "missing.txt".to_owned(),
+                    vfs::VfsEntry::File(vfs::VfsFile {
+                        blob_ref: missing_ref,
+                        size_bytes: 7,
+                        media_type: None,
+                        executable: false,
+                    }),
+                )]),
+            },
+            totals: vfs::VfsTotals { files: 1, bytes: 7 },
+        };
+
+        let error = commit_vfs_snapshot(
+            &store,
+            VfsSnapshotCommitParams {
+                manifest: serde_json::to_value(manifest).expect("manifest json"),
+            },
+        )
+        .await
+        .expect_err("missing blob should fail");
+        assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
+        assert!(error.message.contains("missing blob"));
     }
 
     fn failure(kind: AgentAdmissionFailureKind) -> AgentAdmissionFailure {
