@@ -379,9 +379,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "api",
+ "async-trait",
+ "base64",
  "clap",
  "crossterm",
  "dotenvy",
+ "engine",
  "futures-util",
  "pulldown-cmark 0.10.3",
  "ratatui",
@@ -391,6 +394,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "unicode-width 0.2.0",
+ "vfs",
 ]
 
 [[package]]

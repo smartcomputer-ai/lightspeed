@@ -1,28 +1,22 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
-};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
 use api::{
-    AgentApiError, AgentApiErrorKind, AgentApiOutcome, EventCursor, GenerationConfig, InputItem,
-    JsonRpcRequest, JsonRpcResponse, METHOD_RUN_START, METHOD_SESSION_EVENTS_READ,
-    METHOD_SESSION_READ, METHOD_SESSION_START, ModelConfig, ReasoningEffort as ApiReasoningEffort,
-    RequestId, RunStartConfig, RunStartParams, RunStartResponse, SessionConfigInput,
-    SessionEventKindView, SessionEventView, SessionEventsReadParams, SessionEventsReadResponse,
-    SessionItemView, SessionReadParams, SessionReadResponse, SessionStartParams,
-    SessionStartResponse, SessionView, ToolBatchView, ToolCallEventView, ToolCallView,
-    ToolItemStatus,
+    AgentApiOutcome, EventCursor, GenerationConfig, InputItem, ModelConfig,
+    ReasoningEffort as ApiReasoningEffort, RunStartConfig, RunStartParams, RunStartResponse,
+    SessionConfigInput, SessionEventKindView, SessionEventView, SessionEventsReadParams,
+    SessionItemView, SessionReadParams, SessionStartParams, SessionView, ToolBatchView,
+    ToolCallEventView, ToolCallView, ToolItemStatus,
 };
 use clap::Args;
-use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
 
+use crate::api_client::{HttpAgentApi, api_error};
 use crate::chat::preview::compact_preview;
 use crate::chat::protocol::{
     ChatCommand, ChatConnectionInfo, ChatDelta, ChatDraftSettings, ChatErrorView, ChatEvent,
@@ -166,116 +160,6 @@ type PendingRunHandle =
     JoinHandle<std::result::Result<AgentApiOutcome<RunStartResponse>, api::AgentApiError>>;
 
 type ChatAgentApi = Arc<HttpAgentApi>;
-
-struct HttpAgentApi {
-    endpoint: String,
-    client: reqwest::Client,
-    next_id: AtomicU64,
-}
-
-impl HttpAgentApi {
-    fn new(endpoint: impl Into<String>) -> Self {
-        Self {
-            endpoint: endpoint.into(),
-            client: reqwest::Client::new(),
-            next_id: AtomicU64::new(1),
-        }
-    }
-
-    async fn open_or_start_session(
-        &self,
-        params: SessionStartParams,
-    ) -> std::result::Result<AgentApiOutcome<SessionStartResponse>, AgentApiError> {
-        match self.start_session(params.clone()).await {
-            Ok(outcome) => Ok(outcome),
-            Err(error)
-                if matches!(error.kind, AgentApiErrorKind::Conflict)
-                    && params.session_id.is_some() =>
-            {
-                self.read_session(SessionReadParams {
-                    session_id: params.session_id.expect("checked session id present"),
-                })
-                .await
-                .map(|outcome| {
-                    AgentApiOutcome::with_notifications(
-                        SessionStartResponse {
-                            session: outcome.result.session,
-                        },
-                        outcome.notifications,
-                    )
-                })
-            }
-            Err(error) => Err(error),
-        }
-    }
-
-    async fn start_session(
-        &self,
-        params: SessionStartParams,
-    ) -> std::result::Result<AgentApiOutcome<SessionStartResponse>, AgentApiError> {
-        self.request(METHOD_SESSION_START, params).await
-    }
-
-    async fn read_session(
-        &self,
-        params: SessionReadParams,
-    ) -> std::result::Result<AgentApiOutcome<SessionReadResponse>, AgentApiError> {
-        self.request(METHOD_SESSION_READ, params).await
-    }
-
-    async fn read_session_events(
-        &self,
-        params: SessionEventsReadParams,
-    ) -> std::result::Result<AgentApiOutcome<SessionEventsReadResponse>, AgentApiError> {
-        self.request(METHOD_SESSION_EVENTS_READ, params).await
-    }
-
-    async fn start_run(
-        &self,
-        params: RunStartParams,
-    ) -> std::result::Result<AgentApiOutcome<RunStartResponse>, AgentApiError> {
-        self.request(METHOD_RUN_START, params).await
-    }
-
-    async fn request<P, R>(
-        &self,
-        method: &str,
-        params: P,
-    ) -> std::result::Result<AgentApiOutcome<R>, AgentApiError>
-    where
-        P: Serialize,
-        R: DeserializeOwned,
-    {
-        let id = RequestId::Number(self.next_id.fetch_add(1, Ordering::Relaxed));
-        let request = JsonRpcRequest {
-            id,
-            method: method.to_owned(),
-            params: Some(serde_json::to_value(params).map_err(|error| {
-                AgentApiError::invalid_request(format!("failed to encode API params: {error}"))
-            })?),
-        };
-        let response = self
-            .client
-            .post(&self.endpoint)
-            .json(&request)
-            .send()
-            .await
-            .map_err(|error| AgentApiError::internal(format!("API request failed: {error}")))?
-            .error_for_status()
-            .map_err(|error| AgentApiError::internal(format!("API request failed: {error}")))?
-            .json::<JsonRpcResponse>()
-            .await
-            .map_err(|error| AgentApiError::internal(format!("invalid API response: {error}")))?;
-        if let Some(error) = response.error {
-            return Err(agent_error_from_json_rpc(error));
-        }
-        let value = response
-            .result
-            .ok_or_else(|| AgentApiError::internal("JSON-RPC response missing result"))?;
-        serde_json::from_value::<AgentApiOutcome<R>>(value)
-            .map_err(|error| AgentApiError::internal(format!("invalid API result: {error}")))
-    }
-}
 
 impl ChatSessionDriver {
     pub(crate) async fn open(options: ChatSessionDriverOptions) -> Result<(Self, Vec<ChatEvent>)> {
@@ -1365,21 +1249,6 @@ fn displayable_reasoning_text(text: &str) -> bool {
         return false;
     }
     true
-}
-
-fn api_error(error: api::AgentApiError) -> anyhow::Error {
-    anyhow!("{error}")
-}
-
-fn agent_error_from_json_rpc(error: api::JsonRpcError) -> AgentApiError {
-    let kind = match error.code {
-        -32602 => AgentApiErrorKind::InvalidRequest,
-        -32004 => AgentApiErrorKind::NotFound,
-        -32009 => AgentApiErrorKind::Conflict,
-        -32010 => AgentApiErrorKind::Rejected,
-        _ => AgentApiErrorKind::Internal,
-    };
-    AgentApiError::new(kind, error.message)
 }
 
 #[cfg(test)]

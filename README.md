@@ -175,6 +175,16 @@ The `cli` package builds the `forge` binary, so installed usage is equivalent:
 forge chat --new
 ```
 
+To upload a local directory as a CAS-backed VFS snapshot:
+
+```bash
+cargo run -p cli -- vfs snapshot .
+```
+
+The command walks the directory locally, uploads missing content-addressed blobs
+through the gateway, commits the VFS manifest, and prints the resulting
+`snapshotRef`. Use `--json` for a machine-readable summary.
+
 ### Stop Or Reset Local Infra
 
 ```bash

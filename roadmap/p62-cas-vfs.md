@@ -487,7 +487,8 @@ For small snapshots, a single `vfs/snapshot/create` request may carry inline
 files. For larger trees, use a staged upload:
 
 ```text
-blob/put or vfs/blob/put
+blob/has_many
+blob/put_many
 vfs/snapshot/commit
 ```
 
@@ -750,12 +751,15 @@ gateway/CAS remains the authority for blobs and manifests.
   `vfs/snapshot/read`, including manifest shape validation, referenced-blob
   existence and size checks, and a larger configurable gateway request body
   limit for local uploads.
+- Done: reusable CLI snapshot upload flow plus `forge vfs snapshot <dir>`.
+  The CLI scans a local directory, skips symlinks, computes content digests,
+  checks existing CAS refs with `blob/has_many`, uploads missing unique blobs
+  with batched `blob/put_many`, and commits a VFS manifest by ref.
 - Remaining: add internal gateway helpers for workspace creation and workspace
   commit.
-- Add CLI-local upload/download APIs for snapshot creation and local
-  materialization.
-- Add CLI-local sync flows that compare content digests so repeated snapshots
-  and materializations transfer only changed blobs where possible.
+- Add CLI-local download/materialization APIs.
+- Extend CLI-local sync so materialization also compares content digests and
+  transfers only changed blobs where possible.
 - Add public API only when a product surface needs direct VFS access.
 - Project VFS-backed context items with useful previews.
 

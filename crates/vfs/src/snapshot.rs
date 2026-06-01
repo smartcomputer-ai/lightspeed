@@ -319,6 +319,27 @@ pub async fn write_manifest_file(
     )
 }
 
+pub fn write_manifest_file_ref(
+    manifest: &mut VfsSnapshotManifest,
+    path: &VfsPath,
+    blob_ref: BlobRef,
+    size_bytes: u64,
+    media_type: Option<String>,
+    executable: bool,
+) -> Result<(), VfsError> {
+    ensure_file_write_target(manifest, path)?;
+    replace_file_entry(
+        manifest,
+        path,
+        VfsFile {
+            blob_ref,
+            size_bytes,
+            media_type,
+            executable,
+        },
+    )
+}
+
 pub fn create_manifest_directory(
     manifest: &mut VfsSnapshotManifest,
     path: &VfsPath,
@@ -902,6 +923,38 @@ mod tests {
                 .unwrap(),
             manifest
         );
+    }
+
+    #[test]
+    fn mutable_snapshot_helpers_write_existing_blob_refs() {
+        let mut manifest = VfsSnapshotManifest::empty();
+        create_manifest_directory(&mut manifest, &VfsPath::parse("/dist").unwrap(), false).unwrap();
+
+        write_manifest_file_ref(
+            &mut manifest,
+            &VfsPath::parse("/dist/index.js").unwrap(),
+            BlobRef::from_bytes(b"console.log('ok');\n"),
+            19,
+            Some("text/javascript".to_owned()),
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(
+            manifest.totals,
+            VfsTotals {
+                files: 1,
+                bytes: 19
+            }
+        );
+        let file = match lookup_snapshot_path(&manifest, &VfsPath::parse("/dist/index.js").unwrap())
+            .unwrap()
+        {
+            VfsNode::File(file) => file,
+            VfsNode::Directory(_) => panic!("dist/index.js should be a file"),
+        };
+        assert_eq!(file.media_type.as_deref(), Some("text/javascript"));
+        assert_eq!(file.blob_ref, BlobRef::from_bytes(b"console.log('ok');\n"));
     }
 
     #[tokio::test(flavor = "current_thread")]
