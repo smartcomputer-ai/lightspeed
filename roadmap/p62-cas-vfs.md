@@ -779,8 +779,8 @@ gateway/CAS remains the authority for blobs and manifests.
   creates a writable workspace, mounts it at `/workspace` by default, and starts
   the chat against that VFS cwd.
 - Done: hosted worker tool execution can load session VFS mounts and run the
-  existing DirectFs host tools over `MountedVfsFileSystem`; `FORGE_TOOLS=fake`
-  remains available for dev/test fallback.
+  existing DirectFs host tools over `MountedVfsFileSystem`; fake tools remain
+  available through explicit test injection rather than runtime env modes.
 - Deferred until a concrete product reconciliation workflow exists: higher-level
   CLI-local sync that composes snapshot/upload and materialize/download into
   bidirectional flows with local state, conflict detection, deletion policy,

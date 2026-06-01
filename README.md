@@ -60,10 +60,8 @@ Prerequisites:
 - `ANTHROPIC_API_KEY` for live Anthropic client tests
 
 Easiest is to copy `.env_example` to `.env` and set provider keys there. The
-local hosted stack defaults to `FORGE_LLM=fake` and `FORGE_TOOLS=fake`, so a
-first smoke test does not require a provider key or mounted VFS workspace. Set
-`FORGE_LLM=openai`, `FORGE_TOOLS=vfs`, and `OPENAI_API_KEY` when you want the
-worker to call OpenAI against mounted VFS files.
+hosted worker registers real provider adapters and session-mounted VFS tools;
+for OpenAI-backed local chat, set `OPENAI_API_KEY`.
 
 Build and test:
 
@@ -106,13 +104,6 @@ Open a first shell:
 ```bash
 source dev/local/env.sh
 
-# Default smoke-test mode. Uses the fake LLM activity implementation.
-export FORGE_LLM=fake
-export FORGE_TOOLS=fake
-
-# For real OpenAI-backed chat instead:
-# export FORGE_LLM=openai
-# export FORGE_TOOLS=vfs
 # export OPENAI_API_KEY=...  # omit this if it is already in .env
 
 cargo run -p worker
@@ -299,8 +290,6 @@ the same variables directly in your shell.
 | `FORGE_CHAT_REASONING_EFFORT` | Default OpenAI Responses reasoning effort |
 | `FORGE_CHAT_MAX_TOKENS` | Default max output token setting for chat runs |
 | `FORGE_API_URL` | CLI JSON-RPC gateway URL |
-| `FORGE_LLM` | Worker LLM mode: `fake` or `openai` |
-| `FORGE_TOOLS` | Worker tool mode: `vfs` or `fake` |
 | `FORGE_POSTGRES_URL` | PostgreSQL session/CAS database URL |
 | `FORGE_PG_UNIVERSE_ID` | Hosted store universe UUID |
 | `FORGE_TASK_QUEUE` | Temporal task queue used by worker and gateway |

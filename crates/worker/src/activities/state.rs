@@ -1,4 +1,4 @@
-use std::{env, sync::Arc};
+use std::sync::Arc;
 
 use engine::{
     CoreAgentLlm, CoreAgentTools, ProviderApiKind,
@@ -8,7 +8,7 @@ use llm_clients::openai::responses as oai;
 use llm_runtime::{LlmAdapterRegistry, LlmRuntime, OpenAiResponsesLlmAdapter};
 use store_pg::PgStore;
 
-use crate::{FakeLlm, FakeTools, SessionMountedVfsTools, pg_store_from_env};
+use crate::{SessionMountedVfsTools, pg_store_from_env};
 
 #[derive(Clone)]
 pub struct StorageActivityDeps {
@@ -68,8 +68,8 @@ impl ActivityState {
     pub async fn from_env() -> anyhow::Result<Self> {
         let store = pg_store_from_env().await?;
         let blobs: Arc<dyn BlobStore> = store.clone();
-        let llm = llm_from_env(blobs.clone())?;
-        let tools = tools_from_env(store.clone(), blobs)?;
+        let llm = openai_responses_llm(blobs)?;
+        let tools = session_mounted_vfs_tools(store.clone());
         Ok(Self::from_pg_store(store, llm, tools))
     }
 
@@ -86,31 +86,16 @@ impl ActivityState {
     }
 }
 
-fn tools_from_env(
-    store: Arc<PgStore>,
-    blobs: Arc<dyn BlobStore>,
-) -> anyhow::Result<Arc<dyn CoreAgentTools>> {
-    let tool_mode = env::var("FORGE_TOOLS").unwrap_or_else(|_| "vfs".to_owned());
-    match tool_mode.as_str() {
-        "vfs" => Ok(Arc::new(SessionMountedVfsTools::from_pg_store(store))),
-        "fake" => Ok(Arc::new(FakeTools::new(blobs))),
-        other => Err(anyhow::anyhow!("unsupported FORGE_TOOLS value: {other}")),
-    }
+fn session_mounted_vfs_tools(store: Arc<PgStore>) -> Arc<dyn CoreAgentTools> {
+    Arc::new(SessionMountedVfsTools::from_pg_store(store))
 }
 
-fn llm_from_env(blobs: Arc<dyn BlobStore>) -> anyhow::Result<Arc<dyn CoreAgentLlm>> {
-    let llm_mode = env::var("FORGE_LLM").unwrap_or_else(|_| "fake".to_owned());
-    match llm_mode.as_str() {
-        "fake" => Ok(Arc::new(FakeLlm::new(blobs))),
-        "openai" => {
-            let openai = oai::Client::new(oai::Config::from_env()?)?;
-            let adapter = Arc::new(OpenAiResponsesLlmAdapter::new(Arc::new(openai), blobs));
-            let runtime = LlmRuntime::new(
-                LlmAdapterRegistry::new()
-                    .with_generation_adapter(ProviderApiKind::OpenAiResponses, adapter),
-            );
-            Ok(Arc::new(runtime))
-        }
-        other => Err(anyhow::anyhow!("unsupported FORGE_LLM value: {other}")),
-    }
+fn openai_responses_llm(blobs: Arc<dyn BlobStore>) -> anyhow::Result<Arc<dyn CoreAgentLlm>> {
+    let openai = oai::Client::new(oai::Config::from_env()?)?;
+    let adapter = Arc::new(OpenAiResponsesLlmAdapter::new(Arc::new(openai), blobs));
+    let runtime = LlmRuntime::new(
+        LlmAdapterRegistry::new()
+            .with_generation_adapter(ProviderApiKind::OpenAiResponses, adapter),
+    );
+    Ok(Arc::new(runtime))
 }
