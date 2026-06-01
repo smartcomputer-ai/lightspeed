@@ -185,6 +185,16 @@ The command walks the directory locally, uploads missing content-addressed blobs
 through the gateway, commits the VFS manifest, and prints the resulting
 `snapshotRef`. Use `--json` for a machine-readable summary.
 
+To materialize a snapshot back to a local directory:
+
+```bash
+cargo run -p cli -- vfs materialize sha256:... ./out
+```
+
+The command downloads only blobs needed for files that do not already match
+locally, writes under the selected destination, and refuses destination
+symlinks that could escape that directory.
+
 ### Stop Or Reset Local Infra
 
 ```bash

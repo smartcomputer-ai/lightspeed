@@ -8,8 +8,8 @@
   G6.
 - Deferred until a concrete product write/sync surface exists: G3 workspace
   quotas and mount policy limits.
-- Next product slice: G7 CLI-local upload/download/sync APIs so the user's
-  computer can snapshot to CAS, materialize from CAS, and sync by digest.
+- Next product slice: G7 higher-level CLI-local sync/workspace/projection hooks
+  on top of the implemented snapshot upload and materialization primitives.
 
 ## Goal
 
@@ -755,11 +755,15 @@ gateway/CAS remains the authority for blobs and manifests.
   The CLI scans a local directory, skips symlinks, computes content digests,
   checks existing CAS refs with `blob/has_many`, uploads missing unique blobs
   with batched `blob/put_many`, and commits a VFS manifest by ref.
+- Done: reusable CLI materialization flow plus
+  `forge vfs materialize <snapshot-ref> <dest>`. The CLI reads the snapshot
+  manifest, downloads blobs through `blob/get`, skips local files whose digest
+  already matches, writes only below the selected destination, refuses
+  destination symlink traversal, and applies executable bits conservatively.
 - Remaining: add internal gateway helpers for workspace creation and workspace
   commit.
-- Add CLI-local download/materialization APIs.
-- Extend CLI-local sync so materialization also compares content digests and
-  transfers only changed blobs where possible.
+- Extend CLI-local sync so snapshot/upload and materialize/download can be
+  composed into higher-level bidirectional flows.
 - Add public API only when a product surface needs direct VFS access.
 - Project VFS-backed context items with useful previews.
 

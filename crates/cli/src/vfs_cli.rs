@@ -7,7 +7,7 @@ use crate::api_client::HttpAgentApi;
 use crate::vfs_transfer::{
     DEFAULT_HAS_MANY_MAX_REFS, DEFAULT_MAX_DEPTH, DEFAULT_MAX_FILES, DEFAULT_MAX_SINGLE_FILE_BYTES,
     DEFAULT_MAX_TOTAL_BYTES, DEFAULT_PUT_MANY_MAX_BATCH_BYTES, DEFAULT_PUT_MANY_MAX_BATCH_FILES,
-    SnapshotUploadOptions, upload_snapshot_directory,
+    SnapshotUploadOptions, materialize_snapshot, upload_snapshot_directory,
 };
 
 #[derive(Args, Debug, Clone)]
@@ -20,6 +20,8 @@ pub(crate) struct VfsArgs {
 enum VfsCommand {
     /// Upload a local directory as a CAS-backed VFS snapshot.
     Snapshot(SnapshotArgs),
+    /// Materialize a CAS-backed VFS snapshot into a local directory.
+    Materialize(MaterializeArgs),
 }
 
 #[derive(Args, Debug, Clone)]
@@ -55,9 +57,24 @@ struct SnapshotArgs {
     directory: PathBuf,
 }
 
+#[derive(Args, Debug, Clone)]
+struct MaterializeArgs {
+    /// JSON-RPC agent API URL.
+    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    api_url: String,
+    /// Emit the materialization summary as JSON.
+    #[arg(long)]
+    json: bool,
+    /// Snapshot ref to materialize.
+    snapshot_ref: String,
+    /// Local destination directory.
+    destination: PathBuf,
+}
+
 pub(crate) async fn handle(args: VfsArgs) -> Result<()> {
     match args.command {
         VfsCommand::Snapshot(args) => snapshot(args).await,
+        VfsCommand::Materialize(args) => materialize(args).await,
     }
 }
 
@@ -83,6 +100,29 @@ async fn snapshot(args: SnapshotArgs) -> Result<()> {
             println!("warning {}: {}", warning.path, warning.message);
         }
     }
+    Ok(())
+}
+
+async fn materialize(args: MaterializeArgs) -> Result<()> {
+    let api = HttpAgentApi::new(args.api_url);
+    let summary = materialize_snapshot(&api, args.snapshot_ref, args.destination).await?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&summary)?);
+        return Ok(());
+    }
+
+    println!("snapshotRef {}", summary.snapshot_ref);
+    println!("destination {}", summary.destination);
+    println!("files {}", summary.files);
+    println!("bytes {}", summary.bytes);
+    println!("directories {}", summary.directories);
+    println!("createdDirectories {}", summary.created_directories);
+    println!("writtenFiles {}", summary.written_files);
+    println!("writtenBytes {}", summary.written_bytes);
+    println!("reusedFiles {}", summary.reused_files);
+    println!("reusedBytes {}", summary.reused_bytes);
+    println!("downloadedBlobs {}", summary.downloaded_blobs);
+    println!("downloadedBytes {}", summary.downloaded_bytes);
     Ok(())
 }
 

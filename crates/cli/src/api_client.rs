@@ -1,12 +1,14 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use api::{
-    AgentApiError, AgentApiErrorKind, AgentApiOutcome, BlobHasManyParams, BlobHasManyResponse,
-    BlobPutManyParams, BlobPutManyResponse, JsonRpcRequest, JsonRpcResponse, METHOD_BLOB_HAS_MANY,
-    METHOD_BLOB_PUT_MANY, METHOD_RUN_START, METHOD_SESSION_EVENTS_READ, METHOD_SESSION_READ,
-    METHOD_SESSION_START, METHOD_VFS_SNAPSHOT_COMMIT, RequestId, RunStartParams, RunStartResponse,
-    SessionEventsReadParams, SessionEventsReadResponse, SessionReadParams, SessionReadResponse,
-    SessionStartParams, SessionStartResponse, VfsSnapshotCommitParams, VfsSnapshotCommitResponse,
+    AgentApiError, AgentApiErrorKind, AgentApiOutcome, BlobGetParams, BlobGetResponse,
+    BlobHasManyParams, BlobHasManyResponse, BlobPutManyParams, BlobPutManyResponse, JsonRpcRequest,
+    JsonRpcResponse, METHOD_BLOB_GET, METHOD_BLOB_HAS_MANY, METHOD_BLOB_PUT_MANY, METHOD_RUN_START,
+    METHOD_SESSION_EVENTS_READ, METHOD_SESSION_READ, METHOD_SESSION_START,
+    METHOD_VFS_SNAPSHOT_COMMIT, METHOD_VFS_SNAPSHOT_READ, RequestId, RunStartParams,
+    RunStartResponse, SessionEventsReadParams, SessionEventsReadResponse, SessionReadParams,
+    SessionReadResponse, SessionStartParams, SessionStartResponse, VfsSnapshotCommitParams,
+    VfsSnapshotCommitResponse, VfsSnapshotReadParams, VfsSnapshotReadResponse,
 };
 use serde::{Serialize, de::DeserializeOwned};
 
@@ -94,11 +96,25 @@ impl HttpAgentApi {
         self.request(METHOD_BLOB_HAS_MANY, params).await
     }
 
+    pub(crate) async fn get_blob(
+        &self,
+        params: BlobGetParams,
+    ) -> Result<AgentApiOutcome<BlobGetResponse>, AgentApiError> {
+        self.request(METHOD_BLOB_GET, params).await
+    }
+
     pub(crate) async fn commit_vfs_snapshot(
         &self,
         params: VfsSnapshotCommitParams,
     ) -> Result<AgentApiOutcome<VfsSnapshotCommitResponse>, AgentApiError> {
         self.request(METHOD_VFS_SNAPSHOT_COMMIT, params).await
+    }
+
+    pub(crate) async fn read_vfs_snapshot(
+        &self,
+        params: VfsSnapshotReadParams,
+    ) -> Result<AgentApiOutcome<VfsSnapshotReadResponse>, AgentApiError> {
+        self.request(METHOD_VFS_SNAPSHOT_READ, params).await
     }
 
     async fn request<P, R>(

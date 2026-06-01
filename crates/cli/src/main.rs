@@ -86,4 +86,19 @@ mod tests {
         .expect("parse vfs snapshot");
         assert!(matches!(cli.command, Command::Vfs(_)));
     }
+
+    #[test]
+    fn vfs_materialize_parse_accepts_snapshot_ref_and_destination() {
+        let cli = Cli::try_parse_from([
+            "forge",
+            "vfs",
+            "materialize",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "./out",
+        ])
+        .expect("parse vfs materialize");
+        assert!(matches!(cli.command, Command::Vfs(_)));
+    }
 }
