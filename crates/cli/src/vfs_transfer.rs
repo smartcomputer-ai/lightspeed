@@ -112,6 +112,7 @@ pub(crate) struct SnapshotUploadEntry {
 #[derive(Clone, Debug)]
 pub(crate) enum SnapshotEntrySource {
     HostPath(PathBuf),
+    #[allow(dead_code)]
     Bytes(Vec<u8>),
 }
 

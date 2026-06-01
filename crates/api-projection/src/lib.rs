@@ -20,8 +20,8 @@ use engine::{
     CoreAgentCodec, CoreAgentEntry, CoreAgentEventKind, CoreAgentJoins, CoreAgentLifecycleEvent,
     CoreAgentState, CoreAgentStatus, CoreApplyEvent, EventSeq, LlmGenerationStatus,
     ModelProviderOptions, ModelSelection, ObservedToolCall, ProviderApiKind,
-    ProviderRequestDefaults, RunEvent, RunId, RunStatus, SessionConfig, SessionId, ToolBatchId,
-    ToolCallStatus, ToolConfigEvent, ToolEvent, TurnEvent, TurnId,
+    ProviderRequestDefaults, RunEvent, RunFailure, RunId, RunStatus, SessionConfig, SessionId,
+    ToolBatchId, ToolCallStatus, ToolConfigEvent, ToolEvent, TurnEvent, TurnId,
     storage::{
         BlobStore, BlobStoreError, DynamicSessionEntry, ReadSessionEvents, SessionRecord,
         SessionStore, SessionStoreError,
@@ -260,7 +260,7 @@ impl<'a> CoreAgentProjector<'a> {
                 }
                 RunEvent::Failed { run_id, failure } => Ok(SessionEventKindView::RunFailed {
                     run_id: api_run_id(*run_id),
-                    message: format!("{:?}", failure.kind),
+                    message: self.run_failure_message(failure).await,
                 }),
                 RunEvent::Cancelled { run_id } => Ok(SessionEventKindView::RunCancelled {
                     run_id: api_run_id(*run_id),
@@ -522,6 +522,15 @@ impl<'a> CoreAgentProjector<'a> {
             .read_text(blob_ref)
             .await
             .map_err(map_blob_store_error)
+    }
+
+    async fn run_failure_message(&self, failure: &RunFailure) -> String {
+        if let Some(message_ref) = &failure.message_ref
+            && let Ok(message) = self.read_blob_text(message_ref).await
+        {
+            return message;
+        }
+        format!("{:?}", failure.kind)
     }
 }
 

@@ -5,10 +5,7 @@ use engine::{
     CoreAgentIoError, CoreAgentLlm, LlmGenerationRequest, LlmGenerationResult, ProviderApiKind,
 };
 
-use crate::{
-    error::LlmAdapterResult,
-    result::{LlmGenerationExecution, failed_generation_result},
-};
+use crate::{error::LlmAdapterResult, result::LlmGenerationExecution};
 
 #[async_trait]
 pub trait LlmGenerationAdapter: Send + Sync {
@@ -63,20 +60,29 @@ impl LlmRuntime {
         Self { registry }
     }
 
-    async fn generate_request(&self, request: LlmGenerationRequest) -> LlmGenerationResult {
+    async fn generate_request(
+        &self,
+        request: LlmGenerationRequest,
+    ) -> Result<LlmGenerationResult, CoreAgentIoError> {
         let Some(adapter) = self
             .registry
             .generation_adapter(&request.request.model.api_kind)
         else {
-            return failed_generation_result(request.run_id, request.turn_id);
+            return Err(CoreAgentIoError::Failed {
+                message: format!(
+                    "no LLM generation adapter registered for {:?}",
+                    request.request.model.api_kind
+                ),
+            });
         };
 
-        let run_id = request.run_id;
-        let turn_id = request.turn_id;
-        match adapter.generate(request).await {
-            Ok(execution) => execution.result,
-            Err(_error) => failed_generation_result(run_id, turn_id),
-        }
+        adapter
+            .generate(request)
+            .await
+            .map(|execution| execution.result)
+            .map_err(|error| CoreAgentIoError::Failed {
+                message: error.to_string(),
+            })
     }
 }
 
@@ -86,6 +92,85 @@ impl CoreAgentLlm for LlmRuntime {
         &self,
         request: LlmGenerationRequest,
     ) -> Result<LlmGenerationResult, CoreAgentIoError> {
-        Ok(self.generate_request(request).await)
+        self.generate_request(request).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::LlmAdapterError;
+    use engine::{
+        LlmRequest, LlmRequestKind, ModelProviderOptions, ModelSelection, OpenAiResponsesRequest,
+        ResolvedContextWindow, RunId, SessionId, TurnId,
+    };
+
+    struct FailingAdapter;
+
+    #[async_trait]
+    impl LlmGenerationAdapter for FailingAdapter {
+        async fn generate(
+            &self,
+            _request: LlmGenerationRequest,
+        ) -> LlmAdapterResult<LlmGenerationExecution> {
+            Err(LlmAdapterError::Provider {
+                message: "boom".to_owned(),
+            })
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn adapter_errors_are_returned_to_the_worker() {
+        let registry = LlmAdapterRegistry::new()
+            .with_generation_adapter(ProviderApiKind::OpenAiResponses, Arc::new(FailingAdapter));
+        let runtime = LlmRuntime::new(registry);
+
+        let error = CoreAgentLlm::generate(&runtime, request())
+            .await
+            .expect_err("adapter errors must not become anonymous failed generations");
+
+        assert!(error.to_string().contains("provider call failed: boom"));
+    }
+
+    fn request() -> LlmGenerationRequest {
+        LlmGenerationRequest {
+            session_id: SessionId::new("session-a"),
+            run_id: RunId::new(1),
+            turn_id: TurnId::new(1),
+            request: LlmRequest {
+                model: ModelSelection {
+                    api_kind: ProviderApiKind::OpenAiResponses,
+                    provider_id: "openai".to_owned(),
+                    model: "gpt-test".to_owned(),
+                    options: ModelProviderOptions::None,
+                },
+                request_fingerprint: "sha256:test".to_owned(),
+                kind: LlmRequestKind::OpenAiResponses(OpenAiResponsesRequest {
+                    instructions_ref: None,
+                    input_window: ResolvedContextWindow {
+                        api_kind: ProviderApiKind::OpenAiResponses,
+                        items: Vec::new(),
+                        token_estimate: None,
+                    },
+                    previous_response_id: None,
+                    tools: Vec::new(),
+                    tool_choice: None,
+                    reasoning: None,
+                    text: None,
+                    include: Vec::new(),
+                    max_output_tokens: None,
+                    max_tool_calls: None,
+                    temperature: None,
+                    top_p: None,
+                    metadata: BTreeMap::new(),
+                    parallel_tool_calls: None,
+                    store: None,
+                    stream: None,
+                    truncation: None,
+                    context_management: None,
+                    extra: BTreeMap::new(),
+                }),
+            },
+        }
     }
 }

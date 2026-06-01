@@ -341,12 +341,18 @@ pub async fn result_from_response(
         }
     }
 
+    let status = generation_status(response.parsed.status);
+    let failure_ref = if status == LlmGenerationStatus::Failed {
+        Some(provider_failure_ref(blobs, &response.parsed).await?)
+    } else {
+        None
+    };
     let usage = response.parsed.usage.as_ref().map(llm_usage);
     Ok(LlmGenerationResult {
         run_id: request.run_id,
         turn_id: request.turn_id,
-        status: generation_status(response.parsed.status),
-        failure_ref: None,
+        status,
+        failure_ref,
         context_items,
         facts: LlmGenerationFacts {
             provider_response_id: Some(response.parsed.id.clone()),
@@ -365,6 +371,31 @@ pub async fn result_from_response(
             compaction: None,
         },
     })
+}
+
+async fn provider_failure_ref(
+    blobs: &dyn BlobStore,
+    response: &oai::Response,
+) -> LlmAdapterResult<BlobRef> {
+    let message = match &response.error {
+        Some(error) => {
+            let detail = error
+                .message
+                .as_deref()
+                .unwrap_or("OpenAI response failed without an error message");
+            let code = error.code.as_deref().unwrap_or("unknown_code");
+            let kind = error.r#type.as_deref().unwrap_or("unknown_type");
+            format!(
+                "OpenAI Responses generation failed\nresponse_id={}\nerror_type={kind}\nerror_code={code}\nmessage={detail}\n",
+                response.id
+            )
+        }
+        None => format!(
+            "OpenAI Responses generation failed\nresponse_id={}\nmessage=response status was failed\n",
+            response.id
+        ),
+    };
+    put_text(blobs, &message).await
 }
 
 fn raw_output_item(
@@ -1041,5 +1072,73 @@ mod tests {
         assert_eq!(followup_json["input"][0]["type"], "reasoning");
         assert_eq!(followup_json["input"][0]["id"], "rs_1");
         assert_eq!(followup_json["input"][1]["type"], "function_call");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn failed_provider_response_records_failure_message() {
+        let blobs = InMemoryBlobStore::new();
+        let raw_json = json!({
+            "id": "resp_failed",
+            "status": "failed",
+            "error": {
+                "code": "invalid_model",
+                "message": "The requested model is unavailable.",
+                "type": "invalid_request_error"
+            },
+            "output": []
+        });
+        let response = ApiResponse {
+            parsed: serde_json::from_value(raw_json.clone()).expect("response"),
+            raw_json,
+            status: 200,
+            headers: HeaderSnapshot::default(),
+        };
+        let request = LlmGenerationRequest {
+            session_id: SessionId::new("session-a"),
+            run_id: RunId::new(1),
+            turn_id: TurnId::new(1),
+            request: LlmRequest {
+                model: model(),
+                request_fingerprint: "sha256:test".to_string(),
+                kind: LlmRequestKind::OpenAiResponses(OpenAiResponsesRequest {
+                    instructions_ref: None,
+                    input_window: ResolvedContextWindow {
+                        api_kind: ProviderApiKind::OpenAiResponses,
+                        items: Vec::new(),
+                        token_estimate: None,
+                    },
+                    previous_response_id: None,
+                    tools: Vec::new(),
+                    tool_choice: None,
+                    reasoning: None,
+                    text: None,
+                    include: Vec::new(),
+                    max_output_tokens: None,
+                    max_tool_calls: None,
+                    temperature: None,
+                    top_p: None,
+                    metadata: BTreeMap::new(),
+                    parallel_tool_calls: None,
+                    store: None,
+                    stream: None,
+                    truncation: None,
+                    context_management: None,
+                    extra: BTreeMap::new(),
+                }),
+            },
+        };
+
+        let result = result_from_response(&blobs, &request, &response)
+            .await
+            .expect("result");
+
+        assert_eq!(result.status, LlmGenerationStatus::Failed);
+        assert_eq!(result.facts.finish, LlmFinish::Failed);
+        let failure = blobs
+            .read_text(&result.failure_ref.expect("failure ref"))
+            .await
+            .expect("failure text");
+        assert!(failure.contains("invalid_request_error"));
+        assert!(failure.contains("The requested model is unavailable."));
     }
 }

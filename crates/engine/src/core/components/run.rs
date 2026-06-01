@@ -186,7 +186,15 @@ fn terminal_run_proposal(
                 output_ref: output_ref.clone(),
             }))
         }
-        (TurnStatus::Failed, Some(TurnOutcome::Failed { .. })) => None,
+        (TurnStatus::Failed, Some(TurnOutcome::Failed { failure_ref })) => {
+            Some(CoreAgentEventKind::Run(Event::Failed {
+                run_id: active_run.run_id,
+                failure: RunFailure {
+                    kind: RunFailureKind::ModelFailure,
+                    message_ref: failure_ref.clone(),
+                },
+            }))
+        }
         (TurnStatus::Cancelled, Some(TurnOutcome::Cancelled)) => {
             Some(CoreAgentEventKind::Run(Event::Failed {
                 run_id: active_run.run_id,

@@ -3,8 +3,8 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Widget, Wrap};
 
-use crate::chat::protocol::ChatToolChainView;
 use crate::chat::protocol::{ChatDelta, ChatEvent, ChatProgressStatus};
+use crate::chat::protocol::{ChatToolChainView, ChatTurn};
 use crate::chat::tui::cell::{
     CellRenderState, ChatCell, ChatCellKind, ErrorCell, MessageCell, NoticeCell, ReasoningCell,
     RunCell, ToolChainCell,
@@ -226,38 +226,43 @@ impl TranscriptState {
     fn apply_delta(&mut self, delta: ChatDelta) {
         match delta {
             ChatDelta::ReplaceTurns { turns, .. } => {
+                let reconstructed = reconstructed_items(turns);
                 self.cells.clear();
                 self.pending_history_cell_indices.clear();
                 self.pending_user_messages.clear();
-                for turn in turns {
-                    let turn_id = turn.turn_id.clone();
-                    if let Some(user) = turn.user {
-                        self.push_committed_cell_if_changed(Box::new(MessageCell::new(
-                            format!("{turn_id}:user:{}", user.id),
-                            user.role,
-                            user.content,
-                        )));
+
+                for (index, item) in reconstructed.iter().enumerate() {
+                    match item {
+                        ReconstructedItem::Message { id, role, content } => {
+                            self.push_committed_cell_if_changed(Box::new(MessageCell::new(
+                                id.clone(),
+                                role.clone(),
+                                content.clone(),
+                            )));
+                        }
+                        ReconstructedItem::Reasoning { id, content } => {
+                            self.push_committed_cell_if_changed(Box::new(ReasoningCell::new(
+                                id.clone(),
+                                content.clone(),
+                            )));
+                        }
+                        ReconstructedItem::ToolChain { chain } => {
+                            if self.reconcile_active_tool_chain(chain) {
+                                if index + 1 < reconstructed.len()
+                                    && self.flush_terminal_active_tool_chains()
+                                {
+                                    self.clear_tool_active_cell();
+                                }
+                            } else {
+                                self.push_committed_cell_if_changed(Box::new(
+                                    self.completed_tool_cell(
+                                        tool_history_cell_id(chain),
+                                        vec![chain.clone()],
+                                    ),
+                                ));
+                            }
+                        }
                     }
-                    for chain in turn.tool_chains {
-                        self.push_committed_cell_if_changed(Box::new(self.completed_tool_cell(
-                            format!("{turn_id}:tools:{}", chain.id),
-                            vec![chain],
-                        )));
-                    }
-                    if let Some(reasoning) = turn.assistant_reasoning {
-                        self.push_committed_cell_if_changed(Box::new(ReasoningCell::new(
-                            format!("{turn_id}:reasoning:{}", reasoning.id),
-                            reasoning.content,
-                        )));
-                    }
-                    if let Some(assistant) = turn.assistant {
-                        self.push_committed_cell_if_changed(Box::new(MessageCell::new(
-                            format!("{turn_id}:assistant:{}", assistant.id),
-                            assistant.role,
-                            assistant.content,
-                        )));
-                    }
-                    let _ = turn.run;
                 }
             }
             ChatDelta::AppendMessage { message, .. } => {
@@ -345,18 +350,49 @@ impl TranscriptState {
             .any(|emitted| emitted == fingerprint)
     }
 
-    fn flush_terminal_active_tool_chains(&mut self) {
+    fn flush_terminal_active_tool_chains(&mut self) -> bool {
         let Some(chains) = self.active_tool_chains.take() else {
-            return;
+            return false;
         };
         if !tool_chains_terminal(&chains) {
-            return;
+            self.active_tool_chains = Some(chains);
+            return false;
         }
         let id = chains
             .first()
-            .map(|chain| format!("tools:{}", chain.id))
+            .map(tool_history_cell_id)
             .unwrap_or_else(|| "tools".to_string());
         self.push_committed_cell_if_changed(Box::new(self.completed_tool_cell(id, chains)));
+        true
+    }
+
+    fn reconcile_active_tool_chain(&mut self, chain: &ChatToolChainView) -> bool {
+        let Some(active) = self.active_tool_chains.as_mut() else {
+            return false;
+        };
+        let Some(slot) = active.iter_mut().find(|active| active.id == chain.id) else {
+            return false;
+        };
+        *slot = chain.clone();
+        let chains = active.clone();
+        let id = chains
+            .first()
+            .map(|chain| format!("active-tools:{}", chain.id))
+            .unwrap_or_else(|| "active-tools".to_string());
+        self.active_cell = Some(Box::new(ToolChainCell::new(id, chains)));
+        self.active_cell_revision = self.active_cell_revision.wrapping_add(1);
+        true
+    }
+
+    fn clear_tool_active_cell(&mut self) {
+        if self
+            .active_cell
+            .as_ref()
+            .is_some_and(|cell| cell.kind() == ChatCellKind::ToolChain)
+        {
+            self.active_cell = None;
+            self.active_cell_revision = self.active_cell_revision.wrapping_add(1);
+        }
     }
 
     fn completed_tool_cell(
@@ -378,8 +414,62 @@ impl Default for TranscriptState {
     }
 }
 
+#[derive(Debug, Clone)]
+enum ReconstructedItem {
+    Message {
+        id: String,
+        role: String,
+        content: String,
+    },
+    ToolChain {
+        chain: ChatToolChainView,
+    },
+    Reasoning {
+        id: String,
+        content: String,
+    },
+}
+
+fn reconstructed_items(turns: Vec<ChatTurn>) -> Vec<ReconstructedItem> {
+    let mut items = Vec::new();
+    for turn in turns {
+        let turn_id = turn.turn_id.clone();
+        if let Some(user) = turn.user {
+            items.push(ReconstructedItem::Message {
+                id: format!("{turn_id}:user:{}", user.id),
+                role: user.role,
+                content: user.content,
+            });
+        }
+        items.extend(
+            turn.tool_chains
+                .into_iter()
+                .map(|chain| ReconstructedItem::ToolChain { chain }),
+        );
+        if let Some(reasoning) = turn.assistant_reasoning {
+            items.push(ReconstructedItem::Reasoning {
+                id: format!("{turn_id}:reasoning:{}", reasoning.id),
+                content: reasoning.content,
+            });
+        }
+        if let Some(assistant) = turn.assistant {
+            items.push(ReconstructedItem::Message {
+                id: format!("{turn_id}:assistant:{}", assistant.id),
+                role: assistant.role,
+                content: assistant.content,
+            });
+        }
+        let _ = turn.run;
+    }
+    items
+}
+
 fn tool_chain_identity(chains: &[ChatToolChainView]) -> Option<&str> {
     chains.first().map(|chain| chain.id.as_str())
+}
+
+fn tool_history_cell_id(chain: &ChatToolChainView) -> String {
+    format!("tools:{}", chain.id)
 }
 
 fn tool_chains_terminal(chains: &[ChatToolChainView]) -> bool {
@@ -422,6 +512,30 @@ mod tests {
         ChatMessageView, ChatReasoningView, ChatSessionSummary, ChatToolCallView,
         ChatToolChainView, ChatTurn,
     };
+
+    fn test_tool_chain(id: &str, status: ChatProgressStatus) -> ChatToolChainView {
+        ChatToolChainView {
+            id: id.into(),
+            title: "tools 1 calls".into(),
+            status,
+            reasoning: None,
+            calls: vec![ChatToolCallView {
+                id: format!("{id}:call"),
+                tool_id: None,
+                tool_name: "list_dir".into(),
+                status,
+                group_index: Some(1),
+                parallel_safe: Some(true),
+                resource_key: None,
+                arguments_preview: Some(r#"{"path":"spec"}"#.into()),
+                result_preview: (status == ChatProgressStatus::Succeeded)
+                    .then(|| r#"{"ok":true}"#.into()),
+                error: (status == ChatProgressStatus::Failed).then(|| "failed".into()),
+                display: None,
+            }],
+            summary: Some("1 execution groups".into()),
+        }
+    }
 
     #[test]
     fn confirmed_user_message_replaces_matching_pending_echo() {
@@ -605,6 +719,97 @@ mod tests {
         assert!(!history.contains("result"));
         assert!(!history.contains("args"));
         assert!(!history.contains("running"));
+    }
+
+    #[test]
+    fn replace_turns_updates_matching_active_tool_chain_in_place() {
+        let mut state = TranscriptState::default();
+        state.apply_chat_event(ChatEvent::ToolChainsChanged {
+            session_id: "s-1".into(),
+            chains: vec![test_tool_chain("run-1:1", ChatProgressStatus::Running)],
+        });
+        assert!(state.drain_pending_history_lines(80).is_empty());
+
+        state.apply_chat_event(ChatEvent::TranscriptDelta(ChatDelta::ReplaceTurns {
+            session_id: "s-1".into(),
+            turns: vec![ChatTurn {
+                turn_id: "turn-1".into(),
+                user: None,
+                assistant_reasoning: None,
+                assistant: None,
+                run: None,
+                tool_chains: vec![test_tool_chain("run-1:1", ChatProgressStatus::Succeeded)],
+            }],
+        }));
+
+        assert!(state.drain_pending_history_lines(80).is_empty());
+        let active = state
+            .active_cell
+            .as_ref()
+            .expect("active tool cell after snapshot");
+        let active_text = active
+            .display_lines(80, &CellRenderState)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(active_text.contains("tools 1 calls  ok"));
+        assert!(!active_text.contains("running"));
+
+        state.apply_chat_event(ChatEvent::ToolChainsChanged {
+            session_id: "s-1".into(),
+            chains: Vec::new(),
+        });
+        let history = state
+            .drain_pending_history_lines(80)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(history.contains("tools 1 calls  ok"));
+        assert!(!history.contains("running"));
+    }
+
+    #[test]
+    fn replace_turns_flushes_active_tool_chain_before_later_snapshot_content() {
+        let mut state = TranscriptState::default();
+        state.apply_chat_event(ChatEvent::ToolChainsChanged {
+            session_id: "s-1".into(),
+            chains: vec![test_tool_chain("run-1:1", ChatProgressStatus::Running)],
+        });
+
+        state.apply_chat_event(ChatEvent::TranscriptDelta(ChatDelta::ReplaceTurns {
+            session_id: "s-1".into(),
+            turns: vec![ChatTurn {
+                turn_id: "turn-1".into(),
+                user: None,
+                assistant_reasoning: None,
+                assistant: Some(ChatMessageView {
+                    id: "assistant-1".into(),
+                    role: "assistant".into(),
+                    content: "done".into(),
+                    ref_: None,
+                }),
+                run: None,
+                tool_chains: vec![test_tool_chain("run-1:1", ChatProgressStatus::Succeeded)],
+            }],
+        }));
+
+        let history = state
+            .drain_pending_history_lines(80)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>();
+        let tool = history
+            .iter()
+            .position(|line| line.contains("tools 1 calls  ok"))
+            .expect("tool history");
+        let assistant = history
+            .iter()
+            .position(|line| line.contains("done"))
+            .expect("assistant history");
+        assert!(tool < assistant);
+        assert!(state.active_cell.is_none());
     }
 
     #[test]

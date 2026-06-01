@@ -451,8 +451,8 @@ mod tests {
     use crate::{
         BlobRef, CommandRejectionKind, ContextConfig, ContextConfigPatch, ContextItemSource,
         CoreAgentCommand, LlmGenerationFacts, ModelProviderOptions, ModelSelection,
-        OptionalConfigPatch, ProviderApiKind, ProviderRequestDefaults, RunConfig, SessionConfig,
-        SessionConfigPatch, TurnConfig, TurnConfigPatch,
+        OptionalConfigPatch, ProviderApiKind, ProviderRequestDefaults, RunConfig, RunFailureKind,
+        RunStatus, SessionConfig, SessionConfigPatch, TurnConfig, TurnConfigPatch,
     };
 
     fn config() -> SessionConfig {
@@ -725,5 +725,74 @@ mod tests {
             }
             commit_action(&mut drive, action);
         }
+    }
+
+    #[test]
+    fn failed_generation_fails_run_without_starting_another_turn() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let open = drive
+            .admit_command(CoreAgentCommand::OpenSession { config: config() }, 10)
+            .expect("open");
+        commit_action(&mut drive, open);
+        let request = drive
+            .admit_command(
+                CoreAgentCommand::RequestRun {
+                    submission_id: None,
+                    input_ref: BlobRef::from_bytes(b"input"),
+                    run_config: run_config(),
+                },
+                20,
+            )
+            .expect("request run");
+        commit_action(&mut drive, request);
+
+        let llm_request = loop {
+            let action = drive.next_action(21, 8).expect("next");
+            if let CoreAgentAction::GenerateLlm { request } = action {
+                break request;
+            }
+            commit_action(&mut drive, action);
+        };
+        let failure_ref = BlobRef::from_bytes(b"model failed");
+        let resumed = drive
+            .resume_generation(
+                LlmGenerationResult {
+                    run_id: llm_request.run_id,
+                    turn_id: llm_request.turn_id,
+                    status: LlmGenerationStatus::Failed,
+                    failure_ref: Some(failure_ref.clone()),
+                    context_items: Vec::new(),
+                    facts: LlmGenerationFacts {
+                        provider_response_id: None,
+                        finish: LlmFinish::Failed,
+                        usage: None,
+                        tool_calls: Vec::new(),
+                        context_token_estimate: None,
+                        compaction: None,
+                    },
+                },
+                30,
+            )
+            .expect("resume failed generation");
+        commit_action(&mut drive, resumed);
+
+        let fail_run = drive.next_action(31, 8).expect("fail run");
+        let entries = commit_action(&mut drive, fail_run);
+        assert!(matches!(
+            entries[0].event.kind,
+            CoreAgentEventKind::Run(crate::RunEvent::Failed { .. })
+        ));
+        assert!(drive.state().runs.active.is_none());
+        let completed = drive.state().runs.completed.last().expect("completed run");
+        assert_eq!(completed.status, RunStatus::Failed);
+        let failure = completed.failure.as_ref().expect("run failure");
+        assert_eq!(failure.kind, RunFailureKind::ModelFailure);
+        assert_eq!(failure.message_ref.as_ref(), Some(&failure_ref));
+
+        assert!(matches!(
+            drive.next_action(32, 8).expect("next"),
+            CoreAgentAction::Idle
+        ));
     }
 }
