@@ -1,16 +1,20 @@
 # P62: CAS-Backed Virtual Filesystem
 
 **Status**
-- Accepted direction
-- Partially implemented: G1-G2.5, first-cut G3, and first-cut G4 in
-  `crates/vfs`, `crates/tools`, `crates/store-fs`, and `crates/store-pg`
-- Deferred until real VM host targets exist: G5 and the host-target portion of
-  G6.
-- Deferred until a concrete product write/sync surface exists: G3 workspace
-  quotas and mount policy limits.
-- G7 now has first-cut CLI-local snapshot/materialize plus session VFS
-  workspace/mount APIs and hosted worker VFS tool execution. Higher-level
-  bidirectional sync remains future work.
+- Complete for the accepted P62 scope.
+- Implemented: G1-G2.5, first-cut G3, first-cut G4, and G7 across
+  `crates/vfs`, `crates/tools`, `crates/store-fs`, `crates/store-pg`,
+  `crates/api`, `crates/gateway`, `crates/worker`, and `crates/cli`.
+- Out of scope for P62 completion: G5 and the host-target portion of G6,
+  deferred until real VM host targets exist.
+- Out of scope for P62 completion: G3 workspace quotas and mount policy limits,
+  deferred until a concrete product write/sync surface exists.
+- Out of scope for P62 completion: higher-level bidirectional CLI-local sync,
+  deferred until a concrete product reconciliation workflow exists.
+- Out of scope for P62 completion: VFS-backed context previews.
+  Tool calls and commit effects already surface file-like paths/details,
+  workspace head refs, and revisions. Revisit only if a future non-tool product
+  context surface displays opaque VFS refs directly.
 
 ## Goal
 
@@ -712,8 +716,8 @@ later.
 - Done: first version exposes new snapshot refs and workspace revisions as
   structured, non-model-visible tool effects on mutating VFS workspace tool
   results.
-- Remaining: replace full-tree rewrite with a real overlay only if benchmarks
-  or product workflows need it.
+- Out of scope for P62 completion: replace full-tree rewrite with a real
+  overlay only if benchmarks or product workflows need it.
 
 Implementation note: expose commit refs as structured, non-model-visible tool
 result metadata. Prefer a generic tool-effect contract over embedding VFS
@@ -777,10 +781,16 @@ gateway/CAS remains the authority for blobs and manifests.
 - Done: hosted worker tool execution can load session VFS mounts and run the
   existing DirectFs host tools over `MountedVfsFileSystem`; `FORGE_TOOLS=fake`
   remains available for dev/test fallback.
-- Extend CLI-local sync so snapshot/upload and materialize/download can be
-  composed into higher-level bidirectional flows.
-- Add public API only when a product surface needs direct VFS access.
-- Project VFS-backed context items with useful previews.
+- Deferred until a concrete product reconciliation workflow exists: higher-level
+  CLI-local sync that composes snapshot/upload and materialize/download into
+  bidirectional flows with local state, conflict detection, deletion policy,
+  and explicit overwrite controls.
+- Out of scope for P62 completion: add public API only when a product surface
+  needs direct VFS access.
+- Not needed for the current tool-driven flow: VFS-backed context previews,
+  because tool calls and commit effects carry the file-like details users need.
+  Revisit only if a future non-tool product context surface displays opaque VFS
+  refs directly.
 
 ## Verification
 
@@ -798,7 +808,6 @@ Required tests:
 - size/depth/file-count limits fail clearly,
 - CLI-local snapshotting uploads blobs and commits a validated manifest,
 - CLI-local materialization writes only under the selected destination,
-- CLI-local sync preserves unchanged files by digest where practical,
 - CLI-local materialization does not write outside its destination,
 - CLI-local materialization handles executable bits conservatively.
 
@@ -814,7 +823,16 @@ Deferred quota/policy tests:
 - writable workspace quotas fail clearly once a product write/sync surface
   defines the relevant limits.
 
-## Open Questions
+Deferred sync tests:
+
+- CLI-local sync tracks local binding state separately from immutable snapshots,
+- CLI-local sync preserves unchanged files by digest where practical,
+- sync push rejects local/remote divergence unless explicitly overwritten,
+- sync pull rejects unsafe local overwrites/deletes unless explicitly
+  overwritten,
+- repeated unchanged sync is a no-op apart from local scanning/status.
+
+## Resolved Positions
 
 - Should the first manifest be a single recursive JSON document or a directory
   object DAG? Recommendation: single recursive document for P62 v1.
