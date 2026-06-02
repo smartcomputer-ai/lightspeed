@@ -36,16 +36,24 @@ pub struct SkillCatalogContext {
 pub struct SkillActivation {
     pub skill_id: SkillId,
     pub catalog_ref: BlobRef,
-    pub context_ref: BlobRef,
     pub source: SkillActivationSource,
     pub scope: SkillActivationScope,
+}
+
+impl SkillActivation {
+    pub fn direct_context_ref(&self) -> Option<&BlobRef> {
+        match &self.source {
+            SkillActivationSource::DirectContext { context_ref } => Some(context_ref),
+            SkillActivationSource::ToolResult { .. } => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SkillActivationSource {
-    ToolCall { call_id: ToolCallId },
-    Direct,
+    ToolResult { call_id: ToolCallId },
+    DirectContext { context_ref: BlobRef },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

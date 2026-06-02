@@ -661,8 +661,9 @@ mod tests {
         let activation = SkillActivation {
             skill_id: SkillId::new("skill-1"),
             catalog_ref: BlobRef::from_bytes(b"catalog"),
-            context_ref: BlobRef::from_bytes(b"skill body"),
-            source: SkillActivationSource::Direct,
+            source: SkillActivationSource::DirectContext {
+                context_ref: BlobRef::from_bytes(b"skill body"),
+            },
             scope: SkillActivationScope::Run,
         };
         let action = drive
@@ -744,8 +745,9 @@ mod tests {
         let activation = SkillActivation {
             skill_id: skill_id.clone(),
             catalog_ref: catalog_ref.clone(),
-            context_ref: activation_ref.clone(),
-            source: SkillActivationSource::Direct,
+            source: SkillActivationSource::DirectContext {
+                context_ref: activation_ref.clone(),
+            },
             scope: SkillActivationScope::Run,
         };
         let set_activations = drive
@@ -790,8 +792,7 @@ mod tests {
         let activation = SkillActivation {
             skill_id: SkillId::new("skill-1"),
             catalog_ref: BlobRef::from_bytes(b"catalog"),
-            context_ref: BlobRef::from_bytes(b"skill body"),
-            source: SkillActivationSource::ToolCall {
+            source: SkillActivationSource::ToolResult {
                 call_id: ToolCallId::new("call-1"),
             },
             scope: SkillActivationScope::Run,
@@ -830,8 +831,9 @@ mod tests {
         let activation = SkillActivation {
             skill_id: SkillId::new("skill-1"),
             catalog_ref: BlobRef::from_bytes(b"catalog"),
-            context_ref: BlobRef::from_bytes(b"skill body"),
-            source: SkillActivationSource::Direct,
+            source: SkillActivationSource::DirectContext {
+                context_ref: BlobRef::from_bytes(b"skill body"),
+            },
             scope: SkillActivationScope::Run,
         };
         let set_activations = drive

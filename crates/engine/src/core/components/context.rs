@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     BlobRef, ContextItemId, CoreAgentEventKind, CoreAgentEventProposal, CoreAgentJoins,
     CoreAgentState, CoreAgentStatus, DomainError, PlanNext, PlanningError, ProviderApiKind, RunId,
-    RunStatus, SkillActivation, SkillActivationSource, SkillId, ToolCallId, ToolName, TurnId,
+    RunStatus, SkillActivation, SkillId, ToolCallId, ToolName, TurnId,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -363,9 +363,9 @@ fn missing_direct_activation_items(
 ) -> Result<Vec<ContextItem>, DomainError> {
     let mut items = Vec::new();
     for activation in &state.skills.activations {
-        if !matches!(activation.source, SkillActivationSource::Direct) {
+        let Some(context_ref) = activation.direct_context_ref() else {
             continue;
-        }
+        };
         if activation_context_is_retained(state, activation) {
             continue;
         }
@@ -378,7 +378,7 @@ fn missing_direct_activation_items(
             source: ContextItemSource::Runtime {
                 label: "skills.activation".to_owned(),
             },
-            native_item_ref: activation.context_ref.clone(),
+            native_item_ref: context_ref.clone(),
             media_type: None,
             preview: None,
             provider_kind: None,
@@ -432,8 +432,11 @@ fn current_catalog_item(state: &CoreAgentState) -> Option<&ContextItem> {
 }
 
 fn activation_context_is_retained(state: &CoreAgentState, activation: &SkillActivation) -> bool {
+    let Some(context_ref) = activation.direct_context_ref() else {
+        return true;
+    };
     state.context.retained_items.iter().any(|item| {
-        &item.native_item_ref == &activation.context_ref
+        &item.native_item_ref == context_ref
             && match &item.kind {
                 ContextItemKind::SkillActivation { skill_id } => skill_id == &activation.skill_id,
                 ContextItemKind::ToolResult { .. } => true,
@@ -448,7 +451,7 @@ fn active_activation_for_item<'a>(
     context_ref: &BlobRef,
 ) -> Option<&'a SkillActivation> {
     state.skills.activations.iter().find(|activation| {
-        &activation.skill_id == skill_id && &activation.context_ref == context_ref
+        &activation.skill_id == skill_id && activation.direct_context_ref() == Some(context_ref)
     })
 }
 

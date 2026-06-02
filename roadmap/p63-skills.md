@@ -15,7 +15,14 @@
 - OpenAI Responses lowers already-recorded skill context items as explicit
   developer messages, with runtime tests covering catalog and activation
   materialization; API projection exposes minimal skill state events.
-- Discovery, catalog rendering, model-selected activation from VFS reads, and
+- Active `SkillActivation` records now anchor either to an existing tool result
+  or to a direct context blob, rather than requiring every activation to carry
+  a separate `context_ref`.
+- The finalized Forge approach is documented: generic file-surface discovery,
+  semantic catalog snapshots, tool-result/direct activation anchors, explicit
+  catalog refresh boundaries, and provider-specific OpenAI/Anthropic context
+  lowering.
+- Discovery, catalog rendering, model-selected activation from file reads, and
   public API methods are not implemented.
 - The first implementation is skill-specific. Do not introduce a generic
   `RuntimeContext` abstraction until there is a second concrete use case.
@@ -32,8 +39,8 @@ Forge, skills should be:
 - available from immutable CAS/VFS snapshots or editable VFS workspaces,
 - visible through compact skill catalog context items, separate from base
   instructions,
-- mounted so referenced docs/scripts/assets are available through ordinary file
-  tools, with published skills read-only and authoring roots writable by
+- exposed through ordinary file tools so referenced docs/scripts/assets are
+  readable, with published skills read-only and authoring roots writable by
   policy,
 - activated by loading the relevant `SKILL.md` into context,
 - target-aware when installed inside a VM/sandbox,
@@ -135,6 +142,22 @@ normal filesystem/process tools. A model reading `SKILL.md` through a normal
 tool is treated as implicit skill use; the file contents remain the ordinary
 tool output in conversation history.
 
+Codex activation paths:
+
+- Catalog/listing: compact available-skill metadata is rendered as developer
+  context by `core/src/context/available_skills_instructions.rs`.
+- User-forced activation: explicit skill mentions are collected during turn
+  setup, `core-skills/src/injection.rs` reads the selected `SKILL.md` bytes
+  directly through the skill's filesystem, and
+  `core/src/context/skill_instructions.rs` lowers the body as a contextual
+  user fragment wrapped in `<skill>`. This is not represented as a synthetic
+  tool call.
+- Model activation: Codex does not expose a dedicated model `SkillTool`.
+  Instead, the model reads `SKILL.md` or runs skill scripts through ordinary
+  filesystem/process tools. `core-skills/src/invocation_utils.rs` detects
+  those implicit uses for tracking, but the loaded bytes remain the ordinary
+  tool output already present in the transcript.
+
 ### Claude Code
 
 Public docs:
@@ -212,6 +235,24 @@ cache-creation churn.
 Claude also supports conditional `paths` skills that are held back until a
 matching file is touched.
 
+Claude Code activation paths:
+
+- Catalog/listing: available skills are surfaced through system-reminder style
+  attachments and the `SkillTool` prompt, with the listing bounded by a
+  context budget.
+- User-forced activation: slash/direct prompt-command invocation calls the
+  skill command's `getPromptForCommand`, checks `user-invocable`, and inserts
+  command metadata plus hidden model-visible skill content before the next
+  model query. This path does not go through the model's `SkillTool`.
+- Model activation: the model calls `SkillTool`. The tool validates model
+  invocation policy, invokes the same prompt-command machinery for inline
+  skills, and returns additional model-visible messages to splice into the
+  conversation. For `context: fork`, both user and model routes run the skill
+  in a forked/subagent context instead of inline.
+- Compaction: invoked skill names, paths, and content are recorded separately
+  in session state so compacted conversations can preserve used skill content
+  without reintroducing the entire skill catalog.
+
 ## Design Position
 
 Forge should support the Agent Skills pattern, but with stricter runtime
@@ -222,8 +263,8 @@ boundaries:
   mounted read-only before the model is asked to use them.
 - Editable skill roots can live in writable VFS workspaces so the model can
   author or revise skills with ordinary file tools.
-- The engine records only catalog refs, VFS mount/tool config, active
-  activation/read refs, and concrete skill context items that were shown to the
+- The engine records only catalog refs, skill source locations, active
+  activation refs, and concrete skill context items that were shown to the
   model.
 - Host-installed skills are discovered through the selected host target, not by
   reading the worker's local filesystem.
@@ -235,6 +276,80 @@ boundaries:
 Skills are not a new deterministic engine module in v1. They are a product
 feature implemented by runtime services, VFS mounts, ordinary filesystem tools,
 and CoreAgent context mechanisms.
+
+## Finalized Forge Approach
+
+Forge should implement skills as a runtime-owned capability over generic file
+surfaces, with the deterministic engine recording only pinned refs and
+request-planning state.
+
+The implementation has five layers:
+
+1. Skill source discovery over a narrow filesystem reader.
+2. Catalog construction into a semantic CAS blob.
+3. Catalog publication into `CoreAgentState.skills.catalog`.
+4. Activation through ordinary file reads or direct runtime injection.
+5. Provider-specific lowering of semantic skill context items.
+
+The catalog builder should not depend on the worker's local filesystem. It
+should operate on a small `FileSystem`-like reader with list/read/stat
+operations, adapting these concrete sources:
+
+- immutable CAS/VFS snapshots for product/system/org/user skill bundles;
+- writable VFS workspaces for project and authoring roots;
+- live host or VM filesystems for target-installed skills.
+
+Do not force every host/VM skill root through a CAS snapshot before the model
+can use it. For host-installed skills, the source of truth is the bytes read
+from that target filesystem at catalog refresh or activation time. Catalog
+metadata reads and activation reads must still pin the bytes they observed into
+CAS, but the runtime does not need to control or freeze the whole target
+filesystem.
+
+`SkillCatalogContext.catalog_ref` points at the active model catalog: a compact,
+semantic catalog snapshot selected for the current session/request surface. API
+projection may also expose a fuller catalog ref later, but the engine only
+needs the model catalog ref.
+
+`catalog_ref` is also the published catalog fingerprint: if a refresh rebuilds
+the same canonical semantic catalog blob, core state is already current and no
+catalog update is needed. Mutable source checksums are runtime refresh keys,
+not a second catalog identity in the engine. For snapshots and workspaces,
+source refs and workspace heads are enough to cheaply decide whether a refresh
+might be needed. For live host/VM filesystems, the runtime must compute a
+checksum over the observed catalog inputs, because the engine cannot know
+whether a host path changed.
+
+Activation has two engine-level anchors:
+
+- `SkillActivationSource::ToolResult { call_id }` for model-selected
+  activation through ordinary `read_file`. This is the default path, especially
+  for host/VM skills.
+- `SkillActivationSource::DirectContext { context_ref }` for UI/CLI/runtime
+  activation where the runtime preloads the skill body before the next model
+  request. This does not start a run; the next run consumes the activation
+  during context planning.
+
+Catalog refresh is explicit and cache-aware. Refresh at session open,
+configuration changes, target changes, and explicit `skills/list` or
+`skills/refresh` boundaries. Do not refresh mutable workspace or host catalogs
+on every model turn. If a refresh is requested while a run is active, reject it
+or stage it for the next run; do not mutate the prompt surface mid-request.
+
+Provider adapters own context lowering:
+
+- OpenAI Responses lowers skill catalog and direct activation items as
+  `developer` input messages. Prompt caching is prefix-based, so ordering is
+  the main cache control mechanism.
+- Anthropic Messages should lower the catalog into top-level `system` content
+  blocks, separate from the base instructions block, and use
+  provider-native `cache_control` on stable blocks when enabled. Direct
+  activations should lower as user-message content near the current-run tail,
+  not as top-level system blocks, so they do not disturb the stable cached
+  prefix. Tool-result activations remain ordinary tool result blocks.
+
+The final provider request blob remains the audit record for the exact
+provider-native materialization.
 
 ## Skill Sources
 
@@ -322,6 +437,13 @@ Skills already installed inside a mounted VM/sandbox, such as:
 
 These are target-scoped. The same skill path on two VMs is two different skill
 sources.
+
+Host-installed skills should be discovered and activated through the selected
+target's filesystem abstraction. Do not require a full snapshot of the host
+skill root in v1. A catalog refresh pins the metadata bytes it reads, and a
+full activation pins the exact `SKILL.md` body loaded at activation time.
+Optional snapshotting can be added later for policy isolation, offline replay,
+or exposing host skills through a VFS mount, but it is not the default model.
 
 ### Plugin/MCP Skills
 
@@ -457,6 +579,12 @@ pub enum SkillLocation {
         skill_dir_path: VfsPath,
         skill_doc_path: VfsPath,
     },
+    HostFilesystem {
+        target: ToolExecutionTarget,
+        root_path: String,
+        skill_dir_path: String,
+        skill_doc_path: String,
+    },
     Remote {
         source_id: String,
         skill_name: String,
@@ -475,6 +603,11 @@ workspace and the head snapshot observed when the catalog entry was built.
 the mounted VFS view, for example `/skills/system/openai-docs` and
 `/skills/system/openai-docs/SKILL.md`, or
 `/workspace/.forge/skills/deploy-review/SKILL.md`.
+
+`HostFilesystem` entries are paths on the selected target filesystem. The
+catalog should show the target along with the path so the model reads the file
+through the matching host file tool/profile. Runtime activation detection must
+match both target and resolved path, not path string alone.
 
 `skill_doc_ref` points at the `SKILL.md` body or full markdown payload.
 It is recorded when the catalog builder or activation path has read and pinned
@@ -497,14 +630,52 @@ pub struct SkillCatalogSnapshot {
 }
 ```
 
-Store the catalog snapshot in CAS. Do not pre-render provider-specific catalog
-messages in the engine. The core context item should point at the semantic
-catalog blob and let provider adapters materialize it into provider-native
-input messages or content blocks.
+Store the semantic catalog snapshot in CAS. Its `catalog_ref` is the
+content-addressed fingerprint for the published model catalog. Do not
+pre-render provider-specific catalog messages in the engine. The core context
+item should point at the semantic catalog blob and let provider adapters
+materialize it into provider-native input messages or content blocks.
 
 ```rust
 pub struct SkillCatalogContext {
     pub catalog_ref: BlobRef,
+}
+```
+
+For mutable-source freshness, the runtime should also keep a build record or
+catalog cache entry outside core state:
+
+```rust
+pub struct SkillCatalogBuildRecord {
+    pub schema_version: String, // "forge.skills.catalog.build.v1"
+    pub catalog_ref: BlobRef,
+    pub source_fingerprint: SkillCatalogSourceFingerprint,
+}
+
+pub struct SkillCatalogSourceFingerprint {
+    pub algorithm: String, // "sha256"
+    pub digest: String,
+    pub inputs: Vec<SkillCatalogSourceInput>,
+}
+
+pub enum SkillCatalogSourceInput {
+    SnapshotRoot {
+        root_id: String,
+        snapshot_ref: BlobRef,
+        root_path: VfsPath,
+    },
+    WorkspaceRoot {
+        root_id: String,
+        workspace_id: VfsWorkspaceId,
+        workspace_head_ref: BlobRef,
+        root_path: VfsPath,
+    },
+    HostRoot {
+        root_id: String,
+        target: ToolExecutionTarget,
+        root_path: String,
+        root_fingerprint: String,
+    },
 }
 ```
 
@@ -513,6 +684,34 @@ provider-native text/messages sent to the model. If catalog budgeting later
 requires a narrowed or selected catalog, store that selected semantic catalog
 as another catalog blob rather than storing provider-specific rendered text in
 core state.
+
+The source fingerprint is a deterministic digest of the external inputs that
+were observed while constructing the semantic catalog: source root identity,
+target identity, compatibility mode, parser/schema version, size/budget policy
+that changes inclusion, discovered skill paths, and the bytes of frontmatter or
+metadata files that were parsed. Do not include wall-clock observation time in
+this digest. Store scan time or warnings separately if projection needs them.
+
+Do not put a non-model-visible source fingerprint into the semantic catalog
+blob solely to track freshness; that would change `catalog_ref` and invalidate
+prompt cache even when the model-visible catalog did not change. Keep the
+source fingerprint in runtime cache/build metadata, then update core only when
+the rebuilt semantic catalog has a new `catalog_ref`.
+
+For host roots, `root_fingerprint` should be computed by the runtime from the
+host filesystem data used for cataloging. The authoritative form is a hash of
+candidate skill paths plus the bytes of catalog-relevant files such as
+`SKILL.md` frontmatter and `agents/forge.yaml`. A cheaper stat-based
+fingerprint can be used only as a preliminary "maybe changed" signal; content
+hashes are the deterministic basis for deciding whether the catalog inputs
+changed. The rebuilt `catalog_ref` decides whether the semantic catalog
+changed.
+
+The fingerprint should track catalog inputs, not necessarily full activation
+bodies. A `SKILL.md` body edit with unchanged catalog frontmatter does not have
+to invalidate the catalog unless the catalog snapshot includes the full
+`skill_doc_ref` or another model-visible field derived from that body.
+Activation still pins the exact full body bytes when the skill is loaded.
 
 ### Skill State And Context Items
 
@@ -534,8 +733,8 @@ The core split is:
   semantic skill context selected for a request. The final provider request
   records the exact provider-native materialization.
 - Provider adapters lower these concrete skill context items with
-  provider-native semantics. OpenAI Responses should render them as developer
-  messages first.
+  provider-native semantics. OpenAI and Anthropic should intentionally lower
+  the same semantic items differently.
 
 First-cut engine shape:
 
@@ -579,6 +778,44 @@ For provider APIs without a separable skill-guidance lane, the adapter must use
 an explicit configured fallback or fail clearly for skills-enabled sessions. Do
 not silently fold the catalog into `instructions_ref`.
 
+### Provider Context Lowering
+
+Core context remains provider-neutral. `ContextItemKind::SkillCatalog` and
+`ContextItemKind::SkillActivation` point at semantic payload blobs; they are
+not pre-rendered OpenAI or Anthropic messages in engine state.
+
+OpenAI Responses:
+
+- Lower `SkillCatalog` as a `developer` input message.
+- Lower direct `SkillActivation` as a `developer` input message at the item's
+  planned position near the current-run tail.
+- Keep tool-result activations as ordinary `function_call_output` items.
+- Rely on stable input order for prompt-cache preservation. Base instructions,
+  tool schemas, and the skill catalog form the stable prefix; direct
+  activations are not inserted above existing history.
+
+Anthropic Messages:
+
+- Lower base instructions and the skill catalog into top-level `system`
+  content blocks. Keep them as separate blocks so the adapter can attach
+  provider-native metadata such as `cache_control` independently.
+- Use Anthropic `cache_control` on stable system/tool blocks when prompt
+  caching is enabled. The catalog block is cacheable because it changes only at
+  explicit refresh boundaries.
+- Lower direct `SkillActivation` as user-message content near the current-run
+  tail, matching Claude Code's hidden/meta user-message shape more closely than
+  a system-block insertion would.
+- Keep tool-result activations as ordinary tool result blocks paired with their
+  tool use history. Do not synthesize a second skill message for them.
+- If the adapter cannot represent skill catalog context separately from base
+  instructions, fail clearly for skills-enabled Anthropic sessions rather than
+  silently appending the catalog to `instructions_ref`.
+
+Both adapters should use provider-specific wrappers around the same semantic
+payloads. For example, OpenAI may use a concise developer text wrapper, while
+Anthropic may use XML-ish tags inside a system or user content block. The
+provider request blob is the source of truth for the exact final text.
+
 ### Catalog Lifecycle And Context Injection
 
 Skill headers are read during runtime catalog discovery, not inside `engine`.
@@ -589,8 +826,9 @@ metadata such as `agents/forge.yaml` or compatible `agents/openai.yaml`.
 For CAS/VFS snapshot sources this should happen through VFS snapshot reads and
 the blob store. For writable workspace sources it should happen through the VFS
 workspace mount at a recorded workspace head. For host-target sources it should
-happen through the selected host filesystem abstraction, followed by
-snapshotting the source root into CAS/VFS.
+happen through the selected host filesystem abstraction. Pin the metadata bytes
+that were read, but do not require snapshotting the entire source root into
+CAS/VFS before cataloging it.
 
 Recommended refresh points:
 
@@ -600,11 +838,30 @@ Recommended refresh points:
 - host-target catalog refresh when a target is added or a user asks to refresh.
 
 Do not rescan mutable host files during each model turn. A run should use the
-active catalog snapshot and mounted source refs it was prepared with.
+active catalog snapshot and source locations it was prepared with.
 Writable VFS workspaces are session state, not external host state, but they
 are still mutable. Workspace-authored skill changes should become catalog
 metadata only through explicit catalog refresh or another product-controlled
 refresh boundary.
+
+The engine's `SkillState.catalog.catalog_ref` is the active published catalog
+and the catalog fingerprint that affects request planning. It is not an oracle
+for external freshness. It is "latest" only relative to the runtime's current
+source observations:
+
+- for immutable snapshots, the configured root snapshot refs still match the
+  catalog build record;
+- for writable workspaces, the workspace heads relevant to skill roots still
+  match, or a refresh/rebuild produced the same semantic `catalog_ref`;
+- for host/VM filesystems, the host-root fingerprint computed by the runtime
+  still matches the fingerprint recorded in runtime catalog build metadata.
+
+When a refresh observes unchanged source fingerprints, reuse the current
+`catalog_ref`. When a refresh observes changed sources, rebuild the semantic
+catalog and compare its new `catalog_ref` to the active one. Emit
+`CoreAgentCommand::SetSkillCatalog` only if the semantic `catalog_ref` changed
+and only while no run is active or queued, or stage the new catalog for the
+next run boundary.
 
 The catalog context selected for the model is skill context, not real user
 history and not base instructions:
@@ -653,17 +910,19 @@ already-recorded provider requests still pin the exact provider-native request
 blob they used.
 
 Activated skill bodies are different from the catalog. Do not automatically
-reinsert every previously activated skill after compaction. Reinsert an
+reinsert every previously activated skill after compaction. Reinsert a direct
 activated body only while its `SkillActivation` remains in
 `SkillState.activations`.
 
-When reinserting, deduplicate by the pinned `context_ref`. If the
-original tool result or explicit `SkillActivation` context item with that same
+For direct activations, deduplicate by the pinned `context_ref` stored on
+`SkillActivationSource::DirectContext`. If the original explicit
+`SkillActivation` context item or an equivalent tool result with that same
 `context_ref` is still present in the planned request window, do not add
-a second copy. Once the activation is removed from `SkillState.activations`,
-it is just ordinary history: compaction may summarize or omit it, and the
-model can read the cataloged `SKILL.md` again if the skill becomes relevant
-later.
+a second copy. For tool-result activations, the tool result is the loaded skill
+body; do not add a parallel skill context item just to keep the activation
+alive. Once the activation is removed from `SkillState.activations`, it is just
+ordinary history: compaction may summarize or omit it, and the model can read
+the cataloged `SKILL.md` again if the skill becomes relevant later.
 
 ### Skill Activation
 
@@ -671,38 +930,51 @@ later.
 pub struct SkillActivation {
     pub skill_id: SkillId,
     pub catalog_ref: BlobRef,
-    pub context_ref: BlobRef,
     pub source: SkillActivationSource,
     pub scope: SkillActivationScope,
 }
+
+pub enum SkillActivationSource {
+    ToolResult { call_id: ToolCallId },
+    DirectContext { context_ref: BlobRef },
+}
 ```
 
-Activation pins the selected catalog snapshot through `catalog_ref` and the
-loaded provider-neutral skill context through `context_ref`. The context blob
-may be raw semantic skill text for v1, or a richer structured payload later.
-Provider adapters wrap that payload in the appropriate provider-native message
-or content block. Activation does not make the skill folder appear. Enabled
-skill roots should already be available through VFS mounts before the model can
-use them: read-only mounts for published sources, or writable workspace mounts
-for authoring sources.
+Activation pins the selected catalog snapshot through `catalog_ref`.
+`source` then says where the loaded skill body lives:
+
+- `ToolResult { call_id }` means the skill was loaded by ordinary tool
+  execution, typically a complete `read_file` of a cataloged `SKILL.md`. The
+  source of truth is the tool result and its pinned output refs. The planner
+  should not create a duplicate `SkillActivation` context item for this source.
+- `DirectContext { context_ref }` means runtime/API/UI flow preloaded the skill
+  body outside the model's tool transcript. `context_ref` points at the exact
+  provider-neutral skill payload to insert as skill context when needed. The
+  context blob may be raw semantic skill text for v1, or a richer structured
+  payload later. Provider adapters wrap that payload in the appropriate
+  provider-native message or content block.
+
+Activation does not make the skill folder appear. Enabled skill roots should
+already be available through their advertised read surface before the model can
+use them: read-only VFS mounts for published sources, writable workspace mounts
+for authoring sources, or host file tools for target-installed sources.
 
 Source/load provenance belongs to the active catalog, tool result, context
 item, and optional projection/report data. Do not duplicate that provenance in
 `SkillActivation` unless request planning needs it.
 
-`source` records only the direct activation source needed by engine/projection:
-`ToolCall { call_id }` for activations derived from tool execution, or
-`Direct` for activations admitted by runtime/API/UI flow. Inspect the tool call
-to distinguish ordinary `read_file` from an explicit activation helper.
+`source` records only the activation anchor needed by engine/projection.
+Inspect the referenced tool result to distinguish ordinary `read_file` from an
+explicit activation helper.
 `scope` controls context maintenance: `Run` activations are removed when the
 current run completes; `Session` activations remain active across runs until
 explicit deactivation, policy removal, or session close.
 
 Do not add a separate activation id in v1. The active list is live
 request-planning state, not a durable activation ledger. Use `skill_id` for
-the selected skill, `context_ref` for the exact loaded skill context,
-`ToolCallId` for model-selected reads, and `ContextItemId` for historical
-inclusions.
+the selected skill, `ToolCallId` for model-selected reads,
+`DirectContext.context_ref` for direct injected skill context, and
+`ContextItemId` for historical inclusions.
 
 An activation in `SkillState.activations` is live request-planning state for
 the current session/run. It should be removed when it is no longer active.
@@ -710,13 +982,13 @@ Historical evidence that a skill body was injected or read lives in context
 items and tool results in the event log; deactivation must not delete those
 historical items or mutate provider requests that already included the body.
 
-If a model reads a cataloged `skill_doc_path` through the ordinary VFS
-`read_file` tool, the runtime may emit this activation record from that tool
-call. If a user explicitly selects a skill through UI/CLI, the runtime may read
-the same `skill_doc_path` before the model turn and inject the loaded
-`SKILL.md` as `ContextItemKind::SkillActivation`. In both cases, the
-activation remains in `SkillState.activations` only while it is active for its
-configured scope.
+If a model reads a cataloged `skill_doc_path` through the ordinary `read_file`
+tool for the skill's read surface, the runtime may emit this activation record
+from that tool call. If a user explicitly selects a skill through UI/CLI, the
+runtime may read the same `skill_doc_path` before the model turn and inject
+the loaded `SKILL.md` as `ContextItemKind::SkillActivation`. In both cases,
+the activation remains in `SkillState.activations` only while it is active for
+its configured scope.
 
 Multiple skills may be active at the same time. Activation is additive, not a
 global mode switch. If two active skill bodies conflict, normal instruction
@@ -749,9 +1021,9 @@ Skill discovery and activation must be target-aware:
 ```text
 discover skills for host:vm-123
   -> read configured roots through host:vm-123 filesystem
-  -> snapshot discovered skill roots into CAS/VFS
-  -> mount snapshots read-only under /skills/<source-id>
+  -> pin catalog metadata bytes read from that filesystem
   -> catalog entries carry target = host:vm-123
+  -> model reads the cataloged host path through host:vm-123 file tools
 ```
 
 A model-visible skill list should show target scope when ambiguity matters:
@@ -772,10 +1044,12 @@ also accept a target id. If model-selected per-call execution targets become a
 common need beyond skills, extend the core tool-call target model later instead
 of adding skill-specific routing hacks.
 
-## Skill Root Mounts
+## Skill Root Read Surfaces
 
-Mount skill roots or skill bundles, not only individual skill directories.
-The mount source can be an immutable snapshot or a writable workspace.
+Expose skill roots or skill bundles through the appropriate read surface, not
+only individual skill directories. CAS-backed and workspace-backed sources use
+VFS mounts. Host-installed sources use the selected target filesystem unless a
+future policy explicitly snapshots them.
 
 Examples:
 
@@ -792,6 +1066,10 @@ Examples:
 /workspace/.forge/skills/
   draft-skill/SKILL.md
   draft-skill/references/example.md
+
+host:vm-123:/home/dev/.agents/skills/
+  deploy-review/SKILL.md
+  deploy-review/references/checklist.md
 ```
 
 A catalog entry points at one skill directory inside a mounted root:
@@ -801,6 +1079,15 @@ source_snapshot_ref = sha256:...
 source_mount_path   = /skills/system
 skill_dir_path      = /skills/system/openai-docs
 skill_doc_path      = /skills/system/openai-docs/SKILL.md
+```
+
+For a host-installed skill, the catalog entry points at a target path:
+
+```text
+target             = host:vm-123
+root_path          = /home/dev/.agents/skills
+skill_dir_path     = /home/dev/.agents/skills/deploy-review
+skill_doc_path     = /home/dev/.agents/skills/deploy-review/SKILL.md
 ```
 
 For a workspace-authored skill, the catalog entry points into the writable
@@ -814,9 +1101,10 @@ skill_dir_path     = /workspace/.forge/skills/draft-skill
 skill_doc_path     = /workspace/.forge/skills/draft-skill/SKILL.md
 ```
 
-Prefer one snapshot/mount per source root or product-managed bundle. Fall back
-to one snapshot/mount per skill only when policy isolation, source shape, or
-size limits require it.
+Prefer one snapshot/mount per CAS source root or product-managed bundle. Fall
+back to one snapshot/mount per skill only when policy isolation, source shape,
+or size limits require it. Host roots do not need VFS mounts for v1; the
+matching host file tool/profile is the read surface.
 
 Current P62 VFS mounts are explicit session records. A snapshot ref is not a
 model-visible path until it is mounted. P62 also rejects nested mounts, so do
@@ -852,16 +1140,16 @@ Output:
 Discovery steps:
 
 1. Resolve skill roots for the requested target or global source.
-2. Snapshot host/product source roots into P62 VFS when allowed, or select the
-   configured VFS workspace mount for editable roots.
-3. Mount immutable snapshots read-only at stable session paths; keep workspace
-   roots under their writable workspace mounts.
-4. List candidate skill directories inside those mounted snapshot or workspace
-   roots.
+2. Select the read surface for each root:
+   immutable snapshot/VFS mount, writable VFS workspace, or host filesystem.
+3. Mount immutable CAS snapshots read-only at stable session paths; keep
+   workspace roots under their writable workspace mounts; leave host roots on
+   the target filesystem.
+4. List candidate skill directories through the selected read surface.
 5. Read `SKILL.md` frontmatter.
 6. Validate name, description, policy, dependencies, and size limits.
-7. Store metadata, resolved `SkillLocation`, pinned `SKILL.md` refs when read,
-   and warnings in a catalog snapshot.
+7. Store metadata, resolved `SkillLocation`, pinned frontmatter/body refs when
+   read, target/read-surface data, and warnings in a catalog snapshot.
 8. Render a compact catalog for model context.
 
 For host targets, all filesystem reads must go through the host abstraction.
@@ -874,7 +1162,8 @@ Initial skill catalog context should include only compact metadata:
 ## Skills
 Available skills:
 - openai-docs: Use when ... Path: /skills/system/openai-docs/SKILL.md
-- deploy-review [host:vm-123]: Use when ... Path: /skills/vm-123/deploy-review/SKILL.md
+- deploy-review [host:vm-123]: Use when ... Target path:
+  /home/dev/.agents/skills/deploy-review/SKILL.md
 
 When a skill is relevant, read its `SKILL.md` before following its workflow.
 ```
@@ -896,19 +1185,21 @@ If the catalog exceeds budget:
 
 Activation is the act of loading a selected skill's `SKILL.md` into the model
 context and recording the pinned content refs. It is not the act of mounting
-the skill folder. Enabled skills should already be available through mounted
-snapshot or workspace roots as part of catalog/session preparation.
+the skill folder. Enabled skills should already be available through their
+cataloged read surface as part of catalog/session preparation.
 
 There are two activation paths:
 
 1. Model-selected activation: the model reads the cataloged `skill_doc_path`
-   through the ordinary VFS `read_file` tool. The tool result contains the
-   `SKILL.md` contents. The runtime can recognize that path as a cataloged
-   skill doc and record a `SkillActivation`.
+   through the ordinary `read_file` tool for that skill's read surface: VFS for
+   mounted snapshots/workspaces, or the selected host file tool for
+   host-installed skills. The tool result contains the `SKILL.md` contents. The
+   runtime recognizes the resolved path plus target/read surface as a cataloged
+   skill doc and records a `SkillActivation`.
 2. Explicit user activation: UI/CLI selection such as `$deploy-review` resolves
    a skill by id or unambiguous name before the model turn. The runtime reads
-   that same `skill_doc_path` and injects a skill context item directly, saving
-   a tool round.
+   that same `skill_doc_path` through the same read surface and injects a skill
+   context item directly, saving a tool round.
 
 Resolution rules for explicit activation:
 
@@ -917,8 +1208,10 @@ Resolution rules for explicit activation:
   and target scope.
 - If a host target is required, use the explicit target argument or session
   default target.
-- Resolve to the cataloged `skill_doc_path`; do not rescan mutable host files
-  during activation.
+- Resolve to the cataloged `skill_doc_path`; do not rescan roots or reinterpret
+  names during activation.
+- For host-installed skills, read the current target file at activation time and
+  pin the bytes actually returned.
 - If the skill comes from a writable VFS workspace, read through the workspace
   mount at the request's planned workspace head and pin the exact body that was
   loaded. If the workspace changed since catalog refresh, projection should
@@ -935,7 +1228,7 @@ Model-visible result:
 <name>deploy-review</name>
 <id>skill:host:host:vm-123:...</id>
 <target>host:vm-123</target>
-<path>/skills/vm-123/deploy-review/SKILL.md</path>
+<path>/home/dev/.agents/skills/deploy-review/SKILL.md</path>
 ... contents of SKILL.md ...
 </skill>
 ```
@@ -943,7 +1236,7 @@ Model-visible result:
 The exact wrapper can be provider-specific, but the content should be a normal
 context item or tool result recorded in the session log.
 
-Current VFS `read_file` data:
+Current `read_file` tool data:
 
 - successful tool calls already produce `ToolCallResult.output_ref`,
   `model_visible_output_ref`, and generic `effects`;
@@ -952,12 +1245,14 @@ Current VFS `read_file` data:
   and bytes read;
 - `model_visible_output_ref` is the model-facing text returned from the tool;
 - VFS effects currently record workspace commits from mutating tools, not file
-  read provenance.
+  read provenance. Host reads likewise need target/path provenance from the
+  tool call and result facts.
 
 Therefore model-selected skill activation can initially key off:
 
 1. successful `read_file`,
-2. `ReadFileResult.resolved_path` matching a cataloged `skill_doc_path`,
+2. `ReadFileResult.resolved_path` matching a cataloged `skill_doc_path` on the
+   same VFS mount/workspace or host target,
 3. a complete read of the file (`line_start == 1` and `truncated == false`).
 
 If the read is partial, treat it as an ordinary file read, or record a partial
@@ -967,9 +1262,11 @@ VFS read-provenance effect such as `forge.vfs.read_file.v1` containing
 `workspace_id`, `workspace_head_ref`, `mount_path`, and resolved path. Snapshot
 reads can similarly include `snapshot_ref` when useful. The activation record
 should reuse that tool result/effect data instead of inventing a separate
-parallel read log. When a full `SKILL.md` read is recognized, derive
-`context_ref` from the loaded `ReadFileResult.text` bytes or from a
-provider-neutral loaded skill context blob built by the runtime.
+parallel read log. When a full `SKILL.md` read is recognized, record
+`SkillActivationSource::ToolResult { call_id }`; the exact loaded bytes remain
+pinned by the existing tool result refs. If runtime/API/UI flow preloads a
+skill body without a model tool call, store that provider-neutral body as a
+blob and record `SkillActivationSource::DirectContext { context_ref }`.
 
 `forge.skill.activate` is optional in v1. It is useful as an API/runtime helper
 for explicit UI activation or resolving by name, and could later host approval
@@ -1009,10 +1306,12 @@ explicit user-selected skills, recently activated skills, and higher-trust
 skills. A model can reload an omitted skill by reading its cataloged
 `SKILL.md` again.
 
-The planner should avoid duplicating a skill body. If the same
-`context_ref` is already present as a tool result or
+The planner should avoid duplicating a skill body. For direct activations, if
+the same `DirectContext.context_ref` is already present as a tool result or
 `SkillActivation` item in the planned request window, the active activation is
 satisfied for that request and no additional skill block should be inserted.
+For tool-result activations, the referenced tool result is already the loaded
+skill body, so no parallel skill block is needed.
 
 Prompt-cache ordering matters. Request planning must not insert new skill
 activations at the top of the context window, because that changes the stable
@@ -1047,8 +1346,8 @@ Keep v1 minimal, but make the engine model skill-native:
 - Teach context-window planning and provider request materialization to include
   `SkillCatalog` context in the stable request prefix and direct
   `SkillActivation` context near the current-run tail.
-- Use existing VFS mount/tool configuration so the model can read mounted
-  skill files with ordinary filesystem tools.
+- Use existing file tool configuration so the model can read cataloged skill
+  files through VFS mounts, workspaces, or host filesystem tools.
 - Use existing tool result flow when the model reads a `SKILL.md`.
 - Store explicit activation outputs and `read_file` results as CAS blobs like
   any other tool result.
@@ -1110,12 +1409,12 @@ that tool result as satisfying the activation for the current request/window
 and avoid inserting a duplicate `SkillActivation` item. For direct
 activations, there is no prior tool result, so the planner inserts a
 `ContextItemKind::SkillActivation { skill_id }` item using
-`SkillActivation.context_ref` near the current-run tail, not above existing
-history or above the stable catalog prefix.
+`SkillActivationSource::DirectContext.context_ref` near the current-run tail,
+not above existing history or above the stable catalog prefix.
 
 Do not add commands such as `ScanSkills` or `ReadSkillFile` to the engine.
 Do not add a special engine command for model-selected skill activation when a
-normal VFS file read already expresses the behavior.
+normal `read_file` tool result already expresses the behavior.
 
 ## Public API
 
@@ -1136,11 +1435,12 @@ Recommended v1:
 - `skills/list` for UI/CLI discovery before or during a session.
 - `session/read` projection includes active skill catalog summary, active skill
   activations, and historical skill context items.
-- Activation during model execution uses ordinary VFS `read_file` on the
-  cataloged `SKILL.md` path.
+- Activation during model execution uses ordinary `read_file` on the cataloged
+  `SKILL.md` path for that skill's read surface.
 - Manual user activation can be encoded as run input or a future
-  `skills/activate` method that records a `SkillActivation` and optional
-  `SkillActivation` context item.
+  `skills/activate` method that records a direct-context `SkillActivation`;
+  the context planner owns inserting the corresponding `SkillActivation`
+  context item before the next model request.
 
 `skills/list` request shape:
 
@@ -1214,17 +1514,19 @@ tool behavior.
 
 ## Scripts And Unix Requirements
 
-Instruction-only skills require only CAS/VFS reads.
+Instruction-only skills require only file reads through their configured read
+surface.
 
 Reference-only skills require:
 
-- VFS read/list/search tools over the mounted skill root.
+- read/list/search tools over the skill root, either through VFS or the host
+  filesystem.
 
 Script-backed skills require:
 
 - process capability on the selected host target,
 - materialized skill resources visible to that process when the process cannot
-  read directly from the VFS adapter,
+  read directly from the VFS or host filesystem adapter,
 - an interpreter such as `bash`, `python3`, or `node` if the script depends on
   one.
 
@@ -1282,10 +1584,17 @@ is running.
 Use snapshot semantics:
 
 - catalog refresh can discover new metadata,
-- catalog refresh writes a new skill-root snapshot and updates mount/catalog
-  paths for future runs when the source is an external host path,
+- catalog refresh pins the metadata bytes it reads and updates catalog entries
+  for future runs when the source is an external host path,
+- host-root freshness is decided by comparing the recorded
+  runtime build-record fingerprint against a newly observed host-root
+  fingerprint; changed fingerprints trigger a rebuild, not necessarily a core
+  update,
 - catalog refresh over a writable workspace records the workspace head snapshot
   and makes newly authored or edited skills catalog-selectable,
+- workspace head changes are a coarse refresh trigger; after rebuilding, if the
+  semantic `catalog_ref` is unchanged, do not update core state or invalidate
+  the prompt cache,
 - reading or explicitly activating `SKILL.md` pins that exact file content into
   CAS,
 - existing activations do not change when source files change,
@@ -1299,7 +1608,7 @@ not need to refresh automatically after every write.
 
 ## Interaction With P62 VFS
 
-P63 should use P62 like this:
+P63 should use P62 for immutable snapshots and writable workspaces like this:
 
 ```text
 Published skill source root or bundle
@@ -1328,14 +1637,32 @@ Editable skill source root
   -> activation reads and pins exact SKILL.md body from the workspace
 ```
 
-The model should be able to read skill references through VFS tools without
-knowing whether the skill originated in CAS, a database, or a VM.
+Host-installed skill source root:
+
+```text
+  -> host filesystem reader for catalog refresh
+  -> SkillMetadata.location = HostFilesystem {
+       target,
+       root_path,
+       skill_dir_path,
+       skill_doc_path
+     }
+  -> model reads target path with the matching host read_file tool/profile
+  -> activation pins exact SKILL.md body from the tool result
+  -> optional later snapshot/materialization only for policy, offline replay,
+     or process-visible script resources
+```
+
+The model should be able to read skill references through the advertised file
+tool surface without knowing whether the skill originated in CAS, a database,
+or a VM.
 
 Do not assume a snapshot ref is itself a model-visible path. It becomes
 file-like only through a VFS mount. A workspace ref is also not a plain path;
 it becomes file-like through its writable mount. Prefer multi-skill mounts at
 source-root, bundle, or workspace-root granularity; use one-skill mounts only
-for isolation or source-shape reasons.
+for isolation or source-shape reasons. Host filesystem paths are already
+file-like through the host tool profile and do not require a VFS mount in v1.
 
 ## Implementation Slices
 
@@ -1392,22 +1719,25 @@ Essential.
 - Build a semantic catalog snapshot with budget/selection metadata where
   needed.
 - Store catalog snapshots in CAS.
+- Record deterministic source fingerprints in runtime catalog build metadata,
+  not in core state.
 - Record the catalog ref in `SkillState.catalog` before a run starts.
 - Reinsert the configured catalog context after compaction from the pinned
   catalog ref, not through the compaction summary.
 
-### G4: Model-Selected Activation Through VFS Reads
+### G4: Model-Selected Activation Through File Reads
 
 Essential.
 
-- Treat ordinary VFS `read_file` calls against cataloged `SKILL.md` paths as
-  model-selected activation.
+- Treat ordinary `read_file` calls against cataloged `SKILL.md` paths as
+  model-selected activation, matching both resolved path and VFS/host target
+  read surface.
 - Reuse current tool result data: `output_ref`, `model_visible_output_ref`, and
   parsed `ReadFileResult.resolved_path`.
 - Count the read as full activation only when it starts at line 1 and is not
   truncated.
-- Record active activation metadata with skill id, catalog ref, loaded
-  provider-neutral context ref, source, and run/session scope.
+- Record active activation metadata with skill id, catalog ref,
+  `SkillActivationSource::ToolResult { call_id }`, and run/session scope.
 - Add a narrow VFS read-provenance effect if needed to record exact
   workspace-head or snapshot provenance for the read.
 - Add model-selected activations to `SkillState.activations` when the loaded
@@ -1426,8 +1756,8 @@ Useful, but can follow the core path.
   scope.
 - Support multiple active skill activations in one run.
 - Reinsert activated bodies after compaction only while they remain in
-  `SkillState.activations`, and do not duplicate the body when the original
-  `context_ref` is already in the request window.
+  `SkillState.activations`, and do not duplicate a direct activation body when
+  the original `DirectContext.context_ref` is already in the request window.
 - Add `skills/deactivate` to remove active activations when clients need it.
 
 ### G6: Writable Workspace Skill Authoring
@@ -1451,7 +1781,13 @@ Broader target-scoped layer.
 - Discover skills through a selected `ToolExecutionTarget`.
 - Support `.forge/skills` and `.agents/skills` first.
 - Add Codex/Claude compatibility roots behind config.
-- Snapshot host skill roots into CAS and mount the snapshots read-only.
+- Catalog host skill roots through the target filesystem abstraction and pin
+  observed metadata/body bytes when read.
+- Compute and store host-root fingerprints from discovered skill paths and
+  catalog-relevant file bytes so refresh can detect stale catalogs without
+  relying on mutable path strings alone.
+- Snapshot and mount host skill roots only when policy, offline replay, or
+  materialization requires it.
 - Add tests with in-memory/scoped host filesystems.
 - Wire real VM/sandbox host filesystem discovery when host-target filesystem
   adapters are available.
@@ -1488,6 +1824,12 @@ Core tests for G0-G4:
 - snapshot and mount a skill root containing multiple skills,
 - build catalog with duplicate names across targets,
 - build catalog within budget,
+- record runtime catalog source fingerprints for snapshot, workspace, and host
+  roots,
+- avoid emitting a core catalog update when refresh/rebuild produces the same
+  semantic `catalog_ref`,
+- update the catalog when a host-root fingerprint changes and the rebuilt
+  semantic catalog has a different `catalog_ref`,
 - record catalog context in `SkillState.catalog` rather than
   `instructions_ref` or real user input,
 - record actual request inclusion as `ContextItemKind::SkillCatalog`,
@@ -1495,11 +1837,14 @@ Core tests for G0-G4:
 - reinsert configured catalog context after compaction without relying on the
   compaction summary,
 - expose cataloged `skill_doc_path` values under read-only VFS mounts,
-- treat `read_file` of a cataloged `SKILL.md` as activation,
+- treat `read_file` of a cataloged `SKILL.md` as activation when the resolved
+  path and read surface match,
 - do not treat partial/truncated `SKILL.md` reads as full activation,
 - record activation using existing tool result refs and resolved path,
 - add/read VFS provenance effect when exact read-time snapshot or workspace
   head cannot be recovered from existing data,
+- do not activate a host skill when the same path is read on a different
+  target,
 - activation survives later source file mutation.
 
 Expanded-phase tests:
@@ -1510,8 +1855,8 @@ Expanded-phase tests:
 - reinsert an activated skill body after compaction only while it remains in
   `SkillState.activations`,
 - avoid duplicating an activated skill body when the original tool result or
-  `SkillActivation` item with the same `context_ref` is still in the
-  request window,
+  direct `SkillActivation` item with the same `DirectContext.context_ref` is
+  still in the request window,
 - allow multiple active skill activations in one run,
 - remove active activations when the run completes without deleting history,
   tool results, or provider requests,
@@ -1544,5 +1889,5 @@ Expanded-phase tests:
   `.claude/skills` explicit compatibility modes.
 - Should activation be a tool or an API command?
   Recommendation: neither is required for model-driven activation. Use
-  ordinary VFS file reads for model-selected skills. Add an API/runtime helper
+  ordinary file reads for model-selected skills. Add an API/runtime helper
   only for UI/CLI explicit activation or name resolution.
