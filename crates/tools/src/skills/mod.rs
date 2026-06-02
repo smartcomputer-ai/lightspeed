@@ -3,6 +3,7 @@
 pub mod catalog;
 pub mod model;
 pub mod parser;
+pub mod vfs;
 
 pub use catalog::{
     SkillCatalogBuild, SkillCatalogBuilder, SkillCatalogError, SkillCatalogPublication,
@@ -10,3 +11,7 @@ pub use catalog::{
 };
 pub use model::*;
 pub use parser::{SkillFrontmatter, SkillParseError, parse_skill_frontmatter};
+pub use vfs::{
+    MountedVfsSkillCatalogRoots, SkillVfsRootError, VfsSkillRootSpec,
+    resolve_mounted_vfs_skill_roots,
+};

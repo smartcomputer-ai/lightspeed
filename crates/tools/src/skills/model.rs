@@ -217,10 +217,12 @@ pub struct SkillCatalogRoot {
 pub enum SkillCatalogRootSource {
     MountedSnapshot {
         snapshot_ref: BlobRef,
+        mount_path: VfsPath,
     },
     MountedWorkspace {
         workspace_id: VfsWorkspaceId,
         workspace_head_ref: BlobRef,
+        mount_path: VfsPath,
     },
     HostFilesystem {
         target: ToolExecutionTarget,

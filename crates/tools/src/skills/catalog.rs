@@ -305,7 +305,7 @@ fn metadata_for_skill(
 
 fn source_for_root(root: &SkillCatalogRoot) -> SkillSource {
     match &root.source {
-        SkillCatalogRootSource::MountedSnapshot { snapshot_ref } => SkillSource::Snapshot {
+        SkillCatalogRootSource::MountedSnapshot { snapshot_ref, .. } => SkillSource::Snapshot {
             root_id: root.root_id.clone(),
             snapshot_ref: snapshot_ref.clone(),
         },
@@ -326,20 +326,22 @@ fn location_for_skill(
     skill_doc_path: &FsPath,
 ) -> Result<SkillLocation, SkillCatalogError> {
     match &root.source {
-        SkillCatalogRootSource::MountedSnapshot { snapshot_ref } => {
-            Ok(SkillLocation::MountedSnapshot {
-                source_snapshot_ref: snapshot_ref.clone(),
-                source_mount_path: vfs_path(&root.root_path)?,
-                skill_dir_path: vfs_path(skill_dir_path)?,
-                skill_doc_path: vfs_path(skill_doc_path)?,
-            })
-        }
+        SkillCatalogRootSource::MountedSnapshot {
+            snapshot_ref,
+            mount_path,
+        } => Ok(SkillLocation::MountedSnapshot {
+            source_snapshot_ref: snapshot_ref.clone(),
+            source_mount_path: mount_path.clone(),
+            skill_dir_path: vfs_path(skill_dir_path)?,
+            skill_doc_path: vfs_path(skill_doc_path)?,
+        }),
         SkillCatalogRootSource::MountedWorkspace {
             workspace_id,
             workspace_head_ref: _,
+            mount_path,
         } => Ok(SkillLocation::MountedWorkspace {
             workspace_id: workspace_id.clone(),
-            source_mount_path: vfs_path(&root.root_path)?,
+            source_mount_path: mount_path.clone(),
             skill_dir_path: vfs_path(skill_dir_path)?,
             skill_doc_path: vfs_path(skill_doc_path)?,
         }),
@@ -367,12 +369,13 @@ fn skill_id_for_path(root: &SkillCatalogRoot, skill_doc_path: &FsPath) -> SkillI
 
 fn source_key(source: &SkillCatalogRootSource) -> String {
     match source {
-        SkillCatalogRootSource::MountedSnapshot { snapshot_ref } => {
+        SkillCatalogRootSource::MountedSnapshot { snapshot_ref, .. } => {
             format!("snapshot:{snapshot_ref}")
         }
         SkillCatalogRootSource::MountedWorkspace {
             workspace_id,
             workspace_head_ref: _,
+            mount_path: _,
         } => format!("workspace:{workspace_id}"),
         SkillCatalogRootSource::HostFilesystem { target } => {
             format!("host:{}:{}", target.namespace, target.id)
@@ -435,7 +438,7 @@ fn source_input_for_root(
     host_observations: &[HostRootObservation],
 ) -> SkillCatalogSourceInput {
     match &input.root.source {
-        SkillCatalogRootSource::MountedSnapshot { snapshot_ref } => {
+        SkillCatalogRootSource::MountedSnapshot { snapshot_ref, .. } => {
             SkillCatalogSourceInput::SnapshotRoot {
                 root_id: input.root.root_id.clone(),
                 snapshot_ref: snapshot_ref.clone(),
@@ -445,6 +448,7 @@ fn source_input_for_root(
         SkillCatalogRootSource::MountedWorkspace {
             workspace_id,
             workspace_head_ref,
+            mount_path: _,
         } => SkillCatalogSourceInput::WorkspaceRoot {
             root_id: input.root.root_id.clone(),
             workspace_id: workspace_id.clone(),
@@ -667,6 +671,7 @@ mod tests {
                     root_path: FsPath::new("/skills").unwrap(),
                     source: SkillCatalogRootSource::MountedSnapshot {
                         snapshot_ref: BlobRef::from_bytes(b"snapshot-1"),
+                        mount_path: VfsPath::parse("/skills").unwrap(),
                     },
                     trust: SkillTrustLevel::System,
                     scope: SkillScope::Global,
@@ -716,6 +721,7 @@ mod tests {
                         root_path: FsPath::new("/skills-one").unwrap(),
                         source: SkillCatalogRootSource::MountedSnapshot {
                             snapshot_ref: BlobRef::from_bytes(b"snapshot-1"),
+                            mount_path: VfsPath::parse("/skills-one").unwrap(),
                         },
                         trust: SkillTrustLevel::System,
                         scope: SkillScope::Global,
@@ -728,6 +734,7 @@ mod tests {
                         root_path: FsPath::new("/skills-two").unwrap(),
                         source: SkillCatalogRootSource::MountedSnapshot {
                             snapshot_ref: BlobRef::from_bytes(b"snapshot-2"),
+                            mount_path: VfsPath::parse("/skills-two").unwrap(),
                         },
                         trust: SkillTrustLevel::User,
                         scope: SkillScope::Global,
@@ -768,6 +775,7 @@ mod tests {
                     root_path: FsPath::new("/skills").unwrap(),
                     source: SkillCatalogRootSource::MountedSnapshot {
                         snapshot_ref: BlobRef::from_bytes(b"snapshot-1"),
+                        mount_path: VfsPath::parse("/skills").unwrap(),
                     },
                     trust: SkillTrustLevel::System,
                     scope: SkillScope::Global,
@@ -888,6 +896,7 @@ mod tests {
             source: SkillCatalogRootSource::MountedWorkspace {
                 workspace_id: VfsWorkspaceId::new("workspace-1"),
                 workspace_head_ref: BlobRef::from_bytes(head),
+                mount_path: VfsPath::parse("/workspace").unwrap(),
             },
             trust: SkillTrustLevel::Project,
             scope: SkillScope::Global,
@@ -976,6 +985,7 @@ mod tests {
             root_path: FsPath::new(root_path).unwrap(),
             source: SkillCatalogRootSource::MountedSnapshot {
                 snapshot_ref: BlobRef::from_bytes(format!("{root_id}:{root_path}").as_bytes()),
+                mount_path: VfsPath::parse(root_path).unwrap(),
             },
             trust: SkillTrustLevel::System,
             scope: SkillScope::Global,

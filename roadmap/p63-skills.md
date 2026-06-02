@@ -30,8 +30,12 @@
   and emit `SetSkillCatalog` only when the model-visible catalog changed.
 - OpenAI Responses now renders semantic skill catalog blobs into provider
   developer messages at materialization time.
-- Catalog root wiring, model-selected activation from file reads, Anthropic
-  catalog rendering, and public API methods are not implemented.
+- First-cut VFS skill root resolver is implemented: configured root paths are
+  matched to explicit VFS mounts, snapshot/workspace roots become
+  `SkillCatalogRoot`s, and workspace roots record the observed head ref.
+- Session/worker invocation of catalog root resolution, model-selected
+  activation from file reads, Anthropic catalog rendering, and public API
+  methods are not implemented.
 - The first implementation is skill-specific. Do not introduce a generic
   `RuntimeContext` abstraction until there is a second concrete use case.
 
@@ -1724,6 +1728,11 @@ Essential.
 - Add tests for scripts/references/assets trees and multiple skills in one
   mounted root.
 
+First-cut implementation status: `tools::skills::resolve_mounted_vfs_skill_roots`
+turns configured VFS root paths into catalog roots over `MountedVfsFileSystem`.
+It supports read-only snapshot roots and workspace subpath roots, preserving the
+actual mount path separately from the scanned root path.
+
 ### G3: Global Catalog
 
 - Load product/system and configured user/org skills from CAS/VFS.
@@ -1739,7 +1748,7 @@ Essential.
 First-cut implementation status: `tools::skills::prepare_skill_catalog_publication`
 builds the semantic catalog, returns runtime build metadata, and prepares a
 `SetSkillCatalog` command only when the rebuilt semantic `catalog_ref` differs
-from core state. Root discovery/wiring into sessions is still pending.
+from core state. Session/worker invocation before runs is still pending.
 
 ### G4: Model-Selected Activation Through File Reads
 
