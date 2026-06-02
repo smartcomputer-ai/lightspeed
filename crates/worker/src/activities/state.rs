@@ -7,6 +7,7 @@ use engine::{
 use llm_clients::openai::responses as oai;
 use llm_runtime::{LlmAdapterRegistry, LlmRuntime, OpenAiResponsesLlmAdapter};
 use store_pg::PgStore;
+use vfs::{VfsMountStore, VfsWorkspaceStore};
 
 use crate::{SessionMountedVfsTools, pg_store_from_env};
 
@@ -29,10 +30,18 @@ pub struct ToolActivityDeps {
 }
 
 #[derive(Clone)]
+pub struct SkillCatalogActivityDeps {
+    pub(super) blobs: Arc<dyn BlobStore>,
+    pub(super) workspace_store: Arc<dyn VfsWorkspaceStore>,
+    pub(super) mount_store: Arc<dyn VfsMountStore>,
+}
+
+#[derive(Clone)]
 pub struct ActivityState {
     storage: StorageActivityDeps,
     llm: LlmActivityDeps,
     tools: ToolActivityDeps,
+    skill_catalog: Option<SkillCatalogActivityDeps>,
 }
 
 impl ActivityState {
@@ -52,7 +61,21 @@ impl ActivityState {
                 blobs: blobs.clone(),
             },
             tools: ToolActivityDeps { tools, blobs },
+            skill_catalog: None,
         }
+    }
+
+    pub fn with_skill_catalog_deps(
+        mut self,
+        workspace_store: Arc<dyn VfsWorkspaceStore>,
+        mount_store: Arc<dyn VfsMountStore>,
+    ) -> Self {
+        self.skill_catalog = Some(SkillCatalogActivityDeps {
+            blobs: self.storage.blobs.clone(),
+            workspace_store,
+            mount_store,
+        });
+        self
     }
 
     pub fn from_pg_store(
@@ -61,8 +84,10 @@ impl ActivityState {
         tools: Arc<dyn CoreAgentTools>,
     ) -> Self {
         let sessions: Arc<dyn SessionStore> = store.clone();
-        let blobs: Arc<dyn BlobStore> = store;
-        Self::new(sessions, blobs, llm, tools)
+        let blobs: Arc<dyn BlobStore> = store.clone();
+        let workspace_store: Arc<dyn VfsWorkspaceStore> = store.clone();
+        let mount_store: Arc<dyn VfsMountStore> = store;
+        Self::new(sessions, blobs, llm, tools).with_skill_catalog_deps(workspace_store, mount_store)
     }
 
     pub async fn from_env() -> anyhow::Result<Self> {
@@ -83,6 +108,10 @@ impl ActivityState {
 
     pub(super) fn tools(&self) -> &ToolActivityDeps {
         &self.tools
+    }
+
+    pub(super) fn skill_catalog(&self) -> Option<&SkillCatalogActivityDeps> {
+        self.skill_catalog.as_ref()
     }
 }
 

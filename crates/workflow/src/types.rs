@@ -1,5 +1,6 @@
 use engine::{
-    BlobRef, DynamicCommand, RunStatus, SessionConfig, SessionId, SessionPosition, SubmissionId,
+    BlobRef, CoreAgentCommand, DynamicCommand, RunStatus, SessionConfig, SessionId,
+    SessionPosition, SkillCatalogContext, SubmissionId,
     storage::{DynamicSessionEntry, DynamicUncommittedSessionEvent, SessionRecord},
 };
 use serde::{Deserialize, Serialize};
@@ -111,4 +112,15 @@ pub struct LlmGenerateActivityRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolInvokeBatchActivityRequest {
     pub request: engine::ToolInvocationBatchRequest,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkillCatalogRefreshActivityRequest {
+    pub session_id: SessionId,
+    pub active_catalog: Option<SkillCatalogContext>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkillCatalogRefreshActivityResult {
+    pub command: Option<CoreAgentCommand>,
 }

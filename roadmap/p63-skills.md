@@ -33,9 +33,11 @@
 - First-cut VFS skill root resolver is implemented: configured root paths are
   matched to explicit VFS mounts, snapshot/workspace roots become
   `SkillCatalogRoot`s, and workspace roots record the observed head ref.
-- Session/worker invocation of catalog root resolution, model-selected
-  activation from file reads, Anthropic catalog rendering, and public API
-  methods are not implemented.
+- First-cut runtime refresh is wired before idle `RequestRun` admission in the
+  Temporal workflow and in-process test runner. It uses convention-based VFS
+  roots and publishes only changed semantic catalogs.
+- Model-selected activation from file reads, Anthropic catalog rendering, and
+  public API methods are not implemented.
 - The first implementation is skill-specific. Do not introduce a generic
   `RuntimeContext` abstraction until there is a second concrete use case.
 
@@ -847,6 +849,7 @@ CAS/VFS before cataloging it.
 Recommended refresh points:
 
 - session open, after skills config and initial VFS mounts are known;
+- before admitting a new run while the session has no active or queued run;
 - explicit `skills/list` or catalog refresh with `force_refresh`;
 - skills config changes;
 - host-target catalog refresh when a target is added or a user asks to refresh.
@@ -1748,7 +1751,9 @@ actual mount path separately from the scanned root path.
 First-cut implementation status: `tools::skills::prepare_skill_catalog_publication`
 builds the semantic catalog, returns runtime build metadata, and prepares a
 `SetSkillCatalog` command only when the rebuilt semantic `catalog_ref` differs
-from core state. Session/worker invocation before runs is still pending.
+from core state. `workflow` and `test-support` invoke this lazily before idle
+`RequestRun` admission using convention-based VFS roots; production workers
+perform the scan in a workflow activity.
 
 ### G4: Model-Selected Activation Through File Reads
 

@@ -7,7 +7,7 @@ use thiserror::Error;
 use vfs::{VfsMountRecord, VfsMountSource, VfsPath, VfsWorkspaceId, VfsWorkspaceStore};
 
 use crate::{
-    host::fs::{FileSystem, FsPath, MountedVfsFileSystem},
+    host::fs::{FileSystem, FsError, FsPath, MountedVfsFileSystem},
     skills::{
         SkillCatalogRoot, SkillCatalogRootInput, SkillCatalogRootSource, SkillScope,
         SkillTrustLevel,
@@ -66,6 +66,27 @@ impl MountedVfsSkillCatalogRoots {
             })
             .collect()
     }
+
+    pub async fn existing_directory_inputs(
+        &self,
+    ) -> Result<Vec<SkillCatalogRootInput<'_>>, SkillVfsRootError> {
+        let mut inputs = Vec::new();
+        for root in &self.roots {
+            match self.fs.get_metadata(&root.root_path).await {
+                Ok(metadata) if metadata.is_directory => inputs.push(SkillCatalogRootInput {
+                    root: root.clone(),
+                    fs: &self.fs as &dyn FileSystem,
+                }),
+                Ok(_) | Err(FsError::NotFound { .. }) => {}
+                Err(error) => {
+                    return Err(SkillVfsRootError::Filesystem {
+                        message: error.to_string(),
+                    });
+                }
+            }
+        }
+        Ok(inputs)
+    }
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -113,6 +134,90 @@ pub async fn resolve_mounted_vfs_skill_roots(
     }
 
     Ok(MountedVfsSkillCatalogRoots { fs, roots })
+}
+
+pub fn conventional_vfs_skill_root_specs(mounts: &[VfsMountRecord]) -> Vec<VfsSkillRootSpec> {
+    let mut specs = Vec::new();
+    let mut seen = BTreeSet::new();
+    for mount in mounts {
+        if is_skills_mount(&mount.mount_path) {
+            push_spec(
+                &mut specs,
+                &mut seen,
+                spec_for_skills_mount(&mount.mount_path),
+            );
+        }
+        if matches!(mount.source, VfsMountSource::Workspace { .. }) {
+            push_spec(
+                &mut specs,
+                &mut seen,
+                workspace_skill_root(&mount.mount_path, ".forge/skills"),
+            );
+            push_spec(
+                &mut specs,
+                &mut seen,
+                workspace_skill_root(&mount.mount_path, ".agents/skills"),
+            );
+        }
+    }
+    specs
+}
+
+fn push_spec(
+    specs: &mut Vec<VfsSkillRootSpec>,
+    seen: &mut BTreeSet<String>,
+    spec: VfsSkillRootSpec,
+) {
+    if seen.insert(spec.root_id.clone()) {
+        specs.push(spec);
+    }
+}
+
+fn is_skills_mount(path: &VfsPath) -> bool {
+    let components = path.components();
+    components.first() == Some(&"skills") && components.len() >= 2
+}
+
+fn spec_for_skills_mount(path: &VfsPath) -> VfsSkillRootSpec {
+    let trust = if path.as_str() == "/skills/system" {
+        SkillTrustLevel::System
+    } else {
+        SkillTrustLevel::User
+    };
+    VfsSkillRootSpec::new(
+        root_id_for_vfs_path("vfs", path),
+        path.clone(),
+        trust,
+        SkillScope::Global,
+    )
+}
+
+fn workspace_skill_root(mount_path: &VfsPath, suffix: &str) -> VfsSkillRootSpec {
+    let path = append_vfs_path(mount_path, suffix);
+    VfsSkillRootSpec::new(
+        root_id_for_vfs_path("workspace", &path),
+        path,
+        SkillTrustLevel::Project,
+        SkillScope::Global,
+    )
+}
+
+fn append_vfs_path(base: &VfsPath, suffix: &str) -> VfsPath {
+    let path = if base.is_root() {
+        format!("/{suffix}")
+    } else {
+        format!("{}/{suffix}", base.as_str())
+    };
+    VfsPath::parse(path).expect("conventional VFS skill root path")
+}
+
+fn root_id_for_vfs_path(prefix: &str, path: &VfsPath) -> String {
+    let suffix = path.components().join("-");
+    if suffix.is_empty() {
+        prefix.to_owned()
+    } else {
+        format!("{prefix}-{suffix}")
+    }
 }
 
 fn validate_specs(specs: &[VfsSkillRootSpec]) -> Result<(), SkillVfsRootError> {

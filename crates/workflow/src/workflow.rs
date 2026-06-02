@@ -16,8 +16,8 @@ use crate::{
     AgentCompletedRunSummary, AgentQueuedRunSummary, AgentSessionArgs, AgentSessionStatus,
     AppendEventsRequest, CreateOrLoadSessionRequest, DEFAULT_CONTINUE_AS_NEW_HISTORY_THRESHOLD,
     FAKE_TOOL_PROFILE_ID, LlmGenerateActivityRequest, PutBlobRequest,
-    ToolInvokeBatchActivityRequest, WorkflowActivities, activity_options, default_instructions,
-    fake_tool_input_schema, fake_tool_registry,
+    SkillCatalogRefreshActivityRequest, ToolInvokeBatchActivityRequest, WorkflowActivities,
+    activity_options, default_instructions, fake_tool_input_schema, fake_tool_registry,
 };
 
 const DEFAULT_MAX_STEPS_PER_INPUT: usize = 256;
@@ -288,6 +288,9 @@ async fn process_admissions(
                 continue;
             }
         };
+        if should_refresh_skill_catalog_before_admitting(drive.state(), &command) {
+            refresh_skill_catalog_before_run(ctx, &mut drive).await?;
+        }
         match admit_and_append_command(ctx, &mut drive, command).await? {
             CommandAdmissionResult::Accepted => {}
             CommandAdmissionResult::Rejected(failure) => {
@@ -296,6 +299,45 @@ async fn process_admissions(
         }
     }
     drive_until_idle(ctx, args, &mut drive).await
+}
+
+fn should_refresh_skill_catalog_before_admitting(
+    state: &CoreAgentState,
+    command: &CoreAgentCommand,
+) -> bool {
+    matches!(command, CoreAgentCommand::RequestRun { .. })
+        && state.runs.active.is_none()
+        && state.runs.queued.is_empty()
+}
+
+async fn refresh_skill_catalog_before_run(
+    ctx: &mut WorkflowContext<AgentSessionWorkflow>,
+    drive: &mut CoreAgentDrive,
+) -> anyhow::Result<()> {
+    let result = ctx
+        .start_activity(
+            WorkflowActivities::skill_catalog_refresh,
+            SkillCatalogRefreshActivityRequest {
+                session_id: drive.session_id().clone(),
+                active_catalog: drive.state().skills.catalog.clone(),
+            },
+            activity_options(),
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    let Some(command) = result.command else {
+        return Ok(());
+    };
+    match admit_and_append_command(ctx, drive, command).await? {
+        CommandAdmissionResult::Accepted => Ok(()),
+        CommandAdmissionResult::Rejected(failure) => {
+            anyhow::bail!(
+                "skill catalog refresh command rejected: {}",
+                failure.message
+            )
+        }
+    }
 }
 
 enum CommandAdmissionResult {

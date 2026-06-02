@@ -1,11 +1,16 @@
 use std::sync::Arc;
 
 use engine::{
-    ApplyEvent, BlobRef, CoreAgentAction, CoreAgentDrive, CoreAgentDriveError, CoreAgentIoError,
-    CoreAgentLlm, CoreAgentState, CoreAgentTools, CoreApplyEvent, EventSeq, LlmFinish,
-    LlmGenerationFacts, LlmGenerationRequest, LlmGenerationResult, LlmGenerationStatus, SessionId,
-    ToolCallStatus, ToolInvocationBatchRequest, ToolInvocationBatchResult, ToolInvocationResult,
+    ApplyEvent, BlobRef, CoreAgentAction, CoreAgentCommand, CoreAgentDrive, CoreAgentDriveError,
+    CoreAgentIoError, CoreAgentLlm, CoreAgentState, CoreAgentTools, CoreApplyEvent, EventSeq,
+    LlmFinish, LlmGenerationFacts, LlmGenerationRequest, LlmGenerationResult, LlmGenerationStatus,
+    SessionId, SkillCatalogContext, ToolCallStatus, ToolInvocationBatchRequest,
+    ToolInvocationBatchResult, ToolInvocationResult,
     storage::{AppendSessionEvents, BlobStore, ReadSessionEvents},
+};
+use tools::skills::{
+    conventional_vfs_skill_root_specs, prepare_skill_catalog_publication,
+    resolve_mounted_vfs_skill_roots,
 };
 
 use super::{
@@ -49,6 +54,15 @@ impl SessionRunner {
         let mut drive = self.load_drive(&request.session_id).await?;
         let mut emitted_entries = Vec::new();
 
+        if should_refresh_skill_catalog_before_admitting(drive.state(), &request.command) {
+            self.refresh_skill_catalog_before_run(
+                &mut drive,
+                request.observed_at_ms,
+                &mut emitted_entries,
+            )
+            .await?;
+        }
+
         let action = match drive.admit_command(request.command, request.observed_at_ms) {
             Ok(action) => action,
             Err(CoreAgentDriveError::Command(engine::CommandError::Rejected(rejection))) => {
@@ -85,6 +99,95 @@ impl SessionRunner {
             state: drive.state().clone(),
             quiescence,
         })
+    }
+
+    async fn refresh_skill_catalog_before_run(
+        &self,
+        drive: &mut CoreAgentDrive,
+        observed_at_ms: u64,
+        emitted_entries: &mut Vec<engine::CoreAgentEntry>,
+    ) -> Result<(), RunnerError> {
+        let Some(command) = self
+            .refresh_skill_catalog_command(drive.session_id(), drive.state())
+            .await?
+        else {
+            return Ok(());
+        };
+        let action = drive.admit_command(command, observed_at_ms)?;
+        match action {
+            CoreAgentAction::AppendEvents {
+                expected_head,
+                events,
+            } => {
+                let appended = self
+                    .stores
+                    .sessions
+                    .append(AppendSessionEvents {
+                        session_id: drive.session_id().clone(),
+                        expected_head,
+                        events,
+                    })
+                    .await?;
+                let entries = drive.resume_appended(appended.entries)?;
+                emitted_entries.extend(entries);
+                Ok(())
+            }
+            CoreAgentAction::Idle | CoreAgentAction::Closed => Ok(()),
+            other => Err(RunnerError::InvalidRequest {
+                message: format!("skill catalog refresh emitted unexpected action: {other:?}"),
+            }),
+        }
+    }
+
+    async fn refresh_skill_catalog_command(
+        &self,
+        session_id: &SessionId,
+        state: &CoreAgentState,
+    ) -> Result<Option<CoreAgentCommand>, RunnerError> {
+        let Some(workspace_store) = self.stores.vfs_workspace_store.as_ref() else {
+            return Ok(None);
+        };
+        let Some(mount_store) = self.stores.vfs_mount_store.as_ref() else {
+            return Ok(None);
+        };
+
+        let mounts = mount_store.list_mounts(session_id).await.map_err(|error| {
+            RunnerError::InvalidRequest {
+                message: format!("load VFS mounts for skill catalog refresh: {error}"),
+            }
+        })?;
+        let specs = conventional_vfs_skill_root_specs(&mounts);
+        if specs.is_empty() {
+            return Ok(clear_catalog_command(state.skills.catalog.as_ref()));
+        }
+
+        let resolved = resolve_mounted_vfs_skill_roots(
+            self.stores.blobs.clone(),
+            workspace_store.clone(),
+            mounts,
+            specs,
+        )
+        .await
+        .map_err(|error| RunnerError::InvalidRequest {
+            message: format!("resolve VFS skill roots: {error}"),
+        })?;
+        let inputs = resolved
+            .existing_directory_inputs()
+            .await
+            .map_err(|error| RunnerError::InvalidRequest {
+                message: format!("filter VFS skill roots: {error}"),
+            })?;
+        if inputs.is_empty() {
+            return Ok(clear_catalog_command(state.skills.catalog.as_ref()));
+        }
+
+        let publication =
+            prepare_skill_catalog_publication(self.stores.blobs.as_ref(), state, None, &inputs)
+                .await
+                .map_err(|error| RunnerError::InvalidRequest {
+                    message: format!("prepare skill catalog publication: {error}"),
+                })?;
+        Ok(publication.command)
     }
 
     pub async fn drive_until_quiescent(
@@ -226,6 +329,19 @@ impl SessionRunner {
     }
 }
 
+fn should_refresh_skill_catalog_before_admitting(
+    state: &CoreAgentState,
+    command: &CoreAgentCommand,
+) -> bool {
+    matches!(command, CoreAgentCommand::RequestRun { .. })
+        && state.runs.active.is_none()
+        && state.runs.queued.is_empty()
+}
+
+fn clear_catalog_command(active_catalog: Option<&SkillCatalogContext>) -> Option<CoreAgentCommand> {
+    active_catalog.map(|_| CoreAgentCommand::SetSkillCatalog { catalog: None })
+}
+
 fn resolve_max_steps(max_steps: Option<u32>) -> Result<usize, RunnerError> {
     let max_steps = max_steps.unwrap_or(DEFAULT_MAX_STEPS);
     if max_steps == 0 {
@@ -329,10 +445,16 @@ mod tests {
         AgentHandle, ContextConfig, ContextItemKind, ContextItemSource, ContextMessageRole,
         CoreAgentCommand, CoreAgentEventKind, FunctionToolSpec, LlmFinish, ModelProviderOptions,
         ModelSelection, ObservedToolCall, ProviderApiKind, ProviderRequestDefaults, RunConfig,
-        RunStatus, SessionConfig, ToolCallResult, ToolKind, ToolName, ToolParallelism, ToolProfile,
-        ToolProfileId, ToolRegistry, ToolSpec, ToolTargetRequirement, TurnConfig, TurnEvent,
-        UncommittedContextItem,
+        RunStatus, SessionConfig, SessionId, ToolCallResult, ToolKind, ToolName, ToolParallelism,
+        ToolProfile, ToolProfileId, ToolRegistry, ToolSpec, ToolTargetRequirement, TurnConfig,
+        TurnEvent, UncommittedContextItem,
         storage::{CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
+    };
+    use tools::skills::{SkillCatalogSnapshot, SkillLocation};
+    use vfs::{
+        CompareAndSetVfsWorkspaceHead, CreateInlineSnapshotRequest, CreateVfsWorkspaceRecord,
+        InlineFile, VfsCatalogError, VfsMountAccess, VfsMountRecord, VfsMountSource, VfsMountStore,
+        VfsPath, VfsWorkspaceId, VfsWorkspaceRecord, VfsWorkspaceStore, create_inline_snapshot,
     };
 
     use super::*;
@@ -365,6 +487,129 @@ mod tests {
     #[derive(Debug)]
     struct ToolThenFinalLlm {
         calls: Mutex<u32>,
+    }
+
+    #[derive(Default)]
+    struct TestVfsCatalog {
+        mounts: Mutex<BTreeMap<SessionId, Vec<VfsMountRecord>>>,
+        workspaces: Mutex<BTreeMap<VfsWorkspaceId, VfsWorkspaceRecord>>,
+    }
+
+    #[async_trait]
+    impl VfsMountStore for TestVfsCatalog {
+        async fn put_mount(&self, record: VfsMountRecord) -> Result<(), VfsCatalogError> {
+            self.mounts
+                .lock()
+                .expect("mount lock")
+                .entry(record.session_id.clone())
+                .or_default()
+                .push(record);
+            Ok(())
+        }
+
+        async fn list_mounts(
+            &self,
+            session_id: &SessionId,
+        ) -> Result<Vec<VfsMountRecord>, VfsCatalogError> {
+            Ok(self
+                .mounts
+                .lock()
+                .expect("mount lock")
+                .get(session_id)
+                .cloned()
+                .unwrap_or_default())
+        }
+
+        async fn remove_mount(
+            &self,
+            session_id: &SessionId,
+            mount_path: &VfsPath,
+        ) -> Result<(), VfsCatalogError> {
+            let mut mounts = self.mounts.lock().expect("mount lock");
+            let Some(session_mounts) = mounts.get_mut(session_id) else {
+                return Ok(());
+            };
+            session_mounts.retain(|mount| &mount.mount_path != mount_path);
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl VfsWorkspaceStore for TestVfsCatalog {
+        async fn create_workspace(
+            &self,
+            record: CreateVfsWorkspaceRecord,
+        ) -> Result<VfsWorkspaceRecord, VfsCatalogError> {
+            let workspace = VfsWorkspaceRecord {
+                workspace_id: record.workspace_id,
+                base_snapshot_ref: record.base_snapshot_ref,
+                head_snapshot_ref: record.head_snapshot_ref,
+                revision: 0,
+                created_at_ms: record.created_at_ms,
+                updated_at_ms: record.created_at_ms,
+            };
+            self.workspaces
+                .lock()
+                .expect("workspace lock")
+                .insert(workspace.workspace_id.clone(), workspace.clone());
+            Ok(workspace)
+        }
+
+        async fn read_workspace(
+            &self,
+            workspace_id: &VfsWorkspaceId,
+        ) -> Result<VfsWorkspaceRecord, VfsCatalogError> {
+            self.workspaces
+                .lock()
+                .expect("workspace lock")
+                .get(workspace_id)
+                .cloned()
+                .ok_or_else(|| VfsCatalogError::NotFound {
+                    kind: "workspace",
+                    id: workspace_id.to_string(),
+                })
+        }
+
+        async fn compare_and_set_head(
+            &self,
+            request: CompareAndSetVfsWorkspaceHead,
+        ) -> Result<VfsWorkspaceRecord, VfsCatalogError> {
+            let mut workspaces = self.workspaces.lock().expect("workspace lock");
+            let workspace = workspaces.get_mut(&request.workspace_id).ok_or_else(|| {
+                VfsCatalogError::NotFound {
+                    kind: "workspace",
+                    id: request.workspace_id.to_string(),
+                }
+            })?;
+            if request
+                .expected_revision
+                .is_some_and(|revision| revision != workspace.revision)
+            {
+                return Err(VfsCatalogError::RevisionConflict {
+                    workspace_id: request.workspace_id,
+                    expected_revision: request.expected_revision.unwrap_or_default(),
+                    actual_revision: workspace.revision,
+                });
+            }
+            workspace.head_snapshot_ref = request.new_head_snapshot_ref;
+            workspace.revision += 1;
+            workspace.updated_at_ms = request.updated_at_ms;
+            Ok(workspace.clone())
+        }
+
+        async fn delete_workspace(
+            &self,
+            workspace_id: &VfsWorkspaceId,
+        ) -> Result<VfsWorkspaceRecord, VfsCatalogError> {
+            self.workspaces
+                .lock()
+                .expect("workspace lock")
+                .remove(workspace_id)
+                .ok_or_else(|| VfsCatalogError::NotFound {
+                    kind: "workspace",
+                    id: workspace_id.to_string(),
+                })
+        }
     }
 
     #[async_trait]
@@ -517,6 +762,108 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn request_run_refreshes_conventional_vfs_skill_catalog_before_planning() {
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let vfs = Arc::new(TestVfsCatalog::default());
+        let stores = RunnerStores::new(sessions.clone(), blobs.clone())
+            .with_vfs_catalog(vfs.clone(), vfs.clone());
+        let session_id = SessionId::new("session-a");
+        sessions
+            .create_session(CreateSession {
+                session_id: session_id.clone(),
+                agent_handle: AgentHandle::new("forge.default"),
+                created_at_ms: 1,
+            })
+            .await
+            .expect("create session");
+        let snapshot = create_inline_snapshot(
+            blobs.as_ref(),
+            CreateInlineSnapshotRequest::new(vec![
+                InlineFile::new(
+                    "deploy-review/SKILL.md",
+                    b"---\nname: deploy-review\ndescription: Use when reviewing deploys.\n---\n\nBody\n"
+                        .to_vec(),
+                )
+                .unwrap(),
+            ]),
+        )
+        .await
+        .expect("create snapshot");
+        vfs.put_mount(VfsMountRecord {
+            session_id: session_id.clone(),
+            mount_path: VfsPath::parse("/skills/system").unwrap(),
+            source: VfsMountSource::Snapshot {
+                snapshot_ref: snapshot.snapshot_ref.clone(),
+            },
+            access: VfsMountAccess::ReadOnly,
+        })
+        .await
+        .expect("mount skills");
+        let runner = SessionRunner::new(
+            stores,
+            Arc::new(ToolThenFinalLlm {
+                calls: Mutex::new(0),
+            }),
+        );
+        runner
+            .drive_command(DriveCommand {
+                session_id: session_id.clone(),
+                observed_at_ms: 10,
+                command: CoreAgentCommand::OpenSession { config: config() },
+                max_steps: None,
+            })
+            .await
+            .expect("open session");
+
+        let outcome = runner
+            .drive_command(DriveCommand {
+                session_id: session_id.clone(),
+                observed_at_ms: 20,
+                command: CoreAgentCommand::RequestRun {
+                    submission_id: None,
+                    input_ref: BlobRef::from_bytes(b"input"),
+                    run_config: run_config(),
+                },
+                max_steps: Some(64),
+            })
+            .await
+            .expect("drive request");
+
+        let catalog_ref = outcome
+            .state
+            .skills
+            .catalog
+            .as_ref()
+            .expect("skill catalog")
+            .catalog_ref
+            .clone();
+        let catalog: SkillCatalogSnapshot =
+            serde_json::from_slice(&blobs.read_bytes(&catalog_ref).await.expect("read catalog"))
+                .expect("decode catalog");
+
+        assert_eq!(catalog.skills.len(), 1);
+        assert_eq!(catalog.skills[0].name, "deploy-review");
+        assert!(matches!(
+            &catalog.skills[0].location,
+            SkillLocation::MountedSnapshot {
+                source_snapshot_ref,
+                source_mount_path,
+                skill_doc_path,
+                ..
+            } if source_snapshot_ref == &snapshot.snapshot_ref
+                && source_mount_path.as_str() == "/skills/system"
+                && skill_doc_path.as_str() == "/skills/system/deploy-review/SKILL.md"
+        ));
+        assert!(outcome.emitted_entries.iter().any(|entry| {
+            matches!(
+                &entry.event.kind,
+                CoreAgentEventKind::Skill(engine::SkillEvent::CatalogSet { catalog: Some(_) })
+            )
+        }));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn llm_io_error_is_recorded_and_drive_can_continue() {
         let (runner, session_id) = runner_with(Arc::new(FailOnceLlm {
             calls: Mutex::new(0),
@@ -532,9 +879,9 @@ mod tests {
             .await
             .expect("open session");
 
-        let outcome = runner
+        let failed = runner
             .drive_command(DriveCommand {
-                session_id,
+                session_id: session_id.clone(),
                 observed_at_ms: 20,
                 command: CoreAgentCommand::RequestRun {
                     submission_id: None,
@@ -546,9 +893,9 @@ mod tests {
             .await
             .expect("drive request");
 
-        assert_eq!(outcome.quiescence, RunnerQuiescence::Idle);
-        assert_eq!(outcome.state.runs.completed[0].status, RunStatus::Completed);
-        assert!(outcome.emitted_entries.iter().any(|entry| {
+        assert_eq!(failed.quiescence, RunnerQuiescence::Idle);
+        assert_eq!(failed.state.runs.completed[0].status, RunStatus::Failed);
+        assert!(failed.emitted_entries.iter().any(|entry| {
             matches!(
                 &entry.event.kind,
                 CoreAgentEventKind::Turn(TurnEvent::Completed {
@@ -559,6 +906,26 @@ mod tests {
                 })
             )
         }));
+
+        let completed = runner
+            .drive_command(DriveCommand {
+                session_id,
+                observed_at_ms: 30,
+                command: CoreAgentCommand::RequestRun {
+                    submission_id: None,
+                    input_ref: BlobRef::from_bytes(b"input-2"),
+                    run_config: run_config(),
+                },
+                max_steps: Some(32),
+            })
+            .await
+            .expect("drive follow-up request");
+
+        assert_eq!(completed.quiescence, RunnerQuiescence::Idle);
+        assert_eq!(
+            completed.state.runs.completed[1].status,
+            RunStatus::Completed
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

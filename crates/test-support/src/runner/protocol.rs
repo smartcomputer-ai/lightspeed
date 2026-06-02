@@ -5,6 +5,7 @@ use engine::{
     storage::{BlobStore, SessionStore},
 };
 use serde::{Deserialize, Serialize};
+use vfs::{VfsMountStore, VfsWorkspaceStore};
 
 pub const DEFAULT_MAX_STEPS: u32 = 128;
 
@@ -12,11 +13,28 @@ pub const DEFAULT_MAX_STEPS: u32 = 128;
 pub struct RunnerStores {
     pub sessions: Arc<dyn SessionStore>,
     pub blobs: Arc<dyn BlobStore>,
+    pub vfs_workspace_store: Option<Arc<dyn VfsWorkspaceStore>>,
+    pub vfs_mount_store: Option<Arc<dyn VfsMountStore>>,
 }
 
 impl RunnerStores {
     pub fn new(sessions: Arc<dyn SessionStore>, blobs: Arc<dyn BlobStore>) -> Self {
-        Self { sessions, blobs }
+        Self {
+            sessions,
+            blobs,
+            vfs_workspace_store: None,
+            vfs_mount_store: None,
+        }
+    }
+
+    pub fn with_vfs_catalog(
+        mut self,
+        workspace_store: Arc<dyn VfsWorkspaceStore>,
+        mount_store: Arc<dyn VfsMountStore>,
+    ) -> Self {
+        self.vfs_workspace_store = Some(workspace_store);
+        self.vfs_mount_store = Some(mount_store);
+        self
     }
 }
 
