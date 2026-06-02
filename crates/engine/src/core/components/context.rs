@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     BlobRef, ContextItemId, CoreAgentEventKind, CoreAgentEventProposal, CoreAgentJoins,
     CoreAgentState, CoreAgentStatus, DomainError, PlanNext, PlanningError, ProviderApiKind, RunId,
-    RunStatus, SkillId, ToolCallId, ToolName, TurnId,
+    RunStatus, SkillActivation, SkillActivationSource, SkillId, ToolCallId, ToolName, TurnId,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -234,6 +234,17 @@ impl PlanNext for CoreContextPlanner {
             return Ok(Vec::new());
         }
 
+        if let Some(item) = missing_skill_catalog_item(state)? {
+            let joins = CoreAgentJoins {
+                run_id: Some(active_run.run_id),
+                ..CoreAgentJoins::default()
+            };
+            return Ok(vec![CoreAgentEventProposal::new(
+                joins,
+                CoreAgentEventKind::Context(Event::ItemsRecorded { items: vec![item] }),
+            )]);
+        }
+
         if !state.context.retained_items.iter().any(|item| {
             matches!(
                 item.source,
@@ -272,6 +283,20 @@ impl PlanNext for CoreContextPlanner {
             )]);
         }
 
+        let activation_items = missing_direct_activation_items(state)?;
+        if !activation_items.is_empty() {
+            let joins = CoreAgentJoins {
+                run_id: Some(active_run.run_id),
+                ..CoreAgentJoins::default()
+            };
+            return Ok(vec![CoreAgentEventProposal::new(
+                joins,
+                CoreAgentEventKind::Context(Event::ItemsRecorded {
+                    items: activation_items,
+                }),
+            )]);
+        }
+
         let Some(turn_id) = active_run.active_turn_id else {
             return Ok(Vec::new());
         };
@@ -285,12 +310,7 @@ impl PlanNext for CoreContextPlanner {
             )
             .into());
         };
-        let item_ids = state
-            .context
-            .retained_items
-            .iter()
-            .map(|item| item.item_id)
-            .collect::<Vec<_>>();
+        let item_ids = planned_context_item_ids(state);
         if item_ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -314,6 +334,122 @@ impl PlanNext for CoreContextPlanner {
             }),
         )])
     }
+}
+
+fn missing_skill_catalog_item(state: &CoreAgentState) -> Result<Option<ContextItem>, DomainError> {
+    let Some(catalog) = state.skills.catalog.as_ref() else {
+        return Ok(None);
+    };
+    if current_catalog_item(state).is_some() {
+        return Ok(None);
+    }
+    Ok(Some(ContextItem {
+        item_id: next_context_item_id(state, 1)?,
+        kind: ContextItemKind::SkillCatalog,
+        source: ContextItemSource::Runtime {
+            label: "skills.catalog".to_owned(),
+        },
+        native_item_ref: catalog.catalog_ref.clone(),
+        media_type: None,
+        preview: None,
+        provider_kind: None,
+        provider_item_id: None,
+        token_estimate: None,
+    }))
+}
+
+fn missing_direct_activation_items(
+    state: &CoreAgentState,
+) -> Result<Vec<ContextItem>, DomainError> {
+    let mut items = Vec::new();
+    for activation in &state.skills.activations {
+        if !matches!(activation.source, SkillActivationSource::Direct) {
+            continue;
+        }
+        if activation_context_is_retained(state, activation) {
+            continue;
+        }
+
+        items.push(ContextItem {
+            item_id: next_context_item_id(state, items.len() as u64 + 1)?,
+            kind: ContextItemKind::SkillActivation {
+                skill_id: activation.skill_id.clone(),
+            },
+            source: ContextItemSource::Runtime {
+                label: "skills.activation".to_owned(),
+            },
+            native_item_ref: activation.context_ref.clone(),
+            media_type: None,
+            preview: None,
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        });
+    }
+    Ok(items)
+}
+
+fn next_context_item_id(
+    state: &CoreAgentState,
+    offset_from_next: u64,
+) -> Result<ContextItemId, DomainError> {
+    let next_item_id = state
+        .id_cursors
+        .last_context_item_id
+        .checked_add(offset_from_next)
+        .ok_or_else(|| {
+            DomainError::InvariantViolation("context item id cursor exhausted".to_owned())
+        })?;
+    Ok(ContextItemId::new(next_item_id))
+}
+
+fn planned_context_item_ids(state: &CoreAgentState) -> Vec<ContextItemId> {
+    let mut item_ids = Vec::new();
+    if let Some(catalog) = current_catalog_item(state) {
+        item_ids.push(catalog.item_id);
+    }
+
+    for item in &state.context.retained_items {
+        match &item.kind {
+            ContextItemKind::SkillCatalog => {}
+            ContextItemKind::SkillActivation { skill_id } => {
+                if active_activation_for_item(state, skill_id, &item.native_item_ref).is_some() {
+                    item_ids.push(item.item_id);
+                }
+            }
+            _ => item_ids.push(item.item_id),
+        }
+    }
+
+    item_ids
+}
+
+fn current_catalog_item(state: &CoreAgentState) -> Option<&ContextItem> {
+    let catalog_ref = &state.skills.catalog.as_ref()?.catalog_ref;
+    state.context.retained_items.iter().find(|item| {
+        matches!(item.kind, ContextItemKind::SkillCatalog) && &item.native_item_ref == catalog_ref
+    })
+}
+
+fn activation_context_is_retained(state: &CoreAgentState, activation: &SkillActivation) -> bool {
+    state.context.retained_items.iter().any(|item| {
+        &item.native_item_ref == &activation.context_ref
+            && match &item.kind {
+                ContextItemKind::SkillActivation { skill_id } => skill_id == &activation.skill_id,
+                ContextItemKind::ToolResult { .. } => true,
+                _ => false,
+            }
+    })
+}
+
+fn active_activation_for_item<'a>(
+    state: &'a CoreAgentState,
+    skill_id: &SkillId,
+    context_ref: &BlobRef,
+) -> Option<&'a SkillActivation> {
+    state.skills.activations.iter().find(|activation| {
+        &activation.skill_id == skill_id && &activation.context_ref == context_ref
+    })
 }
 
 pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(), DomainError> {

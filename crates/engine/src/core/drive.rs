@@ -424,10 +424,11 @@ mod tests {
     use super::*;
     use crate::{
         BlobRef, CommandRejectionKind, ContextConfig, ContextConfigPatch, ContextItemSource,
-        CoreAgentCommand, LlmGenerationFacts, ModelProviderOptions, ModelSelection,
+        CoreAgentCommand, LlmGenerationFacts, LlmRequestKind, ModelProviderOptions, ModelSelection,
         OptionalConfigPatch, ProviderApiKind, ProviderRequestDefaults, RunConfig, RunFailureKind,
         RunStatus, SessionConfig, SessionConfigPatch, SkillActivation, SkillActivationScope,
-        SkillActivationSource, SkillId, TurnConfig, TurnConfigPatch,
+        SkillActivationSource, SkillCatalogContext, SkillId, ToolCallId, TurnConfig,
+        TurnConfigPatch,
     };
 
     fn config() -> SessionConfig {
@@ -498,6 +499,45 @@ mod tests {
             })
             .collect::<Vec<_>>();
         drive.resume_appended(entries).expect("resume appended")
+    }
+
+    fn open_session(drive: &mut CoreAgentDrive) {
+        let open = drive
+            .admit_command(CoreAgentCommand::OpenSession { config: config() }, 10)
+            .expect("open");
+        commit_action(drive, open);
+    }
+
+    fn request_run(drive: &mut CoreAgentDrive, input_ref: BlobRef) {
+        let request = drive
+            .admit_command(
+                CoreAgentCommand::RequestRun {
+                    submission_id: None,
+                    input_ref,
+                    run_config: run_config(),
+                },
+                20,
+            )
+            .expect("request run");
+        commit_action(drive, request);
+    }
+
+    fn drive_until_generate(drive: &mut CoreAgentDrive) -> LlmGenerationRequest {
+        for observed_at_ms in 21..80 {
+            let action = drive.next_action(observed_at_ms, 64).expect("next action");
+            if let CoreAgentAction::GenerateLlm { request } = action {
+                return request;
+            }
+            commit_action(drive, action);
+        }
+        panic!("drive did not emit an LLM action");
+    }
+
+    fn openai_items(request: &LlmGenerationRequest) -> &[crate::ContextItem] {
+        let LlmRequestKind::OpenAiResponses(openai) = &request.request.kind else {
+            panic!("expected OpenAI Responses request");
+        };
+        &openai.input_window.items
     }
 
     #[test]
@@ -677,6 +717,170 @@ mod tests {
             panic!("expected rejected command");
         };
         assert_eq!(rejection.kind, CommandRejectionKind::ActiveWork);
+    }
+
+    #[test]
+    fn skill_catalog_and_direct_activation_are_planned_in_cache_preserving_order() {
+        let session_id = SessionId::new("session-a");
+        let mut drive =
+            CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+        open_session(&mut drive);
+
+        let catalog_ref = BlobRef::from_bytes(b"catalog");
+        let set_catalog = drive
+            .admit_command(
+                CoreAgentCommand::SetSkillCatalog {
+                    catalog: Some(SkillCatalogContext {
+                        catalog_ref: catalog_ref.clone(),
+                    }),
+                },
+                20,
+            )
+            .expect("set skill catalog");
+        commit_action(&mut drive, set_catalog);
+
+        let skill_id = SkillId::new("skill-1");
+        let activation_ref = BlobRef::from_bytes(b"skill body");
+        let activation = SkillActivation {
+            skill_id: skill_id.clone(),
+            catalog_ref: catalog_ref.clone(),
+            context_ref: activation_ref.clone(),
+            source: SkillActivationSource::Direct,
+            scope: SkillActivationScope::Run,
+        };
+        let set_activations = drive
+            .admit_command(
+                CoreAgentCommand::SetSkillActivations {
+                    activations: vec![activation],
+                },
+                21,
+            )
+            .expect("set skill activations");
+        commit_action(&mut drive, set_activations);
+
+        let input_ref = BlobRef::from_bytes(b"input");
+        request_run(&mut drive, input_ref.clone());
+
+        let request = drive_until_generate(&mut drive);
+        assert_eq!(request.session_id, session_id);
+        let items = openai_items(&request);
+        assert_eq!(items.len(), 3);
+        assert!(matches!(items[0].kind, ContextItemKind::SkillCatalog));
+        assert_eq!(items[0].native_item_ref, catalog_ref);
+        assert!(matches!(
+            items[1].kind,
+            ContextItemKind::Message {
+                role: ContextMessageRole::User
+            }
+        ));
+        assert_eq!(items[1].native_item_ref, input_ref);
+        assert!(matches!(
+            &items[2].kind,
+            ContextItemKind::SkillActivation { skill_id: planned } if planned == &skill_id
+        ));
+        assert_eq!(items[2].native_item_ref, activation_ref);
+    }
+
+    #[test]
+    fn tool_call_skill_activation_does_not_create_parallel_skill_context_item() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        open_session(&mut drive);
+
+        let activation = SkillActivation {
+            skill_id: SkillId::new("skill-1"),
+            catalog_ref: BlobRef::from_bytes(b"catalog"),
+            context_ref: BlobRef::from_bytes(b"skill body"),
+            source: SkillActivationSource::ToolCall {
+                call_id: ToolCallId::new("call-1"),
+            },
+            scope: SkillActivationScope::Run,
+        };
+        let set_activations = drive
+            .admit_command(
+                CoreAgentCommand::SetSkillActivations {
+                    activations: vec![activation],
+                },
+                20,
+            )
+            .expect("set skill activations");
+        commit_action(&mut drive, set_activations);
+
+        let input_ref = BlobRef::from_bytes(b"input");
+        request_run(&mut drive, input_ref.clone());
+
+        let request = drive_until_generate(&mut drive);
+        let items = openai_items(&request);
+        assert_eq!(items.len(), 1);
+        assert!(matches!(
+            items[0].kind,
+            ContextItemKind::Message {
+                role: ContextMessageRole::User
+            }
+        ));
+        assert_eq!(items[0].native_item_ref, input_ref);
+    }
+
+    #[test]
+    fn run_scoped_skill_activations_expire_when_run_completes() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        open_session(&mut drive);
+
+        let activation = SkillActivation {
+            skill_id: SkillId::new("skill-1"),
+            catalog_ref: BlobRef::from_bytes(b"catalog"),
+            context_ref: BlobRef::from_bytes(b"skill body"),
+            source: SkillActivationSource::Direct,
+            scope: SkillActivationScope::Run,
+        };
+        let set_activations = drive
+            .admit_command(
+                CoreAgentCommand::SetSkillActivations {
+                    activations: vec![activation],
+                },
+                20,
+            )
+            .expect("set skill activations");
+        commit_action(&mut drive, set_activations);
+
+        request_run(&mut drive, BlobRef::from_bytes(b"input"));
+        let llm_request = drive_until_generate(&mut drive);
+        let resumed = drive
+            .resume_generation(
+                LlmGenerationResult {
+                    run_id: llm_request.run_id,
+                    turn_id: llm_request.turn_id,
+                    status: LlmGenerationStatus::Succeeded,
+                    failure_ref: None,
+                    context_items: Vec::new(),
+                    facts: LlmGenerationFacts {
+                        provider_response_id: Some("resp-1".to_owned()),
+                        finish: LlmFinish::Stop,
+                        usage: None,
+                        tool_calls: Vec::new(),
+                        context_token_estimate: None,
+                        compaction: None,
+                    },
+                },
+                30,
+            )
+            .expect("resume generation");
+        commit_action(&mut drive, resumed);
+
+        let complete_run = drive.next_action(31, 64).expect("complete run");
+        commit_action(&mut drive, complete_run);
+
+        assert!(drive.state().skills.activations.is_empty());
+
+        request_run(&mut drive, BlobRef::from_bytes(b"next input"));
+        let next_request = drive_until_generate(&mut drive);
+        let next_items = openai_items(&next_request);
+        assert!(
+            next_items
+                .iter()
+                .all(|item| !matches!(item.kind, ContextItemKind::SkillActivation { .. }))
+        );
     }
 
     #[test]

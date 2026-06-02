@@ -8,10 +8,14 @@
   and active run/session-scoped activation records.
 - First-cut engine command/event/reducer wiring is implemented for setting the
   active skill catalog and replacing active skill activations.
+- The engine context planner now inserts the active skill catalog in the stable
+  request prefix, inserts direct activation items without top-prepending them,
+  avoids parallel context items for tool-call activations, and expires
+  run-scoped activations when the run completes.
 - OpenAI Responses can lower already-recorded skill context items as developer
   messages; API projection exposes minimal skill state events.
-- Discovery, catalog rendering, automatic context planning, activation
-  behavior, and public API methods are not implemented.
+- Discovery, catalog rendering, model-selected activation from VFS reads, and
+  public API methods are not implemented.
 - The first implementation is skill-specific. Do not introduce a generic
   `RuntimeContext` abstraction until there is a second concrete use case.
 

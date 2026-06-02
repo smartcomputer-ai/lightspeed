@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     ActiveToolBatch, BlobRef, CompletedToolBatch, CoreAgentEventKind, CoreAgentEventProposal,
     CoreAgentJoins, CoreAgentState, CoreAgentStatus, DomainError, PlanNext, PlanningError,
-    RunConfig, RunId, SubmissionId, ToolBatchId, TurnId, TurnOutcome, TurnState, TurnStatus,
+    RunConfig, RunId, SkillActivationScope, SubmissionId, ToolBatchId, TurnId, TurnOutcome,
+    TurnState, TurnStatus,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -456,5 +457,9 @@ fn finish_active_run(
         output_ref,
         failure,
     });
+    state
+        .skills
+        .activations
+        .retain(|activation| activation.scope != SkillActivationScope::Run);
     Ok(())
 }
