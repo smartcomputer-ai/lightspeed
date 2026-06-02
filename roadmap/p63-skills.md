@@ -12,8 +12,9 @@
   request prefix, inserts direct activation items without top-prepending them,
   avoids parallel context items for tool-call activations, and expires
   run-scoped activations when the run completes.
-- OpenAI Responses can lower already-recorded skill context items as developer
-  messages; API projection exposes minimal skill state events.
+- OpenAI Responses lowers already-recorded skill context items as explicit
+  developer messages, with runtime tests covering catalog and activation
+  materialization; API projection exposes minimal skill state events.
 - Discovery, catalog rendering, model-selected activation from VFS reads, and
   public API methods are not implemented.
 - The first implementation is skill-specific. Do not introduce a generic

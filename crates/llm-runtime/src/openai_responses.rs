@@ -5,8 +5,8 @@ use engine::{
     BlobRef, ContextItem, ContextItemKind, ContextItemSource, ContextMessageRole, LlmFinish,
     LlmGenerationFacts, LlmGenerationRequest, LlmGenerationResult, LlmGenerationStatus,
     LlmRequestKind, LlmUsage, ObservedToolCall, OpenAiResponsesRequest, OpenAiResponsesToolChoice,
-    ProviderApiKind, ProviderNativeToolExecution, TokenEstimate, TokenEstimateQuality, ToolCallId,
-    ToolKind, ToolName, ToolSpec, UncommittedContextItem, storage::BlobStore,
+    ProviderApiKind, ProviderNativeToolExecution, SkillId, TokenEstimate, TokenEstimateQuality,
+    ToolCallId, ToolKind, ToolName, ToolSpec, UncommittedContextItem, storage::BlobStore,
 };
 use llm_clients::{ApiResponse, openai::responses as oai};
 use serde_json::Value;
@@ -180,11 +180,21 @@ async fn materialize_input_item(
                 },
             ))
         }
-        ContextItemKind::SkillCatalog | ContextItemKind::SkillActivation { .. } => {
+        ContextItemKind::SkillCatalog => {
             let text = read_text(blobs, &item.native_item_ref).await?;
             Ok(oai::ResponseInputItem::Message(oai::InputMessage {
                 role: oai::MessageRole::Developer,
-                content: oai::InputMessageContent::Text(text),
+                content: oai::InputMessageContent::Text(openai_skill_catalog_text(text)),
+                extra: Default::default(),
+            }))
+        }
+        ContextItemKind::SkillActivation { skill_id } => {
+            let text = read_text(blobs, &item.native_item_ref).await?;
+            Ok(oai::ResponseInputItem::Message(oai::InputMessage {
+                role: oai::MessageRole::Developer,
+                content: oai::InputMessageContent::Text(openai_skill_activation_text(
+                    skill_id, text,
+                )),
                 extra: Default::default(),
             }))
         }
@@ -199,6 +209,14 @@ async fn materialize_input_item(
 
 fn is_openai_raw_item(item: &ContextItem) -> bool {
     item.media_type.as_deref() == Some(MEDIA_TYPE_JSON)
+}
+
+fn openai_skill_catalog_text(text: String) -> String {
+    format!("Forge skill catalog:\n\n{text}")
+}
+
+fn openai_skill_activation_text(skill_id: &SkillId, text: String) -> String {
+    format!("Forge loaded skill ({skill_id}):\n\n{text}")
 }
 
 async fn materialize_tools(
@@ -768,6 +786,107 @@ mod tests {
                 "context_management": { "strategy": "none" },
                 "max_tool_calls": 4
             })
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn materialize_create_request_maps_skill_context_as_developer_messages() {
+        let blobs = InMemoryBlobStore::new();
+        let catalog_ref = text_blob(&blobs, "- deploy-review: Review deployment risk.").await;
+        let input_ref = text_blob(&blobs, "Review this rollout.").await;
+        let activation_ref = text_blob(
+            &blobs,
+            "# Deploy Review\n\nCheck rollout scope, blast radius, and rollback plan.",
+        )
+        .await;
+
+        let catalog_item = ContextItem {
+            item_id: ContextItemId::new(1),
+            kind: ContextItemKind::SkillCatalog,
+            source: ContextItemSource::Runtime {
+                label: "skills.catalog".to_string(),
+            },
+            native_item_ref: catalog_ref,
+            media_type: None,
+            preview: None,
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        };
+        let user_item = ContextItem {
+            item_id: ContextItemId::new(2),
+            kind: ContextItemKind::Message {
+                role: ContextMessageRole::User,
+            },
+            source: ContextItemSource::RunInput {
+                run_id: RunId::new(1),
+            },
+            native_item_ref: input_ref,
+            media_type: None,
+            preview: None,
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        };
+        let activation_item = ContextItem {
+            item_id: ContextItemId::new(3),
+            kind: ContextItemKind::SkillActivation {
+                skill_id: SkillId::new("skill:deploy-review"),
+            },
+            source: ContextItemSource::Runtime {
+                label: "skills.activation".to_string(),
+            },
+            native_item_ref: activation_ref,
+            media_type: None,
+            preview: None,
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        };
+        let request = OpenAiResponsesRequest {
+            instructions_ref: None,
+            input_window: ResolvedContextWindow {
+                api_kind: ProviderApiKind::OpenAiResponses,
+                items: vec![catalog_item, user_item, activation_item],
+                token_estimate: None,
+            },
+            previous_response_id: None,
+            tools: Vec::new(),
+            tool_choice: None,
+            reasoning: None,
+            text: None,
+            include: Vec::new(),
+            max_output_tokens: None,
+            max_tool_calls: None,
+            temperature: None,
+            top_p: None,
+            metadata: BTreeMap::new(),
+            parallel_tool_calls: None,
+            store: None,
+            stream: None,
+            truncation: None,
+            context_management: None,
+            extra: BTreeMap::new(),
+        };
+
+        let materialized = materialize_create_request(&blobs, &request, "gpt-5.1")
+            .await
+            .expect("materialize");
+        let value = serde_json::to_value(materialized).expect("json");
+
+        assert_eq!(
+            value["input"],
+            json!([
+                {
+                    "role": "developer",
+                    "content": "Forge skill catalog:\n\n- deploy-review: Review deployment risk."
+                },
+                { "role": "user", "content": "Review this rollout." },
+                {
+                    "role": "developer",
+                    "content": "Forge loaded skill (skill:deploy-review):\n\n# Deploy Review\n\nCheck rollout scope, blast radius, and rollback plan."
+                }
+            ])
         );
     }
 
