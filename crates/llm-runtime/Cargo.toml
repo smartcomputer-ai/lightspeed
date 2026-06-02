@@ -13,4 +13,6 @@ thiserror = "1"
 tools = { path = "../tools" }
 
 [dev-dependencies]
+test-support = { path = "../test-support" }
 tokio = { version = "1", features = ["macros", "rt"] }
+vfs = { path = "../vfs" }

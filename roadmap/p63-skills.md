@@ -41,6 +41,10 @@
   reads of cataloged `SKILL.md` files and records run-scoped
   `SkillActivationSource::ToolResult` activations without duplicating the tool
   result body.
+- An ignored OpenAI Responses live contract test covers multi-skill selection:
+  the model must read the matching cataloged skill, avoid decoys, trigger the
+  corresponding activation event, and use a hidden marker from the loaded skill
+  body.
 - Anthropic catalog rendering and public API methods are not implemented.
 - The first implementation is skill-specific. Do not introduce a generic
   `RuntimeContext` abstraction until there is a second concrete use case.
@@ -1789,9 +1793,10 @@ Essential.
   workspace-head or snapshot provenance for the read.
 - Add model-selected activations to `SkillState.activations` when the loaded
   skill body should remain eligible for planning.
-- First-cut tests cover direct recognizer matching and runtime activation from
-  a mounted VFS `read_file` result. Add follow-up tests that activation/read
-  pins skill content even if the source changes after the catalog snapshot.
+- First-cut tests cover direct recognizer matching, runtime activation from a
+  mounted VFS `read_file` result, pinned workspace read output after source
+  changes, and an ignored OpenAI Responses live contract test with multiple
+  cataloged skills and decoys.
 
 ### G5: Explicit User Activation And Deactivation
 

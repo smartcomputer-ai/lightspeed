@@ -1681,9 +1681,11 @@ dependencies = [
  "llm-clients",
  "serde",
  "serde_json",
+ "test-support",
  "thiserror 1.0.69",
  "tokio",
  "tools",
+ "vfs",
 ]
 
 [[package]]
