@@ -25,8 +25,13 @@
 - First-cut `tools` skill catalog models, frontmatter parser, and generic
   `FileSystem` catalog builder are implemented with runtime build
   fingerprints.
-- Runtime catalog publication, catalog rendering, model-selected activation
-  from file reads, and public API methods are not implemented.
+- First-cut runtime catalog publication helper is implemented: rebuild the
+  semantic catalog, compare `catalog_ref` to `CoreAgentState.skills.catalog`,
+  and emit `SetSkillCatalog` only when the model-visible catalog changed.
+- OpenAI Responses now renders semantic skill catalog blobs into provider
+  developer messages at materialization time.
+- Catalog root wiring, model-selected activation from file reads, Anthropic
+  catalog rendering, and public API methods are not implemented.
 - The first implementation is skill-specific. Do not introduce a generic
   `RuntimeContext` abstraction until there is a second concrete use case.
 
@@ -1730,6 +1735,11 @@ Essential.
 - Record the catalog ref in `SkillState.catalog` before a run starts.
 - Reinsert the configured catalog context after compaction from the pinned
   catalog ref, not through the compaction summary.
+
+First-cut implementation status: `tools::skills::prepare_skill_catalog_publication`
+builds the semantic catalog, returns runtime build metadata, and prepares a
+`SetSkillCatalog` command only when the rebuilt semantic `catalog_ref` differs
+from core state. Root discovery/wiring into sessions is still pending.
 
 ### G4: Model-Selected Activation Through File Reads
 

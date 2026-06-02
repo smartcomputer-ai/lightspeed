@@ -10,6 +10,7 @@ use engine::{
 };
 use llm_clients::{ApiResponse, openai::responses as oai};
 use serde_json::Value;
+use tools::skills::{SkillCatalogSnapshot, SkillLocation, SkillMetadata};
 
 use crate::{
     blob_io::{put_json, put_text, read_json, read_text},
@@ -181,10 +182,10 @@ async fn materialize_input_item(
             ))
         }
         ContextItemKind::SkillCatalog => {
-            let text = read_text(blobs, &item.native_item_ref).await?;
+            let catalog = read_skill_catalog(blobs, &item.native_item_ref).await?;
             Ok(oai::ResponseInputItem::Message(oai::InputMessage {
                 role: oai::MessageRole::Developer,
-                content: oai::InputMessageContent::Text(openai_skill_catalog_text(text)),
+                content: oai::InputMessageContent::Text(openai_skill_catalog_text(&catalog)),
                 extra: Default::default(),
             }))
         }
@@ -211,8 +212,57 @@ fn is_openai_raw_item(item: &ContextItem) -> bool {
     item.media_type.as_deref() == Some(MEDIA_TYPE_JSON)
 }
 
-fn openai_skill_catalog_text(text: String) -> String {
-    format!("Forge skill catalog:\n\n{text}")
+async fn read_skill_catalog(
+    blobs: &dyn BlobStore,
+    blob_ref: &BlobRef,
+) -> LlmAdapterResult<SkillCatalogSnapshot> {
+    let bytes = blobs.read_bytes(blob_ref).await?;
+    serde_json::from_slice(&bytes).map_err(|error| LlmAdapterError::InvalidJson {
+        blob_ref: blob_ref.clone(),
+        message: error.to_string(),
+    })
+}
+
+fn openai_skill_catalog_text(catalog: &SkillCatalogSnapshot) -> String {
+    let mut text = String::from("Forge skill catalog:\n\n");
+    if catalog.skills.is_empty() {
+        text.push_str("No Forge skills are currently available.");
+        return text;
+    }
+
+    text.push_str(
+        "When a skill is relevant, read its SKILL.md through the available file tool before following it.\n\n",
+    );
+    for skill in &catalog.skills {
+        text.push_str(&openai_skill_catalog_entry(skill));
+    }
+    text
+}
+
+fn openai_skill_catalog_entry(skill: &SkillMetadata) -> String {
+    let mut entry = format!(
+        "- {} ({})\n  description: {}\n  skill_doc_path: {}",
+        skill.name,
+        skill.skill_id,
+        skill.description,
+        skill_doc_path(&skill.location)
+    );
+    if let Some(target) = &skill.target {
+        entry.push_str(&format!("\n  target: {}:{}", target.namespace, target.id));
+    }
+    if let Some(short_description) = &skill.short_description {
+        entry.push_str(&format!("\n  short_description: {short_description}"));
+    }
+    entry.push('\n');
+    entry
+}
+
+fn skill_doc_path(location: &SkillLocation) -> &str {
+    match location {
+        SkillLocation::MountedSnapshot { skill_doc_path, .. }
+        | SkillLocation::MountedWorkspace { skill_doc_path, .. } => skill_doc_path.as_str(),
+        SkillLocation::HostFilesystem { skill_doc_path, .. } => skill_doc_path,
+    }
 }
 
 fn openai_skill_activation_text(skill_id: &SkillId, text: String) -> String {
@@ -630,10 +680,13 @@ mod tests {
     use engine::{
         ContextItemId, CoreAgentLlm, FunctionToolSpec, LlmGenerationRequest, LlmRequest,
         ModelProviderOptions, ModelSelection, OpenAiReasoningConfig, ResolvedContextWindow, RunId,
-        SessionId, ToolParallelism, TurnId, storage::InMemoryBlobStore,
+        SessionId, ToolExecutionTarget, ToolParallelism, TurnId, storage::InMemoryBlobStore,
     };
     use llm_clients::HeaderSnapshot;
     use serde_json::json;
+    use tools::skills::{
+        SKILL_CATALOG_SCHEMA_VERSION, SkillDependencies, SkillScope, SkillSource, SkillTrustLevel,
+    };
 
     use super::*;
     use crate::executor::{LlmAdapterRegistry, LlmRuntime};
@@ -792,7 +845,41 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn materialize_create_request_maps_skill_context_as_developer_messages() {
         let blobs = InMemoryBlobStore::new();
-        let catalog_ref = text_blob(&blobs, "- deploy-review: Review deployment risk.").await;
+        let target = ToolExecutionTarget::new("host", "vm-1");
+        let skill_id = SkillId::new("skill:deploy-review");
+        let catalog_ref = crate::blob_io::put_json(
+            &blobs,
+            &SkillCatalogSnapshot {
+                schema_version: SKILL_CATALOG_SCHEMA_VERSION.to_string(),
+                target: Some(target.clone()),
+                skills: vec![SkillMetadata {
+                    skill_id: skill_id.clone(),
+                    name: "deploy-review".to_string(),
+                    description: "Review deployment risk.".to_string(),
+                    short_description: None,
+                    source: SkillSource::HostPath {
+                        root_id: "host".to_string(),
+                        target: target.clone(),
+                    },
+                    scope: SkillScope::Target,
+                    target: Some(target.clone()),
+                    enabled: true,
+                    trust: SkillTrustLevel::Host,
+                    interface: None,
+                    dependencies: SkillDependencies::default(),
+                    location: SkillLocation::HostFilesystem {
+                        target,
+                        root_path: "/skills".to_string(),
+                        skill_dir_path: "/skills/deploy-review".to_string(),
+                        skill_doc_path: "/skills/deploy-review/SKILL.md".to_string(),
+                    },
+                    skill_doc_ref: None,
+                }],
+                warnings: Vec::new(),
+            },
+        )
+        .await
+        .expect("catalog");
         let input_ref = text_blob(&blobs, "Review this rollout.").await;
         let activation_ref = text_blob(
             &blobs,
@@ -831,7 +918,7 @@ mod tests {
         let activation_item = ContextItem {
             item_id: ContextItemId::new(3),
             kind: ContextItemKind::SkillActivation {
-                skill_id: SkillId::new("skill:deploy-review"),
+                skill_id: skill_id.clone(),
             },
             source: ContextItemSource::Runtime {
                 label: "skills.activation".to_string(),
@@ -879,7 +966,7 @@ mod tests {
             json!([
                 {
                     "role": "developer",
-                    "content": "Forge skill catalog:\n\n- deploy-review: Review deployment risk."
+                    "content": "Forge skill catalog:\n\nWhen a skill is relevant, read its SKILL.md through the available file tool before following it.\n\n- deploy-review (skill:deploy-review)\n  description: Review deployment risk.\n  skill_doc_path: /skills/deploy-review/SKILL.md\n  target: host:vm-1\n"
                 },
                 { "role": "user", "content": "Review this rollout." },
                 {

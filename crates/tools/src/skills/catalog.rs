@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 
 use engine::{
-    BlobRef, SkillId, ToolExecutionTarget,
+    BlobRef, CoreAgentCommand, CoreAgentState, SkillCatalogContext, SkillId, ToolExecutionTarget,
     storage::{BlobStore, BlobStoreError},
 };
 use serde::Serialize;
@@ -33,6 +33,12 @@ pub struct SkillCatalogBuild {
     pub catalog: SkillCatalogSnapshot,
     pub catalog_bytes: Vec<u8>,
     pub build_record: SkillCatalogBuildRecord,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SkillCatalogPublication {
+    pub build: SkillCatalogBuild,
+    pub command: Option<CoreAgentCommand>,
 }
 
 #[derive(Debug, Error)]
@@ -112,6 +118,31 @@ pub async fn build_skill_catalog(
         catalog_bytes,
         build_record,
     })
+}
+
+pub async fn prepare_skill_catalog_publication(
+    blobs: &dyn BlobStore,
+    state: &CoreAgentState,
+    target: Option<ToolExecutionTarget>,
+    roots: &[SkillCatalogRootInput<'_>],
+) -> Result<SkillCatalogPublication, SkillCatalogError> {
+    let build = build_skill_catalog(blobs, target, roots).await?;
+    let command = if state
+        .skills
+        .catalog
+        .as_ref()
+        .is_some_and(|catalog| catalog.catalog_ref == build.catalog_ref)
+    {
+        None
+    } else {
+        Some(CoreAgentCommand::SetSkillCatalog {
+            catalog: Some(SkillCatalogContext {
+                catalog_ref: build.catalog_ref.clone(),
+            }),
+        })
+    };
+
+    Ok(SkillCatalogPublication { build, command })
 }
 
 async fn scan_root(input: &SkillCatalogRootInput<'_>) -> RootScanResult {
@@ -874,6 +905,81 @@ mod tests {
             first.build_record.source_fingerprint.digest,
             second.build_record.source_fingerprint.digest
         );
+    }
+
+    #[tokio::test]
+    async fn prepare_publication_emits_command_when_catalog_changes() {
+        let fs = skill_fs(&[(
+            "/skills/review/SKILL.md",
+            skill_doc("review", "Use when reviewing."),
+        )])
+        .await;
+        let blobs = InMemoryBlobStore::new();
+        let state = CoreAgentState::new();
+
+        let publication = prepare_skill_catalog_publication(
+            &blobs,
+            &state,
+            None,
+            &[root_input(&fs, snapshot_root("system", "/skills"))],
+        )
+        .await
+        .expect("prepare publication");
+
+        assert_eq!(
+            publication.command,
+            Some(CoreAgentCommand::SetSkillCatalog {
+                catalog: Some(SkillCatalogContext {
+                    catalog_ref: publication.build.catalog_ref.clone(),
+                }),
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_publication_omits_command_when_catalog_is_current() {
+        let fs = skill_fs(&[(
+            "/skills/review/SKILL.md",
+            skill_doc("review", "Use when reviewing."),
+        )])
+        .await;
+        let blobs = InMemoryBlobStore::new();
+        let first = prepare_skill_catalog_publication(
+            &blobs,
+            &CoreAgentState::new(),
+            None,
+            &[root_input(&fs, snapshot_root("system", "/skills"))],
+        )
+        .await
+        .expect("first publication");
+        let mut state = CoreAgentState::new();
+        state.skills.catalog = Some(SkillCatalogContext {
+            catalog_ref: first.build.catalog_ref.clone(),
+        });
+
+        let second = prepare_skill_catalog_publication(
+            &blobs,
+            &state,
+            None,
+            &[root_input(&fs, snapshot_root("system", "/skills"))],
+        )
+        .await
+        .expect("second publication");
+
+        assert_eq!(first.build.catalog_ref, second.build.catalog_ref);
+        assert_eq!(second.command, None);
+    }
+
+    fn snapshot_root(root_id: &str, root_path: &str) -> SkillCatalogRoot {
+        SkillCatalogRoot {
+            root_id: root_id.to_owned(),
+            root_path: FsPath::new(root_path).unwrap(),
+            source: SkillCatalogRootSource::MountedSnapshot {
+                snapshot_ref: BlobRef::from_bytes(format!("{root_id}:{root_path}").as_bytes()),
+            },
+            trust: SkillTrustLevel::System,
+            scope: SkillScope::Global,
+        }
     }
 
     fn root_input<'a>(
