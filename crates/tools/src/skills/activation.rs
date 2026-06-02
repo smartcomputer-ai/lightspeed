@@ -158,6 +158,82 @@ mod tests {
             })
             .is_none()
         );
+        let mut line_limited_read = read_output("/skills/system/review/SKILL.md", 1, false);
+        line_limited_read["line_count"] = json!(2);
+        assert!(
+            skill_activation_from_tool_result(SkillToolResultActivationInput {
+                catalog_ref: &catalog_ref,
+                catalog: &catalog,
+                current_activations: &[],
+                call_id: &ToolCallId::new("call_1"),
+                tool_name: &ToolName::new("read_file"),
+                status: ToolCallStatus::Succeeded,
+                execution_target: None,
+                output_json: &line_limited_read,
+            })
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn ignores_non_cataloged_skill_doc_reads() {
+        let catalog_ref = BlobRef::from_bytes(b"catalog");
+        let catalog = SkillCatalogSnapshot::new(
+            None,
+            vec![skill("/skills/system/review/SKILL.md")],
+            Vec::<SkillLoadWarning>::new(),
+        );
+
+        assert!(
+            skill_activation_from_tool_result(SkillToolResultActivationInput {
+                catalog_ref: &catalog_ref,
+                catalog: &catalog,
+                current_activations: &[],
+                call_id: &ToolCallId::new("call_1"),
+                tool_name: &ToolName::new("read_file"),
+                status: ToolCallStatus::Succeeded,
+                execution_target: None,
+                output_json: &read_output("/skills/system/other/SKILL.md", 1, false),
+            })
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn ignores_non_read_file_or_failed_tool_results() {
+        let catalog_ref = BlobRef::from_bytes(b"catalog");
+        let catalog = SkillCatalogSnapshot::new(
+            None,
+            vec![skill("/skills/system/review/SKILL.md")],
+            Vec::<SkillLoadWarning>::new(),
+        );
+
+        assert!(
+            skill_activation_from_tool_result(SkillToolResultActivationInput {
+                catalog_ref: &catalog_ref,
+                catalog: &catalog,
+                current_activations: &[],
+                call_id: &ToolCallId::new("call_1"),
+                tool_name: &ToolName::new("grep"),
+                status: ToolCallStatus::Succeeded,
+                execution_target: None,
+                output_json: &read_output("/skills/system/review/SKILL.md", 1, false),
+            })
+            .is_none()
+        );
+        assert!(
+            skill_activation_from_tool_result(SkillToolResultActivationInput {
+                catalog_ref: &catalog_ref,
+                catalog: &catalog,
+                current_activations: &[],
+                call_id: &ToolCallId::new("call_1"),
+                tool_name: &ToolName::new("read_file"),
+                status: ToolCallStatus::Failed,
+                execution_target: None,
+                output_json: &read_output("/skills/system/review/SKILL.md", 1, false),
+            })
+            .is_none()
+        );
     }
 
     fn skill(path: &str) -> SkillMetadata {

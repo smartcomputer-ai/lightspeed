@@ -586,8 +586,9 @@ mod tests {
     use tools::{
         host::{
             HostToolContext, InlineHostToolRuntime,
-            fs::{FsPath, MountedVfsFileSystem},
+            fs::{FileSystem, FsPath, MountedVfsFileSystem},
             profiles::{HostToolPreset, resolve_host_profile},
+            tools::ReadFileResult,
         },
         runtime::ToolTarget,
     };
@@ -629,9 +630,13 @@ mod tests {
         calls: Mutex<u32>,
     }
 
-    struct ReadSkillThenFinalLlm {
+    struct ReadFileThenFinalLlm {
         calls: Mutex<u32>,
         blobs: Arc<dyn BlobStore>,
+        path: String,
+        offset: Option<usize>,
+        limit: Option<usize>,
+        call_id: String,
     }
 
     #[derive(Default)]
@@ -796,7 +801,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl CoreAgentLlm for ReadSkillThenFinalLlm {
+    impl CoreAgentLlm for ReadFileThenFinalLlm {
         async fn generate(
             &self,
             request: LlmGenerationRequest,
@@ -807,12 +812,18 @@ mod tests {
                 *calls
             };
             if call == 1 {
+                let arguments = serde_json::json!({
+                    "path": self.path,
+                    "offset": self.offset,
+                    "limit": self.limit,
+                });
                 let arguments_ref = self
                     .blobs
-                    .put_bytes(
-                        br#"{"path":"/skills/system/deploy-review/SKILL.md","offset":null,"limit":null}"#
-                            .to_vec(),
-                    )
+                    .put_bytes(serde_json::to_vec(&arguments).map_err(|error| {
+                        CoreAgentIoError::Failed {
+                            message: error.to_string(),
+                        }
+                    })?)
                     .await
                     .map_err(|error| CoreAgentIoError::Failed {
                         message: error.to_string(),
@@ -828,7 +839,7 @@ mod tests {
                         finish: LlmFinish::ToolCalls,
                         usage: None,
                         tool_calls: vec![ObservedToolCall {
-                            call_id: engine::ToolCallId::new("call-read-skill"),
+                            call_id: engine::ToolCallId::new(self.call_id.clone()),
                             tool_name: ToolName::new("read_file"),
                             provider_kind: None,
                             arguments_ref,
@@ -1113,9 +1124,13 @@ mod tests {
         let tools = InlineHostToolRuntime::new(ctx, profile.catalog);
         let runner = SessionRunner::new(
             stores,
-            Arc::new(ReadSkillThenFinalLlm {
+            Arc::new(ReadFileThenFinalLlm {
                 calls: Mutex::new(0),
                 blobs: blob_store,
+                path: "/skills/system/deploy-review/SKILL.md".to_owned(),
+                offset: None,
+                limit: None,
+                call_id: "call-read-skill".to_owned(),
             }),
         )
         .with_tools(Arc::new(tools));
@@ -1190,6 +1205,202 @@ mod tests {
             )
         }));
         assert!(outcome.state.skills.activations.is_empty());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn workspace_skill_read_output_stays_pinned_after_workspace_changes() {
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let blob_store: Arc<dyn BlobStore> = blobs.clone();
+        let vfs = Arc::new(TestVfsCatalog::default());
+        let stores = RunnerStores::new(sessions.clone(), blob_store.clone())
+            .with_vfs_catalog(vfs.clone(), vfs.clone());
+        let session_id = SessionId::new("session-workspace");
+        sessions
+            .create_session(CreateSession {
+                session_id: session_id.clone(),
+                agent_handle: AgentHandle::new("forge.default"),
+                created_at_ms: 1,
+            })
+            .await
+            .expect("create session");
+        let original_snapshot = create_inline_snapshot(
+            blob_store.as_ref(),
+            CreateInlineSnapshotRequest::new(vec![
+                InlineFile::new(
+                    "deploy-review/SKILL.md",
+                    b"---\nname: deploy-review\ndescription: Use when reviewing deploys.\n---\n\nOriginal body\n"
+                        .to_vec(),
+                )
+                .unwrap(),
+            ]),
+        )
+        .await
+        .expect("create original snapshot");
+        let workspace_id = VfsWorkspaceId::new("workspace-skills");
+        vfs.create_workspace(CreateVfsWorkspaceRecord {
+            workspace_id: workspace_id.clone(),
+            base_snapshot_ref: Some(original_snapshot.snapshot_ref.clone()),
+            head_snapshot_ref: original_snapshot.snapshot_ref.clone(),
+            created_at_ms: 1,
+        })
+        .await
+        .expect("create workspace");
+        vfs.put_mount(VfsMountRecord {
+            session_id: session_id.clone(),
+            mount_path: VfsPath::parse("/skills/system").unwrap(),
+            source: VfsMountSource::Workspace {
+                workspace_id: workspace_id.clone(),
+            },
+            access: VfsMountAccess::ReadWrite,
+        })
+        .await
+        .expect("mount skills workspace");
+
+        let mounted_fs = MountedVfsFileSystem::new(
+            blob_store.clone(),
+            vfs.clone(),
+            vfs.list_mounts(&session_id).await.expect("list mounts"),
+        )
+        .expect("mounted fs");
+        let ctx = HostToolContext::new(Arc::new(mounted_fs), None, blob_store.clone())
+            .with_cwd(FsPath::root());
+        let target = ToolTarget::api_kind(ProviderApiKind::OpenAiResponses);
+        let profile =
+            resolve_host_profile(&ctx, &target, HostToolPreset::DirectFs).expect("host profile");
+        let registry = profile.registry.clone();
+        let profile_id = profile.profile_id.clone();
+        let tools = InlineHostToolRuntime::new(ctx, profile.catalog);
+        let runner = SessionRunner::new(
+            stores,
+            Arc::new(ReadFileThenFinalLlm {
+                calls: Mutex::new(0),
+                blobs: blob_store.clone(),
+                path: "/skills/system/deploy-review/SKILL.md".to_owned(),
+                offset: None,
+                limit: None,
+                call_id: "call-read-skill".to_owned(),
+            }),
+        )
+        .with_tools(Arc::new(tools));
+
+        runner
+            .drive_command(DriveCommand {
+                session_id: session_id.clone(),
+                observed_at_ms: 10,
+                command: CoreAgentCommand::OpenSession { config: config() },
+                max_steps: None,
+            })
+            .await
+            .expect("open session");
+        runner
+            .drive_command(DriveCommand {
+                session_id: session_id.clone(),
+                observed_at_ms: 11,
+                command: CoreAgentCommand::SetToolRegistry { registry },
+                max_steps: None,
+            })
+            .await
+            .expect("set registry");
+        runner
+            .drive_command(DriveCommand {
+                session_id: session_id.clone(),
+                observed_at_ms: 12,
+                command: CoreAgentCommand::SelectToolProfile { profile_id },
+                max_steps: None,
+            })
+            .await
+            .expect("select profile");
+        runner
+            .drive_command(DriveCommand {
+                session_id: session_id.clone(),
+                observed_at_ms: 13,
+                command: CoreAgentCommand::SetDefaultToolTarget {
+                    target: ToolExecutionTarget::new("host", "local"),
+                },
+                max_steps: None,
+            })
+            .await
+            .expect("set default target");
+
+        let outcome = runner
+            .drive_command(DriveCommand {
+                session_id: session_id.clone(),
+                observed_at_ms: 20,
+                command: CoreAgentCommand::RequestRun {
+                    submission_id: None,
+                    input_ref: BlobRef::from_bytes(b"input"),
+                    run_config: run_config(),
+                },
+                max_steps: Some(96),
+            })
+            .await
+            .expect("drive request");
+        let output_ref = tool_output_ref(&outcome, "call-read-skill");
+        let loaded_skill = read_file_result(blobs.as_ref(), &output_ref).await;
+        assert!(loaded_skill.text.contains("Original body"));
+
+        let updated_snapshot = create_inline_snapshot(
+            blob_store.as_ref(),
+            CreateInlineSnapshotRequest::new(vec![
+                InlineFile::new(
+                    "deploy-review/SKILL.md",
+                    b"---\nname: deploy-review\ndescription: Use when reviewing deploys.\n---\n\nUpdated body\n"
+                        .to_vec(),
+                )
+                .unwrap(),
+            ]),
+        )
+        .await
+        .expect("create updated snapshot");
+        let workspace = vfs
+            .read_workspace(&workspace_id)
+            .await
+            .expect("read workspace");
+        vfs.compare_and_set_head(CompareAndSetVfsWorkspaceHead {
+            workspace_id: workspace_id.clone(),
+            expected_revision: Some(workspace.revision),
+            new_head_snapshot_ref: updated_snapshot.snapshot_ref,
+            updated_at_ms: 30,
+        })
+        .await
+        .expect("update workspace head");
+
+        let current_fs = MountedVfsFileSystem::new(
+            blob_store.clone(),
+            vfs.clone(),
+            vfs.list_mounts(&session_id).await.expect("list mounts"),
+        )
+        .expect("current mounted fs");
+        let current_skill = current_fs
+            .read_file_text(&FsPath::new("/skills/system/deploy-review/SKILL.md").unwrap())
+            .await
+            .expect("read current skill");
+        assert!(current_skill.contains("Updated body"));
+
+        let pinned_skill = read_file_result(blobs.as_ref(), &output_ref).await;
+        assert!(pinned_skill.text.contains("Original body"));
+        assert!(!pinned_skill.text.contains("Updated body"));
+    }
+
+    fn tool_output_ref(outcome: &DriveOutcome, call_id: &str) -> BlobRef {
+        outcome
+            .emitted_entries
+            .iter()
+            .find_map(|entry| match &entry.event.kind {
+                CoreAgentEventKind::Tool(engine::ToolEvent::CallCompleted { result, .. })
+                    if result.call_id.as_str() == call_id =>
+                {
+                    result.output_ref.clone()
+                }
+                _ => None,
+            })
+            .expect("tool output ref")
+    }
+
+    async fn read_file_result(blobs: &dyn BlobStore, output_ref: &BlobRef) -> ReadFileResult {
+        let bytes = blobs.read_bytes(output_ref).await.expect("read output");
+        serde_json::from_slice(&bytes).expect("decode read_file result")
     }
 
     #[tokio::test(flavor = "current_thread")]
