@@ -6,6 +6,7 @@ use crate::{
     CoreAgentState, CoreAgentStatus, DomainError, RunEvent, RunStatus, ToolConfigEvent,
     core::components::{
         config::{validate_config_update_for_state, validate_run_config_for_state},
+        skills::validate_activations,
         tooling::{
             validate_default_tool_target_clear, validate_default_tool_target_set,
             validate_profile_exists, validate_registry_keeps_active_profile,
@@ -43,12 +44,10 @@ impl AdmitCommand for CoreAdmitCommand {
                 patch,
             } => {
                 require_open(state)?;
-                if state.runs.active.is_some() || !state.runs.queued.is_empty() {
-                    return reject(
-                        CommandRejectionKind::ActiveWork,
-                        "session config can only change while no run is active or queued",
-                    );
-                }
+                require_no_active_or_queued_work(
+                    state,
+                    "session config can only change while no run is active or queued",
+                )?;
                 if let Some(expected_revision) = expected_revision {
                     let actual_revision = state.lifecycle.config_revision;
                     if expected_revision != actual_revision {
@@ -191,7 +190,43 @@ impl AdmitCommand for CoreAdmitCommand {
                     }),
                 )])
             }
+            CoreAgentCommand::SetSkillCatalog { catalog } => {
+                require_open(state)?;
+                require_no_active_or_queued_work(
+                    state,
+                    "skill catalog can only change while no run is active or queued",
+                )?;
+
+                Ok(vec![CoreAgentEventProposal::new(
+                    CoreAgentJoins::default(),
+                    CoreAgentEventKind::Skill(crate::SkillEvent::CatalogSet { catalog }),
+                )])
+            }
+            CoreAgentCommand::SetSkillActivations { activations } => {
+                require_open(state)?;
+                require_no_active_or_queued_work(
+                    state,
+                    "skill activations can only change while no run is active or queued",
+                )?;
+                validate_activations(&activations).map_err(command_rejection_from_domain)?;
+
+                Ok(vec![CoreAgentEventProposal::new(
+                    CoreAgentJoins::default(),
+                    CoreAgentEventKind::Skill(crate::SkillEvent::ActivationsSet { activations }),
+                )])
+            }
         }
+    }
+}
+
+fn require_no_active_or_queued_work(
+    state: &CoreAgentState,
+    message: &'static str,
+) -> Result<(), CommandError> {
+    if state.runs.active.is_some() || !state.runs.queued.is_empty() {
+        reject(CommandRejectionKind::ActiveWork, message)
+    } else {
+        Ok(())
     }
 }
 

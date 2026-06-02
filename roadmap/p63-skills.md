@@ -6,8 +6,12 @@
 - First-cut `engine` skill model types are implemented:
   `SkillState`, skill ids, skill catalog/activation context item kinds,
   and active run/session-scoped activation records.
-- Discovery, catalog rendering, provider materialization, activation behavior,
-  projection, and API methods are not implemented.
+- First-cut engine command/event/reducer wiring is implemented for setting the
+  active skill catalog and replacing active skill activations.
+- OpenAI Responses can lower already-recorded skill context items as developer
+  messages; API projection exposes minimal skill state events.
+- Discovery, catalog rendering, automatic context planning, activation
+  behavior, and public API methods are not implemented.
 - The first implementation is skill-specific. Do not introduce a generic
   `RuntimeContext` abstraction until there is a second concrete use case.
 
@@ -92,6 +96,13 @@ Important files:
   mentions and injects selected skill bodies.
 - `codex-rs/core-skills/src/invocation_utils.rs` - detects implicit skill
   invocation when scripts or skill docs are read through shell commands.
+- `codex-rs/core/src/context/available_skills_instructions.rs` - lowers the
+  compact skill catalog as developer-context.
+- `codex-rs/core/src/context/skill_instructions.rs` - lowers explicitly loaded
+  skill bodies as user-context fragments.
+- `codex-rs/core/src/session/turn.rs` - records current-turn user input before
+  explicit skill/plugin injection items, so loaded skill bodies are appended near
+  the turn tail rather than prepended above existing history.
 - `codex-rs/core-skills/src/manager.rs` - skill root resolution, cache, config
   rules, bundled skill install.
 - `codex-rs/skills/src/lib.rs` - installs bundled system skills into
@@ -115,7 +126,9 @@ Codex discovery uses multiple roots, including repo/project skills, user
 skills, bundled system skills, plugin skills, and extra roots. It loads only
 name/description/path into the initial prompt. Full skill bodies are injected
 after explicit mention or triggering. Scripts and resources are used through
-normal filesystem/process tools.
+normal filesystem/process tools. A model reading `SKILL.md` through a normal
+tool is treated as implicit skill use; the file contents remain the ordinary
+tool output in conversation history.
 
 ### Claude Code
 
@@ -137,6 +150,15 @@ Important files:
   of bundled reference files to disk.
 - `src/plugins/builtinPlugins.ts` - exposes enabled built-in plugin skills as
   commands.
+- `src/tools/SkillTool/prompt.ts` - Skill tool prompt and bounded skill listing.
+- `src/tools/SkillTool/SkillTool.ts` - model-invoked skill execution; inline
+  skills return additional model-visible messages plus a short tool result.
+- `src/utils/processUserInput/processSlashCommand.tsx` - slash/direct prompt
+  command expansion into metadata plus hidden model-visible skill content.
+- `src/utils/attachments.ts` and `src/utils/messages.ts` - skill listing and
+  discovery attachments rendered as model-visible system reminders.
+- `src/services/compact/compact.ts` - preserves invoked skill contents after
+  compaction without re-injecting the full skill listing.
 - `src/components/skills/SkillsMenu.tsx` - `/skills` UI.
 - `src/components/permissions/SkillPermissionRequest/SkillPermissionRequest.tsx`
   - approval UI for skill use.
@@ -174,6 +196,13 @@ Claude Code treats skills as prompt commands, often slash-invocable as
 `${CLAUDE_SESSION_ID}`. For file-based skills, it can execute shell expansion
 inside prompt markdown so skills can compute dynamic context. MCP skills are
 treated as remote/untrusted and do not run inline shell from the markdown body.
+The initial model-visible listing is bounded frontmatter/description guidance;
+full skill content is loaded only when `SkillTool` or a slash/direct prompt
+command invokes the skill. Inline invocation appends model-visible skill content
+near the current turn tail. Claude Code separately tracks invoked skills so
+compaction can preserve used skill content, while intentionally avoiding
+re-injecting the full skill listing after compaction because that is mostly
+cache-creation churn.
 
 Claude also supports conditional `paths` skills that are held back until a
 matching file is touched.
@@ -532,7 +561,9 @@ This avoids a premature `RuntimeContextKind` / `RuntimeContextAuthority` /
 
 - skill context items are part of the request context, not conversation
   history;
-- skill catalog items are ordered before normal user/assistant/tool history;
+- skill catalog items are stable request-prefix context;
+- loaded skill bodies are current-run tail context or ordinary tool results,
+  never prepended above existing history;
 - skill catalog items are not summarized during compaction;
 - the active catalog can be reinserted from pinned refs after compaction;
 - activated skill bodies are reinserted only while they remain present in
@@ -579,7 +610,9 @@ history and not base instructions:
 4. When request planning includes the catalog, record a
    `ContextItemKind::SkillCatalog` item whose `native_item_ref` points at
    `catalog_ref`.
-5. Insert that semantic skill catalog item before the conversation window.
+5. Insert that semantic skill catalog item in the stable request prefix, before
+   the conversation window. Catalog updates may invalidate the prompt cache, so
+   make refresh explicit and relatively rare.
 6. Let provider adapters lower the semantic catalog into provider-native
    model input.
 
@@ -604,11 +637,10 @@ preserve the skills catalog. The next model turn rebuilds the request from
 `CoreAgentState.skills.catalog` plus the compacted conversation state,
 so the current skills catalog is reinserted from the active `catalog_ref`.
 
-Mid-turn compaction should insert fresh skill catalog context before the last
-real user item in the replacement request context. Remote/provider compaction
-outputs must not be trusted to carry forward provider-lowered skill context
-items; drop those lowered copies from the compacted transcript and reinsert the
-current canonical skill items.
+Mid-turn compaction should rebuild skill catalog context from canonical state
+rather than trusting the compaction output to carry provider-lowered skill
+context forward. The catalog returns to the stable request prefix; live direct
+activations return near the current-run tail if still active.
 
 This keeps skill catalog visibility independent from summaries. If the active
 catalog changes, future runs or refreshed turns use the new catalog snapshot;
@@ -977,6 +1009,15 @@ The planner should avoid duplicating a skill body. If the same
 `SkillActivation` item in the planned request window, the active activation is
 satisfied for that request and no additional skill block should be inserted.
 
+Prompt-cache ordering matters. Request planning must not insert new skill
+activations at the top of the context window, because that changes the stable
+prefix and invalidates cached history. Keep base instructions, tool schemas, the
+active catalog, and existing conversation/tool history in their normal order.
+When a direct activation has no prior tool result, append its semantic
+`SkillActivation` item near the current-run tail. When a tool call loaded the
+skill, the ordinary tool result is the loaded skill body and no extra activation
+item is needed.
+
 Add an explicit deactivate path when clients need it:
 
 ```text
@@ -999,7 +1040,8 @@ Keep v1 minimal, but make the engine model skill-native:
 - Keep active catalog snapshots and active activations out of `ContextConfig`;
   session config can later hold skill policy and source configuration.
 - Teach context-window planning and provider request materialization to include
-  `SkillCatalog` context before normal conversation history.
+  `SkillCatalog` context in the stable request prefix and direct
+  `SkillActivation` context near the current-run tail.
 - Use existing VFS mount/tool configuration so the model can read mounted
   skill files with ordinary filesystem tools.
 - Use existing tool result flow when the model reads a `SKILL.md`.
@@ -1027,22 +1069,44 @@ pub enum ContextItemKind {
 }
 ```
 
-Recommended near-term engine improvements for explicit activations:
+First-cut command/event wiring:
 
 ```rust
-CoreAgentCommand::SetActiveSkillActivations {
+CoreAgentCommand::SetSkillCatalog {
+    catalog: Option<SkillCatalogContext>,
+}
+
+CoreAgentCommand::SetSkillActivations {
     activations: Vec<SkillActivation>,
 }
 
-CoreAgentCommand::RecordContextItems {
-    items: Vec<UncommittedContextItem>,
+pub enum SkillEvent {
+    CatalogSet {
+        catalog: Option<SkillCatalogContext>,
+    },
+    ActivationsSet {
+        activations: Vec<SkillActivation>,
+    },
 }
 ```
 
-This would let the runtime admit activated skill content as concrete skill
-context without pretending the activation is just an ordinary tool result. It
-also lets deactivation stop future sticky reinsertion by removing the live
-activation without rewriting history.
+`SetSkillActivations` replaces the active set. The engine rejects duplicate
+active `skill_id`s for now. The context planner, not external command
+admission, owns inserting skill context items into the request context.
+Skill catalog and activation commands are admitted only while no run is active
+or queued. Direct activation therefore does not start work; it updates
+`SkillState`, and the next requested run consumes that state during context
+planning. Deactivation can stop future sticky reinsertion by replacing the
+live activation set without rewriting history.
+
+For activations sourced from a tool call, the loaded `SKILL.md` is already
+visible through the ordinary tool result context item. The planner should treat
+that tool result as satisfying the activation for the current request/window
+and avoid inserting a duplicate `SkillActivation` item. For direct
+activations, there is no prior tool result, so the planner inserts a
+`ContextItemKind::SkillActivation { skill_id }` item using
+`SkillActivation.context_ref` near the current-run tail, not above existing
+history or above the stable catalog prefix.
 
 Do not add commands such as `ScanSkills` or `ReadSkillFile` to the engine.
 Do not add a special engine command for model-selected skill activation when a

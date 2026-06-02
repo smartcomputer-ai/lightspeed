@@ -611,6 +611,8 @@ impl ChatSessionDriver {
             | SessionEventKindView::RunQueued { .. }
             | SessionEventKindView::RunSteeringAdded { .. }
             | SessionEventKindView::RunCancellationRequested { .. }
+            | SessionEventKindView::SkillCatalogSet { .. }
+            | SessionEventKindView::SkillActivationsSet { .. }
             | SessionEventKindView::TurnCompleted { .. }
             | SessionEventKindView::ContextWindowPlanned { .. }
             | SessionEventKindView::ToolRegistryChanged

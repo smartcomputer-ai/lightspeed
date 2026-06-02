@@ -180,6 +180,14 @@ async fn materialize_input_item(
                 },
             ))
         }
+        ContextItemKind::SkillCatalog | ContextItemKind::SkillActivation { .. } => {
+            let text = read_text(blobs, &item.native_item_ref).await?;
+            Ok(oai::ResponseInputItem::Message(oai::InputMessage {
+                role: oai::MessageRole::Developer,
+                content: oai::InputMessageContent::Text(text),
+                extra: Default::default(),
+            }))
+        }
         ContextItemKind::ToolCall { .. }
         | ContextItemKind::ReasoningState
         | ContextItemKind::CompactionState

@@ -571,6 +571,12 @@ pub enum SessionEventKindView {
         turn_id: Option<String>,
         summary_ref: Option<String>,
     },
+    SkillCatalogSet {
+        catalog_ref: Option<String>,
+    },
+    SkillActivationsSet {
+        skill_ids: Vec<String>,
+    },
     ToolRegistryChanged,
     ToolProfileSelected {
         profile_id: String,

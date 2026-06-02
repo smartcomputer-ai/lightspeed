@@ -146,6 +146,20 @@ impl<'a> CoreAgentProjector<'a> {
                     ToolItemStatus::Succeeded
                 },
             }),
+            ContextItemKind::SkillCatalog => Ok(SessionItemView::SystemEvent {
+                id,
+                text: item
+                    .preview
+                    .clone()
+                    .unwrap_or_else(|| "skills catalog".to_owned()),
+            }),
+            ContextItemKind::SkillActivation { skill_id } => Ok(SessionItemView::SystemEvent {
+                id,
+                text: item
+                    .preview
+                    .clone()
+                    .unwrap_or_else(|| format!("skill activated: {skill_id}")),
+            }),
             ContextItemKind::ReasoningState
             | ContextItemKind::CompactionState
             | ContextItemKind::ProviderOpaque => Ok(SessionItemView::SystemEvent {
@@ -323,6 +337,23 @@ impl<'a> CoreAgentProjector<'a> {
                         .as_ref()
                         .map(|ref_| ref_.as_str().to_owned()),
                 }),
+            },
+            CoreAgentEventKind::Skill(event) => match event {
+                engine::SkillEvent::CatalogSet { catalog } => {
+                    Ok(SessionEventKindView::SkillCatalogSet {
+                        catalog_ref: catalog
+                            .as_ref()
+                            .map(|catalog| catalog.catalog_ref.as_str().to_owned()),
+                    })
+                }
+                engine::SkillEvent::ActivationsSet { activations } => {
+                    Ok(SessionEventKindView::SkillActivationsSet {
+                        skill_ids: activations
+                            .iter()
+                            .map(|activation| activation.skill_id.as_str().to_owned())
+                            .collect(),
+                    })
+                }
             },
             CoreAgentEventKind::ToolConfig(event) => match event {
                 ToolConfigEvent::RegistryChanged { .. } => {

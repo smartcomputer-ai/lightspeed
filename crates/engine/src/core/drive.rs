@@ -10,14 +10,14 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    AdmitCommand, ApplyEvent, BlobRef, CodecError, CommandError, ContextEvent, ContextItem,
-    ContextItemId, ContextItemKind, ContextMessageRole, CoreAdmitCommand, CoreAgentCodec,
-    CoreAgentEntry, CoreAgentEventKind, CoreAgentEventProposal, CoreAgentJoins, CoreAgentState,
-    CoreAgentStatus, CoreApplyEvent, CorePlanner, DomainError, LlmFinish, LlmGenerationRequest,
-    LlmGenerationResult, LlmGenerationStatus, PlanNext, PlanningError, SessionId, SessionPosition,
-    ToolCallResult, ToolCallStatus, ToolEvent, ToolInvocationBatchRequest,
-    ToolInvocationBatchResult, ToolInvocationRequest, TurnEvent, TurnOutcome,
-    UncommittedContextItem,
+    AdmitCommand, ApplyEvent, BlobRef, CodecError, CommandError, ContextEvent, ContextItemKind,
+    ContextMessageRole, CoreAdmitCommand, CoreAgentCodec, CoreAgentEntry, CoreAgentEventKind,
+    CoreAgentEventProposal, CoreAgentJoins, CoreAgentState, CoreAgentStatus, CoreApplyEvent,
+    CorePlanner, DomainError, LlmFinish, LlmGenerationRequest, LlmGenerationResult,
+    LlmGenerationStatus, PlanNext, PlanningError, SessionId, SessionPosition, ToolCallResult,
+    ToolCallStatus, ToolEvent, ToolInvocationBatchRequest, ToolInvocationBatchResult,
+    ToolInvocationRequest, TurnEvent, TurnOutcome, UncommittedContextItem,
+    core::components::context::context_items_from_uncommitted,
     session::{DynamicSessionEntry, DynamicUncommittedSessionEvent},
 };
 
@@ -295,32 +295,6 @@ pub fn generation_result_proposals(
     Ok(proposals)
 }
 
-fn context_items_from_uncommitted(
-    state: &CoreAgentState,
-    uncommitted: &[UncommittedContextItem],
-) -> Result<Vec<ContextItem>, DomainError> {
-    let mut next_item_id = state.id_cursors.last_context_item_id;
-    uncommitted
-        .iter()
-        .map(|item| {
-            next_item_id = next_item_id.checked_add(1).ok_or_else(|| {
-                DomainError::InvariantViolation("context item id cursor exhausted".to_owned())
-            })?;
-            Ok(ContextItem {
-                item_id: ContextItemId::new(next_item_id),
-                kind: item.kind.clone(),
-                source: item.source.clone(),
-                native_item_ref: item.native_item_ref.clone(),
-                media_type: item.media_type.clone(),
-                preview: item.preview.clone(),
-                provider_kind: item.provider_kind.clone(),
-                provider_item_id: item.provider_item_id.clone(),
-                token_estimate: item.token_estimate.clone(),
-            })
-        })
-        .collect()
-}
-
 fn turn_outcome_for_generation_result(result: &LlmGenerationResult) -> TurnOutcome {
     match &result.status {
         LlmGenerationStatus::Cancelled => TurnOutcome::Cancelled,
@@ -452,7 +426,8 @@ mod tests {
         BlobRef, CommandRejectionKind, ContextConfig, ContextConfigPatch, ContextItemSource,
         CoreAgentCommand, LlmGenerationFacts, ModelProviderOptions, ModelSelection,
         OptionalConfigPatch, ProviderApiKind, ProviderRequestDefaults, RunConfig, RunFailureKind,
-        RunStatus, SessionConfig, SessionConfigPatch, TurnConfig, TurnConfigPatch,
+        RunStatus, SessionConfig, SessionConfigPatch, SkillActivation, SkillActivationScope,
+        SkillActivationSource, SkillId, TurnConfig, TurnConfigPatch,
     };
 
     fn config() -> SessionConfig {
@@ -627,6 +602,76 @@ mod tests {
                 30,
             )
             .expect_err("patch must reject queued work");
+
+        let CoreAgentDriveError::Command(crate::CommandError::Rejected(rejection)) = error else {
+            panic!("expected rejected command");
+        };
+        assert_eq!(rejection.kind, CommandRejectionKind::ActiveWork);
+    }
+
+    #[test]
+    fn set_skill_activations_updates_state_without_starting_run() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let open = drive
+            .admit_command(CoreAgentCommand::OpenSession { config: config() }, 10)
+            .expect("open");
+        commit_action(&mut drive, open);
+
+        let activation = SkillActivation {
+            skill_id: SkillId::new("skill-1"),
+            catalog_ref: BlobRef::from_bytes(b"catalog"),
+            context_ref: BlobRef::from_bytes(b"skill body"),
+            source: SkillActivationSource::Direct,
+            scope: SkillActivationScope::Run,
+        };
+        let action = drive
+            .admit_command(
+                CoreAgentCommand::SetSkillActivations {
+                    activations: vec![activation.clone()],
+                },
+                20,
+            )
+            .expect("set skill activations");
+        commit_action(&mut drive, action);
+
+        assert_eq!(drive.state().skills.activations, vec![activation]);
+        assert!(drive.state().runs.active.is_none());
+        assert!(drive.state().runs.queued.is_empty());
+        assert!(matches!(
+            drive.next_action(30, 8).expect("next action"),
+            CoreAgentAction::Idle
+        ));
+    }
+
+    #[test]
+    fn set_skill_activations_rejects_queued_work() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let open = drive
+            .admit_command(CoreAgentCommand::OpenSession { config: config() }, 10)
+            .expect("open");
+        commit_action(&mut drive, open);
+        let request = drive
+            .admit_command(
+                CoreAgentCommand::RequestRun {
+                    submission_id: None,
+                    input_ref: BlobRef::from_bytes(b"input"),
+                    run_config: run_config(),
+                },
+                20,
+            )
+            .expect("request run");
+        commit_action(&mut drive, request);
+
+        let error = drive
+            .admit_command(
+                CoreAgentCommand::SetSkillActivations {
+                    activations: Vec::new(),
+                },
+                30,
+            )
+            .expect_err("skill activations must reject queued work");
 
         let CoreAgentDriveError::Command(crate::CommandError::Rejected(rejection)) = error else {
             panic!("expected rejected command");

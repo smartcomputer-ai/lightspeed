@@ -189,6 +189,32 @@ pub(crate) fn resolve_context_window(
     })
 }
 
+pub(crate) fn context_items_from_uncommitted(
+    state: &CoreAgentState,
+    uncommitted: &[UncommittedContextItem],
+) -> Result<Vec<ContextItem>, DomainError> {
+    let mut next_item_id = state.id_cursors.last_context_item_id;
+    uncommitted
+        .iter()
+        .map(|item| {
+            next_item_id = next_item_id.checked_add(1).ok_or_else(|| {
+                DomainError::InvariantViolation("context item id cursor exhausted".to_owned())
+            })?;
+            Ok(ContextItem {
+                item_id: ContextItemId::new(next_item_id),
+                kind: item.kind.clone(),
+                source: item.source.clone(),
+                native_item_ref: item.native_item_ref.clone(),
+                media_type: item.media_type.clone(),
+                preview: item.preview.clone(),
+                provider_kind: item.provider_kind.clone(),
+                provider_item_id: item.provider_item_id.clone(),
+                token_estimate: item.token_estimate.clone(),
+            })
+        })
+        .collect()
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CoreContextPlanner;
 

@@ -35,7 +35,8 @@ pub use run::{
     ActiveRun, QueuedRun, RunEvent, RunFailure, RunFailureKind, RunQueueState, RunRecord, RunStatus,
 };
 pub use skills::{
-    SkillActivation, SkillActivationScope, SkillActivationSource, SkillCatalogContext, SkillState,
+    SkillActivation, SkillActivationScope, SkillActivationSource, SkillCatalogContext, SkillEvent,
+    SkillState,
 };
 pub use state::*;
 pub use tooling::{
