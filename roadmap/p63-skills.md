@@ -22,8 +22,11 @@
   semantic catalog snapshots, tool-result/direct activation anchors, explicit
   catalog refresh boundaries, and provider-specific OpenAI/Anthropic context
   lowering.
-- Discovery, catalog rendering, model-selected activation from file reads, and
-  public API methods are not implemented.
+- First-cut `tools` skill catalog models, frontmatter parser, and generic
+  `FileSystem` catalog builder are implemented with runtime build
+  fingerprints.
+- Runtime catalog publication, catalog rendering, model-selected activation
+  from file reads, and public API methods are not implemented.
 - The first implementation is skill-specific. Do not introduce a generic
   `RuntimeContext` abstraction until there is a second concrete use case.
 
@@ -574,7 +577,6 @@ pub enum SkillLocation {
     },
     MountedWorkspace {
         workspace_id: VfsWorkspaceId,
-        workspace_head_ref: BlobRef,
         source_mount_path: VfsPath,
         skill_dir_path: VfsPath,
         skill_doc_path: VfsPath,
@@ -596,8 +598,11 @@ pub enum SkillLocation {
 skill source root or bundle. It does not have to be a one-skill snapshot. A
 single mounted snapshot can contain many skill directories.
 
-`MountedWorkspace.workspace_id` and `workspace_head_ref` identify the writable
-workspace and the head snapshot observed when the catalog entry was built.
+`MountedWorkspace.workspace_id` identifies the writable workspace. The
+workspace head observed when the catalog entry was built belongs to runtime
+catalog build metadata, not the semantic catalog location, so unchanged
+model-visible catalogs keep the same `catalog_ref` across unrelated workspace
+head changes.
 
 `source_mount_path`, `skill_dir_path`, and `skill_doc_path` are paths inside
 the mounted VFS view, for example `/skills/system/openai-docs` and
@@ -1091,14 +1096,15 @@ skill_doc_path     = /home/dev/.agents/skills/deploy-review/SKILL.md
 ```
 
 For a workspace-authored skill, the catalog entry points into the writable
-workspace mount and records the workspace head observed during refresh:
+workspace mount. The runtime build record, not the semantic catalog entry,
+records the workspace head observed during refresh:
 
 ```text
 workspace_id       = vfsws_...
-workspace_head_ref = sha256:...
 source_mount_path  = /workspace
 skill_dir_path     = /workspace/.forge/skills/draft-skill
 skill_doc_path     = /workspace/.forge/skills/draft-skill/SKILL.md
+build input       = WorkspaceRoot { workspace_head_ref = sha256:... }
 ```
 
 Prefer one snapshot/mount per CAS source root or product-managed bundle. Fall
@@ -1627,11 +1633,11 @@ Editable skill source root
   -> writable VFS workspace mount, such as /workspace
   -> SkillMetadata.location = MountedWorkspace {
        workspace_id,
-       workspace_head_ref at catalog refresh,
        source_mount_path,
        skill_dir_path,
        skill_doc_path
      }
+  -> SkillCatalogBuildRecord input records workspace_head_ref at refresh
   -> model edits /workspace/.forge/skills/<skill>/... with VFS tools
   -> catalog refresh makes new/edited skills selectable
   -> activation reads and pins exact SKILL.md body from the workspace
@@ -1767,8 +1773,8 @@ Needs more product validation.
 - Support configured writable VFS workspace roots for skill authoring.
 - Discover configured workspace skill roots from writable VFS mounts when
   authoring is enabled.
-- Store workspace ids, mount paths, skill paths, and observed head refs in the
-  catalog.
+- Store workspace ids, mount paths, and skill paths in the catalog; store
+  observed workspace head refs in catalog build metadata.
 - For workspace-sourced activations, record the workspace id/head observed by
   the read or runtime injection that loaded the body.
 - Add tests that authored or edited workspace skills become catalog-visible
