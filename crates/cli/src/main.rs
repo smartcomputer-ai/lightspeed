@@ -1,5 +1,6 @@
 mod api_client;
 mod chat;
+mod skills_cli;
 mod vfs_cli;
 mod vfs_transfer;
 
@@ -19,6 +20,8 @@ enum Command {
     Chat(chat::ChatArgs),
     /// Work with CAS-backed VFS snapshots.
     Vfs(vfs_cli::VfsArgs),
+    /// List and manage session skills.
+    Skills(skills_cli::SkillsArgs),
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -28,6 +31,7 @@ async fn main() -> Result<()> {
     match cli.command {
         Command::Chat(args) => chat::handle(args).await,
         Command::Vfs(args) => vfs_cli::handle(args).await,
+        Command::Skills(args) => skills_cli::handle(args).await,
     }
 }
 
@@ -238,5 +242,70 @@ mod tests {
         ])
         .expect("parse vfs mount delete");
         assert!(matches!(cli.command, Command::Vfs(_)));
+    }
+
+    #[test]
+    fn skills_list_parse_accepts_session() {
+        let cli = Cli::try_parse_from([
+            "forge",
+            "skills",
+            "list",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
+            "--session",
+            "session_1",
+        ])
+        .expect("parse skills list");
+        assert!(matches!(cli.command, Command::Skills(_)));
+    }
+
+    #[test]
+    fn skills_active_parse_accepts_json() {
+        let cli = Cli::try_parse_from([
+            "forge",
+            "skills",
+            "active",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
+            "--session",
+            "session_1",
+            "--json",
+        ])
+        .expect("parse skills active");
+        assert!(matches!(cli.command, Command::Skills(_)));
+    }
+
+    #[test]
+    fn skills_activate_parse_accepts_scope() {
+        let cli = Cli::try_parse_from([
+            "forge",
+            "skills",
+            "activate",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
+            "--session",
+            "session_1",
+            "--scope",
+            "session",
+            "skill:review",
+        ])
+        .expect("parse skills activate");
+        assert!(matches!(cli.command, Command::Skills(_)));
+    }
+
+    #[test]
+    fn skills_deactivate_parse_accepts_skill_id() {
+        let cli = Cli::try_parse_from([
+            "forge",
+            "skills",
+            "deactivate",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
+            "--session",
+            "session_1",
+            "skill:review",
+        ])
+        .expect("parse skills deactivate");
+        assert!(matches!(cli.command, Command::Skills(_)));
     }
 }

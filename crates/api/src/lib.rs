@@ -23,6 +23,10 @@ pub const METHOD_SESSION_EVENTS_READ: &str = "session/events/read";
 pub const METHOD_SESSION_CLOSE: &str = "session/close";
 pub const METHOD_RUN_START: &str = "run/start";
 pub const METHOD_RUN_CANCEL: &str = "run/cancel";
+pub const METHOD_SKILLS_LIST: &str = "skills/list";
+pub const METHOD_SKILLS_ACTIVE: &str = "skills/active";
+pub const METHOD_SKILLS_ACTIVATE: &str = "skills/activate";
+pub const METHOD_SKILLS_DEACTIVATE: &str = "skills/deactivate";
 pub const METHOD_BLOB_PUT: &str = "blob/put";
 pub const METHOD_BLOB_PUT_MANY: &str = "blob/put_many";
 pub const METHOD_BLOB_GET: &str = "blob/get";
@@ -48,6 +52,7 @@ pub const NOTIFY_ERROR: &str = "error";
 pub type SessionId = String;
 pub type RunId = String;
 pub type ItemId = String;
+pub type SkillId = String;
 
 const SESSION_ID_MAX_LEN: usize = 128;
 
@@ -130,6 +135,26 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: RunCancelParams,
     ) -> Result<AgentApiOutcome<RunCancelResponse>, AgentApiError>;
+
+    async fn list_skills(
+        &self,
+        params: SkillListParams,
+    ) -> Result<AgentApiOutcome<SkillListResponse>, AgentApiError>;
+
+    async fn active_skills(
+        &self,
+        params: SkillActiveParams,
+    ) -> Result<AgentApiOutcome<SkillActiveResponse>, AgentApiError>;
+
+    async fn activate_skill(
+        &self,
+        params: SkillActivateParams,
+    ) -> Result<AgentApiOutcome<SkillActivateResponse>, AgentApiError>;
+
+    async fn deactivate_skill(
+        &self,
+        params: SkillDeactivateParams,
+    ) -> Result<AgentApiOutcome<SkillDeactivateResponse>, AgentApiError>;
 
     async fn put_blob(
         &self,
@@ -678,6 +703,114 @@ pub struct RunCancelParams {
 #[serde(rename_all = "camelCase")]
 pub struct RunCancelResponse {
     pub run: RunView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillListParams {
+    pub session_id: SessionId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillListResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_ref: Option<String>,
+    #[serde(default)]
+    pub skills: Vec<SkillListItem>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillListItem {
+    pub skill_id: SkillId,
+    pub name: String,
+    pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub short_description: Option<String>,
+    pub enabled: bool,
+    pub active: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillActiveParams {
+    pub session_id: SessionId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillActiveResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_ref: Option<String>,
+    #[serde(default)]
+    pub activations: Vec<SkillActivationView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillActivationView {
+    pub skill_id: SkillId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub short_description: Option<String>,
+    pub catalog_ref: String,
+    pub scope: SkillActivationScope,
+    pub source: SkillActivationSource,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SkillActivationScope {
+    #[default]
+    Run,
+    Session,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum SkillActivationSource {
+    ToolResult { call_id: String },
+    DirectContext { context_ref: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillActivateParams {
+    pub session_id: SessionId,
+    pub skill_id: SkillId,
+    #[serde(default)]
+    pub scope: SkillActivationScope,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillActivateResponse {
+    pub activation: SkillActivationView,
+    #[serde(default)]
+    pub active: Vec<SkillActivationView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillDeactivateParams {
+    pub session_id: SessionId,
+    pub skill_id: SkillId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillDeactivateResponse {
+    pub skill_id: SkillId,
+    #[serde(default)]
+    pub active: Vec<SkillActivationView>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1384,6 +1517,24 @@ pub async fn dispatch_json_rpc(
             Ok(params) => json_rpc_outcome(id, service.cancel_run(params).await),
             Err(error) => JsonRpcResponse::failure(id, error),
         },
+        METHOD_SKILLS_LIST => match json_rpc_params::<SkillListParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.list_skills(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
+        METHOD_SKILLS_ACTIVE => match json_rpc_params::<SkillActiveParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.active_skills(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
+        METHOD_SKILLS_ACTIVATE => match json_rpc_params::<SkillActivateParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.activate_skill(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
+        METHOD_SKILLS_DEACTIVATE => {
+            match json_rpc_params::<SkillDeactivateParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.deactivate_skill(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
         METHOD_BLOB_PUT => match json_rpc_params::<BlobPutParams>(request.params) {
             Ok(params) => json_rpc_outcome(id, service.put_blob(params).await),
             Err(error) => JsonRpcResponse::failure(id, error),
@@ -1634,6 +1785,89 @@ mod tests {
         assert_eq!(
             response.result.expect("result")["result"]["run"]["status"],
             json!("cancelled")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_skills_list() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_SKILLS_LIST.to_owned(),
+                params: Some(json!({ "sessionId": "session_1" })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["skills"][0]["active"],
+            json!(true)
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_skills_active() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_SKILLS_ACTIVE.to_owned(),
+                params: Some(json!({ "sessionId": "session_1" })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["activations"][0]["source"]["type"],
+            json!("directContext")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_skills_activate() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_SKILLS_ACTIVATE.to_owned(),
+                params: Some(json!({
+                    "sessionId": "session_1",
+                    "skillId": "skill:one",
+                    "scope": "session"
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["activation"]["scope"],
+            json!("session")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_skills_deactivate() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_SKILLS_DEACTIVATE.to_owned(),
+                params: Some(json!({
+                    "sessionId": "session_1",
+                    "skillId": "skill:one"
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["skillId"],
+            json!("skill:one")
         );
     }
 
@@ -2146,6 +2380,55 @@ mod tests {
             }))
         }
 
+        async fn list_skills(
+            &self,
+            _params: SkillListParams,
+        ) -> Result<AgentApiOutcome<SkillListResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(SkillListResponse {
+                catalog_ref: Some(format!("sha256:{}", "5".repeat(64))),
+                skills: vec![SkillListItem {
+                    skill_id: "skill:one".to_owned(),
+                    name: "one".to_owned(),
+                    description: "Use when testing skills.".to_owned(),
+                    short_description: Some("test skill".to_owned()),
+                    enabled: true,
+                    active: true,
+                }],
+            }))
+        }
+
+        async fn active_skills(
+            &self,
+            _params: SkillActiveParams,
+        ) -> Result<AgentApiOutcome<SkillActiveResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(SkillActiveResponse {
+                catalog_ref: Some(format!("sha256:{}", "5".repeat(64))),
+                activations: vec![test_skill_activation(SkillActivationScope::Run)],
+            }))
+        }
+
+        async fn activate_skill(
+            &self,
+            params: SkillActivateParams,
+        ) -> Result<AgentApiOutcome<SkillActivateResponse>, AgentApiError> {
+            assert_eq!(params.skill_id, "skill:one");
+            let activation = test_skill_activation(params.scope);
+            Ok(AgentApiOutcome::new(SkillActivateResponse {
+                activation: activation.clone(),
+                active: vec![activation],
+            }))
+        }
+
+        async fn deactivate_skill(
+            &self,
+            params: SkillDeactivateParams,
+        ) -> Result<AgentApiOutcome<SkillDeactivateResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(SkillDeactivateResponse {
+                skill_id: params.skill_id,
+                active: Vec::new(),
+            }))
+        }
+
         async fn put_blob(
             &self,
             params: BlobPutParams,
@@ -2363,6 +2646,20 @@ mod tests {
             input: Vec::new(),
             items: Vec::new(),
             tool_batches: Vec::new(),
+        }
+    }
+
+    fn test_skill_activation(scope: SkillActivationScope) -> SkillActivationView {
+        SkillActivationView {
+            skill_id: "skill:one".to_owned(),
+            name: Some("one".to_owned()),
+            description: Some("Use when testing skills.".to_owned()),
+            short_description: Some("test skill".to_owned()),
+            catalog_ref: format!("sha256:{}", "5".repeat(64)),
+            scope,
+            source: SkillActivationSource::DirectContext {
+                context_ref: format!("sha256:{}", "6".repeat(64)),
+            },
         }
     }
 }

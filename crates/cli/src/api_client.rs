@@ -4,12 +4,15 @@ use api::{
     AgentApiError, AgentApiErrorKind, AgentApiOutcome, BlobGetParams, BlobGetResponse,
     BlobHasManyParams, BlobHasManyResponse, BlobPutManyParams, BlobPutManyResponse, JsonRpcRequest,
     JsonRpcResponse, METHOD_BLOB_GET, METHOD_BLOB_HAS_MANY, METHOD_BLOB_PUT_MANY, METHOD_RUN_START,
-    METHOD_SESSION_EVENTS_READ, METHOD_SESSION_READ, METHOD_SESSION_START, METHOD_VFS_MOUNT_DELETE,
+    METHOD_SESSION_EVENTS_READ, METHOD_SESSION_READ, METHOD_SESSION_START, METHOD_SKILLS_ACTIVATE,
+    METHOD_SKILLS_ACTIVE, METHOD_SKILLS_DEACTIVATE, METHOD_SKILLS_LIST, METHOD_VFS_MOUNT_DELETE,
     METHOD_VFS_MOUNT_LIST, METHOD_VFS_MOUNT_PUT, METHOD_VFS_SNAPSHOT_COMMIT,
     METHOD_VFS_SNAPSHOT_READ, METHOD_VFS_WORKSPACE_CREATE, METHOD_VFS_WORKSPACE_DELETE,
     METHOD_VFS_WORKSPACE_READ, METHOD_VFS_WORKSPACE_UPDATE, RequestId, RunStartParams,
     RunStartResponse, SessionEventsReadParams, SessionEventsReadResponse, SessionReadParams,
-    SessionReadResponse, SessionStartParams, SessionStartResponse, VfsMountDeleteParams,
+    SessionReadResponse, SessionStartParams, SessionStartResponse, SkillActivateParams,
+    SkillActivateResponse, SkillActiveParams, SkillActiveResponse, SkillDeactivateParams,
+    SkillDeactivateResponse, SkillListParams, SkillListResponse, VfsMountDeleteParams,
     VfsMountDeleteResponse, VfsMountListParams, VfsMountListResponse, VfsMountPutParams,
     VfsMountPutResponse, VfsSnapshotCommitParams, VfsSnapshotCommitResponse, VfsSnapshotReadParams,
     VfsSnapshotReadResponse, VfsWorkspaceCreateParams, VfsWorkspaceCreateResponse,
@@ -86,6 +89,34 @@ impl HttpAgentApi {
         params: RunStartParams,
     ) -> Result<AgentApiOutcome<RunStartResponse>, AgentApiError> {
         self.request(METHOD_RUN_START, params).await
+    }
+
+    pub(crate) async fn list_skills(
+        &self,
+        params: SkillListParams,
+    ) -> Result<AgentApiOutcome<SkillListResponse>, AgentApiError> {
+        self.request(METHOD_SKILLS_LIST, params).await
+    }
+
+    pub(crate) async fn active_skills(
+        &self,
+        params: SkillActiveParams,
+    ) -> Result<AgentApiOutcome<SkillActiveResponse>, AgentApiError> {
+        self.request(METHOD_SKILLS_ACTIVE, params).await
+    }
+
+    pub(crate) async fn activate_skill(
+        &self,
+        params: SkillActivateParams,
+    ) -> Result<AgentApiOutcome<SkillActivateResponse>, AgentApiError> {
+        self.request(METHOD_SKILLS_ACTIVATE, params).await
+    }
+
+    pub(crate) async fn deactivate_skill(
+        &self,
+        params: SkillDeactivateParams,
+    ) -> Result<AgentApiOutcome<SkillDeactivateResponse>, AgentApiError> {
+        self.request(METHOD_SKILLS_DEACTIVATE, params).await
     }
 
     pub(crate) async fn put_blobs(

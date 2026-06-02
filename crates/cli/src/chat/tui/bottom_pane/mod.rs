@@ -166,6 +166,17 @@ impl BottomPaneState {
         self.slash_popup = None;
     }
 
+    pub(crate) fn open_skill_picker(
+        &mut self,
+        skills: &[api::SkillListItem],
+        scope: api::SkillActivationScope,
+    ) {
+        self.active_view = Some(BottomPaneView::Picker(ListSelectionView::skills(
+            skills, scope,
+        )));
+        self.slash_popup = None;
+    }
+
     pub(crate) fn desired_height(&self) -> u16 {
         self.content_height() + self.footer_height()
     }

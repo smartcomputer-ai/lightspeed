@@ -59,7 +59,9 @@ impl TranscriptState {
                     ),
                 )));
             }
-            ChatEvent::SessionsListed { .. } | ChatEvent::SessionSelected(_) => {}
+            ChatEvent::SessionsListed { .. }
+            | ChatEvent::SkillsListed { .. }
+            | ChatEvent::SessionSelected(_) => {}
             ChatEvent::HistoryReset { session_id } => {
                 self.cells.clear();
                 self.pending_history_cell_indices.clear();

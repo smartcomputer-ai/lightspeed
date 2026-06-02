@@ -1,7 +1,7 @@
 //! `api` gateway for the Temporal-backed agent workflow.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     env,
     sync::{Arc, RwLock},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -19,13 +19,17 @@ use api::{
     SessionCloseResponse, SessionConfigInput, SessionConfigPatchInput, SessionEventsReadParams,
     SessionEventsReadResponse, SessionReadParams, SessionReadResponse, SessionStartParams,
     SessionStartResponse, SessionUpdateParams, SessionUpdateResponse, SessionView,
-    VfsMountAccess as ApiVfsMountAccess, VfsMountDeleteParams, VfsMountDeleteResponse,
-    VfsMountListParams, VfsMountListResponse, VfsMountPutParams, VfsMountPutResponse,
-    VfsMountSourceInput, VfsMountSourceView, VfsMountView, VfsSnapshotCommitParams,
-    VfsSnapshotCommitResponse, VfsSnapshotReadParams, VfsSnapshotReadResponse,
-    VfsWorkspaceCreateParams, VfsWorkspaceCreateResponse, VfsWorkspaceDeleteParams,
-    VfsWorkspaceDeleteResponse, VfsWorkspaceReadParams, VfsWorkspaceReadResponse,
-    VfsWorkspaceUpdateParams, VfsWorkspaceUpdateResponse, VfsWorkspaceView,
+    SkillActivateParams, SkillActivateResponse, SkillActivationScope as ApiSkillActivationScope,
+    SkillActivationSource as ApiSkillActivationSource, SkillActivationView, SkillActiveParams,
+    SkillActiveResponse, SkillDeactivateParams, SkillDeactivateResponse, SkillListItem,
+    SkillListParams, SkillListResponse, VfsMountAccess as ApiVfsMountAccess, VfsMountDeleteParams,
+    VfsMountDeleteResponse, VfsMountListParams, VfsMountListResponse, VfsMountPutParams,
+    VfsMountPutResponse, VfsMountSourceInput, VfsMountSourceView, VfsMountView,
+    VfsSnapshotCommitParams, VfsSnapshotCommitResponse, VfsSnapshotReadParams,
+    VfsSnapshotReadResponse, VfsWorkspaceCreateParams, VfsWorkspaceCreateResponse,
+    VfsWorkspaceDeleteParams, VfsWorkspaceDeleteResponse, VfsWorkspaceReadParams,
+    VfsWorkspaceReadResponse, VfsWorkspaceUpdateParams, VfsWorkspaceUpdateResponse,
+    VfsWorkspaceView,
 };
 use api_projection::{
     CoreAgentProjector, MAX_EVENT_PAGE_LIMIT, ProjectSession, api_kind_from_str, api_run_id,
@@ -39,7 +43,8 @@ use engine::{
     CoreAgentStatus, ModelProviderOptions, ModelSelection, OpenAiCompletionsRequestDefaults,
     OpenAiReasoningConfig, OpenAiResponsesRequestDefaults, OptionalConfigPatch, ProviderApiKind,
     ProviderRequestDefaults, RunConfig, RunConfigPatch, RunId, RunStatus, SessionConfig,
-    SessionConfigPatch, SessionId, SubmissionId, TurnConfigPatch,
+    SessionConfigPatch, SessionId, SkillActivation, SkillActivationScope, SkillActivationSource,
+    SkillCatalogContext, SkillId, SubmissionId, TurnConfigPatch,
     storage::{BlobStore, BlobStoreError, ReadSessionEvents, SessionStore},
 };
 use store_pg::PgStore;
@@ -50,10 +55,14 @@ use temporalio_client::{
 use tools::{
     host::{
         HostToolContext, HostToolTargets,
-        fs::{FsPath, MountedVfsFileSystem},
+        fs::{FileSystem, FsPath, MountedVfsFileSystem},
         profiles::{HostToolPreset, resolve_host_profile},
     },
     runtime::ToolDocument,
+    skills::{
+        SkillCatalogSnapshot, SkillLocation, SkillMetadata, conventional_vfs_skill_root_specs,
+        prepare_skill_catalog_publication, resolve_mounted_vfs_skill_roots,
+    },
 };
 use vfs::{
     CompareAndSetVfsWorkspaceHead, CreateVfsWorkspaceRecord, VfsCatalogError, VfsMountAccess,
@@ -422,6 +431,252 @@ impl GatewayAgentApi {
         self.projector()
             .project_run(&loaded.entries, run_id, status)
             .await
+    }
+
+    async fn load_session_state_with_current_skill_catalog(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<LoadedSession, AgentApiError> {
+        let loaded = self.load_session_state(session_id).await?;
+        if loaded.state.lifecycle.status == CoreAgentStatus::Open
+            && loaded.state.runs.active.is_none()
+            && loaded.state.runs.queued.is_empty()
+        {
+            self.refresh_skill_catalog_for_idle_session(
+                session_id,
+                loaded.state.skills.catalog.clone(),
+            )
+            .await?;
+            return self.load_session_state(session_id).await;
+        }
+        Ok(loaded)
+    }
+
+    async fn refresh_skill_catalog_for_idle_session(
+        &self,
+        session_id: &SessionId,
+        active_catalog: Option<SkillCatalogContext>,
+    ) -> Result<(), AgentApiError> {
+        let Some(command) = self
+            .skill_catalog_refresh_command(session_id, active_catalog)
+            .await?
+        else {
+            return Ok(());
+        };
+        let CoreAgentCommand::SetSkillCatalog { catalog } = &command else {
+            return Err(AgentApiError::internal(
+                "skill catalog refresh produced non-catalog command",
+            ));
+        };
+        let target_catalog_ref = catalog.as_ref().map(|catalog| catalog.catalog_ref.clone());
+        let baseline_failures = self
+            .query_status_optional(session_id)
+            .await?
+            .map(|status| status.admission_failures.len())
+            .unwrap_or(0);
+        self.submit_core_command(session_id, command).await?;
+        self.wait_for_skill_catalog(session_id, target_catalog_ref, baseline_failures)
+            .await
+    }
+
+    async fn skill_catalog_refresh_command(
+        &self,
+        session_id: &SessionId,
+        active_catalog: Option<SkillCatalogContext>,
+    ) -> Result<Option<CoreAgentCommand>, AgentApiError> {
+        let mounts = self
+            .store
+            .list_mounts(session_id)
+            .await
+            .map_err(map_vfs_catalog_error)?;
+        let specs = conventional_vfs_skill_root_specs(&mounts);
+        if specs.is_empty() {
+            return Ok(clear_skill_catalog_command(active_catalog.as_ref()));
+        }
+
+        let blobs: Arc<dyn BlobStore> = self.store.clone();
+        let workspace_store: Arc<dyn VfsWorkspaceStore> = self.store.clone();
+        let resolved = resolve_mounted_vfs_skill_roots(blobs, workspace_store, mounts, specs)
+            .await
+            .map_err(|error| AgentApiError::internal(error.to_string()))?;
+        let inputs = resolved
+            .existing_directory_inputs()
+            .await
+            .map_err(|error| AgentApiError::internal(error.to_string()))?;
+        if inputs.is_empty() {
+            return Ok(clear_skill_catalog_command(active_catalog.as_ref()));
+        }
+
+        let mut state = engine::CoreAgentState::new();
+        state.skills.catalog = active_catalog;
+        let publication =
+            prepare_skill_catalog_publication(self.store.as_ref(), &state, None, &inputs)
+                .await
+                .map_err(|error| AgentApiError::internal(error.to_string()))?;
+        Ok(publication.command)
+    }
+
+    async fn project_skill_list(
+        &self,
+        loaded: &LoadedSession,
+    ) -> Result<SkillListResponse, AgentApiError> {
+        let Some(catalog_context) = loaded.state.skills.catalog.as_ref() else {
+            return Ok(SkillListResponse {
+                catalog_ref: None,
+                skills: Vec::new(),
+            });
+        };
+        let catalog = self
+            .read_skill_catalog(&catalog_context.catalog_ref)
+            .await?;
+        Ok(skill_list_response(
+            Some(&catalog_context.catalog_ref),
+            Some(&catalog),
+            &loaded.state.skills.activations,
+        ))
+    }
+
+    async fn project_active_skills(
+        &self,
+        loaded: &LoadedSession,
+    ) -> Result<SkillActiveResponse, AgentApiError> {
+        let catalog = match loaded.state.skills.catalog.as_ref() {
+            Some(catalog_context) => Some(
+                self.read_skill_catalog(&catalog_context.catalog_ref)
+                    .await?,
+            ),
+            None => None,
+        };
+        Ok(skill_active_response(
+            loaded
+                .state
+                .skills
+                .catalog
+                .as_ref()
+                .map(|catalog| &catalog.catalog_ref),
+            catalog.as_ref(),
+            &loaded.state.skills.activations,
+        ))
+    }
+
+    async fn read_skill_catalog(
+        &self,
+        catalog_ref: &BlobRef,
+    ) -> Result<SkillCatalogSnapshot, AgentApiError> {
+        let bytes = self
+            .store
+            .read_bytes(catalog_ref)
+            .await
+            .map_err(map_blob_read_error)?;
+        serde_json::from_slice(&bytes).map_err(|error| {
+            AgentApiError::internal(format!("stored skill catalog is invalid JSON: {error}"))
+        })
+    }
+
+    async fn read_skill_doc_for_activation(
+        &self,
+        session_id: &SessionId,
+        skill: &SkillMetadata,
+    ) -> Result<String, AgentApiError> {
+        let mounts = self
+            .store
+            .list_mounts(session_id)
+            .await
+            .map_err(map_vfs_catalog_error)?;
+        let blobs: Arc<dyn BlobStore> = self.store.clone();
+        let workspace_store: Arc<dyn VfsWorkspaceStore> = self.store.clone();
+        read_skill_doc_for_activation_from_vfs(blobs, workspace_store, mounts, skill).await
+    }
+
+    fn require_open_idle_session(
+        &self,
+        session_id: &SessionId,
+        loaded: &LoadedSession,
+        operation: &str,
+    ) -> Result<(), AgentApiError> {
+        if loaded.state.lifecycle.status != CoreAgentStatus::Open {
+            return Err(AgentApiError::rejected(format!(
+                "session is not open: {session_id}"
+            )));
+        }
+        if loaded.state.runs.active.is_some() || !loaded.state.runs.queued.is_empty() {
+            return Err(AgentApiError::rejected(format!(
+                "{operation} can only change while no run is active or queued"
+            )));
+        }
+        Ok(())
+    }
+
+    async fn wait_for_skill_catalog(
+        &self,
+        session_id: &SessionId,
+        target_catalog_ref: Option<BlobRef>,
+        baseline_failures: usize,
+    ) -> Result<(), AgentApiError> {
+        let started = Instant::now();
+        loop {
+            if started.elapsed() > self.operation_timeout {
+                return Err(AgentApiError::internal(format!(
+                    "timed out waiting for skill catalog update: {session_id}"
+                )));
+            }
+            if let Some(status) = self.query_status_optional(session_id).await? {
+                if status.admission_failures.len() > baseline_failures {
+                    if let Some(failure) = status.admission_failures.last() {
+                        return Err(map_admission_failure_to_api_error(failure));
+                    }
+                }
+                if let Some(error) = status.last_error {
+                    return Err(AgentApiError::internal(format!(
+                        "agent workflow reported error: {error}"
+                    )));
+                }
+            }
+            let loaded = self.load_session_state(session_id).await?;
+            let actual = loaded
+                .state
+                .skills
+                .catalog
+                .as_ref()
+                .map(|catalog| catalog.catalog_ref.clone());
+            if actual == target_catalog_ref {
+                return Ok(());
+            }
+            tokio::time::sleep(self.poll_interval).await;
+        }
+    }
+
+    async fn wait_for_skill_activations(
+        &self,
+        session_id: &SessionId,
+        target: Vec<SkillActivation>,
+        baseline_failures: usize,
+    ) -> Result<(), AgentApiError> {
+        let started = Instant::now();
+        loop {
+            if started.elapsed() > self.operation_timeout {
+                return Err(AgentApiError::internal(format!(
+                    "timed out waiting for skill activation update: {session_id}"
+                )));
+            }
+            if let Some(status) = self.query_status_optional(session_id).await? {
+                if status.admission_failures.len() > baseline_failures {
+                    if let Some(failure) = status.admission_failures.last() {
+                        return Err(map_admission_failure_to_api_error(failure));
+                    }
+                }
+                if let Some(error) = status.last_error {
+                    return Err(AgentApiError::internal(format!(
+                        "agent workflow reported error: {error}"
+                    )));
+                }
+            }
+            let loaded = self.load_session_state(session_id).await?;
+            if loaded.state.skills.activations == target {
+                return Ok(());
+            }
+            tokio::time::sleep(self.poll_interval).await;
+        }
     }
 
     async fn project_vfs_mounts(
@@ -1375,6 +1630,152 @@ impl AgentApiService for GatewayAgentApi {
         Ok(AgentApiOutcome::new(RunCancelResponse { run }))
     }
 
+    async fn list_skills(
+        &self,
+        params: SkillListParams,
+    ) -> Result<AgentApiOutcome<SkillListResponse>, AgentApiError> {
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let loaded = self
+            .load_session_state_with_current_skill_catalog(&session_id)
+            .await?;
+        Ok(AgentApiOutcome::new(
+            self.project_skill_list(&loaded).await?,
+        ))
+    }
+
+    async fn active_skills(
+        &self,
+        params: SkillActiveParams,
+    ) -> Result<AgentApiOutcome<SkillActiveResponse>, AgentApiError> {
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let loaded = self
+            .load_session_state_with_current_skill_catalog(&session_id)
+            .await?;
+        Ok(AgentApiOutcome::new(
+            self.project_active_skills(&loaded).await?,
+        ))
+    }
+
+    async fn activate_skill(
+        &self,
+        params: SkillActivateParams,
+    ) -> Result<AgentApiOutcome<SkillActivateResponse>, AgentApiError> {
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let skill_id = SkillId::try_new(params.skill_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid skill id: {error}"))
+        })?;
+        let loaded = self
+            .load_session_state_with_current_skill_catalog(&session_id)
+            .await?;
+        self.require_open_idle_session(&session_id, &loaded, "skill activation")?;
+
+        let catalog_context = loaded.state.skills.catalog.as_ref().ok_or_else(|| {
+            AgentApiError::not_found(format!("no skill catalog is available for {session_id}"))
+        })?;
+        let catalog = self
+            .read_skill_catalog(&catalog_context.catalog_ref)
+            .await?;
+        let skill = catalog
+            .skills
+            .iter()
+            .find(|skill| skill.skill_id == skill_id)
+            .ok_or_else(|| AgentApiError::not_found(format!("skill not found: {skill_id}")))?;
+        if !skill.enabled {
+            return Err(AgentApiError::rejected(format!(
+                "skill is disabled: {skill_id}"
+            )));
+        }
+
+        let skill_doc = self
+            .read_skill_doc_for_activation(&session_id, skill)
+            .await?;
+        let context_ref = self
+            .store
+            .put_bytes(skill_doc.into_bytes())
+            .await
+            .map_err(map_blob_store_error)?;
+        let (activation, activations) = replace_direct_skill_activation(
+            &loaded.state.skills.activations,
+            skill_id.clone(),
+            catalog_context.catalog_ref.clone(),
+            context_ref,
+            params.scope,
+        );
+
+        if activations != loaded.state.skills.activations {
+            let baseline_failures = self
+                .query_status_optional(&session_id)
+                .await?
+                .map(|status| status.admission_failures.len())
+                .unwrap_or(0);
+            self.submit_core_command(
+                &session_id,
+                CoreAgentCommand::SetSkillActivations {
+                    activations: activations.clone(),
+                },
+            )
+            .await?;
+            self.wait_for_skill_activations(&session_id, activations, baseline_failures)
+                .await?;
+        }
+
+        let loaded = self.load_session_state(&session_id).await?;
+        let active = self.project_active_skills(&loaded).await?.activations;
+        let activation = active
+            .iter()
+            .find(|active| active.skill_id == skill_id.as_str())
+            .cloned()
+            .unwrap_or_else(|| skill_activation_view(&activation, Some(&catalog)));
+        Ok(AgentApiOutcome::new(SkillActivateResponse {
+            activation,
+            active,
+        }))
+    }
+
+    async fn deactivate_skill(
+        &self,
+        params: SkillDeactivateParams,
+    ) -> Result<AgentApiOutcome<SkillDeactivateResponse>, AgentApiError> {
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let skill_id = SkillId::try_new(params.skill_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid skill id: {error}"))
+        })?;
+        let loaded = self.load_session_state(&session_id).await?;
+        self.require_open_idle_session(&session_id, &loaded, "skill deactivation")?;
+
+        let activations = remove_skill_activation(&loaded.state.skills.activations, &skill_id)?;
+
+        let baseline_failures = self
+            .query_status_optional(&session_id)
+            .await?
+            .map(|status| status.admission_failures.len())
+            .unwrap_or(0);
+        self.submit_core_command(
+            &session_id,
+            CoreAgentCommand::SetSkillActivations {
+                activations: activations.clone(),
+            },
+        )
+        .await?;
+        self.wait_for_skill_activations(&session_id, activations, baseline_failures)
+            .await?;
+
+        let loaded = self.load_session_state(&session_id).await?;
+        let active = self.project_active_skills(&loaded).await?.activations;
+        Ok(AgentApiOutcome::new(SkillDeactivateResponse {
+            skill_id: skill_id.as_str().to_owned(),
+            active,
+        }))
+    }
+
     async fn put_blob(
         &self,
         params: BlobPutParams,
@@ -1670,6 +2071,161 @@ fn mounted_vfs_cwd(mounts: &[VfsMountRecord]) -> Result<FsPath, AgentApiError> {
         "/"
     };
     FsPath::new(cwd).map_err(|error| AgentApiError::internal(error.to_string()))
+}
+
+fn clear_skill_catalog_command(
+    active_catalog: Option<&SkillCatalogContext>,
+) -> Option<CoreAgentCommand> {
+    active_catalog.map(|_| CoreAgentCommand::SetSkillCatalog { catalog: None })
+}
+
+fn skill_list_response(
+    catalog_ref: Option<&BlobRef>,
+    catalog: Option<&SkillCatalogSnapshot>,
+    activations: &[SkillActivation],
+) -> SkillListResponse {
+    let Some(catalog) = catalog else {
+        return SkillListResponse {
+            catalog_ref: None,
+            skills: Vec::new(),
+        };
+    };
+    let active_ids = activations
+        .iter()
+        .map(|activation| activation.skill_id.as_str().to_owned())
+        .collect::<BTreeSet<_>>();
+    SkillListResponse {
+        catalog_ref: catalog_ref.map(|catalog_ref| catalog_ref.as_str().to_owned()),
+        skills: catalog
+            .skills
+            .iter()
+            .map(|skill| SkillListItem {
+                skill_id: skill.skill_id.as_str().to_owned(),
+                name: skill.name.clone(),
+                description: skill.description.clone(),
+                short_description: skill.short_description.clone(),
+                enabled: skill.enabled,
+                active: active_ids.contains(skill.skill_id.as_str()),
+            })
+            .collect(),
+    }
+}
+
+fn skill_active_response(
+    catalog_ref: Option<&BlobRef>,
+    catalog: Option<&SkillCatalogSnapshot>,
+    activations: &[SkillActivation],
+) -> SkillActiveResponse {
+    SkillActiveResponse {
+        catalog_ref: catalog_ref.map(|catalog_ref| catalog_ref.as_str().to_owned()),
+        activations: activations
+            .iter()
+            .map(|activation| skill_activation_view(activation, catalog))
+            .collect(),
+    }
+}
+
+fn replace_direct_skill_activation(
+    current: &[SkillActivation],
+    skill_id: SkillId,
+    catalog_ref: BlobRef,
+    context_ref: BlobRef,
+    scope: ApiSkillActivationScope,
+) -> (SkillActivation, Vec<SkillActivation>) {
+    let activation = SkillActivation {
+        skill_id: skill_id.clone(),
+        catalog_ref,
+        source: SkillActivationSource::DirectContext { context_ref },
+        scope: core_skill_activation_scope(scope),
+    };
+    let mut activations = current.to_vec();
+    activations.retain(|active| active.skill_id != skill_id);
+    activations.push(activation.clone());
+    (activation, activations)
+}
+
+fn remove_skill_activation(
+    current: &[SkillActivation],
+    skill_id: &SkillId,
+) -> Result<Vec<SkillActivation>, AgentApiError> {
+    let mut activations = current.to_vec();
+    let original_len = activations.len();
+    activations.retain(|active| &active.skill_id != skill_id);
+    if activations.len() == original_len {
+        return Err(AgentApiError::not_found(format!(
+            "active skill not found: {skill_id}"
+        )));
+    }
+    Ok(activations)
+}
+
+async fn read_skill_doc_for_activation_from_vfs(
+    blobs: Arc<dyn BlobStore>,
+    workspace_store: Arc<dyn VfsWorkspaceStore>,
+    mounts: Vec<VfsMountRecord>,
+    skill: &SkillMetadata,
+) -> Result<String, AgentApiError> {
+    let skill_doc_path = match &skill.location {
+        SkillLocation::MountedSnapshot { skill_doc_path, .. }
+        | SkillLocation::MountedWorkspace { skill_doc_path, .. } => skill_doc_path,
+        SkillLocation::HostFilesystem { .. } => {
+            return Err(AgentApiError::invalid_request(
+                "direct skill activation currently supports VFS-mounted skills only",
+            ));
+        }
+    };
+
+    let fs = MountedVfsFileSystem::new(blobs, workspace_store, mounts).map_err(map_fs_error)?;
+    let path = FsPath::new(skill_doc_path.as_str()).map_err(|error| {
+        AgentApiError::internal(format!(
+            "stored skill document path is invalid: {skill_doc_path}: {error}"
+        ))
+    })?;
+    fs.read_file_text(&path).await.map_err(map_fs_error)
+}
+
+fn core_skill_activation_scope(scope: ApiSkillActivationScope) -> SkillActivationScope {
+    match scope {
+        ApiSkillActivationScope::Run => SkillActivationScope::Run,
+        ApiSkillActivationScope::Session => SkillActivationScope::Session,
+    }
+}
+
+fn api_skill_activation_scope(scope: SkillActivationScope) -> ApiSkillActivationScope {
+    match scope {
+        SkillActivationScope::Run => ApiSkillActivationScope::Run,
+        SkillActivationScope::Session => ApiSkillActivationScope::Session,
+    }
+}
+
+fn skill_activation_view(
+    activation: &SkillActivation,
+    catalog: Option<&SkillCatalogSnapshot>,
+) -> SkillActivationView {
+    let metadata = catalog.and_then(|catalog| {
+        catalog
+            .skills
+            .iter()
+            .find(|skill| skill.skill_id == activation.skill_id)
+    });
+    SkillActivationView {
+        skill_id: activation.skill_id.as_str().to_owned(),
+        name: metadata.map(|skill| skill.name.clone()),
+        description: metadata.map(|skill| skill.description.clone()),
+        short_description: metadata.and_then(|skill| skill.short_description.clone()),
+        catalog_ref: activation.catalog_ref.as_str().to_owned(),
+        scope: api_skill_activation_scope(activation.scope),
+        source: match &activation.source {
+            SkillActivationSource::ToolResult { call_id } => ApiSkillActivationSource::ToolResult {
+                call_id: call_id.as_str().to_owned(),
+            },
+            SkillActivationSource::DirectContext { context_ref } => {
+                ApiSkillActivationSource::DirectContext {
+                    context_ref: context_ref.as_str().to_owned(),
+                }
+            }
+        },
+    }
 }
 
 async fn store_tool_documents(
@@ -2172,6 +2728,8 @@ fn map_workflow_interaction_error(error: WorkflowInteractionError) -> AgentApiEr
 
 #[cfg(test)]
 mod tests {
+    use async_trait::async_trait;
+
     use super::*;
 
     #[test]
@@ -2188,6 +2746,212 @@ mod tests {
             .kind,
             AgentApiErrorKind::Rejected
         );
+    }
+
+    #[test]
+    fn skill_list_response_marks_active_catalog_entries() {
+        let catalog_ref = BlobRef::from_bytes(b"catalog");
+        let catalog = test_skill_catalog(
+            &catalog_ref,
+            vec![
+                test_skill_metadata("skill:review", "review", true),
+                test_skill_metadata("skill:deploy", "deploy", false),
+            ],
+        );
+        let activation = direct_activation(
+            "skill:review",
+            &catalog_ref,
+            &BlobRef::from_bytes(b"review-body"),
+            SkillActivationScope::Run,
+        );
+
+        let response = skill_list_response(Some(&catalog_ref), Some(&catalog), &[activation]);
+
+        assert_eq!(response.catalog_ref.as_deref(), Some(catalog_ref.as_str()));
+        assert_eq!(response.skills.len(), 2);
+        assert_eq!(response.skills[0].skill_id, "skill:review");
+        assert!(response.skills[0].enabled);
+        assert!(response.skills[0].active);
+        assert_eq!(response.skills[1].skill_id, "skill:deploy");
+        assert!(!response.skills[1].enabled);
+        assert!(!response.skills[1].active);
+    }
+
+    #[test]
+    fn skill_active_response_exposes_activation_sources_and_metadata() {
+        let catalog_ref = BlobRef::from_bytes(b"catalog");
+        let context_ref = BlobRef::from_bytes(b"direct-body");
+        let catalog = test_skill_catalog(
+            &catalog_ref,
+            vec![
+                test_skill_metadata("skill:review", "review", true),
+                test_skill_metadata("skill:deploy", "deploy", true),
+            ],
+        );
+        let direct = direct_activation(
+            "skill:review",
+            &catalog_ref,
+            &context_ref,
+            SkillActivationScope::Session,
+        );
+        let tool = SkillActivation {
+            skill_id: SkillId::new("skill:deploy"),
+            catalog_ref: catalog_ref.clone(),
+            source: SkillActivationSource::ToolResult {
+                call_id: engine::ToolCallId::new("call_1"),
+            },
+            scope: SkillActivationScope::Run,
+        };
+
+        let response = skill_active_response(Some(&catalog_ref), Some(&catalog), &[direct, tool]);
+
+        assert_eq!(response.catalog_ref.as_deref(), Some(catalog_ref.as_str()));
+        assert_eq!(response.activations.len(), 2);
+        assert_eq!(response.activations[0].name.as_deref(), Some("review"));
+        assert_eq!(
+            response.activations[0].source,
+            ApiSkillActivationSource::DirectContext {
+                context_ref: context_ref.as_str().to_owned()
+            }
+        );
+        assert_eq!(
+            response.activations[0].scope,
+            ApiSkillActivationScope::Session
+        );
+        assert_eq!(response.activations[1].name.as_deref(), Some("deploy"));
+        assert_eq!(
+            response.activations[1].source,
+            ApiSkillActivationSource::ToolResult {
+                call_id: "call_1".to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn replace_direct_skill_activation_replaces_same_skill_only() {
+        let catalog_ref = BlobRef::from_bytes(b"catalog");
+        let old_context_ref = BlobRef::from_bytes(b"old-body");
+        let new_context_ref = BlobRef::from_bytes(b"new-body");
+        let other = direct_activation(
+            "skill:deploy",
+            &catalog_ref,
+            &BlobRef::from_bytes(b"deploy-body"),
+            SkillActivationScope::Run,
+        );
+        let current = vec![
+            direct_activation(
+                "skill:review",
+                &catalog_ref,
+                &old_context_ref,
+                SkillActivationScope::Run,
+            ),
+            other.clone(),
+        ];
+
+        let (activation, activations) = replace_direct_skill_activation(
+            &current,
+            SkillId::new("skill:review"),
+            catalog_ref.clone(),
+            new_context_ref.clone(),
+            ApiSkillActivationScope::Session,
+        );
+
+        assert_eq!(activation.skill_id, SkillId::new("skill:review"));
+        assert_eq!(activation.scope, SkillActivationScope::Session);
+        assert_eq!(activation.direct_context_ref(), Some(&new_context_ref));
+        assert_eq!(activations.len(), 2);
+        assert_eq!(activations[0], other);
+        assert_eq!(activations[1], activation);
+        assert_eq!(
+            activations
+                .iter()
+                .filter(|activation| activation.skill_id == SkillId::new("skill:review"))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn remove_skill_activation_removes_selected_or_errors() {
+        let catalog_ref = BlobRef::from_bytes(b"catalog");
+        let review = direct_activation(
+            "skill:review",
+            &catalog_ref,
+            &BlobRef::from_bytes(b"review-body"),
+            SkillActivationScope::Run,
+        );
+        let deploy = direct_activation(
+            "skill:deploy",
+            &catalog_ref,
+            &BlobRef::from_bytes(b"deploy-body"),
+            SkillActivationScope::Session,
+        );
+
+        let remaining =
+            remove_skill_activation(&[review, deploy.clone()], &SkillId::new("skill:review"))
+                .expect("remove review");
+
+        assert_eq!(remaining, vec![deploy]);
+        let error = remove_skill_activation(&remaining, &SkillId::new("skill:missing"))
+            .expect_err("missing skill should fail");
+        assert_eq!(error.kind, AgentApiErrorKind::NotFound);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn read_skill_doc_for_activation_reads_cataloged_vfs_bytes() {
+        let blobs = Arc::new(engine::storage::InMemoryBlobStore::new());
+        let skill_body =
+            "---\nname: review\ndescription: Use when testing review.\n---\nsecret body\n";
+        let snapshot = vfs::create_inline_snapshot(
+            blobs.as_ref(),
+            vfs::CreateInlineSnapshotRequest::new(vec![
+                vfs::InlineFile::new("review/SKILL.md", skill_body.as_bytes().to_vec()).unwrap(),
+            ]),
+        )
+        .await
+        .expect("create skill snapshot");
+        let workspace_store = Arc::new(EmptyWorkspaceStore);
+        let mount = VfsMountRecord {
+            session_id: SessionId::new("session_1"),
+            mount_path: VfsPath::parse("/skills/system").unwrap(),
+            source: VfsMountSource::Snapshot {
+                snapshot_ref: snapshot.snapshot_ref.clone(),
+            },
+            access: VfsMountAccess::ReadOnly,
+        };
+        let skill = test_skill_metadata_with_snapshot(
+            "skill:review",
+            "review",
+            true,
+            snapshot.snapshot_ref.clone(),
+        );
+
+        let body =
+            read_skill_doc_for_activation_from_vfs(blobs, workspace_store, vec![mount], &skill)
+                .await
+                .expect("read skill doc");
+
+        assert_eq!(body, skill_body);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn read_skill_doc_for_activation_rejects_host_locations() {
+        let blobs = Arc::new(engine::storage::InMemoryBlobStore::new());
+        let workspace_store = Arc::new(EmptyWorkspaceStore);
+        let mut skill = test_skill_metadata("skill:host", "host", true);
+        skill.location = SkillLocation::HostFilesystem {
+            target: engine::ToolExecutionTarget::new("host", "vm-1"),
+            root_path: "/skills".to_owned(),
+            skill_dir_path: "/skills/host".to_owned(),
+            skill_doc_path: "/skills/host/SKILL.md".to_owned(),
+        };
+
+        let error =
+            read_skill_doc_for_activation_from_vfs(blobs, workspace_store, Vec::new(), &skill)
+                .await
+                .expect_err("host location should not read through VFS");
+
+        assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
     }
 
     #[test]
@@ -2430,6 +3194,105 @@ mod tests {
             provider_id: "openai".to_owned(),
             model: "gpt-5.5".to_owned(),
             options: ModelProviderOptions::None,
+        }
+    }
+
+    fn test_skill_catalog(
+        _catalog_ref: &BlobRef,
+        skills: Vec<SkillMetadata>,
+    ) -> SkillCatalogSnapshot {
+        SkillCatalogSnapshot::new(None, skills, Vec::new())
+    }
+
+    fn test_skill_metadata(skill_id: &str, name: &str, enabled: bool) -> SkillMetadata {
+        let snapshot_ref = BlobRef::from_bytes(b"skills-snapshot");
+        test_skill_metadata_with_snapshot(skill_id, name, enabled, snapshot_ref)
+    }
+
+    fn test_skill_metadata_with_snapshot(
+        skill_id: &str,
+        name: &str,
+        enabled: bool,
+        snapshot_ref: BlobRef,
+    ) -> SkillMetadata {
+        SkillMetadata {
+            skill_id: SkillId::new(skill_id),
+            name: name.to_owned(),
+            description: format!("Use when testing {name}."),
+            short_description: Some(format!("{name} skill")),
+            source: tools::skills::SkillSource::Snapshot {
+                root_id: "system".to_owned(),
+                snapshot_ref: snapshot_ref.clone(),
+            },
+            scope: tools::skills::SkillScope::Global,
+            target: None,
+            enabled,
+            trust: tools::skills::SkillTrustLevel::System,
+            interface: None,
+            dependencies: tools::skills::SkillDependencies::default(),
+            location: SkillLocation::MountedSnapshot {
+                source_snapshot_ref: snapshot_ref,
+                source_mount_path: VfsPath::parse("/skills/system").unwrap(),
+                skill_dir_path: VfsPath::parse(format!("/skills/system/{name}")).unwrap(),
+                skill_doc_path: VfsPath::parse(format!("/skills/system/{name}/SKILL.md")).unwrap(),
+            },
+            skill_doc_ref: None,
+        }
+    }
+
+    fn direct_activation(
+        skill_id: &str,
+        catalog_ref: &BlobRef,
+        context_ref: &BlobRef,
+        scope: SkillActivationScope,
+    ) -> SkillActivation {
+        SkillActivation {
+            skill_id: SkillId::new(skill_id),
+            catalog_ref: catalog_ref.clone(),
+            source: SkillActivationSource::DirectContext {
+                context_ref: context_ref.clone(),
+            },
+            scope,
+        }
+    }
+
+    struct EmptyWorkspaceStore;
+
+    #[async_trait]
+    impl VfsWorkspaceStore for EmptyWorkspaceStore {
+        async fn create_workspace(
+            &self,
+            _record: vfs::CreateVfsWorkspaceRecord,
+        ) -> Result<vfs::VfsWorkspaceRecord, vfs::VfsCatalogError> {
+            Err(workspace_not_found("create"))
+        }
+
+        async fn read_workspace(
+            &self,
+            workspace_id: &VfsWorkspaceId,
+        ) -> Result<vfs::VfsWorkspaceRecord, vfs::VfsCatalogError> {
+            Err(workspace_not_found(workspace_id.as_str()))
+        }
+
+        async fn compare_and_set_head(
+            &self,
+            _request: vfs::CompareAndSetVfsWorkspaceHead,
+        ) -> Result<vfs::VfsWorkspaceRecord, vfs::VfsCatalogError> {
+            Err(workspace_not_found("compare_and_set"))
+        }
+
+        async fn delete_workspace(
+            &self,
+            workspace_id: &VfsWorkspaceId,
+        ) -> Result<vfs::VfsWorkspaceRecord, vfs::VfsCatalogError> {
+            Err(workspace_not_found(workspace_id.as_str()))
+        }
+    }
+
+    fn workspace_not_found(id: &str) -> vfs::VfsCatalogError {
+        vfs::VfsCatalogError::NotFound {
+            kind: "workspace",
+            id: id.to_owned(),
         }
     }
 }

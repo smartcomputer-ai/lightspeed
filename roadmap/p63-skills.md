@@ -45,7 +45,16 @@
   the model must read the matching cataloged skill, avoid decoys, trigger the
   corresponding activation event, and use a hidden marker from the loaded skill
   body.
-- Anthropic catalog rendering and public API methods are not implemented.
+- First-cut public API methods are implemented: `skills/list`,
+  `skills/active`, `skills/activate`, and `skills/deactivate`.
+- Gateway unit tests cover skill list/active response projection, direct
+  activation replacement, deactivation removal, and VFS-backed direct skill
+  body reads.
+- First-cut CLI skill commands are implemented under `forge skills`.
+- First-cut TUI chat slash commands are implemented: `/skills`,
+  `/skills-active`, `/skill` picker, `/skill <id> [run|session]`, and
+  `/skill-off <id>`.
+- Anthropic catalog rendering is not implemented.
 - The first implementation is skill-specific. Do not introduce a generic
   `RuntimeContext` abstraction until there is a second concrete use case.
 
@@ -1450,35 +1459,46 @@ normal `read_file` tool result already expresses the behavior.
 
 Add product-shaped APIs only where clients need them.
 
-Candidate methods:
+Implemented first-cut methods:
 
 ```text
 skills/list
+skills/active
 skills/activate
 skills/deactivate
-session/skills/list
-session/skills/configure
 ```
 
-Recommended v1:
+Current v1 behavior:
 
-- `skills/list` for UI/CLI discovery before or during a session.
-- `session/read` projection includes active skill catalog summary, active skill
-  activations, and historical skill context items.
+- `skills/list` is catalog-focused. It returns the active `catalog_ref`, compact
+  skill summaries, and an `active` boolean per listed skill.
+- `skills/active` returns detailed current activation records, including
+  source (`toolResult` or `directContext`), scope (`run` or `session`), and the
+  activation's `catalog_ref`.
+- `skills/activate` records a direct-context activation. The gateway resolves
+  the selected skill from the active catalog, reads the cataloged `SKILL.md`
+  through mounted VFS, stores the raw body as a context blob, and submits
+  `SetSkillActivations`. The call does not start a run; the context planner
+  inserts the body before the next model request.
+- `skills/deactivate` removes a currently active activation by skill id.
 - Activation during model execution uses ordinary `read_file` on the cataloged
   `SKILL.md` path for that skill's read surface.
-- Manual user activation can be encoded as run input or a future
-  `skills/activate` method that records a direct-context `SkillActivation`;
-  the context planner owns inserting the corresponding `SkillActivation`
-  context item before the next model request.
+- API catalog refresh is conservative: `skills/list`, `skills/active`, and
+  `skills/activate` refresh the catalog only while the session is open and no
+  run is active or queued. Active/queued sessions return the already-published
+  catalog, and activation/deactivation reject until idle.
+- `session/read` projection includes historical skill context items and skill
+  events; richer active skill projection can be added when clients need it.
+- Chat clients expose these APIs incrementally: the standalone CLI has
+  `forge skills ...`, and the interactive TUI has text slash commands. `/skills`
+  and `/skills-active` report results as local system transcript messages;
+  `/skill` opens a picker backed by `skills/list`.
 
 `skills/list` request shape:
 
 ```rust
 pub struct SkillsListParams {
-    pub session_id: Option<SessionId>,
-    pub target: Option<ToolExecutionTarget>,
-    pub force_refresh: bool,
+    pub session_id: SessionId,
 }
 ```
 
@@ -1486,9 +1506,27 @@ Response shape:
 
 ```rust
 pub struct SkillsListResponse {
-    pub catalog_ref: BlobRef,
+    pub catalog_ref: Option<BlobRef>,
     pub skills: Vec<SkillSummary>,
-    pub warnings: Vec<SkillLoadWarning>,
+}
+
+pub struct SkillSummary {
+    pub skill_id: SkillId,
+    pub name: String,
+    pub description: String,
+    pub short_description: Option<String>,
+    pub enabled: bool,
+    pub active: bool,
+}
+```
+
+`skills/activate` request shape:
+
+```rust
+pub struct SkillActivateParams {
+    pub session_id: SessionId,
+    pub skill_id: SkillId,
+    pub scope: SkillActivationScope, // default: run
 }
 ```
 
@@ -1862,7 +1900,11 @@ Needs more policy and target work.
 
 Product surface.
 
-- Add `skills/list` if needed by CLI/UI.
+- Implemented first-cut `api`/gateway JSON-RPC methods: `skills/list`,
+  `skills/active`, `skills/activate`, and `skills/deactivate`.
+- Implemented first-cut CLI commands under `forge skills`.
+- Implemented first-cut TUI chat slash commands for listing, activating, and
+  deactivating skills.
 - Project active catalog refs and activated skills through `session/read`.
 - Emit warnings for invalid skills and catalog truncation.
 
