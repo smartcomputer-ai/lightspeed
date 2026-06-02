@@ -13,6 +13,7 @@ pub mod lifecycle;
 pub mod llm;
 pub mod log;
 pub mod run;
+pub mod skills;
 pub mod state;
 pub mod tooling;
 pub mod turn;
@@ -32,6 +33,9 @@ pub use llm::*;
 pub use log::*;
 pub use run::{
     ActiveRun, QueuedRun, RunEvent, RunFailure, RunFailureKind, RunQueueState, RunRecord, RunStatus,
+};
+pub use skills::{
+    SkillActivation, SkillActivationScope, SkillActivationSource, SkillCatalogContext, SkillState,
 };
 pub use state::*;
 pub use tooling::{

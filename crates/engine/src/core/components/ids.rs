@@ -119,6 +119,7 @@ macro_rules! numeric_id {
 }
 
 string_id!(SubmissionId, validate_general_string_id);
+string_id!(SkillId, validate_general_string_id);
 string_id!(ToolCallId, validate_general_string_id);
 string_id!(ToolProfileId, validate_general_string_id);
 string_id!(ToolName, validate_tool_name);

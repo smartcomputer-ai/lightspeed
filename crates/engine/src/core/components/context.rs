@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     BlobRef, ContextItemId, CoreAgentEventKind, CoreAgentEventProposal, CoreAgentJoins,
     CoreAgentState, CoreAgentStatus, DomainError, PlanNext, PlanningError, ProviderApiKind, RunId,
-    RunStatus, ToolCallId, ToolName, TurnId,
+    RunStatus, SkillId, ToolCallId, ToolName, TurnId,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -78,6 +78,8 @@ pub struct UncommittedContextItem {
 #[serde(rename_all = "snake_case")]
 pub enum ContextItemKind {
     Message { role: ContextMessageRole },
+    SkillCatalog,
+    SkillActivation { skill_id: SkillId },
     ToolCall { call_id: ToolCallId, name: ToolName },
     ToolResult { call_id: ToolCallId, is_error: bool },
     ReasoningState,
