@@ -204,10 +204,7 @@ impl AdmitCommand for CoreAdmitCommand {
             }
             CoreAgentCommand::SetSkillActivations { activations } => {
                 require_open(state)?;
-                require_no_active_or_queued_work(
-                    state,
-                    "skill activations can only change while no run is active or queued",
-                )?;
+                require_skill_activation_update_allowed(state, &activations)?;
                 validate_activations(&activations).map_err(command_rejection_from_domain)?;
 
                 Ok(vec![CoreAgentEventProposal::new(
@@ -217,6 +214,64 @@ impl AdmitCommand for CoreAdmitCommand {
             }
         }
     }
+}
+
+fn require_skill_activation_update_allowed(
+    state: &CoreAgentState,
+    activations: &[crate::SkillActivation],
+) -> Result<(), CommandError> {
+    if !state.runs.queued.is_empty() {
+        return reject(
+            CommandRejectionKind::ActiveWork,
+            "skill activations can only change while no run is queued",
+        );
+    }
+
+    let Some(active_run) = state.runs.active.as_ref() else {
+        return Ok(());
+    };
+    if active_run.status != RunStatus::Active {
+        return reject(
+            CommandRejectionKind::ActiveWork,
+            "skill activations can only change while active run is accepting work",
+        );
+    }
+    if active_run.active_turn_id.is_some() {
+        return reject(
+            CommandRejectionKind::ActiveWork,
+            "skill activations cannot change while a model turn is active",
+        );
+    }
+
+    for current in &state.skills.activations {
+        if !activations.iter().any(|activation| activation == current) {
+            return reject(
+                CommandRejectionKind::ActiveWork,
+                "skill activations cannot remove active skills during a run",
+            );
+        }
+    }
+    for activation in activations {
+        if state
+            .skills
+            .activations
+            .iter()
+            .any(|current| current == activation)
+        {
+            continue;
+        }
+        if !matches!(
+            activation.source,
+            crate::SkillActivationSource::ToolResult { .. }
+        ) {
+            return reject(
+                CommandRejectionKind::ActiveWork,
+                "active runs can only add skill activations from tool results",
+            );
+        }
+    }
+
+    Ok(())
 }
 
 fn require_no_active_or_queued_work(

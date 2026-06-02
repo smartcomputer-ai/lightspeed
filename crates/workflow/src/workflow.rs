@@ -16,8 +16,9 @@ use crate::{
     AgentCompletedRunSummary, AgentQueuedRunSummary, AgentSessionArgs, AgentSessionStatus,
     AppendEventsRequest, CreateOrLoadSessionRequest, DEFAULT_CONTINUE_AS_NEW_HISTORY_THRESHOLD,
     FAKE_TOOL_PROFILE_ID, LlmGenerateActivityRequest, PutBlobRequest,
-    SkillCatalogRefreshActivityRequest, ToolInvokeBatchActivityRequest, WorkflowActivities,
-    activity_options, default_instructions, fake_tool_input_schema, fake_tool_registry,
+    SkillActivationRefreshActivityRequest, SkillCatalogRefreshActivityRequest,
+    ToolInvokeBatchActivityRequest, WorkflowActivities, activity_options, default_instructions,
+    fake_tool_input_schema, fake_tool_registry,
 };
 
 const DEFAULT_MAX_STEPS_PER_INPUT: usize = 256;
@@ -412,7 +413,16 @@ async fn drive_until_idle(
                 expected_head,
                 events,
             } => {
+                let pending_skill_activation_command =
+                    if active_tool_batch_has_results(drive.state()) {
+                        skill_activation_command_for_tool_results(ctx, drive).await?
+                    } else {
+                        None
+                    };
                 append_events(ctx, drive, expected_head, events).await?;
+                if let Some(command) = pending_skill_activation_command {
+                    append_skill_activation_command(ctx, drive, command).await?;
+                }
                 action = drive.next_action(workflow_time_ms(ctx), max_steps)?;
             }
             CoreAgentAction::GenerateLlm { request } => {
@@ -438,9 +448,9 @@ async fn append_events(
     drive: &mut CoreAgentDrive,
     expected_head: Option<SessionPosition>,
     events: Vec<engine::storage::DynamicUncommittedSessionEvent>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<CoreAgentEntry>> {
     if events.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let appended = ctx
         .start_activity(
@@ -466,7 +476,55 @@ async fn append_events(
         state.last_error = None;
         Ok(())
     })?;
-    Ok(())
+    Ok(entries)
+}
+
+async fn skill_activation_command_for_tool_results(
+    ctx: &mut WorkflowContext<AgentSessionWorkflow>,
+    drive: &mut CoreAgentDrive,
+) -> anyhow::Result<Option<CoreAgentCommand>> {
+    let state = drive.state().clone();
+    let result = ctx
+        .start_activity(
+            WorkflowActivities::skill_activation_refresh,
+            SkillActivationRefreshActivityRequest { state },
+            activity_options(),
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+    Ok(result.command)
+}
+
+async fn append_skill_activation_command(
+    ctx: &mut WorkflowContext<AgentSessionWorkflow>,
+    drive: &mut CoreAgentDrive,
+    command: CoreAgentCommand,
+) -> anyhow::Result<()> {
+    let action = drive.admit_command(command, workflow_time_ms(ctx))?;
+    match action {
+        CoreAgentAction::AppendEvents {
+            expected_head,
+            events,
+        } => {
+            append_events(ctx, drive, expected_head, events).await?;
+            Ok(())
+        }
+        CoreAgentAction::Idle | CoreAgentAction::Closed => Ok(()),
+        other => anyhow::bail!("skill activation refresh emitted unexpected action: {other:?}"),
+    }
+}
+
+fn active_tool_batch_has_results(state: &CoreAgentState) -> bool {
+    let Some(active_run) = state.runs.active.as_ref() else {
+        return false;
+    };
+    let Some(batch_id) = active_run.active_tool_batch_id else {
+        return false;
+    };
+    active_run
+        .tool_batches
+        .get(&batch_id)
+        .is_some_and(|batch| batch.calls.iter().any(|call| call.result.is_some()))
 }
 
 fn drive_from_state(ctx: &WorkflowContext<AgentSessionWorkflow>) -> anyhow::Result<CoreAgentDrive> {

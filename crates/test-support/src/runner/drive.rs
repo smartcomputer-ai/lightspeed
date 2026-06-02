@@ -9,8 +9,9 @@ use engine::{
     storage::{AppendSessionEvents, BlobStore, ReadSessionEvents},
 };
 use tools::skills::{
-    conventional_vfs_skill_root_specs, prepare_skill_catalog_publication,
-    resolve_mounted_vfs_skill_roots,
+    SkillCatalogSnapshot, SkillToolResultActivationInput, conventional_vfs_skill_root_specs,
+    prepare_skill_catalog_publication, resolve_mounted_vfs_skill_roots,
+    skill_activation_from_tool_result,
 };
 
 use super::{
@@ -190,6 +191,106 @@ impl SessionRunner {
         Ok(publication.command)
     }
 
+    async fn append_skill_activation_command(
+        &self,
+        drive: &mut CoreAgentDrive,
+        observed_at_ms: u64,
+        command: CoreAgentCommand,
+        emitted_entries: &mut Vec<engine::CoreAgentEntry>,
+    ) -> Result<(), RunnerError> {
+        let action = drive.admit_command(command, observed_at_ms)?;
+        match action {
+            CoreAgentAction::AppendEvents {
+                expected_head,
+                events,
+            } => {
+                let appended = self
+                    .stores
+                    .sessions
+                    .append(AppendSessionEvents {
+                        session_id: drive.session_id().clone(),
+                        expected_head,
+                        events,
+                    })
+                    .await?;
+                let entries = drive.resume_appended(appended.entries)?;
+                emitted_entries.extend(entries);
+                Ok(())
+            }
+            CoreAgentAction::Idle | CoreAgentAction::Closed => Ok(()),
+            other => Err(RunnerError::InvalidRequest {
+                message: format!("skill activation refresh emitted unexpected action: {other:?}"),
+            }),
+        }
+    }
+
+    async fn skill_activation_command_for_active_tool_batch(
+        &self,
+        state: &CoreAgentState,
+    ) -> Result<Option<CoreAgentCommand>, RunnerError> {
+        let Some(catalog_context) = state.skills.catalog.as_ref() else {
+            return Ok(None);
+        };
+        let Some(active_run) = state.runs.active.as_ref() else {
+            return Ok(None);
+        };
+        let Some(batch_id) = active_run.active_tool_batch_id else {
+            return Ok(None);
+        };
+        let Some(batch) = active_run.tool_batches.get(&batch_id) else {
+            return Ok(None);
+        };
+
+        let catalog_bytes = self
+            .stores
+            .blobs
+            .read_bytes(&catalog_context.catalog_ref)
+            .await?;
+        let catalog =
+            serde_json::from_slice::<SkillCatalogSnapshot>(&catalog_bytes).map_err(|error| {
+                RunnerError::InvalidRequest {
+                    message: format!("decode active skill catalog: {error}"),
+                }
+            })?;
+
+        let mut activations = state.skills.activations.clone();
+        for call_state in &batch.calls {
+            let Some(result) = call_state.result.as_ref() else {
+                continue;
+            };
+            let Some(output_ref) = result.output_ref.as_ref() else {
+                continue;
+            };
+            let output_bytes = self.stores.blobs.read_bytes(output_ref).await?;
+            let output_json = serde_json::from_slice(&output_bytes).map_err(|error| {
+                RunnerError::InvalidRequest {
+                    message: format!("decode tool output {}: {error}", result.call_id),
+                }
+            })?;
+            let Some(activation) =
+                skill_activation_from_tool_result(SkillToolResultActivationInput {
+                    catalog_ref: &catalog_context.catalog_ref,
+                    catalog: &catalog,
+                    current_activations: &activations,
+                    call_id: &result.call_id,
+                    tool_name: &call_state.call.tool_name,
+                    status: result.status,
+                    execution_target: call_state.execution_target.as_ref(),
+                    output_json: &output_json,
+                })
+            else {
+                continue;
+            };
+            activations.push(activation);
+        }
+
+        if activations == state.skills.activations {
+            Ok(None)
+        } else {
+            Ok(Some(CoreAgentCommand::SetSkillActivations { activations }))
+        }
+    }
+
     pub async fn drive_until_quiescent(
         &self,
         request: DriveSession,
@@ -268,6 +369,13 @@ impl SessionRunner {
                     expected_head,
                     events,
                 } => {
+                    let pending_skill_activation_command =
+                        if active_tool_batch_has_results(drive.state()) {
+                            self.skill_activation_command_for_active_tool_batch(drive.state())
+                                .await?
+                        } else {
+                            None
+                        };
                     let appended = self
                         .stores
                         .sessions
@@ -279,6 +387,15 @@ impl SessionRunner {
                         .await?;
                     let entries = drive.resume_appended(appended.entries)?;
                     emitted_entries.extend(entries);
+                    if let Some(command) = pending_skill_activation_command {
+                        self.append_skill_activation_command(
+                            drive,
+                            observed_at_ms,
+                            command,
+                            emitted_entries,
+                        )
+                        .await?;
+                    }
                     action = drive.next_action(observed_at_ms, max_steps)?;
                 }
                 CoreAgentAction::GenerateLlm { request } => {
@@ -340,6 +457,19 @@ fn should_refresh_skill_catalog_before_admitting(
 
 fn clear_catalog_command(active_catalog: Option<&SkillCatalogContext>) -> Option<CoreAgentCommand> {
     active_catalog.map(|_| CoreAgentCommand::SetSkillCatalog { catalog: None })
+}
+
+fn active_tool_batch_has_results(state: &CoreAgentState) -> bool {
+    let Some(active_run) = state.runs.active.as_ref() else {
+        return false;
+    };
+    let Some(batch_id) = active_run.active_tool_batch_id else {
+        return false;
+    };
+    active_run
+        .tool_batches
+        .get(&batch_id)
+        .is_some_and(|batch| batch.calls.iter().any(|call| call.result.is_some()))
 }
 
 fn resolve_max_steps(max_steps: Option<u32>) -> Result<usize, RunnerError> {
@@ -445,12 +575,22 @@ mod tests {
         AgentHandle, ContextConfig, ContextItemKind, ContextItemSource, ContextMessageRole,
         CoreAgentCommand, CoreAgentEventKind, FunctionToolSpec, LlmFinish, ModelProviderOptions,
         ModelSelection, ObservedToolCall, ProviderApiKind, ProviderRequestDefaults, RunConfig,
-        RunStatus, SessionConfig, SessionId, ToolCallResult, ToolKind, ToolName, ToolParallelism,
-        ToolProfile, ToolProfileId, ToolRegistry, ToolSpec, ToolTargetRequirement, TurnConfig,
-        TurnEvent, UncommittedContextItem,
-        storage::{CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
+        RunStatus, SessionConfig, SessionId, ToolCallResult, ToolExecutionTarget, ToolKind,
+        ToolName, ToolParallelism, ToolProfile, ToolProfileId, ToolRegistry, ToolSpec,
+        ToolTargetRequirement, TurnConfig, TurnEvent, UncommittedContextItem,
+        storage::{
+            BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore,
+        },
     };
     use tools::skills::{SkillCatalogSnapshot, SkillLocation};
+    use tools::{
+        host::{
+            HostToolContext, InlineHostToolRuntime,
+            fs::{FsPath, MountedVfsFileSystem},
+            profiles::{HostToolPreset, resolve_host_profile},
+        },
+        runtime::ToolTarget,
+    };
     use vfs::{
         CompareAndSetVfsWorkspaceHead, CreateInlineSnapshotRequest, CreateVfsWorkspaceRecord,
         InlineFile, VfsCatalogError, VfsMountAccess, VfsMountRecord, VfsMountSource, VfsMountStore,
@@ -487,6 +627,11 @@ mod tests {
     #[derive(Debug)]
     struct ToolThenFinalLlm {
         calls: Mutex<u32>,
+    }
+
+    struct ReadSkillThenFinalLlm {
+        calls: Mutex<u32>,
+        blobs: Arc<dyn BlobStore>,
     }
 
     #[derive(Default)]
@@ -639,6 +784,54 @@ mod tests {
                             tool_name: ToolName::new("test_tool"),
                             provider_kind: None,
                             arguments_ref: BlobRef::from_bytes(br#"{}"#),
+                            native_call_ref: None,
+                        }],
+                        context_token_estimate: None,
+                        compaction: None,
+                    },
+                });
+            }
+            Ok(final_output_result(&request))
+        }
+    }
+
+    #[async_trait]
+    impl CoreAgentLlm for ReadSkillThenFinalLlm {
+        async fn generate(
+            &self,
+            request: LlmGenerationRequest,
+        ) -> Result<LlmGenerationResult, CoreAgentIoError> {
+            let call = {
+                let mut calls = self.calls.lock().expect("calls lock");
+                *calls += 1;
+                *calls
+            };
+            if call == 1 {
+                let arguments_ref = self
+                    .blobs
+                    .put_bytes(
+                        br#"{"path":"/skills/system/deploy-review/SKILL.md","offset":null,"limit":null}"#
+                            .to_vec(),
+                    )
+                    .await
+                    .map_err(|error| CoreAgentIoError::Failed {
+                        message: error.to_string(),
+                    })?;
+                return Ok(LlmGenerationResult {
+                    run_id: request.run_id,
+                    turn_id: request.turn_id,
+                    status: LlmGenerationStatus::Succeeded,
+                    failure_ref: None,
+                    context_items: Vec::new(),
+                    facts: LlmGenerationFacts {
+                        provider_response_id: Some("resp-read-skill".to_owned()),
+                        finish: LlmFinish::ToolCalls,
+                        usage: None,
+                        tool_calls: vec![ObservedToolCall {
+                            call_id: engine::ToolCallId::new("call-read-skill"),
+                            tool_name: ToolName::new("read_file"),
+                            provider_kind: None,
+                            arguments_ref,
                             native_call_ref: None,
                         }],
                         context_token_estimate: None,
@@ -861,6 +1054,142 @@ mod tests {
                 CoreAgentEventKind::Skill(engine::SkillEvent::CatalogSet { catalog: Some(_) })
             )
         }));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn read_file_of_cataloged_skill_doc_records_tool_result_activation() {
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let blob_store: Arc<dyn BlobStore> = blobs.clone();
+        let vfs = Arc::new(TestVfsCatalog::default());
+        let stores = RunnerStores::new(sessions.clone(), blob_store.clone())
+            .with_vfs_catalog(vfs.clone(), vfs.clone());
+        let session_id = SessionId::new("session-a");
+        sessions
+            .create_session(CreateSession {
+                session_id: session_id.clone(),
+                agent_handle: AgentHandle::new("forge.default"),
+                created_at_ms: 1,
+            })
+            .await
+            .expect("create session");
+        let snapshot = create_inline_snapshot(
+            blob_store.as_ref(),
+            CreateInlineSnapshotRequest::new(vec![
+                InlineFile::new(
+                    "deploy-review/SKILL.md",
+                    b"---\nname: deploy-review\ndescription: Use when reviewing deploys.\n---\n\nBody\n"
+                        .to_vec(),
+                )
+                .unwrap(),
+            ]),
+        )
+        .await
+        .expect("create snapshot");
+        vfs.put_mount(VfsMountRecord {
+            session_id: session_id.clone(),
+            mount_path: VfsPath::parse("/skills/system").unwrap(),
+            source: VfsMountSource::Snapshot {
+                snapshot_ref: snapshot.snapshot_ref.clone(),
+            },
+            access: VfsMountAccess::ReadOnly,
+        })
+        .await
+        .expect("mount skills");
+
+        let mounted_fs = MountedVfsFileSystem::new(
+            blob_store.clone(),
+            vfs.clone(),
+            vfs.list_mounts(&session_id).await.expect("list mounts"),
+        )
+        .expect("mounted fs");
+        let ctx = HostToolContext::new(Arc::new(mounted_fs), None, blob_store.clone())
+            .with_cwd(FsPath::root());
+        let target = ToolTarget::api_kind(ProviderApiKind::OpenAiResponses);
+        let profile =
+            resolve_host_profile(&ctx, &target, HostToolPreset::DirectFs).expect("host profile");
+        let registry = profile.registry.clone();
+        let profile_id = profile.profile_id.clone();
+        let tools = InlineHostToolRuntime::new(ctx, profile.catalog);
+        let runner = SessionRunner::new(
+            stores,
+            Arc::new(ReadSkillThenFinalLlm {
+                calls: Mutex::new(0),
+                blobs: blob_store,
+            }),
+        )
+        .with_tools(Arc::new(tools));
+
+        runner
+            .drive_command(DriveCommand {
+                session_id: session_id.clone(),
+                observed_at_ms: 10,
+                command: CoreAgentCommand::OpenSession { config: config() },
+                max_steps: None,
+            })
+            .await
+            .expect("open session");
+        runner
+            .drive_command(DriveCommand {
+                session_id: session_id.clone(),
+                observed_at_ms: 11,
+                command: CoreAgentCommand::SetToolRegistry { registry },
+                max_steps: None,
+            })
+            .await
+            .expect("set registry");
+        runner
+            .drive_command(DriveCommand {
+                session_id: session_id.clone(),
+                observed_at_ms: 12,
+                command: CoreAgentCommand::SelectToolProfile { profile_id },
+                max_steps: None,
+            })
+            .await
+            .expect("select profile");
+        runner
+            .drive_command(DriveCommand {
+                session_id: session_id.clone(),
+                observed_at_ms: 13,
+                command: CoreAgentCommand::SetDefaultToolTarget {
+                    target: ToolExecutionTarget::new("host", "local"),
+                },
+                max_steps: None,
+            })
+            .await
+            .expect("set default target");
+
+        let outcome = runner
+            .drive_command(DriveCommand {
+                session_id,
+                observed_at_ms: 20,
+                command: CoreAgentCommand::RequestRun {
+                    submission_id: None,
+                    input_ref: BlobRef::from_bytes(b"input"),
+                    run_config: run_config(),
+                },
+                max_steps: Some(96),
+            })
+            .await
+            .expect("drive request");
+
+        assert_eq!(outcome.quiescence, RunnerQuiescence::Idle);
+        assert_eq!(outcome.state.runs.completed[0].status, RunStatus::Completed);
+        assert!(outcome.emitted_entries.iter().any(|entry| {
+            matches!(
+                &entry.event.kind,
+                CoreAgentEventKind::Skill(engine::SkillEvent::ActivationsSet {
+                    activations
+                }) if activations.iter().any(|activation| {
+                    matches!(
+                        &activation.source,
+                        engine::SkillActivationSource::ToolResult { call_id }
+                            if call_id.as_str() == "call-read-skill"
+                    )
+                })
+            )
+        }));
+        assert!(outcome.state.skills.activations.is_empty());
     }
 
     #[tokio::test(flavor = "current_thread")]

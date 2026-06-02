@@ -1,5 +1,5 @@
 use engine::{
-    BlobRef, CoreAgentCommand, DynamicCommand, RunStatus, SessionConfig, SessionId,
+    BlobRef, CoreAgentCommand, CoreAgentState, DynamicCommand, RunStatus, SessionConfig, SessionId,
     SessionPosition, SkillCatalogContext, SubmissionId,
     storage::{DynamicSessionEntry, DynamicUncommittedSessionEvent, SessionRecord},
 };
@@ -122,5 +122,15 @@ pub struct SkillCatalogRefreshActivityRequest {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SkillCatalogRefreshActivityResult {
+    pub command: Option<CoreAgentCommand>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkillActivationRefreshActivityRequest {
+    pub state: CoreAgentState,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkillActivationRefreshActivityResult {
     pub command: Option<CoreAgentCommand>,
 }

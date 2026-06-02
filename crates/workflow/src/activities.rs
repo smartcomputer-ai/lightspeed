@@ -5,6 +5,7 @@ use temporalio_sdk::activities::{ActivityContext, ActivityError};
 use crate::{
     AppendEventsRequest, CreateOrLoadSessionRequest, CreateOrLoadSessionResult,
     LlmGenerateActivityRequest, PutBlobRequest, ReadBlobRequest, ReadBlobResult,
+    SkillActivationRefreshActivityRequest, SkillActivationRefreshActivityResult,
     SkillCatalogRefreshActivityRequest, SkillCatalogRefreshActivityResult,
     ToolInvokeBatchActivityRequest,
 };
@@ -16,6 +17,7 @@ pub const ACTIVITY_APPEND_EVENTS: &str = "WorkflowActivities::append_events";
 pub const ACTIVITY_LLM_GENERATE: &str = "WorkflowActivities::llm_generate";
 pub const ACTIVITY_TOOL_INVOKE_BATCH: &str = "WorkflowActivities::tool_invoke_batch";
 pub const ACTIVITY_SKILL_CATALOG_REFRESH: &str = "WorkflowActivities::skill_catalog_refresh";
+pub const ACTIVITY_SKILL_ACTIVATION_REFRESH: &str = "WorkflowActivities::skill_activation_refresh";
 
 pub struct WorkflowActivities;
 
@@ -74,6 +76,14 @@ impl WorkflowActivities {
         _ctx: ActivityContext,
         _request: SkillCatalogRefreshActivityRequest,
     ) -> Result<SkillCatalogRefreshActivityResult, ActivityError> {
+        unimplemented!("workflow activity definition only")
+    }
+
+    #[activity(name = ACTIVITY_SKILL_ACTIVATION_REFRESH)]
+    pub async fn skill_activation_refresh(
+        _ctx: ActivityContext,
+        _request: SkillActivationRefreshActivityRequest,
+    ) -> Result<SkillActivationRefreshActivityResult, ActivityError> {
         unimplemented!("workflow activity definition only")
     }
 }

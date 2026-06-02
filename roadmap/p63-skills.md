@@ -36,8 +36,12 @@
 - First-cut runtime refresh is wired before idle `RequestRun` admission in the
   Temporal workflow and in-process test runner. It uses convention-based VFS
   roots and publishes only changed semantic catalogs.
-- Model-selected activation from file reads, Anthropic catalog rendering, and
-  public API methods are not implemented.
+- First-cut model-selected activation from ordinary file reads is wired in the
+  Temporal workflow and in-process test runner. Runtime detects successful full
+  reads of cataloged `SKILL.md` files and records run-scoped
+  `SkillActivationSource::ToolResult` activations without duplicating the tool
+  result body.
+- Anthropic catalog rendering and public API methods are not implemented.
 - The first implementation is skill-specific. Do not introduce a generic
   `RuntimeContext` abstraction until there is a second concrete use case.
 
@@ -1268,10 +1272,11 @@ Current `read_file` tool data:
 
 Therefore model-selected skill activation can initially key off:
 
-1. successful `read_file`,
+1. successful `read_file`/Claude-style `Read`,
 2. `ReadFileResult.resolved_path` matching a cataloged `skill_doc_path` on the
    same VFS mount/workspace or host target,
-3. a complete read of the file (`line_start == 1` and `truncated == false`).
+3. a complete read of the file (`line_start == 1`, `truncated == false`, and
+   `line_count == total_lines`).
 
 If the read is partial, treat it as an ordinary file read, or record a partial
 read observation, but do not claim the full skill body was activated. To record
@@ -1415,11 +1420,14 @@ pub enum SkillEvent {
 `SetSkillActivations` replaces the active set. The engine rejects duplicate
 active `skill_id`s for now. The context planner, not external command
 admission, owns inserting skill context items into the request context.
-Skill catalog and activation commands are admitted only while no run is active
-or queued. Direct activation therefore does not start work; it updates
-`SkillState`, and the next requested run consumes that state during context
-planning. Deactivation can stop future sticky reinsertion by replacing the
-live activation set without rewriting history.
+Skill catalog commands are admitted only while no run is active or queued.
+Direct activation follows the same pre-run shape: it does not start work; it
+updates `SkillState`, and the next requested run consumes that state during
+context planning. Runtime-detected tool-result activations may be added during
+an active run only at a boundary with no active model turn, without removing
+existing activations, and only when the newly added activation is sourced from
+a tool result. Deactivation can stop future sticky reinsertion by replacing the
+live activation set outside active work without rewriting history.
 
 For activations sourced from a tool call, the loaded `SKILL.md` is already
 visible through the ordinary tool result context item. The planner should treat
@@ -1755,6 +1763,15 @@ from core state. `workflow` and `test-support` invoke this lazily before idle
 `RequestRun` admission using convention-based VFS roots; production workers
 perform the scan in a workflow activity.
 
+First-cut implementation status: `tools::skills::skill_activation_from_tool_result`
+recognizes successful full `read_file`/`Read` results whose resolved path
+matches a cataloged `SKILL.md`. `workflow` and `test-support` compute the
+activation command while the active tool batch still carries call metadata,
+then append it after the tool-result context item and batch-completion events
+commit, before planning the next model turn. Production workers perform the
+blob reads and matching in a workflow activity, returning a normal
+`SetSkillActivations` command when a new activation is found.
+
 ### G4: Model-Selected Activation Through File Reads
 
 Essential.
@@ -1765,15 +1782,16 @@ Essential.
 - Reuse current tool result data: `output_ref`, `model_visible_output_ref`, and
   parsed `ReadFileResult.resolved_path`.
 - Count the read as full activation only when it starts at line 1 and is not
-  truncated.
+  truncated, and the selected line count covers the whole file.
 - Record active activation metadata with skill id, catalog ref,
   `SkillActivationSource::ToolResult { call_id }`, and run/session scope.
 - Add a narrow VFS read-provenance effect if needed to record exact
   workspace-head or snapshot provenance for the read.
 - Add model-selected activations to `SkillState.activations` when the loaded
   skill body should remain eligible for planning.
-- Add tests that activation/read pins skill content even if the source changes
-  after the catalog snapshot.
+- First-cut tests cover direct recognizer matching and runtime activation from
+  a mounted VFS `read_file` result. Add follow-up tests that activation/read
+  pins skill content even if the source changes after the catalog snapshot.
 
 ### G5: Explicit User Activation And Deactivation
 
