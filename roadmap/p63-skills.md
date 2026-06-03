@@ -1,7 +1,9 @@
 # P63: Target-Scoped Skills
 
 **Status**
-- Accepted direction
+- Done: first-cut skills milestone complete.
+- Accepted direction; remaining broader target-scoped work is deferred to
+  follow-up roadmap items rather than blocking P63.
 - Depends on P62 for CAS-backed skill resource trees
 - First-cut `engine` skill model types are implemented:
   `SkillState`, skill ids, skill catalog/activation context item kinds,
@@ -54,7 +56,10 @@
 - First-cut TUI chat slash commands are implemented: `/skills`,
   `/skills-active`, `/skill` picker, `/skill <id> [run|session]`, and
   `/skill-off <id>`.
-- Anthropic catalog rendering is not implemented.
+- Deferred follow-up scope: Anthropic catalog/activation lowering, richer
+  `session/read` skill projection, invalid-skill warning surfacing, optional
+  metadata files, writable authoring roots, host/VM skill discovery, and script
+  materialization.
 - The first implementation is skill-specific. Do not introduce a generic
   `RuntimeContext` abstraction until there is a second concrete use case.
 
@@ -1735,9 +1740,9 @@ file-like through the host tool profile and do not require a VFS mount in v1.
 ## Implementation Slices
 
 The phases are ordered from prerequisite/core behavior to broader product
-surface. G0-G4 are the essential first usable layer. G5-G9 can be added as the
-product needs them; they should not force complexity into the initial engine
-model.
+surface. P63 is closed on the first usable layer: G0-G4 plus first-cut explicit
+activation/deactivation and API/UI surface. Later target-scoped expansion should
+be planned as follow-up roadmap work instead of extending this milestone.
 
 ### G0: Skill Core Model Prerequisite
 
@@ -1851,9 +1856,15 @@ Useful, but can follow the core path.
   the original `DirectContext.context_ref` is already in the request window.
 - Add `skills/deactivate` to remove active activations when clients need it.
 
+First-cut implementation status: explicit activation and deactivation are
+implemented through `skills/activate`, `skills/deactivate`, `forge skills`, and
+TUI slash commands. Activation reads and pins the cataloged `SKILL.md` body as
+direct context, while deactivation removes active activations without changing
+history.
+
 ### G6: Writable Workspace Skill Authoring
 
-Needs more product validation.
+Deferred follow-up. Needs more product validation.
 
 - Support configured writable VFS workspace roots for skill authoring.
 - Discover configured workspace skill roots from writable VFS mounts when
@@ -1867,7 +1878,7 @@ Needs more product validation.
 
 ### G7: Host Target Discovery
 
-Broader target-scoped layer.
+Deferred follow-up. Broader target-scoped layer.
 
 - Discover skills through a selected `ToolExecutionTarget`.
 - Support `.forge/skills` and `.agents/skills` first.
@@ -1885,7 +1896,7 @@ Broader target-scoped layer.
 
 ### G8: Materialization For Scripts
 
-Needs more policy and target work.
+Deferred follow-up. Needs more policy and target work.
 
 - Integrate P62 materialization.
 - Include materialized root path when script execution requests it and policy
@@ -1905,8 +1916,8 @@ Product surface.
 - Implemented first-cut CLI commands under `forge skills`.
 - Implemented first-cut TUI chat slash commands for listing, activating, and
   deactivating skills.
-- Project active catalog refs and activated skills through `session/read`.
-- Emit warnings for invalid skills and catalog truncation.
+- Deferred: richer active catalog/activation projection through `session/read`.
+- Deferred: warning surfacing for invalid skills and catalog truncation.
 
 ## Verification
 
@@ -1942,7 +1953,7 @@ Core tests for G0-G4:
   target,
 - activation survives later source file mutation.
 
-Expanded-phase tests:
+Deferred expanded-phase tests:
 
 - resolve explicit `skill_id`,
 - reject ambiguous name activation,

@@ -1,7 +1,7 @@
 # Roadmap to Usable Agent
 
-- vfs
-- skills
+- [x] vfs
+- [x] skills (P63 first cut)
 - timers/schedules/cron
 - search & web requests
 - compaction
