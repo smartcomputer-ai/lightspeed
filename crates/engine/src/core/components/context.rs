@@ -5,12 +5,15 @@ use serde::{Deserialize, Serialize};
 use crate::{
     BlobRef, ContextEntryKey, ContextItemId, CoreAgentEventKind, CoreAgentEventProposal,
     CoreAgentJoins, CoreAgentState, CoreAgentStatus, DomainError, PlanNext, PlanningError,
-    ProviderApiKind, RunId, RunStatus, SkillActivation, SkillId, SteeringId, ToolBatchId,
-    ToolCallId, ToolName, TurnId,
+    ProviderApiKind, RunId, RunStatus, SkillId, SteeringId, ToolBatchId, ToolCallId, ToolName,
+    TurnId,
 };
 
 const INSTRUCTIONS_KEY_PREFIX: &str = "instructions.";
-const SKILL_CATALOG_KEY: &str = "skills.catalog";
+pub const SKILL_CATALOG_CONTEXT_KEY: &str = "skills.catalog";
+pub const SKILL_ACTIVATION_CONTEXT_KEY_PREFIX: &str = "skills.activation.";
+pub const SKILL_ACTIVATION_PROVIDER_KIND_RUN: &str = "forge.skill.activation.run";
+pub const SKILL_ACTIVATION_PROVIDER_KIND_SESSION: &str = "forge.skill.activation.session";
 
 pub type ContextEntryId = ContextItemId;
 
@@ -239,12 +242,6 @@ pub(crate) fn planned_context_entry_ids(state: &CoreAgentState) -> Vec<ContextEn
 
         match &entry.kind {
             ContextEntryKind::Instructions | ContextEntryKind::SkillCatalog => {}
-            ContextEntryKind::SkillActivation { skill_id } => {
-                if active_activation_for_entry(state, skill_id, &entry.content_ref).is_some() {
-                    entry_ids.push(entry.entry_id);
-                    seen.insert(entry.entry_id);
-                }
-            }
             _ => {
                 entry_ids.push(entry.entry_id);
                 seen.insert(entry.entry_id);
@@ -385,12 +382,6 @@ pub(crate) fn validate_external_context_edit(
     key: &ContextEntryKey,
     entry: &ContextEntryInput,
 ) -> Result<(), DomainError> {
-    if is_reserved_context_key(key) {
-        return Err(DomainError::InvariantViolation(format!(
-            "context key {} is reserved",
-            key
-        )));
-    }
     validate_external_context_edit_entry(key, entry)
 }
 
@@ -454,6 +445,37 @@ fn validate_external_context_edit_entry(
         };
     }
 
+    if key.as_str() == SKILL_CATALOG_CONTEXT_KEY {
+        return match &entry.kind {
+            ContextEntryKind::SkillCatalog => Ok(()),
+            _ => Err(DomainError::InvariantViolation(format!(
+                "skill catalog context key {} cannot supply context entry kind {:?}",
+                key, entry.kind
+            ))),
+        };
+    }
+
+    if let Some(skill_id) = key
+        .as_str()
+        .strip_prefix(SKILL_ACTIVATION_CONTEXT_KEY_PREFIX)
+    {
+        return match &entry.kind {
+            ContextEntryKind::SkillActivation {
+                skill_id: entry_skill_id,
+            } if entry_skill_id.as_str() == skill_id => Ok(()),
+            ContextEntryKind::SkillActivation { skill_id } => {
+                Err(DomainError::InvariantViolation(format!(
+                    "skill activation context key {} does not match entry skill id {}",
+                    key, skill_id
+                )))
+            }
+            _ => Err(DomainError::InvariantViolation(format!(
+                "skill activation context key {} cannot supply context entry kind {:?}",
+                key, entry.kind
+            ))),
+        };
+    }
+
     match &entry.kind {
         ContextEntryKind::ProviderOpaque => Ok(()),
         ContextEntryKind::Instructions => Err(DomainError::InvariantViolation(format!(
@@ -465,10 +487,6 @@ fn validate_external_context_edit_entry(
             entry.kind
         ))),
     }
-}
-
-fn is_reserved_context_key(key: &ContextEntryKey) -> bool {
-    key.as_str() == SKILL_CATALOG_KEY
 }
 
 fn is_instructions_key(key: &ContextEntryKey) -> bool {
@@ -494,10 +512,6 @@ impl PlanNext for CoreContextPlanner {
             return Ok(Vec::new());
         }
 
-        if let Some(proposal) = skill_catalog_proposal(state, active_run.run_id)? {
-            return Ok(vec![proposal]);
-        }
-
         let run_input_entries = missing_run_input_entries(state)?;
         if !run_input_entries.is_empty() {
             return Ok(vec![entries_applied_proposal(
@@ -516,54 +530,8 @@ impl PlanNext for CoreContextPlanner {
             )]);
         }
 
-        let activation_entries = missing_direct_activation_entries(state)?;
-        if !activation_entries.is_empty() {
-            return Ok(vec![entries_applied_proposal(
-                state,
-                active_run.run_id,
-                activation_entries,
-            )]);
-        }
-
         Ok(Vec::new())
     }
-}
-
-fn skill_catalog_proposal(
-    state: &CoreAgentState,
-    run_id: RunId,
-) -> Result<Option<CoreAgentEventProposal>, DomainError> {
-    let key = skill_catalog_key();
-    let Some(catalog) = state.skills.catalog.as_ref() else {
-        if current_key_entry(state, &key).is_some() {
-            return Ok(Some(keys_removed_proposal(state, run_id, vec![key])));
-        }
-        return Ok(None);
-    };
-
-    if current_key_entry(state, &key).is_some_and(|entry| entry.content_ref == catalog.catalog_ref)
-    {
-        return Ok(None);
-    }
-
-    Ok(Some(entries_applied_proposal(
-        state,
-        run_id,
-        vec![ContextEntry {
-            entry_id: next_context_entry_id(state, 1)?,
-            key: Some(key),
-            kind: ContextEntryKind::SkillCatalog,
-            source: ContextEntrySource::Runtime {
-                label: "skills.catalog".to_owned(),
-            },
-            content_ref: catalog.catalog_ref.clone(),
-            media_type: None,
-            preview: None,
-            provider_kind: None,
-            provider_item_id: None,
-            token_estimate: None,
-        }],
-    )))
 }
 
 fn missing_run_input_entries(state: &CoreAgentState) -> Result<Vec<ContextEntry>, DomainError> {
@@ -634,76 +602,6 @@ fn input_index(index: usize) -> Result<u32, DomainError> {
     })
 }
 
-fn missing_direct_activation_entries(
-    state: &CoreAgentState,
-) -> Result<Vec<ContextEntry>, DomainError> {
-    let mut entries = Vec::new();
-    for activation in &state.skills.activations {
-        let Some(context_ref) = activation.direct_context_ref() else {
-            continue;
-        };
-        if activation_context_is_active(state, activation) {
-            continue;
-        }
-
-        entries.push(ContextEntry {
-            entry_id: next_context_entry_id(state, entries.len() as u64 + 1)?,
-            key: None,
-            kind: ContextEntryKind::SkillActivation {
-                skill_id: activation.skill_id.clone(),
-            },
-            source: ContextEntrySource::Runtime {
-                label: "skills.activation".to_owned(),
-            },
-            content_ref: context_ref.clone(),
-            media_type: None,
-            preview: None,
-            provider_kind: None,
-            provider_item_id: None,
-            token_estimate: None,
-        });
-    }
-    Ok(entries)
-}
-
-fn next_context_entry_id(
-    state: &CoreAgentState,
-    offset_from_next: u64,
-) -> Result<ContextEntryId, DomainError> {
-    let next_entry_id = state
-        .id_cursors
-        .last_context_item_id
-        .checked_add(offset_from_next)
-        .ok_or_else(|| {
-            DomainError::InvariantViolation("context entry id cursor exhausted".to_owned())
-        })?;
-    Ok(ContextEntryId::new(next_entry_id))
-}
-
-fn activation_context_is_active(state: &CoreAgentState, activation: &SkillActivation) -> bool {
-    let Some(context_ref) = activation.direct_context_ref() else {
-        return true;
-    };
-    state.context.entries.iter().any(|entry| {
-        &entry.content_ref == context_ref
-            && match &entry.kind {
-                ContextEntryKind::SkillActivation { skill_id } => skill_id == &activation.skill_id,
-                ContextEntryKind::ToolResult { .. } => true,
-                _ => false,
-            }
-    })
-}
-
-fn active_activation_for_entry<'a>(
-    state: &'a CoreAgentState,
-    skill_id: &SkillId,
-    context_ref: &BlobRef,
-) -> Option<&'a SkillActivation> {
-    state.skills.activations.iter().find(|activation| {
-        &activation.skill_id == skill_id && activation.direct_context_ref() == Some(context_ref)
-    })
-}
-
 fn entry_by_id(state: &CoreAgentState, entry_id: ContextEntryId) -> Option<&ContextEntry> {
     state
         .context
@@ -724,7 +622,33 @@ fn current_key_entry<'a>(
 }
 
 fn skill_catalog_key() -> ContextEntryKey {
-    ContextEntryKey::new(SKILL_CATALOG_KEY)
+    ContextEntryKey::new(SKILL_CATALOG_CONTEXT_KEY)
+}
+
+pub fn skill_activation_context_key(skill_id: &SkillId) -> ContextEntryKey {
+    ContextEntryKey::new(format!(
+        "{SKILL_ACTIVATION_CONTEXT_KEY_PREFIX}{}",
+        skill_id.as_str()
+    ))
+}
+
+pub fn is_run_scoped_skill_activation_entry(entry: &ContextEntry) -> bool {
+    matches!(entry.kind, ContextEntryKind::SkillActivation { .. })
+        && entry.provider_kind.as_deref() == Some(SKILL_ACTIVATION_PROVIDER_KIND_RUN)
+}
+
+pub(crate) fn expire_run_scoped_context_entries(
+    state: &mut CoreAgentState,
+) -> Result<(), DomainError> {
+    let before = state.context.entries.len();
+    state
+        .context
+        .entries
+        .retain(|entry| !is_run_scoped_skill_activation_entry(entry));
+    if state.context.entries.len() != before {
+        bump_context_revision(state)?;
+    }
+    Ok(())
 }
 
 fn entries_applied_proposal(
@@ -740,23 +664,6 @@ fn entries_applied_proposal(
         CoreAgentEventKind::Context(Event::EntriesApplied {
             base_revision: state.context.revision,
             entries,
-        }),
-    )
-}
-
-fn keys_removed_proposal(
-    state: &CoreAgentState,
-    run_id: RunId,
-    keys: Vec<ContextEntryKey>,
-) -> CoreAgentEventProposal {
-    CoreAgentEventProposal::new(
-        CoreAgentJoins {
-            run_id: Some(run_id),
-            ..CoreAgentJoins::default()
-        },
-        CoreAgentEventKind::Context(Event::KeysRemoved {
-            base_revision: state.context.revision,
-            keys,
         }),
     )
 }

@@ -1,9 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ContextEntryInput, ContextEntryKey, RunConfig, SessionConfig, SessionConfigPatch,
-    SkillActivation, SkillCatalogContext, SubmissionId, ToolExecutionTarget, ToolProfileId,
-    ToolRegistry,
+    ContextEntryInput, ContextEntryKey, RunConfig, SessionConfig, SessionConfigPatch, SubmissionId,
+    ToolExecutionTarget, ToolProfileId, ToolRegistry,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -27,12 +26,6 @@ pub enum CoreAgentCommand {
     },
     ClearDefaultToolTarget {
         namespace: String,
-    },
-    SetSkillCatalog {
-        catalog: Option<SkillCatalogContext>,
-    },
-    SetSkillActivations {
-        activations: Vec<SkillActivation>,
     },
     UpsertContext {
         key: ContextEntryKey,

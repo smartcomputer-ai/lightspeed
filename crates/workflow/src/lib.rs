@@ -8,8 +8,8 @@ mod workflow;
 
 pub use activities::{
     ACTIVITY_APPEND_EVENTS, ACTIVITY_CREATE_OR_LOAD_SESSION, ACTIVITY_LLM_GENERATE,
-    ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB, ACTIVITY_SKILL_ACTIVATION_REFRESH,
-    ACTIVITY_SKILL_CATALOG_REFRESH, ACTIVITY_TOOL_INVOKE_BATCH, WorkflowActivities,
+    ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB, ACTIVITY_SKILL_CATALOG_REFRESH,
+    ACTIVITY_TOOL_INVOKE_BATCH, WorkflowActivities,
 };
 pub use config::{
     DEFAULT_CONTINUE_AS_NEW_HISTORY_THRESHOLD, DEFAULT_MODEL, DEFAULT_TASK_QUEUE,
@@ -23,7 +23,6 @@ pub use types::{
     AgentCompletedRunSummary, AgentQueuedRunSummary, AgentSessionArgs, AgentSessionStatus,
     AppendEventsRequest, CreateOrLoadSessionRequest, CreateOrLoadSessionResult,
     LlmGenerateActivityRequest, PutBlobRequest, ReadBlobRequest, ReadBlobResult,
-    SkillActivationRefreshActivityRequest, SkillActivationRefreshActivityResult,
     SkillCatalogRefreshActivityRequest, SkillCatalogRefreshActivityResult,
     ToolInvokeBatchActivityRequest,
 };

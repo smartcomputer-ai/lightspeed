@@ -4,14 +4,13 @@ use engine::{
     ApplyEvent, BlobRef, CoreAgentAction, CoreAgentCommand, CoreAgentDrive, CoreAgentDriveError,
     CoreAgentIoError, CoreAgentLlm, CoreAgentState, CoreAgentTools, CoreApplyEvent, EventSeq,
     LlmFinish, LlmGenerationFacts, LlmGenerationRequest, LlmGenerationResult, LlmGenerationStatus,
-    SessionId, SkillCatalogContext, ToolCallStatus, ToolInvocationBatchRequest,
+    SKILL_CATALOG_CONTEXT_KEY, SessionId, ToolCallStatus, ToolInvocationBatchRequest,
     ToolInvocationBatchResult, ToolInvocationResult,
     storage::{AppendSessionEvents, BlobStore, ReadSessionEvents},
 };
 use tools::skills::{
-    SkillCatalogSnapshot, SkillToolResultActivationInput, conventional_vfs_skill_root_specs,
-    prepare_skill_catalog_publication, resolve_mounted_vfs_skill_roots,
-    skill_activation_from_tool_result,
+    conventional_vfs_skill_root_specs, prepare_skill_catalog_publication,
+    resolve_mounted_vfs_skill_roots,
 };
 
 use super::{
@@ -159,7 +158,9 @@ impl SessionRunner {
         })?;
         let specs = conventional_vfs_skill_root_specs(&mounts);
         if specs.is_empty() {
-            return Ok(clear_catalog_command(state.skills.catalog.as_ref()));
+            return Ok(clear_catalog_command(
+                active_skill_catalog_ref(state).as_ref(),
+            ));
         }
 
         let resolved = resolve_mounted_vfs_skill_roots(
@@ -179,7 +180,9 @@ impl SessionRunner {
                 message: format!("filter VFS skill roots: {error}"),
             })?;
         if inputs.is_empty() {
-            return Ok(clear_catalog_command(state.skills.catalog.as_ref()));
+            return Ok(clear_catalog_command(
+                active_skill_catalog_ref(state).as_ref(),
+            ));
         }
 
         let publication =
@@ -189,106 +192,6 @@ impl SessionRunner {
                     message: format!("prepare skill catalog publication: {error}"),
                 })?;
         Ok(publication.command)
-    }
-
-    async fn append_skill_activation_command(
-        &self,
-        drive: &mut CoreAgentDrive,
-        observed_at_ms: u64,
-        command: CoreAgentCommand,
-        emitted_entries: &mut Vec<engine::CoreAgentEntry>,
-    ) -> Result<(), RunnerError> {
-        let action = drive.admit_command(command, observed_at_ms)?;
-        match action {
-            CoreAgentAction::AppendEvents {
-                expected_head,
-                events,
-            } => {
-                let appended = self
-                    .stores
-                    .sessions
-                    .append(AppendSessionEvents {
-                        session_id: drive.session_id().clone(),
-                        expected_head,
-                        events,
-                    })
-                    .await?;
-                let entries = drive.resume_appended(appended.entries)?;
-                emitted_entries.extend(entries);
-                Ok(())
-            }
-            CoreAgentAction::Idle | CoreAgentAction::Closed => Ok(()),
-            other => Err(RunnerError::InvalidRequest {
-                message: format!("skill activation refresh emitted unexpected action: {other:?}"),
-            }),
-        }
-    }
-
-    async fn skill_activation_command_for_active_tool_batch(
-        &self,
-        state: &CoreAgentState,
-    ) -> Result<Option<CoreAgentCommand>, RunnerError> {
-        let Some(catalog_context) = state.skills.catalog.as_ref() else {
-            return Ok(None);
-        };
-        let Some(active_run) = state.runs.active.as_ref() else {
-            return Ok(None);
-        };
-        let Some(batch_id) = active_run.active_tool_batch_id else {
-            return Ok(None);
-        };
-        let Some(batch) = active_run.tool_batches.get(&batch_id) else {
-            return Ok(None);
-        };
-
-        let catalog_bytes = self
-            .stores
-            .blobs
-            .read_bytes(&catalog_context.catalog_ref)
-            .await?;
-        let catalog =
-            serde_json::from_slice::<SkillCatalogSnapshot>(&catalog_bytes).map_err(|error| {
-                RunnerError::InvalidRequest {
-                    message: format!("decode active skill catalog: {error}"),
-                }
-            })?;
-
-        let mut activations = state.skills.activations.clone();
-        for call_state in &batch.calls {
-            let Some(result) = call_state.result.as_ref() else {
-                continue;
-            };
-            let Some(output_ref) = result.output_ref.as_ref() else {
-                continue;
-            };
-            let output_bytes = self.stores.blobs.read_bytes(output_ref).await?;
-            let output_json = serde_json::from_slice(&output_bytes).map_err(|error| {
-                RunnerError::InvalidRequest {
-                    message: format!("decode tool output {}: {error}", result.call_id),
-                }
-            })?;
-            let Some(activation) =
-                skill_activation_from_tool_result(SkillToolResultActivationInput {
-                    catalog_ref: &catalog_context.catalog_ref,
-                    catalog: &catalog,
-                    current_activations: &activations,
-                    call_id: &result.call_id,
-                    tool_name: &call_state.call.tool_name,
-                    status: result.status,
-                    execution_target: call_state.execution_target.as_ref(),
-                    output_json: &output_json,
-                })
-            else {
-                continue;
-            };
-            activations.push(activation);
-        }
-
-        if activations == state.skills.activations {
-            Ok(None)
-        } else {
-            Ok(Some(CoreAgentCommand::SetSkillActivations { activations }))
-        }
     }
 
     pub async fn drive_until_quiescent(
@@ -369,13 +272,6 @@ impl SessionRunner {
                     expected_head,
                     events,
                 } => {
-                    let pending_skill_activation_command =
-                        if active_tool_batch_has_results(drive.state()) {
-                            self.skill_activation_command_for_active_tool_batch(drive.state())
-                                .await?
-                        } else {
-                            None
-                        };
                     let appended = self
                         .stores
                         .sessions
@@ -387,15 +283,6 @@ impl SessionRunner {
                         .await?;
                     let entries = drive.resume_appended(appended.entries)?;
                     emitted_entries.extend(entries);
-                    if let Some(command) = pending_skill_activation_command {
-                        self.append_skill_activation_command(
-                            drive,
-                            observed_at_ms,
-                            command,
-                            emitted_entries,
-                        )
-                        .await?;
-                    }
                     action = drive.next_action(observed_at_ms, max_steps)?;
                 }
                 CoreAgentAction::GenerateLlm { request } => {
@@ -455,21 +342,25 @@ fn should_refresh_skill_catalog_before_admitting(
         && state.runs.queued.is_empty()
 }
 
-fn clear_catalog_command(active_catalog: Option<&SkillCatalogContext>) -> Option<CoreAgentCommand> {
-    active_catalog.map(|_| CoreAgentCommand::SetSkillCatalog { catalog: None })
+fn clear_catalog_command(active_catalog_ref: Option<&BlobRef>) -> Option<CoreAgentCommand> {
+    active_catalog_ref.map(|_| CoreAgentCommand::RemoveContext {
+        key: engine::ContextEntryKey::new(SKILL_CATALOG_CONTEXT_KEY),
+    })
 }
 
-fn active_tool_batch_has_results(state: &CoreAgentState) -> bool {
-    let Some(active_run) = state.runs.active.as_ref() else {
-        return false;
-    };
-    let Some(batch_id) = active_run.active_tool_batch_id else {
-        return false;
-    };
-    active_run
-        .tool_batches
-        .get(&batch_id)
-        .is_some_and(|batch| batch.calls.iter().any(|call| call.result.is_some()))
+fn active_skill_catalog_ref(state: &CoreAgentState) -> Option<BlobRef> {
+    state
+        .context
+        .entries
+        .iter()
+        .find(|entry| {
+            entry
+                .key
+                .as_ref()
+                .is_some_and(|key| key.as_str() == SKILL_CATALOG_CONTEXT_KEY)
+                && matches!(entry.kind, engine::ContextEntryKind::SkillCatalog)
+        })
+        .map(|entry| entry.content_ref.clone())
 }
 
 fn resolve_max_steps(max_steps: Option<u32>) -> Result<usize, RunnerError> {
@@ -1038,14 +929,7 @@ mod tests {
             .await
             .expect("drive request");
 
-        let catalog_ref = outcome
-            .state
-            .skills
-            .catalog
-            .as_ref()
-            .expect("skill catalog")
-            .catalog_ref
-            .clone();
+        let catalog_ref = active_skill_catalog_ref(&outcome.state).expect("skill catalog");
         let catalog: SkillCatalogSnapshot =
             serde_json::from_slice(&blobs.read_bytes(&catalog_ref).await.expect("read catalog"))
                 .expect("decode catalog");
@@ -1066,13 +950,16 @@ mod tests {
         assert!(outcome.emitted_entries.iter().any(|entry| {
             matches!(
                 &entry.event.kind,
-                CoreAgentEventKind::Skill(engine::SkillEvent::CatalogSet { catalog: Some(_) })
+                CoreAgentEventKind::Context(engine::ContextEvent::EntriesApplied { entries, .. })
+                    if entries.iter().any(|entry| {
+                        matches!(entry.kind, ContextEntryKind::SkillCatalog)
+                    })
             )
         }));
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn read_file_of_cataloged_skill_doc_records_tool_result_activation() {
+    async fn read_file_of_cataloged_skill_doc_does_not_record_activation() {
         let sessions = Arc::new(InMemorySessionStore::new());
         let blobs = Arc::new(InMemoryBlobStore::new());
         let blob_store: Arc<dyn BlobStore> = blobs.clone();
@@ -1194,21 +1081,23 @@ mod tests {
 
         assert_eq!(outcome.quiescence, RunnerQuiescence::Idle);
         assert_eq!(outcome.state.runs.completed[0].status, RunStatus::Completed);
-        assert!(outcome.emitted_entries.iter().any(|entry| {
-            matches!(
+        assert!(outcome.emitted_entries.iter().all(|entry| {
+            !matches!(
                 &entry.event.kind,
-                CoreAgentEventKind::Skill(engine::SkillEvent::ActivationsSet {
-                    activations
-                }) if activations.iter().any(|activation| {
-                    matches!(
-                        &activation.source,
-                        engine::SkillActivationSource::ToolResult { call_id }
-                            if call_id.as_str() == "call-read-skill"
-                    )
-                })
+                CoreAgentEventKind::Context(engine::ContextEvent::EntriesApplied { entries, .. })
+                    if entries.iter().any(|entry| {
+                        matches!(entry.kind, ContextEntryKind::SkillActivation { .. })
+                    })
             )
         }));
-        assert!(outcome.state.skills.activations.is_empty());
+        assert!(
+            outcome
+                .state
+                .context
+                .entries
+                .iter()
+                .all(|entry| { !matches!(entry.kind, ContextEntryKind::SkillActivation { .. }) })
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

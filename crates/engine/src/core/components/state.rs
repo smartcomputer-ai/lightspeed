@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ContextState, IdCursors, SessionPosition, SkillState, ToolingState,
+    ContextState, IdCursors, SessionPosition, ToolingState,
     core::components::{lifecycle::LifecycleState, run::RunQueueState},
 };
 
@@ -12,7 +12,6 @@ pub struct CoreAgentState {
     pub lifecycle: LifecycleState,
     pub runs: RunQueueState,
     pub context: ContextState,
-    pub skills: SkillState,
     pub tooling: ToolingState,
 }
 
@@ -24,7 +23,6 @@ impl CoreAgentState {
             lifecycle: LifecycleState::default(),
             runs: RunQueueState::default(),
             context: ContextState::default(),
-            skills: SkillState::default(),
             tooling: ToolingState::default(),
         }
     }

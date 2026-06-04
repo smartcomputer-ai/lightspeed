@@ -1,8 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ContextEvent, CoreAgentLifecycleEvent, RunEvent, SkillEvent, ToolConfigEvent, ToolEvent,
-    TurnEvent,
+    ContextEvent, CoreAgentLifecycleEvent, RunEvent, ToolConfigEvent, ToolEvent, TurnEvent,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -17,7 +16,6 @@ pub enum CoreAgentEventKind {
     Run(RunEvent),
     Turn(TurnEvent),
     Context(ContextEvent),
-    Skill(SkillEvent),
     ToolConfig(ToolConfigEvent),
     Tool(ToolEvent),
 }

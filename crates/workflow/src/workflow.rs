@@ -4,8 +4,8 @@ use engine::{
     ApplyEvent, BlobRef, CommandCodec, CommandError, ContextEntryInput, ContextEntryKey,
     ContextEntryKind, CoreAgentAction, CoreAgentCodec, CoreAgentCommand, CoreAgentDrive,
     CoreAgentDriveError, CoreAgentEntry, CoreAgentEventKind, CoreAgentState, CoreApplyEvent,
-    LlmGenerationRequest, RunEvent, SessionId, SessionPosition, SubmissionId,
-    ToolInvocationBatchRequest, ToolProfileId,
+    LlmGenerationRequest, RunEvent, SKILL_CATALOG_CONTEXT_KEY, SessionId, SessionPosition,
+    SubmissionId, ToolInvocationBatchRequest, ToolProfileId,
 };
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
@@ -17,9 +17,8 @@ use crate::{
     AgentCompletedRunSummary, AgentQueuedRunSummary, AgentSessionArgs, AgentSessionStatus,
     AppendEventsRequest, CreateOrLoadSessionRequest, DEFAULT_CONTINUE_AS_NEW_HISTORY_THRESHOLD,
     FAKE_TOOL_PROFILE_ID, LlmGenerateActivityRequest, PutBlobRequest,
-    SkillActivationRefreshActivityRequest, SkillCatalogRefreshActivityRequest,
-    ToolInvokeBatchActivityRequest, WorkflowActivities, activity_options, default_instructions,
-    fake_tool_input_schema, fake_tool_registry,
+    SkillCatalogRefreshActivityRequest, ToolInvokeBatchActivityRequest, WorkflowActivities,
+    activity_options, default_instructions, fake_tool_input_schema, fake_tool_registry,
 };
 
 const DEFAULT_MAX_STEPS_PER_INPUT: usize = 256;
@@ -343,7 +342,7 @@ async fn refresh_skill_catalog_before_run(
             WorkflowActivities::skill_catalog_refresh,
             SkillCatalogRefreshActivityRequest {
                 session_id: drive.session_id().clone(),
-                active_catalog: drive.state().skills.catalog.clone(),
+                active_catalog_ref: active_skill_catalog_ref(drive.state()),
             },
             activity_options(),
         )
@@ -362,6 +361,21 @@ async fn refresh_skill_catalog_before_run(
             )
         }
     }
+}
+
+fn active_skill_catalog_ref(state: &CoreAgentState) -> Option<BlobRef> {
+    state
+        .context
+        .entries
+        .iter()
+        .find(|entry| {
+            entry
+                .key
+                .as_ref()
+                .is_some_and(|key| key.as_str() == SKILL_CATALOG_CONTEXT_KEY)
+                && matches!(entry.kind, ContextEntryKind::SkillCatalog)
+        })
+        .map(|entry| entry.content_ref.clone())
 }
 
 enum CommandAdmissionResult {
@@ -436,16 +450,7 @@ async fn drive_until_idle(
                 expected_head,
                 events,
             } => {
-                let pending_skill_activation_command =
-                    if active_tool_batch_has_results(drive.state()) {
-                        skill_activation_command_for_tool_results(ctx, drive).await?
-                    } else {
-                        None
-                    };
                 append_events(ctx, drive, expected_head, events).await?;
-                if let Some(command) = pending_skill_activation_command {
-                    append_skill_activation_command(ctx, drive, command).await?;
-                }
                 action = drive.next_action(workflow_time_ms(ctx), max_steps)?;
             }
             CoreAgentAction::GenerateLlm { request } => {
@@ -500,54 +505,6 @@ async fn append_events(
         Ok(())
     })?;
     Ok(entries)
-}
-
-async fn skill_activation_command_for_tool_results(
-    ctx: &mut WorkflowContext<AgentSessionWorkflow>,
-    drive: &mut CoreAgentDrive,
-) -> anyhow::Result<Option<CoreAgentCommand>> {
-    let state = drive.state().clone();
-    let result = ctx
-        .start_activity(
-            WorkflowActivities::skill_activation_refresh,
-            SkillActivationRefreshActivityRequest { state },
-            activity_options(),
-        )
-        .await
-        .map_err(|error| anyhow::anyhow!("{error}"))?;
-    Ok(result.command)
-}
-
-async fn append_skill_activation_command(
-    ctx: &mut WorkflowContext<AgentSessionWorkflow>,
-    drive: &mut CoreAgentDrive,
-    command: CoreAgentCommand,
-) -> anyhow::Result<()> {
-    let action = drive.admit_command(command, workflow_time_ms(ctx))?;
-    match action {
-        CoreAgentAction::AppendEvents {
-            expected_head,
-            events,
-        } => {
-            append_events(ctx, drive, expected_head, events).await?;
-            Ok(())
-        }
-        CoreAgentAction::Idle | CoreAgentAction::Closed => Ok(()),
-        other => anyhow::bail!("skill activation refresh emitted unexpected action: {other:?}"),
-    }
-}
-
-fn active_tool_batch_has_results(state: &CoreAgentState) -> bool {
-    let Some(active_run) = state.runs.active.as_ref() else {
-        return false;
-    };
-    let Some(batch_id) = active_run.active_tool_batch_id else {
-        return false;
-    };
-    active_run
-        .tool_batches
-        .get(&batch_id)
-        .is_some_and(|batch| batch.calls.iter().any(|call| call.result.is_some()))
 }
 
 fn drive_from_state(ctx: &WorkflowContext<AgentSessionWorkflow>) -> anyhow::Result<CoreAgentDrive> {

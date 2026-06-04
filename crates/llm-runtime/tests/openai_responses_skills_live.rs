@@ -397,9 +397,14 @@ async fn openai_responses_live_selects_and_activates_the_matching_skill() {
         .expect("drive live run");
 
     assert_eq!(outcome.quiescence, RunnerQuiescence::Idle);
-    assert_eq!(outcome.state.runs.completed[0].status, RunStatus::Completed);
+    assert_eq!(
+        outcome.state.runs.completed[0].status,
+        RunStatus::Completed,
+        "{}",
+        run_failure_text(blobs.as_ref(), &outcome.state).await
+    );
 
-    let selected_call_id = selected_skill_read_call_id(blobs.as_ref(), &outcome.emitted_entries)
+    let _selected_call_id = selected_skill_read_call_id(blobs.as_ref(), &outcome.emitted_entries)
         .await
         .expect("expected model to read matrix-migration SKILL.md");
     assert!(
@@ -411,20 +416,16 @@ async fn openai_responses_live_selects_and_activates_the_matching_skill() {
         read_paths(blobs.as_ref(), &outcome.emitted_entries).await
     );
     assert!(
-        outcome.emitted_entries.iter().any(|entry| {
-            matches!(
+        outcome.emitted_entries.iter().all(|entry| {
+            !matches!(
                 &entry.event.kind,
-                CoreAgentEventKind::Skill(engine::SkillEvent::ActivationsSet { activations })
-                    if activations.iter().any(|activation| {
-                        matches!(
-                            &activation.source,
-                            engine::SkillActivationSource::ToolResult { call_id }
-                                if call_id == &selected_call_id
-                        )
+                CoreAgentEventKind::Context(engine::ContextEvent::EntriesApplied { entries, .. })
+                    if entries.iter().any(|entry| {
+                        matches!(entry.kind, ContextEntryKind::SkillActivation { .. })
                     })
             )
         }),
-        "expected skill activation for selected read call {selected_call_id}"
+        "reading SKILL.md should not create a skill activation"
     );
 
     let assistant_text = assistant_text(blobs.as_ref(), &outcome.emitted_entries).await;
@@ -545,4 +546,20 @@ async fn assistant_text(blobs: &dyn BlobStore, entries: &[engine::CoreAgentEntry
         }
     }
     text
+}
+
+async fn run_failure_text(blobs: &dyn BlobStore, state: &engine::CoreAgentState) -> String {
+    let Some(run) = state.runs.completed.first() else {
+        return "run did not complete".to_owned();
+    };
+    let Some(failure) = run.failure.as_ref() else {
+        return format!("run status was {:?}", run.status);
+    };
+    let Some(message_ref) = failure.message_ref.as_ref() else {
+        return format!("run failed without message: {:?}", failure.kind);
+    };
+    blobs
+        .read_text(message_ref)
+        .await
+        .unwrap_or_else(|error| format!("failed to read failure message {message_ref}: {error}"))
 }

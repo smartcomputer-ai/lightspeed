@@ -39,13 +39,14 @@ use api_projection::{
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use engine::{
-    AnthropicMessagesRequestDefaults, BlobRef, CommandCodec, ContextConfigPatch, ContextEntryInput,
-    ContextEntryKind, ContextMessageRole, CoreAgentCommand, CoreAgentStatus, ModelProviderOptions,
-    ModelSelection, OpenAiCompletionsRequestDefaults, OpenAiReasoningConfig,
-    OpenAiResponsesRequestDefaults, OptionalConfigPatch, ProviderApiKind, ProviderRequestDefaults,
-    RunConfig, RunConfigPatch, RunId, RunStatus, SessionConfig, SessionConfigPatch, SessionId,
-    SkillActivation, SkillActivationScope, SkillActivationSource, SkillCatalogContext, SkillId,
-    SubmissionId, TurnConfigPatch,
+    AnthropicMessagesRequestDefaults, BlobRef, CommandCodec, ContextConfigPatch, ContextEntry,
+    ContextEntryInput, ContextEntryKey, ContextEntryKind, ContextMessageRole, CoreAgentCommand,
+    CoreAgentStatus, ModelProviderOptions, ModelSelection, OpenAiCompletionsRequestDefaults,
+    OpenAiReasoningConfig, OpenAiResponsesRequestDefaults, OptionalConfigPatch, ProviderApiKind,
+    ProviderRequestDefaults, RunConfig, RunConfigPatch, RunId, RunStatus,
+    SKILL_ACTIVATION_PROVIDER_KIND_RUN, SKILL_ACTIVATION_PROVIDER_KIND_SESSION,
+    SKILL_CATALOG_CONTEXT_KEY, SessionConfig, SessionConfigPatch, SessionId, SkillId, SubmissionId,
+    TurnConfigPatch, skill_activation_context_key,
     storage::{BlobStore, BlobStoreError, ReadSessionEvents, SessionStore},
 };
 use store_pg::PgStore;
@@ -63,6 +64,7 @@ use tools::{
     skills::{
         SkillCatalogSnapshot, SkillLocation, SkillMetadata, conventional_vfs_skill_root_specs,
         prepare_skill_catalog_publication, resolve_mounted_vfs_skill_roots,
+        skill_catalog_context_input,
     },
 };
 use vfs::{
@@ -405,7 +407,7 @@ impl GatewayAgentApi {
         {
             self.refresh_skill_catalog_for_idle_session(
                 session_id,
-                loaded.state.skills.catalog.clone(),
+                active_skill_catalog_ref(&loaded.state),
             )
             .await?;
             return self.load_session_state(session_id).await;
@@ -416,20 +418,32 @@ impl GatewayAgentApi {
     async fn refresh_skill_catalog_for_idle_session(
         &self,
         session_id: &SessionId,
-        active_catalog: Option<SkillCatalogContext>,
+        active_catalog_ref: Option<BlobRef>,
     ) -> Result<(), AgentApiError> {
         let Some(command) = self
-            .skill_catalog_refresh_command(session_id, active_catalog)
+            .skill_catalog_refresh_command(session_id, active_catalog_ref)
             .await?
         else {
             return Ok(());
         };
-        let CoreAgentCommand::SetSkillCatalog { catalog } = &command else {
-            return Err(AgentApiError::internal(
-                "skill catalog refresh produced non-catalog command",
-            ));
+        let target_catalog_ref = match &command {
+            CoreAgentCommand::UpsertContext { key, entry }
+                if key.as_str() == SKILL_CATALOG_CONTEXT_KEY
+                    && matches!(entry.kind, ContextEntryKind::SkillCatalog) =>
+            {
+                Some(entry.content_ref.clone())
+            }
+            CoreAgentCommand::RemoveContext { key }
+                if key.as_str() == SKILL_CATALOG_CONTEXT_KEY =>
+            {
+                None
+            }
+            _ => {
+                return Err(AgentApiError::internal(
+                    "skill catalog refresh produced non-catalog context command",
+                ));
+            }
         };
-        let target_catalog_ref = catalog.as_ref().map(|catalog| catalog.catalog_ref.clone());
         let baseline_failures = self
             .query_status_optional(session_id)
             .await?
@@ -443,7 +457,7 @@ impl GatewayAgentApi {
     async fn skill_catalog_refresh_command(
         &self,
         session_id: &SessionId,
-        active_catalog: Option<SkillCatalogContext>,
+        active_catalog_ref: Option<BlobRef>,
     ) -> Result<Option<CoreAgentCommand>, AgentApiError> {
         let mounts = self
             .store
@@ -452,7 +466,7 @@ impl GatewayAgentApi {
             .map_err(map_vfs_catalog_error)?;
         let specs = conventional_vfs_skill_root_specs(&mounts);
         if specs.is_empty() {
-            return Ok(clear_skill_catalog_command(active_catalog.as_ref()));
+            return Ok(clear_skill_catalog_command(active_catalog_ref.as_ref()));
         }
 
         let blobs: Arc<dyn BlobStore> = self.store.clone();
@@ -465,11 +479,13 @@ impl GatewayAgentApi {
             .await
             .map_err(|error| AgentApiError::internal(error.to_string()))?;
         if inputs.is_empty() {
-            return Ok(clear_skill_catalog_command(active_catalog.as_ref()));
+            return Ok(clear_skill_catalog_command(active_catalog_ref.as_ref()));
         }
 
         let mut state = engine::CoreAgentState::new();
-        state.skills.catalog = active_catalog;
+        if let Some(catalog_ref) = active_catalog_ref {
+            state.context.entries = vec![active_catalog_entry(catalog_ref)];
+        }
         let publication =
             prepare_skill_catalog_publication(self.store.as_ref(), &state, None, &inputs)
                 .await
@@ -481,19 +497,17 @@ impl GatewayAgentApi {
         &self,
         loaded: &LoadedSession,
     ) -> Result<SkillListResponse, AgentApiError> {
-        let Some(catalog_context) = loaded.state.skills.catalog.as_ref() else {
+        let Some(catalog_ref) = active_skill_catalog_ref(&loaded.state) else {
             return Ok(SkillListResponse {
                 catalog_ref: None,
                 skills: Vec::new(),
             });
         };
-        let catalog = self
-            .read_skill_catalog(&catalog_context.catalog_ref)
-            .await?;
+        let catalog = self.read_skill_catalog(&catalog_ref).await?;
         Ok(skill_list_response(
-            Some(&catalog_context.catalog_ref),
+            Some(&catalog_ref),
             Some(&catalog),
-            &loaded.state.skills.activations,
+            &active_skill_context_entries(&loaded.state),
         ))
     }
 
@@ -501,22 +515,15 @@ impl GatewayAgentApi {
         &self,
         loaded: &LoadedSession,
     ) -> Result<SkillActiveResponse, AgentApiError> {
-        let catalog = match loaded.state.skills.catalog.as_ref() {
-            Some(catalog_context) => Some(
-                self.read_skill_catalog(&catalog_context.catalog_ref)
-                    .await?,
-            ),
+        let catalog_ref = active_skill_catalog_ref(&loaded.state);
+        let catalog = match catalog_ref.as_ref() {
+            Some(catalog_ref) => Some(self.read_skill_catalog(catalog_ref).await?),
             None => None,
         };
         Ok(skill_active_response(
-            loaded
-                .state
-                .skills
-                .catalog
-                .as_ref()
-                .map(|catalog| &catalog.catalog_ref),
+            catalog_ref.as_ref(),
             catalog.as_ref(),
-            &loaded.state.skills.activations,
+            &active_skill_context_entries(&loaded.state),
         ))
     }
 
@@ -594,12 +601,7 @@ impl GatewayAgentApi {
                 }
             }
             let loaded = self.load_session_state(session_id).await?;
-            let actual = loaded
-                .state
-                .skills
-                .catalog
-                .as_ref()
-                .map(|catalog| catalog.catalog_ref.clone());
+            let actual = active_skill_catalog_ref(&loaded.state);
             if actual == target_catalog_ref {
                 return Ok(());
             }
@@ -610,7 +612,7 @@ impl GatewayAgentApi {
     async fn wait_for_skill_activations(
         &self,
         session_id: &SessionId,
-        target: Vec<SkillActivation>,
+        target: Vec<SkillId>,
         baseline_failures: usize,
     ) -> Result<(), AgentApiError> {
         let started = Instant::now();
@@ -633,7 +635,7 @@ impl GatewayAgentApi {
                 }
             }
             let loaded = self.load_session_state(session_id).await?;
-            if loaded.state.skills.activations == target {
+            if active_skill_ids(&loaded.state) == target {
                 return Ok(());
             }
             tokio::time::sleep(self.poll_interval).await;
@@ -1636,12 +1638,10 @@ impl AgentApiService for GatewayAgentApi {
             .await?;
         self.require_open_idle_session(&session_id, &loaded, "skill activation")?;
 
-        let catalog_context = loaded.state.skills.catalog.as_ref().ok_or_else(|| {
+        let catalog_ref = active_skill_catalog_ref(&loaded.state).ok_or_else(|| {
             AgentApiError::not_found(format!("no skill catalog is available for {session_id}"))
         })?;
-        let catalog = self
-            .read_skill_catalog(&catalog_context.catalog_ref)
-            .await?;
+        let catalog = self.read_skill_catalog(&catalog_ref).await?;
         let skill = catalog
             .skills
             .iter()
@@ -1661,30 +1661,29 @@ impl AgentApiService for GatewayAgentApi {
             .put_bytes(skill_doc.into_bytes())
             .await
             .map_err(map_blob_store_error)?;
-        let (activation, activations) = replace_direct_skill_activation(
-            &loaded.state.skills.activations,
+        let entry = skill_activation_context_input(
             skill_id.clone(),
-            catalog_context.catalog_ref.clone(),
-            context_ref,
+            catalog_ref.clone(),
+            context_ref.clone(),
             params.scope,
+            Some(skill),
         );
-
-        if activations != loaded.state.skills.activations {
-            let baseline_failures = self
-                .query_status_optional(&session_id)
-                .await?
-                .map(|status| status.admission_failures.len())
-                .unwrap_or(0);
-            self.submit_core_command(
-                &session_id,
-                CoreAgentCommand::SetSkillActivations {
-                    activations: activations.clone(),
-                },
-            )
+        let target_active_ids = active_skill_ids_after_upsert(&loaded.state, skill_id.clone());
+        let baseline_failures = self
+            .query_status_optional(&session_id)
+            .await?
+            .map(|status| status.admission_failures.len())
+            .unwrap_or(0);
+        self.submit_core_command(
+            &session_id,
+            CoreAgentCommand::UpsertContext {
+                key: skill_activation_context_key(&skill_id),
+                entry,
+            },
+        )
+        .await?;
+        self.wait_for_skill_activations(&session_id, target_active_ids, baseline_failures)
             .await?;
-            self.wait_for_skill_activations(&session_id, activations, baseline_failures)
-                .await?;
-        }
 
         let loaded = self.load_session_state(&session_id).await?;
         let active = self.project_active_skills(&loaded).await?.activations;
@@ -1692,7 +1691,17 @@ impl AgentApiService for GatewayAgentApi {
             .iter()
             .find(|active| active.skill_id == skill_id.as_str())
             .cloned()
-            .unwrap_or_else(|| skill_activation_view(&activation, Some(&catalog)));
+            .unwrap_or_else(|| SkillActivationView {
+                skill_id: skill_id.as_str().to_owned(),
+                name: Some(skill.name.clone()),
+                description: Some(skill.description.clone()),
+                short_description: skill.short_description.clone(),
+                catalog_ref: catalog_ref.as_str().to_owned(),
+                scope: params.scope,
+                source: ApiSkillActivationSource::DirectContext {
+                    context_ref: context_ref.as_str().to_owned(),
+                },
+            });
         Ok(AgentApiOutcome::new(SkillActivateResponse {
             activation,
             active,
@@ -1712,7 +1721,12 @@ impl AgentApiService for GatewayAgentApi {
         let loaded = self.load_session_state(&session_id).await?;
         self.require_open_idle_session(&session_id, &loaded, "skill deactivation")?;
 
-        let activations = remove_skill_activation(&loaded.state.skills.activations, &skill_id)?;
+        if !active_skill_ids(&loaded.state).contains(&skill_id) {
+            return Err(AgentApiError::not_found(format!(
+                "active skill not found: {skill_id}"
+            )));
+        }
+        let target_active_ids = active_skill_ids_after_remove(&loaded.state, &skill_id);
 
         let baseline_failures = self
             .query_status_optional(&session_id)
@@ -1721,12 +1735,12 @@ impl AgentApiService for GatewayAgentApi {
             .unwrap_or(0);
         self.submit_core_command(
             &session_id,
-            CoreAgentCommand::SetSkillActivations {
-                activations: activations.clone(),
+            CoreAgentCommand::RemoveContext {
+                key: skill_activation_context_key(&skill_id),
             },
         )
         .await?;
-        self.wait_for_skill_activations(&session_id, activations, baseline_failures)
+        self.wait_for_skill_activations(&session_id, target_active_ids, baseline_failures)
             .await?;
 
         let loaded = self.load_session_state(&session_id).await?;
@@ -2034,16 +2048,112 @@ fn mounted_vfs_cwd(mounts: &[VfsMountRecord]) -> Result<FsPath, AgentApiError> {
     FsPath::new(cwd).map_err(|error| AgentApiError::internal(error.to_string()))
 }
 
-fn clear_skill_catalog_command(
-    active_catalog: Option<&SkillCatalogContext>,
-) -> Option<CoreAgentCommand> {
-    active_catalog.map(|_| CoreAgentCommand::SetSkillCatalog { catalog: None })
+fn clear_skill_catalog_command(active_catalog_ref: Option<&BlobRef>) -> Option<CoreAgentCommand> {
+    active_catalog_ref.map(|_| CoreAgentCommand::RemoveContext {
+        key: ContextEntryKey::new(SKILL_CATALOG_CONTEXT_KEY),
+    })
+}
+
+fn active_catalog_entry(catalog_ref: BlobRef) -> ContextEntry {
+    let input = skill_catalog_context_input(catalog_ref);
+    ContextEntry {
+        entry_id: engine::ContextEntryId::new(1),
+        key: Some(ContextEntryKey::new(SKILL_CATALOG_CONTEXT_KEY)),
+        kind: ContextEntryKind::SkillCatalog,
+        source: engine::ContextEntrySource::Runtime {
+            label: "skills.catalog".to_owned(),
+        },
+        content_ref: input.content_ref,
+        media_type: input.media_type,
+        preview: input.preview,
+        provider_kind: input.provider_kind,
+        provider_item_id: input.provider_item_id,
+        token_estimate: input.token_estimate,
+    }
+}
+
+fn active_skill_catalog_ref(state: &engine::CoreAgentState) -> Option<BlobRef> {
+    state
+        .context
+        .entries
+        .iter()
+        .find(|entry| {
+            entry
+                .key
+                .as_ref()
+                .is_some_and(|key| key.as_str() == SKILL_CATALOG_CONTEXT_KEY)
+                && matches!(entry.kind, ContextEntryKind::SkillCatalog)
+        })
+        .map(|entry| entry.content_ref.clone())
+}
+
+fn active_skill_context_entries(state: &engine::CoreAgentState) -> Vec<&ContextEntry> {
+    state
+        .context
+        .entries
+        .iter()
+        .filter(|entry| matches!(entry.kind, ContextEntryKind::SkillActivation { .. }))
+        .collect()
+}
+
+fn active_skill_ids(state: &engine::CoreAgentState) -> Vec<SkillId> {
+    active_skill_context_entries(state)
+        .into_iter()
+        .filter_map(|entry| match &entry.kind {
+            ContextEntryKind::SkillActivation { skill_id } => Some(skill_id.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn active_skill_ids_after_upsert(
+    state: &engine::CoreAgentState,
+    skill_id: SkillId,
+) -> Vec<SkillId> {
+    let mut ids = active_skill_ids(state);
+    ids.retain(|active| active != &skill_id);
+    ids.push(skill_id);
+    ids
+}
+
+fn active_skill_ids_after_remove(
+    state: &engine::CoreAgentState,
+    skill_id: &SkillId,
+) -> Vec<SkillId> {
+    let mut ids = active_skill_ids(state);
+    ids.retain(|active| active != skill_id);
+    ids
+}
+
+fn skill_activation_context_input(
+    skill_id: SkillId,
+    catalog_ref: BlobRef,
+    context_ref: BlobRef,
+    scope: ApiSkillActivationScope,
+    skill: Option<&SkillMetadata>,
+) -> ContextEntryInput {
+    ContextEntryInput {
+        kind: ContextEntryKind::SkillActivation { skill_id },
+        content_ref: context_ref,
+        media_type: Some("text/markdown".to_owned()),
+        preview: skill.map(|skill| format!("skill activated: {}", skill.name)),
+        provider_kind: Some(skill_activation_provider_kind(scope).to_owned()),
+        provider_item_id: Some(catalog_ref.as_str().to_owned()),
+        token_estimate: None,
+    }
+}
+
+fn skill_activation_provider_kind(scope: ApiSkillActivationScope) -> &'static str {
+    match scope {
+        ApiSkillActivationScope::Run => SKILL_ACTIVATION_PROVIDER_KIND_RUN,
+        ApiSkillActivationScope::Session => SKILL_ACTIVATION_PROVIDER_KIND_SESSION,
+    }
 }
 
 fn skill_list_response(
     catalog_ref: Option<&BlobRef>,
     catalog: Option<&SkillCatalogSnapshot>,
-    activations: &[SkillActivation],
+    activations: &[&ContextEntry],
 ) -> SkillListResponse {
     let Some(catalog) = catalog else {
         return SkillListResponse {
@@ -2053,7 +2163,10 @@ fn skill_list_response(
     };
     let active_ids = activations
         .iter()
-        .map(|activation| activation.skill_id.as_str().to_owned())
+        .filter_map(|entry| match &entry.kind {
+            ContextEntryKind::SkillActivation { skill_id } => Some(skill_id.as_str().to_owned()),
+            _ => None,
+        })
         .collect::<BTreeSet<_>>();
     SkillListResponse {
         catalog_ref: catalog_ref.map(|catalog_ref| catalog_ref.as_str().to_owned()),
@@ -2075,49 +2188,15 @@ fn skill_list_response(
 fn skill_active_response(
     catalog_ref: Option<&BlobRef>,
     catalog: Option<&SkillCatalogSnapshot>,
-    activations: &[SkillActivation],
+    activations: &[&ContextEntry],
 ) -> SkillActiveResponse {
     SkillActiveResponse {
         catalog_ref: catalog_ref.map(|catalog_ref| catalog_ref.as_str().to_owned()),
         activations: activations
             .iter()
-            .map(|activation| skill_activation_view(activation, catalog))
+            .filter_map(|activation| skill_activation_view(activation, catalog_ref, catalog))
             .collect(),
     }
-}
-
-fn replace_direct_skill_activation(
-    current: &[SkillActivation],
-    skill_id: SkillId,
-    catalog_ref: BlobRef,
-    context_ref: BlobRef,
-    scope: ApiSkillActivationScope,
-) -> (SkillActivation, Vec<SkillActivation>) {
-    let activation = SkillActivation {
-        skill_id: skill_id.clone(),
-        catalog_ref,
-        source: SkillActivationSource::DirectContext { context_ref },
-        scope: core_skill_activation_scope(scope),
-    };
-    let mut activations = current.to_vec();
-    activations.retain(|active| active.skill_id != skill_id);
-    activations.push(activation.clone());
-    (activation, activations)
-}
-
-fn remove_skill_activation(
-    current: &[SkillActivation],
-    skill_id: &SkillId,
-) -> Result<Vec<SkillActivation>, AgentApiError> {
-    let mut activations = current.to_vec();
-    let original_len = activations.len();
-    activations.retain(|active| &active.skill_id != skill_id);
-    if activations.len() == original_len {
-        return Err(AgentApiError::not_found(format!(
-            "active skill not found: {skill_id}"
-        )));
-    }
-    Ok(activations)
 }
 
 async fn read_skill_doc_for_activation_from_vfs(
@@ -2145,48 +2224,42 @@ async fn read_skill_doc_for_activation_from_vfs(
     fs.read_file_text(&path).await.map_err(map_fs_error)
 }
 
-fn core_skill_activation_scope(scope: ApiSkillActivationScope) -> SkillActivationScope {
-    match scope {
-        ApiSkillActivationScope::Run => SkillActivationScope::Run,
-        ApiSkillActivationScope::Session => SkillActivationScope::Session,
-    }
-}
-
-fn api_skill_activation_scope(scope: SkillActivationScope) -> ApiSkillActivationScope {
-    match scope {
-        SkillActivationScope::Run => ApiSkillActivationScope::Run,
-        SkillActivationScope::Session => ApiSkillActivationScope::Session,
+fn api_skill_activation_scope(entry: &ContextEntry) -> ApiSkillActivationScope {
+    match entry.provider_kind.as_deref() {
+        Some(SKILL_ACTIVATION_PROVIDER_KIND_RUN) => ApiSkillActivationScope::Run,
+        _ => ApiSkillActivationScope::Session,
     }
 }
 
 fn skill_activation_view(
-    activation: &SkillActivation,
+    activation: &ContextEntry,
+    active_catalog_ref: Option<&BlobRef>,
     catalog: Option<&SkillCatalogSnapshot>,
-) -> SkillActivationView {
+) -> Option<SkillActivationView> {
+    let ContextEntryKind::SkillActivation { skill_id } = &activation.kind else {
+        return None;
+    };
     let metadata = catalog.and_then(|catalog| {
         catalog
             .skills
             .iter()
-            .find(|skill| skill.skill_id == activation.skill_id)
+            .find(|skill| &skill.skill_id == skill_id)
     });
-    SkillActivationView {
-        skill_id: activation.skill_id.as_str().to_owned(),
+    let catalog_ref = activation
+        .provider_item_id
+        .as_deref()
+        .or_else(|| active_catalog_ref.map(BlobRef::as_str))?;
+    Some(SkillActivationView {
+        skill_id: skill_id.as_str().to_owned(),
         name: metadata.map(|skill| skill.name.clone()),
         description: metadata.map(|skill| skill.description.clone()),
         short_description: metadata.and_then(|skill| skill.short_description.clone()),
-        catalog_ref: activation.catalog_ref.as_str().to_owned(),
-        scope: api_skill_activation_scope(activation.scope),
-        source: match &activation.source {
-            SkillActivationSource::ToolResult { call_id } => ApiSkillActivationSource::ToolResult {
-                call_id: call_id.as_str().to_owned(),
-            },
-            SkillActivationSource::DirectContext { context_ref } => {
-                ApiSkillActivationSource::DirectContext {
-                    context_ref: context_ref.as_str().to_owned(),
-                }
-            }
+        catalog_ref: catalog_ref.to_owned(),
+        scope: api_skill_activation_scope(activation),
+        source: ApiSkillActivationSource::DirectContext {
+            context_ref: activation.content_ref.as_str().to_owned(),
         },
-    }
+    })
 }
 
 async fn store_tool_documents(
@@ -2715,10 +2788,10 @@ mod tests {
             "skill:review",
             &catalog_ref,
             &BlobRef::from_bytes(b"review-body"),
-            SkillActivationScope::Run,
+            ApiSkillActivationScope::Run,
         );
 
-        let response = skill_list_response(Some(&catalog_ref), Some(&catalog), &[activation]);
+        let response = skill_list_response(Some(&catalog_ref), Some(&catalog), &[&activation]);
 
         assert_eq!(response.catalog_ref.as_deref(), Some(catalog_ref.as_str()));
         assert_eq!(response.skills.len(), 2);
@@ -2745,18 +2818,17 @@ mod tests {
             "skill:review",
             &catalog_ref,
             &context_ref,
-            SkillActivationScope::Session,
+            ApiSkillActivationScope::Session,
         );
-        let tool = SkillActivation {
-            skill_id: SkillId::new("skill:deploy"),
-            catalog_ref: catalog_ref.clone(),
-            source: SkillActivationSource::ToolResult {
-                call_id: engine::ToolCallId::new("call_1"),
-            },
-            scope: SkillActivationScope::Run,
-        };
+        let run_scoped = direct_activation(
+            "skill:deploy",
+            &catalog_ref,
+            &BlobRef::from_bytes(b"deploy-body"),
+            ApiSkillActivationScope::Run,
+        );
 
-        let response = skill_active_response(Some(&catalog_ref), Some(&catalog), &[direct, tool]);
+        let response =
+            skill_active_response(Some(&catalog_ref), Some(&catalog), &[&direct, &run_scoped]);
 
         assert_eq!(response.catalog_ref.as_deref(), Some(catalog_ref.as_str()));
         assert_eq!(response.activations.len(), 2);
@@ -2772,82 +2844,58 @@ mod tests {
             ApiSkillActivationScope::Session
         );
         assert_eq!(response.activations[1].name.as_deref(), Some("deploy"));
-        assert_eq!(
-            response.activations[1].source,
-            ApiSkillActivationSource::ToolResult {
-                call_id: "call_1".to_owned()
-            }
-        );
+        assert_eq!(response.activations[1].scope, ApiSkillActivationScope::Run);
     }
 
     #[test]
-    fn replace_direct_skill_activation_replaces_same_skill_only() {
+    fn active_skill_ids_after_upsert_replaces_same_skill_only() {
         let catalog_ref = BlobRef::from_bytes(b"catalog");
-        let old_context_ref = BlobRef::from_bytes(b"old-body");
-        let new_context_ref = BlobRef::from_bytes(b"new-body");
         let other = direct_activation(
             "skill:deploy",
             &catalog_ref,
             &BlobRef::from_bytes(b"deploy-body"),
-            SkillActivationScope::Run,
+            ApiSkillActivationScope::Run,
         );
-        let current = vec![
+        let mut state = engine::CoreAgentState::new();
+        state.context.entries = vec![
             direct_activation(
                 "skill:review",
                 &catalog_ref,
-                &old_context_ref,
-                SkillActivationScope::Run,
+                &BlobRef::from_bytes(b"old-body"),
+                ApiSkillActivationScope::Run,
             ),
-            other.clone(),
+            other,
         ];
 
-        let (activation, activations) = replace_direct_skill_activation(
-            &current,
-            SkillId::new("skill:review"),
-            catalog_ref.clone(),
-            new_context_ref.clone(),
-            ApiSkillActivationScope::Session,
-        );
+        let ids = active_skill_ids_after_upsert(&state, SkillId::new("skill:review"));
 
-        assert_eq!(activation.skill_id, SkillId::new("skill:review"));
-        assert_eq!(activation.scope, SkillActivationScope::Session);
-        assert_eq!(activation.direct_context_ref(), Some(&new_context_ref));
-        assert_eq!(activations.len(), 2);
-        assert_eq!(activations[0], other);
-        assert_eq!(activations[1], activation);
         assert_eq!(
-            activations
-                .iter()
-                .filter(|activation| activation.skill_id == SkillId::new("skill:review"))
-                .count(),
-            1
+            ids,
+            vec![SkillId::new("skill:deploy"), SkillId::new("skill:review")]
         );
     }
 
     #[test]
-    fn remove_skill_activation_removes_selected_or_errors() {
+    fn active_skill_ids_after_remove_drops_selected_skill() {
         let catalog_ref = BlobRef::from_bytes(b"catalog");
         let review = direct_activation(
             "skill:review",
             &catalog_ref,
             &BlobRef::from_bytes(b"review-body"),
-            SkillActivationScope::Run,
+            ApiSkillActivationScope::Run,
         );
         let deploy = direct_activation(
             "skill:deploy",
             &catalog_ref,
             &BlobRef::from_bytes(b"deploy-body"),
-            SkillActivationScope::Session,
+            ApiSkillActivationScope::Session,
         );
+        let mut state = engine::CoreAgentState::new();
+        state.context.entries = vec![review, deploy];
 
-        let remaining =
-            remove_skill_activation(&[review, deploy.clone()], &SkillId::new("skill:review"))
-                .expect("remove review");
+        let remaining = active_skill_ids_after_remove(&state, &SkillId::new("skill:review"));
 
-        assert_eq!(remaining, vec![deploy]);
-        let error = remove_skill_activation(&remaining, &SkillId::new("skill:missing"))
-            .expect_err("missing skill should fail");
-        assert_eq!(error.kind, AgentApiErrorKind::NotFound);
+        assert_eq!(remaining, vec![SkillId::new("skill:deploy")]);
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -3209,15 +3257,27 @@ mod tests {
         skill_id: &str,
         catalog_ref: &BlobRef,
         context_ref: &BlobRef,
-        scope: SkillActivationScope,
-    ) -> SkillActivation {
-        SkillActivation {
-            skill_id: SkillId::new(skill_id),
-            catalog_ref: catalog_ref.clone(),
-            source: SkillActivationSource::DirectContext {
-                context_ref: context_ref.clone(),
-            },
+        scope: ApiSkillActivationScope,
+    ) -> ContextEntry {
+        let skill_id = SkillId::new(skill_id);
+        let input = skill_activation_context_input(
+            skill_id.clone(),
+            catalog_ref.clone(),
+            context_ref.clone(),
             scope,
+            None,
+        );
+        ContextEntry {
+            entry_id: engine::ContextEntryId::new(1),
+            key: Some(skill_activation_context_key(&skill_id)),
+            kind: input.kind,
+            source: engine::ContextEntrySource::ContextEdit,
+            content_ref: input.content_ref,
+            media_type: input.media_type,
+            preview: input.preview,
+            provider_kind: input.provider_kind,
+            provider_item_id: input.provider_item_id,
+            token_estimate: input.token_estimate,
         }
     }
 

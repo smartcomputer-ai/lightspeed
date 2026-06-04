@@ -1,6 +1,6 @@
 use engine::{
-    BlobRef, ContextEntryInput, CoreAgentCommand, CoreAgentState, DynamicCommand, RunStatus,
-    SessionConfig, SessionId, SessionPosition, SkillCatalogContext, SubmissionId,
+    BlobRef, ContextEntryInput, CoreAgentCommand, DynamicCommand, RunStatus, SessionConfig,
+    SessionId, SessionPosition, SubmissionId,
     storage::{DynamicSessionEntry, DynamicUncommittedSessionEvent, SessionRecord},
 };
 use serde::{Deserialize, Serialize};
@@ -118,20 +118,10 @@ pub struct ToolInvokeBatchActivityRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SkillCatalogRefreshActivityRequest {
     pub session_id: SessionId,
-    pub active_catalog: Option<SkillCatalogContext>,
+    pub active_catalog_ref: Option<BlobRef>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SkillCatalogRefreshActivityResult {
-    pub command: Option<CoreAgentCommand>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SkillActivationRefreshActivityRequest {
-    pub state: CoreAgentState,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SkillActivationRefreshActivityResult {
     pub command: Option<CoreAgentCommand>,
 }

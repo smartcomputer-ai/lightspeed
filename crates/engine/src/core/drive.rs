@@ -451,9 +451,10 @@ mod tests {
         ContextEntryId, ContextEntryInput, ContextEntryKey, ContextEntryKind, ContextRemovalReason,
         ContextRewriteReason, CoreAgentCommand, LlmGenerationFacts, LlmRequestKind,
         ModelProviderOptions, ModelSelection, OptionalConfigPatch, ProviderApiKind,
-        ProviderRequestDefaults, RunConfig, RunFailureKind, RunStatus, SessionConfig,
-        SessionConfigPatch, SkillActivation, SkillActivationScope, SkillActivationSource,
-        SkillCatalogContext, SkillId, ToolCallId, TurnConfig, TurnConfigPatch, TurnStatus,
+        ProviderRequestDefaults, RunConfig, RunFailureKind, RunStatus,
+        SKILL_ACTIVATION_PROVIDER_KIND_RUN, SKILL_CATALOG_CONTEXT_KEY, SessionConfig,
+        SessionConfigPatch, SkillId, TurnConfig, TurnConfigPatch, TurnStatus,
+        skill_activation_context_key,
     };
 
     fn config() -> SessionConfig {
@@ -619,6 +620,34 @@ mod tests {
             media_type: Some("text/plain".to_owned()),
             preview: None,
             provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        }
+    }
+
+    fn skill_catalog_input(content_ref: BlobRef) -> ContextEntryInput {
+        ContextEntryInput {
+            kind: ContextEntryKind::SkillCatalog,
+            content_ref,
+            media_type: None,
+            preview: None,
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        }
+    }
+
+    fn skill_activation_input(
+        skill_id: SkillId,
+        content_ref: BlobRef,
+        provider_kind: Option<&str>,
+    ) -> ContextEntryInput {
+        ContextEntryInput {
+            kind: ContextEntryKind::SkillActivation { skill_id },
+            content_ref,
+            media_type: Some("text/markdown".to_owned()),
+            preview: None,
+            provider_kind: provider_kind.map(str::to_owned),
             provider_item_id: None,
             token_estimate: None,
         }
@@ -1231,7 +1260,7 @@ mod tests {
     }
 
     #[test]
-    fn set_skill_activations_updates_state_without_starting_run() {
+    fn skill_activation_context_edit_updates_context_without_starting_run() {
         let session_id = SessionId::new("session-a");
         let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
         let open = drive
@@ -1239,25 +1268,25 @@ mod tests {
             .expect("open");
         commit_action(&mut drive, open);
 
-        let activation = SkillActivation {
-            skill_id: SkillId::new("skill-1"),
-            catalog_ref: BlobRef::from_bytes(b"catalog"),
-            source: SkillActivationSource::DirectContext {
-                context_ref: BlobRef::from_bytes(b"skill body"),
-            },
-            scope: SkillActivationScope::Run,
-        };
+        let skill_id = SkillId::new("skill-1");
+        let context_ref = BlobRef::from_bytes(b"skill body");
         let action = drive
             .admit_command(
-                CoreAgentCommand::SetSkillActivations {
-                    activations: vec![activation.clone()],
+                CoreAgentCommand::UpsertContext {
+                    key: skill_activation_context_key(&skill_id),
+                    entry: skill_activation_input(skill_id.clone(), context_ref.clone(), None),
                 },
                 20,
             )
-            .expect("set skill activations");
+            .expect("set skill activation context");
         commit_action(&mut drive, action);
 
-        assert_eq!(drive.state().skills.activations, vec![activation]);
+        assert_eq!(drive.state().context.entries.len(), 1);
+        assert!(matches!(
+            &drive.state().context.entries[0].kind,
+            ContextEntryKind::SkillActivation { skill_id: planned } if planned == &skill_id
+        ));
+        assert_eq!(drive.state().context.entries[0].content_ref, context_ref);
         assert!(drive.state().runs.active.is_none());
         assert!(drive.state().runs.queued.is_empty());
         assert!(matches!(
@@ -1267,42 +1296,36 @@ mod tests {
     }
 
     #[test]
-    fn set_skill_activations_rejects_queued_work() {
+    fn skill_activation_context_key_must_match_entry_skill_id() {
         let session_id = SessionId::new("session-a");
         let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
         let open = drive
             .admit_command(CoreAgentCommand::OpenSession { config: config() }, 10)
             .expect("open");
         commit_action(&mut drive, open);
-        let request = drive
-            .admit_command(
-                CoreAgentCommand::RequestRun {
-                    submission_id: None,
-                    input: user_input(BlobRef::from_bytes(b"input")),
-                    run_config: run_config(),
-                },
-                20,
-            )
-            .expect("request run");
-        commit_action(&mut drive, request);
 
         let error = drive
             .admit_command(
-                CoreAgentCommand::SetSkillActivations {
-                    activations: Vec::new(),
+                CoreAgentCommand::UpsertContext {
+                    key: skill_activation_context_key(&SkillId::new("skill-1")),
+                    entry: skill_activation_input(
+                        SkillId::new("skill-2"),
+                        BlobRef::from_bytes(b"skill body"),
+                        None,
+                    ),
                 },
                 30,
             )
-            .expect_err("skill activations must reject queued work");
+            .expect_err("mismatched skill activation key must reject");
 
         let CoreAgentDriveError::Command(crate::CommandError::Rejected(rejection)) = error else {
             panic!("expected rejected command");
         };
-        assert_eq!(rejection.kind, CommandRejectionKind::ActiveWork);
+        assert_eq!(rejection.kind, CommandRejectionKind::InvariantViolation);
     }
 
     #[test]
-    fn skill_catalog_and_direct_activation_are_planned_in_cache_preserving_order() {
+    fn skill_catalog_and_activation_context_are_planned_in_cache_preserving_order() {
         let session_id = SessionId::new("session-a");
         let mut drive =
             CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
@@ -1311,34 +1334,26 @@ mod tests {
         let catalog_ref = BlobRef::from_bytes(b"catalog");
         let set_catalog = drive
             .admit_command(
-                CoreAgentCommand::SetSkillCatalog {
-                    catalog: Some(SkillCatalogContext {
-                        catalog_ref: catalog_ref.clone(),
-                    }),
+                CoreAgentCommand::UpsertContext {
+                    key: ContextEntryKey::new(SKILL_CATALOG_CONTEXT_KEY),
+                    entry: skill_catalog_input(catalog_ref.clone()),
                 },
                 20,
             )
-            .expect("set skill catalog");
+            .expect("set skill catalog context");
         commit_action(&mut drive, set_catalog);
 
         let skill_id = SkillId::new("skill-1");
         let activation_ref = BlobRef::from_bytes(b"skill body");
-        let activation = SkillActivation {
-            skill_id: skill_id.clone(),
-            catalog_ref: catalog_ref.clone(),
-            source: SkillActivationSource::DirectContext {
-                context_ref: activation_ref.clone(),
-            },
-            scope: SkillActivationScope::Run,
-        };
         let set_activations = drive
             .admit_command(
-                CoreAgentCommand::SetSkillActivations {
-                    activations: vec![activation],
+                CoreAgentCommand::UpsertContext {
+                    key: skill_activation_context_key(&skill_id),
+                    entry: skill_activation_input(skill_id.clone(), activation_ref.clone(), None),
                 },
                 21,
             )
-            .expect("set skill activations");
+            .expect("set skill activation context");
         commit_action(&mut drive, set_activations);
 
         let input_ref = BlobRef::from_bytes(b"input");
@@ -1351,80 +1366,39 @@ mod tests {
         assert!(matches!(items[0].kind, ContextEntryKind::SkillCatalog));
         assert_eq!(items[0].content_ref, catalog_ref);
         assert!(matches!(
-            items[1].kind,
-            ContextEntryKind::Message {
-                role: ContextMessageRole::User
-            }
-        ));
-        assert_eq!(items[1].content_ref, input_ref);
-        assert!(matches!(
-            &items[2].kind,
+            &items[1].kind,
             ContextEntryKind::SkillActivation { skill_id: planned } if planned == &skill_id
         ));
-        assert_eq!(items[2].content_ref, activation_ref);
-    }
-
-    #[test]
-    fn tool_call_skill_activation_does_not_create_parallel_skill_context_item() {
-        let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
-        open_session(&mut drive);
-
-        let activation = SkillActivation {
-            skill_id: SkillId::new("skill-1"),
-            catalog_ref: BlobRef::from_bytes(b"catalog"),
-            source: SkillActivationSource::ToolResult {
-                call_id: ToolCallId::new("call-1"),
-            },
-            scope: SkillActivationScope::Run,
-        };
-        let set_activations = drive
-            .admit_command(
-                CoreAgentCommand::SetSkillActivations {
-                    activations: vec![activation],
-                },
-                20,
-            )
-            .expect("set skill activations");
-        commit_action(&mut drive, set_activations);
-
-        let input_ref = BlobRef::from_bytes(b"input");
-        request_run(&mut drive, input_ref.clone());
-
-        let request = drive_until_generate(&mut drive);
-        let items = openai_items(&request);
-        assert_eq!(items.len(), 1);
+        assert_eq!(items[1].content_ref, activation_ref);
         assert!(matches!(
-            items[0].kind,
+            items[2].kind,
             ContextEntryKind::Message {
                 role: ContextMessageRole::User
             }
         ));
-        assert_eq!(items[0].content_ref, input_ref);
+        assert_eq!(items[2].content_ref, input_ref);
     }
 
     #[test]
-    fn run_scoped_skill_activations_expire_when_run_completes() {
+    fn run_scoped_skill_activation_context_expires_when_run_completes() {
         let session_id = SessionId::new("session-a");
         let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
         open_session(&mut drive);
 
-        let activation = SkillActivation {
-            skill_id: SkillId::new("skill-1"),
-            catalog_ref: BlobRef::from_bytes(b"catalog"),
-            source: SkillActivationSource::DirectContext {
-                context_ref: BlobRef::from_bytes(b"skill body"),
-            },
-            scope: SkillActivationScope::Run,
-        };
+        let skill_id = SkillId::new("skill-1");
         let set_activations = drive
             .admit_command(
-                CoreAgentCommand::SetSkillActivations {
-                    activations: vec![activation],
+                CoreAgentCommand::UpsertContext {
+                    key: skill_activation_context_key(&skill_id),
+                    entry: skill_activation_input(
+                        skill_id,
+                        BlobRef::from_bytes(b"skill body"),
+                        Some(SKILL_ACTIVATION_PROVIDER_KIND_RUN),
+                    ),
                 },
                 20,
             )
-            .expect("set skill activations");
+            .expect("set skill activation context");
         commit_action(&mut drive, set_activations);
 
         request_run(&mut drive, BlobRef::from_bytes(b"input"));
@@ -1453,7 +1427,14 @@ mod tests {
         let complete_run = drive.next_action(31, 64).expect("complete run");
         commit_action(&mut drive, complete_run);
 
-        assert!(drive.state().skills.activations.is_empty());
+        assert!(
+            drive
+                .state()
+                .context
+                .entries
+                .iter()
+                .all(|item| !matches!(item.kind, ContextEntryKind::SkillActivation { .. }))
+        );
 
         request_run(&mut drive, BlobRef::from_bytes(b"next input"));
         let next_request = drive_until_generate(&mut drive);

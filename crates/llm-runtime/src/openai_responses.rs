@@ -241,7 +241,12 @@ async fn materialize_input_item(
 }
 
 fn is_openai_raw_item(item: &ContextEntry) -> bool {
-    item.media_type.as_deref() == Some(MEDIA_TYPE_JSON)
+    matches!(
+        item.kind,
+        ContextEntryKind::ToolCall { .. }
+            | ContextEntryKind::ReasoningState
+            | ContextEntryKind::ProviderOpaque
+    ) && item.media_type.as_deref() == Some(MEDIA_TYPE_JSON)
 }
 
 async fn read_skill_catalog(

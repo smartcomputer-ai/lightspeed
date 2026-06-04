@@ -6,12 +6,11 @@ use temporalio_sdk::activities::{ActivityContext, ActivityError};
 
 use crate::{
     ACTIVITY_APPEND_EVENTS, ACTIVITY_CREATE_OR_LOAD_SESSION, ACTIVITY_LLM_GENERATE,
-    ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB, ACTIVITY_SKILL_ACTIVATION_REFRESH,
-    ACTIVITY_SKILL_CATALOG_REFRESH, ACTIVITY_TOOL_INVOKE_BATCH, AppendEventsRequest,
-    CreateOrLoadSessionRequest, CreateOrLoadSessionResult, LlmGenerateActivityRequest,
-    PutBlobRequest, ReadBlobRequest, ReadBlobResult, SkillActivationRefreshActivityRequest,
-    SkillActivationRefreshActivityResult, SkillCatalogRefreshActivityRequest,
-    SkillCatalogRefreshActivityResult, ToolInvokeBatchActivityRequest,
+    ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB, ACTIVITY_SKILL_CATALOG_REFRESH,
+    ACTIVITY_TOOL_INVOKE_BATCH, AppendEventsRequest, CreateOrLoadSessionRequest,
+    CreateOrLoadSessionResult, LlmGenerateActivityRequest, PutBlobRequest, ReadBlobRequest,
+    ReadBlobResult, SkillCatalogRefreshActivityRequest, SkillCatalogRefreshActivityResult,
+    ToolInvokeBatchActivityRequest,
 };
 
 mod common;
@@ -86,10 +85,6 @@ mod tests {
         assert_eq!(
             WorkerActivities::skill_catalog_refresh.name(),
             workflow::WorkflowActivities::skill_catalog_refresh.name()
-        );
-        assert_eq!(
-            WorkerActivities::skill_activation_refresh.name(),
-            workflow::WorkflowActivities::skill_activation_refresh.name()
         );
     }
 
@@ -246,17 +241,5 @@ impl WorkerActivities {
         request: SkillCatalogRefreshActivityRequest,
     ) -> Result<SkillCatalogRefreshActivityResult, ActivityError> {
         skills::refresh_skill_catalog(self.state.skill_catalog(), request).await
-    }
-
-    #[activity(name = ACTIVITY_SKILL_ACTIVATION_REFRESH)]
-    pub async fn skill_activation_refresh(
-        self: Arc<Self>,
-        _ctx: ActivityContext,
-        request: SkillActivationRefreshActivityRequest,
-    ) -> Result<SkillActivationRefreshActivityResult, ActivityError> {
-        let Some(deps) = self.state.skill_catalog() else {
-            return Ok(SkillActivationRefreshActivityResult { command: None });
-        };
-        skills::refresh_skill_activations(deps, request).await
     }
 }

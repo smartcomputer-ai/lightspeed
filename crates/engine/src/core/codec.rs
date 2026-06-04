@@ -1,7 +1,7 @@
 use crate::{
     CodecError, CommandCodec, ContextEvent, CoreAgentCommand, CoreAgentEntry, CoreAgentEvent,
     CoreAgentEventKind, CoreAgentJoins, CoreAgentLifecycleEvent, CorrelationId, DynamicEvent,
-    EventCodec, JoinsCodec, RunEvent, RunId, SkillEvent, SubmissionId, ToolBatchId, ToolCallId,
+    EventCodec, JoinsCodec, RunEvent, RunId, SubmissionId, ToolBatchId, ToolCallId,
     ToolConfigEvent, ToolEvent, TurnEvent, TurnId, UncommittedCoreAgentEvent,
     session::{DynamicJoins, DynamicSessionEntry, DynamicUncommittedSessionEvent},
 };
@@ -173,8 +173,6 @@ fn is_core_agent_event_envelope_kind(kind: &str) -> bool {
             | "forge.core.context.entries_removed"
             | "forge.core.context.keys_removed"
             | "forge.core.context.state_replaced"
-            | "forge.core.skill.catalog_set"
-            | "forge.core.skill.activations_set"
             | "forge.core.tool_config.registry_changed"
             | "forge.core.tool_config.profile_selected"
             | "forge.core.tool_config.default_target_set"
@@ -214,10 +212,6 @@ fn core_agent_event_envelope_kind(event: &CoreAgentEvent) -> &'static str {
             ContextEvent::EntriesRemoved { .. } => "forge.core.context.entries_removed",
             ContextEvent::KeysRemoved { .. } => "forge.core.context.keys_removed",
             ContextEvent::StateReplaced { .. } => "forge.core.context.state_replaced",
-        },
-        CoreAgentEventKind::Skill(event) => match event {
-            SkillEvent::CatalogSet { .. } => "forge.core.skill.catalog_set",
-            SkillEvent::ActivationsSet { .. } => "forge.core.skill.activations_set",
         },
         CoreAgentEventKind::ToolConfig(event) => match event {
             ToolConfigEvent::RegistryChanged { .. } => "forge.core.tool_config.registry_changed",

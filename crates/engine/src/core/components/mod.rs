@@ -13,7 +13,6 @@ pub mod lifecycle;
 pub mod llm;
 pub mod log;
 pub mod run;
-pub mod skills;
 pub mod state;
 pub mod tooling;
 pub mod turn;
@@ -23,7 +22,9 @@ pub use config::*;
 pub use context::{
     ContextEntry, ContextEntryId, ContextEntryInput, ContextEntryKind, ContextEntrySource,
     ContextEvent, ContextMessageRole, ContextRemovalReason, ContextRewriteReason, ContextSnapshot,
-    ContextState, TokenEstimate, TokenEstimateQuality,
+    ContextState, SKILL_ACTIVATION_CONTEXT_KEY_PREFIX, SKILL_ACTIVATION_PROVIDER_KIND_RUN,
+    SKILL_ACTIVATION_PROVIDER_KIND_SESSION, SKILL_CATALOG_CONTEXT_KEY, TokenEstimate,
+    TokenEstimateQuality, is_run_scoped_skill_activation_entry, skill_activation_context_key,
 };
 pub use error::*;
 pub use event::*;
@@ -34,10 +35,6 @@ pub use log::*;
 pub use run::{
     AcceptedRun, ActiveRun, RunEvent, RunFailure, RunFailureKind, RunInputBatch, RunQueueState,
     RunRecord, RunStatus, SteeringBatch,
-};
-pub use skills::{
-    SkillActivation, SkillActivationScope, SkillActivationSource, SkillCatalogContext, SkillEvent,
-    SkillState,
 };
 pub use state::*;
 pub use tooling::{

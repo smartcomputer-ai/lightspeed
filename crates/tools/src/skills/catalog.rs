@@ -1,7 +1,8 @@
 use std::cmp::Ordering;
 
 use engine::{
-    BlobRef, CoreAgentCommand, CoreAgentState, SkillCatalogContext, SkillId, ToolExecutionTarget,
+    BlobRef, ContextEntryInput, ContextEntryKey, ContextEntryKind, CoreAgentCommand,
+    CoreAgentState, SKILL_CATALOG_CONTEXT_KEY, SkillId, ToolExecutionTarget,
     storage::{BlobStore, BlobStoreError},
 };
 use serde::Serialize;
@@ -127,22 +128,42 @@ pub async fn prepare_skill_catalog_publication(
     roots: &[SkillCatalogRootInput<'_>],
 ) -> Result<SkillCatalogPublication, SkillCatalogError> {
     let build = build_skill_catalog(blobs, target, roots).await?;
-    let command = if state
-        .skills
-        .catalog
-        .as_ref()
-        .is_some_and(|catalog| catalog.catalog_ref == build.catalog_ref)
-    {
+    let command = if current_skill_catalog_ref(state).as_ref() == Some(&build.catalog_ref) {
         None
     } else {
-        Some(CoreAgentCommand::SetSkillCatalog {
-            catalog: Some(SkillCatalogContext {
-                catalog_ref: build.catalog_ref.clone(),
-            }),
+        Some(CoreAgentCommand::UpsertContext {
+            key: ContextEntryKey::new(SKILL_CATALOG_CONTEXT_KEY),
+            entry: skill_catalog_context_input(build.catalog_ref.clone()),
         })
     };
 
     Ok(SkillCatalogPublication { build, command })
+}
+
+pub fn skill_catalog_context_input(catalog_ref: BlobRef) -> ContextEntryInput {
+    ContextEntryInput {
+        kind: ContextEntryKind::SkillCatalog,
+        content_ref: catalog_ref,
+        media_type: None,
+        preview: Some("skills catalog".to_owned()),
+        provider_kind: None,
+        provider_item_id: None,
+        token_estimate: None,
+    }
+}
+
+fn current_skill_catalog_ref(state: &CoreAgentState) -> Option<BlobRef> {
+    state
+        .context
+        .entries
+        .iter()
+        .find(|entry| {
+            entry
+                .key
+                .as_ref()
+                .is_some_and(|key| key.as_str() == SKILL_CATALOG_CONTEXT_KEY)
+        })
+        .map(|entry| entry.content_ref.clone())
 }
 
 async fn scan_root(input: &SkillCatalogRootInput<'_>) -> RootScanResult {
@@ -636,7 +657,7 @@ mod tests {
     use std::sync::Arc;
 
     use engine::{
-        BlobRef, ToolExecutionTarget,
+        BlobRef, ContextEntry, ContextEntryId, ContextEntrySource, ToolExecutionTarget,
         storage::{BlobStore, InMemoryBlobStore},
     };
     use vfs::VfsWorkspaceId;
@@ -937,10 +958,9 @@ mod tests {
 
         assert_eq!(
             publication.command,
-            Some(CoreAgentCommand::SetSkillCatalog {
-                catalog: Some(SkillCatalogContext {
-                    catalog_ref: publication.build.catalog_ref.clone(),
-                }),
+            Some(CoreAgentCommand::UpsertContext {
+                key: ContextEntryKey::new(SKILL_CATALOG_CONTEXT_KEY),
+                entry: skill_catalog_context_input(publication.build.catalog_ref.clone()),
             })
         );
     }
@@ -962,9 +982,20 @@ mod tests {
         .await
         .expect("first publication");
         let mut state = CoreAgentState::new();
-        state.skills.catalog = Some(SkillCatalogContext {
-            catalog_ref: first.build.catalog_ref.clone(),
-        });
+        state.context.entries = vec![ContextEntry {
+            entry_id: ContextEntryId::new(1),
+            key: Some(ContextEntryKey::new(SKILL_CATALOG_CONTEXT_KEY)),
+            kind: ContextEntryKind::SkillCatalog,
+            source: ContextEntrySource::Runtime {
+                label: "skills.catalog".to_owned(),
+            },
+            content_ref: first.build.catalog_ref.clone(),
+            media_type: None,
+            preview: Some("skills catalog".to_owned()),
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        }];
 
         let second = prepare_skill_catalog_publication(
             &blobs,
