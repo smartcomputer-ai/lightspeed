@@ -586,17 +586,31 @@ mod tests {
     }
 
     fn user_input(input_ref: BlobRef) -> Vec<ContextEntryInput> {
-        vec![ContextEntryInput {
-            kind: ContextEntryKind::Message {
-                role: ContextMessageRole::User,
-            },
-            content_ref: input_ref,
+        vec![message_input(ContextMessageRole::User, input_ref)]
+    }
+
+    fn message_input(role: ContextMessageRole, content_ref: BlobRef) -> ContextEntryInput {
+        ContextEntryInput {
+            kind: ContextEntryKind::Message { role },
+            content_ref,
             media_type: None,
             preview: None,
             provider_kind: None,
             provider_item_id: None,
             token_estimate: None,
-        }]
+        }
+    }
+
+    fn provider_opaque_input(content_ref: BlobRef) -> ContextEntryInput {
+        ContextEntryInput {
+            kind: ContextEntryKind::ProviderOpaque,
+            content_ref,
+            media_type: None,
+            preview: None,
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        }
     }
 
     fn drive_until_generate(drive: &mut CoreAgentDrive) -> LlmGenerationRequest {
@@ -615,6 +629,110 @@ mod tests {
             panic!("expected OpenAI Responses request");
         };
         &openai.input_context.entries
+    }
+
+    #[test]
+    fn request_run_rejects_non_user_message_input() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        open_session(&mut drive);
+
+        let error = drive
+            .admit_command(
+                CoreAgentCommand::RequestRun {
+                    submission_id: None,
+                    input: vec![message_input(
+                        ContextMessageRole::Assistant,
+                        BlobRef::from_bytes(b"assistant"),
+                    )],
+                    run_config: run_config(),
+                },
+                20,
+            )
+            .expect_err("assistant run input must be rejected");
+
+        let CoreAgentDriveError::Command(crate::CommandError::Rejected(rejection)) = error else {
+            panic!("expected rejected command");
+        };
+        assert_eq!(rejection.kind, CommandRejectionKind::InvariantViolation);
+        assert!(rejection.message.contains("run input cannot supply"));
+    }
+
+    #[test]
+    fn request_run_accepts_provider_opaque_native_input() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        open_session(&mut drive);
+
+        let action = drive
+            .admit_command(
+                CoreAgentCommand::RequestRun {
+                    submission_id: None,
+                    input: vec![provider_opaque_input(BlobRef::from_bytes(b"native"))],
+                    run_config: run_config(),
+                },
+                20,
+            )
+            .expect("provider-opaque run input");
+        commit_action(&mut drive, action);
+
+        assert_eq!(drive.state().runs.queued.len(), 1);
+        assert!(matches!(
+            drive.state().runs.queued[0].input[0].kind,
+            ContextEntryKind::ProviderOpaque
+        ));
+    }
+
+    #[test]
+    fn upsert_context_accepts_provider_opaque_entry() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        open_session(&mut drive);
+        let key = ContextEntryKey::new("client.native");
+
+        let action = drive
+            .admit_command(
+                CoreAgentCommand::UpsertContext {
+                    key: key.clone(),
+                    entry: provider_opaque_input(BlobRef::from_bytes(b"native")),
+                },
+                20,
+            )
+            .expect("provider-opaque context edit");
+        commit_action(&mut drive, action);
+
+        assert_eq!(drive.state().context.entries.len(), 1);
+        let entry = &drive.state().context.entries[0];
+        assert_eq!(entry.key.as_ref(), Some(&key));
+        assert!(matches!(entry.kind, ContextEntryKind::ProviderOpaque));
+        assert!(matches!(entry.source, ContextEntrySource::ContextEdit));
+    }
+
+    #[test]
+    fn upsert_context_rejects_user_message_entry() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        open_session(&mut drive);
+
+        let error = drive
+            .admit_command(
+                CoreAgentCommand::UpsertContext {
+                    key: ContextEntryKey::new("client.message"),
+                    entry: message_input(
+                        ContextMessageRole::User,
+                        BlobRef::from_bytes(b"persistent user message"),
+                    ),
+                },
+                20,
+            )
+            .expect_err("user-message context edit must be rejected");
+
+        let CoreAgentDriveError::Command(crate::CommandError::Rejected(rejection)) = error else {
+            panic!("expected rejected command");
+        };
+        assert_eq!(rejection.kind, CommandRejectionKind::InvariantViolation);
+        assert!(rejection.message.contains("context edit cannot supply"));
+        assert!(drive.state().context.entries.is_empty());
     }
 
     #[test]

@@ -377,7 +377,7 @@ pub(crate) fn validate_external_context_edit(
             key
         )));
     }
-    validate_user_supplied_context_entry(entry, "context edit")
+    validate_external_context_edit_entry(entry)
 }
 
 pub(crate) fn validate_context_key_exists(
@@ -396,7 +396,7 @@ pub(crate) fn validate_context_key_exists(
 
 pub(crate) fn validate_run_input_entries(entries: &[ContextEntryInput]) -> Result<(), DomainError> {
     for entry in entries {
-        validate_user_supplied_context_entry(entry, "run input")?;
+        validate_run_supplied_context_entry(entry, "run input")?;
     }
     Ok(())
 }
@@ -405,12 +405,12 @@ pub(crate) fn validate_steering_input_entries(
     entries: &[ContextEntryInput],
 ) -> Result<(), DomainError> {
     for entry in entries {
-        validate_user_supplied_context_entry(entry, "run steering")?;
+        validate_run_supplied_context_entry(entry, "run steering")?;
     }
     Ok(())
 }
 
-fn validate_user_supplied_context_entry(
+fn validate_run_supplied_context_entry(
     entry: &ContextEntryInput,
     source: &'static str,
 ) -> Result<(), DomainError> {
@@ -422,6 +422,16 @@ fn validate_user_supplied_context_entry(
         _ => Err(DomainError::InvariantViolation(format!(
             "{} cannot supply context entry kind {:?}",
             source, entry.kind
+        ))),
+    }
+}
+
+fn validate_external_context_edit_entry(entry: &ContextEntryInput) -> Result<(), DomainError> {
+    match &entry.kind {
+        ContextEntryKind::ProviderOpaque => Ok(()),
+        _ => Err(DomainError::InvariantViolation(format!(
+            "context edit cannot supply context entry kind {:?}",
+            entry.kind
         ))),
     }
 }
