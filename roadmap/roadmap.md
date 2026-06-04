@@ -2,7 +2,7 @@
 
 - [x] vfs
 - [x] skills (P63 first cut)
-- compaction
+- compaction (P64 provider-native)
 - timers/schedules/cron
 - search & web requests
 - vfs watches (inject/update on change)
@@ -10,4 +10,3 @@
 - (go live)
 - vms/sandboxes
 - fleet
-
