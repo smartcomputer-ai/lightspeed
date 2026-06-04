@@ -15,9 +15,10 @@ use async_trait::async_trait;
 use casefile::{EvalCase, FileExpectation, load_cases};
 use clap::{Parser, Subcommand};
 use engine::{
-    AgentHandle, ContextConfig, CoreAgentCommand, ModelProviderOptions, ModelSelection,
-    OpenAiResponsesRequestDefaults, ProviderApiKind, ProviderRequestDefaults, RunConfig,
-    SessionConfig, SessionId, ToolExecutionTarget, ToolProfileId, ToolRegistry, TurnConfig,
+    AgentHandle, ContextConfig, ContextEntryInput, ContextEntryKind, ContextMessageRole,
+    CoreAgentCommand, ModelProviderOptions, ModelSelection, OpenAiResponsesRequestDefaults,
+    ProviderApiKind, ProviderRequestDefaults, RunConfig, SessionConfig, SessionId,
+    ToolExecutionTarget, ToolProfileId, ToolRegistry, TurnConfig,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
 };
 use llm_clients::ApiResponse;
@@ -483,7 +484,7 @@ impl EvalRuntime {
                 session_id.clone(),
                 CoreAgentCommand::RequestRun {
                     submission_id: None,
-                    input_ref,
+                    input: user_input(input_ref),
                     run_config: self.config.run.clone(),
                 },
                 20,
@@ -729,9 +730,22 @@ fn session_config(
             max_context_tokens: None,
             target_context_tokens: None,
             reserve_output_tokens: None,
-            compaction_enabled: false,
         },
     }
+}
+
+fn user_input(content_ref: engine::BlobRef) -> Vec<ContextEntryInput> {
+    vec![ContextEntryInput {
+        kind: ContextEntryKind::Message {
+            role: ContextMessageRole::User,
+        },
+        content_ref,
+        media_type: None,
+        preview: None,
+        provider_kind: None,
+        provider_item_id: None,
+        token_estimate: None,
+    }]
 }
 
 async fn store_tool_documents(blobs: &dyn BlobStore, documents: &[ToolDocument]) -> Result<()> {

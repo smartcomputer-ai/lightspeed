@@ -507,14 +507,13 @@ async fn failed_generation_result_from_error(
         turn_id: request.turn_id,
         status: LlmGenerationStatus::Failed,
         failure_ref: Some(failure_ref),
-        context_items: Vec::new(),
+        context_entries: Vec::new(),
         facts: LlmGenerationFacts {
             provider_response_id: None,
             finish: LlmFinish::Failed,
             usage: None,
             tool_calls: Vec::new(),
             context_token_estimate: None,
-            compaction: None,
         },
     })
 }
@@ -572,12 +571,12 @@ mod tests {
 
     use async_trait::async_trait;
     use engine::{
-        AgentHandle, ContextConfig, ContextItemKind, ContextItemSource, ContextMessageRole,
+        AgentHandle, ContextConfig, ContextEntryInput, ContextEntryKind, ContextMessageRole,
         CoreAgentCommand, CoreAgentEventKind, FunctionToolSpec, LlmFinish, ModelProviderOptions,
         ModelSelection, ObservedToolCall, ProviderApiKind, ProviderRequestDefaults, RunConfig,
         RunStatus, SessionConfig, SessionId, ToolCallResult, ToolExecutionTarget, ToolKind,
         ToolName, ToolParallelism, ToolProfile, ToolProfileId, ToolRegistry, ToolSpec,
-        ToolTargetRequirement, TurnConfig, TurnEvent, UncommittedContextItem,
+        ToolTargetRequirement, TurnConfig, TurnEvent,
         storage::{
             BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore,
         },
@@ -779,7 +778,7 @@ mod tests {
                     turn_id: request.turn_id,
                     status: LlmGenerationStatus::Succeeded,
                     failure_ref: None,
-                    context_items: Vec::new(),
+                    context_entries: Vec::new(),
                     facts: LlmGenerationFacts {
                         provider_response_id: Some("resp-tool".to_owned()),
                         finish: LlmFinish::ToolCalls,
@@ -792,7 +791,6 @@ mod tests {
                             native_call_ref: None,
                         }],
                         context_token_estimate: None,
-                        compaction: None,
                     },
                 });
             }
@@ -833,7 +831,7 @@ mod tests {
                     turn_id: request.turn_id,
                     status: LlmGenerationStatus::Succeeded,
                     failure_ref: None,
-                    context_items: Vec::new(),
+                    context_entries: Vec::new(),
                     facts: LlmGenerationFacts {
                         provider_response_id: Some("resp-read-skill".to_owned()),
                         finish: LlmFinish::ToolCalls,
@@ -846,7 +844,6 @@ mod tests {
                             native_call_ref: None,
                         }],
                         context_token_estimate: None,
-                        compaction: None,
                     },
                 });
             }
@@ -860,15 +857,11 @@ mod tests {
             turn_id: request.turn_id,
             status: LlmGenerationStatus::Succeeded,
             failure_ref: None,
-            context_items: vec![UncommittedContextItem {
-                kind: ContextItemKind::Message {
+            context_entries: vec![ContextEntryInput {
+                kind: ContextEntryKind::Message {
                     role: ContextMessageRole::Assistant,
                 },
-                source: ContextItemSource::AssistantOutput {
-                    run_id: request.run_id,
-                    turn_id: request.turn_id,
-                },
-                native_item_ref: BlobRef::from_bytes(b"assistant output"),
+                content_ref: BlobRef::from_bytes(b"assistant output"),
                 media_type: None,
                 preview: None,
                 provider_kind: None,
@@ -881,9 +874,22 @@ mod tests {
                 usage: None,
                 tool_calls: Vec::new(),
                 context_token_estimate: None,
-                compaction: None,
             },
         }
+    }
+
+    fn user_input(content_ref: BlobRef) -> Vec<ContextEntryInput> {
+        vec![ContextEntryInput {
+            kind: ContextEntryKind::Message {
+                role: ContextMessageRole::User,
+            },
+            content_ref,
+            media_type: None,
+            preview: None,
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        }]
     }
 
     fn config() -> SessionConfig {
@@ -904,7 +910,6 @@ mod tests {
                 max_context_tokens: None,
                 target_context_tokens: None,
                 reserve_output_tokens: None,
-                compaction_enabled: false,
             },
         }
     }
@@ -1026,7 +1031,7 @@ mod tests {
                 observed_at_ms: 20,
                 command: CoreAgentCommand::RequestRun {
                     submission_id: None,
-                    input_ref: BlobRef::from_bytes(b"input"),
+                    input: user_input(BlobRef::from_bytes(b"input")),
                     run_config: run_config(),
                 },
                 max_steps: Some(64),
@@ -1180,7 +1185,7 @@ mod tests {
                 observed_at_ms: 20,
                 command: CoreAgentCommand::RequestRun {
                     submission_id: None,
-                    input_ref: BlobRef::from_bytes(b"input"),
+                    input: user_input(BlobRef::from_bytes(b"input")),
                     run_config: run_config(),
                 },
                 max_steps: Some(96),
@@ -1329,7 +1334,7 @@ mod tests {
                 observed_at_ms: 20,
                 command: CoreAgentCommand::RequestRun {
                     submission_id: None,
-                    input_ref: BlobRef::from_bytes(b"input"),
+                    input: user_input(BlobRef::from_bytes(b"input")),
                     run_config: run_config(),
                 },
                 max_steps: Some(96),
@@ -1425,7 +1430,7 @@ mod tests {
                 observed_at_ms: 20,
                 command: CoreAgentCommand::RequestRun {
                     submission_id: None,
-                    input_ref: BlobRef::from_bytes(b"input"),
+                    input: user_input(BlobRef::from_bytes(b"input")),
                     run_config: run_config(),
                 },
                 max_steps: Some(32),
@@ -1453,7 +1458,7 @@ mod tests {
                 observed_at_ms: 30,
                 command: CoreAgentCommand::RequestRun {
                     submission_id: None,
-                    input_ref: BlobRef::from_bytes(b"input-2"),
+                    input: user_input(BlobRef::from_bytes(b"input-2")),
                     run_config: run_config(),
                 },
                 max_steps: Some(32),
@@ -1512,7 +1517,7 @@ mod tests {
                 observed_at_ms: 20,
                 command: CoreAgentCommand::RequestRun {
                     submission_id: None,
-                    input_ref: BlobRef::from_bytes(b"input"),
+                    input: user_input(BlobRef::from_bytes(b"input")),
                     run_config: run_config(),
                 },
                 max_steps: Some(64),

@@ -28,14 +28,13 @@ pub(super) async fn failed_generation_result_from_error(
         turn_id: request.turn_id,
         status: LlmGenerationStatus::Failed,
         failure_ref: Some(failure_ref),
-        context_items: Vec::new(),
+        context_entries: Vec::new(),
         facts: LlmGenerationFacts {
             provider_response_id: None,
             finish: LlmFinish::Failed,
             usage: None,
             tool_calls: Vec::new(),
             context_token_estimate: None,
-            compaction: None,
         },
     })
 }

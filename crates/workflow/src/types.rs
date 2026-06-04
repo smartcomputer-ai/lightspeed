@@ -1,6 +1,6 @@
 use engine::{
-    BlobRef, CoreAgentCommand, CoreAgentState, DynamicCommand, RunStatus, SessionConfig, SessionId,
-    SessionPosition, SkillCatalogContext, SubmissionId,
+    BlobRef, ContextEntryInput, CoreAgentCommand, CoreAgentState, DynamicCommand, RunStatus,
+    SessionConfig, SessionId, SessionPosition, SkillCatalogContext, SubmissionId,
     storage::{DynamicSessionEntry, DynamicUncommittedSessionEvent, SessionRecord},
 };
 use serde::{Deserialize, Serialize};
@@ -58,7 +58,7 @@ pub struct AgentActiveRunSummary {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentQueuedRunSummary {
     pub submission_id: Option<SubmissionId>,
-    pub input_ref: BlobRef,
+    pub input: Vec<ContextEntryInput>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

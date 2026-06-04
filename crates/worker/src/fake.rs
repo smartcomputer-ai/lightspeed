@@ -2,11 +2,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use engine::{
-    ContextItemKind, ContextItemSource, ContextMessageRole, CoreAgentIoError, CoreAgentLlm,
+    ContextEntryInput, ContextEntryKind, ContextMessageRole, CoreAgentIoError, CoreAgentLlm,
     CoreAgentTools, LlmFinish, LlmGenerationFacts, LlmGenerationRequest, LlmGenerationResult,
     LlmGenerationStatus, ObservedToolCall, ToolCallId, ToolCallStatus, ToolInvocationBatchRequest,
-    ToolInvocationBatchResult, ToolInvocationResult, ToolName, UncommittedContextItem,
-    storage::BlobStore,
+    ToolInvocationBatchResult, ToolInvocationResult, ToolName, storage::BlobStore,
 };
 use serde_json::Value;
 
@@ -42,16 +41,12 @@ impl FakeLlm {
             turn_id: request.turn_id,
             status: LlmGenerationStatus::Succeeded,
             failure_ref: None,
-            context_items: vec![UncommittedContextItem {
-                kind: ContextItemKind::ToolCall {
+            context_entries: vec![ContextEntryInput {
+                kind: ContextEntryKind::ToolCall {
                     call_id: call_id.clone(),
                     name: tool_name.clone(),
                 },
-                source: ContextItemSource::ToolCall {
-                    run_id: request.run_id,
-                    turn_id: request.turn_id,
-                },
-                native_item_ref: arguments_ref.clone(),
+                content_ref: arguments_ref.clone(),
                 media_type: Some("application/json".to_owned()),
                 preview: Some(format!("{FAKE_TOOL_NAME}({arguments})")),
                 provider_kind: Some("fake".to_owned()),
@@ -70,7 +65,6 @@ impl FakeLlm {
                     native_call_ref: None,
                 }],
                 context_token_estimate: None,
-                compaction: None,
             },
         })
     }
@@ -90,15 +84,11 @@ impl FakeLlm {
             turn_id: request.turn_id,
             status: LlmGenerationStatus::Succeeded,
             failure_ref: None,
-            context_items: vec![UncommittedContextItem {
-                kind: ContextItemKind::Message {
+            context_entries: vec![ContextEntryInput {
+                kind: ContextEntryKind::Message {
                     role: ContextMessageRole::Assistant,
                 },
-                source: ContextItemSource::AssistantOutput {
-                    run_id: request.run_id,
-                    turn_id: request.turn_id,
-                },
-                native_item_ref: output_ref,
+                content_ref: output_ref,
                 media_type: Some("text/plain".to_owned()),
                 preview: Some("fake final answer".to_owned()),
                 provider_kind: Some("fake".to_owned()),
@@ -111,7 +101,6 @@ impl FakeLlm {
                 usage: None,
                 tool_calls: Vec::new(),
                 context_token_estimate: None,
-                compaction: None,
             },
         })
     }
@@ -208,20 +197,20 @@ impl CoreAgentTools for FakeTools {
 fn request_has_tool_result(request: &LlmGenerationRequest) -> bool {
     match &request.request.kind {
         engine::LlmRequestKind::OpenAiResponses(request) => request
-            .input_window
-            .items
+            .input_context
+            .entries
             .iter()
-            .any(|item| matches!(item.kind, ContextItemKind::ToolResult { .. })),
+            .any(|entry| matches!(entry.kind, ContextEntryKind::ToolResult { .. })),
         engine::LlmRequestKind::AnthropicMessages(request) => request
-            .messages_window
-            .items
+            .messages_context
+            .entries
             .iter()
-            .any(|item| matches!(item.kind, ContextItemKind::ToolResult { .. })),
+            .any(|entry| matches!(entry.kind, ContextEntryKind::ToolResult { .. })),
         engine::LlmRequestKind::OpenAiCompletions(request) => request
-            .messages_window
-            .items
+            .messages_context
+            .entries
             .iter()
-            .any(|item| matches!(item.kind, ContextItemKind::ToolResult { .. })),
+            .any(|entry| matches!(entry.kind, ContextEntryKind::ToolResult { .. })),
     }
 }
 

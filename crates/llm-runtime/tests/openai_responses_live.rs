@@ -3,10 +3,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use engine::{
-    BlobRef, ContextItem, ContextItemId, ContextItemKind, ContextItemSource, ContextMessageRole,
-    LlmFinish, LlmGenerationRequest, LlmGenerationStatus, LlmRequest, LlmRequestKind,
-    ModelProviderOptions, ModelSelection, OpenAiResponsesRequest, ProviderApiKind,
-    ResolvedContextWindow, RunId, SessionId, TurnId,
+    BlobRef, ContextEntry, ContextEntryId, ContextEntryKind, ContextEntrySource,
+    ContextMessageRole, ContextSnapshot, LlmFinish, LlmGenerationRequest, LlmGenerationStatus,
+    LlmRequest, LlmRequestKind, ModelProviderOptions, ModelSelection, OpenAiResponsesRequest,
+    ProviderApiKind, RunId, SessionId, TurnId,
     storage::{BlobStore, InMemoryBlobStore},
 };
 use llm_clients::openai::responses::{Client, Config};
@@ -92,15 +92,17 @@ async fn text_blob(blobs: &InMemoryBlobStore, text: &str) -> BlobRef {
 async fn openai_responses_live_adapter_generates_result() {
     let blobs = Arc::new(InMemoryBlobStore::new());
     let input_ref = text_blob(&blobs, "Reply with exactly these two words: forge adapter").await;
-    let context_item = ContextItem {
-        item_id: ContextItemId::new(1),
-        kind: ContextItemKind::Message {
+    let context_entry = ContextEntry {
+        key: None,
+        entry_id: ContextEntryId::new(1),
+        kind: ContextEntryKind::Message {
             role: ContextMessageRole::User,
         },
-        source: ContextItemSource::RunInput {
+        source: ContextEntrySource::RunInput {
             run_id: RunId::new(1),
+            input_index: 0,
         },
-        native_item_ref: input_ref,
+        content_ref: input_ref,
         media_type: None,
         preview: None,
         provider_kind: None,
@@ -122,9 +124,10 @@ async fn openai_responses_live_adapter_generates_result() {
             request_fingerprint: "live-openai-responses".to_string(),
             kind: LlmRequestKind::OpenAiResponses(OpenAiResponsesRequest {
                 instructions_ref: None,
-                input_window: ResolvedContextWindow {
+                input_context: ContextSnapshot {
                     api_kind: ProviderApiKind::OpenAiResponses,
-                    items: vec![context_item],
+                    context_revision: 0,
+                    entries: vec![context_entry],
                     token_estimate: None,
                 },
                 previous_response_id: None,
@@ -174,12 +177,12 @@ async fn openai_responses_live_adapter_generates_result() {
     );
     let assistant_ref = execution
         .result
-        .context_items
+        .context_entries
         .iter()
         .find_map(|item| match item.kind {
-            ContextItemKind::Message {
+            ContextEntryKind::Message {
                 role: ContextMessageRole::Assistant,
-            } => Some(item.native_item_ref.clone()),
+            } => Some(item.content_ref.clone()),
             _ => None,
         })
         .expect("assistant context item");

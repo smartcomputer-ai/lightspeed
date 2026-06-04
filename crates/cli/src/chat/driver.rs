@@ -640,6 +640,14 @@ impl ChatSessionDriver {
     fn chat_events_from_session_event(&mut self, event: &SessionEventView) -> Vec<ChatEvent> {
         let mut events = Vec::new();
         match &event.kind {
+            SessionEventKindView::RunAccepted { run_id, .. } => {
+                events.push(ChatEvent::RunChanged(self.run_view_from_status(
+                    run_id,
+                    api::RunStatus::Queued,
+                    event.observed_at_ms,
+                )));
+                events.push(self.status_event("queued"));
+            }
             SessionEventKindView::RunStarted { run_id, .. } => {
                 events.push(ChatEvent::RunChanged(self.run_view_from_status(
                     run_id,
@@ -704,23 +712,18 @@ impl ChatSessionDriver {
             SessionEventKindView::ToolCallCompleted { .. } => {
                 events.push(self.status_event("tool result received"));
             }
-            SessionEventKindView::ItemsRecorded { .. } => {}
-            SessionEventKindView::CompactionRecorded { .. } => {
-                events.push(ChatEvent::CompactionsChanged {
-                    session_id: event.session_id.clone(),
-                    compactions: Vec::new(),
-                });
-            }
             SessionEventKindView::SessionOpened { .. }
             | SessionEventKindView::SessionConfigChanged { .. }
             | SessionEventKindView::SessionClosed
-            | SessionEventKindView::RunQueued { .. }
-            | SessionEventKindView::RunSteeringAdded { .. }
+            | SessionEventKindView::RunSteeringAccepted { .. }
             | SessionEventKindView::RunCancellationRequested { .. }
+            | SessionEventKindView::ContextEntriesApplied { .. }
+            | SessionEventKindView::ContextEntriesRemoved { .. }
+            | SessionEventKindView::ContextKeysRemoved { .. }
+            | SessionEventKindView::ContextStateReplaced { .. }
             | SessionEventKindView::SkillCatalogSet { .. }
             | SessionEventKindView::SkillActivationsSet { .. }
             | SessionEventKindView::TurnCompleted { .. }
-            | SessionEventKindView::ContextWindowPlanned { .. }
             | SessionEventKindView::ToolRegistryChanged
             | SessionEventKindView::ToolProfileSelected { .. }
             | SessionEventKindView::ToolDefaultTargetChanged { .. } => {}
@@ -1053,12 +1056,14 @@ fn project_tool_batch(run_id: &str, batch: &ToolBatchView) -> ChatToolChainView 
 fn event_needs_snapshot(kind: &SessionEventKindView) -> bool {
     matches!(
         kind,
-        SessionEventKindView::ItemsRecorded { .. }
+        SessionEventKindView::ContextEntriesApplied { .. }
+            | SessionEventKindView::ContextEntriesRemoved { .. }
+            | SessionEventKindView::ContextKeysRemoved { .. }
+            | SessionEventKindView::ContextStateReplaced { .. }
             | SessionEventKindView::RunCompleted { .. }
             | SessionEventKindView::RunFailed { .. }
             | SessionEventKindView::RunCancelled { .. }
             | SessionEventKindView::ToolBatchCompleted { .. }
-            | SessionEventKindView::CompactionRecorded { .. }
     )
 }
 
@@ -1622,6 +1627,7 @@ mod tests {
                     },
                 ],
             }],
+            active_context: api::ContextView::default(),
             vfs_mounts: Vec::new(),
         };
 
@@ -1714,6 +1720,7 @@ mod tests {
                 ],
                 tool_batches: Vec::new(),
             }],
+            active_context: api::ContextView::default(),
             vfs_mounts: Vec::new(),
         };
         let settings = ChatDraftSettings {
@@ -1755,6 +1762,7 @@ mod tests {
                 }],
                 tool_batches: Vec::new(),
             }],
+            active_context: api::ContextView::default(),
             vfs_mounts: Vec::new(),
         };
         let settings = ChatDraftSettings {
@@ -1898,13 +1906,50 @@ mod tests {
             run_id: "run_1".into(),
             output_ref: None,
         }));
-        assert!(event_needs_snapshot(&SessionEventKindView::ItemsRecorded {
-            items: Vec::new(),
+        assert!(event_needs_snapshot(
+            &SessionEventKindView::ContextEntriesApplied {
+                base_revision: 0,
+                revision: 1,
+                items: Vec::new(),
+            }
+        ));
+        assert!(event_needs_snapshot(
+            &SessionEventKindView::ContextStateReplaced {
+                base_revision: 1,
+                revision: 2,
+                items: Vec::new(),
+                reason: "pruned".into(),
+            }
+        ));
+        assert!(event_needs_snapshot(
+            &SessionEventKindView::ContextEntriesRemoved {
+                base_revision: 2,
+                revision: 3,
+                item_ids: Vec::new(),
+                reason: "pruned".into(),
+            }
+        ));
+        assert!(event_needs_snapshot(
+            &SessionEventKindView::ContextKeysRemoved {
+                base_revision: 3,
+                revision: 4,
+                keys: Vec::new(),
+            }
+        ));
+        assert!(event_needs_snapshot(
+            &SessionEventKindView::ToolBatchCompleted {
+                run_id: "run_1".into(),
+                turn_id: "turn_1".into(),
+                batch_id: "batch_1".into(),
+            }
+        ));
+        assert!(!event_needs_snapshot(&SessionEventKindView::RunAccepted {
+            run_id: "run_1".into(),
+            submission_id: Some("submit_1".into()),
+            input: Vec::new(),
         }));
         assert!(!event_needs_snapshot(&SessionEventKindView::RunStarted {
             run_id: "run_1".into(),
-            submission_id: None,
-            input_ref: "sha256:input".into(),
         }));
     }
 }

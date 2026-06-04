@@ -15,14 +15,13 @@ pub fn failed_generation_result(run_id: RunId, turn_id: TurnId) -> LlmGeneration
         turn_id,
         status: LlmGenerationStatus::Failed,
         failure_ref: None,
-        context_items: Vec::new(),
+        context_entries: Vec::new(),
         facts: LlmGenerationFacts {
             provider_response_id: None,
             finish: LlmFinish::Failed,
             usage: None,
             tool_calls: Vec::new(),
             context_token_estimate: None,
-            compaction: None,
         },
     }
 }

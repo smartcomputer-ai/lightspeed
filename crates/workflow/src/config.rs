@@ -45,7 +45,6 @@ pub fn default_session_config(
             max_context_tokens: None,
             target_context_tokens: None,
             reserve_output_tokens: None,
-            compaction_enabled: false,
         },
     }
 }

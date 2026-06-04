@@ -345,8 +345,6 @@ pub struct ContextConfigInput {
     pub target_context_tokens: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reserve_output_tokens: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub compaction_enabled: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -414,8 +412,6 @@ pub struct ContextConfigPatchInput {
     pub target_context_tokens: Option<FieldPatch<u32>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reserve_output_tokens: Option<FieldPatch<u32>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub compaction_enabled: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -537,18 +533,18 @@ pub enum SessionEventKindView {
         revision: u64,
     },
     SessionClosed,
-    RunQueued {
+    RunAccepted {
+        run_id: RunId,
         submission_id: Option<String>,
-        input_ref: String,
+        input: Vec<ContextEntryInputView>,
     },
     RunStarted {
         run_id: RunId,
-        submission_id: Option<String>,
-        input_ref: String,
     },
-    RunSteeringAdded {
+    RunSteeringAccepted {
         run_id: RunId,
-        input_ref: String,
+        steering_id: String,
+        input: Vec<ContextEntryInputView>,
     },
     RunCancellationRequested {
         run_id: RunId,
@@ -584,17 +580,27 @@ pub enum SessionEventKindView {
     TurnCompleted {
         turn_id: String,
     },
-    ItemsRecorded {
+    ContextEntriesApplied {
+        base_revision: u64,
+        revision: u64,
         items: Vec<SessionItemView>,
     },
-    ContextWindowPlanned {
-        run_id: RunId,
-        turn_id: String,
+    ContextEntriesRemoved {
+        base_revision: u64,
+        revision: u64,
+        item_ids: Vec<ItemId>,
+        reason: String,
     },
-    CompactionRecorded {
-        run_id: Option<RunId>,
-        turn_id: Option<String>,
-        summary_ref: Option<String>,
+    ContextKeysRemoved {
+        base_revision: u64,
+        revision: u64,
+        keys: Vec<String>,
+    },
+    ContextStateReplaced {
+        base_revision: u64,
+        revision: u64,
+        items: Vec<SessionItemView>,
+        reason: String,
     },
     SkillCatalogSet {
         catalog_ref: Option<String>,
@@ -1089,8 +1095,17 @@ pub struct SessionView {
     pub updated_at_ms: u64,
     #[serde(default)]
     pub runs: Vec<RunView>,
+    pub active_context: ContextView,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub vfs_mounts: Vec<VfsMountView>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextView {
+    pub revision: u64,
+    #[serde(default)]
+    pub items: Vec<SessionItemView>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1211,6 +1226,62 @@ pub enum RunStatus {
 pub enum InputItem {
     Text { text: String },
     TextRef { blob_ref: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextEntryInputView {
+    pub kind: ContextEntryKindView,
+    pub content_ref: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_item_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_estimate: Option<TokenEstimateView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ContextEntryKindView {
+    Message { role: ContextMessageRoleView },
+    Instructions,
+    SkillCatalog,
+    SkillActivation { skill_id: SkillId },
+    ToolCall { call_id: String, name: String },
+    ToolResult { call_id: String, is_error: bool },
+    ReasoningState,
+    ProviderOpaque,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ContextMessageRoleView {
+    User,
+    Assistant,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenEstimateView {
+    pub tokens: u32,
+    pub quality: TokenEstimateQualityView,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TokenEstimateQualityView {
+    Exact,
+    ProviderCounted,
+    Estimated,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -2635,6 +2706,7 @@ mod tests {
             created_at_ms: 1,
             updated_at_ms: 2,
             runs: Vec::new(),
+            active_context: ContextView::default(),
             vfs_mounts: Vec::new(),
         }
     }

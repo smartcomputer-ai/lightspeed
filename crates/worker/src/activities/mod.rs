@@ -46,10 +46,10 @@ mod tests {
     use std::{collections::BTreeMap, sync::Arc};
 
     use engine::{
-        CoreAgentLlm, CoreAgentTools, LlmGenerationRequest, LlmRequest, LlmRequestKind,
-        ModelProviderOptions, ModelSelection, OpenAiResponsesRequest, ProviderApiKind,
-        ResolvedContextWindow, RunId, SessionId, ToolBatchId, ToolCallStatus,
-        ToolInvocationBatchRequest, ToolInvocationRequest, TurnId,
+        ContextSnapshot, CoreAgentLlm, CoreAgentTools, LlmGenerationRequest, LlmRequest,
+        LlmRequestKind, ModelProviderOptions, ModelSelection, OpenAiResponsesRequest,
+        ProviderApiKind, RunId, SessionId, ToolBatchId, ToolCallStatus, ToolInvocationBatchRequest,
+        ToolInvocationRequest, TurnId,
         storage::{BlobStore, InMemoryBlobStore, InMemorySessionStore, SessionStore},
     };
 
@@ -155,9 +155,10 @@ mod tests {
                 request_fingerprint: "fake-agent-test".to_owned(),
                 kind: LlmRequestKind::OpenAiResponses(OpenAiResponsesRequest {
                     instructions_ref: None,
-                    input_window: ResolvedContextWindow {
+                    input_context: ContextSnapshot {
                         api_kind: ProviderApiKind::OpenAiResponses,
-                        items: Vec::new(),
+                        context_revision: 0,
+                        entries: Vec::new(),
                         token_estimate: None,
                     },
                     previous_response_id: None,

@@ -101,8 +101,8 @@ mod tests {
     use super::*;
     use crate::error::LlmAdapterError;
     use engine::{
-        LlmRequest, LlmRequestKind, ModelProviderOptions, ModelSelection, OpenAiResponsesRequest,
-        ResolvedContextWindow, RunId, SessionId, TurnId,
+        ContextSnapshot, LlmRequest, LlmRequestKind, ModelProviderOptions, ModelSelection,
+        OpenAiResponsesRequest, RunId, SessionId, TurnId,
     };
 
     struct FailingAdapter;
@@ -147,9 +147,10 @@ mod tests {
                 request_fingerprint: "sha256:test".to_owned(),
                 kind: LlmRequestKind::OpenAiResponses(OpenAiResponsesRequest {
                     instructions_ref: None,
-                    input_window: ResolvedContextWindow {
+                    input_context: ContextSnapshot {
                         api_kind: ProviderApiKind::OpenAiResponses,
-                        items: Vec::new(),
+                        context_revision: 0,
+                        entries: Vec::new(),
                         token_estimate: None,
                     },
                     previous_response_id: None,

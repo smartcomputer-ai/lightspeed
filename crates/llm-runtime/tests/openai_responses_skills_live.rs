@@ -6,9 +6,10 @@ use std::{
 
 use async_trait::async_trait;
 use engine::{
-    AgentHandle, BlobRef, ContextConfig, CoreAgentCommand, CoreAgentEventKind,
-    ModelProviderOptions, ModelSelection, OpenAiResponsesRequestDefaults, ProviderApiKind,
-    ProviderRequestDefaults, RunConfig, RunStatus, SessionConfig, SessionId, ToolExecutionTarget,
+    AgentHandle, BlobRef, ContextConfig, ContextEntryInput, ContextEntryKind, ContextMessageRole,
+    CoreAgentCommand, CoreAgentEventKind, ModelProviderOptions, ModelSelection,
+    OpenAiResponsesRequestDefaults, ProviderApiKind, ProviderRequestDefaults, RunConfig, RunStatus,
+    SessionConfig, SessionId, ToolExecutionTarget,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
 };
 use llm_clients::openai::responses::{Client, Config};
@@ -377,7 +378,17 @@ async fn openai_responses_live_selects_and_activates_the_matching_skill() {
             observed_at_ms: 20,
             command: CoreAgentCommand::RequestRun {
                 submission_id: None,
-                input_ref,
+                input: vec![ContextEntryInput {
+                    kind: ContextEntryKind::Message {
+                        role: ContextMessageRole::User,
+                    },
+                    content_ref: input_ref,
+                    media_type: None,
+                    preview: None,
+                    provider_kind: None,
+                    provider_item_id: None,
+                    token_estimate: None,
+                }],
                 run_config: run_config(),
             },
             max_steps: Some(128),
@@ -441,7 +452,6 @@ fn session_config(model: ModelSelection) -> SessionConfig {
             max_context_tokens: None,
             target_context_tokens: None,
             reserve_output_tokens: None,
-            compaction_enabled: false,
         },
     }
 }
@@ -513,19 +523,20 @@ async fn read_file_result(blobs: &dyn BlobStore, output_ref: &BlobRef) -> Option
 async fn assistant_text(blobs: &dyn BlobStore, entries: &[engine::CoreAgentEntry]) -> String {
     let mut text = String::new();
     for entry in entries {
-        if let CoreAgentEventKind::Context(engine::ContextEvent::ItemsRecorded { items }) =
-            &entry.event.kind
+        if let CoreAgentEventKind::Context(engine::ContextEvent::EntriesApplied {
+            entries, ..
+        }) = &entry.event.kind
         {
-            for item in items {
+            for item in entries {
                 if matches!(
                     item.kind,
-                    engine::ContextItemKind::Message {
+                    engine::ContextEntryKind::Message {
                         role: engine::ContextMessageRole::Assistant
                     }
                 ) {
                     text.push_str(
                         &blobs
-                            .read_text(&item.native_item_ref)
+                            .read_text(&item.content_ref)
                             .await
                             .expect("assistant text"),
                     );

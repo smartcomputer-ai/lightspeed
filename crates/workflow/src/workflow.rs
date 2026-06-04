@@ -125,7 +125,7 @@ impl AgentSessionWorkflow {
                 .iter()
                 .map(|run| AgentQueuedRunSummary {
                     submission_id: run.submission_id.clone(),
-                    input_ref: run.input_ref.clone(),
+                    input: run.input.clone(),
                 })
                 .collect(),
             completed_runs: self
@@ -574,7 +574,7 @@ fn apply_entries(
     run_submissions: &mut BTreeMap<u64, Option<SubmissionId>>,
 ) -> anyhow::Result<()> {
     for entry in entries {
-        if let CoreAgentEventKind::Run(RunEvent::Started {
+        if let CoreAgentEventKind::Run(RunEvent::Accepted {
             run_id,
             submission_id,
             ..
@@ -635,7 +635,7 @@ fn should_continue_as_new(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use engine::DynamicCommand;
+    use engine::{ContextEntryInput, ContextEntryKind, ContextMessageRole, DynamicCommand};
 
     #[test]
     fn pending_admissions_are_fifo() {
@@ -690,7 +690,7 @@ mod tests {
         let submission_id = SubmissionId::new("submit_test");
         let command = CoreAgentCommand::RequestRun {
             submission_id: Some(submission_id.clone()),
-            input_ref: engine::BlobRef::from_bytes(b"hello"),
+            input: user_input(engine::BlobRef::from_bytes(b"hello")),
             run_config: crate::default_run_config(),
         };
 
@@ -727,10 +727,24 @@ mod tests {
         CoreAgentCodec
             .encode_command(&CoreAgentCommand::RequestRun {
                 submission_id: Some(SubmissionId::new(submission_id)),
-                input_ref: engine::BlobRef::from_bytes(submission_id.as_bytes()),
+                input: user_input(engine::BlobRef::from_bytes(submission_id.as_bytes())),
                 run_config: crate::default_run_config(),
             })
             .expect("encode request run")
+    }
+
+    fn user_input(content_ref: engine::BlobRef) -> Vec<ContextEntryInput> {
+        vec![ContextEntryInput {
+            kind: ContextEntryKind::Message {
+                role: ContextMessageRole::User,
+            },
+            content_ref,
+            media_type: None,
+            preview: None,
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        }]
     }
 
     fn admission(command: DynamicCommand) -> AgentAdmission {

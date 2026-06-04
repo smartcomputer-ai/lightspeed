@@ -39,12 +39,13 @@ use api_projection::{
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use engine::{
-    AnthropicMessagesRequestDefaults, BlobRef, CommandCodec, ContextConfigPatch, CoreAgentCommand,
-    CoreAgentStatus, ModelProviderOptions, ModelSelection, OpenAiCompletionsRequestDefaults,
-    OpenAiReasoningConfig, OpenAiResponsesRequestDefaults, OptionalConfigPatch, ProviderApiKind,
-    ProviderRequestDefaults, RunConfig, RunConfigPatch, RunId, RunStatus, SessionConfig,
-    SessionConfigPatch, SessionId, SkillActivation, SkillActivationScope, SkillActivationSource,
-    SkillCatalogContext, SkillId, SubmissionId, TurnConfigPatch,
+    AnthropicMessagesRequestDefaults, BlobRef, CommandCodec, ContextConfigPatch, ContextEntryInput,
+    ContextEntryKind, ContextMessageRole, CoreAgentCommand, CoreAgentStatus, ModelProviderOptions,
+    ModelSelection, OpenAiCompletionsRequestDefaults, OpenAiReasoningConfig,
+    OpenAiResponsesRequestDefaults, OptionalConfigPatch, ProviderApiKind, ProviderRequestDefaults,
+    RunConfig, RunConfigPatch, RunId, RunStatus, SessionConfig, SessionConfigPatch, SessionId,
+    SkillActivation, SkillActivationScope, SkillActivationSource, SkillCatalogContext, SkillId,
+    SubmissionId, TurnConfigPatch,
     storage::{BlobStore, BlobStoreError, ReadSessionEvents, SessionStore},
 };
 use store_pg::PgStore;
@@ -1554,11 +1555,11 @@ impl AgentApiService for GatewayAgentApi {
         let run_config = self
             .run_config_for_start(&session_id, params.config)
             .await?;
-        let input_ref = run_input_ref_from_api(self.store.as_ref(), &params.input).await?;
+        let input = run_input_from_api(self.store.as_ref(), &params.input).await?;
         let command = engine::CoreAgentCodec
             .encode_command(&CoreAgentCommand::RequestRun {
                 submission_id: Some(submission_id.clone()),
-                input_ref,
+                input,
                 run_config,
             })
             .map_err(|error| AgentApiError::internal(error.to_string()))?;
@@ -2247,29 +2248,21 @@ async fn store_tool_documents(
     Ok(())
 }
 
-async fn run_input_ref_from_api(
+async fn run_input_from_api(
     store: &dyn BlobStore,
     input: &[InputItem],
-) -> Result<BlobRef, AgentApiError> {
-    if let [InputItem::TextRef { blob_ref }] = input {
-        let blob_ref = parse_blob_ref(blob_ref)?;
-        let text = store
-            .read_text(&blob_ref)
-            .await
-            .map_err(map_input_blob_store_error)?;
-        if text.trim().is_empty() {
-            return Err(empty_run_input_error());
-        }
-        return Ok(blob_ref);
-    }
-
-    let mut parts = Vec::new();
+) -> Result<Vec<ContextEntryInput>, AgentApiError> {
+    let mut entries = Vec::new();
     for item in input {
         match item {
             InputItem::Text { text } => {
                 let text = text.trim();
                 if !text.is_empty() {
-                    parts.push(text.to_owned());
+                    let content_ref = store
+                        .put_bytes(text.as_bytes().to_vec())
+                        .await
+                        .map_err(map_blob_store_error)?;
+                    entries.push(user_message_input(content_ref));
                 }
             }
             InputItem::TextRef { blob_ref } => {
@@ -2280,19 +2273,30 @@ async fn run_input_ref_from_api(
                     .map_err(map_input_blob_store_error)?;
                 let text = text.trim();
                 if !text.is_empty() {
-                    parts.push(text.to_owned());
+                    entries.push(user_message_input(blob_ref));
                 }
             }
         }
     }
 
-    if parts.is_empty() {
+    if entries.is_empty() {
         return Err(empty_run_input_error());
     }
-    store
-        .put_bytes(parts.join("\n\n").into_bytes())
-        .await
-        .map_err(map_blob_store_error)
+    Ok(entries)
+}
+
+fn user_message_input(content_ref: BlobRef) -> ContextEntryInput {
+    ContextEntryInput {
+        kind: ContextEntryKind::Message {
+            role: ContextMessageRole::User,
+        },
+        content_ref,
+        media_type: Some("text/plain".to_owned()),
+        preview: None,
+        provider_kind: None,
+        provider_item_id: None,
+        token_estimate: None,
+    }
 }
 
 fn parse_blob_ref(value: &str) -> Result<BlobRef, AgentApiError> {
@@ -2395,9 +2399,6 @@ fn apply_context_config(
     }
     if let Some(reserve_output_tokens) = context.reserve_output_tokens {
         config.reserve_output_tokens = Some(reserve_output_tokens);
-    }
-    if let Some(compaction_enabled) = context.compaction_enabled {
-        config.compaction_enabled = compaction_enabled;
     }
 }
 
@@ -2507,7 +2508,6 @@ fn context_config_patch_from_api(
         max_context_tokens: patch.max_context_tokens.map(optional_patch_from_api),
         target_context_tokens: patch.target_context_tokens.map(optional_patch_from_api),
         reserve_output_tokens: patch.reserve_output_tokens.map(optional_patch_from_api),
-        compaction_enabled: patch.compaction_enabled,
     }
 }
 
@@ -3022,28 +3022,35 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn run_input_ref_from_api_preserves_single_text_ref() {
+    async fn run_input_from_api_preserves_single_text_ref() {
         let store = engine::storage::InMemoryBlobStore::new();
         let blob_ref = store.insert_text("hello from cas").await;
 
-        let input_ref = run_input_ref_from_api(
+        let input = run_input_from_api(
             &store,
             &[InputItem::TextRef {
                 blob_ref: blob_ref.as_str().to_owned(),
             }],
         )
         .await
-        .expect("input ref");
+        .expect("input");
 
-        assert_eq!(input_ref, blob_ref);
+        assert_eq!(input.len(), 1);
+        assert_eq!(input[0].content_ref, blob_ref);
+        assert_eq!(
+            input[0].kind,
+            engine::ContextEntryKind::Message {
+                role: engine::ContextMessageRole::User,
+            }
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn run_input_ref_from_api_joins_text_and_refs() {
+    async fn run_input_from_api_stores_text_and_preserves_refs() {
         let store = engine::storage::InMemoryBlobStore::new();
         let blob_ref = store.insert_text(" second ").await;
 
-        let input_ref = run_input_ref_from_api(
+        let input = run_input_from_api(
             &store,
             &[
                 InputItem::Text {
@@ -3055,12 +3062,17 @@ mod tests {
             ],
         )
         .await
-        .expect("input ref");
+        .expect("input");
 
-        assert_ne!(input_ref, blob_ref);
+        assert_eq!(input.len(), 2);
+        assert_ne!(input[0].content_ref, blob_ref);
+        assert_eq!(input[1].content_ref, blob_ref);
         assert_eq!(
-            store.read_text(&input_ref).await.expect("stored input"),
-            "first\n\nsecond"
+            store
+                .read_text(&input[0].content_ref)
+                .await
+                .expect("stored input"),
+            "first"
         );
     }
 

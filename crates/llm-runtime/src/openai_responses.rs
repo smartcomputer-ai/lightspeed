@@ -2,11 +2,11 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use engine::{
-    BlobRef, ContextItem, ContextItemKind, ContextItemSource, ContextMessageRole, LlmFinish,
+    BlobRef, ContextEntry, ContextEntryInput, ContextEntryKind, ContextMessageRole, LlmFinish,
     LlmGenerationFacts, LlmGenerationRequest, LlmGenerationResult, LlmGenerationStatus,
     LlmRequestKind, LlmUsage, ObservedToolCall, OpenAiResponsesRequest, OpenAiResponsesToolChoice,
     ProviderApiKind, ProviderNativeToolExecution, SkillId, TokenEstimate, TokenEstimateQuality,
-    ToolCallId, ToolKind, ToolName, ToolSpec, UncommittedContextItem, storage::BlobStore,
+    ToolCallId, ToolKind, ToolName, ToolSpec, storage::BlobStore,
 };
 use llm_clients::{ApiResponse, openai::responses as oai};
 use serde_json::Value;
@@ -98,7 +98,7 @@ pub async fn materialize_create_request(
     request: &OpenAiResponsesRequest,
     model: &str,
 ) -> LlmAdapterResult<oai::CreateResponseRequest> {
-    let input_items = materialize_input_items(blobs, &request.input_window.items).await?;
+    let input_items = materialize_input_items(blobs, &request.input_context.entries).await?;
     let tools = materialize_tools(blobs, &request.tools).await?;
 
     let mut extra = request.extra.clone();
@@ -139,10 +139,10 @@ pub async fn materialize_create_request(
 
 async fn materialize_input_items(
     blobs: &dyn BlobStore,
-    items: &[ContextItem],
+    entries: &[ContextEntry],
 ) -> LlmAdapterResult<Vec<oai::ResponseInputItem>> {
-    let mut input = Vec::with_capacity(items.len());
-    for item in items {
+    let mut input = Vec::with_capacity(entries.len());
+    for item in entries {
         input.push(materialize_input_item(blobs, item).await?);
     }
     Ok(input)
@@ -150,17 +150,17 @@ async fn materialize_input_items(
 
 async fn materialize_input_item(
     blobs: &dyn BlobStore,
-    item: &ContextItem,
+    item: &ContextEntry,
 ) -> LlmAdapterResult<oai::ResponseInputItem> {
     if is_openai_raw_item(item) {
         return Ok(oai::ResponseInputItem::Raw(
-            read_json(blobs, &item.native_item_ref).await?,
+            read_json(blobs, &item.content_ref).await?,
         ));
     }
 
     match &item.kind {
-        ContextItemKind::Message { role } => {
-            let text = read_text(blobs, &item.native_item_ref).await?;
+        ContextEntryKind::Message { role } => {
+            let text = read_text(blobs, &item.content_ref).await?;
             Ok(oai::ResponseInputItem::Message(oai::InputMessage {
                 role: match role {
                     ContextMessageRole::User => oai::MessageRole::User,
@@ -170,8 +170,8 @@ async fn materialize_input_item(
                 extra: Default::default(),
             }))
         }
-        ContextItemKind::ToolResult { call_id, .. } => {
-            let output = read_text(blobs, &item.native_item_ref).await?;
+        ContextEntryKind::ToolResult { call_id, .. } => {
+            let output = read_text(blobs, &item.content_ref).await?;
             Ok(oai::ResponseInputItem::FunctionCallOutput(
                 oai::FunctionCallOutput {
                     r#type: oai::FunctionCallOutputType::FunctionCallOutput,
@@ -181,16 +181,24 @@ async fn materialize_input_item(
                 },
             ))
         }
-        ContextItemKind::SkillCatalog => {
-            let catalog = read_skill_catalog(blobs, &item.native_item_ref).await?;
+        ContextEntryKind::Instructions => {
+            let text = read_text(blobs, &item.content_ref).await?;
+            Ok(oai::ResponseInputItem::Message(oai::InputMessage {
+                role: oai::MessageRole::Developer,
+                content: oai::InputMessageContent::Text(text),
+                extra: Default::default(),
+            }))
+        }
+        ContextEntryKind::SkillCatalog => {
+            let catalog = read_skill_catalog(blobs, &item.content_ref).await?;
             Ok(oai::ResponseInputItem::Message(oai::InputMessage {
                 role: oai::MessageRole::Developer,
                 content: oai::InputMessageContent::Text(openai_skill_catalog_text(&catalog)),
                 extra: Default::default(),
             }))
         }
-        ContextItemKind::SkillActivation { skill_id } => {
-            let text = read_text(blobs, &item.native_item_ref).await?;
+        ContextEntryKind::SkillActivation { skill_id } => {
+            let text = read_text(blobs, &item.content_ref).await?;
             Ok(oai::ResponseInputItem::Message(oai::InputMessage {
                 role: oai::MessageRole::Developer,
                 content: oai::InputMessageContent::Text(openai_skill_activation_text(
@@ -199,16 +207,15 @@ async fn materialize_input_item(
                 extra: Default::default(),
             }))
         }
-        ContextItemKind::ToolCall { .. }
-        | ContextItemKind::ReasoningState
-        | ContextItemKind::CompactionState
-        | ContextItemKind::ProviderOpaque => Ok(oai::ResponseInputItem::Raw(
-            read_json(blobs, &item.native_item_ref).await?,
+        ContextEntryKind::ToolCall { .. }
+        | ContextEntryKind::ReasoningState
+        | ContextEntryKind::ProviderOpaque => Ok(oai::ResponseInputItem::Raw(
+            read_json(blobs, &item.content_ref).await?,
         )),
     }
 }
 
-fn is_openai_raw_item(item: &ContextItem) -> bool {
+fn is_openai_raw_item(item: &ContextEntry) -> bool {
     item.media_type.as_deref() == Some(MEDIA_TYPE_JSON)
 }
 
@@ -362,14 +369,22 @@ fn optional_f64(value: Option<&Value>, name: &'static str) -> LlmAdapterResult<O
         .transpose()
 }
 
-fn non_empty<T>(items: Vec<T>) -> Option<Vec<T>> {
-    if items.is_empty() { None } else { Some(items) }
+fn non_empty<T>(entries: Vec<T>) -> Option<Vec<T>> {
+    if entries.is_empty() {
+        None
+    } else {
+        Some(entries)
+    }
 }
 
 fn non_empty_map<T>(
-    items: std::collections::BTreeMap<String, T>,
+    entries: std::collections::BTreeMap<String, T>,
 ) -> Option<std::collections::BTreeMap<String, T>> {
-    if items.is_empty() { None } else { Some(items) }
+    if entries.is_empty() {
+        None
+    } else {
+        Some(entries)
+    }
 }
 
 fn insert_optional<T>(
@@ -389,28 +404,28 @@ pub async fn result_from_response(
     request: &LlmGenerationRequest,
     response: &ApiResponse<oai::Response>,
 ) -> LlmAdapterResult<LlmGenerationResult> {
-    let mut context_items = Vec::new();
+    let mut context_entries = Vec::new();
     let mut tool_calls = Vec::new();
 
     for (index, item) in response.parsed.output.iter().enumerate() {
         let raw_item = raw_output_item(&response.raw_json, index, item)?;
         match item.r#type.as_str() {
             "message" => {
-                if let Some(context_item) =
-                    assistant_context_item(blobs, request, item, &response.parsed).await?
+                if let Some(context_entry) =
+                    assistant_context_entry(blobs, request, item, &response.parsed).await?
                 {
-                    context_items.push(context_item);
+                    context_entries.push(context_entry);
                 }
             }
             "function_call" => {
-                let (context_item, tool_call) =
+                let (context_entry, tool_call) =
                     function_call_context(blobs, request, item, raw_item, index).await?;
-                context_items.push(context_item);
+                context_entries.push(context_entry);
                 tool_calls.push(tool_call);
             }
             "reasoning" => {
-                if let Some(item) = reasoning_context_item(blobs, request, item, raw_item).await? {
-                    context_items.push(item);
+                if let Some(item) = reasoning_context_entry(blobs, request, item, raw_item).await? {
+                    context_entries.push(item);
                 }
             }
             _ => {}
@@ -429,7 +444,7 @@ pub async fn result_from_response(
         turn_id: request.turn_id,
         status,
         failure_ref,
-        context_items,
+        context_entries,
         facts: LlmGenerationFacts {
             provider_response_id: Some(response.parsed.id.clone()),
             finish: finish_reason(&response.parsed, !tool_calls.is_empty()),
@@ -444,7 +459,6 @@ pub async fn result_from_response(
                     tokens: u64_to_u32(tokens),
                     quality: TokenEstimateQuality::ProviderCounted,
                 }),
-            compaction: None,
         },
     })
 }
@@ -491,12 +505,12 @@ fn raw_output_item(
     })
 }
 
-async fn assistant_context_item(
+async fn assistant_context_entry(
     blobs: &dyn BlobStore,
-    request: &LlmGenerationRequest,
+    _request: &LlmGenerationRequest,
     item: &oai::ResponseOutputItem,
     response: &oai::Response,
-) -> LlmAdapterResult<Option<UncommittedContextItem>> {
+) -> LlmAdapterResult<Option<ContextEntryInput>> {
     let text = item
         .content
         .iter()
@@ -512,16 +526,12 @@ async fn assistant_context_item(
         return Ok(None);
     }
 
-    let native_item_ref = put_text(blobs, &text).await?;
-    Ok(Some(UncommittedContextItem {
-        kind: ContextItemKind::Message {
+    let content_ref = put_text(blobs, &text).await?;
+    Ok(Some(ContextEntryInput {
+        kind: ContextEntryKind::Message {
             role: ContextMessageRole::Assistant,
         },
-        source: ContextItemSource::AssistantOutput {
-            run_id: request.run_id,
-            turn_id: request.turn_id,
-        },
-        native_item_ref,
+        content_ref,
         media_type: Some(MEDIA_TYPE_TEXT.to_string()),
         preview: Some(text),
         provider_kind: Some(PROVIDER_KIND_MESSAGE.to_string()),
@@ -532,11 +542,11 @@ async fn assistant_context_item(
 
 async fn function_call_context(
     blobs: &dyn BlobStore,
-    request: &LlmGenerationRequest,
+    _request: &LlmGenerationRequest,
     item: &oai::ResponseOutputItem,
     raw_item: Value,
     index: usize,
-) -> LlmAdapterResult<(UncommittedContextItem, ObservedToolCall)> {
+) -> LlmAdapterResult<(ContextEntryInput, ObservedToolCall)> {
     let call = oai::FunctionCallRef {
         item_id: item.id.as_deref(),
         call_id: item.call_id.as_deref(),
@@ -567,16 +577,12 @@ async fn function_call_context(
         crate::blob_io::put_bytes(blobs, call.arguments.as_bytes().to_vec()).await?;
     let native_call_ref = put_json(blobs, &raw_item).await?;
 
-    let context_item = UncommittedContextItem {
-        kind: ContextItemKind::ToolCall {
+    let context_entry = ContextEntryInput {
+        kind: ContextEntryKind::ToolCall {
             call_id: call_id.clone(),
             name: tool_name.clone(),
         },
-        source: ContextItemSource::ToolCall {
-            run_id: request.run_id,
-            turn_id: request.turn_id,
-        },
-        native_item_ref: native_call_ref.clone(),
+        content_ref: native_call_ref.clone(),
         media_type: Some(MEDIA_TYPE_JSON.to_string()),
         preview: Some(format!("{}({})", call.name, call.arguments)),
         provider_kind: Some(PROVIDER_KIND_FUNCTION_CALL.to_string()),
@@ -590,15 +596,15 @@ async fn function_call_context(
         arguments_ref,
         native_call_ref: Some(native_call_ref),
     };
-    Ok((context_item, tool_call))
+    Ok((context_entry, tool_call))
 }
 
-async fn reasoning_context_item(
+async fn reasoning_context_entry(
     blobs: &dyn BlobStore,
-    request: &LlmGenerationRequest,
+    _request: &LlmGenerationRequest,
     item: &oai::ResponseOutputItem,
     raw_item: Value,
-) -> LlmAdapterResult<Option<UncommittedContextItem>> {
+) -> LlmAdapterResult<Option<ContextEntryInput>> {
     let summaries = item
         .summary
         .iter()
@@ -606,14 +612,10 @@ async fn reasoning_context_item(
         .filter_map(|content| content.text.as_deref())
         .collect::<Vec<_>>();
     let text = summaries.join("\n");
-    let native_item_ref = put_json(blobs, &raw_item).await?;
-    Ok(Some(UncommittedContextItem {
-        kind: ContextItemKind::ReasoningState,
-        source: ContextItemSource::Reasoning {
-            run_id: request.run_id,
-            turn_id: request.turn_id,
-        },
-        native_item_ref,
+    let content_ref = put_json(blobs, &raw_item).await?;
+    Ok(Some(ContextEntryInput {
+        kind: ContextEntryKind::ReasoningState,
+        content_ref,
         media_type: Some(MEDIA_TYPE_JSON.to_string()),
         preview: Some(if text.is_empty() {
             item.id
@@ -678,9 +680,10 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use engine::{
-        ContextItemId, CoreAgentLlm, FunctionToolSpec, LlmGenerationRequest, LlmRequest,
-        ModelProviderOptions, ModelSelection, OpenAiReasoningConfig, ResolvedContextWindow, RunId,
-        SessionId, ToolExecutionTarget, ToolParallelism, TurnId, storage::InMemoryBlobStore,
+        ContextEntryId, ContextEntrySource, ContextSnapshot, CoreAgentLlm, FunctionToolSpec,
+        LlmGenerationRequest, LlmRequest, ModelProviderOptions, ModelSelection,
+        OpenAiReasoningConfig, RunId, SessionId, ToolExecutionTarget, ToolParallelism, TurnId,
+        storage::InMemoryBlobStore,
     };
     use llm_clients::HeaderSnapshot;
     use serde_json::json;
@@ -709,6 +712,30 @@ mod tests {
 
     async fn text_blob(blobs: &InMemoryBlobStore, text: &str) -> BlobRef {
         blobs.insert_text(text).await
+    }
+
+    fn retained_context_entry(index: usize, item: &ContextEntryInput) -> ContextEntry {
+        ContextEntry {
+            key: None,
+            entry_id: ContextEntryId::new(index as u64 + 1),
+            kind: item.kind.clone(),
+            source: match item.kind {
+                ContextEntryKind::ReasoningState => ContextEntrySource::Reasoning {
+                    run_id: RunId::new(1),
+                    turn_id: TurnId::new(1),
+                },
+                _ => ContextEntrySource::AssistantOutput {
+                    run_id: RunId::new(1),
+                    turn_id: TurnId::new(1),
+                },
+            },
+            content_ref: item.content_ref.clone(),
+            media_type: item.media_type.clone(),
+            preview: item.preview.clone(),
+            provider_kind: item.provider_kind.clone(),
+            provider_item_id: item.provider_item_id.clone(),
+            token_estimate: item.token_estimate.clone(),
+        }
     }
 
     fn model() -> ModelSelection {
@@ -740,15 +767,17 @@ mod tests {
             crate::blob_io::put_json(&blobs, &json!({ "x-openai-extra": true }))
                 .await
                 .expect("provider options");
-        let item = ContextItem {
-            item_id: ContextItemId::new(1),
-            kind: ContextItemKind::Message {
+        let item = ContextEntry {
+            key: None,
+            entry_id: ContextEntryId::new(1),
+            kind: ContextEntryKind::Message {
                 role: ContextMessageRole::User,
             },
-            source: ContextItemSource::RunInput {
+            source: ContextEntrySource::RunInput {
                 run_id: RunId::new(1),
+                input_index: 0,
             },
-            native_item_ref: input_ref,
+            content_ref: input_ref,
             media_type: None,
             preview: None,
             provider_kind: None,
@@ -757,9 +786,10 @@ mod tests {
         };
         let request = OpenAiResponsesRequest {
             instructions_ref: Some(instructions_ref),
-            input_window: ResolvedContextWindow {
+            input_context: ContextSnapshot {
                 api_kind: ProviderApiKind::OpenAiResponses,
-                items: vec![item],
+                context_revision: 0,
+                entries: vec![item],
                 token_estimate: None,
             },
             previous_response_id: Some("resp_prev".to_string()),
@@ -887,43 +917,47 @@ mod tests {
         )
         .await;
 
-        let catalog_item = ContextItem {
-            item_id: ContextItemId::new(1),
-            kind: ContextItemKind::SkillCatalog,
-            source: ContextItemSource::Runtime {
+        let catalog_item = ContextEntry {
+            key: None,
+            entry_id: ContextEntryId::new(1),
+            kind: ContextEntryKind::SkillCatalog,
+            source: ContextEntrySource::Runtime {
                 label: "skills.catalog".to_string(),
             },
-            native_item_ref: catalog_ref,
+            content_ref: catalog_ref,
             media_type: None,
             preview: None,
             provider_kind: None,
             provider_item_id: None,
             token_estimate: None,
         };
-        let user_item = ContextItem {
-            item_id: ContextItemId::new(2),
-            kind: ContextItemKind::Message {
+        let user_item = ContextEntry {
+            key: None,
+            entry_id: ContextEntryId::new(2),
+            kind: ContextEntryKind::Message {
                 role: ContextMessageRole::User,
             },
-            source: ContextItemSource::RunInput {
+            source: ContextEntrySource::RunInput {
                 run_id: RunId::new(1),
+                input_index: 0,
             },
-            native_item_ref: input_ref,
+            content_ref: input_ref,
             media_type: None,
             preview: None,
             provider_kind: None,
             provider_item_id: None,
             token_estimate: None,
         };
-        let activation_item = ContextItem {
-            item_id: ContextItemId::new(3),
-            kind: ContextItemKind::SkillActivation {
+        let activation_item = ContextEntry {
+            key: None,
+            entry_id: ContextEntryId::new(3),
+            kind: ContextEntryKind::SkillActivation {
                 skill_id: skill_id.clone(),
             },
-            source: ContextItemSource::Runtime {
+            source: ContextEntrySource::Runtime {
                 label: "skills.activation".to_string(),
             },
-            native_item_ref: activation_ref,
+            content_ref: activation_ref,
             media_type: None,
             preview: None,
             provider_kind: None,
@@ -932,9 +966,10 @@ mod tests {
         };
         let request = OpenAiResponsesRequest {
             instructions_ref: None,
-            input_window: ResolvedContextWindow {
+            input_context: ContextSnapshot {
                 api_kind: ProviderApiKind::OpenAiResponses,
-                items: vec![catalog_item, user_item, activation_item],
+                context_revision: 0,
+                entries: vec![catalog_item, user_item, activation_item],
                 token_estimate: None,
             },
             previous_response_id: None,
@@ -981,15 +1016,17 @@ mod tests {
     async fn llm_runtime_returns_generation_result_for_openai_response() {
         let blobs = Arc::new(InMemoryBlobStore::new());
         let input_ref = text_blob(&blobs, "Use the tool").await;
-        let context = ContextItem {
-            item_id: ContextItemId::new(1),
-            kind: ContextItemKind::Message {
+        let context = ContextEntry {
+            key: None,
+            entry_id: ContextEntryId::new(1),
+            kind: ContextEntryKind::Message {
                 role: ContextMessageRole::User,
             },
-            source: ContextItemSource::RunInput {
+            source: ContextEntrySource::RunInput {
                 run_id: RunId::new(1),
+                input_index: 0,
             },
-            native_item_ref: input_ref,
+            content_ref: input_ref,
             media_type: None,
             preview: None,
             provider_kind: None,
@@ -1044,9 +1081,10 @@ mod tests {
                 request_fingerprint: "sha256:test".to_string(),
                 kind: LlmRequestKind::OpenAiResponses(OpenAiResponsesRequest {
                     instructions_ref: None,
-                    input_window: ResolvedContextWindow {
+                    input_context: ContextSnapshot {
                         api_kind: ProviderApiKind::OpenAiResponses,
-                        items: vec![context],
+                        context_revision: 0,
+                        entries: vec![context],
                         token_estimate: None,
                     },
                     previous_response_id: None,
@@ -1097,35 +1135,26 @@ mod tests {
                 .expect("arguments"),
             "{\"path\":\"Cargo.toml\"}"
         );
-        assert_eq!(result.context_items.len(), 2);
+        assert_eq!(result.context_entries.len(), 2);
         assert_eq!(
             blobs
-                .read_text(&result.context_items[0].native_item_ref)
+                .read_text(&result.context_entries[0].content_ref)
                 .await
                 .expect("assistant text"),
             "I'll inspect it."
         );
-        let retained_items = result
-            .context_items
+        let retained_entries = result
+            .context_entries
             .iter()
             .enumerate()
-            .map(|(index, item)| ContextItem {
-                item_id: ContextItemId::new(index as u64 + 1),
-                kind: item.kind.clone(),
-                source: item.source.clone(),
-                native_item_ref: item.native_item_ref.clone(),
-                media_type: item.media_type.clone(),
-                preview: item.preview.clone(),
-                provider_kind: item.provider_kind.clone(),
-                provider_item_id: item.provider_item_id.clone(),
-                token_estimate: item.token_estimate.clone(),
-            })
+            .map(|(index, item)| retained_context_entry(index, item))
             .collect::<Vec<_>>();
         let followup_request = OpenAiResponsesRequest {
             instructions_ref: None,
-            input_window: ResolvedContextWindow {
+            input_context: ContextSnapshot {
                 api_kind: ProviderApiKind::OpenAiResponses,
-                items: retained_items,
+                context_revision: 0,
+                entries: retained_entries,
                 token_estimate: None,
             },
             previous_response_id: None,
@@ -1203,9 +1232,10 @@ mod tests {
                 request_fingerprint: "sha256:test".to_string(),
                 kind: LlmRequestKind::OpenAiResponses(OpenAiResponsesRequest {
                     instructions_ref: None,
-                    input_window: ResolvedContextWindow {
+                    input_context: ContextSnapshot {
                         api_kind: ProviderApiKind::OpenAiResponses,
-                        items: Vec::new(),
+                        context_revision: 0,
+                        entries: Vec::new(),
                         token_estimate: None,
                     },
                     previous_response_id: None,
@@ -1233,32 +1263,23 @@ mod tests {
             .await
             .expect("result");
 
-        assert_eq!(result.context_items.len(), 2);
+        assert_eq!(result.context_entries.len(), 2);
         assert!(matches!(
-            result.context_items[0].kind,
-            ContextItemKind::ReasoningState
+            result.context_entries[0].kind,
+            ContextEntryKind::ReasoningState
         ));
-        let retained_items = result
-            .context_items
+        let retained_entries = result
+            .context_entries
             .iter()
             .enumerate()
-            .map(|(index, item)| ContextItem {
-                item_id: ContextItemId::new(index as u64 + 1),
-                kind: item.kind.clone(),
-                source: item.source.clone(),
-                native_item_ref: item.native_item_ref.clone(),
-                media_type: item.media_type.clone(),
-                preview: item.preview.clone(),
-                provider_kind: item.provider_kind.clone(),
-                provider_item_id: item.provider_item_id.clone(),
-                token_estimate: item.token_estimate.clone(),
-            })
+            .map(|(index, item)| retained_context_entry(index, item))
             .collect::<Vec<_>>();
         let followup_request = OpenAiResponsesRequest {
             instructions_ref: None,
-            input_window: ResolvedContextWindow {
+            input_context: ContextSnapshot {
                 api_kind: ProviderApiKind::OpenAiResponses,
-                items: retained_items,
+                context_revision: 0,
+                entries: retained_entries,
                 token_estimate: None,
             },
             previous_response_id: None,
@@ -1316,9 +1337,10 @@ mod tests {
                 request_fingerprint: "sha256:test".to_string(),
                 kind: LlmRequestKind::OpenAiResponses(OpenAiResponsesRequest {
                     instructions_ref: None,
-                    input_window: ResolvedContextWindow {
+                    input_context: ContextSnapshot {
                         api_kind: ProviderApiKind::OpenAiResponses,
-                        items: Vec::new(),
+                        context_revision: 0,
+                        entries: Vec::new(),
                         token_estimate: None,
                     },
                     previous_response_id: None,
