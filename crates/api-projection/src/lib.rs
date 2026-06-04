@@ -9,8 +9,8 @@ use std::collections::BTreeMap;
 use api::{
     AgentApiError, ContextConfigInput, ContextEntryInputView, ContextEntryKindView,
     ContextMessageRoleView, ContextView, EventCursor, EventJoinsView, GenerationConfig, InputItem,
-    InstructionsView, ModelConfig, ReasoningEffort, RunDefaultsConfig, RunStatus as ApiRunStatus,
-    RunView, SessionConfigView, SessionEventKindView, SessionEventView, SessionItemView,
+    ModelConfig, ReasoningEffort, RunDefaultsConfig, RunStatus as ApiRunStatus, RunView,
+    SessionConfigView, SessionEventKindView, SessionEventView, SessionItemView,
     SessionStatus as ApiSessionStatus, SessionView, TokenEstimateQualityView, TokenEstimateView,
     ToolBatchView, ToolCallDisplayGroup, ToolCallDisplayView, ToolCallEventView, ToolCallView,
     ToolEffectView, ToolExecutionTargetView, ToolItemStatus,
@@ -221,16 +221,8 @@ impl<'a> CoreAgentProjector<'a> {
         &self,
         config: &SessionConfig,
     ) -> Result<SessionConfigView, AgentApiError> {
-        let instructions = match config.context.instructions_ref.as_ref() {
-            Some(blob_ref) => Some(InstructionsView {
-                blob_ref: blob_ref.as_str().to_owned(),
-                text: Some(self.read_blob_text(blob_ref).await?),
-            }),
-            None => None,
-        };
         Ok(SessionConfigView {
             model: model_to_api(&config.model),
-            instructions,
             generation: GenerationConfig {
                 max_output_tokens: config.turn.max_output_tokens,
                 reasoning_effort: reasoning_effort_to_api(&config.turn.provider_request_defaults),

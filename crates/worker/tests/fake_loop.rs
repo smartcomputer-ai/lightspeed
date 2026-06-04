@@ -51,7 +51,7 @@ async fn fake_llm_tool_loop_completes_a_run() {
         .put_bytes(fake_tool_input_schema())
         .await
         .expect("store schema");
-    let config = default_session_config(model(), None);
+    let config = default_session_config(model());
 
     let opened = runner
         .drive_command(DriveCommand {

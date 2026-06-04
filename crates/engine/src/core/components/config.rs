@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    BlobRef, CoreAgentState, DomainError, ModelProviderOptions, ModelSelection, ProviderApiKind,
+    CoreAgentState, DomainError, ModelProviderOptions, ModelSelection, ProviderApiKind,
     ProviderRequestDefaults,
 };
 
@@ -141,8 +141,6 @@ impl TurnConfigPatch {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextConfigPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub instructions_ref: Option<OptionalConfigPatch<BlobRef>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_context_tokens: Option<OptionalConfigPatch<u32>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_context_tokens: Option<OptionalConfigPatch<u32>>,
@@ -152,7 +150,6 @@ pub struct ContextConfigPatch {
 
 impl ContextConfigPatch {
     pub fn apply_to(&self, config: &mut ContextConfig) {
-        apply_optional_config_patch(&mut config.instructions_ref, &self.instructions_ref);
         apply_optional_config_patch(&mut config.max_context_tokens, &self.max_context_tokens);
         apply_optional_config_patch(
             &mut config.target_context_tokens,
@@ -165,8 +162,7 @@ impl ContextConfigPatch {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.instructions_ref.is_none()
-            && self.max_context_tokens.is_none()
+        self.max_context_tokens.is_none()
             && self.target_context_tokens.is_none()
             && self.reserve_output_tokens.is_none()
     }
@@ -237,7 +233,6 @@ pub struct TurnConfig {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextConfig {
-    pub instructions_ref: Option<BlobRef>,
     pub max_context_tokens: Option<u32>,
     pub target_context_tokens: Option<u32>,
     pub reserve_output_tokens: Option<u32>,

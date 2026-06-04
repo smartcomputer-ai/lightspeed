@@ -15,10 +15,10 @@ use async_trait::async_trait;
 use casefile::{EvalCase, FileExpectation, load_cases};
 use clap::{Parser, Subcommand};
 use engine::{
-    AgentHandle, ContextConfig, ContextEntryInput, ContextEntryKind, ContextMessageRole,
-    CoreAgentCommand, ModelProviderOptions, ModelSelection, OpenAiResponsesRequestDefaults,
-    ProviderApiKind, ProviderRequestDefaults, RunConfig, SessionConfig, SessionId,
-    ToolExecutionTarget, ToolProfileId, ToolRegistry, TurnConfig,
+    AgentHandle, ContextConfig, ContextEntryInput, ContextEntryKey, ContextEntryKind,
+    ContextMessageRole, CoreAgentCommand, ModelProviderOptions, ModelSelection,
+    OpenAiResponsesRequestDefaults, ProviderApiKind, ProviderRequestDefaults, RunConfig,
+    SessionConfig, SessionId, ToolExecutionTarget, ToolProfileId, ToolRegistry, TurnConfig,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
 };
 use llm_clients::ApiResponse;
@@ -421,6 +421,7 @@ struct EvalRuntime {
     sessions: Arc<InMemorySessionStore>,
     blobs: Arc<InMemoryBlobStore>,
     config: SessionConfig,
+    instructions_ref: engine::BlobRef,
     tool_registry: ToolRegistry,
     tool_profile_id: ToolProfileId,
     default_tool_target: ToolExecutionTarget,
@@ -448,10 +449,19 @@ impl EvalRuntime {
         .await?;
         self.drive(
             session_id.clone(),
+            CoreAgentCommand::UpsertContext {
+                key: ContextEntryKey::new("instructions.000.eval"),
+                entry: instruction_context_input(self.instructions_ref.clone()),
+            },
+            11,
+        )
+        .await?;
+        self.drive(
+            session_id.clone(),
             CoreAgentCommand::SetToolRegistry {
                 registry: self.tool_registry.clone(),
             },
-            11,
+            12,
         )
         .await?;
         self.drive(
@@ -459,7 +469,7 @@ impl EvalRuntime {
             CoreAgentCommand::SetDefaultToolTarget {
                 target: self.default_tool_target.clone(),
             },
-            12,
+            13,
         )
         .await?;
         self.drive(
@@ -467,7 +477,7 @@ impl EvalRuntime {
             CoreAgentCommand::SelectToolProfile {
                 profile_id: self.tool_profile_id.clone(),
             },
-            13,
+            14,
         )
         .await?;
         Ok(())
@@ -617,19 +627,17 @@ async fn build_runtime(
 ) -> Result<EvalRuntime> {
     let blobs = Arc::new(InMemoryBlobStore::new());
     let sessions = Arc::new(InMemorySessionStore::new());
-    let instructions_ref = Some(
-        blobs
-            .put_bytes(EVAL_INSTRUCTIONS.as_bytes().to_vec())
-            .await
-            .context("store eval instructions")?,
-    );
+    let instructions_ref = blobs
+        .put_bytes(EVAL_INSTRUCTIONS.as_bytes().to_vec())
+        .await
+        .context("store eval instructions")?;
     let model = ModelSelection {
         api_kind: ProviderApiKind::OpenAiResponses,
         provider_id: provider.provider_id.clone(),
         model: provider.model.clone(),
         options: ModelProviderOptions::None,
     };
-    let default_config = session_config(case, model.clone(), instructions_ref);
+    let default_config = session_config(case, model.clone());
     let diagnostics = Arc::new(LlmDiagnostics::default());
     let openai = DiagnosticOpenAiResponsesApi {
         inner: oai::Client::new(openai_config(provider))?,
@@ -673,6 +681,7 @@ async fn build_runtime(
         sessions,
         blobs,
         config: default_config,
+        instructions_ref,
         tool_registry: host_profile.registry,
         tool_profile_id: host_profile.profile_id,
         default_tool_target: HostToolTargets::local_execution_target(),
@@ -705,11 +714,7 @@ fn resolve_eval_host_profile(
     }
 }
 
-fn session_config(
-    case: &EvalCase,
-    model: ModelSelection,
-    instructions_ref: Option<engine::BlobRef>,
-) -> SessionConfig {
+fn session_config(case: &EvalCase, model: ModelSelection) -> SessionConfig {
     SessionConfig {
         model,
         run: RunConfig {
@@ -726,7 +731,6 @@ fn session_config(
             ),
         },
         context: ContextConfig {
-            instructions_ref,
             max_context_tokens: None,
             target_context_tokens: None,
             reserve_output_tokens: None,
@@ -746,6 +750,18 @@ fn user_input(content_ref: engine::BlobRef) -> Vec<ContextEntryInput> {
         provider_item_id: None,
         token_estimate: None,
     }]
+}
+
+fn instruction_context_input(content_ref: engine::BlobRef) -> ContextEntryInput {
+    ContextEntryInput {
+        kind: ContextEntryKind::Instructions,
+        content_ref,
+        media_type: Some("text/plain".to_owned()),
+        preview: None,
+        provider_kind: None,
+        provider_item_id: None,
+        token_estimate: None,
+    }
 }
 
 async fn store_tool_documents(blobs: &dyn BlobStore, documents: &[ToolDocument]) -> Result<()> {

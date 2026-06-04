@@ -305,8 +305,6 @@ pub struct SessionStartParams {
 #[serde(rename_all = "camelCase")]
 pub struct SessionConfigInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub instructions: Option<InstructionsSource>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<ModelConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generation: Option<GenerationConfig>,
@@ -314,17 +312,6 @@ pub struct SessionConfigInput {
     pub context: Option<ContextConfigInput>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_defaults: Option<RunDefaultsConfig>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(
-    tag = "type",
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase"
-)]
-pub enum InstructionsSource {
-    Text { text: String },
-    BlobRef { blob_ref: String },
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -375,8 +362,6 @@ pub struct SessionUpdateParams {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionConfigPatchInput {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub instructions: Option<FieldPatch<InstructionsSource>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<ModelConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1112,19 +1097,9 @@ pub struct ContextView {
 #[serde(rename_all = "camelCase")]
 pub struct SessionConfigView {
     pub model: ModelConfig,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub instructions: Option<InstructionsView>,
     pub generation: GenerationConfig,
     pub context: ContextConfigInput,
     pub run_defaults: RunDefaultsConfig,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct InstructionsView {
-    pub blob_ref: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub text: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

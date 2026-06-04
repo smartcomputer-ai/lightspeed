@@ -123,7 +123,6 @@ async fn openai_responses_live_adapter_generates_result() {
             },
             request_fingerprint: "live-openai-responses".to_string(),
             kind: LlmRequestKind::OpenAiResponses(OpenAiResponsesRequest {
-                instructions_ref: None,
                 input_context: ContextSnapshot {
                     api_kind: ProviderApiKind::OpenAiResponses,
                     context_revision: 0,

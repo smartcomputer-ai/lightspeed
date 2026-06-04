@@ -1281,7 +1281,6 @@ fn model_config(settings: &ChatDraftSettings) -> ModelConfig {
 
 fn session_start_config(settings: &ChatDraftSettings) -> SessionConfigInput {
     SessionConfigInput {
-        instructions: None,
         model: Some(model_config(settings)),
         generation: Some(generation_config(settings)),
         context: None,

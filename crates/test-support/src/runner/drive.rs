@@ -906,7 +906,6 @@ mod tests {
                 provider_request_defaults: ProviderRequestDefaults::None,
             },
             context: ContextConfig {
-                instructions_ref: None,
                 max_context_tokens: None,
                 target_context_tokens: None,
                 reserve_output_tokens: None,

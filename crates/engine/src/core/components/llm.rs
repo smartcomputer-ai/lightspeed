@@ -5,8 +5,8 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    ActiveRun, BlobRef, ContextSnapshot, CoreAgentState, DomainError, PlanningError, RunConfig,
-    RunId, SessionConfig, ToolChoice, ToolChoiceMode, ToolKind, ToolName, ToolSpec, TurnId,
+    ActiveRun, ContextSnapshot, CoreAgentState, DomainError, PlanningError, RunConfig, RunId,
+    SessionConfig, ToolChoice, ToolChoiceMode, ToolKind, ToolName, ToolSpec, TurnId,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -342,7 +342,6 @@ fn openai_responses_request(
     defaults: &OpenAiResponsesRequestDefaults,
 ) -> OpenAiResponsesRequest {
     OpenAiResponsesRequest {
-        instructions_ref: config.context.instructions_ref.clone(),
         input_context,
         previous_response_id: None,
         tools,
@@ -378,7 +377,6 @@ fn anthropic_messages_request(
         .into());
     };
     Ok(AnthropicMessagesRequest {
-        system_ref: config.context.instructions_ref.clone(),
         messages_context,
         tools,
         tool_choice: tool_choice.map(anthropic_tool_choice),
@@ -476,7 +474,6 @@ fn request_fingerprint(
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OpenAiResponsesRequest {
-    pub instructions_ref: Option<BlobRef>,
     pub input_context: ContextSnapshot,
     pub previous_response_id: Option<String>,
     pub tools: Vec<ToolSpec>,
@@ -516,7 +513,6 @@ pub struct OpenAiReasoningConfig {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AnthropicMessagesRequest {
-    pub system_ref: Option<BlobRef>,
     pub messages_context: ContextSnapshot,
     pub tools: Vec<ToolSpec>,
     pub tool_choice: Option<AnthropicToolChoice>,
@@ -645,7 +641,6 @@ mod tests {
                 provider_request_defaults: ProviderRequestDefaults::None,
             },
             context: crate::ContextConfig {
-                instructions_ref: None,
                 max_context_tokens: None,
                 target_context_tokens: None,
                 reserve_output_tokens: None,

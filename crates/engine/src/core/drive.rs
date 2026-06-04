@@ -476,7 +476,6 @@ mod tests {
                 provider_request_defaults: ProviderRequestDefaults::None,
             },
             context: ContextConfig {
-                instructions_ref: None,
                 max_context_tokens: None,
                 target_context_tokens: None,
                 reserve_output_tokens: None,
@@ -613,6 +612,18 @@ mod tests {
         }
     }
 
+    fn instruction_input(content_ref: BlobRef) -> ContextEntryInput {
+        ContextEntryInput {
+            kind: ContextEntryKind::Instructions,
+            content_ref,
+            media_type: Some("text/plain".to_owned()),
+            preview: None,
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        }
+    }
+
     fn drive_until_generate(drive: &mut CoreAgentDrive) -> LlmGenerationRequest {
         for observed_at_ms in 21..80 {
             let action = drive.next_action(observed_at_ms, 64).expect("next action");
@@ -709,6 +720,57 @@ mod tests {
     }
 
     #[test]
+    fn upsert_context_accepts_instruction_entry_with_instruction_key() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        open_session(&mut drive);
+        let key = ContextEntryKey::new("instructions.100.base");
+
+        let action = drive
+            .admit_command(
+                CoreAgentCommand::UpsertContext {
+                    key: key.clone(),
+                    entry: instruction_input(BlobRef::from_bytes(b"base instructions")),
+                },
+                20,
+            )
+            .expect("instruction context edit");
+        commit_action(&mut drive, action);
+
+        assert_eq!(drive.state().context.entries.len(), 1);
+        let entry = &drive.state().context.entries[0];
+        assert_eq!(entry.key.as_ref(), Some(&key));
+        assert!(matches!(entry.kind, ContextEntryKind::Instructions));
+    }
+
+    #[test]
+    fn upsert_context_rejects_instruction_entry_without_instruction_key() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        open_session(&mut drive);
+
+        let error = drive
+            .admit_command(
+                CoreAgentCommand::UpsertContext {
+                    key: ContextEntryKey::new("client.instructions"),
+                    entry: instruction_input(BlobRef::from_bytes(b"base instructions")),
+                },
+                20,
+            )
+            .expect_err("instruction context edit must use instruction key");
+
+        let CoreAgentDriveError::Command(crate::CommandError::Rejected(rejection)) = error else {
+            panic!("expected rejected command");
+        };
+        assert_eq!(rejection.kind, CommandRejectionKind::InvariantViolation);
+        assert!(
+            rejection
+                .message
+                .contains("instruction context entry requires")
+        );
+    }
+
+    #[test]
     fn upsert_context_rejects_user_message_entry() {
         let session_id = SessionId::new("session-a");
         let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
@@ -733,6 +795,49 @@ mod tests {
         assert_eq!(rejection.kind, CommandRejectionKind::InvariantViolation);
         assert!(rejection.message.contains("context edit cannot supply"));
         assert!(drive.state().context.entries.is_empty());
+    }
+
+    #[test]
+    fn planned_context_includes_instruction_entries_first_by_key() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        open_session(&mut drive);
+        let second_ref = BlobRef::from_bytes(b"second instructions");
+        let first_ref = BlobRef::from_bytes(b"first instructions");
+        let input_ref = BlobRef::from_bytes(b"user input");
+
+        for (key, content_ref) in [
+            ("instructions.200.second", second_ref.clone()),
+            ("instructions.100.first", first_ref.clone()),
+        ] {
+            let action = drive
+                .admit_command(
+                    CoreAgentCommand::UpsertContext {
+                        key: ContextEntryKey::new(key),
+                        entry: instruction_input(content_ref),
+                    },
+                    20,
+                )
+                .expect("instruction context edit");
+            commit_action(&mut drive, action);
+        }
+        request_run(&mut drive, input_ref.clone());
+
+        let request = drive_until_generate(&mut drive);
+        let items = openai_items(&request);
+
+        assert_eq!(items.len(), 3);
+        assert!(matches!(items[0].kind, ContextEntryKind::Instructions));
+        assert_eq!(items[0].content_ref, first_ref);
+        assert!(matches!(items[1].kind, ContextEntryKind::Instructions));
+        assert_eq!(items[1].content_ref, second_ref);
+        assert!(matches!(
+            items[2].kind,
+            ContextEntryKind::Message {
+                role: ContextMessageRole::User
+            }
+        ));
+        assert_eq!(items[2].content_ref, input_ref);
     }
 
     #[test]
@@ -1056,14 +1161,12 @@ mod tests {
             .expect("open");
         commit_action(&mut drive, open);
 
-        let instructions_ref = BlobRef::from_bytes(b"new instructions");
         let patch = SessionConfigPatch {
             turn: TurnConfigPatch {
                 max_output_tokens: Some(OptionalConfigPatch::Set(2048)),
                 ..TurnConfigPatch::default()
             },
             context: ContextConfigPatch {
-                instructions_ref: Some(OptionalConfigPatch::Set(instructions_ref.clone())),
                 target_context_tokens: Some(OptionalConfigPatch::Set(4096)),
                 ..ContextConfigPatch::default()
             },
@@ -1088,7 +1191,6 @@ mod tests {
             .expect("session config");
         assert_eq!(drive.state().lifecycle.config_revision, 1);
         assert_eq!(config.turn.max_output_tokens, Some(2048));
-        assert_eq!(config.context.instructions_ref, Some(instructions_ref));
         assert_eq!(config.context.target_context_tokens, Some(4096));
     }
 

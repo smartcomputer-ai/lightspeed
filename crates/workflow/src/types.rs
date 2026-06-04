@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 pub struct AgentSessionArgs {
     pub session_id: SessionId,
     pub session_config: SessionConfig,
+    pub instructions_ref: Option<BlobRef>,
     pub max_steps_per_input: Option<u32>,
     pub continue_as_new_history_threshold: Option<u32>,
 }

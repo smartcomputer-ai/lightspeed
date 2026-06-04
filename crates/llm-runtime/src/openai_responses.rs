@@ -98,7 +98,15 @@ pub async fn materialize_create_request(
     request: &OpenAiResponsesRequest,
     model: &str,
 ) -> LlmAdapterResult<oai::CreateResponseRequest> {
-    let input_items = materialize_input_items(blobs, &request.input_context.entries).await?;
+    let instructions = materialize_instructions(blobs, &request.input_context.entries).await?;
+    let input_entries = request
+        .input_context
+        .entries
+        .iter()
+        .filter(|entry| !matches!(entry.kind, ContextEntryKind::Instructions))
+        .cloned()
+        .collect::<Vec<_>>();
+    let input_items = materialize_input_items(blobs, &input_entries).await?;
     let tools = materialize_tools(blobs, &request.tools).await?;
 
     let mut extra = request.extra.clone();
@@ -115,7 +123,7 @@ pub async fn materialize_create_request(
     Ok(oai::CreateResponseRequest {
         model: Some(model.to_string()),
         input: Some(oai::ResponseInput::Items(input_items)),
-        instructions: read_optional_text(blobs, request.instructions_ref.as_ref()).await?,
+        instructions,
         previous_response_id: request.previous_response_id.clone(),
         tools: non_empty(tools),
         tool_choice: request.tool_choice.as_ref().map(openai_tool_choice),
@@ -135,6 +143,27 @@ pub async fn materialize_create_request(
         stream: request.stream,
         extra,
     })
+}
+
+async fn materialize_instructions(
+    blobs: &dyn BlobStore,
+    entries: &[ContextEntry],
+) -> LlmAdapterResult<Option<Value>> {
+    let mut parts = Vec::new();
+    for entry in entries {
+        if matches!(entry.kind, ContextEntryKind::Instructions) {
+            let text = read_text(blobs, &entry.content_ref).await?;
+            let text = text.trim();
+            if !text.is_empty() {
+                parts.push(text.to_owned());
+            }
+        }
+    }
+    if parts.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(Value::String(parts.join("\n\n"))))
+    }
 }
 
 async fn materialize_input_items(
@@ -181,14 +210,10 @@ async fn materialize_input_item(
                 },
             ))
         }
-        ContextEntryKind::Instructions => {
-            let text = read_text(blobs, &item.content_ref).await?;
-            Ok(oai::ResponseInputItem::Message(oai::InputMessage {
-                role: oai::MessageRole::Developer,
-                content: oai::InputMessageContent::Text(text),
-                extra: Default::default(),
-            }))
-        }
+        ContextEntryKind::Instructions => Err(LlmAdapterError::InvalidProviderRequest {
+            message: "instruction context entries must materialize as top-level instructions"
+                .to_owned(),
+        }),
         ContextEntryKind::SkillCatalog => {
             let catalog = read_skill_catalog(blobs, &item.content_ref).await?;
             Ok(oai::ResponseInputItem::Message(oai::InputMessage {
@@ -331,16 +356,6 @@ async fn materialize_tool(blobs: &dyn BlobStore, tool: &ToolSpec) -> LlmAdapterR
                 )),
             }
         }
-    }
-}
-
-async fn read_optional_text(
-    blobs: &dyn BlobStore,
-    blob_ref: Option<&BlobRef>,
-) -> LlmAdapterResult<Option<Value>> {
-    match blob_ref {
-        Some(blob_ref) => Ok(Some(Value::String(read_text(blobs, blob_ref).await?))),
-        None => Ok(None),
     }
 }
 
@@ -767,9 +782,21 @@ mod tests {
             crate::blob_io::put_json(&blobs, &json!({ "x-openai-extra": true }))
                 .await
                 .expect("provider options");
+        let instructions_item = ContextEntry {
+            key: Some(engine::ContextEntryKey::new("instructions.000.test")),
+            entry_id: ContextEntryId::new(1),
+            kind: ContextEntryKind::Instructions,
+            source: ContextEntrySource::ContextEdit,
+            content_ref: instructions_ref,
+            media_type: Some("text/plain".to_owned()),
+            preview: None,
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        };
         let item = ContextEntry {
             key: None,
-            entry_id: ContextEntryId::new(1),
+            entry_id: ContextEntryId::new(2),
             kind: ContextEntryKind::Message {
                 role: ContextMessageRole::User,
             },
@@ -785,11 +812,10 @@ mod tests {
             token_estimate: None,
         };
         let request = OpenAiResponsesRequest {
-            instructions_ref: Some(instructions_ref),
             input_context: ContextSnapshot {
                 api_kind: ProviderApiKind::OpenAiResponses,
                 context_revision: 0,
-                entries: vec![item],
+                entries: vec![instructions_item, item],
                 token_estimate: None,
             },
             previous_response_id: Some("resp_prev".to_string()),
@@ -965,7 +991,6 @@ mod tests {
             token_estimate: None,
         };
         let request = OpenAiResponsesRequest {
-            instructions_ref: None,
             input_context: ContextSnapshot {
                 api_kind: ProviderApiKind::OpenAiResponses,
                 context_revision: 0,
@@ -1080,7 +1105,6 @@ mod tests {
                 model: model(),
                 request_fingerprint: "sha256:test".to_string(),
                 kind: LlmRequestKind::OpenAiResponses(OpenAiResponsesRequest {
-                    instructions_ref: None,
                     input_context: ContextSnapshot {
                         api_kind: ProviderApiKind::OpenAiResponses,
                         context_revision: 0,
@@ -1150,7 +1174,6 @@ mod tests {
             .map(|(index, item)| retained_context_entry(index, item))
             .collect::<Vec<_>>();
         let followup_request = OpenAiResponsesRequest {
-            instructions_ref: None,
             input_context: ContextSnapshot {
                 api_kind: ProviderApiKind::OpenAiResponses,
                 context_revision: 0,
@@ -1231,7 +1254,6 @@ mod tests {
                 model: model(),
                 request_fingerprint: "sha256:test".to_string(),
                 kind: LlmRequestKind::OpenAiResponses(OpenAiResponsesRequest {
-                    instructions_ref: None,
                     input_context: ContextSnapshot {
                         api_kind: ProviderApiKind::OpenAiResponses,
                         context_revision: 0,
@@ -1275,7 +1297,6 @@ mod tests {
             .map(|(index, item)| retained_context_entry(index, item))
             .collect::<Vec<_>>();
         let followup_request = OpenAiResponsesRequest {
-            instructions_ref: None,
             input_context: ContextSnapshot {
                 api_kind: ProviderApiKind::OpenAiResponses,
                 context_revision: 0,
@@ -1336,7 +1357,6 @@ mod tests {
                 model: model(),
                 request_fingerprint: "sha256:test".to_string(),
                 kind: LlmRequestKind::OpenAiResponses(OpenAiResponsesRequest {
-                    instructions_ref: None,
                     input_context: ContextSnapshot {
                         api_kind: ProviderApiKind::OpenAiResponses,
                         context_revision: 0,

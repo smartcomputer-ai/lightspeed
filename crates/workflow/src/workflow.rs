@@ -1,9 +1,10 @@
 use std::{collections::BTreeMap, time::UNIX_EPOCH};
 
 use engine::{
-    ApplyEvent, CommandCodec, CommandError, CoreAgentAction, CoreAgentCodec, CoreAgentCommand,
-    CoreAgentDrive, CoreAgentDriveError, CoreAgentEntry, CoreAgentEventKind, CoreAgentState,
-    CoreApplyEvent, LlmGenerationRequest, RunEvent, SessionId, SessionPosition, SubmissionId,
+    ApplyEvent, BlobRef, CommandCodec, CommandError, ContextEntryInput, ContextEntryKey,
+    ContextEntryKind, CoreAgentAction, CoreAgentCodec, CoreAgentCommand, CoreAgentDrive,
+    CoreAgentDriveError, CoreAgentEntry, CoreAgentEventKind, CoreAgentState, CoreApplyEvent,
+    LlmGenerationRequest, RunEvent, SessionId, SessionPosition, SubmissionId,
     ToolInvocationBatchRequest, ToolProfileId,
 };
 use temporalio_macros::{workflow, workflow_methods};
@@ -211,7 +212,7 @@ async fn open_new_session(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     args: AgentSessionArgs,
 ) -> anyhow::Result<()> {
-    let instructions_ref = match args.session_config.context.instructions_ref.clone() {
+    let instructions_ref = match args.instructions_ref.clone() {
         Some(blob_ref) => Some(blob_ref),
         None => {
             let blob_ref = ctx
@@ -227,8 +228,7 @@ async fn open_new_session(
             Some(blob_ref)
         }
     };
-    let mut session_config = args.session_config;
-    session_config.context.instructions_ref = instructions_ref;
+    let session_config = args.session_config;
     let schema_ref = ctx
         .start_activity(
             WorkflowActivities::put_blob,
@@ -249,6 +249,17 @@ async fn open_new_session(
         },
     )
     .await?;
+    if let Some(instructions_ref) = instructions_ref {
+        append_command(
+            ctx,
+            &mut drive,
+            CoreAgentCommand::UpsertContext {
+                key: ContextEntryKey::new("instructions.000.default"),
+                entry: instruction_context_input(instructions_ref),
+            },
+        )
+        .await?;
+    }
     append_command(
         ctx,
         &mut drive,
@@ -266,6 +277,18 @@ async fn open_new_session(
     )
     .await?;
     Ok(())
+}
+
+fn instruction_context_input(content_ref: BlobRef) -> ContextEntryInput {
+    ContextEntryInput {
+        kind: ContextEntryKind::Instructions,
+        content_ref,
+        media_type: Some("text/plain".to_owned()),
+        preview: None,
+        provider_kind: None,
+        provider_item_id: None,
+        token_estimate: None,
+    }
 }
 
 async fn process_admissions(

@@ -13,13 +13,13 @@ use api::{
     BlobPutManyResponse, BlobPutParams, BlobPutResponse, ClientCapabilities,
     ContextConfigInput as ApiContextConfigInput, ContextConfigPatchInput, FieldPatch,
     GenerationConfig, GenerationConfigPatch, InitializeParams, InitializeResponse, InputItem,
-    InstructionsSource, ModelConfig, ReasoningEffort, RunCancelParams, RunCancelResponse,
-    RunDefaultsConfig, RunDefaultsPatch, RunLimitsConfig, RunStartConfig, RunStartParams,
-    RunStartResponse, RunView, ServerCapabilities, ServerInfo, SessionCloseParams,
-    SessionCloseResponse, SessionConfigInput, SessionConfigPatchInput, SessionEventsReadParams,
-    SessionEventsReadResponse, SessionReadParams, SessionReadResponse, SessionStartParams,
-    SessionStartResponse, SessionUpdateParams, SessionUpdateResponse, SessionView,
-    SkillActivateParams, SkillActivateResponse, SkillActivationScope as ApiSkillActivationScope,
+    ModelConfig, ReasoningEffort, RunCancelParams, RunCancelResponse, RunDefaultsConfig,
+    RunDefaultsPatch, RunLimitsConfig, RunStartConfig, RunStartParams, RunStartResponse, RunView,
+    ServerCapabilities, ServerInfo, SessionCloseParams, SessionCloseResponse, SessionConfigInput,
+    SessionConfigPatchInput, SessionEventsReadParams, SessionEventsReadResponse, SessionReadParams,
+    SessionReadResponse, SessionStartParams, SessionStartResponse, SessionUpdateParams,
+    SessionUpdateResponse, SessionView, SkillActivateParams, SkillActivateResponse,
+    SkillActivationScope as ApiSkillActivationScope,
     SkillActivationSource as ApiSkillActivationSource, SkillActivationView, SkillActiveParams,
     SkillActiveResponse, SkillDeactivateParams, SkillDeactivateResponse, SkillListItem,
     SkillListParams, SkillListResponse, VfsMountAccess as ApiVfsMountAccess, VfsMountDeleteParams,
@@ -261,6 +261,7 @@ impl GatewayAgentApi {
         AgentSessionArgs {
             session_id,
             session_config,
+            instructions_ref: self.instructions_ref.clone(),
             max_steps_per_input: self.max_steps_per_input,
             continue_as_new_history_threshold: self.continue_as_new_history_threshold,
         }
@@ -270,8 +271,7 @@ impl GatewayAgentApi {
         &self,
         api_config: Option<SessionConfigInput>,
     ) -> Result<SessionConfig, AgentApiError> {
-        let mut config =
-            default_session_config(self.default_model.clone(), self.instructions_ref.clone());
+        let mut config = default_session_config(self.default_model.clone());
         self.apply_session_config_input(&mut config, api_config)
             .await?;
         config
@@ -288,10 +288,6 @@ impl GatewayAgentApi {
         let Some(api_config) = api_config else {
             return Ok(());
         };
-        if let Some(instructions) = api_config.instructions {
-            config.context.instructions_ref =
-                Some(self.instructions_ref_from_source(instructions).await?);
-        }
         if let Some(model) = api_config.model {
             let previous_api_kind = config.model.api_kind.clone();
             config.model = model_selection_from_api(model)?;
@@ -306,54 +302,18 @@ impl GatewayAgentApi {
         Ok(())
     }
 
-    async fn instructions_ref_from_source(
-        &self,
-        source: InstructionsSource,
-    ) -> Result<BlobRef, AgentApiError> {
-        match source {
-            InstructionsSource::Text { text } => self
-                .store
-                .put_bytes(text.into_bytes())
-                .await
-                .map_err(map_blob_store_error),
-            InstructionsSource::BlobRef { blob_ref } => {
-                let blob_ref = BlobRef::parse(blob_ref)
-                    .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
-                let exists = self
-                    .store
-                    .has_blob(&blob_ref)
-                    .await
-                    .map_err(map_blob_store_error)?;
-                if exists {
-                    Ok(blob_ref)
-                } else {
-                    Err(AgentApiError::invalid_request(format!(
-                        "instructions blob not found: {blob_ref}"
-                    )))
-                }
-            }
-        }
-    }
-
     async fn core_session_patch_from_api(
         &self,
         current: &SessionConfig,
         patch: SessionConfigPatchInput,
     ) -> Result<SessionConfigPatch, AgentApiError> {
-        let instructions_ref = match patch.instructions {
-            Some(FieldPatch::Set(source)) => Some(OptionalConfigPatch::Set(
-                self.instructions_ref_from_source(source).await?,
-            )),
-            Some(FieldPatch::Clear) => Some(OptionalConfigPatch::Clear),
-            None => None,
-        };
         let model = patch.model.map(model_selection_from_api).transpose()?;
         let turn = turn_config_patch_from_api(current, patch.generation)?;
         Ok(SessionConfigPatch {
             model,
             run: run_config_patch_from_api(patch.run_defaults),
             turn,
-            context: context_config_patch_from_api(instructions_ref, patch.context),
+            context: context_config_patch_from_api(patch.context),
         })
     }
 
@@ -2493,18 +2453,11 @@ fn turn_config_patch_from_api(
     })
 }
 
-fn context_config_patch_from_api(
-    instructions_ref: Option<OptionalConfigPatch<BlobRef>>,
-    patch: Option<ContextConfigPatchInput>,
-) -> ContextConfigPatch {
+fn context_config_patch_from_api(patch: Option<ContextConfigPatchInput>) -> ContextConfigPatch {
     let Some(patch) = patch else {
-        return ContextConfigPatch {
-            instructions_ref,
-            ..ContextConfigPatch::default()
-        };
+        return ContextConfigPatch::default();
     };
     ContextConfigPatch {
-        instructions_ref,
         max_context_tokens: patch.max_context_tokens.map(optional_patch_from_api),
         target_context_tokens: patch.target_context_tokens.map(optional_patch_from_api),
         reserve_output_tokens: patch.reserve_output_tokens.map(optional_patch_from_api),
@@ -2956,7 +2909,7 @@ mod tests {
 
     #[test]
     fn session_start_config_maps_reasoning_and_max_output_tokens() {
-        let mut config = default_session_config(openai_model(), None);
+        let mut config = default_session_config(openai_model());
 
         apply_generation_config(
             &mut config,
@@ -2980,7 +2933,7 @@ mod tests {
 
     #[test]
     fn run_start_config_maps_model_and_generation_overrides() {
-        let session_config = default_session_config(openai_model(), None);
+        let session_config = default_session_config(openai_model());
         let mut run_config = RunConfig::default();
 
         apply_run_start_config(

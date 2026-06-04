@@ -28,10 +28,7 @@ pub fn default_run_config() -> RunConfig {
     }
 }
 
-pub fn default_session_config(
-    model: ModelSelection,
-    instructions_ref: Option<BlobRef>,
-) -> SessionConfig {
+pub fn default_session_config(model: ModelSelection) -> SessionConfig {
     let provider_request_defaults = default_provider_request_defaults(&model.api_kind);
     SessionConfig {
         model,
@@ -41,7 +38,6 @@ pub fn default_session_config(
             provider_request_defaults,
         },
         context: ContextConfig {
-            instructions_ref,
             max_context_tokens: None,
             target_context_tokens: None,
             reserve_output_tokens: None,

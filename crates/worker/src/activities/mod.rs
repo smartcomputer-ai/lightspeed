@@ -154,7 +154,6 @@ mod tests {
                 },
                 request_fingerprint: "fake-agent-test".to_owned(),
                 kind: LlmRequestKind::OpenAiResponses(OpenAiResponsesRequest {
-                    instructions_ref: None,
                     input_context: ContextSnapshot {
                         api_kind: ProviderApiKind::OpenAiResponses,
                         context_revision: 0,

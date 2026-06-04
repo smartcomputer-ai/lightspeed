@@ -9,7 +9,7 @@ use crate::{
     ToolCallId, ToolName, TurnId,
 };
 
-const SESSION_INSTRUCTIONS_KEY: &str = "session.instructions";
+const INSTRUCTIONS_KEY_PREFIX: &str = "instructions.";
 const SKILL_CATALOG_KEY: &str = "skills.catalog";
 
 pub type ContextEntryId = ContextItemId;
@@ -211,11 +211,25 @@ pub(crate) fn planned_context_entry_ids(state: &CoreAgentState) -> Vec<ContextEn
     let mut entry_ids = Vec::new();
     let mut seen = BTreeSet::new();
 
-    for key in [session_instructions_key(), skill_catalog_key()] {
-        if let Some(entry) = current_key_entry(state, &key) {
-            entry_ids.push(entry.entry_id);
-            seen.insert(entry.entry_id);
-        }
+    let mut instruction_entries = state
+        .context
+        .entries
+        .iter()
+        .filter(|entry| matches!(entry.kind, ContextEntryKind::Instructions))
+        .collect::<Vec<_>>();
+    instruction_entries.sort_by(|left, right| {
+        left.key
+            .cmp(&right.key)
+            .then_with(|| left.entry_id.cmp(&right.entry_id))
+    });
+    for entry in instruction_entries {
+        entry_ids.push(entry.entry_id);
+        seen.insert(entry.entry_id);
+    }
+
+    if let Some(entry) = current_key_entry(state, &skill_catalog_key()) {
+        entry_ids.push(entry.entry_id);
+        seen.insert(entry.entry_id);
     }
 
     for entry in &state.context.entries {
@@ -377,7 +391,7 @@ pub(crate) fn validate_external_context_edit(
             key
         )));
     }
-    validate_external_context_edit_entry(entry)
+    validate_external_context_edit_entry(key, entry)
 }
 
 pub(crate) fn validate_context_key_exists(
@@ -426,9 +440,26 @@ fn validate_run_supplied_context_entry(
     }
 }
 
-fn validate_external_context_edit_entry(entry: &ContextEntryInput) -> Result<(), DomainError> {
+fn validate_external_context_edit_entry(
+    key: &ContextEntryKey,
+    entry: &ContextEntryInput,
+) -> Result<(), DomainError> {
+    if is_instructions_key(key) {
+        return match &entry.kind {
+            ContextEntryKind::Instructions => Ok(()),
+            _ => Err(DomainError::InvariantViolation(format!(
+                "instruction context key {} cannot supply context entry kind {:?}",
+                key, entry.kind
+            ))),
+        };
+    }
+
     match &entry.kind {
         ContextEntryKind::ProviderOpaque => Ok(()),
+        ContextEntryKind::Instructions => Err(DomainError::InvariantViolation(format!(
+            "instruction context entry requires an {}* key, got {}",
+            INSTRUCTIONS_KEY_PREFIX, key
+        ))),
         _ => Err(DomainError::InvariantViolation(format!(
             "context edit cannot supply context entry kind {:?}",
             entry.kind
@@ -437,7 +468,11 @@ fn validate_external_context_edit_entry(entry: &ContextEntryInput) -> Result<(),
 }
 
 fn is_reserved_context_key(key: &ContextEntryKey) -> bool {
-    key.as_str() == SESSION_INSTRUCTIONS_KEY || key.as_str() == SKILL_CATALOG_KEY
+    key.as_str() == SKILL_CATALOG_KEY
+}
+
+fn is_instructions_key(key: &ContextEntryKey) -> bool {
+    key.as_str().starts_with(INSTRUCTIONS_KEY_PREFIX)
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -457,10 +492,6 @@ impl PlanNext for CoreContextPlanner {
         };
         if active_run.status != RunStatus::Active {
             return Ok(Vec::new());
-        }
-
-        if let Some(proposal) = instruction_proposal(state, active_run.run_id)? {
-            return Ok(vec![proposal]);
         }
 
         if let Some(proposal) = skill_catalog_proposal(state, active_run.run_id)? {
@@ -496,48 +527,6 @@ impl PlanNext for CoreContextPlanner {
 
         Ok(Vec::new())
     }
-}
-
-fn instruction_proposal(
-    state: &CoreAgentState,
-    run_id: RunId,
-) -> Result<Option<CoreAgentEventProposal>, DomainError> {
-    let key = session_instructions_key();
-    let Some(config) = state.lifecycle.config.as_ref() else {
-        return Err(DomainError::InvariantViolation(
-            "open session is missing config".to_owned(),
-        ));
-    };
-
-    let Some(instructions_ref) = config.context.instructions_ref.as_ref() else {
-        if current_key_entry(state, &key).is_some() {
-            return Ok(Some(keys_removed_proposal(state, run_id, vec![key])));
-        }
-        return Ok(None);
-    };
-
-    if current_key_entry(state, &key).is_some_and(|entry| entry.content_ref == *instructions_ref) {
-        return Ok(None);
-    }
-
-    Ok(Some(entries_applied_proposal(
-        state,
-        run_id,
-        vec![ContextEntry {
-            entry_id: next_context_entry_id(state, 1)?,
-            key: Some(key),
-            kind: ContextEntryKind::Instructions,
-            source: ContextEntrySource::Runtime {
-                label: "session.instructions".to_owned(),
-            },
-            content_ref: instructions_ref.clone(),
-            media_type: Some("text/plain".to_owned()),
-            preview: None,
-            provider_kind: None,
-            provider_item_id: None,
-            token_estimate: None,
-        }],
-    )))
 }
 
 fn skill_catalog_proposal(
@@ -732,10 +721,6 @@ fn current_key_entry<'a>(
         .entries
         .iter()
         .find(|entry| entry.key.as_ref() == Some(key))
-}
-
-fn session_instructions_key() -> ContextEntryKey {
-    ContextEntryKey::new(SESSION_INSTRUCTIONS_KEY)
 }
 
 fn skill_catalog_key() -> ContextEntryKey {
