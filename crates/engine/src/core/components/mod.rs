@@ -22,8 +22,8 @@ pub use command::*;
 pub use config::*;
 pub use context::{
     ContextEntry, ContextEntryId, ContextEntryInput, ContextEntryKind, ContextEntrySource,
-    ContextEvent, ContextMessageRole, ContextRemovalReason, ContextRewriteReason, ContextState,
-    TokenEstimate, TokenEstimateQuality,
+    ContextEvent, ContextMessageRole, ContextRemovalReason, ContextRewriteReason, ContextSnapshot,
+    ContextState, TokenEstimate, TokenEstimateQuality,
 };
 pub use error::*;
 pub use event::*;
@@ -32,8 +32,8 @@ pub use lifecycle::{CoreAgentLifecycleEvent, CoreAgentStatus, LifecycleState};
 pub use llm::*;
 pub use log::*;
 pub use run::{
-    AcceptedRun, ActiveRun, RunEvent, RunFailure, RunFailureKind, RunQueueState, RunRecord,
-    RunStatus,
+    AcceptedRun, ActiveRun, RunEvent, RunFailure, RunFailureKind, RunInputBatch, RunQueueState,
+    RunRecord, RunStatus, SteeringBatch,
 };
 pub use skills::{
     SkillActivation, SkillActivationScope, SkillActivationSource, SkillCatalogContext, SkillEvent,

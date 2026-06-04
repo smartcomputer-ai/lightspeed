@@ -18,8 +18,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    BlobRef, LlmGenerationFacts, LlmGenerationStatus, LlmRequest, RunId, SessionId, ToolBatchId,
-    ToolCallId, ToolCallStatus, ToolExecutionTarget, ToolName, TurnId, UncommittedContextItem,
+    BlobRef, ContextEntryInput, LlmGenerationFacts, LlmGenerationStatus, LlmRequest, RunId,
+    SessionId, ToolBatchId, ToolCallId, ToolCallStatus, ToolExecutionTarget, ToolName, TurnId,
 };
 
 #[async_trait]
@@ -53,7 +53,7 @@ pub struct LlmGenerationResult {
     pub status: LlmGenerationStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure_ref: Option<BlobRef>,
-    pub context_items: Vec<UncommittedContextItem>,
+    pub context_entries: Vec<ContextEntryInput>,
     pub facts: LlmGenerationFacts,
 }
 

@@ -10,14 +10,15 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    AdmitCommand, ApplyEvent, BlobRef, CodecError, CommandError, ContextEvent, ContextItemKind,
-    ContextMessageRole, CoreAdmitCommand, CoreAgentCodec, CoreAgentEntry, CoreAgentEventKind,
-    CoreAgentEventProposal, CoreAgentJoins, CoreAgentState, CoreAgentStatus, CoreApplyEvent,
-    CorePlanner, DomainError, LlmFinish, LlmGenerationRequest, LlmGenerationResult,
-    LlmGenerationStatus, PlanNext, PlanningError, SessionId, SessionPosition, ToolCallResult,
-    ToolCallStatus, ToolEvent, ToolInvocationBatchRequest, ToolInvocationBatchResult,
-    ToolInvocationRequest, TurnEvent, TurnOutcome, UncommittedContextItem,
-    core::components::context::context_items_from_uncommitted,
+    AdmitCommand, ApplyEvent, BlobRef, CodecError, CommandError, ContextEntryInput,
+    ContextEntryKind, ContextEntrySource, ContextEvent, ContextMessageRole, CoreAdmitCommand,
+    CoreAgentCodec, CoreAgentEntry, CoreAgentEventKind, CoreAgentEventProposal, CoreAgentJoins,
+    CoreAgentState, CoreAgentStatus, CoreApplyEvent, CorePlanner, DomainError, LlmFinish,
+    LlmGenerationRequest, LlmGenerationResult, LlmGenerationStatus, PlanNext, PlanningError,
+    SessionId, SessionPosition, ToolCallResult, ToolCallStatus, ToolEvent,
+    ToolInvocationBatchRequest, ToolInvocationBatchResult, ToolInvocationRequest, TurnEvent,
+    TurnOutcome,
+    core::components::context::context_entries_from_inputs,
     session::{DynamicSessionEntry, DynamicUncommittedSessionEvent},
 };
 
@@ -249,7 +250,7 @@ pub fn generation_result_proposals(
             "llm generation result does not match active turn".into(),
         ));
     }
-    let context_items = context_items_from_uncommitted(state, &result.context_items)?;
+    let context_entries = context_entries_from_llm_result(state, &result)?;
     let outcome = turn_outcome_for_generation_result(&result);
     let joins = CoreAgentJoins {
         run_id: Some(result.run_id),
@@ -258,21 +259,12 @@ pub fn generation_result_proposals(
     };
 
     let mut proposals = Vec::new();
-    if !context_items.is_empty() {
+    if !context_entries.is_empty() {
         proposals.push(CoreAgentEventProposal::new(
             joins.clone(),
-            CoreAgentEventKind::Context(ContextEvent::ItemsRecorded {
-                items: context_items,
-            }),
-        ));
-    }
-    if let Some(record) = result.facts.compaction.clone() {
-        proposals.push(CoreAgentEventProposal::new(
-            joins.clone(),
-            CoreAgentEventKind::Context(ContextEvent::CompactionRecorded {
-                run_id: result.run_id,
-                turn_id: Some(result.turn_id),
-                record,
+            CoreAgentEventKind::Context(ContextEvent::EntriesApplied {
+                base_revision: state.context.revision,
+                entries: context_entries,
             }),
         ));
     }
@@ -310,27 +302,59 @@ fn turn_outcome_for_generation_result(result: &LlmGenerationResult) -> TurnOutco
             },
             LlmFinish::Stop | LlmFinish::Length | LlmFinish::ContentFilter | LlmFinish::Unknown => {
                 TurnOutcome::FinalOutput {
-                    output_ref: final_output_ref(&result.context_items),
+                    output_ref: final_output_ref(&result.context_entries),
                 }
             }
         },
     }
 }
 
-fn final_output_ref(context_items: &[UncommittedContextItem]) -> Option<BlobRef> {
-    context_items
+fn context_entries_from_llm_result(
+    state: &CoreAgentState,
+    result: &LlmGenerationResult,
+) -> Result<Vec<crate::ContextEntry>, DomainError> {
+    context_entries_from_inputs(
+        state,
+        result
+            .context_entries
+            .iter()
+            .cloned()
+            .map(|entry| {
+                (
+                    None,
+                    source_for_llm_context_entry(result.run_id, result.turn_id, &entry),
+                    entry,
+                )
+            })
+            .collect(),
+    )
+}
+
+fn source_for_llm_context_entry(
+    run_id: crate::RunId,
+    turn_id: crate::TurnId,
+    entry: &ContextEntryInput,
+) -> ContextEntrySource {
+    match &entry.kind {
+        ContextEntryKind::ReasoningState => ContextEntrySource::Reasoning { run_id, turn_id },
+        _ => ContextEntrySource::AssistantOutput { run_id, turn_id },
+    }
+}
+
+fn final_output_ref(context_entries: &[ContextEntryInput]) -> Option<BlobRef> {
+    context_entries
         .iter()
         .rev()
-        .find_map(|item| match item.kind {
-            ContextItemKind::Message {
+        .find_map(|entry| match entry.kind {
+            ContextEntryKind::Message {
                 role: ContextMessageRole::Assistant,
-            } => Some(item.native_item_ref.clone()),
+            } => Some(entry.content_ref.clone()),
             _ => None,
         })
         .or_else(|| {
-            context_items
+            context_entries
                 .last()
-                .map(|item| item.native_item_ref.clone())
+                .map(|entry| entry.content_ref.clone())
         })
 }
 
@@ -423,12 +447,13 @@ fn validate_tool_batch_result(result: &ToolInvocationBatchResult) -> Result<(), 
 mod tests {
     use super::*;
     use crate::{
-        BlobRef, CommandRejectionKind, ContextConfig, ContextConfigPatch, ContextItemSource,
-        CoreAgentCommand, LlmGenerationFacts, LlmRequestKind, ModelProviderOptions, ModelSelection,
-        OptionalConfigPatch, ProviderApiKind, ProviderRequestDefaults, RunConfig, RunFailureKind,
-        RunStatus, SessionConfig, SessionConfigPatch, SkillActivation, SkillActivationScope,
-        SkillActivationSource, SkillCatalogContext, SkillId, ToolCallId, TurnConfig,
-        TurnConfigPatch,
+        BlobRef, CommandRejectionKind, ContextConfig, ContextConfigPatch, ContextEntry,
+        ContextEntryId, ContextEntryInput, ContextEntryKey, ContextEntryKind, ContextRemovalReason,
+        ContextRewriteReason, CoreAgentCommand, LlmGenerationFacts, LlmRequestKind,
+        ModelProviderOptions, ModelSelection, OptionalConfigPatch, ProviderApiKind,
+        ProviderRequestDefaults, RunConfig, RunFailureKind, RunStatus, SessionConfig,
+        SessionConfigPatch, SkillActivation, SkillActivationScope, SkillActivationSource,
+        SkillCatalogContext, SkillId, ToolCallId, TurnConfig, TurnConfigPatch, TurnStatus,
     };
 
     fn config() -> SessionConfig {
@@ -455,7 +480,6 @@ mod tests {
                 max_context_tokens: None,
                 target_context_tokens: None,
                 reserve_output_tokens: None,
-                compaction_enabled: false,
             },
         }
     }
@@ -501,6 +525,45 @@ mod tests {
         drive.resume_appended(entries).expect("resume appended")
     }
 
+    fn commit_core_event_result(
+        drive: &mut CoreAgentDrive,
+        kind: CoreAgentEventKind,
+        observed_at_ms: u64,
+    ) -> Result<Vec<CoreAgentEntry>, CoreAgentDriveError> {
+        let proposal = CoreAgentEventProposal::new(CoreAgentJoins::default(), kind);
+        let uncommitted = proposal.into_uncommitted(observed_at_ms);
+        let event = drive.codec.encode_uncommitted(&uncommitted)?;
+        let seq = drive.head().map_or(1, |position| position.seq.as_u64() + 1);
+        let entry = DynamicSessionEntry {
+            position: SessionPosition {
+                seq: crate::EventSeq::new(seq),
+            },
+            observed_at_ms: event.observed_at_ms,
+            joins: event.joins,
+            event: event.event,
+        };
+        drive.resume_appended(vec![entry])
+    }
+
+    fn context_edit_entry(
+        entry_id: u64,
+        key: Option<ContextEntryKey>,
+        content: &'static [u8],
+    ) -> ContextEntry {
+        ContextEntry {
+            entry_id: ContextEntryId::new(entry_id),
+            key,
+            kind: ContextEntryKind::ProviderOpaque,
+            source: ContextEntrySource::ContextEdit,
+            content_ref: BlobRef::from_bytes(content),
+            media_type: None,
+            preview: None,
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        }
+    }
+
     fn open_session(drive: &mut CoreAgentDrive) {
         let open = drive
             .admit_command(CoreAgentCommand::OpenSession { config: config() }, 10)
@@ -513,13 +576,27 @@ mod tests {
             .admit_command(
                 CoreAgentCommand::RequestRun {
                     submission_id: None,
-                    input_ref,
+                    input: user_input(input_ref),
                     run_config: run_config(),
                 },
                 20,
             )
             .expect("request run");
         commit_action(drive, request);
+    }
+
+    fn user_input(input_ref: BlobRef) -> Vec<ContextEntryInput> {
+        vec![ContextEntryInput {
+            kind: ContextEntryKind::Message {
+                role: ContextMessageRole::User,
+            },
+            content_ref: input_ref,
+            media_type: None,
+            preview: None,
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        }]
     }
 
     fn drive_until_generate(drive: &mut CoreAgentDrive) -> LlmGenerationRequest {
@@ -533,11 +610,295 @@ mod tests {
         panic!("drive did not emit an LLM action");
     }
 
-    fn openai_items(request: &LlmGenerationRequest) -> &[crate::ContextItem] {
+    fn openai_items(request: &LlmGenerationRequest) -> &[ContextEntry] {
         let LlmRequestKind::OpenAiResponses(openai) = &request.request.kind else {
             panic!("expected OpenAI Responses request");
         };
-        &openai.input_window.items
+        &openai.input_context.entries
+    }
+
+    #[test]
+    fn queued_run_input_does_not_enter_context_until_run_starts() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        open_session(&mut drive);
+
+        request_run(&mut drive, BlobRef::from_bytes(b"input"));
+
+        assert_eq!(drive.state().runs.queued.len(), 1);
+        assert!(drive.state().runs.active.is_none());
+        assert!(drive.state().context.entries.is_empty());
+        assert_eq!(drive.state().context.revision, 0);
+    }
+
+    #[test]
+    fn run_input_materializes_once_before_turn_planning() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        open_session(&mut drive);
+        request_run(&mut drive, BlobRef::from_bytes(b"input"));
+
+        let start_run = drive.next_action(21, 64).expect("start run");
+        commit_action(&mut drive, start_run);
+        let active_run = drive.state().runs.active.as_ref().expect("active run");
+        assert!(active_run.input.entry_ids.is_empty());
+        assert!(drive.state().context.entries.is_empty());
+
+        let materialize_input = drive.next_action(22, 64).expect("materialize input");
+        let entries = commit_action(&mut drive, materialize_input);
+        let CoreAgentEventKind::Context(ContextEvent::EntriesApplied {
+            entries: applied, ..
+        }) = &entries[0].event.kind
+        else {
+            panic!("expected context entries");
+        };
+        assert_eq!(applied.len(), 1);
+        assert!(matches!(
+            applied[0].source,
+            ContextEntrySource::RunInput { input_index: 0, .. }
+        ));
+
+        let active_run = drive.state().runs.active.as_ref().expect("active run");
+        assert_eq!(active_run.input.entry_ids, vec![applied[0].entry_id]);
+        assert_eq!(active_run.input.consumed_by_turn_id, None);
+        assert_eq!(drive.state().context.entries.len(), 1);
+
+        let start_turn = drive.next_action(23, 64).expect("start turn");
+        let entries = commit_action(&mut drive, start_turn);
+        assert!(matches!(
+            entries[0].event.kind,
+            CoreAgentEventKind::Turn(TurnEvent::Started { .. })
+        ));
+        assert_eq!(drive.state().context.entries.len(), 1);
+    }
+
+    #[test]
+    fn unconsumed_run_input_context_cannot_be_removed() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        open_session(&mut drive);
+        request_run(&mut drive, BlobRef::from_bytes(b"input"));
+        let start_run = drive.next_action(21, 64).expect("start run");
+        commit_action(&mut drive, start_run);
+        let materialize_input = drive.next_action(22, 64).expect("materialize input");
+        commit_action(&mut drive, materialize_input);
+
+        let entry_id = drive
+            .state()
+            .runs
+            .active
+            .as_ref()
+            .expect("active run")
+            .input
+            .entry_ids[0];
+        let base_revision = drive.state().context.revision;
+        let error = commit_core_event_result(
+            &mut drive,
+            CoreAgentEventKind::Context(ContextEvent::EntriesRemoved {
+                base_revision,
+                entry_ids: vec![entry_id],
+                reason: ContextRemovalReason::Pruned,
+            }),
+            30,
+        )
+        .expect_err("unconsumed run input removal must fail");
+
+        assert!(matches!(error, CoreAgentDriveError::Domain(_)));
+        assert_eq!(drive.state().context.entries.len(), 1);
+    }
+
+    #[test]
+    fn consumed_run_input_context_can_be_removed() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        open_session(&mut drive);
+        request_run(&mut drive, BlobRef::from_bytes(b"input"));
+        let request = drive_until_generate(&mut drive);
+
+        let active_run = drive.state().runs.active.as_ref().expect("active run");
+        let entry_id = active_run.input.entry_ids[0];
+        assert_eq!(active_run.input.consumed_by_turn_id, Some(request.turn_id));
+
+        let base_revision = drive.state().context.revision;
+        commit_core_event_result(
+            &mut drive,
+            CoreAgentEventKind::Context(ContextEvent::EntriesRemoved {
+                base_revision,
+                entry_ids: vec![entry_id],
+                reason: ContextRemovalReason::Pruned,
+            }),
+            30,
+        )
+        .expect("consumed run input removal");
+
+        assert!(drive.state().context.entries.is_empty());
+    }
+
+    #[test]
+    fn stale_context_base_revision_is_rejected() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        open_session(&mut drive);
+        request_run(&mut drive, BlobRef::from_bytes(b"input"));
+        let start_run = drive.next_action(21, 64).expect("start run");
+        commit_action(&mut drive, start_run);
+        let materialize_input = drive.next_action(22, 64).expect("materialize input");
+        commit_action(&mut drive, materialize_input);
+
+        let entry_id = drive.state().context.entries[0].entry_id;
+        assert_eq!(drive.state().context.revision, 1);
+        let error = commit_core_event_result(
+            &mut drive,
+            CoreAgentEventKind::Context(ContextEvent::EntriesRemoved {
+                base_revision: 0,
+                entry_ids: vec![entry_id],
+                reason: ContextRemovalReason::Pruned,
+            }),
+            30,
+        )
+        .expect_err("stale base revision must fail");
+
+        assert!(matches!(error, CoreAgentDriveError::Domain(_)));
+        assert_eq!(drive.state().context.entries.len(), 1);
+    }
+
+    #[test]
+    fn duplicate_key_entries_in_one_context_event_are_rejected() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        open_session(&mut drive);
+        let key = ContextEntryKey::new("client.note");
+        let base_revision = drive.state().context.revision;
+
+        let error = commit_core_event_result(
+            &mut drive,
+            CoreAgentEventKind::Context(ContextEvent::EntriesApplied {
+                base_revision,
+                entries: vec![
+                    context_edit_entry(1, Some(key.clone()), b"first"),
+                    context_edit_entry(2, Some(key), b"second"),
+                ],
+            }),
+            20,
+        )
+        .expect_err("duplicate keys must fail");
+
+        assert!(matches!(error, CoreAgentDriveError::Domain(_)));
+        assert!(drive.state().context.entries.is_empty());
+        assert_eq!(drive.state().id_cursors.last_context_item_id, 0);
+    }
+
+    #[test]
+    fn missing_context_key_removal_is_rejected_at_admission() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        open_session(&mut drive);
+
+        let error = drive
+            .admit_command(
+                CoreAgentCommand::RemoveContext {
+                    key: ContextEntryKey::new("client.note"),
+                },
+                20,
+            )
+            .expect_err("missing key removal must fail");
+
+        let CoreAgentDriveError::Command(crate::CommandError::Rejected(rejection)) = error else {
+            panic!("expected rejected command");
+        };
+        assert_eq!(rejection.kind, CommandRejectionKind::UnknownReference);
+    }
+
+    #[test]
+    fn state_replacement_cannot_introduce_new_context_entries() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        open_session(&mut drive);
+        let base_revision = drive.state().context.revision;
+
+        let error = commit_core_event_result(
+            &mut drive,
+            CoreAgentEventKind::Context(ContextEvent::StateReplaced {
+                base_revision,
+                entries: vec![context_edit_entry(1, None, b"new")],
+                reason: ContextRewriteReason::PolicyChanged,
+            }),
+            20,
+        )
+        .expect_err("replacement cannot introduce new entries");
+
+        assert!(matches!(error, CoreAgentDriveError::Domain(_)));
+        assert!(drive.state().context.entries.is_empty());
+    }
+
+    #[test]
+    fn steering_materializes_after_in_flight_turn_snapshot() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        open_session(&mut drive);
+        request_run(&mut drive, BlobRef::from_bytes(b"input"));
+        let request = drive_until_generate(&mut drive);
+        assert_eq!(openai_items(&request).len(), 1);
+
+        let steering_one = drive
+            .admit_command(
+                CoreAgentCommand::RequestRunSteering {
+                    input: user_input(BlobRef::from_bytes(b"steering one")),
+                },
+                30,
+            )
+            .expect("steering one");
+        commit_action(&mut drive, steering_one);
+        let steering_two = drive
+            .admit_command(
+                CoreAgentCommand::RequestRunSteering {
+                    input: user_input(BlobRef::from_bytes(b"steering two")),
+                },
+                31,
+            )
+            .expect("steering two");
+        commit_action(&mut drive, steering_two);
+
+        let materialize_steering = drive.next_action(32, 64).expect("materialize steering");
+        let entries = commit_action(&mut drive, materialize_steering);
+        let CoreAgentEventKind::Context(ContextEvent::EntriesApplied {
+            entries: applied, ..
+        }) = &entries[0].event.kind
+        else {
+            panic!("expected context entries");
+        };
+        assert_eq!(applied.len(), 2);
+        assert!(matches!(
+            applied[0].source,
+            ContextEntrySource::Steering {
+                steering_id,
+                input_index: 0,
+                ..
+            } if steering_id.as_u64() == 1
+        ));
+        assert!(matches!(
+            applied[1].source,
+            ContextEntrySource::Steering {
+                steering_id,
+                input_index: 0,
+                ..
+            } if steering_id.as_u64() == 2
+        ));
+
+        let active_run = drive.state().runs.active.as_ref().expect("active run");
+        assert_eq!(active_run.steering.len(), 2);
+        assert_eq!(active_run.steering[0].entry_ids, vec![applied[0].entry_id]);
+        assert_eq!(active_run.steering[1].entry_ids, vec![applied[1].entry_id]);
+        assert_eq!(active_run.steering[0].consumed_by_turn_id, None);
+        assert_eq!(active_run.steering[1].consumed_by_turn_id, None);
+
+        let active_turn = active_run.turns.get(&request.turn_id).expect("active turn");
+        assert_eq!(active_turn.status, TurnStatus::GenerationPending);
+        let planned_request = active_turn.request.as_ref().expect("planned request");
+        let LlmRequestKind::OpenAiResponses(openai) = &planned_request.kind else {
+            panic!("expected OpenAI Responses request");
+        };
+        assert_eq!(openai.input_context.entries.len(), 1);
     }
 
     #[test]
@@ -585,7 +946,7 @@ mod tests {
             },
             context: ContextConfigPatch {
                 instructions_ref: Some(OptionalConfigPatch::Set(instructions_ref.clone())),
-                compaction_enabled: Some(true),
+                target_context_tokens: Some(OptionalConfigPatch::Set(4096)),
                 ..ContextConfigPatch::default()
             },
             ..SessionConfigPatch::default()
@@ -610,7 +971,7 @@ mod tests {
         assert_eq!(drive.state().lifecycle.config_revision, 1);
         assert_eq!(config.turn.max_output_tokens, Some(2048));
         assert_eq!(config.context.instructions_ref, Some(instructions_ref));
-        assert!(config.context.compaction_enabled);
+        assert_eq!(config.context.target_context_tokens, Some(4096));
     }
 
     #[test]
@@ -625,7 +986,7 @@ mod tests {
             .admit_command(
                 CoreAgentCommand::RequestRun {
                     submission_id: None,
-                    input_ref: BlobRef::from_bytes(b"input"),
+                    input: user_input(BlobRef::from_bytes(b"input")),
                     run_config: run_config(),
                 },
                 20,
@@ -697,7 +1058,7 @@ mod tests {
             .admit_command(
                 CoreAgentCommand::RequestRun {
                     submission_id: None,
-                    input_ref: BlobRef::from_bytes(b"input"),
+                    input: user_input(BlobRef::from_bytes(b"input")),
                     run_config: run_config(),
                 },
                 20,
@@ -767,20 +1128,20 @@ mod tests {
         assert_eq!(request.session_id, session_id);
         let items = openai_items(&request);
         assert_eq!(items.len(), 3);
-        assert!(matches!(items[0].kind, ContextItemKind::SkillCatalog));
-        assert_eq!(items[0].native_item_ref, catalog_ref);
+        assert!(matches!(items[0].kind, ContextEntryKind::SkillCatalog));
+        assert_eq!(items[0].content_ref, catalog_ref);
         assert!(matches!(
             items[1].kind,
-            ContextItemKind::Message {
+            ContextEntryKind::Message {
                 role: ContextMessageRole::User
             }
         ));
-        assert_eq!(items[1].native_item_ref, input_ref);
+        assert_eq!(items[1].content_ref, input_ref);
         assert!(matches!(
             &items[2].kind,
-            ContextItemKind::SkillActivation { skill_id: planned } if planned == &skill_id
+            ContextEntryKind::SkillActivation { skill_id: planned } if planned == &skill_id
         ));
-        assert_eq!(items[2].native_item_ref, activation_ref);
+        assert_eq!(items[2].content_ref, activation_ref);
     }
 
     #[test]
@@ -815,11 +1176,11 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert!(matches!(
             items[0].kind,
-            ContextItemKind::Message {
+            ContextEntryKind::Message {
                 role: ContextMessageRole::User
             }
         ));
-        assert_eq!(items[0].native_item_ref, input_ref);
+        assert_eq!(items[0].content_ref, input_ref);
     }
 
     #[test]
@@ -855,14 +1216,13 @@ mod tests {
                     turn_id: llm_request.turn_id,
                     status: LlmGenerationStatus::Succeeded,
                     failure_ref: None,
-                    context_items: Vec::new(),
+                    context_entries: Vec::new(),
                     facts: LlmGenerationFacts {
                         provider_response_id: Some("resp-1".to_owned()),
                         finish: LlmFinish::Stop,
                         usage: None,
                         tool_calls: Vec::new(),
                         context_token_estimate: None,
-                        compaction: None,
                     },
                 },
                 30,
@@ -881,7 +1241,7 @@ mod tests {
         assert!(
             next_items
                 .iter()
-                .all(|item| !matches!(item.kind, ContextItemKind::SkillActivation { .. }))
+                .all(|item| !matches!(item.kind, ContextEntryKind::SkillActivation { .. }))
         );
     }
 
@@ -898,7 +1258,7 @@ mod tests {
             .admit_command(
                 CoreAgentCommand::RequestRun {
                     submission_id: None,
-                    input_ref: BlobRef::from_bytes(b"input"),
+                    input: user_input(BlobRef::from_bytes(b"input")),
                     run_config: run_config(),
                 },
                 20,
@@ -929,7 +1289,7 @@ mod tests {
             .admit_command(
                 CoreAgentCommand::RequestRun {
                     submission_id: None,
-                    input_ref: BlobRef::from_bytes(b"input"),
+                    input: user_input(BlobRef::from_bytes(b"input")),
                     run_config: run_config(),
                 },
                 20,
@@ -944,15 +1304,11 @@ mod tests {
                     turn_id: request.turn_id,
                     status: LlmGenerationStatus::Succeeded,
                     failure_ref: None,
-                    context_items: vec![UncommittedContextItem {
-                        kind: ContextItemKind::Message {
+                    context_entries: vec![ContextEntryInput {
+                        kind: ContextEntryKind::Message {
                             role: ContextMessageRole::Assistant,
                         },
-                        source: ContextItemSource::AssistantOutput {
-                            run_id: request.run_id,
-                            turn_id: request.turn_id,
-                        },
-                        native_item_ref: BlobRef::from_bytes(b"assistant output"),
+                        content_ref: BlobRef::from_bytes(b"assistant output"),
                         media_type: None,
                         preview: None,
                         provider_kind: None,
@@ -965,7 +1321,6 @@ mod tests {
                         usage: None,
                         tool_calls: Vec::new(),
                         context_token_estimate: None,
-                        compaction: None,
                     },
                 };
                 let resumed = drive
@@ -990,7 +1345,7 @@ mod tests {
             .admit_command(
                 CoreAgentCommand::RequestRun {
                     submission_id: None,
-                    input_ref: BlobRef::from_bytes(b"input"),
+                    input: user_input(BlobRef::from_bytes(b"input")),
                     run_config: run_config(),
                 },
                 20,
@@ -1013,14 +1368,13 @@ mod tests {
                     turn_id: llm_request.turn_id,
                     status: LlmGenerationStatus::Failed,
                     failure_ref: Some(failure_ref.clone()),
-                    context_items: Vec::new(),
+                    context_entries: Vec::new(),
                     facts: LlmGenerationFacts {
                         provider_response_id: None,
                         finish: LlmFinish::Failed,
                         usage: None,
                         tool_calls: Vec::new(),
                         context_token_estimate: None,
-                        compaction: None,
                     },
                 },
                 30,

@@ -148,8 +148,6 @@ pub struct ContextConfigPatch {
     pub target_context_tokens: Option<OptionalConfigPatch<u32>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reserve_output_tokens: Option<OptionalConfigPatch<u32>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub compaction_enabled: Option<bool>,
 }
 
 impl ContextConfigPatch {
@@ -164,9 +162,6 @@ impl ContextConfigPatch {
             &mut config.reserve_output_tokens,
             &self.reserve_output_tokens,
         );
-        if let Some(compaction_enabled) = self.compaction_enabled {
-            config.compaction_enabled = compaction_enabled;
-        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -174,7 +169,6 @@ impl ContextConfigPatch {
             && self.max_context_tokens.is_none()
             && self.target_context_tokens.is_none()
             && self.reserve_output_tokens.is_none()
-            && self.compaction_enabled.is_none()
     }
 }
 
@@ -247,7 +241,6 @@ pub struct ContextConfig {
     pub max_context_tokens: Option<u32>,
     pub target_context_tokens: Option<u32>,
     pub reserve_output_tokens: Option<u32>,
-    pub compaction_enabled: bool,
 }
 
 fn validate_model_selection(model: &ModelSelection) -> Result<(), DomainError> {
@@ -319,13 +312,6 @@ fn validate_active_context_api_kind(
     state: &CoreAgentState,
     api_kind: &ProviderApiKind,
 ) -> Result<(), DomainError> {
-    if let Some(window) = state.context.active_window.as_ref() {
-        if &window.api_kind != api_kind {
-            return Err(DomainError::ProviderCompatibility(format!(
-                "active context window api kind {:?} does not match session api kind {:?}",
-                window.api_kind, api_kind
-            )));
-        }
-    }
+    let _ = (state, api_kind);
     Ok(())
 }

@@ -4,8 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     BlobRef, ContextEntryKey, ContextItemId, CoreAgentEventKind, CoreAgentEventProposal,
-    CoreAgentJoins, CoreAgentState, CoreAgentStatus, DomainError, PlanNext, PlanningError, RunId,
-    RunStatus, SkillActivation, SkillId, ToolCallId, ToolName, TurnId,
+    CoreAgentJoins, CoreAgentState, CoreAgentStatus, DomainError, PlanNext, PlanningError,
+    ProviderApiKind, RunId, RunStatus, SkillActivation, SkillId, SteeringId, ToolBatchId,
+    ToolCallId, ToolName, TurnId,
 };
 
 const SESSION_INSTRUCTIONS_KEY: &str = "session.instructions";
@@ -18,19 +19,27 @@ pub type ContextEntryId = ContextItemId;
 pub enum Event {
     /// Applies new immutable entries to active context. Unkeyed entries append;
     /// keyed entries replace the previous active entry for that key.
-    EntriesApplied { entries: Vec<ContextEntry> },
+    EntriesApplied {
+        base_revision: u64,
+        entries: Vec<ContextEntry>,
+    },
     /// Removes active context entries. The event log remains the durable audit
     /// history, so removed entries do not need to stay in reducer state.
     EntriesRemoved {
+        base_revision: u64,
         entry_ids: Vec<ContextEntryId>,
         reason: ContextRemovalReason,
     },
     /// Removes replaceable active entries by key, such as cleared instructions.
-    KeysRemoved { keys: Vec<ContextEntryKey> },
-    /// Replaces the full active context state. This is intended for compaction
-    /// and policy rewrites where the next active context is clearer as a whole
-    /// state than as separate add/remove deltas.
+    KeysRemoved {
+        base_revision: u64,
+        keys: Vec<ContextEntryKey>,
+    },
+    /// Replaces the full active context state for explicit prune or policy
+    /// rewrites. Replacement entries must be active entries from the current
+    /// state; new materialization uses `EntriesApplied`.
     StateReplaced {
+        base_revision: u64,
         entries: Vec<ContextEntry>,
         reason: ContextRewriteReason,
     },
@@ -40,9 +49,25 @@ pub type ContextEvent = Event;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextState {
+    /// Monotonic active-context revision used to guard rewrites and turn snapshots.
+    pub revision: u64,
     /// Active context entries in strictly increasing `entry_id` order. Gaps are
-    /// expected after removals and compaction; ids are never reused.
+    /// expected after removals and state rewrites; ids are never reused.
     pub entries: Vec<ContextEntry>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextSnapshot {
+    pub api_kind: ProviderApiKind,
+    pub context_revision: u64,
+    pub entries: Vec<ContextEntry>,
+    pub token_estimate: Option<TokenEstimate>,
+}
+
+impl ContextSnapshot {
+    pub fn entry_ids(&self) -> Vec<ContextEntryId> {
+        self.entries.iter().map(|entry| entry.entry_id).collect()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,10 +79,6 @@ pub enum ContextRemovalReason {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContextRewriteReason {
-    Compacted {
-        source_entries: Vec<ContextEntryId>,
-        summary_ref: Option<BlobRef>,
-    },
     Pruned,
     PolicyChanged,
 }
@@ -67,7 +88,7 @@ pub struct ContextEntry {
     /// Immutable, session-local identity assigned by the reducer.
     pub entry_id: ContextEntryId,
     /// Optional live slot this entry replaces. The key is not identity; model
-    /// requests, removals, and compaction should reference `entry_id`.
+    /// requests, removals, and rewrites should reference `entry_id`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<ContextEntryKey>,
     /// Provider-neutral semantic category used by planners, renderers, and projections.
@@ -84,7 +105,7 @@ pub struct ContextEntry {
     pub provider_kind: Option<String>,
     /// Provider-assigned item id when preserving native conversation/state identity.
     pub provider_item_id: Option<String>,
-    /// Optional accounting estimate used by context planning and compaction.
+    /// Optional accounting estimate used by context planning.
     pub token_estimate: Option<TokenEstimate>,
 }
 
@@ -131,7 +152,6 @@ pub enum ContextEntryKind {
     ToolCall { call_id: ToolCallId, name: ToolName },
     ToolResult { call_id: ToolCallId, is_error: bool },
     ReasoningState,
-    CompactionState,
     ProviderOpaque,
 }
 
@@ -148,9 +168,12 @@ pub enum ContextEntrySource {
     ContextEdit,
     RunInput {
         run_id: RunId,
+        input_index: u32,
     },
     Steering {
         run_id: RunId,
+        steering_id: SteeringId,
+        input_index: u32,
     },
     AssistantOutput {
         run_id: RunId,
@@ -159,14 +182,11 @@ pub enum ContextEntrySource {
     Tool {
         run_id: RunId,
         turn_id: TurnId,
+        batch_id: Option<ToolBatchId>,
     },
     Reasoning {
         run_id: RunId,
         turn_id: TurnId,
-    },
-    Compaction {
-        run_id: Option<RunId>,
-        turn_id: Option<TurnId>,
     },
     Runtime {
         label: String,
@@ -239,6 +259,94 @@ pub(crate) fn context_entries_by_id(
         .collect()
 }
 
+pub(crate) fn planned_context_snapshot(
+    state: &CoreAgentState,
+    api_kind: ProviderApiKind,
+) -> Result<ContextSnapshot, PlanningError> {
+    let entry_ids = planned_context_entry_ids(state);
+    let entries = context_entries_by_id(state, &entry_ids)?;
+    Ok(ContextSnapshot {
+        api_kind,
+        context_revision: state.context.revision,
+        token_estimate: combined_token_estimate(&entries),
+        entries,
+    })
+}
+
+pub(crate) fn validate_snapshot_matches_active_context(
+    state: &CoreAgentState,
+    snapshot: &ContextSnapshot,
+) -> Result<(), DomainError> {
+    if snapshot.context_revision != state.context.revision {
+        return Err(DomainError::InvariantViolation(format!(
+            "turn context snapshot revision {} does not match active context revision {}",
+            snapshot.context_revision, state.context.revision
+        )));
+    }
+
+    let expected_entry_ids = planned_context_entry_ids(state);
+    let actual_entry_ids = snapshot.entry_ids();
+    if expected_entry_ids != actual_entry_ids {
+        return Err(DomainError::InvariantViolation(
+            "turn context snapshot entries do not match active context plan".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn mark_snapshot_consumed_by_turn(
+    state: &mut CoreAgentState,
+    run_id: RunId,
+    turn_id: TurnId,
+    snapshot: &ContextSnapshot,
+) -> Result<(), DomainError> {
+    let snapshot_ids = snapshot.entry_ids().into_iter().collect::<BTreeSet<_>>();
+    let active_run = crate::core::components::run::active_run_mut(state, run_id)?;
+
+    if active_run.input.consumed_by_turn_id.is_none()
+        && active_run
+            .input
+            .entry_ids
+            .iter()
+            .all(|entry_id| snapshot_ids.contains(entry_id))
+    {
+        active_run.input.consumed_by_turn_id = Some(turn_id);
+    }
+
+    for steering in &mut active_run.steering {
+        if steering.consumed_by_turn_id.is_none()
+            && steering
+                .entry_ids
+                .iter()
+                .all(|entry_id| snapshot_ids.contains(entry_id))
+        {
+            steering.consumed_by_turn_id = Some(turn_id);
+        }
+    }
+
+    Ok(())
+}
+
+fn combined_token_estimate(entries: &[ContextEntry]) -> Option<TokenEstimate> {
+    let mut tokens = 0u32;
+    let mut quality = TokenEstimateQuality::Exact;
+    for entry in entries {
+        let estimate = entry.token_estimate.as_ref()?;
+        tokens = tokens.checked_add(estimate.tokens)?;
+        quality = match (quality, estimate.quality) {
+            (TokenEstimateQuality::Estimated, _) | (_, TokenEstimateQuality::Estimated) => {
+                TokenEstimateQuality::Estimated
+            }
+            (TokenEstimateQuality::ProviderCounted, _)
+            | (_, TokenEstimateQuality::ProviderCounted) => TokenEstimateQuality::ProviderCounted,
+            (TokenEstimateQuality::Exact, TokenEstimateQuality::Exact) => {
+                TokenEstimateQuality::Exact
+            }
+        };
+    }
+    Some(TokenEstimate { tokens, quality })
+}
+
 pub(crate) fn context_entries_from_inputs(
     state: &CoreAgentState,
     inputs: Vec<(
@@ -257,6 +365,69 @@ pub(crate) fn context_entries_from_inputs(
             Ok(entry.commit(ContextEntryId::new(next_entry_id), key, source))
         })
         .collect()
+}
+
+pub(crate) fn validate_external_context_edit(
+    key: &ContextEntryKey,
+    entry: &ContextEntryInput,
+) -> Result<(), DomainError> {
+    if is_reserved_context_key(key) {
+        return Err(DomainError::InvariantViolation(format!(
+            "context key {} is reserved",
+            key
+        )));
+    }
+    validate_user_supplied_context_entry(entry, "context edit")
+}
+
+pub(crate) fn validate_context_key_exists(
+    state: &CoreAgentState,
+    key: &ContextEntryKey,
+) -> Result<(), DomainError> {
+    if current_key_entry(state, key).is_some() {
+        Ok(())
+    } else {
+        Err(DomainError::InvariantViolation(format!(
+            "context key {} does not exist",
+            key
+        )))
+    }
+}
+
+pub(crate) fn validate_run_input_entries(entries: &[ContextEntryInput]) -> Result<(), DomainError> {
+    for entry in entries {
+        validate_user_supplied_context_entry(entry, "run input")?;
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_steering_input_entries(
+    entries: &[ContextEntryInput],
+) -> Result<(), DomainError> {
+    for entry in entries {
+        validate_user_supplied_context_entry(entry, "run steering")?;
+    }
+    Ok(())
+}
+
+fn validate_user_supplied_context_entry(
+    entry: &ContextEntryInput,
+    source: &'static str,
+) -> Result<(), DomainError> {
+    match &entry.kind {
+        ContextEntryKind::Message {
+            role: ContextMessageRole::User,
+        }
+        | ContextEntryKind::ProviderOpaque => Ok(()),
+        _ => Err(DomainError::InvariantViolation(format!(
+            "{} cannot supply context entry kind {:?}",
+            source, entry.kind
+        ))),
+    }
+}
+
+fn is_reserved_context_key(key: &ContextEntryKey) -> bool {
+    key.as_str() == SESSION_INSTRUCTIONS_KEY || key.as_str() == SKILL_CATALOG_KEY
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -289,6 +460,7 @@ impl PlanNext for CoreContextPlanner {
         let run_input_entries = missing_run_input_entries(state)?;
         if !run_input_entries.is_empty() {
             return Ok(vec![entries_applied_proposal(
+                state,
                 active_run.run_id,
                 run_input_entries,
             )]);
@@ -297,6 +469,7 @@ impl PlanNext for CoreContextPlanner {
         let steering_entries = missing_steering_entries(state)?;
         if !steering_entries.is_empty() {
             return Ok(vec![entries_applied_proposal(
+                state,
                 active_run.run_id,
                 steering_entries,
             )]);
@@ -305,6 +478,7 @@ impl PlanNext for CoreContextPlanner {
         let activation_entries = missing_direct_activation_entries(state)?;
         if !activation_entries.is_empty() {
             return Ok(vec![entries_applied_proposal(
+                state,
                 active_run.run_id,
                 activation_entries,
             )]);
@@ -327,7 +501,7 @@ fn instruction_proposal(
 
     let Some(instructions_ref) = config.context.instructions_ref.as_ref() else {
         if current_key_entry(state, &key).is_some() {
-            return Ok(Some(keys_removed_proposal(run_id, vec![key])));
+            return Ok(Some(keys_removed_proposal(state, run_id, vec![key])));
         }
         return Ok(None);
     };
@@ -337,6 +511,7 @@ fn instruction_proposal(
     }
 
     Ok(Some(entries_applied_proposal(
+        state,
         run_id,
         vec![ContextEntry {
             entry_id: next_context_entry_id(state, 1)?,
@@ -362,7 +537,7 @@ fn skill_catalog_proposal(
     let key = skill_catalog_key();
     let Some(catalog) = state.skills.catalog.as_ref() else {
         if current_key_entry(state, &key).is_some() {
-            return Ok(Some(keys_removed_proposal(run_id, vec![key])));
+            return Ok(Some(keys_removed_proposal(state, run_id, vec![key])));
         }
         return Ok(None);
     };
@@ -373,6 +548,7 @@ fn skill_catalog_proposal(
     }
 
     Ok(Some(entries_applied_proposal(
+        state,
         run_id,
         vec![ContextEntry {
             entry_id: next_context_entry_id(state, 1)?,
@@ -395,12 +571,7 @@ fn missing_run_input_entries(state: &CoreAgentState) -> Result<Vec<ContextEntry>
     let Some(active_run) = state.runs.active.as_ref() else {
         return Ok(Vec::new());
     };
-    if state.context.entries.iter().any(|entry| {
-        matches!(
-            entry.source,
-            ContextEntrySource::RunInput { run_id } if run_id == active_run.run_id
-        )
-    }) {
+    if active_run.input.entry_ids.len() >= active_run.input.input.len() {
         return Ok(Vec::new());
     }
 
@@ -408,18 +579,22 @@ fn missing_run_input_entries(state: &CoreAgentState) -> Result<Vec<ContextEntry>
         state,
         active_run
             .input
+            .input
             .iter()
-            .cloned()
-            .map(|entry| {
-                (
+            .enumerate()
+            .skip(active_run.input.entry_ids.len())
+            .map(|(index, entry)| {
+                let input_index = input_index(index)?;
+                Ok((
                     None,
                     ContextEntrySource::RunInput {
                         run_id: active_run.run_id,
+                        input_index,
                     },
-                    entry,
-                )
+                    entry.clone(),
+                ))
             })
-            .collect(),
+            .collect::<Result<Vec<_>, DomainError>>()?,
     )
 }
 
@@ -428,37 +603,36 @@ fn missing_steering_entries(state: &CoreAgentState) -> Result<Vec<ContextEntry>,
         return Ok(Vec::new());
     };
 
-    let recorded_entries_to_skip = state
-        .context
-        .entries
-        .iter()
-        .filter(|entry| {
-            matches!(
-                entry.source,
-                ContextEntrySource::Steering { run_id } if run_id == active_run.run_id
-            )
-        })
-        .count();
-
-    context_entries_from_inputs(
-        state,
-        active_run
-            .steering
+    let mut inputs = Vec::new();
+    for steering in &active_run.steering {
+        if steering.entry_ids.len() >= steering.input.len() {
+            continue;
+        }
+        for (index, entry) in steering
+            .input
             .iter()
-            .flat_map(|input| input.iter())
-            .skip(recorded_entries_to_skip)
-            .cloned()
-            .map(|entry| {
-                (
-                    None,
-                    ContextEntrySource::Steering {
-                        run_id: active_run.run_id,
-                    },
-                    entry,
-                )
-            })
-            .collect(),
-    )
+            .enumerate()
+            .skip(steering.entry_ids.len())
+        {
+            inputs.push((
+                None,
+                ContextEntrySource::Steering {
+                    run_id: active_run.run_id,
+                    steering_id: steering.steering_id,
+                    input_index: input_index(index)?,
+                },
+                entry.clone(),
+            ));
+        }
+    }
+
+    context_entries_from_inputs(state, inputs)
+}
+
+fn input_index(index: usize) -> Result<u32, DomainError> {
+    index.try_into().map_err(|_| {
+        DomainError::InvariantViolation(format!("context input index {} exceeds u32", index))
+    })
 }
 
 fn missing_direct_activation_entries(
@@ -558,46 +732,110 @@ fn skill_catalog_key() -> ContextEntryKey {
     ContextEntryKey::new(SKILL_CATALOG_KEY)
 }
 
-fn entries_applied_proposal(run_id: RunId, entries: Vec<ContextEntry>) -> CoreAgentEventProposal {
+fn entries_applied_proposal(
+    state: &CoreAgentState,
+    run_id: RunId,
+    entries: Vec<ContextEntry>,
+) -> CoreAgentEventProposal {
     CoreAgentEventProposal::new(
         CoreAgentJoins {
             run_id: Some(run_id),
             ..CoreAgentJoins::default()
         },
-        CoreAgentEventKind::Context(Event::EntriesApplied { entries }),
+        CoreAgentEventKind::Context(Event::EntriesApplied {
+            base_revision: state.context.revision,
+            entries,
+        }),
     )
 }
 
-fn keys_removed_proposal(run_id: RunId, keys: Vec<ContextEntryKey>) -> CoreAgentEventProposal {
+fn keys_removed_proposal(
+    state: &CoreAgentState,
+    run_id: RunId,
+    keys: Vec<ContextEntryKey>,
+) -> CoreAgentEventProposal {
     CoreAgentEventProposal::new(
         CoreAgentJoins {
             run_id: Some(run_id),
             ..CoreAgentJoins::default()
         },
-        CoreAgentEventKind::Context(Event::KeysRemoved { keys }),
+        CoreAgentEventKind::Context(Event::KeysRemoved {
+            base_revision: state.context.revision,
+            keys,
+        }),
     )
 }
 
 pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(), DomainError> {
     match event {
-        Event::EntriesApplied { entries } => apply_entries_applied(state, entries),
-        Event::EntriesRemoved { entry_ids, reason } => {
-            validate_removal_reason(reason)?;
-            remove_context_entries(state, entry_ids)
+        Event::EntriesApplied {
+            base_revision,
+            entries,
+        } => {
+            validate_base_revision(state, *base_revision)?;
+            apply_entries_applied(state, entries)?;
+            bump_context_revision(state)?;
+            Ok(())
         }
-        Event::KeysRemoved { keys } => {
+        Event::EntriesRemoved {
+            base_revision,
+            entry_ids,
+            reason,
+        } => {
+            validate_base_revision(state, *base_revision)?;
+            validate_removal_reason(reason)?;
+            validate_entries_removable(state, entry_ids, reason)?;
+            remove_context_entries(state, entry_ids)?;
+            bump_context_revision(state)?;
+            Ok(())
+        }
+        Event::KeysRemoved {
+            base_revision,
+            keys,
+        } => {
+            validate_base_revision(state, *base_revision)?;
             if keys.is_empty() {
                 return Err(DomainError::InvariantViolation(
                     "context key removal event must contain at least one key".into(),
                 ));
             }
+            validate_keys_removable(state, keys)?;
             for key in keys {
                 remove_context_entry_by_key(state, key);
             }
+            bump_context_revision(state)?;
             Ok(())
         }
-        Event::StateReplaced { entries, reason } => replace_context_state(state, entries, reason),
+        Event::StateReplaced {
+            base_revision,
+            entries,
+            reason,
+        } => {
+            validate_base_revision(state, *base_revision)?;
+            replace_context_state(state, entries, reason)?;
+            bump_context_revision(state)?;
+            Ok(())
+        }
     }
+}
+
+fn validate_base_revision(state: &CoreAgentState, base_revision: u64) -> Result<(), DomainError> {
+    if base_revision == state.context.revision {
+        Ok(())
+    } else {
+        Err(DomainError::InvariantViolation(format!(
+            "context event base revision {} does not match active revision {}",
+            base_revision, state.context.revision
+        )))
+    }
+}
+
+fn bump_context_revision(state: &mut CoreAgentState) -> Result<(), DomainError> {
+    state.context.revision =
+        state.context.revision.checked_add(1).ok_or_else(|| {
+            DomainError::InvariantViolation("context revision exhausted".to_owned())
+        })?;
+    Ok(())
 }
 
 fn apply_entries_applied(
@@ -609,6 +847,7 @@ fn apply_entries_applied(
             "context entries event must contain at least one entry".into(),
         ));
     }
+    validate_no_duplicate_entry_keys(entries)?;
     for entry in entries {
         let expected_entry_id = state
             .id_cursors
@@ -638,6 +877,8 @@ fn apply_entries_applied(
             }
         }
 
+        record_entry_materialization(state, entry)?;
+
         if let Some(key) = entry.key.as_ref() {
             remove_context_entry_by_key(state, key);
         }
@@ -648,10 +889,180 @@ fn apply_entries_applied(
     Ok(())
 }
 
+fn validate_no_duplicate_entry_keys(entries: &[ContextEntry]) -> Result<(), DomainError> {
+    let mut seen = BTreeSet::new();
+    for entry in entries {
+        if let Some(key) = entry.key.as_ref() {
+            if !seen.insert(key.clone()) {
+                return Err(DomainError::InvariantViolation(format!(
+                    "duplicate context key {} in entries event",
+                    key
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn record_entry_materialization(
+    state: &mut CoreAgentState,
+    entry: &ContextEntry,
+) -> Result<(), DomainError> {
+    match &entry.source {
+        ContextEntrySource::RunInput {
+            run_id,
+            input_index,
+        } => {
+            let active_run = crate::core::components::run::active_run_mut(state, *run_id)?;
+            let index = *input_index as usize;
+            let Some(expected) = active_run.input.input.get(index) else {
+                return Err(DomainError::InvariantViolation(format!(
+                    "run input context entry {} references missing input index {}",
+                    entry.entry_id, input_index
+                )));
+            };
+            validate_entry_matches_input(entry, expected)?;
+            if active_run.input.entry_ids.len() != index {
+                return Err(DomainError::InvariantViolation(format!(
+                    "run input context entry {} expected input index {}, got {}",
+                    entry.entry_id,
+                    active_run.input.entry_ids.len(),
+                    input_index
+                )));
+            }
+            active_run.input.entry_ids.push(entry.entry_id);
+            Ok(())
+        }
+        ContextEntrySource::Steering {
+            run_id,
+            steering_id,
+            input_index,
+        } => {
+            let active_run = crate::core::components::run::active_run_mut(state, *run_id)?;
+            let Some(steering) = active_run
+                .steering
+                .iter_mut()
+                .find(|steering| steering.steering_id == *steering_id)
+            else {
+                return Err(DomainError::InvariantViolation(format!(
+                    "steering context entry {} references missing steering batch {}",
+                    entry.entry_id, steering_id
+                )));
+            };
+            let index = *input_index as usize;
+            let Some(expected) = steering.input.get(index) else {
+                return Err(DomainError::InvariantViolation(format!(
+                    "steering context entry {} references missing input index {}",
+                    entry.entry_id, input_index
+                )));
+            };
+            validate_entry_matches_input(entry, expected)?;
+            if steering.entry_ids.len() != index {
+                return Err(DomainError::InvariantViolation(format!(
+                    "steering context entry {} expected input index {}, got {}",
+                    entry.entry_id,
+                    steering.entry_ids.len(),
+                    input_index
+                )));
+            }
+            steering.entry_ids.push(entry.entry_id);
+            Ok(())
+        }
+        ContextEntrySource::ContextEdit
+        | ContextEntrySource::AssistantOutput { .. }
+        | ContextEntrySource::Tool { .. }
+        | ContextEntrySource::Reasoning { .. }
+        | ContextEntrySource::Runtime { .. } => Ok(()),
+    }
+}
+
+fn validate_entry_matches_input(
+    entry: &ContextEntry,
+    input: &ContextEntryInput,
+) -> Result<(), DomainError> {
+    if entry.key.is_some() {
+        return Err(DomainError::InvariantViolation(format!(
+            "run materialized context entry {} must not have a key",
+            entry.entry_id
+        )));
+    }
+    if entry.kind != input.kind
+        || entry.content_ref != input.content_ref
+        || entry.media_type != input.media_type
+        || entry.preview != input.preview
+        || entry.provider_kind != input.provider_kind
+        || entry.provider_item_id != input.provider_item_id
+        || entry.token_estimate != input.token_estimate
+    {
+        return Err(DomainError::InvariantViolation(format!(
+            "context entry {} does not match accepted input payload",
+            entry.entry_id
+        )));
+    }
+    Ok(())
+}
+
 fn validate_removal_reason(reason: &ContextRemovalReason) -> Result<(), DomainError> {
     match reason {
         ContextRemovalReason::Pruned => Ok(()),
     }
+}
+
+fn validate_entries_removable(
+    state: &CoreAgentState,
+    entry_ids: &[ContextEntryId],
+    _reason: &ContextRemovalReason,
+) -> Result<(), DomainError> {
+    for entry_id in entry_ids {
+        validate_entry_is_not_unconsumed_active_run_input(state, *entry_id)?;
+    }
+    Ok(())
+}
+
+fn validate_keys_removable(
+    state: &CoreAgentState,
+    keys: &[ContextEntryKey],
+) -> Result<(), DomainError> {
+    let mut seen = BTreeSet::new();
+    for key in keys {
+        if !seen.insert(key.clone()) {
+            return Err(DomainError::InvariantViolation(format!(
+                "duplicate context key removal {}",
+                key
+            )));
+        }
+        validate_context_key_exists(state, key)?;
+    }
+    Ok(())
+}
+
+fn validate_entry_is_not_unconsumed_active_run_input(
+    state: &CoreAgentState,
+    entry_id: ContextEntryId,
+) -> Result<(), DomainError> {
+    let Some(active_run) = state.runs.active.as_ref() else {
+        return Ok(());
+    };
+
+    if active_run.input.consumed_by_turn_id.is_none()
+        && active_run.input.entry_ids.contains(&entry_id)
+    {
+        return Err(DomainError::InvariantViolation(format!(
+            "cannot remove unconsumed run input context entry {}",
+            entry_id
+        )));
+    }
+
+    for steering in &active_run.steering {
+        if steering.consumed_by_turn_id.is_none() && steering.entry_ids.contains(&entry_id) {
+            return Err(DomainError::InvariantViolation(format!(
+                "cannot remove unconsumed steering context entry {}",
+                entry_id
+            )));
+        }
+    }
+
+    Ok(())
 }
 
 fn remove_context_entries(
@@ -701,6 +1112,7 @@ fn replace_context_state(
 ) -> Result<(), DomainError> {
     validate_rewrite_reason(state, reason)?;
     validate_replacement_entries(state, entries)?;
+    validate_rewrite_preserves_unconsumed_entries(state, entries)?;
 
     if let Some(last) = entries.last() {
         state.id_cursors.last_context_item_id = last
@@ -712,34 +1124,27 @@ fn replace_context_state(
     Ok(())
 }
 
-fn validate_rewrite_reason(
+fn validate_rewrite_preserves_unconsumed_entries(
     state: &CoreAgentState,
+    replacement_entries: &[ContextEntry],
+) -> Result<(), DomainError> {
+    let replacement_ids = replacement_entries
+        .iter()
+        .map(|entry| entry.entry_id)
+        .collect::<BTreeSet<_>>();
+    for entry in &state.context.entries {
+        if !replacement_ids.contains(&entry.entry_id) {
+            validate_entry_is_not_unconsumed_active_run_input(state, entry.entry_id)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_rewrite_reason(
+    _state: &CoreAgentState,
     reason: &ContextRewriteReason,
 ) -> Result<(), DomainError> {
     match reason {
-        ContextRewriteReason::Compacted { source_entries, .. } => {
-            if source_entries.is_empty() {
-                return Err(DomainError::InvariantViolation(
-                    "context compaction rewrite must include source entries".into(),
-                ));
-            }
-            let mut seen = BTreeSet::new();
-            for entry_id in source_entries {
-                if !seen.insert(*entry_id) {
-                    return Err(DomainError::InvariantViolation(format!(
-                        "duplicate context compaction source entry {}",
-                        entry_id
-                    )));
-                }
-                if entry_by_id(state, *entry_id).is_none() {
-                    return Err(DomainError::InvariantViolation(format!(
-                        "context compaction references unknown source entry {}",
-                        entry_id
-                    )));
-                }
-            }
-            Ok(())
-        }
         ContextRewriteReason::Pruned | ContextRewriteReason::PolicyChanged => Ok(()),
     }
 }
@@ -751,13 +1156,6 @@ fn validate_replacement_entries(
     let mut seen_ids = BTreeSet::new();
     let mut seen_keys = BTreeSet::new();
     let mut previous_entry_id = None;
-    let mut next_new_entry_id = state
-        .id_cursors
-        .last_context_item_id
-        .checked_add(1)
-        .ok_or_else(|| {
-            DomainError::InvariantViolation("context entry id cursor exhausted".into())
-        })?;
 
     for entry in entries {
         if !seen_ids.insert(entry.entry_id) {
@@ -794,15 +1192,10 @@ fn validate_replacement_entries(
             }
             Some(_) => {}
             None => {
-                if entry.entry_id.as_u64() != next_new_entry_id {
-                    return Err(DomainError::InvariantViolation(format!(
-                        "expected new replacement context entry id {}, got {}",
-                        next_new_entry_id, entry.entry_id
-                    )));
-                }
-                next_new_entry_id = next_new_entry_id.checked_add(1).ok_or_else(|| {
-                    DomainError::InvariantViolation("context entry id cursor exhausted".into())
-                })?;
+                return Err(DomainError::InvariantViolation(format!(
+                    "replacement context entry {} is not an active entry",
+                    entry.entry_id
+                )));
             }
         }
     }

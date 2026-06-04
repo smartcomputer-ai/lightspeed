@@ -157,9 +157,9 @@ fn is_core_agent_event_envelope_kind(kind: &str) -> bool {
         "forge.core.lifecycle.opened"
             | "forge.core.lifecycle.config_changed"
             | "forge.core.lifecycle.closed"
-            | "forge.core.run.queued"
+            | "forge.core.run.accepted"
             | "forge.core.run.started"
-            | "forge.core.run.steering_added"
+            | "forge.core.run.steering_accepted"
             | "forge.core.run.cancellation_requested"
             | "forge.core.run.completed"
             | "forge.core.run.failed"
@@ -169,9 +169,10 @@ fn is_core_agent_event_envelope_kind(kind: &str) -> bool {
             | "forge.core.turn.generation_requested"
             | "forge.core.turn.generation_completed"
             | "forge.core.turn.completed"
-            | "forge.core.context.items_recorded"
-            | "forge.core.context.window_planned"
-            | "forge.core.context.compaction_recorded"
+            | "forge.core.context.entries_applied"
+            | "forge.core.context.entries_removed"
+            | "forge.core.context.keys_removed"
+            | "forge.core.context.state_replaced"
             | "forge.core.skill.catalog_set"
             | "forge.core.skill.activations_set"
             | "forge.core.tool_config.registry_changed"
@@ -193,9 +194,9 @@ fn core_agent_event_envelope_kind(event: &CoreAgentEvent) -> &'static str {
             CoreAgentLifecycleEvent::Closed => "forge.core.lifecycle.closed",
         },
         CoreAgentEventKind::Run(event) => match event {
-            RunEvent::Queued { .. } => "forge.core.run.queued",
+            RunEvent::Accepted { .. } => "forge.core.run.accepted",
             RunEvent::Started { .. } => "forge.core.run.started",
-            RunEvent::SteeringAdded { .. } => "forge.core.run.steering_added",
+            RunEvent::SteeringAccepted { .. } => "forge.core.run.steering_accepted",
             RunEvent::CancellationRequested { .. } => "forge.core.run.cancellation_requested",
             RunEvent::Completed { .. } => "forge.core.run.completed",
             RunEvent::Failed { .. } => "forge.core.run.failed",
@@ -209,9 +210,10 @@ fn core_agent_event_envelope_kind(event: &CoreAgentEvent) -> &'static str {
             TurnEvent::Completed { .. } => "forge.core.turn.completed",
         },
         CoreAgentEventKind::Context(event) => match event {
-            ContextEvent::ItemsRecorded { .. } => "forge.core.context.items_recorded",
-            ContextEvent::WindowPlanned { .. } => "forge.core.context.window_planned",
-            ContextEvent::CompactionRecorded { .. } => "forge.core.context.compaction_recorded",
+            ContextEvent::EntriesApplied { .. } => "forge.core.context.entries_applied",
+            ContextEvent::EntriesRemoved { .. } => "forge.core.context.entries_removed",
+            ContextEvent::KeysRemoved { .. } => "forge.core.context.keys_removed",
+            ContextEvent::StateReplaced { .. } => "forge.core.context.state_replaced",
         },
         CoreAgentEventKind::Skill(event) => match event {
             SkillEvent::CatalogSet { .. } => "forge.core.skill.catalog_set",

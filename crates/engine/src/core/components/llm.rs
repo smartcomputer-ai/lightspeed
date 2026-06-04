@@ -5,9 +5,8 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    ActiveRun, BlobRef, ContextWindow, CoreAgentState, DomainError, PlanningError,
-    ResolvedContextWindow, RunConfig, RunId, SessionConfig, ToolChoice, ToolChoiceMode, ToolKind,
-    ToolName, ToolSpec, TurnId,
+    ActiveRun, BlobRef, ContextSnapshot, CoreAgentState, DomainError, PlanningError, RunConfig,
+    RunId, SessionConfig, ToolChoice, ToolChoiceMode, ToolKind, ToolName, ToolSpec, TurnId,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -149,45 +148,30 @@ pub enum LlmRequestKind {
     OpenAiCompletions(OpenAiCompletionsRequest),
 }
 
-pub(crate) fn validate_request_matches_active_window(
+pub(crate) fn validate_request_matches_active_context(
     state: &CoreAgentState,
     request: &LlmRequest,
 ) -> Result<(), DomainError> {
-    let request_window = llm_request_window(request)?;
-    let Some(active_window) = state.context.active_window.as_ref() else {
-        return Err(DomainError::InvariantViolation(
-            "turn request requires an active context window".into(),
-        ));
-    };
-    let request_item_ids = request_window
-        .items
-        .iter()
-        .map(|item| item.item_id)
-        .collect::<Vec<_>>();
-    if request_window.api_kind != active_window.api_kind
-        || request_item_ids != active_window.item_ids
-        || request_window.token_estimate != active_window.token_estimate
-    {
-        return Err(DomainError::InvariantViolation(
-            "turn request context window does not match active context window".into(),
-        ));
-    }
-    Ok(())
+    let request_context = llm_request_context(request)?;
+    crate::core::components::context::validate_snapshot_matches_active_context(
+        state,
+        request_context,
+    )
 }
 
-pub(crate) fn llm_request_window(
-    request: &LlmRequest,
-) -> Result<&ResolvedContextWindow, DomainError> {
-    let (expected_api_kind, window) = match &request.kind {
+pub(crate) fn llm_request_context(request: &LlmRequest) -> Result<&ContextSnapshot, DomainError> {
+    let (expected_api_kind, context) = match &request.kind {
         LlmRequestKind::OpenAiResponses(request) => {
-            (ProviderApiKind::OpenAiResponses, &request.input_window)
+            (ProviderApiKind::OpenAiResponses, &request.input_context)
         }
-        LlmRequestKind::AnthropicMessages(request) => {
-            (ProviderApiKind::AnthropicMessages, &request.messages_window)
-        }
-        LlmRequestKind::OpenAiCompletions(request) => {
-            (ProviderApiKind::OpenAiCompletions, &request.messages_window)
-        }
+        LlmRequestKind::AnthropicMessages(request) => (
+            ProviderApiKind::AnthropicMessages,
+            &request.messages_context,
+        ),
+        LlmRequestKind::OpenAiCompletions(request) => (
+            ProviderApiKind::OpenAiCompletions,
+            &request.messages_context,
+        ),
     };
     if request.model.api_kind != expected_api_kind {
         return Err(DomainError::ProviderCompatibility(format!(
@@ -195,20 +179,19 @@ pub(crate) fn llm_request_window(
             expected_api_kind, request.model.api_kind
         )));
     }
-    if window.api_kind != request.model.api_kind {
+    if context.api_kind != request.model.api_kind {
         return Err(DomainError::ProviderCompatibility(format!(
-            "request window api kind {:?} does not match model api kind {:?}",
-            window.api_kind, request.model.api_kind
+            "request context api kind {:?} does not match model api kind {:?}",
+            context.api_kind, request.model.api_kind
         )));
     }
-    Ok(window)
+    Ok(context)
 }
 
 pub(crate) fn build_llm_request(
     state: &CoreAgentState,
     active_run: &ActiveRun,
     turn_id: TurnId,
-    window: &ContextWindow,
 ) -> Result<LlmRequest, PlanningError> {
     let Some(config) = state.lifecycle.config.as_ref() else {
         return Err(
@@ -220,16 +203,9 @@ pub(crate) fn build_llm_request(
         .model_override
         .clone()
         .unwrap_or_else(|| config.model.clone());
-    if model.api_kind != window.api_kind {
-        return Err(DomainError::ProviderCompatibility(format!(
-            "model api kind {:?} does not match context window api kind {:?}",
-            model.api_kind, window.api_kind
-        ))
-        .into());
-    }
-
     let request_config = session_config_for_run(config, &active_run.run_config);
-    let resolved_window = crate::core::components::context::resolve_context_window(state, window)?;
+    let context =
+        crate::core::components::context::planned_context_snapshot(state, model.api_kind.clone())?;
     let (tools, tool_choice) = selected_tools_and_choice(state, &model.api_kind)?;
     let kind = match (
         &model.api_kind,
@@ -238,7 +214,7 @@ pub(crate) fn build_llm_request(
         (ProviderApiKind::OpenAiResponses, ProviderRequestDefaults::None) => {
             LlmRequestKind::OpenAiResponses(openai_responses_request(
                 &request_config,
-                resolved_window.clone(),
+                context.clone(),
                 tools,
                 tool_choice.as_ref(),
                 &OpenAiResponsesRequestDefaults::default(),
@@ -247,7 +223,7 @@ pub(crate) fn build_llm_request(
         (ProviderApiKind::OpenAiResponses, ProviderRequestDefaults::OpenAiResponses(defaults)) => {
             LlmRequestKind::OpenAiResponses(openai_responses_request(
                 &request_config,
-                resolved_window.clone(),
+                context.clone(),
                 tools,
                 tool_choice.as_ref(),
                 &defaults,
@@ -256,7 +232,7 @@ pub(crate) fn build_llm_request(
         (ProviderApiKind::AnthropicMessages, ProviderRequestDefaults::None) => {
             LlmRequestKind::AnthropicMessages(anthropic_messages_request(
                 &request_config,
-                resolved_window.clone(),
+                context.clone(),
                 tools,
                 tool_choice.as_ref(),
                 &AnthropicMessagesRequestDefaults::default(),
@@ -267,7 +243,7 @@ pub(crate) fn build_llm_request(
             ProviderRequestDefaults::AnthropicMessages(defaults),
         ) => LlmRequestKind::AnthropicMessages(anthropic_messages_request(
             &request_config,
-            resolved_window.clone(),
+            context.clone(),
             tools,
             tool_choice.as_ref(),
             &defaults,
@@ -275,7 +251,7 @@ pub(crate) fn build_llm_request(
         (ProviderApiKind::OpenAiCompletions, ProviderRequestDefaults::None) => {
             LlmRequestKind::OpenAiCompletions(openai_completions_request(
                 &request_config,
-                resolved_window.clone(),
+                context.clone(),
                 tools,
                 tool_choice.as_ref(),
                 &OpenAiCompletionsRequestDefaults::default(),
@@ -286,7 +262,7 @@ pub(crate) fn build_llm_request(
             ProviderRequestDefaults::OpenAiCompletions(defaults),
         ) => LlmRequestKind::OpenAiCompletions(openai_completions_request(
             &request_config,
-            resolved_window,
+            context,
             tools,
             tool_choice.as_ref(),
             &defaults,
@@ -360,14 +336,14 @@ fn selected_tools_and_choice(
 
 fn openai_responses_request(
     config: &SessionConfig,
-    input_window: ResolvedContextWindow,
+    input_context: ContextSnapshot,
     tools: Vec<ToolSpec>,
     tool_choice: Option<&ToolChoice>,
     defaults: &OpenAiResponsesRequestDefaults,
 ) -> OpenAiResponsesRequest {
     OpenAiResponsesRequest {
         instructions_ref: config.context.instructions_ref.clone(),
-        input_window,
+        input_context,
         previous_response_id: None,
         tools,
         tool_choice: tool_choice.map(openai_responses_tool_choice),
@@ -390,7 +366,7 @@ fn openai_responses_request(
 
 fn anthropic_messages_request(
     config: &SessionConfig,
-    messages_window: ResolvedContextWindow,
+    messages_context: ContextSnapshot,
     tools: Vec<ToolSpec>,
     tool_choice: Option<&ToolChoice>,
     defaults: &AnthropicMessagesRequestDefaults,
@@ -403,7 +379,7 @@ fn anthropic_messages_request(
     };
     Ok(AnthropicMessagesRequest {
         system_ref: config.context.instructions_ref.clone(),
-        messages_window,
+        messages_context,
         tools,
         tool_choice: tool_choice.map(anthropic_tool_choice),
         thinking: defaults.thinking.clone(),
@@ -424,13 +400,13 @@ fn anthropic_messages_request(
 
 fn openai_completions_request(
     config: &SessionConfig,
-    messages_window: ResolvedContextWindow,
+    messages_context: ContextSnapshot,
     tools: Vec<ToolSpec>,
     tool_choice: Option<&ToolChoice>,
     defaults: &OpenAiCompletionsRequestDefaults,
 ) -> OpenAiCompletionsRequest {
     OpenAiCompletionsRequest {
-        messages_window,
+        messages_context,
         tools,
         tool_choice: tool_choice.map(openai_completions_tool_choice),
         response_format: defaults.response_format.clone(),
@@ -501,7 +477,7 @@ fn request_fingerprint(
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OpenAiResponsesRequest {
     pub instructions_ref: Option<BlobRef>,
-    pub input_window: ResolvedContextWindow,
+    pub input_context: ContextSnapshot,
     pub previous_response_id: Option<String>,
     pub tools: Vec<ToolSpec>,
     pub tool_choice: Option<OpenAiResponsesToolChoice>,
@@ -541,7 +517,7 @@ pub struct OpenAiReasoningConfig {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AnthropicMessagesRequest {
     pub system_ref: Option<BlobRef>,
-    pub messages_window: ResolvedContextWindow,
+    pub messages_context: ContextSnapshot,
     pub tools: Vec<ToolSpec>,
     pub tool_choice: Option<AnthropicToolChoice>,
     pub thinking: Option<AnthropicThinkingConfig>,
@@ -586,7 +562,7 @@ pub struct AnthropicThinkingConfig {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OpenAiCompletionsRequest {
-    pub messages_window: ResolvedContextWindow,
+    pub messages_context: ContextSnapshot,
     pub tools: Vec<ToolSpec>,
     pub tool_choice: Option<OpenAiCompletionsToolChoice>,
     pub response_format: Option<Value>,
@@ -673,7 +649,6 @@ mod tests {
                 max_context_tokens: None,
                 target_context_tokens: None,
                 reserve_output_tokens: None,
-                compaction_enabled: false,
             },
         };
         let run_config = RunConfig {

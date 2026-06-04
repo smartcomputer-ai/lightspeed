@@ -3,10 +3,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ActiveRun, BlobRef, ContextEvent, ContextItem, ContextItemId, ContextItemKind,
-    ContextItemSource, CoreAgentEventKind, CoreAgentEventProposal, CoreAgentJoins, CoreAgentState,
+    ActiveRun, BlobRef, ContextEntry, ContextEntryInput, ContextEntryKind, ContextEntrySource,
+    ContextEvent, CoreAgentEventKind, CoreAgentEventProposal, CoreAgentJoins, CoreAgentState,
     CoreAgentStatus, DomainError, PlanNext, PlanningError, ProviderApiKind, RunId, RunStatus,
     ToolBatchId, ToolCallId, ToolEffect, ToolName, ToolProfileId, TurnId, TurnOutcome, TurnStatus,
+    core::components::context::context_entries_from_inputs,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -579,15 +580,16 @@ pub(crate) fn tool_result_context_item_exists(
     let Some(expected_ref) = tool_result_context_ref(result) else {
         return false;
     };
-    state.context.retained_items.iter().any(|item| {
+    state.context.entries.iter().any(|entry| {
         matches!(
-            (&item.source, &item.kind),
+            (&entry.source, &entry.kind),
             (
-                crate::ContextItemSource::ToolResult {
+                ContextEntrySource::Tool {
                     run_id: item_run_id,
                     turn_id: item_turn_id,
+                    ..
                 },
-                crate::ContextItemKind::ToolResult {
+                ContextEntryKind::ToolResult {
                     call_id: item_call_id,
                     is_error,
                 },
@@ -595,7 +597,7 @@ pub(crate) fn tool_result_context_item_exists(
                 && *item_turn_id == turn_id
                 && item_call_id == &result.call_id
                 && *is_error == result.status.is_error()
-                && item.native_item_ref == *expected_ref
+                && entry.content_ref == *expected_ref
         )
     })
 }
@@ -682,7 +684,7 @@ fn decide_active_tool_batch_completion(
     }
 
     let mut proposals = Vec::new();
-    let result_items = tool_result_context_items(state, batch)?;
+    let result_items = tool_result_context_entries(state, batch)?;
     let joins = CoreAgentJoins {
         run_id: Some(batch.run_id),
         turn_id: Some(batch.turn_id),
@@ -692,8 +694,9 @@ fn decide_active_tool_batch_completion(
     if !result_items.is_empty() {
         proposals.push(CoreAgentEventProposal::new(
             joins.clone(),
-            CoreAgentEventKind::Context(ContextEvent::ItemsRecorded {
-                items: result_items,
+            CoreAgentEventKind::Context(ContextEvent::EntriesApplied {
+                base_revision: state.context.revision,
+                entries: result_items,
             }),
         ));
     }
@@ -708,12 +711,11 @@ fn decide_active_tool_batch_completion(
     Ok(proposals)
 }
 
-fn tool_result_context_items(
+fn tool_result_context_entries(
     state: &CoreAgentState,
     batch: &ActiveToolBatch,
-) -> Result<Vec<ContextItem>, PlanningError> {
-    let mut next_item_id = state.id_cursors.last_context_item_id;
-    let mut items = Vec::new();
+) -> Result<Vec<ContextEntry>, PlanningError> {
+    let mut inputs = Vec::new();
     for call_state in &batch.calls {
         let Some(result) = call_state.result.as_ref() else {
             return Err(DomainError::InvariantViolation(
@@ -730,33 +732,33 @@ fn tool_result_context_items(
         if tool_result_context_item_exists(state, batch.run_id, batch.turn_id, result) {
             continue;
         }
-        let native_item_ref = tool_result_context_ref(result).cloned().ok_or_else(|| {
+        let content_ref = tool_result_context_ref(result).cloned().ok_or_else(|| {
             DomainError::InvariantViolation(
                 "terminal tool result is missing a model-visible ref".to_owned(),
             )
         })?;
-        next_item_id = next_item_id.checked_add(1).ok_or_else(|| {
-            DomainError::InvariantViolation("context item id cursor exhausted".to_owned())
-        })?;
-        items.push(ContextItem {
-            item_id: ContextItemId::new(next_item_id),
-            kind: ContextItemKind::ToolResult {
-                call_id: result.call_id.clone(),
-                is_error: result.status.is_error(),
-            },
-            source: ContextItemSource::ToolResult {
+        inputs.push((
+            None,
+            ContextEntrySource::Tool {
                 run_id: batch.run_id,
                 turn_id: batch.turn_id,
+                batch_id: Some(batch.batch_id),
             },
-            native_item_ref,
-            media_type: None,
-            preview: None,
-            provider_kind: call_state.call.provider_kind.clone(),
-            provider_item_id: None,
-            token_estimate: None,
-        });
+            ContextEntryInput {
+                kind: ContextEntryKind::ToolResult {
+                    call_id: result.call_id.clone(),
+                    is_error: result.status.is_error(),
+                },
+                content_ref,
+                media_type: None,
+                preview: None,
+                provider_kind: call_state.call.provider_kind.clone(),
+                provider_item_id: None,
+                token_estimate: None,
+            },
+        ));
     }
-    Ok(items)
+    context_entries_from_inputs(state, inputs).map_err(Into::into)
 }
 
 fn resolve_tool_execution_target(

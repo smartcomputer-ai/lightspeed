@@ -3,10 +3,10 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ActiveToolBatch, BlobRef, CompletedToolBatch, ContextEntryInput, CoreAgentEventKind,
-    CoreAgentEventProposal, CoreAgentJoins, CoreAgentState, CoreAgentStatus, DomainError, PlanNext,
-    PlanningError, RunConfig, RunId, SkillActivationScope, SubmissionId, ToolBatchId, TurnId,
-    TurnOutcome, TurnState, TurnStatus,
+    ActiveToolBatch, BlobRef, CompletedToolBatch, ContextEntryId, ContextEntryInput,
+    CoreAgentEventKind, CoreAgentEventProposal, CoreAgentJoins, CoreAgentState, CoreAgentStatus,
+    DomainError, PlanNext, PlanningError, RunConfig, RunId, SkillActivationScope, SteeringId,
+    SubmissionId, ToolBatchId, TurnId, TurnOutcome, TurnState, TurnStatus,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,6 +24,7 @@ pub enum Event {
     },
     SteeringAccepted {
         run_id: RunId,
+        steering_id: SteeringId,
         input: Vec<ContextEntryInput>,
     },
     CancellationRequested {
@@ -52,14 +53,29 @@ pub struct AcceptedRun {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunInputBatch {
+    pub input: Vec<ContextEntryInput>,
+    pub entry_ids: Vec<ContextEntryId>,
+    pub consumed_by_turn_id: Option<TurnId>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SteeringBatch {
+    pub steering_id: SteeringId,
+    pub input: Vec<ContextEntryInput>,
+    pub entry_ids: Vec<ContextEntryId>,
+    pub consumed_by_turn_id: Option<TurnId>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActiveRun {
     pub run_id: RunId,
     pub status: RunStatus,
     pub submission_id: Option<SubmissionId>,
-    pub input: Vec<ContextEntryInput>,
+    pub input: RunInputBatch,
     pub run_config: RunConfig,
     pub config_revision: u64,
-    pub steering: Vec<Vec<ContextEntryInput>>,
+    pub steering: Vec<SteeringBatch>,
     pub turns: BTreeMap<TurnId, TurnState>,
     pub active_turn_id: Option<TurnId>,
     pub active_tool_batch_id: Option<ToolBatchId>,
@@ -322,7 +338,11 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
                 run_id: *run_id,
                 status: RunStatus::Active,
                 submission_id: queued.submission_id,
-                input: queued.input,
+                input: RunInputBatch {
+                    input: queued.input,
+                    entry_ids: Vec::new(),
+                    consumed_by_turn_id: None,
+                },
                 run_config: queued.run_config,
                 config_revision: queued.config_revision,
                 steering: Vec::new(),
@@ -336,14 +356,37 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
             });
             Ok(())
         }
-        Event::SteeringAccepted { run_id, input } => {
+        Event::SteeringAccepted {
+            run_id,
+            steering_id,
+            input,
+        } => {
+            let expected_steering_id = state
+                .id_cursors
+                .last_steering_id
+                .checked_add(1)
+                .ok_or_else(|| {
+                    DomainError::InvariantViolation("steering id cursor exhausted".into())
+                })?;
+            if steering_id.as_u64() != expected_steering_id {
+                return Err(DomainError::InvariantViolation(format!(
+                    "expected steering id {}, got {}",
+                    expected_steering_id, steering_id
+                )));
+            }
             let active_run = active_run_mut(state, *run_id)?;
             if active_run.status != RunStatus::Active {
                 return Err(DomainError::InvariantViolation(
                     "steering can only be added to active runs".into(),
                 ));
             }
-            active_run.steering.push(input.clone());
+            active_run.steering.push(SteeringBatch {
+                steering_id: *steering_id,
+                input: input.clone(),
+                entry_ids: Vec::new(),
+                consumed_by_turn_id: None,
+            });
+            state.id_cursors.last_steering_id = steering_id.as_u64();
             Ok(())
         }
         Event::CancellationRequested { run_id } => {

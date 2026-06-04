@@ -94,6 +94,8 @@ impl AdmitCommand for CoreAdmitCommand {
                 require_open(state)?;
                 validate_run_config_for_state(state, &run_config)
                     .map_err(command_rejection_from_domain)?;
+                crate::core::components::context::validate_run_input_entries(&input)
+                    .map_err(command_rejection_from_domain)?;
                 let next_run_id = state.id_cursors.last_run_id.checked_add(1).ok_or_else(|| {
                     CommandError::Domain(DomainError::InvariantViolation(
                         "run id cursor exhausted".to_owned(),
@@ -117,6 +119,8 @@ impl AdmitCommand for CoreAdmitCommand {
             }
             CoreAgentCommand::UpsertContext { key, entry } => {
                 require_open(state)?;
+                crate::core::components::context::validate_external_context_edit(&key, &entry)
+                    .map_err(command_rejection_from_domain)?;
                 let entries = crate::core::components::context::context_entries_from_inputs(
                     state,
                     vec![(Some(key), ContextEntrySource::ContextEdit, entry)],
@@ -124,14 +128,22 @@ impl AdmitCommand for CoreAdmitCommand {
                 .map_err(CommandError::Domain)?;
                 Ok(vec![CoreAgentEventProposal::new(
                     CoreAgentJoins::default(),
-                    CoreAgentEventKind::Context(ContextEvent::EntriesApplied { entries }),
+                    CoreAgentEventKind::Context(ContextEvent::EntriesApplied {
+                        base_revision: state.context.revision,
+                        entries,
+                    }),
                 )])
             }
             CoreAgentCommand::RemoveContext { key } => {
                 require_open(state)?;
+                crate::core::components::context::validate_context_key_exists(state, &key)
+                    .map_err(unknown_reference_rejection_from_domain)?;
                 Ok(vec![CoreAgentEventProposal::new(
                     CoreAgentJoins::default(),
-                    CoreAgentEventKind::Context(ContextEvent::KeysRemoved { keys: vec![key] }),
+                    CoreAgentEventKind::Context(ContextEvent::KeysRemoved {
+                        base_revision: state.context.revision,
+                        keys: vec![key],
+                    }),
                 )])
             }
             CoreAgentCommand::CloseSession => {
@@ -150,6 +162,17 @@ impl AdmitCommand for CoreAdmitCommand {
             CoreAgentCommand::RequestRunSteering { input } => {
                 require_open(state)?;
                 let active_run = active_run_for_command(state)?;
+                crate::core::components::context::validate_steering_input_entries(&input)
+                    .map_err(command_rejection_from_domain)?;
+                let next_steering_id = state
+                    .id_cursors
+                    .last_steering_id
+                    .checked_add(1)
+                    .ok_or_else(|| {
+                        CommandError::Domain(DomainError::InvariantViolation(
+                            "steering id cursor exhausted".to_owned(),
+                        ))
+                    })?;
                 let joins = CoreAgentJoins {
                     run_id: Some(active_run.run_id),
                     ..CoreAgentJoins::default()
@@ -158,6 +181,7 @@ impl AdmitCommand for CoreAdmitCommand {
                     joins,
                     CoreAgentEventKind::Run(RunEvent::SteeringAccepted {
                         run_id: active_run.run_id,
+                        steering_id: crate::SteeringId::new(next_steering_id),
                         input,
                     }),
                 )])
