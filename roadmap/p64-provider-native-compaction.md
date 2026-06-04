@@ -25,7 +25,8 @@ the opaque compaction item returned by the provider and use it to shrink the
 next active context window.
 
 Standalone provider-native compaction and Forge-managed summarization are
-fallback paths, not the primary design.
+separate explicit policy modes, not the primary design and not implicit
+runtime fallbacks from provider-triggered compaction.
 
 Priority order:
 
@@ -33,6 +34,13 @@ Priority order:
 2. Explicit standalone provider-native compaction.
 3. Forge-managed summarization or deterministic pruning for providers without
    native compaction support.
+
+Policy selection should be pinned after configuration resolution. If a session
+or run selects `ProviderTriggered`, Forge should either execute
+provider-triggered compaction or reject clearly when the selected provider API
+cannot support it. It should not silently fall back to standalone compaction,
+Forge-managed summarization, or deterministic pruning. `None` in configuration
+means "inherit/default", not "try multiple strategies".
 
 ## Context
 
@@ -211,18 +219,23 @@ pub enum CompactionPolicy {
 
 The exact shape can differ, but it should keep the distinction between
 provider-triggered, provider-standalone, and Forge-managed fallback explicit.
+`ProviderTriggered.compact_threshold` is intentionally optional: `None` means
+use the provider's default server-side threshold and omit `compact_threshold`
+from the provider request.
 
 OpenAI Responses request planning should lower `ProviderTriggered` into the
 provider-native request record:
 
 ```rust
+let mut compaction = json!({
+    "type": "compaction"
+});
+if let Some(compact_threshold) = compact_threshold {
+    compaction["compact_threshold"] = json!(compact_threshold);
+}
+
 OpenAiResponsesRequest {
-    context_management: Some(json!([
-        {
-            "type": "compaction",
-            "compact_threshold": compact_threshold
-        }
-    ])),
+    context_management: Some(json!([compaction])),
     ..
 }
 ```
@@ -322,6 +335,47 @@ pub enum ContextRewriteReason {
 
 The reducer must continue to reject removal of unconsumed run input and
 steering entries.
+
+### Next-Turn Input Shape
+
+Provider-native compaction is not a replacement for current Forge canonical
+context. A follow-up request after provider-triggered compaction should not
+send "just the compaction item".
+
+For OpenAI stateless input-array chaining, the next rendered request should
+contain:
+
+1. current canonical Forge context:
+   - stable keyed instructions rendered through the top-level OpenAI
+     `instructions` field,
+   - current skill catalog entries rendered as developer messages,
+   - active skill activation entries rendered as developer messages,
+   - unconsumed run input or steering entries,
+2. the latest `openai.responses.compaction` provider-opaque item, rendered
+   back as the raw provider item,
+3. any entries after that compaction item,
+4. the new user input for the next turn.
+
+Entries before the latest compaction item are only retained when they are
+canonical Forge context or protected by a run/tool invariant. The compaction
+item supersedes old provider conversation state; it does not supersede
+current instructions, skill catalog, active skill bodies, environment/context
+updates, or other pinned runtime context.
+
+The useful Codex precedent is: process the compacted transcript, keep the
+provider compaction item and selected real user messages, drop stale
+developer/context messages and old assistant/tool/reasoning artifacts, then
+reinject the current canonical context from live session state. Forge should
+use the same principle, adapted to `ContextEntryKind`:
+
+- keep `Instructions`, `SkillCatalog`, active `SkillActivation`, unconsumed
+  run input/steering, the latest compaction `ProviderOpaque`, and entries after
+  it;
+- remove old `Message`, `ReasoningState`, `ToolCall`, `ToolResult`, and older
+  provider-native conversation items before the latest compaction item when no
+  invariant protects them;
+- never trust opaque provider compaction output to preserve Forge-owned
+  canonical context.
 
 ## OpenAI Responses Runtime Work
 
@@ -481,4 +535,3 @@ Live tests:
   the event log enough?
 - Do we need a separate public compaction activity view, or are context rewrite
   events sufficient for clients?
-
