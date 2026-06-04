@@ -1,9 +1,10 @@
 //! Core command admission for external session requests.
 
 use crate::{
-    AdmitCommand, CommandError, CommandRejection, CommandRejectionKind, CoreAgentCommand,
-    CoreAgentEventKind, CoreAgentEventProposal, CoreAgentJoins, CoreAgentLifecycleEvent,
-    CoreAgentState, CoreAgentStatus, DomainError, RunEvent, RunStatus, ToolConfigEvent,
+    AdmitCommand, CommandError, CommandRejection, CommandRejectionKind, ContextEntrySource,
+    ContextEvent, CoreAgentCommand, CoreAgentEventKind, CoreAgentEventProposal, CoreAgentJoins,
+    CoreAgentLifecycleEvent, CoreAgentState, CoreAgentStatus, DomainError, RunEvent, RunStatus,
+    ToolConfigEvent,
     core::components::{
         config::{validate_config_update_for_state, validate_run_config_for_state},
         skills::validate_activations,
@@ -87,23 +88,50 @@ impl AdmitCommand for CoreAdmitCommand {
             }
             CoreAgentCommand::RequestRun {
                 submission_id,
-                input_ref,
+                input,
                 run_config,
             } => {
                 require_open(state)?;
                 validate_run_config_for_state(state, &run_config)
                     .map_err(command_rejection_from_domain)?;
+                let next_run_id = state.id_cursors.last_run_id.checked_add(1).ok_or_else(|| {
+                    CommandError::Domain(DomainError::InvariantViolation(
+                        "run id cursor exhausted".to_owned(),
+                    ))
+                })?;
                 let joins = CoreAgentJoins {
                     submission_id: submission_id.clone(),
+                    run_id: Some(crate::RunId::new(next_run_id)),
                     ..CoreAgentJoins::default()
                 };
                 Ok(vec![CoreAgentEventProposal::new(
                     joins,
-                    CoreAgentEventKind::Run(RunEvent::Queued {
+                    CoreAgentEventKind::Run(RunEvent::Accepted {
+                        run_id: crate::RunId::new(next_run_id),
                         submission_id,
-                        input_ref,
+                        input,
                         run_config,
+                        config_revision: state.lifecycle.config_revision,
                     }),
+                )])
+            }
+            CoreAgentCommand::UpsertContext { key, entry } => {
+                require_open(state)?;
+                let entries = crate::core::components::context::context_entries_from_inputs(
+                    state,
+                    vec![(Some(key), ContextEntrySource::ContextEdit, entry)],
+                )
+                .map_err(CommandError::Domain)?;
+                Ok(vec![CoreAgentEventProposal::new(
+                    CoreAgentJoins::default(),
+                    CoreAgentEventKind::Context(ContextEvent::EntriesApplied { entries }),
+                )])
+            }
+            CoreAgentCommand::RemoveContext { key } => {
+                require_open(state)?;
+                Ok(vec![CoreAgentEventProposal::new(
+                    CoreAgentJoins::default(),
+                    CoreAgentEventKind::Context(ContextEvent::KeysRemoved { keys: vec![key] }),
                 )])
             }
             CoreAgentCommand::CloseSession => {
@@ -119,7 +147,7 @@ impl AdmitCommand for CoreAdmitCommand {
                     CoreAgentEventKind::Lifecycle(CoreAgentLifecycleEvent::Closed),
                 )])
             }
-            CoreAgentCommand::RequestRunSteering { input_ref } => {
+            CoreAgentCommand::RequestRunSteering { input } => {
                 require_open(state)?;
                 let active_run = active_run_for_command(state)?;
                 let joins = CoreAgentJoins {
@@ -128,9 +156,9 @@ impl AdmitCommand for CoreAdmitCommand {
                 };
                 Ok(vec![CoreAgentEventProposal::new(
                     joins,
-                    CoreAgentEventKind::Run(RunEvent::SteeringAdded {
+                    CoreAgentEventKind::Run(RunEvent::SteeringAccepted {
                         run_id: active_run.run_id,
-                        input_ref,
+                        input,
                     }),
                 )])
             }

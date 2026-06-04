@@ -21,9 +21,9 @@ pub mod turn;
 pub use command::*;
 pub use config::*;
 pub use context::{
-    CompactionMode, CompactionRecord, ContextEvent, ContextItem, ContextItemKind,
-    ContextItemSource, ContextMessageRole, ContextState, ContextWindow, ResolvedContextWindow,
-    TokenEstimate, TokenEstimateQuality, UncommittedContextItem,
+    ContextEntry, ContextEntryId, ContextEntryInput, ContextEntryKind, ContextEntrySource,
+    ContextEvent, ContextMessageRole, ContextRemovalReason, ContextRewriteReason, ContextState,
+    TokenEstimate, TokenEstimateQuality,
 };
 pub use error::*;
 pub use event::*;
@@ -32,7 +32,8 @@ pub use lifecycle::{CoreAgentLifecycleEvent, CoreAgentStatus, LifecycleState};
 pub use llm::*;
 pub use log::*;
 pub use run::{
-    ActiveRun, QueuedRun, RunEvent, RunFailure, RunFailureKind, RunQueueState, RunRecord, RunStatus,
+    AcceptedRun, ActiveRun, RunEvent, RunFailure, RunFailureKind, RunQueueState, RunRecord,
+    RunStatus,
 };
 pub use skills::{
     SkillActivation, SkillActivationScope, SkillActivationSource, SkillCatalogContext, SkillEvent,

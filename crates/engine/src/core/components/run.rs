@@ -3,30 +3,28 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ActiveToolBatch, BlobRef, CompletedToolBatch, CoreAgentEventKind, CoreAgentEventProposal,
-    CoreAgentJoins, CoreAgentState, CoreAgentStatus, DomainError, PlanNext, PlanningError,
-    RunConfig, RunId, SkillActivationScope, SubmissionId, ToolBatchId, TurnId, TurnOutcome,
-    TurnState, TurnStatus,
+    ActiveToolBatch, BlobRef, CompletedToolBatch, ContextEntryInput, CoreAgentEventKind,
+    CoreAgentEventProposal, CoreAgentJoins, CoreAgentState, CoreAgentStatus, DomainError, PlanNext,
+    PlanningError, RunConfig, RunId, SkillActivationScope, SubmissionId, ToolBatchId, TurnId,
+    TurnOutcome, TurnState, TurnStatus,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Event {
-    Started {
+    Accepted {
         run_id: RunId,
         submission_id: Option<SubmissionId>,
-        input_ref: BlobRef,
+        input: Vec<ContextEntryInput>,
         run_config: RunConfig,
         config_revision: u64,
     },
-    Queued {
-        submission_id: Option<SubmissionId>,
-        input_ref: BlobRef,
-        run_config: RunConfig,
-    },
-    SteeringAdded {
+    Started {
         run_id: RunId,
-        input_ref: BlobRef,
+    },
+    SteeringAccepted {
+        run_id: RunId,
+        input: Vec<ContextEntryInput>,
     },
     CancellationRequested {
         run_id: RunId,
@@ -45,10 +43,12 @@ pub enum Event {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QueuedRun {
+pub struct AcceptedRun {
+    pub run_id: RunId,
     pub submission_id: Option<SubmissionId>,
-    pub input_ref: BlobRef,
+    pub input: Vec<ContextEntryInput>,
     pub run_config: RunConfig,
+    pub config_revision: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -56,10 +56,10 @@ pub struct ActiveRun {
     pub run_id: RunId,
     pub status: RunStatus,
     pub submission_id: Option<SubmissionId>,
-    pub input_ref: BlobRef,
+    pub input: Vec<ContextEntryInput>,
     pub run_config: RunConfig,
     pub config_revision: u64,
-    pub steering_refs: Vec<BlobRef>,
+    pub steering: Vec<Vec<ContextEntryInput>>,
     pub turns: BTreeMap<TurnId, TurnState>,
     pub active_turn_id: Option<TurnId>,
     pub active_tool_batch_id: Option<ToolBatchId>,
@@ -83,6 +83,7 @@ pub enum RunStatus {
 pub struct RunRecord {
     pub run_id: RunId,
     pub status: RunStatus,
+    pub submission_id: Option<SubmissionId>,
     pub output_ref: Option<BlobRef>,
     pub failure: Option<RunFailure>,
 }
@@ -109,7 +110,7 @@ pub type RunEvent = Event;
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunQueueState {
     pub active: Option<ActiveRun>,
-    pub queued: Vec<QueuedRun>,
+    pub queued: Vec<AcceptedRun>,
     pub completed: Vec<RunRecord>,
 }
 
@@ -152,22 +153,13 @@ impl PlanNext for CoreRunPlanner {
             return Ok(Vec::new());
         };
 
-        let next_run_id =
-            state.id_cursors.last_run_id.checked_add(1).ok_or_else(|| {
-                DomainError::InvariantViolation("run id cursor exhausted".to_owned())
-            })?;
-        let run_id = RunId::new(next_run_id);
         let joins = CoreAgentJoins {
-            run_id: Some(run_id),
+            run_id: Some(queued.run_id),
             submission_id: queued.submission_id.clone(),
             ..CoreAgentJoins::default()
         };
         let kind = CoreAgentEventKind::Run(Event::Started {
-            run_id,
-            submission_id: queued.submission_id.clone(),
-            input_ref: queued.input_ref.clone(),
-            run_config: queued.run_config.clone(),
-            config_revision: state.lifecycle.config_revision,
+            run_id: queued.run_id,
         });
 
         Ok(vec![CoreAgentEventProposal::new(joins, kind)])
@@ -263,62 +255,25 @@ pub(crate) fn latest_turn_is_terminal_run_outcome(
 
 pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(), DomainError> {
     match event {
-        Event::Queued {
-            submission_id,
-            input_ref,
-            run_config,
-        } => {
-            if state.lifecycle.status != CoreAgentStatus::Open {
-                return Err(DomainError::InvariantViolation(
-                    "runs can only be queued while session is open".into(),
-                ));
-            }
-            crate::core::components::config::validate_run_config_for_state(state, run_config)?;
-            state.runs.queued.push(QueuedRun {
-                submission_id: submission_id.clone(),
-                input_ref: input_ref.clone(),
-                run_config: run_config.clone(),
-            });
-            Ok(())
-        }
-        Event::Started {
+        Event::Accepted {
             run_id,
             submission_id,
-            input_ref,
+            input,
             run_config,
             config_revision,
         } => {
             if state.lifecycle.status != CoreAgentStatus::Open {
                 return Err(DomainError::InvariantViolation(
-                    "runs can only start while session is open".into(),
-                ));
-            }
-            if state.runs.active.is_some() {
-                return Err(DomainError::InvariantViolation(
-                    "cannot start run while another run is active".into(),
+                    "runs can only be accepted while session is open".into(),
                 ));
             }
             if *config_revision != state.lifecycle.config_revision {
                 return Err(DomainError::InvariantViolation(format!(
-                    "started run config revision {} does not match session revision {}",
+                    "accepted run config revision {} does not match session revision {}",
                     config_revision, state.lifecycle.config_revision
                 )));
             }
             crate::core::components::config::validate_run_config_for_state(state, run_config)?;
-
-            let Some(queued) = state.runs.queued.first() else {
-                return Err(DomainError::InvariantViolation(
-                    "cannot start run without queued work".into(),
-                ));
-            };
-            if queued.submission_id != *submission_id
-                || queued.input_ref != *input_ref
-                || queued.run_config != *run_config
-            {
-                return Err(DomainError::InvariantViolation(
-                    "started run does not match first queued run".into(),
-                ));
-            }
             let expected_run_id =
                 state.id_cursors.last_run_id.checked_add(1).ok_or_else(|| {
                     DomainError::InvariantViolation("run id cursor exhausted".into())
@@ -329,17 +284,48 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
                     expected_run_id, run_id
                 )));
             }
+            state.runs.queued.push(AcceptedRun {
+                run_id: *run_id,
+                submission_id: submission_id.clone(),
+                input: input.clone(),
+                run_config: run_config.clone(),
+                config_revision: *config_revision,
+            });
+            state.id_cursors.last_run_id = run_id.as_u64();
+            Ok(())
+        }
+        Event::Started { run_id } => {
+            if state.lifecycle.status != CoreAgentStatus::Open {
+                return Err(DomainError::InvariantViolation(
+                    "runs can only start while session is open".into(),
+                ));
+            }
+            if state.runs.active.is_some() {
+                return Err(DomainError::InvariantViolation(
+                    "cannot start run while another run is active".into(),
+                ));
+            }
+
+            let Some(queued) = state.runs.queued.first().cloned() else {
+                return Err(DomainError::InvariantViolation(
+                    "cannot start run without queued work".into(),
+                ));
+            };
+            if queued.run_id != *run_id {
+                return Err(DomainError::InvariantViolation(
+                    "started run does not match first queued run".into(),
+                ));
+            }
 
             state.runs.queued.remove(0);
-            state.id_cursors.last_run_id = run_id.as_u64();
             state.runs.active = Some(ActiveRun {
                 run_id: *run_id,
                 status: RunStatus::Active,
-                submission_id: submission_id.clone(),
-                input_ref: input_ref.clone(),
-                run_config: run_config.clone(),
-                config_revision: *config_revision,
-                steering_refs: Vec::new(),
+                submission_id: queued.submission_id,
+                input: queued.input,
+                run_config: queued.run_config,
+                config_revision: queued.config_revision,
+                steering: Vec::new(),
                 turns: BTreeMap::new(),
                 active_turn_id: None,
                 active_tool_batch_id: None,
@@ -350,14 +336,14 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
             });
             Ok(())
         }
-        Event::SteeringAdded { run_id, input_ref } => {
+        Event::SteeringAccepted { run_id, input } => {
             let active_run = active_run_mut(state, *run_id)?;
             if active_run.status != RunStatus::Active {
                 return Err(DomainError::InvariantViolation(
                     "steering can only be added to active runs".into(),
                 ));
             }
-            active_run.steering_refs.push(input_ref.clone());
+            active_run.steering.push(input.clone());
             Ok(())
         }
         Event::CancellationRequested { run_id } => {
@@ -454,6 +440,7 @@ fn finish_active_run(
     state.runs.completed.push(RunRecord {
         run_id: active_run.run_id,
         status,
+        submission_id: active_run.submission_id,
         output_ref,
         failure,
     });
