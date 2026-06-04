@@ -14,6 +14,7 @@ pub const SKILL_CATALOG_CONTEXT_KEY: &str = "skills.catalog";
 pub const SKILL_ACTIVATION_CONTEXT_KEY_PREFIX: &str = "skills.activation.";
 pub const SKILL_ACTIVATION_PROVIDER_KIND_RUN: &str = "forge.skill.activation.run";
 pub const SKILL_ACTIVATION_PROVIDER_KIND_SESSION: &str = "forge.skill.activation.session";
+pub const OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND: &str = "openai.responses.compaction";
 
 pub type ContextEntryId = ContextItemId;
 
@@ -77,6 +78,7 @@ impl ContextSnapshot {
 #[serde(rename_all = "snake_case")]
 pub enum ContextRemovalReason {
     Pruned,
+    ProviderCompacted,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -84,6 +86,7 @@ pub enum ContextRemovalReason {
 pub enum ContextRewriteReason {
     Pruned,
     PolicyChanged,
+    ProviderCompacted,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -505,6 +508,10 @@ impl PlanNext for CoreContextPlanner {
             return Ok(Vec::new());
         }
 
+        if let Some(proposal) = provider_compacted_prune_proposal(state)? {
+            return Ok(vec![proposal]);
+        }
+
         let Some(active_run) = state.runs.active.as_ref() else {
             return Ok(Vec::new());
         };
@@ -599,6 +606,77 @@ fn missing_steering_entries(state: &CoreAgentState) -> Result<Vec<ContextEntry>,
 fn input_index(index: usize) -> Result<u32, DomainError> {
     index.try_into().map_err(|_| {
         DomainError::InvariantViolation(format!("context input index {} exceeds u32", index))
+    })
+}
+
+fn provider_compacted_prune_proposal(
+    state: &CoreAgentState,
+) -> Result<Option<CoreAgentEventProposal>, DomainError> {
+    if has_active_nonterminal_tool_batch(state) {
+        return Ok(None);
+    }
+
+    let Some(latest_compaction_entry) = latest_provider_compaction_entry(state) else {
+        return Ok(None);
+    };
+    let entry_ids = state
+        .context
+        .entries
+        .iter()
+        .filter(|entry| entry.entry_id < latest_compaction_entry.entry_id)
+        .filter(|entry| is_provider_compaction_prunable_entry(state, entry))
+        .map(|entry| entry.entry_id)
+        .collect::<Vec<_>>();
+    if entry_ids.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(CoreAgentEventProposal::new(
+        CoreAgentJoins::default(),
+        CoreAgentEventKind::Context(Event::EntriesRemoved {
+            base_revision: state.context.revision,
+            entry_ids,
+            reason: ContextRemovalReason::ProviderCompacted,
+        }),
+    )))
+}
+
+fn latest_provider_compaction_entry(state: &CoreAgentState) -> Option<&ContextEntry> {
+    state
+        .context
+        .entries
+        .iter()
+        .rev()
+        .find(|entry| is_provider_compaction_entry(entry))
+}
+
+fn is_provider_compaction_entry(entry: &ContextEntry) -> bool {
+    matches!(entry.kind, ContextEntryKind::ProviderOpaque)
+        && entry.provider_kind.as_deref() == Some(OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND)
+}
+
+fn is_provider_compaction_prunable_entry(state: &CoreAgentState, entry: &ContextEntry) -> bool {
+    if validate_entry_is_not_unconsumed_active_run_input(state, entry.entry_id).is_err() {
+        return false;
+    }
+    match entry.kind {
+        ContextEntryKind::Instructions
+        | ContextEntryKind::SkillCatalog
+        | ContextEntryKind::SkillActivation { .. } => false,
+        ContextEntryKind::Message { .. }
+        | ContextEntryKind::ToolCall { .. }
+        | ContextEntryKind::ToolResult { .. }
+        | ContextEntryKind::ReasoningState
+        | ContextEntryKind::ProviderOpaque => true,
+    }
+}
+
+fn has_active_nonterminal_tool_batch(state: &CoreAgentState) -> bool {
+    state.runs.active.as_ref().is_some_and(|active_run| {
+        active_run
+            .tool_batches
+            .values()
+            .any(|batch| batch.calls.iter().any(|call| !call.status.is_terminal()))
     })
 }
 
@@ -906,7 +984,7 @@ fn validate_entry_matches_input(
 
 fn validate_removal_reason(reason: &ContextRemovalReason) -> Result<(), DomainError> {
     match reason {
-        ContextRemovalReason::Pruned => Ok(()),
+        ContextRemovalReason::Pruned | ContextRemovalReason::ProviderCompacted => Ok(()),
     }
 }
 
@@ -1047,7 +1125,9 @@ fn validate_rewrite_reason(
     reason: &ContextRewriteReason,
 ) -> Result<(), DomainError> {
     match reason {
-        ContextRewriteReason::Pruned | ContextRewriteReason::PolicyChanged => Ok(()),
+        ContextRewriteReason::Pruned
+        | ContextRewriteReason::PolicyChanged
+        | ContextRewriteReason::ProviderCompacted => Ok(()),
     }
 }
 

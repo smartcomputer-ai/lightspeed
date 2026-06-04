@@ -7,23 +7,23 @@
 use std::collections::BTreeMap;
 
 use api::{
-    AgentApiError, ContextConfigInput, ContextEntryInputView, ContextEntryKindView,
-    ContextMessageRoleView, ContextView, EventCursor, EventJoinsView, GenerationConfig, InputItem,
-    ModelConfig, ReasoningEffort, RunDefaultsConfig, RunStatus as ApiRunStatus, RunView,
-    SessionConfigView, SessionEventKindView, SessionEventView, SessionItemView,
-    SessionStatus as ApiSessionStatus, SessionView, TokenEstimateQualityView, TokenEstimateView,
-    ToolBatchView, ToolCallDisplayGroup, ToolCallDisplayView, ToolCallEventView, ToolCallView,
-    ToolEffectView, ToolExecutionTargetView, ToolItemStatus,
+    AgentApiError, CompactionPolicyInput, ContextConfigInput, ContextEntryInputView,
+    ContextEntryKindView, ContextMessageRoleView, ContextView, EventCursor, EventJoinsView,
+    GenerationConfig, InputItem, ModelConfig, ReasoningEffort, RunDefaultsConfig,
+    RunStatus as ApiRunStatus, RunView, SessionConfigView, SessionEventKindView, SessionEventView,
+    SessionItemView, SessionStatus as ApiSessionStatus, SessionView, TokenEstimateQualityView,
+    TokenEstimateView, ToolBatchView, ToolCallDisplayGroup, ToolCallDisplayView, ToolCallEventView,
+    ToolCallView, ToolEffectView, ToolExecutionTargetView, ToolItemStatus,
 };
 use engine::{ApplyEvent, ToolExecutionTarget};
 use engine::{
-    ContextEntry, ContextEntryId, ContextEntryInput, ContextEntryKind, ContextEntrySource,
-    ContextEvent, ContextMessageRole, ContextRemovalReason, ContextRewriteReason, CoreAgentCodec,
-    CoreAgentEntry, CoreAgentEventKind, CoreAgentJoins, CoreAgentLifecycleEvent, CoreAgentState,
-    CoreAgentStatus, CoreApplyEvent, EventSeq, LlmGenerationStatus, ModelProviderOptions,
-    ModelSelection, ObservedToolCall, ProviderApiKind, ProviderRequestDefaults, RunEvent,
-    RunFailure, RunId, RunStatus, SessionConfig, SessionId, SteeringId, ToolBatchId,
-    ToolCallStatus, ToolConfigEvent, ToolEvent, TurnEvent, TurnId,
+    CompactionPolicy, ContextEntry, ContextEntryId, ContextEntryInput, ContextEntryKind,
+    ContextEntrySource, ContextEvent, ContextMessageRole, ContextRemovalReason,
+    ContextRewriteReason, CoreAgentCodec, CoreAgentEntry, CoreAgentEventKind, CoreAgentJoins,
+    CoreAgentLifecycleEvent, CoreAgentState, CoreAgentStatus, CoreApplyEvent, EventSeq,
+    LlmGenerationStatus, ModelProviderOptions, ModelSelection, ObservedToolCall, ProviderApiKind,
+    ProviderRequestDefaults, RunEvent, RunFailure, RunId, RunStatus, SessionConfig, SessionId,
+    SteeringId, ToolBatchId, ToolCallStatus, ToolConfigEvent, ToolEvent, TurnEvent, TurnId,
     storage::{
         BlobStore, BlobStoreError, DynamicSessionEntry, ReadSessionEvents, SessionRecord,
         SessionStore, SessionStoreError,
@@ -231,6 +231,11 @@ impl<'a> CoreAgentProjector<'a> {
                 max_context_tokens: config.context.max_context_tokens,
                 target_context_tokens: config.context.target_context_tokens,
                 reserve_output_tokens: config.context.reserve_output_tokens,
+                compaction: config
+                    .context
+                    .compaction
+                    .as_ref()
+                    .map(compaction_policy_to_api),
             },
             run_defaults: RunDefaultsConfig {
                 max_turns: config.run.max_turns,
@@ -810,6 +815,7 @@ fn context_event_revision(base_revision: u64) -> Result<u64, AgentApiError> {
 fn context_removal_reason_to_api(reason: &ContextRemovalReason) -> &'static str {
     match reason {
         ContextRemovalReason::Pruned => "pruned",
+        ContextRemovalReason::ProviderCompacted => "providerCompacted",
     }
 }
 
@@ -817,6 +823,18 @@ fn context_rewrite_reason_to_api(reason: &ContextRewriteReason) -> &'static str 
     match reason {
         ContextRewriteReason::Pruned => "pruned",
         ContextRewriteReason::PolicyChanged => "policyChanged",
+        ContextRewriteReason::ProviderCompacted => "providerCompacted",
+    }
+}
+
+fn compaction_policy_to_api(policy: &CompactionPolicy) -> CompactionPolicyInput {
+    match policy {
+        CompactionPolicy::Disabled => CompactionPolicyInput::Disabled,
+        CompactionPolicy::ProviderTriggered { compact_threshold } => {
+            CompactionPolicyInput::ProviderTriggered {
+                compact_threshold: *compact_threshold,
+            }
+        }
     }
 }
 

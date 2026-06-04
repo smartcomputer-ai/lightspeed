@@ -1,12 +1,13 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    ActiveRun, ContextSnapshot, CoreAgentState, DomainError, PlanningError, RunConfig, RunId,
-    SessionConfig, ToolChoice, ToolChoiceMode, ToolKind, ToolName, ToolSpec, TurnId,
+    ActiveRun, CompactionPolicy, ContextSnapshot, CoreAgentState, DomainError, PlanningError,
+    RunConfig, RunId, SessionConfig, ToolChoice, ToolChoiceMode, ToolKind, ToolName, ToolSpec,
+    TurnId,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -358,8 +359,21 @@ fn openai_responses_request(
         store: defaults.store,
         stream: defaults.stream,
         truncation: defaults.truncation.clone(),
-        context_management: None,
+        context_management: openai_responses_context_management(config),
         extra: defaults.extra.clone(),
+    }
+}
+
+fn openai_responses_context_management(config: &SessionConfig) -> Option<Value> {
+    match &config.context.compaction {
+        Some(CompactionPolicy::ProviderTriggered { compact_threshold }) => {
+            let mut compaction = json!({ "type": "compaction" });
+            if let Some(compact_threshold) = compact_threshold {
+                compaction["compact_threshold"] = json!(compact_threshold);
+            }
+            Some(json!([compaction]))
+        }
+        None | Some(CompactionPolicy::Disabled) => None,
     }
 }
 
@@ -644,6 +658,7 @@ mod tests {
                 max_context_tokens: None,
                 target_context_tokens: None,
                 reserve_output_tokens: None,
+                compaction: None,
             },
         };
         let run_config = RunConfig {
@@ -660,6 +675,97 @@ mod tests {
         assert_eq!(
             resolved.turn.provider_request_defaults,
             ProviderRequestDefaults::OpenAiResponses(defaults)
+        );
+    }
+
+    #[test]
+    fn openai_responses_request_lowers_provider_triggered_compaction() {
+        let config = SessionConfig {
+            model: ModelSelection {
+                api_kind: ProviderApiKind::OpenAiResponses,
+                provider_id: "openai".to_owned(),
+                model: "gpt-test".to_owned(),
+                options: ModelProviderOptions::None,
+            },
+            run: RunConfig::default(),
+            turn: crate::TurnConfig {
+                max_output_tokens: None,
+                provider_request_defaults: ProviderRequestDefaults::None,
+            },
+            context: crate::ContextConfig {
+                max_context_tokens: None,
+                target_context_tokens: None,
+                reserve_output_tokens: None,
+                compaction: Some(CompactionPolicy::ProviderTriggered {
+                    compact_threshold: Some(120_000),
+                }),
+            },
+        };
+
+        let request = openai_responses_request(
+            &config,
+            ContextSnapshot {
+                api_kind: ProviderApiKind::OpenAiResponses,
+                context_revision: 0,
+                entries: Vec::new(),
+                token_estimate: None,
+            },
+            Vec::new(),
+            None,
+            &OpenAiResponsesRequestDefaults::default(),
+        );
+
+        assert_eq!(
+            request.context_management,
+            Some(json!([
+                {
+                    "type": "compaction",
+                    "compact_threshold": 120000
+                }
+            ]))
+        );
+    }
+
+    #[test]
+    fn openai_responses_request_omits_optional_compact_threshold() {
+        let config = SessionConfig {
+            model: ModelSelection {
+                api_kind: ProviderApiKind::OpenAiResponses,
+                provider_id: "openai".to_owned(),
+                model: "gpt-test".to_owned(),
+                options: ModelProviderOptions::None,
+            },
+            run: RunConfig::default(),
+            turn: crate::TurnConfig {
+                max_output_tokens: None,
+                provider_request_defaults: ProviderRequestDefaults::None,
+            },
+            context: crate::ContextConfig {
+                max_context_tokens: None,
+                target_context_tokens: None,
+                reserve_output_tokens: None,
+                compaction: Some(CompactionPolicy::ProviderTriggered {
+                    compact_threshold: None,
+                }),
+            },
+        };
+
+        let request = openai_responses_request(
+            &config,
+            ContextSnapshot {
+                api_kind: ProviderApiKind::OpenAiResponses,
+                context_revision: 0,
+                entries: Vec::new(),
+                token_estimate: None,
+            },
+            Vec::new(),
+            None,
+            &OpenAiResponsesRequestDefaults::default(),
+        );
+
+        assert_eq!(
+            request.context_management,
+            Some(json!([{ "type": "compaction" }]))
         );
     }
 }

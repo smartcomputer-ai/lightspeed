@@ -452,6 +452,7 @@ fn session_config(model: ModelSelection) -> SessionConfig {
             max_context_tokens: None,
             target_context_tokens: None,
             reserve_output_tokens: None,
+            compaction: None,
         },
     }
 }

@@ -4,9 +4,10 @@ use async_trait::async_trait;
 use engine::{
     BlobRef, ContextEntry, ContextEntryInput, ContextEntryKind, ContextMessageRole, LlmFinish,
     LlmGenerationFacts, LlmGenerationRequest, LlmGenerationResult, LlmGenerationStatus,
-    LlmRequestKind, LlmUsage, ObservedToolCall, OpenAiResponsesRequest, OpenAiResponsesToolChoice,
-    ProviderApiKind, ProviderNativeToolExecution, SkillId, TokenEstimate, TokenEstimateQuality,
-    ToolCallId, ToolKind, ToolName, ToolSpec, storage::BlobStore,
+    LlmRequestKind, LlmUsage, OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, ObservedToolCall,
+    OpenAiResponsesRequest, OpenAiResponsesToolChoice, ProviderApiKind,
+    ProviderNativeToolExecution, SkillId, TokenEstimate, TokenEstimateQuality, ToolCallId,
+    ToolKind, ToolName, ToolSpec, storage::BlobStore,
 };
 use llm_clients::{ApiResponse, openai::responses as oai};
 use serde_json::Value;
@@ -111,11 +112,6 @@ pub async fn materialize_create_request(
 
     let mut extra = request.extra.clone();
     insert_optional(&mut extra, "truncation", request.truncation.clone());
-    insert_optional(
-        &mut extra,
-        "context_management",
-        request.context_management.clone(),
-    );
     if let Some(max_tool_calls) = request.max_tool_calls {
         extra.insert("max_tool_calls".to_string(), Value::from(max_tool_calls));
     }
@@ -141,6 +137,7 @@ pub async fn materialize_create_request(
         parallel_tool_calls: request.parallel_tool_calls,
         store: request.store,
         stream: request.stream,
+        context_management: request.context_management.clone(),
         extra,
     })
 }
@@ -448,6 +445,9 @@ pub async fn result_from_response(
                     context_entries.push(item);
                 }
             }
+            "compaction" | "compaction_summary" | "context_compaction" => {
+                context_entries.push(compaction_context_entry(blobs, item, raw_item).await?);
+            }
             _ => {}
         }
     }
@@ -649,6 +649,23 @@ async fn reasoning_context_entry(
         provider_item_id: item.id.clone(),
         token_estimate: None,
     }))
+}
+
+async fn compaction_context_entry(
+    blobs: &dyn BlobStore,
+    item: &oai::ResponseOutputItem,
+    raw_item: Value,
+) -> LlmAdapterResult<ContextEntryInput> {
+    let content_ref = put_json(blobs, &raw_item).await?;
+    Ok(ContextEntryInput {
+        kind: ContextEntryKind::ProviderOpaque,
+        content_ref,
+        media_type: Some(MEDIA_TYPE_JSON.to_string()),
+        preview: Some("OpenAI Responses compaction item".to_string()),
+        provider_kind: Some(OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND.to_string()),
+        provider_item_id: item.id.clone(),
+        token_estimate: None,
+    })
 }
 
 fn generation_status(status: Option<oai::ResponseStatus>) -> LlmGenerationStatus {
@@ -1333,6 +1350,79 @@ mod tests {
         assert_eq!(followup_json["input"][0]["type"], "reasoning");
         assert_eq!(followup_json["input"][0]["id"], "rs_1");
         assert_eq!(followup_json["input"][1]["type"], "function_call");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn result_captures_compaction_output_as_provider_opaque_context() {
+        let blobs = InMemoryBlobStore::new();
+        let raw_item = json!({
+            "id": "cmp_1",
+            "type": "compaction",
+            "encrypted_content": "opaque"
+        });
+        let raw_json = json!({
+            "id": "resp_1",
+            "status": "completed",
+            "output": [raw_item.clone()]
+        });
+        let response = ApiResponse {
+            parsed: serde_json::from_value(raw_json.clone()).expect("response"),
+            raw_json,
+            status: 200,
+            headers: HeaderSnapshot::default(),
+        };
+        let request = LlmGenerationRequest {
+            session_id: SessionId::new("session-a"),
+            run_id: RunId::new(1),
+            turn_id: TurnId::new(1),
+            request: LlmRequest {
+                model: model(),
+                request_fingerprint: "sha256:test".to_string(),
+                kind: LlmRequestKind::OpenAiResponses(OpenAiResponsesRequest {
+                    input_context: ContextSnapshot {
+                        api_kind: ProviderApiKind::OpenAiResponses,
+                        context_revision: 0,
+                        entries: Vec::new(),
+                        token_estimate: None,
+                    },
+                    previous_response_id: None,
+                    tools: Vec::new(),
+                    tool_choice: None,
+                    reasoning: None,
+                    text: None,
+                    include: Vec::new(),
+                    max_output_tokens: None,
+                    max_tool_calls: None,
+                    temperature: None,
+                    top_p: None,
+                    metadata: BTreeMap::new(),
+                    parallel_tool_calls: None,
+                    store: None,
+                    stream: None,
+                    truncation: None,
+                    context_management: None,
+                    extra: BTreeMap::new(),
+                }),
+            },
+        };
+
+        let result = result_from_response(&blobs, &request, &response)
+            .await
+            .expect("result");
+
+        assert_eq!(result.context_entries.len(), 1);
+        let entry = &result.context_entries[0];
+        assert!(matches!(entry.kind, ContextEntryKind::ProviderOpaque));
+        assert_eq!(entry.media_type.as_deref(), Some(MEDIA_TYPE_JSON));
+        assert_eq!(
+            entry.provider_kind.as_deref(),
+            Some(OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND)
+        );
+        assert_eq!(entry.provider_item_id.as_deref(), Some("cmp_1"));
+        let retained: Value = read_json(&blobs, &entry.content_ref)
+            .await
+            .expect("raw item");
+        assert_eq!(retained, raw_item);
     }
 
     #[tokio::test(flavor = "current_thread")]

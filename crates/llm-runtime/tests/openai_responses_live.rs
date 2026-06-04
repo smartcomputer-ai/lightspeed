@@ -5,12 +5,14 @@ use std::sync::Arc;
 use engine::{
     BlobRef, ContextEntry, ContextEntryId, ContextEntryKind, ContextEntrySource,
     ContextMessageRole, ContextSnapshot, LlmFinish, LlmGenerationRequest, LlmGenerationStatus,
-    LlmRequest, LlmRequestKind, ModelProviderOptions, ModelSelection, OpenAiResponsesRequest,
-    ProviderApiKind, RunId, SessionId, TurnId,
+    LlmRequest, LlmRequestKind, ModelProviderOptions, ModelSelection,
+    OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, OpenAiResponsesRequest, ProviderApiKind, RunId,
+    SessionId, TurnId,
     storage::{BlobStore, InMemoryBlobStore},
 };
 use llm_clients::openai::responses::{Client, Config};
 use llm_runtime::{LlmGenerationAdapter, OpenAiResponsesLlmAdapter};
+use serde_json::{Value, json};
 
 fn live_model() -> String {
     env_or_dotenv_var("OPENAI_RESPONSES_MODEL")
@@ -210,4 +212,99 @@ async fn openai_responses_live_adapter_generates_result() {
         raw_response.contains("\"id\""),
         "expected raw response JSON, got {raw_response}"
     );
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires OPENAI_API_KEY (costs real money)"]
+async fn openai_responses_live_adapter_captures_provider_triggered_compaction() {
+    let blobs = Arc::new(InMemoryBlobStore::new());
+    let repeated_context = "Forge is testing OpenAI Responses provider-triggered compaction with encrypted native context state. This sentence is repeated to exceed the minimum compact threshold.";
+    let input_text = std::iter::repeat(repeated_context)
+        .take(300)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let input_ref = text_blob(&blobs, &input_text).await;
+    let context_entry = ContextEntry {
+        key: None,
+        entry_id: ContextEntryId::new(1),
+        kind: ContextEntryKind::Message {
+            role: ContextMessageRole::User,
+        },
+        source: ContextEntrySource::RunInput {
+            run_id: RunId::new(1),
+            input_index: 0,
+        },
+        content_ref: input_ref,
+        media_type: None,
+        preview: None,
+        provider_kind: None,
+        provider_item_id: None,
+        token_estimate: None,
+    };
+    let adapter = OpenAiResponsesLlmAdapter::new(Arc::new(live_client()), blobs.clone());
+    let request = LlmGenerationRequest {
+        session_id: SessionId::new("session-live-compaction"),
+        run_id: RunId::new(1),
+        turn_id: TurnId::new(1),
+        request: LlmRequest {
+            model: ModelSelection {
+                api_kind: ProviderApiKind::OpenAiResponses,
+                provider_id: "openai".to_string(),
+                model: live_model(),
+                options: ModelProviderOptions::None,
+            },
+            request_fingerprint: "live-openai-responses-compaction".to_string(),
+            kind: LlmRequestKind::OpenAiResponses(OpenAiResponsesRequest {
+                input_context: ContextSnapshot {
+                    api_kind: ProviderApiKind::OpenAiResponses,
+                    context_revision: 0,
+                    entries: vec![context_entry],
+                    token_estimate: None,
+                },
+                previous_response_id: None,
+                tools: Vec::new(),
+                tool_choice: None,
+                reasoning: None,
+                text: None,
+                include: Vec::new(),
+                max_output_tokens: Some(128),
+                max_tool_calls: None,
+                temperature: None,
+                top_p: None,
+                metadata: BTreeMap::new(),
+                parallel_tool_calls: None,
+                store: Some(false),
+                stream: Some(false),
+                truncation: None,
+                context_management: Some(json!([
+                    {
+                        "type": "compaction",
+                        "compact_threshold": 2000
+                    }
+                ])),
+                extra: BTreeMap::new(),
+            }),
+        },
+    };
+
+    let execution = adapter.generate(request).await.expect("generate response");
+
+    let compaction = execution
+        .result
+        .context_entries
+        .iter()
+        .find(|entry| {
+            entry.provider_kind.as_deref() == Some(OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND)
+        })
+        .expect("expected provider-triggered compaction context entry");
+    assert!(matches!(compaction.kind, ContextEntryKind::ProviderOpaque));
+    let raw = blobs
+        .read_text(&compaction.content_ref)
+        .await
+        .expect("raw compaction item");
+    let raw: Value = serde_json::from_str(&raw).expect("raw compaction JSON");
+    assert!(matches!(
+        raw["type"].as_str(),
+        Some("compaction" | "compaction_summary" | "context_compaction")
+    ));
 }

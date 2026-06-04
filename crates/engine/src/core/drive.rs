@@ -450,9 +450,9 @@ mod tests {
         BlobRef, CommandRejectionKind, ContextConfig, ContextConfigPatch, ContextEntry,
         ContextEntryId, ContextEntryInput, ContextEntryKey, ContextEntryKind, ContextRemovalReason,
         ContextRewriteReason, CoreAgentCommand, LlmGenerationFacts, LlmRequestKind,
-        ModelProviderOptions, ModelSelection, OptionalConfigPatch, ProviderApiKind,
-        ProviderRequestDefaults, RunConfig, RunFailureKind, RunStatus,
-        SKILL_ACTIVATION_PROVIDER_KIND_RUN, SKILL_CATALOG_CONTEXT_KEY, SessionConfig,
+        ModelProviderOptions, ModelSelection, OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND,
+        OptionalConfigPatch, ProviderApiKind, ProviderRequestDefaults, RunConfig, RunFailureKind,
+        RunStatus, SKILL_ACTIVATION_PROVIDER_KIND_RUN, SKILL_CATALOG_CONTEXT_KEY, SessionConfig,
         SessionConfigPatch, SkillId, TurnConfig, TurnConfigPatch, TurnStatus,
         skill_activation_context_key,
     };
@@ -480,6 +480,7 @@ mod tests {
                 max_context_tokens: None,
                 target_context_tokens: None,
                 reserve_output_tokens: None,
+                compaction: None,
             },
         }
     }
@@ -609,6 +610,18 @@ mod tests {
             preview: None,
             provider_kind: None,
             provider_item_id: None,
+            token_estimate: None,
+        }
+    }
+
+    fn openai_compaction_input(content_ref: BlobRef) -> ContextEntryInput {
+        ContextEntryInput {
+            kind: ContextEntryKind::ProviderOpaque,
+            content_ref,
+            media_type: Some("application/json".to_owned()),
+            preview: Some("OpenAI Responses compaction item".to_owned()),
+            provider_kind: Some(OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND.to_owned()),
+            provider_item_id: Some("cmp_1".to_owned()),
             token_estimate: None,
         }
     }
@@ -984,6 +997,82 @@ mod tests {
         .expect("consumed run input removal");
 
         assert!(drive.state().context.entries.is_empty());
+    }
+
+    #[test]
+    fn provider_compaction_prunes_superseded_entries_after_compaction_item() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        open_session(&mut drive);
+        request_run(&mut drive, BlobRef::from_bytes(b"input before compaction"));
+        let llm_request = drive_until_generate(&mut drive);
+        let consumed_input_entry_id = drive
+            .state()
+            .runs
+            .active
+            .as_ref()
+            .expect("active run")
+            .input
+            .entry_ids[0];
+
+        let resumed = drive
+            .resume_generation(
+                LlmGenerationResult {
+                    run_id: llm_request.run_id,
+                    turn_id: llm_request.turn_id,
+                    status: LlmGenerationStatus::Succeeded,
+                    failure_ref: None,
+                    context_entries: vec![
+                        openai_compaction_input(BlobRef::from_bytes(
+                            br#"{"type":"compaction","encrypted_content":"opaque"}"#,
+                        )),
+                        message_input(
+                            ContextMessageRole::Assistant,
+                            BlobRef::from_bytes(b"assistant after compaction"),
+                        ),
+                    ],
+                    facts: LlmGenerationFacts {
+                        provider_response_id: Some("resp-1".to_owned()),
+                        finish: LlmFinish::Stop,
+                        usage: None,
+                        tool_calls: Vec::new(),
+                        context_token_estimate: None,
+                    },
+                },
+                30,
+            )
+            .expect("resume generation");
+        commit_action(&mut drive, resumed);
+
+        let complete_run = drive.next_action(31, 64).expect("complete run");
+        commit_action(&mut drive, complete_run);
+
+        let prune = drive
+            .next_action(32, 64)
+            .expect("provider compaction prune");
+        let entries = commit_action(&mut drive, prune);
+        let CoreAgentEventKind::Context(ContextEvent::EntriesRemoved {
+            entry_ids, reason, ..
+        }) = &entries[0].event.kind
+        else {
+            panic!("expected context removal");
+        };
+        assert_eq!(entry_ids, &vec![consumed_input_entry_id]);
+        assert_eq!(reason, &ContextRemovalReason::ProviderCompacted);
+
+        let retained = &drive.state().context.entries;
+        assert_eq!(retained.len(), 2);
+        assert!(matches!(retained[0].kind, ContextEntryKind::ProviderOpaque));
+        assert_eq!(
+            retained[0].provider_kind.as_deref(),
+            Some(OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND)
+        );
+        assert!(matches!(
+            retained[1].kind,
+            ContextEntryKind::Message {
+                role: ContextMessageRole::Assistant
+            }
+        ));
     }
 
     #[test]

@@ -10,7 +10,7 @@ use std::{
 use api::{
     AgentApiError, AgentApiErrorKind, AgentApiOutcome, AgentApiService, BlobGetParams,
     BlobGetResponse, BlobHasItem, BlobHasManyParams, BlobHasManyResponse, BlobPutManyParams,
-    BlobPutManyResponse, BlobPutParams, BlobPutResponse, ClientCapabilities,
+    BlobPutManyResponse, BlobPutParams, BlobPutResponse, ClientCapabilities, CompactionPolicyInput,
     ContextConfigInput as ApiContextConfigInput, ContextConfigPatchInput, FieldPatch,
     GenerationConfig, GenerationConfigPatch, InitializeParams, InitializeResponse, InputItem,
     ModelConfig, ReasoningEffort, RunCancelParams, RunCancelResponse, RunDefaultsConfig,
@@ -39,12 +39,12 @@ use api_projection::{
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use engine::{
-    AnthropicMessagesRequestDefaults, BlobRef, CommandCodec, ContextConfigPatch, ContextEntry,
-    ContextEntryInput, ContextEntryKey, ContextEntryKind, ContextMessageRole, CoreAgentCommand,
-    CoreAgentStatus, ModelProviderOptions, ModelSelection, OpenAiCompletionsRequestDefaults,
-    OpenAiReasoningConfig, OpenAiResponsesRequestDefaults, OptionalConfigPatch, ProviderApiKind,
-    ProviderRequestDefaults, RunConfig, RunConfigPatch, RunId, RunStatus,
-    SKILL_ACTIVATION_PROVIDER_KIND_RUN, SKILL_ACTIVATION_PROVIDER_KIND_SESSION,
+    AnthropicMessagesRequestDefaults, BlobRef, CommandCodec, CompactionPolicy, ContextConfigPatch,
+    ContextEntry, ContextEntryInput, ContextEntryKey, ContextEntryKind, ContextMessageRole,
+    CoreAgentCommand, CoreAgentStatus, ModelProviderOptions, ModelSelection,
+    OpenAiCompletionsRequestDefaults, OpenAiReasoningConfig, OpenAiResponsesRequestDefaults,
+    OptionalConfigPatch, ProviderApiKind, ProviderRequestDefaults, RunConfig, RunConfigPatch,
+    RunId, RunStatus, SKILL_ACTIVATION_PROVIDER_KIND_RUN, SKILL_ACTIVATION_PROVIDER_KIND_SESSION,
     SKILL_CATALOG_CONTEXT_KEY, SessionConfig, SessionConfigPatch, SessionId, SkillId, SubmissionId,
     TurnConfigPatch, skill_activation_context_key,
     storage::{BlobStore, BlobStoreError, ReadSessionEvents, SessionStore},
@@ -2433,6 +2433,9 @@ fn apply_context_config(
     if let Some(reserve_output_tokens) = context.reserve_output_tokens {
         config.reserve_output_tokens = Some(reserve_output_tokens);
     }
+    if let Some(compaction) = context.compaction {
+        config.compaction = Some(compaction_policy_from_api(compaction));
+    }
 }
 
 fn apply_run_defaults_config(config: &mut RunConfig, run_defaults: Option<RunDefaultsConfig>) {
@@ -2534,6 +2537,9 @@ fn context_config_patch_from_api(patch: Option<ContextConfigPatchInput>) -> Cont
         max_context_tokens: patch.max_context_tokens.map(optional_patch_from_api),
         target_context_tokens: patch.target_context_tokens.map(optional_patch_from_api),
         reserve_output_tokens: patch.reserve_output_tokens.map(optional_patch_from_api),
+        compaction: patch
+            .compaction
+            .map(|patch| optional_patch_from_api_map(patch, compaction_policy_from_api)),
     }
 }
 
@@ -2541,6 +2547,25 @@ fn optional_patch_from_api<T>(patch: FieldPatch<T>) -> OptionalConfigPatch<T> {
     match patch {
         FieldPatch::Set(value) => OptionalConfigPatch::Set(value),
         FieldPatch::Clear => OptionalConfigPatch::Clear,
+    }
+}
+
+fn optional_patch_from_api_map<T, U>(
+    patch: FieldPatch<T>,
+    map: impl FnOnce(T) -> U,
+) -> OptionalConfigPatch<U> {
+    match patch {
+        FieldPatch::Set(value) => OptionalConfigPatch::Set(map(value)),
+        FieldPatch::Clear => OptionalConfigPatch::Clear,
+    }
+}
+
+fn compaction_policy_from_api(policy: CompactionPolicyInput) -> CompactionPolicy {
+    match policy {
+        CompactionPolicyInput::Disabled => CompactionPolicy::Disabled,
+        CompactionPolicyInput::ProviderTriggered { compact_threshold } => {
+            CompactionPolicy::ProviderTriggered { compact_threshold }
+        }
     }
 }
 
@@ -2977,6 +3002,28 @@ mod tests {
         let reasoning = defaults.reasoning.expect("reasoning");
         assert_eq!(reasoning.effort.as_deref(), Some("high"));
         assert_eq!(reasoning.summary.as_deref(), Some("auto"));
+    }
+
+    #[test]
+    fn session_start_config_maps_provider_triggered_compaction() {
+        let mut config = default_session_config(openai_model());
+
+        apply_context_config(
+            &mut config.context,
+            Some(ApiContextConfigInput {
+                compaction: Some(CompactionPolicyInput::ProviderTriggered {
+                    compact_threshold: Some(120_000),
+                }),
+                ..ApiContextConfigInput::default()
+            }),
+        );
+
+        assert_eq!(
+            config.context.compaction,
+            Some(CompactionPolicy::ProviderTriggered {
+                compact_threshold: Some(120_000)
+            })
+        );
     }
 
     #[test]
