@@ -1,10 +1,10 @@
 [package]
-name = "server"
+name = "temporal-server"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-workflow = { path = "../workflow" }
+temporal-workflow = { path = "../temporal-workflow" }
 api = { path = "../api" }
 api-projection = { path = "../api-projection" }
 engine = { path = "../engine" }

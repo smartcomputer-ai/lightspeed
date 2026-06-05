@@ -68,35 +68,35 @@ mod tests {
     fn activity_names_match_workflow_definitions() {
         assert_eq!(
             WorkerActivities::create_or_load_session.name(),
-            workflow::WorkflowActivities::create_or_load_session.name()
+            temporal_workflow::WorkflowActivities::create_or_load_session.name()
         );
         assert_eq!(
             WorkerActivities::put_blob.name(),
-            workflow::WorkflowActivities::put_blob.name()
+            temporal_workflow::WorkflowActivities::put_blob.name()
         );
         assert_eq!(
             WorkerActivities::read_blob.name(),
-            workflow::WorkflowActivities::read_blob.name()
+            temporal_workflow::WorkflowActivities::read_blob.name()
         );
         assert_eq!(
             WorkerActivities::append_events.name(),
-            workflow::WorkflowActivities::append_events.name()
+            temporal_workflow::WorkflowActivities::append_events.name()
         );
         assert_eq!(
             WorkerActivities::llm_generate.name(),
-            workflow::WorkflowActivities::llm_generate.name()
+            temporal_workflow::WorkflowActivities::llm_generate.name()
         );
         assert_eq!(
             WorkerActivities::context_compact.name(),
-            workflow::WorkflowActivities::context_compact.name()
+            temporal_workflow::WorkflowActivities::context_compact.name()
         );
         assert_eq!(
             WorkerActivities::tool_invoke_batch.name(),
-            workflow::WorkflowActivities::tool_invoke_batch.name()
+            temporal_workflow::WorkflowActivities::tool_invoke_batch.name()
         );
         assert_eq!(
             WorkerActivities::skill_catalog_refresh.name(),
-            workflow::WorkflowActivities::skill_catalog_refresh.name()
+            temporal_workflow::WorkflowActivities::skill_catalog_refresh.name()
         );
     }
 

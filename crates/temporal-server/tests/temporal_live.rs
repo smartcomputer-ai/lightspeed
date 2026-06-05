@@ -15,11 +15,15 @@ use engine::{
     CommandCodec, CoreAgentCodec, CoreAgentCommand, CoreAgentLlm, CoreAgentTools, DynamicCommand,
     ModelProviderOptions, ModelSelection, ProviderApiKind, SessionId, storage::BlobStore,
 };
-use server::{
+use temporal_server::{
     default_model_from_env,
     gateway::GatewayAgentApi,
     pg_store_from_env,
     worker::{ActivityState, FakeLlm, FakeTools, WorkerActivities},
+};
+use temporal_workflow::{
+    AgentAdmission, AgentAdmissionFailureKind, AgentSessionWorkflow, DEFAULT_TEMPORAL_NAMESPACE,
+    DEFAULT_TEMPORAL_TARGET, connect_temporal,
 };
 use temporalio_client::{
     Client, WorkflowQueryOptions, WorkflowSignalOptions, WorkflowTerminateOptions,
@@ -27,10 +31,6 @@ use temporalio_client::{
 use temporalio_common::{telemetry::TelemetryOptions, worker::WorkerTaskTypes};
 use temporalio_sdk::{Worker, WorkerOptions};
 use temporalio_sdk_core::{CoreRuntime, RuntimeOptions};
-use workflow::{
-    AgentAdmission, AgentAdmissionFailureKind, AgentSessionWorkflow, DEFAULT_TEMPORAL_NAMESPACE,
-    DEFAULT_TEMPORAL_TARGET, connect_temporal,
-};
 
 static LIVE_TEST_LOCK: Mutex<()> = Mutex::new(());
 

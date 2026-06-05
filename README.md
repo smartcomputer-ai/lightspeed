@@ -38,8 +38,8 @@ We belive running and coordination agents at scale are best managed by durable w
 | `engine` | `crates/engine` | Deterministic session kernel plus built-in CoreAgent: dynamic session log storage, CoreAgent command/event/state models, planning, codecs, and the substrate-neutral drive machine |
 | `api` | `crates/api` | Client-facing session/run/item API types, views, and notifications |
 | `api-projection` | `crates/api-projection` | Shared CoreAgent-to-`api` projection helpers for local and workflow-backed gateways |
-| `workflow` | `crates/workflow` | Temporal workflow, signals, queries, and activity request/response DTOs |
-| `server` | `crates/server` | Hosted runtime binary and modules for the Temporal worker, HTTP/JSON-RPC gateway, and combined local/small-deployment mode |
+| `temporal-workflow` | `crates/temporal-workflow` | Temporal workflow, signals, queries, and activity request/response DTOs |
+| `temporal-server` | `crates/temporal-server` | Hosted runtime binary and modules for the Temporal worker, HTTP/JSON-RPC gateway, and combined local/small-deployment mode |
 | `test-support` | `crates/test-support` | Fast in-process runner harness for tests/evals; not a production runtime |
 | `tools` | `crates/tools` | Optional host filesystem/process tool package |
 | `store-fs` | `crates/store-fs` | Filesystem-backed session log and content-addressed blob store adapters |
@@ -74,8 +74,9 @@ cargo test
 The hosted path runs three pieces locally:
 
 1. Docker infra: Postgres/CAS catalog, MinIO object storage, Temporal.
-2. `server`: registers the Temporal workflow/activities and exposes the public
-   JSON-RPC API on HTTP. It can also run only the worker or only the gateway.
+2. `temporal-server`: registers the Temporal workflow/activities and exposes
+   the public JSON-RPC API on HTTP. Its binary is still named `server`, and it
+   can also run only the worker or only the gateway.
 3. `cli`: starts or resumes sessions and submits chat messages through the
    gateway.
 
@@ -105,11 +106,11 @@ source dev/local/env.sh
 
 # export OPENAI_API_KEY=...  # omit this if it is already in .env
 
-cargo run -p server
+cargo run -p temporal-server
 ```
 
-With no subcommand, `server` runs the gateway and Temporal worker together in
-one process. The gateway listens on `http://127.0.0.1:18080` by default.
+With no subcommand, the `server` binary runs the gateway and Temporal worker
+together in one process. The gateway listens on `http://127.0.0.1:18080` by default.
 Optional health check:
 
 ```bash
@@ -119,8 +120,8 @@ curl http://127.0.0.1:18080/health
 For split deployments, run the two roles separately:
 
 ```bash
-cargo run -p server -- worker
-cargo run -p server -- gateway
+cargo run -p temporal-server -- worker
+cargo run -p temporal-server -- gateway
 ```
 
 ### 3. Start Chatting With The CLI
@@ -288,5 +289,5 @@ the same variables directly in your shell.
 | `FORGE_API_URL` | CLI JSON-RPC gateway URL |
 | `FORGE_POSTGRES_URL` | PostgreSQL session/CAS database URL |
 | `FORGE_PG_UNIVERSE_ID` | Hosted store universe UUID |
-| `FORGE_TASK_QUEUE` | Temporal task queue used by the server worker and gateway modes |
+| `FORGE_TASK_QUEUE` | Temporal task queue used by the temporal-server worker and gateway modes |
 | `FORGE_OBJECT_STORE_ENDPOINT` | S3-compatible object store endpoint |

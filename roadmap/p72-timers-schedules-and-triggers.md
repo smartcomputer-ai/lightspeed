@@ -44,13 +44,13 @@ Forge is already oriented around durable sessions and asynchronous hosted runs:
 - `crates/api/src/lib.rs` exposes `session/start`, `session/update`,
   `session/read`, `session/events/read`, `session/close`, `run/start`, and
   `run/cancel`.
-- `crates/gateway/src/service.rs` owns API-to-command conversion for
+- `crates/temporal-server/src/gateway/service.rs` owns API-to-command conversion for
   `run/start`: inline input is written to CAS or an existing blob ref is
   validated, then a `CoreAgentCommand::RequestRun` is encoded as a workflow
   admission and signaled to Temporal.
-- `crates/workflow/src/workflow.rs` runs `AgentSessionWorkflow`, keeps a tiny
-  workflow-local pending admission queue, replays committed Forge session
-  events into `CoreAgentState`, and drives the core to quiescence.
+- `crates/temporal-workflow/src/workflow.rs` runs `AgentSessionWorkflow`,
+  keeps a tiny workflow-local pending admission queue, replays committed Forge
+  session events into `CoreAgentState`, and drives the core to quiescence.
 - `crates/engine` remains deterministic and must not perform wall-clock reads,
   provider calls, host filesystem access, network I/O, or scheduler work.
 

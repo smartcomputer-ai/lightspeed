@@ -1,7 +1,7 @@
 //! Hosted Forge runtime.
 //!
 //! This crate owns the process-facing Temporal gateway and worker wiring. The
-//! deterministic workflow contract remains in `workflow`.
+//! deterministic workflow contract remains in `temporal-workflow`.
 
 pub mod config;
 pub mod gateway;

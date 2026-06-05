@@ -9,7 +9,7 @@ pub use http::{
     serve_gateway, serve_gateway_with_client_store,
 };
 pub use service::{GatewayAgentApi, GatewayAgentApiBuilder};
-pub use workflow::{
+pub use temporal_workflow::{
     AgentAdmission, AgentAdmissionFailure, AgentAdmissionFailureKind, AgentCompletedRunSummary,
     AgentSessionArgs, AgentSessionStatus, AgentSessionWorkflow, DEFAULT_MODEL, DEFAULT_TASK_QUEUE,
     DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET, connect_temporal, default_session_config,

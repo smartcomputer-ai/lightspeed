@@ -2,7 +2,7 @@ use std::{env, net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand};
-use server::{
+use temporal_server::{
     config::pg_store_from_env,
     gateway::{
         DEFAULT_GATEWAY_BIND, DEFAULT_MAX_REQUEST_BODY_BYTES, DEFAULT_TASK_QUEUE,
@@ -149,9 +149,11 @@ async fn main() -> anyhow::Result<()> {
 
 async fn run_both(args: BothArgs) -> anyhow::Result<()> {
     let runtime = worker::core_runtime()?;
-    let client =
-        server::gateway::connect_temporal(&args.temporal.temporal_target, &args.temporal.namespace)
-            .await?;
+    let client = temporal_server::gateway::connect_temporal(
+        &args.temporal.temporal_target,
+        &args.temporal.namespace,
+    )
+    .await?;
     let store = pg_store_from_env().await?;
     let activities = WorkerActivities::from_pg_store_with_default_runtime(store.clone())?;
     let mut temporal_worker = worker::worker_with_activities(

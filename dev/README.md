@@ -86,20 +86,20 @@ Run the Temporal-backed hosted runtime against the local stack:
 
 ```bash
 source dev/local/env.sh
-cargo run -p server
+cargo run -p temporal-server
 ```
 
-With no subcommand, `server` runs the JSON-RPC gateway and Temporal worker in
-one process. For split-role runs, use two shells:
+With no subcommand, the `server` binary runs the JSON-RPC gateway and Temporal
+worker in one process. For split-role runs, use two shells:
 
 ```bash
 source dev/local/env.sh
-cargo run -p server -- worker
+cargo run -p temporal-server -- worker
 ```
 
 ```bash
 source dev/local/env.sh
-cargo run -p server -- gateway
+cargo run -p temporal-server -- gateway
 ```
 
 Then chat through the regular CLI over the gateway transport from another
@@ -117,7 +117,7 @@ Run the fake hosted-agent live integration test against the same stack:
 
 ```bash
 source dev/local/env.sh
-cargo test -p server --test temporal_live temporal_live_session_start_then_run_start_completes_fake_runs -- --ignored --nocapture
+cargo test -p temporal-server --test temporal_live temporal_live_session_start_then_run_start_completes_fake_runs -- --ignored --nocapture
 ```
 
 Run only the OpenAI-backed hosted-agent live test:
@@ -125,7 +125,7 @@ Run only the OpenAI-backed hosted-agent live test:
 ```bash
 source dev/local/env.sh
 export OPENAI_API_KEY=...
-cargo test -p server --test temporal_live temporal_live_session_start_then_run_start_completes_openai_run -- --ignored --nocapture
+cargo test -p temporal-server --test temporal_live temporal_live_session_start_then_run_start_completes_openai_run -- --ignored --nocapture
 ```
 
 Set `FORGE_OPENAI_MODEL`, `OPENAI_RESPONSES_MODEL`, or

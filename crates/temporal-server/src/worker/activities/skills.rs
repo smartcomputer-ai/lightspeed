@@ -2,12 +2,12 @@ use engine::{
     BlobRef, ContextEntry, ContextEntryId, ContextEntryKey, ContextEntryKind, ContextEntrySource,
     CoreAgentCommand, CoreAgentState, SKILL_CATALOG_CONTEXT_KEY,
 };
+use temporal_workflow::{SkillCatalogRefreshActivityRequest, SkillCatalogRefreshActivityResult};
 use temporalio_sdk::activities::ActivityError;
 use tools::skills::{
     conventional_vfs_skill_root_specs, prepare_skill_catalog_publication,
     resolve_mounted_vfs_skill_roots, skill_catalog_context_input,
 };
-use workflow::{SkillCatalogRefreshActivityRequest, SkillCatalogRefreshActivityResult};
 
 use super::{common::activity_error, state::SkillCatalogActivityDeps};
 

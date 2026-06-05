@@ -2,8 +2,8 @@ use std::{env, sync::Arc};
 
 use engine::{ModelProviderOptions, ModelSelection, ProviderApiKind};
 use store_pg::{PgStore, PgStoreConfig, S3ObjectStoreConfig, build_s3_object_store};
+use temporal_workflow::DEFAULT_MODEL;
 use uuid::Uuid;
-use workflow::DEFAULT_MODEL;
 
 pub fn default_model_from_env() -> ModelSelection {
     ModelSelection {
