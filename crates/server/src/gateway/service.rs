@@ -73,7 +73,7 @@ use vfs::{
     VfsSnapshotStore, VfsWorkspaceId, VfsWorkspaceRecord, VfsWorkspaceStore,
 };
 
-use crate::{
+use super::{
     AgentAdmission, AgentAdmissionFailure, AgentAdmissionFailureKind, AgentSessionArgs,
     AgentSessionStatus, AgentSessionWorkflow, DEFAULT_TASK_QUEUE, DEFAULT_TEMPORAL_NAMESPACE,
     DEFAULT_TEMPORAL_TARGET, connect_temporal, default_model_from_env, default_session_config,

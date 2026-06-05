@@ -1,7 +1,7 @@
 use engine::ToolInvocationBatchResult;
 use temporalio_sdk::activities::ActivityError;
 
-use crate::ToolInvokeBatchActivityRequest;
+use crate::worker::ToolInvokeBatchActivityRequest;
 
 use super::{
     common::{activity_error, failed_tool_batch_result},

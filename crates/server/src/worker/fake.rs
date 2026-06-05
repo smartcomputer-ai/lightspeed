@@ -9,7 +9,7 @@ use engine::{
 };
 use serde_json::Value;
 
-use crate::FAKE_TOOL_NAME;
+use crate::worker::FAKE_TOOL_NAME;
 
 #[derive(Clone)]
 pub struct FakeLlm {

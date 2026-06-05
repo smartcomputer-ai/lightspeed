@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
 use engine::{BlobRef, ContextCompactionResult, LlmGenerationResult, ToolInvocationBatchResult};
+use store_pg::PgStore;
 use temporalio_macros::activities;
 use temporalio_sdk::activities::{ActivityContext, ActivityError};
 
-use crate::{
+use crate::worker::{
     ACTIVITY_APPEND_EVENTS, ACTIVITY_CONTEXT_COMPACT, ACTIVITY_CREATE_OR_LOAD_SESSION,
     ACTIVITY_LLM_GENERATE, ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB, ACTIVITY_SKILL_CATALOG_REFRESH,
     ACTIVITY_TOOL_INVOKE_BATCH, AppendEventsRequest, ContextCompactActivityRequest,
@@ -39,6 +40,12 @@ impl WorkerActivities {
     pub async fn from_env() -> anyhow::Result<Self> {
         Ok(Self::new(ActivityState::from_env().await?))
     }
+
+    pub fn from_pg_store_with_default_runtime(store: Arc<PgStore>) -> anyhow::Result<Self> {
+        Ok(Self::new(
+            ActivityState::from_pg_store_with_default_runtime(store)?,
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -53,7 +60,7 @@ mod tests {
         storage::{BlobStore, InMemoryBlobStore, InMemorySessionStore, SessionStore},
     };
 
-    use crate::{FAKE_TOOL_NAME, FakeLlm, FakeTools};
+    use crate::worker::{FAKE_TOOL_NAME, FakeLlm, FakeTools};
 
     use super::*;
 

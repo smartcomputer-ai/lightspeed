@@ -1,7 +1,7 @@
 use engine::ContextCompactionResult;
 use temporalio_sdk::activities::ActivityError;
 
-use crate::ContextCompactActivityRequest;
+use crate::worker::ContextCompactActivityRequest;
 
 use super::{
     common::{activity_error, failed_context_compaction_result_from_error},

@@ -7,7 +7,7 @@ use engine::{
 };
 use temporalio_sdk::activities::ActivityError;
 
-use crate::{
+use crate::worker::{
     AppendEventsRequest, CreateOrLoadSessionRequest, CreateOrLoadSessionResult, PutBlobRequest,
     ReadBlobRequest, ReadBlobResult,
 };

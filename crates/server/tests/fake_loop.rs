@@ -6,11 +6,11 @@ use engine::{
     ProviderApiKind, SessionId, SubmissionId, ToolProfileId,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
 };
-use test_support::{DriveCommand, RunnerQuiescence, RunnerStores, SessionRunner};
-use worker::{
+use server::worker::{
     FAKE_TOOL_PROFILE_ID, FakeLlm, FakeTools, default_run_config, default_session_config,
     fake_tool_input_schema, fake_tool_registry,
 };
+use test_support::{DriveCommand, RunnerQuiescence, RunnerStores, SessionRunner};
 
 fn model() -> ModelSelection {
     ModelSelection {

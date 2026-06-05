@@ -997,33 +997,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gateway"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "api",
- "api-projection",
- "async-trait",
- "axum",
- "base64",
- "clap",
- "dotenvy",
- "engine",
- "serde_json",
- "store-pg",
- "temporalio-client",
- "temporalio-common",
- "temporalio-sdk",
- "temporalio-sdk-core",
- "tokio",
- "tools",
- "uuid",
- "vfs",
- "worker",
- "workflow",
-]
-
-[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2897,6 +2870,37 @@ dependencies = [
  "itoa",
  "ryu",
  "serde",
+]
+
+[[package]]
+name = "server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "api",
+ "api-projection",
+ "async-trait",
+ "axum",
+ "base64",
+ "clap",
+ "dotenvy",
+ "engine",
+ "futures",
+ "llm-clients",
+ "llm-runtime",
+ "serde_json",
+ "store-pg",
+ "temporalio-client",
+ "temporalio-common",
+ "temporalio-macros",
+ "temporalio-sdk",
+ "temporalio-sdk-core",
+ "test-support",
+ "tokio",
+ "tools",
+ "uuid",
+ "vfs",
+ "workflow",
 ]
 
 [[package]]
@@ -4790,32 +4794,6 @@ dependencies = [
  "serde_json",
  "unicode-xid",
  "wasmparser",
-]
-
-[[package]]
-name = "worker"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "clap",
- "dotenvy",
- "engine",
- "futures",
- "llm-clients",
- "llm-runtime",
- "serde_json",
- "store-pg",
- "temporalio-common",
- "temporalio-macros",
- "temporalio-sdk",
- "temporalio-sdk-core",
- "test-support",
- "tokio",
- "tools",
- "uuid",
- "vfs",
- "workflow",
 ]
 
 [[package]]

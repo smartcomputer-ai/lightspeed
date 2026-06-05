@@ -10,8 +10,10 @@
   `agent-core -> engine`, `agent-tools -> tools`, and `agent-eval -> eval`.
 - Imports, dependency keys, workspace members, and active repository docs have
   been updated to the new names.
-- The prototype Temporal package has been split into `workflow`, `worker`, and
-  `gateway`.
+- The prototype Temporal package was split into `workflow`, `worker`, and
+  `gateway`, then folded into the current `workflow` plus `server` shape:
+  `server` owns worker and gateway modules plus a single binary with
+  `worker`, `gateway`, and combined modes.
 - Public deployable names, server metadata, task queue defaults, and local dev
   env vars have moved off the Claw codename.
 - `agent-local` has been removed as a runtime. Its runner-only pieces now live
@@ -48,9 +50,9 @@ Restructure the workspace so the crate layout matches the product runtime:
 ```text
 client
   -> api
-  -> gateway
+  -> server gateway module
   -> workflow
-  -> worker activities
+  -> server worker activities
   -> engine
   -> store-pg / CAS
 ```
@@ -65,8 +67,7 @@ crates/api/              client protocol DTOs, method constants, JSON-RPC envelo
 crates/api-projection/   engine log/state -> api views
 crates/engine/           deterministic reducer, event log domain, drive machine
 crates/workflow/         Temporal workflow, signals, queries, activity DTOs
-crates/worker/           Temporal worker binary and activity implementations/wiring
-crates/gateway/          HTTP/JSON-RPC gateway over Temporal + Pg/CAS
+crates/server/           hosted worker, HTTP/JSON-RPC gateway, and combined binary
 crates/tools/            host/tool package
 crates/llm-clients/      provider-native OpenAI/Anthropic clients
 crates/llm-runtime/      product LLM adapters from engine requests to llm-clients
@@ -87,6 +88,7 @@ crates/agent-api/        -> crates/api/
 crates/agent-projection/ -> crates/api-projection/
 crates/agent-core/       -> crates/engine/
 agents/claw/             -> split across workflow, worker, and gateway
+                         -> current shape is workflow plus server modules
 crates/agent-tools/      -> crates/tools/
 crates/agent-eval/       -> crates/eval/
 crates/agent-local/      -> remove or repurpose as crates/test-support/
@@ -152,38 +154,29 @@ Own Temporal workflow code and workflow-facing types:
 - signals and queries
 - workflow args
 - activity request/response DTOs
-- Temporal helper types that must be shared by gateway and worker
+- Temporal helper types that must be shared by server gateway and worker modules
 
 `workflow` should contain orchestration logic only. Activity implementations and
-process wiring belong in `worker`.
+process wiring belong in `server`.
 
-### `worker`
+### `server`
 
-Own the Temporal worker process:
+Own hosted runtime process concerns:
 
-- worker binary
-- activity implementations
-- Pg/CAS dependency construction
-- LLM runtime construction
-- tool runtime construction
-- environment/config parsing for worker-owned dependencies
-
-The worker depends on `workflow`, but the gateway should not depend on worker
-activity implementations.
-
-### `gateway`
-
-Own public serving:
-
+- single binary with `worker`, `gateway`, and combined modes
 - HTTP/JSON-RPC server
 - `api` service implementation
 - Temporal client start/signal/query calls
-- Pg/CAS projection reads
+- Temporal worker registration
+- activity implementations
+- Pg/CAS dependency construction and projection reads
+- LLM and tool runtime construction
 - request validation and API error mapping
 - future auth, tenancy, rate limits, and streaming transports
 
-The gateway depends on `workflow` for signal/query/workflow types. It does not
-register workers or run activities.
+The gateway and worker roles remain separate modules and runtime modes inside
+`server`. Split deployment uses `server gateway` and `server worker`; local and
+small deployments can use the combined mode.
 
 ### `tools`
 
@@ -213,10 +206,11 @@ crate while it has real tests and reuse. It should not grow into an SDK layer.
 
 Become API-first.
 
-The normal CLI path should talk to `gateway`. Local mode should not require a
-separate production runtime; local development should run the local Temporal
-stack, worker, and gateway. A fast in-process path may remain only as
-test-support or an explicitly marked dev shortcut.
+The normal CLI path should talk to the server gateway. Local mode should not
+require a separate production runtime; local development should run the local
+Temporal stack and `server` in combined mode, or split `server worker` and
+`server gateway` processes when needed. A fast in-process path may remain only
+as test-support or an explicitly marked dev shortcut.
 
 ### `eval`
 
@@ -342,10 +336,11 @@ Move in coarse, breaking slices:
 1. Done. Rename `agent-api` to `api` and update imports.
 2. Done. Rename `agent-projection` to `api-projection` and update imports.
 3. Done. Rename `agent-core` to `engine` and update imports.
-4. Done. Split `agents/claw` into `workflow`, `worker`, and `gateway`.
-5. Done. Move activity implementations and worker binary into `worker`.
-6. Done. Move gateway API/HTTP code into `gateway` and remove the Claw naming
-   from public server metadata and binaries.
+4. Done. Split `agents/claw` into hosted workflow/runtime crates.
+5. Done. Move activity implementations and worker binary into hosted runtime
+   code.
+6. Done. Move gateway API/HTTP code into hosted runtime code and remove the
+   Claw naming from public server metadata and binaries.
 7. Done. Rename `agent-tools` to `tools`.
 8. Done. Rename `agent-eval` to `eval`; keep it as an in-process core-loop
    harness through `test-support`, without exposing a product API service.
@@ -372,9 +367,9 @@ preserving old crate names or duplicate paths.
 
 - The workspace crate names reflect the desired product roles.
 - The hosted path is the primary execution path.
-- Worker and gateway are separate deployables.
-- Gateway and worker share workflow types through `workflow`, not through each
-  other.
+- The server binary can run the worker role, gateway role, or both roles in one
+  process.
+- Gateway and worker modules share workflow types through `workflow`.
 - The CLI can use the product API without depending on local engine/runtime
   crates.
 - Any remaining fast in-process harness is clearly test support, not a second

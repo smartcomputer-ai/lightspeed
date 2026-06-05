@@ -9,7 +9,7 @@ use llm_runtime::{LlmAdapterRegistry, LlmRuntime, OpenAiResponsesLlmAdapter};
 use store_pg::PgStore;
 use vfs::{VfsMountStore, VfsWorkspaceStore};
 
-use crate::{SessionMountedVfsTools, pg_store_from_env};
+use crate::{config::pg_store_from_env, worker::SessionMountedVfsTools};
 
 #[derive(Clone)]
 pub struct StorageActivityDeps {
@@ -90,12 +90,16 @@ impl ActivityState {
         Self::new(sessions, blobs, llm, tools).with_skill_catalog_deps(workspace_store, mount_store)
     }
 
-    pub async fn from_env() -> anyhow::Result<Self> {
-        let store = pg_store_from_env().await?;
+    pub fn from_pg_store_with_default_runtime(store: Arc<PgStore>) -> anyhow::Result<Self> {
         let blobs: Arc<dyn BlobStore> = store.clone();
         let llm = openai_responses_llm(blobs)?;
         let tools = session_mounted_vfs_tools(store.clone());
         Ok(Self::from_pg_store(store, llm, tools))
+    }
+
+    pub async fn from_env() -> anyhow::Result<Self> {
+        let store = pg_store_from_env().await?;
+        Self::from_pg_store_with_default_runtime(store)
     }
 
     pub(super) fn storage(&self) -> &StorageActivityDeps {

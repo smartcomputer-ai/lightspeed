@@ -1,7 +1,7 @@
 use engine::LlmGenerationResult;
 use temporalio_sdk::activities::ActivityError;
 
-use crate::LlmGenerateActivityRequest;
+use crate::worker::LlmGenerateActivityRequest;
 
 use super::{
     common::{activity_error, failed_generation_result_from_error},

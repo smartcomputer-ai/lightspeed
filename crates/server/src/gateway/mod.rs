@@ -1,9 +1,13 @@
-//! Public gateway over the Temporal-backed agent workflow.
+//! HTTP/JSON-RPC gateway over the Temporal-backed agent workflow.
 
-mod config;
+pub mod http;
 mod service;
 
-pub use config::{default_model_from_env, pg_store_from_env};
+pub use crate::config::{default_model_from_env, pg_store_from_env};
+pub use http::{
+    DEFAULT_GATEWAY_BIND, DEFAULT_MAX_REQUEST_BODY_BYTES, GatewayServerConfig, gateway_router,
+    serve_gateway, serve_gateway_with_client_store,
+};
 pub use service::{GatewayAgentApi, GatewayAgentApiBuilder};
 pub use workflow::{
     AgentAdmission, AgentAdmissionFailure, AgentAdmissionFailureKind, AgentCompletedRunSummary,
