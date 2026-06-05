@@ -1,23 +1,29 @@
 use std::sync::Arc;
 
-use engine::{BlobRef, LlmGenerationResult, ToolInvocationBatchResult};
+use engine::{BlobRef, ContextCompactionResult, LlmGenerationResult, ToolInvocationBatchResult};
 use temporalio_macros::activities;
 use temporalio_sdk::activities::{ActivityContext, ActivityError};
 
 use crate::{
-    ACTIVITY_APPEND_EVENTS, ACTIVITY_CREATE_OR_LOAD_SESSION, ACTIVITY_LLM_GENERATE,
-    ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB, ACTIVITY_TOOL_INVOKE_BATCH, AppendEventsRequest,
+    ACTIVITY_APPEND_EVENTS, ACTIVITY_CONTEXT_COMPACT, ACTIVITY_CREATE_OR_LOAD_SESSION,
+    ACTIVITY_LLM_GENERATE, ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB, ACTIVITY_SKILL_CATALOG_REFRESH,
+    ACTIVITY_TOOL_INVOKE_BATCH, AppendEventsRequest, ContextCompactActivityRequest,
     CreateOrLoadSessionRequest, CreateOrLoadSessionResult, LlmGenerateActivityRequest,
-    PutBlobRequest, ReadBlobRequest, ReadBlobResult, ToolInvokeBatchActivityRequest,
+    PutBlobRequest, ReadBlobRequest, ReadBlobResult, SkillCatalogRefreshActivityRequest,
+    SkillCatalogRefreshActivityResult, ToolInvokeBatchActivityRequest,
 };
 
 mod common;
+mod compaction;
 mod llm;
+mod skills;
 mod state;
 mod storage;
 mod tools;
 
-pub use state::{ActivityState, LlmActivityDeps, StorageActivityDeps, ToolActivityDeps};
+pub use state::{
+    ActivityState, LlmActivityDeps, SkillCatalogActivityDeps, StorageActivityDeps, ToolActivityDeps,
+};
 
 pub struct WorkerActivities {
     state: Arc<ActivityState>,
@@ -40,10 +46,10 @@ mod tests {
     use std::{collections::BTreeMap, sync::Arc};
 
     use engine::{
-        CoreAgentLlm, CoreAgentTools, LlmGenerationRequest, LlmRequest, LlmRequestKind,
-        ModelProviderOptions, ModelSelection, OpenAiResponsesRequest, ProviderApiKind,
-        ResolvedContextWindow, RunId, SessionId, ToolBatchId, ToolCallStatus,
-        ToolInvocationBatchRequest, ToolInvocationRequest, TurnId,
+        ContextSnapshot, CoreAgentLlm, CoreAgentTools, LlmGenerationRequest, LlmRequest,
+        LlmRequestKind, ModelProviderOptions, ModelSelection, OpenAiResponsesRequest,
+        ProviderApiKind, RunId, SessionId, ToolBatchId, ToolCallStatus, ToolInvocationBatchRequest,
+        ToolInvocationRequest, TurnId,
         storage::{BlobStore, InMemoryBlobStore, InMemorySessionStore, SessionStore},
     };
 
@@ -74,8 +80,16 @@ mod tests {
             workflow::WorkflowActivities::llm_generate.name()
         );
         assert_eq!(
+            WorkerActivities::context_compact.name(),
+            workflow::WorkflowActivities::context_compact.name()
+        );
+        assert_eq!(
             WorkerActivities::tool_invoke_batch.name(),
             workflow::WorkflowActivities::tool_invoke_batch.name()
+        );
+        assert_eq!(
+            WorkerActivities::skill_catalog_refresh.name(),
+            workflow::WorkflowActivities::skill_catalog_refresh.name()
         );
     }
 
@@ -140,10 +154,10 @@ mod tests {
                 },
                 request_fingerprint: "fake-agent-test".to_owned(),
                 kind: LlmRequestKind::OpenAiResponses(OpenAiResponsesRequest {
-                    instructions_ref: None,
-                    input_window: ResolvedContextWindow {
+                    input_context: ContextSnapshot {
                         api_kind: ProviderApiKind::OpenAiResponses,
-                        items: Vec::new(),
+                        context_revision: 0,
+                        entries: Vec::new(),
                         token_estimate: None,
                     },
                     previous_response_id: None,
@@ -216,6 +230,15 @@ impl WorkerActivities {
         llm::generate(self.state.llm(), request).await
     }
 
+    #[activity(name = ACTIVITY_CONTEXT_COMPACT)]
+    pub async fn context_compact(
+        self: Arc<Self>,
+        _ctx: ActivityContext,
+        request: ContextCompactActivityRequest,
+    ) -> Result<ContextCompactionResult, ActivityError> {
+        compaction::compact_context(self.state.llm(), request).await
+    }
+
     #[activity(name = ACTIVITY_TOOL_INVOKE_BATCH)]
     pub async fn tool_invoke_batch(
         self: Arc<Self>,
@@ -223,5 +246,14 @@ impl WorkerActivities {
         request: ToolInvokeBatchActivityRequest,
     ) -> Result<ToolInvocationBatchResult, ActivityError> {
         tools::invoke_batch(self.state.tools(), request).await
+    }
+
+    #[activity(name = ACTIVITY_SKILL_CATALOG_REFRESH)]
+    pub async fn skill_catalog_refresh(
+        self: Arc<Self>,
+        _ctx: ActivityContext,
+        request: SkillCatalogRefreshActivityRequest,
+    ) -> Result<SkillCatalogRefreshActivityResult, ActivityError> {
+        skills::refresh_skill_catalog(self.state.skill_catalog(), request).await
     }
 }

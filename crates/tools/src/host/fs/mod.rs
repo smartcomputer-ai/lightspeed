@@ -1,6 +1,7 @@
 //! Filesystem capability boundary.
 
 use async_trait::async_trait;
+use engine::ToolEffect;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -11,6 +12,7 @@ pub use path::{FsPath, FsPathError};
 pub use read_only::ReadOnlyFileSystem;
 pub use scoped::ScopedFileSystem;
 pub use scoped_local::ScopedLocalFileSystem;
+pub use vfs::{MountedVfsFileSystem, VfsSnapshotFileSystem, VfsWorkspaceFileSystem};
 
 pub mod access;
 pub mod local;
@@ -19,6 +21,7 @@ pub mod path;
 pub mod read_only;
 pub mod scoped;
 pub mod scoped_local;
+pub mod vfs;
 
 pub type FsResult<T> = Result<T, FsError>;
 
@@ -161,4 +164,8 @@ pub trait FileSystem: Send + Sync {
         destination_path: &FsPath,
         options: CopyOptions,
     ) -> FsResult<()>;
+
+    fn drain_tool_effects(&self) -> Vec<ToolEffect> {
+        Vec::new()
+    }
 }

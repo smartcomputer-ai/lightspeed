@@ -1,4 +1,4 @@
-use engine::{BlobRef, ContextItemId, ProviderApiKind};
+use engine::{BlobRef, ContextEntryId, ProviderApiKind};
 use thiserror::Error;
 
 pub type LlmAdapterResult<T> = Result<T, LlmAdapterError>;
@@ -11,8 +11,8 @@ pub enum LlmAdapterError {
     #[error("LLM request kind does not match provider API kind: {message}")]
     RequestKindMismatch { message: String },
 
-    #[error("missing context item {item_id}")]
-    MissingContextItem { item_id: ContextItemId },
+    #[error("missing context entry {entry_id}")]
+    MissingContextEntry { entry_id: ContextEntryId },
 
     #[error("blob store failure: {message}")]
     BlobStore { message: String },

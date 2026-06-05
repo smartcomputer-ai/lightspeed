@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ActiveRun, BlobRef, CompactionRecord, CoreAgentEventKind, CoreAgentEventProposal,
-    CoreAgentJoins, CoreAgentState, CoreAgentStatus, DomainError, LlmRequest, ObservedToolCall,
-    PlanNext, PlanningError, RunId, RunStatus, TokenEstimate, TurnId,
+    ActiveRun, BlobRef, CoreAgentEventKind, CoreAgentEventProposal, CoreAgentJoins, CoreAgentState,
+    CoreAgentStatus, DomainError, LlmRequest, ObservedToolCall, PlanNext, PlanningError, RunId,
+    RunStatus, TokenEstimate, TurnId,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -105,12 +105,8 @@ fn decide_active_turn_progress(
             if active_run.status != RunStatus::Active {
                 return Ok(Vec::new());
             }
-            let Some(window) = state.context.active_window.as_ref() else {
-                return Ok(Vec::new());
-            };
-            let request = crate::core::components::llm::build_llm_request(
-                state, active_run, turn_id, window,
-            )?;
+            let request =
+                crate::core::components::llm::build_llm_request(state, active_run, turn_id)?;
             let joins = CoreAgentJoins {
                 run_id: Some(active_run.run_id),
                 turn_id: Some(turn_id),
@@ -197,7 +193,6 @@ pub struct LlmGenerationFacts {
     pub usage: Option<LlmUsage>,
     pub tool_calls: Vec<ObservedToolCall>,
     pub context_token_estimate: Option<TokenEstimate>,
-    pub compaction: Option<CompactionRecord>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -280,7 +275,11 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
             run_id,
             request,
         } => {
-            crate::core::components::llm::validate_request_matches_active_window(state, request)?;
+            crate::core::components::llm::validate_request_matches_active_context(state, request)?;
+            let snapshot = crate::core::components::llm::llm_request_context(request)?.clone();
+            crate::core::components::context::mark_snapshot_consumed_by_turn(
+                state, *run_id, *turn_id, &snapshot,
+            )?;
             let active_turn = active_turn_mut(state, *run_id, *turn_id)?;
             if active_turn.status != TurnStatus::Started {
                 return Err(DomainError::InvariantViolation(

@@ -1,5 +1,6 @@
 use engine::{
-    BlobRef, DynamicCommand, RunStatus, SessionConfig, SessionId, SessionPosition, SubmissionId,
+    BlobRef, ContextEntryInput, CoreAgentCommand, DynamicCommand, RunStatus, SessionConfig,
+    SessionId, SessionPosition, SubmissionId,
     storage::{DynamicSessionEntry, DynamicUncommittedSessionEvent, SessionRecord},
 };
 use serde::{Deserialize, Serialize};
@@ -8,6 +9,7 @@ use serde::{Deserialize, Serialize};
 pub struct AgentSessionArgs {
     pub session_id: SessionId,
     pub session_config: SessionConfig,
+    pub instructions_ref: Option<BlobRef>,
     pub max_steps_per_input: Option<u32>,
     pub continue_as_new_history_threshold: Option<u32>,
 }
@@ -57,7 +59,7 @@ pub struct AgentActiveRunSummary {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentQueuedRunSummary {
     pub submission_id: Option<SubmissionId>,
-    pub input_ref: BlobRef,
+    pub input: Vec<ContextEntryInput>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -109,6 +111,22 @@ pub struct LlmGenerateActivityRequest {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextCompactActivityRequest {
+    pub request: engine::ContextCompactionRequest,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolInvokeBatchActivityRequest {
     pub request: engine::ToolInvocationBatchRequest,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkillCatalogRefreshActivityRequest {
+    pub session_id: SessionId,
+    pub active_catalog_ref: Option<BlobRef>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkillCatalogRefreshActivityResult {
+    pub command: Option<CoreAgentCommand>,
 }

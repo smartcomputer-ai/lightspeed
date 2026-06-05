@@ -5,6 +5,8 @@
 //! workflow gateway, or another substrate while clients keep speaking the same
 //! session/run/item protocol.
 
+use std::collections::BTreeMap;
+
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -19,8 +21,26 @@ pub const METHOD_SESSION_UPDATE: &str = "session/update";
 pub const METHOD_SESSION_READ: &str = "session/read";
 pub const METHOD_SESSION_EVENTS_READ: &str = "session/events/read";
 pub const METHOD_SESSION_CLOSE: &str = "session/close";
+pub const METHOD_CONTEXT_COMPACT: &str = "context/compact";
 pub const METHOD_RUN_START: &str = "run/start";
 pub const METHOD_RUN_CANCEL: &str = "run/cancel";
+pub const METHOD_SKILLS_LIST: &str = "skills/list";
+pub const METHOD_SKILLS_ACTIVE: &str = "skills/active";
+pub const METHOD_SKILLS_ACTIVATE: &str = "skills/activate";
+pub const METHOD_SKILLS_DEACTIVATE: &str = "skills/deactivate";
+pub const METHOD_BLOB_PUT: &str = "blob/put";
+pub const METHOD_BLOB_PUT_MANY: &str = "blob/put_many";
+pub const METHOD_BLOB_GET: &str = "blob/get";
+pub const METHOD_BLOB_HAS_MANY: &str = "blob/has_many";
+pub const METHOD_VFS_SNAPSHOT_COMMIT: &str = "vfs/snapshot/commit";
+pub const METHOD_VFS_SNAPSHOT_READ: &str = "vfs/snapshot/read";
+pub const METHOD_VFS_WORKSPACE_CREATE: &str = "vfs/workspace/create";
+pub const METHOD_VFS_WORKSPACE_READ: &str = "vfs/workspace/read";
+pub const METHOD_VFS_WORKSPACE_UPDATE: &str = "vfs/workspace/update";
+pub const METHOD_VFS_WORKSPACE_DELETE: &str = "vfs/workspace/delete";
+pub const METHOD_VFS_MOUNT_PUT: &str = "vfs/mount/put";
+pub const METHOD_VFS_MOUNT_LIST: &str = "vfs/mount/list";
+pub const METHOD_VFS_MOUNT_DELETE: &str = "vfs/mount/delete";
 
 pub const NOTIFY_SESSION_STARTED: &str = "session/started";
 pub const NOTIFY_SESSION_STATUS_CHANGED: &str = "session/status/changed";
@@ -33,6 +53,7 @@ pub const NOTIFY_ERROR: &str = "error";
 pub type SessionId = String;
 pub type RunId = String;
 pub type ItemId = String;
+pub type SkillId = String;
 
 const SESSION_ID_MAX_LEN: usize = 128;
 
@@ -106,6 +127,11 @@ pub trait AgentApiService: Send + Sync {
         params: SessionCloseParams,
     ) -> Result<AgentApiOutcome<SessionCloseResponse>, AgentApiError>;
 
+    async fn compact_context(
+        &self,
+        params: ContextCompactParams,
+    ) -> Result<AgentApiOutcome<ContextCompactResponse>, AgentApiError>;
+
     async fn start_run(
         &self,
         params: RunStartParams,
@@ -115,6 +141,91 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: RunCancelParams,
     ) -> Result<AgentApiOutcome<RunCancelResponse>, AgentApiError>;
+
+    async fn list_skills(
+        &self,
+        params: SkillListParams,
+    ) -> Result<AgentApiOutcome<SkillListResponse>, AgentApiError>;
+
+    async fn active_skills(
+        &self,
+        params: SkillActiveParams,
+    ) -> Result<AgentApiOutcome<SkillActiveResponse>, AgentApiError>;
+
+    async fn activate_skill(
+        &self,
+        params: SkillActivateParams,
+    ) -> Result<AgentApiOutcome<SkillActivateResponse>, AgentApiError>;
+
+    async fn deactivate_skill(
+        &self,
+        params: SkillDeactivateParams,
+    ) -> Result<AgentApiOutcome<SkillDeactivateResponse>, AgentApiError>;
+
+    async fn put_blob(
+        &self,
+        params: BlobPutParams,
+    ) -> Result<AgentApiOutcome<BlobPutResponse>, AgentApiError>;
+
+    async fn put_blobs(
+        &self,
+        params: BlobPutManyParams,
+    ) -> Result<AgentApiOutcome<BlobPutManyResponse>, AgentApiError>;
+
+    async fn get_blob(
+        &self,
+        params: BlobGetParams,
+    ) -> Result<AgentApiOutcome<BlobGetResponse>, AgentApiError>;
+
+    async fn has_blobs(
+        &self,
+        params: BlobHasManyParams,
+    ) -> Result<AgentApiOutcome<BlobHasManyResponse>, AgentApiError>;
+
+    async fn commit_vfs_snapshot(
+        &self,
+        params: VfsSnapshotCommitParams,
+    ) -> Result<AgentApiOutcome<VfsSnapshotCommitResponse>, AgentApiError>;
+
+    async fn read_vfs_snapshot(
+        &self,
+        params: VfsSnapshotReadParams,
+    ) -> Result<AgentApiOutcome<VfsSnapshotReadResponse>, AgentApiError>;
+
+    async fn create_vfs_workspace(
+        &self,
+        params: VfsWorkspaceCreateParams,
+    ) -> Result<AgentApiOutcome<VfsWorkspaceCreateResponse>, AgentApiError>;
+
+    async fn read_vfs_workspace(
+        &self,
+        params: VfsWorkspaceReadParams,
+    ) -> Result<AgentApiOutcome<VfsWorkspaceReadResponse>, AgentApiError>;
+
+    async fn update_vfs_workspace(
+        &self,
+        params: VfsWorkspaceUpdateParams,
+    ) -> Result<AgentApiOutcome<VfsWorkspaceUpdateResponse>, AgentApiError>;
+
+    async fn delete_vfs_workspace(
+        &self,
+        params: VfsWorkspaceDeleteParams,
+    ) -> Result<AgentApiOutcome<VfsWorkspaceDeleteResponse>, AgentApiError>;
+
+    async fn put_vfs_mount(
+        &self,
+        params: VfsMountPutParams,
+    ) -> Result<AgentApiOutcome<VfsMountPutResponse>, AgentApiError>;
+
+    async fn delete_vfs_mount(
+        &self,
+        params: VfsMountDeleteParams,
+    ) -> Result<AgentApiOutcome<VfsMountDeleteResponse>, AgentApiError>;
+
+    async fn list_vfs_mounts(
+        &self,
+        params: VfsMountListParams,
+    ) -> Result<AgentApiOutcome<VfsMountListResponse>, AgentApiError>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -200,8 +311,6 @@ pub struct SessionStartParams {
 #[serde(rename_all = "camelCase")]
 pub struct SessionConfigInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub instructions: Option<InstructionsSource>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<ModelConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generation: Option<GenerationConfig>,
@@ -209,17 +318,6 @@ pub struct SessionConfigInput {
     pub context: Option<ContextConfigInput>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_defaults: Option<RunDefaultsConfig>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(
-    tag = "type",
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase"
-)]
-pub enum InstructionsSource {
-    Text { text: String },
-    BlobRef { blob_ref: String },
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -235,13 +333,23 @@ pub struct GenerationConfig {
 #[serde(rename_all = "camelCase")]
 pub struct ContextConfigInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_context_tokens: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub target_context_tokens: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reserve_output_tokens: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub compaction_enabled: Option<bool>,
+    pub compaction: Option<CompactionPolicyInput>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "mode")]
+pub enum CompactionPolicyInput {
+    Disabled,
+    ProviderTriggered {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        compact_threshold_tokens: Option<u32>,
+    },
+    ProviderStandalone {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        compact_threshold_tokens: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        target_tokens: Option<u32>,
+    },
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -273,8 +381,6 @@ pub struct SessionUpdateParams {
 #[serde(rename_all = "camelCase")]
 pub struct SessionConfigPatchInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub instructions: Option<FieldPatch<InstructionsSource>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<ModelConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generation: Option<GenerationConfigPatch>,
@@ -304,13 +410,7 @@ pub struct GenerationConfigPatch {
 #[serde(rename_all = "camelCase")]
 pub struct ContextConfigPatchInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_context_tokens: Option<FieldPatch<u32>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub target_context_tokens: Option<FieldPatch<u32>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reserve_output_tokens: Option<FieldPatch<u32>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub compaction_enabled: Option<bool>,
+    pub compaction: Option<FieldPatch<CompactionPolicyInput>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -325,6 +425,18 @@ pub struct RunDefaultsPatch {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionUpdateResponse {
+    pub session: SessionView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextCompactParams {
+    pub session_id: SessionId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextCompactResponse {
     pub session: SessionView,
 }
 
@@ -432,18 +544,18 @@ pub enum SessionEventKindView {
         revision: u64,
     },
     SessionClosed,
-    RunQueued {
+    RunAccepted {
+        run_id: RunId,
         submission_id: Option<String>,
-        input_ref: String,
+        input: Vec<ContextEntryInputView>,
     },
     RunStarted {
         run_id: RunId,
-        submission_id: Option<String>,
-        input_ref: String,
     },
-    RunSteeringAdded {
+    RunSteeringAccepted {
         run_id: RunId,
-        input_ref: String,
+        steering_id: String,
+        input: Vec<ContextEntryInputView>,
     },
     RunCancellationRequested {
         run_id: RunId,
@@ -479,17 +591,45 @@ pub enum SessionEventKindView {
     TurnCompleted {
         turn_id: String,
     },
-    ItemsRecorded {
+    ContextEntriesApplied {
+        base_revision: u64,
+        revision: u64,
         items: Vec<SessionItemView>,
     },
-    ContextWindowPlanned {
-        run_id: RunId,
-        turn_id: String,
+    ContextEntriesRemoved {
+        base_revision: u64,
+        revision: u64,
+        item_ids: Vec<ItemId>,
+        reason: String,
     },
-    CompactionRecorded {
-        run_id: Option<RunId>,
-        turn_id: Option<String>,
-        summary_ref: Option<String>,
+    ContextKeysRemoved {
+        base_revision: u64,
+        revision: u64,
+        keys: Vec<String>,
+    },
+    ContextStateReplaced {
+        base_revision: u64,
+        revision: u64,
+        items: Vec<SessionItemView>,
+        reason: String,
+    },
+    ContextCompactionRequested {
+        base_revision: u64,
+        revision: u64,
+        trigger: String,
+    },
+    ContextCompactionFinished {
+        base_revision: u64,
+        revision: u64,
+        status: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        failure_ref: Option<String>,
+    },
+    SkillCatalogSet {
+        catalog_ref: Option<String>,
+    },
+    SkillActivationsSet {
+        skill_ids: Vec<String>,
     },
     ToolRegistryChanged,
     ToolProfileSelected {
@@ -517,6 +657,8 @@ pub enum SessionEventKindView {
         batch_id: String,
         call_id: String,
         status: ToolItemStatus,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        effects: Vec<ToolEffectView>,
     },
     ToolBatchCompleted {
         run_id: RunId,
@@ -594,6 +736,360 @@ pub struct RunCancelResponse {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SkillListParams {
+    pub session_id: SessionId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillListResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_ref: Option<String>,
+    #[serde(default)]
+    pub skills: Vec<SkillListItem>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillListItem {
+    pub skill_id: SkillId,
+    pub name: String,
+    pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub short_description: Option<String>,
+    pub enabled: bool,
+    pub active: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillActiveParams {
+    pub session_id: SessionId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillActiveResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_ref: Option<String>,
+    #[serde(default)]
+    pub activations: Vec<SkillActivationView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillActivationView {
+    pub skill_id: SkillId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub short_description: Option<String>,
+    pub catalog_ref: String,
+    pub scope: SkillActivationScope,
+    pub source: SkillActivationSource,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SkillActivationScope {
+    #[default]
+    Run,
+    Session,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum SkillActivationSource {
+    ToolResult { call_id: String },
+    DirectContext { context_ref: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillActivateParams {
+    pub session_id: SessionId,
+    pub skill_id: SkillId,
+    #[serde(default)]
+    pub scope: SkillActivationScope,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillActivateResponse {
+    pub activation: SkillActivationView,
+    #[serde(default)]
+    pub active: Vec<SkillActivationView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillDeactivateParams {
+    pub session_id: SessionId,
+    pub skill_id: SkillId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillDeactivateResponse {
+    pub skill_id: SkillId,
+    #[serde(default)]
+    pub active: Vec<SkillActivationView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlobPutParams {
+    pub bytes_base64: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlobPutResponse {
+    pub blob_ref: String,
+    pub bytes: u64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlobPutManyParams {
+    #[serde(default)]
+    pub blobs: Vec<BlobPutParams>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlobPutManyResponse {
+    #[serde(default)]
+    pub blobs: Vec<BlobPutResponse>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlobGetParams {
+    pub blob_ref: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlobGetResponse {
+    pub blob_ref: String,
+    pub bytes_base64: String,
+    pub bytes: u64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlobHasManyParams {
+    #[serde(default)]
+    pub blob_refs: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlobHasItem {
+    pub blob_ref: String,
+    pub exists: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlobHasManyResponse {
+    #[serde(default)]
+    pub blobs: Vec<BlobHasItem>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsSnapshotCommitParams {
+    pub manifest: Value,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsSnapshotCommitResponse {
+    pub snapshot_ref: String,
+    pub files: u64,
+    pub bytes: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsSnapshotReadParams {
+    pub snapshot_ref: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsSnapshotReadResponse {
+    pub snapshot_ref: String,
+    pub manifest: Value,
+    pub files: u64,
+    pub bytes: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsWorkspaceCreateParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
+    pub snapshot_ref: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsWorkspaceCreateResponse {
+    pub workspace: VfsWorkspaceView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsWorkspaceReadParams {
+    pub workspace_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsWorkspaceReadResponse {
+    pub workspace: VfsWorkspaceView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsWorkspaceUpdateParams {
+    pub workspace_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_revision: Option<u64>,
+    pub snapshot_ref: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsWorkspaceUpdateResponse {
+    pub workspace: VfsWorkspaceView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsWorkspaceDeleteParams {
+    pub workspace_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsWorkspaceDeleteResponse {
+    pub workspace: VfsWorkspaceView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsWorkspaceView {
+    pub workspace_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_snapshot_ref: Option<String>,
+    pub head_snapshot_ref: String,
+    pub revision: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum VfsMountSourceInput {
+    Snapshot { snapshot_ref: String },
+    Workspace { workspace_id: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum VfsMountSourceView {
+    Snapshot {
+        snapshot_ref: String,
+    },
+    Workspace {
+        workspace_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        head_snapshot_ref: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        revision: Option<u64>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum VfsMountAccess {
+    ReadOnly,
+    ReadWrite,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsMountView {
+    pub mount_path: String,
+    pub source: VfsMountSourceView,
+    pub access: VfsMountAccess,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsMountPutParams {
+    pub session_id: SessionId,
+    pub mount_path: String,
+    pub source: VfsMountSourceInput,
+    pub access: VfsMountAccess,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsMountPutResponse {
+    pub mount: VfsMountView,
+    pub session: SessionView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsMountDeleteParams {
+    pub session_id: SessionId,
+    pub mount_path: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsMountDeleteResponse {
+    pub mount_path: String,
+    pub session: SessionView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsMountListParams {
+    pub session_id: SessionId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsMountListResponse {
+    #[serde(default)]
+    pub mounts: Vec<VfsMountView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ModelConfig {
     pub provider_id: String,
     pub api_kind: String,
@@ -622,25 +1118,26 @@ pub struct SessionView {
     pub updated_at_ms: u64,
     #[serde(default)]
     pub runs: Vec<RunView>,
+    pub active_context: ContextView,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vfs_mounts: Vec<VfsMountView>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextView {
+    pub revision: u64,
+    #[serde(default)]
+    pub items: Vec<SessionItemView>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionConfigView {
     pub model: ModelConfig,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub instructions: Option<InstructionsView>,
     pub generation: GenerationConfig,
     pub context: ContextConfigInput,
     pub run_defaults: RunDefaultsConfig,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct InstructionsView {
-    pub blob_ref: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub text: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -688,8 +1185,18 @@ pub struct ToolCallView {
     #[serde(default)]
     pub is_error: bool,
     pub status: ToolItemStatus,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effects: Vec<ToolEffectView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display: Option<ToolCallDisplayView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolEffectView {
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub data: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -735,6 +1242,62 @@ pub enum InputItem {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextEntryInputView {
+    pub kind: ContextEntryKindView,
+    pub content_ref: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_item_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_estimate: Option<TokenEstimateView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ContextEntryKindView {
+    Message { role: ContextMessageRoleView },
+    Instructions,
+    SkillCatalog,
+    SkillActivation { skill_id: SkillId },
+    ToolCall { call_id: String, name: String },
+    ToolResult { call_id: String, is_error: bool },
+    ReasoningState,
+    ProviderOpaque,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ContextMessageRoleView {
+    User,
+    Assistant,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenEstimateView {
+    pub tokens: u32,
+    pub quality: TokenEstimateQualityView,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TokenEstimateQualityView {
+    Exact,
+    ProviderCounted,
+    Estimated,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     tag = "type",
     rename_all = "camelCase",
@@ -766,6 +1329,20 @@ pub enum SessionItemView {
     SystemEvent {
         id: ItemId,
         text: String,
+    },
+    ProviderContext {
+        id: ItemId,
+        content_ref: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        media_type: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        preview: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider_kind: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider_item_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        token_estimate: Option<TokenEstimateView>,
     },
 }
 
@@ -1030,12 +1607,98 @@ pub async fn dispatch_json_rpc(
             Ok(params) => json_rpc_outcome(id, service.close_session(params).await),
             Err(error) => JsonRpcResponse::failure(id, error),
         },
+        METHOD_CONTEXT_COMPACT => match json_rpc_params::<ContextCompactParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.compact_context(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
         METHOD_RUN_START => match json_rpc_params::<RunStartParams>(request.params) {
             Ok(params) => json_rpc_outcome(id, service.start_run(params).await),
             Err(error) => JsonRpcResponse::failure(id, error),
         },
         METHOD_RUN_CANCEL => match json_rpc_params::<RunCancelParams>(request.params) {
             Ok(params) => json_rpc_outcome(id, service.cancel_run(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
+        METHOD_SKILLS_LIST => match json_rpc_params::<SkillListParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.list_skills(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
+        METHOD_SKILLS_ACTIVE => match json_rpc_params::<SkillActiveParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.active_skills(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
+        METHOD_SKILLS_ACTIVATE => match json_rpc_params::<SkillActivateParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.activate_skill(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
+        METHOD_SKILLS_DEACTIVATE => {
+            match json_rpc_params::<SkillDeactivateParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.deactivate_skill(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
+        METHOD_BLOB_PUT => match json_rpc_params::<BlobPutParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.put_blob(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
+        METHOD_BLOB_PUT_MANY => match json_rpc_params::<BlobPutManyParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.put_blobs(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
+        METHOD_BLOB_GET => match json_rpc_params::<BlobGetParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.get_blob(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
+        METHOD_BLOB_HAS_MANY => match json_rpc_params::<BlobHasManyParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.has_blobs(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
+        METHOD_VFS_SNAPSHOT_COMMIT => {
+            match json_rpc_params::<VfsSnapshotCommitParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.commit_vfs_snapshot(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
+        METHOD_VFS_SNAPSHOT_READ => {
+            match json_rpc_params::<VfsSnapshotReadParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.read_vfs_snapshot(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
+        METHOD_VFS_WORKSPACE_CREATE => {
+            match json_rpc_params::<VfsWorkspaceCreateParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.create_vfs_workspace(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
+        METHOD_VFS_WORKSPACE_READ => {
+            match json_rpc_params::<VfsWorkspaceReadParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.read_vfs_workspace(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
+        METHOD_VFS_WORKSPACE_UPDATE => {
+            match json_rpc_params::<VfsWorkspaceUpdateParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.update_vfs_workspace(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
+        METHOD_VFS_WORKSPACE_DELETE => {
+            match json_rpc_params::<VfsWorkspaceDeleteParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.delete_vfs_workspace(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
+        METHOD_VFS_MOUNT_PUT => match json_rpc_params::<VfsMountPutParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.put_vfs_mount(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
+        METHOD_VFS_MOUNT_DELETE => match json_rpc_params::<VfsMountDeleteParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.delete_vfs_mount(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
+        METHOD_VFS_MOUNT_LIST => match json_rpc_params::<VfsMountListParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.list_vfs_mounts(params).await),
             Err(error) => JsonRpcResponse::failure(id, error),
         },
         other => JsonRpcResponse::failure(id, JsonRpcError::method_not_found(other)),
@@ -1206,6 +1869,25 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_context_compact() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_CONTEXT_COMPACT.to_owned(),
+                params: Some(json!({ "sessionId": "session_1" })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["session"]["id"],
+            json!("session_1")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn dispatch_json_rpc_routes_run_cancel() {
         let response = dispatch_json_rpc(
             &TestService,
@@ -1224,6 +1906,89 @@ mod tests {
         assert_eq!(
             response.result.expect("result")["result"]["run"]["status"],
             json!("cancelled")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_skills_list() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_SKILLS_LIST.to_owned(),
+                params: Some(json!({ "sessionId": "session_1" })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["skills"][0]["active"],
+            json!(true)
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_skills_active() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_SKILLS_ACTIVE.to_owned(),
+                params: Some(json!({ "sessionId": "session_1" })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["activations"][0]["source"]["type"],
+            json!("directContext")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_skills_activate() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_SKILLS_ACTIVATE.to_owned(),
+                params: Some(json!({
+                    "sessionId": "session_1",
+                    "skillId": "skill:one",
+                    "scope": "session"
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["activation"]["scope"],
+            json!("session")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_skills_deactivate() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_SKILLS_DEACTIVATE.to_owned(),
+                params: Some(json!({
+                    "sessionId": "session_1",
+                    "skillId": "skill:one"
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["skillId"],
+            json!("skill:one")
         );
     }
 
@@ -1257,6 +2022,209 @@ mod tests {
         assert_eq!(
             response.result.expect("result")["result"]["run"]["status"],
             json!("running")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_blob_put_many() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_BLOB_PUT_MANY.to_owned(),
+                params: Some(json!({
+                    "blobs": [
+                        { "bytesBase64": "aGVsbG8=" },
+                        { "bytesBase64": "d29ybGQ=" }
+                    ]
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["blobs"][1]["bytes"],
+            json!(8)
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_vfs_snapshot_commit() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_VFS_SNAPSHOT_COMMIT.to_owned(),
+                params: Some(json!({
+                    "manifest": {
+                        "schema_version": "forge.vfs.snapshot.v1",
+                        "root": { "entries": {} },
+                        "totals": { "files": 0, "bytes": 0 }
+                    }
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["snapshotRef"],
+            json!(format!("sha256:{}", "2".repeat(64)))
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_vfs_workspace_create() {
+        let snapshot_ref = format!("sha256:{}", "2".repeat(64));
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_VFS_WORKSPACE_CREATE.to_owned(),
+                params: Some(json!({
+                    "workspaceId": "workspace_1",
+                    "snapshotRef": snapshot_ref
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["workspace"]["workspaceId"],
+            json!("workspace_1")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_vfs_workspace_read() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_VFS_WORKSPACE_READ.to_owned(),
+                params: Some(json!({ "workspaceId": "workspace_1" })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["workspace"]["revision"],
+            json!(4)
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_vfs_workspace_update() {
+        let snapshot_ref = format!("sha256:{}", "4".repeat(64));
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_VFS_WORKSPACE_UPDATE.to_owned(),
+                params: Some(json!({
+                    "workspaceId": "workspace_1",
+                    "expectedRevision": 4,
+                    "snapshotRef": snapshot_ref
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["workspace"]["revision"],
+            json!(5)
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_vfs_workspace_update_without_expected_revision() {
+        let snapshot_ref = format!("sha256:{}", "4".repeat(64));
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_VFS_WORKSPACE_UPDATE.to_owned(),
+                params: Some(json!({
+                    "workspaceId": "workspace_1",
+                    "snapshotRef": snapshot_ref
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["workspace"]["revision"],
+            json!(5)
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_vfs_workspace_delete() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_VFS_WORKSPACE_DELETE.to_owned(),
+                params: Some(json!({ "workspaceId": "workspace_1" })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["workspace"]["workspaceId"],
+            json!("workspace_1")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_vfs_mount_put() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_VFS_MOUNT_PUT.to_owned(),
+                params: Some(json!({
+                    "sessionId": "session_1",
+                    "mountPath": "/workspace",
+                    "source": { "type": "workspace", "workspaceId": "workspace_1" },
+                    "access": "readWrite"
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["mount"]["source"]["workspaceId"],
+            json!("workspace_1")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_vfs_mount_delete() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_VFS_MOUNT_DELETE.to_owned(),
+                params: Some(json!({
+                    "sessionId": "session_1",
+                    "mountPath": "/workspace"
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["mountPath"],
+            json!("/workspace")
         );
     }
 
@@ -1349,6 +2317,41 @@ mod tests {
     }
 
     #[test]
+    fn provider_context_item_serializes_debug_metadata() {
+        let item = SessionItemView::ProviderContext {
+            id: "item_42".to_owned(),
+            content_ref: "sha256:compact".to_owned(),
+            media_type: Some("application/json".to_owned()),
+            preview: Some("OpenAI Responses compaction item".to_owned()),
+            provider_kind: Some("openai.responses.compaction".to_owned()),
+            provider_item_id: Some("item_compaction_1".to_owned()),
+            token_estimate: Some(TokenEstimateView {
+                tokens: 123,
+                quality: TokenEstimateQualityView::ProviderCounted,
+            }),
+        };
+
+        let value = serde_json::to_value(item).expect("serialize provider context item");
+
+        assert_eq!(
+            value,
+            json!({
+                "type": "providerContext",
+                "id": "item_42",
+                "contentRef": "sha256:compact",
+                "mediaType": "application/json",
+                "preview": "OpenAI Responses compaction item",
+                "providerKind": "openai.responses.compaction",
+                "providerItemId": "item_compaction_1",
+                "tokenEstimate": {
+                    "tokens": 123,
+                    "quality": "providerCounted"
+                }
+            })
+        );
+    }
+
+    #[test]
     fn run_view_can_expose_tool_batches() {
         let run = RunView {
             id: "run_1".to_owned(),
@@ -1367,6 +2370,7 @@ mod tests {
                     output: Some("ok".to_owned()),
                     is_error: false,
                     status: ToolItemStatus::Succeeded,
+                    effects: Vec::new(),
                     display: Some(ToolCallDisplayView {
                         group: ToolCallDisplayGroup::Explore,
                         verb: "Read".to_owned(),
@@ -1508,6 +2512,15 @@ mod tests {
             }))
         }
 
+        async fn compact_context(
+            &self,
+            params: ContextCompactParams,
+        ) -> Result<AgentApiOutcome<ContextCompactResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(ContextCompactResponse {
+                session: test_session(params.session_id, SessionStatus::Idle),
+            }))
+        }
+
         async fn start_run(
             &self,
             params: RunStartParams,
@@ -1531,6 +2544,250 @@ mod tests {
                 run: test_run(params.run_id, RunStatus::Cancelled),
             }))
         }
+
+        async fn list_skills(
+            &self,
+            _params: SkillListParams,
+        ) -> Result<AgentApiOutcome<SkillListResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(SkillListResponse {
+                catalog_ref: Some(format!("sha256:{}", "5".repeat(64))),
+                skills: vec![SkillListItem {
+                    skill_id: "skill:one".to_owned(),
+                    name: "one".to_owned(),
+                    description: "Use when testing skills.".to_owned(),
+                    short_description: Some("test skill".to_owned()),
+                    enabled: true,
+                    active: true,
+                }],
+            }))
+        }
+
+        async fn active_skills(
+            &self,
+            _params: SkillActiveParams,
+        ) -> Result<AgentApiOutcome<SkillActiveResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(SkillActiveResponse {
+                catalog_ref: Some(format!("sha256:{}", "5".repeat(64))),
+                activations: vec![test_skill_activation(SkillActivationScope::Run)],
+            }))
+        }
+
+        async fn activate_skill(
+            &self,
+            params: SkillActivateParams,
+        ) -> Result<AgentApiOutcome<SkillActivateResponse>, AgentApiError> {
+            assert_eq!(params.skill_id, "skill:one");
+            let activation = test_skill_activation(params.scope);
+            Ok(AgentApiOutcome::new(SkillActivateResponse {
+                activation: activation.clone(),
+                active: vec![activation],
+            }))
+        }
+
+        async fn deactivate_skill(
+            &self,
+            params: SkillDeactivateParams,
+        ) -> Result<AgentApiOutcome<SkillDeactivateResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(SkillDeactivateResponse {
+                skill_id: params.skill_id,
+                active: Vec::new(),
+            }))
+        }
+
+        async fn put_blob(
+            &self,
+            params: BlobPutParams,
+        ) -> Result<AgentApiOutcome<BlobPutResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(BlobPutResponse {
+                blob_ref: format!("sha256:{}", "1".repeat(64)),
+                bytes: params.bytes_base64.len() as u64,
+            }))
+        }
+
+        async fn put_blobs(
+            &self,
+            params: BlobPutManyParams,
+        ) -> Result<AgentApiOutcome<BlobPutManyResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(BlobPutManyResponse {
+                blobs: params
+                    .blobs
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, blob)| BlobPutResponse {
+                        blob_ref: format!("sha256:{index:064x}"),
+                        bytes: blob.bytes_base64.len() as u64,
+                    })
+                    .collect(),
+            }))
+        }
+
+        async fn get_blob(
+            &self,
+            params: BlobGetParams,
+        ) -> Result<AgentApiOutcome<BlobGetResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(BlobGetResponse {
+                blob_ref: params.blob_ref,
+                bytes_base64: "aGVsbG8=".to_owned(),
+                bytes: 5,
+            }))
+        }
+
+        async fn has_blobs(
+            &self,
+            params: BlobHasManyParams,
+        ) -> Result<AgentApiOutcome<BlobHasManyResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(BlobHasManyResponse {
+                blobs: params
+                    .blob_refs
+                    .into_iter()
+                    .map(|blob_ref| BlobHasItem {
+                        blob_ref,
+                        exists: true,
+                    })
+                    .collect(),
+            }))
+        }
+
+        async fn commit_vfs_snapshot(
+            &self,
+            _params: VfsSnapshotCommitParams,
+        ) -> Result<AgentApiOutcome<VfsSnapshotCommitResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(VfsSnapshotCommitResponse {
+                snapshot_ref: format!("sha256:{}", "2".repeat(64)),
+                files: 1,
+                bytes: 5,
+            }))
+        }
+
+        async fn read_vfs_snapshot(
+            &self,
+            params: VfsSnapshotReadParams,
+        ) -> Result<AgentApiOutcome<VfsSnapshotReadResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(VfsSnapshotReadResponse {
+                snapshot_ref: params.snapshot_ref,
+                manifest: json!({
+                    "schema_version": "forge.vfs.snapshot.v1",
+                    "root": { "entries": {} },
+                    "totals": { "files": 0, "bytes": 0 }
+                }),
+                files: 0,
+                bytes: 0,
+            }))
+        }
+
+        async fn create_vfs_workspace(
+            &self,
+            params: VfsWorkspaceCreateParams,
+        ) -> Result<AgentApiOutcome<VfsWorkspaceCreateResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(VfsWorkspaceCreateResponse {
+                workspace: VfsWorkspaceView {
+                    workspace_id: params
+                        .workspace_id
+                        .unwrap_or_else(|| "workspace_test".to_owned()),
+                    base_snapshot_ref: Some(params.snapshot_ref.clone()),
+                    head_snapshot_ref: params.snapshot_ref,
+                    revision: 0,
+                },
+            }))
+        }
+
+        async fn read_vfs_workspace(
+            &self,
+            params: VfsWorkspaceReadParams,
+        ) -> Result<AgentApiOutcome<VfsWorkspaceReadResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(VfsWorkspaceReadResponse {
+                workspace: VfsWorkspaceView {
+                    workspace_id: params.workspace_id,
+                    base_snapshot_ref: Some(format!("sha256:{}", "2".repeat(64))),
+                    head_snapshot_ref: format!("sha256:{}", "3".repeat(64)),
+                    revision: 4,
+                },
+            }))
+        }
+
+        async fn update_vfs_workspace(
+            &self,
+            params: VfsWorkspaceUpdateParams,
+        ) -> Result<AgentApiOutcome<VfsWorkspaceUpdateResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(VfsWorkspaceUpdateResponse {
+                workspace: VfsWorkspaceView {
+                    workspace_id: params.workspace_id,
+                    base_snapshot_ref: Some(format!("sha256:{}", "2".repeat(64))),
+                    head_snapshot_ref: params.snapshot_ref,
+                    revision: params.expected_revision.unwrap_or(4) + 1,
+                },
+            }))
+        }
+
+        async fn delete_vfs_workspace(
+            &self,
+            params: VfsWorkspaceDeleteParams,
+        ) -> Result<AgentApiOutcome<VfsWorkspaceDeleteResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(VfsWorkspaceDeleteResponse {
+                workspace: VfsWorkspaceView {
+                    workspace_id: params.workspace_id,
+                    base_snapshot_ref: Some(format!("sha256:{}", "2".repeat(64))),
+                    head_snapshot_ref: format!("sha256:{}", "3".repeat(64)),
+                    revision: 4,
+                },
+            }))
+        }
+
+        async fn put_vfs_mount(
+            &self,
+            params: VfsMountPutParams,
+        ) -> Result<AgentApiOutcome<VfsMountPutResponse>, AgentApiError> {
+            let mount = VfsMountView {
+                mount_path: params.mount_path,
+                source: match params.source {
+                    VfsMountSourceInput::Snapshot { snapshot_ref } => {
+                        VfsMountSourceView::Snapshot { snapshot_ref }
+                    }
+                    VfsMountSourceInput::Workspace { workspace_id } => {
+                        VfsMountSourceView::Workspace {
+                            workspace_id,
+                            head_snapshot_ref: Some(format!("sha256:{}", "3".repeat(64))),
+                            revision: Some(0),
+                        }
+                    }
+                },
+                access: params.access,
+            };
+            Ok(AgentApiOutcome::new(VfsMountPutResponse {
+                mount: mount.clone(),
+                session: SessionView {
+                    vfs_mounts: vec![mount],
+                    ..test_session(params.session_id, SessionStatus::Idle)
+                },
+            }))
+        }
+
+        async fn delete_vfs_mount(
+            &self,
+            params: VfsMountDeleteParams,
+        ) -> Result<AgentApiOutcome<VfsMountDeleteResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(VfsMountDeleteResponse {
+                mount_path: params.mount_path,
+                session: test_session(params.session_id, SessionStatus::Idle),
+            }))
+        }
+
+        async fn list_vfs_mounts(
+            &self,
+            params: VfsMountListParams,
+        ) -> Result<AgentApiOutcome<VfsMountListResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(VfsMountListResponse {
+                mounts: vec![VfsMountView {
+                    mount_path: "/workspace".to_owned(),
+                    source: VfsMountSourceView::Workspace {
+                        workspace_id: format!("workspace_{}", params.session_id),
+                        head_snapshot_ref: Some(format!("sha256:{}", "3".repeat(64))),
+                        revision: Some(0),
+                    },
+                    access: VfsMountAccess::ReadWrite,
+                }],
+            }))
+        }
     }
 
     fn test_session(id: SessionId, status: SessionStatus) -> SessionView {
@@ -1543,6 +2800,8 @@ mod tests {
             created_at_ms: 1,
             updated_at_ms: 2,
             runs: Vec::new(),
+            active_context: ContextView::default(),
+            vfs_mounts: Vec::new(),
         }
     }
 
@@ -1553,6 +2812,20 @@ mod tests {
             input: Vec::new(),
             items: Vec::new(),
             tool_batches: Vec::new(),
+        }
+    }
+
+    fn test_skill_activation(scope: SkillActivationScope) -> SkillActivationView {
+        SkillActivationView {
+            skill_id: "skill:one".to_owned(),
+            name: Some("one".to_owned()),
+            description: Some("Use when testing skills.".to_owned()),
+            short_description: Some("test skill".to_owned()),
+            catalog_ref: format!("sha256:{}", "5".repeat(64)),
+            scope,
+            source: SkillActivationSource::DirectContext {
+                context_ref: format!("sha256:{}", "6".repeat(64)),
+            },
         }
     }
 }

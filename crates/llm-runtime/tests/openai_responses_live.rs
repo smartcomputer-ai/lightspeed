@@ -3,14 +3,16 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use engine::{
-    BlobRef, ContextItem, ContextItemId, ContextItemKind, ContextItemSource, ContextMessageRole,
-    LlmFinish, LlmGenerationRequest, LlmGenerationStatus, LlmRequest, LlmRequestKind,
-    ModelProviderOptions, ModelSelection, OpenAiResponsesRequest, ProviderApiKind,
-    ResolvedContextWindow, RunId, SessionId, TurnId,
+    BlobRef, ContextEntry, ContextEntryId, ContextEntryKind, ContextEntrySource,
+    ContextMessageRole, ContextSnapshot, LlmFinish, LlmGenerationRequest, LlmGenerationStatus,
+    LlmRequest, LlmRequestKind, ModelProviderOptions, ModelSelection,
+    OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, OpenAiResponsesRequest, ProviderApiKind, RunId,
+    SessionId, TurnId,
     storage::{BlobStore, InMemoryBlobStore},
 };
 use llm_clients::openai::responses::{Client, Config};
 use llm_runtime::{LlmGenerationAdapter, OpenAiResponsesLlmAdapter};
+use serde_json::{Value, json};
 
 fn live_model() -> String {
     env_or_dotenv_var("OPENAI_RESPONSES_MODEL")
@@ -92,15 +94,17 @@ async fn text_blob(blobs: &InMemoryBlobStore, text: &str) -> BlobRef {
 async fn openai_responses_live_adapter_generates_result() {
     let blobs = Arc::new(InMemoryBlobStore::new());
     let input_ref = text_blob(&blobs, "Reply with exactly these two words: forge adapter").await;
-    let context_item = ContextItem {
-        item_id: ContextItemId::new(1),
-        kind: ContextItemKind::Message {
+    let context_entry = ContextEntry {
+        key: None,
+        entry_id: ContextEntryId::new(1),
+        kind: ContextEntryKind::Message {
             role: ContextMessageRole::User,
         },
-        source: ContextItemSource::RunInput {
+        source: ContextEntrySource::RunInput {
             run_id: RunId::new(1),
+            input_index: 0,
         },
-        native_item_ref: input_ref,
+        content_ref: input_ref,
         media_type: None,
         preview: None,
         provider_kind: None,
@@ -121,10 +125,10 @@ async fn openai_responses_live_adapter_generates_result() {
             },
             request_fingerprint: "live-openai-responses".to_string(),
             kind: LlmRequestKind::OpenAiResponses(OpenAiResponsesRequest {
-                instructions_ref: None,
-                input_window: ResolvedContextWindow {
+                input_context: ContextSnapshot {
                     api_kind: ProviderApiKind::OpenAiResponses,
-                    items: vec![context_item],
+                    context_revision: 0,
+                    entries: vec![context_entry],
                     token_estimate: None,
                 },
                 previous_response_id: None,
@@ -174,12 +178,12 @@ async fn openai_responses_live_adapter_generates_result() {
     );
     let assistant_ref = execution
         .result
-        .context_items
+        .context_entries
         .iter()
         .find_map(|item| match item.kind {
-            ContextItemKind::Message {
+            ContextEntryKind::Message {
                 role: ContextMessageRole::Assistant,
-            } => Some(item.native_item_ref.clone()),
+            } => Some(item.content_ref.clone()),
             _ => None,
         })
         .expect("assistant context item");
@@ -208,4 +212,99 @@ async fn openai_responses_live_adapter_generates_result() {
         raw_response.contains("\"id\""),
         "expected raw response JSON, got {raw_response}"
     );
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires OPENAI_API_KEY (costs real money)"]
+async fn openai_responses_live_adapter_captures_provider_triggered_compaction() {
+    let blobs = Arc::new(InMemoryBlobStore::new());
+    let repeated_context = "Forge is testing OpenAI Responses provider-triggered compaction with encrypted native context state. This sentence is repeated to exceed the minimum compact threshold.";
+    let input_text = std::iter::repeat(repeated_context)
+        .take(300)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let input_ref = text_blob(&blobs, &input_text).await;
+    let context_entry = ContextEntry {
+        key: None,
+        entry_id: ContextEntryId::new(1),
+        kind: ContextEntryKind::Message {
+            role: ContextMessageRole::User,
+        },
+        source: ContextEntrySource::RunInput {
+            run_id: RunId::new(1),
+            input_index: 0,
+        },
+        content_ref: input_ref,
+        media_type: None,
+        preview: None,
+        provider_kind: None,
+        provider_item_id: None,
+        token_estimate: None,
+    };
+    let adapter = OpenAiResponsesLlmAdapter::new(Arc::new(live_client()), blobs.clone());
+    let request = LlmGenerationRequest {
+        session_id: SessionId::new("session-live-compaction"),
+        run_id: RunId::new(1),
+        turn_id: TurnId::new(1),
+        request: LlmRequest {
+            model: ModelSelection {
+                api_kind: ProviderApiKind::OpenAiResponses,
+                provider_id: "openai".to_string(),
+                model: live_model(),
+                options: ModelProviderOptions::None,
+            },
+            request_fingerprint: "live-openai-responses-compaction".to_string(),
+            kind: LlmRequestKind::OpenAiResponses(OpenAiResponsesRequest {
+                input_context: ContextSnapshot {
+                    api_kind: ProviderApiKind::OpenAiResponses,
+                    context_revision: 0,
+                    entries: vec![context_entry],
+                    token_estimate: None,
+                },
+                previous_response_id: None,
+                tools: Vec::new(),
+                tool_choice: None,
+                reasoning: None,
+                text: None,
+                include: Vec::new(),
+                max_output_tokens: Some(128),
+                max_tool_calls: None,
+                temperature: None,
+                top_p: None,
+                metadata: BTreeMap::new(),
+                parallel_tool_calls: None,
+                store: Some(false),
+                stream: Some(false),
+                truncation: None,
+                context_management: Some(json!([
+                    {
+                        "type": "compaction",
+                        "compact_threshold": 2000
+                    }
+                ])),
+                extra: BTreeMap::new(),
+            }),
+        },
+    };
+
+    let execution = adapter.generate(request).await.expect("generate response");
+
+    let compaction = execution
+        .result
+        .context_entries
+        .iter()
+        .find(|entry| {
+            entry.provider_kind.as_deref() == Some(OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND)
+        })
+        .expect("expected provider-triggered compaction context entry");
+    assert!(matches!(compaction.kind, ContextEntryKind::ProviderOpaque));
+    let raw = blobs
+        .read_text(&compaction.content_ref)
+        .await
+        .expect("raw compaction item");
+    let raw: Value = serde_json::from_str(&raw).expect("raw compaction JSON");
+    assert!(matches!(
+        raw["type"].as_str(),
+        Some("compaction" | "compaction_summary" | "context_compaction")
+    ));
 }

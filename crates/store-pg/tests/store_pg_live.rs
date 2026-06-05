@@ -16,6 +16,11 @@ use sqlx::{PgPool, Row, postgres::PgPoolOptions};
 use store_pg::{PgStore, PgStoreConfig};
 use tokio::sync::OnceCell;
 use uuid::Uuid;
+use vfs::{
+    CompareAndSetVfsWorkspaceHead, CreateVfsWorkspaceRecord, VfsCatalogError, VfsMountAccess,
+    VfsMountRecord, VfsMountSource, VfsMountStore, VfsPath, VfsSnapshotRecord, VfsSnapshotSource,
+    VfsSnapshotStore, VfsWorkspaceId, VfsWorkspaceStore,
+};
 
 static MIGRATED: OnceCell<()> = OnceCell::const_new();
 
@@ -223,6 +228,137 @@ async fn pg_live_records_session_roots_and_blob_edges() {
     .await
     .expect("count edge rows");
     assert_eq!(edge_count, 1);
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires dev/local/up.sh or compatible Postgres + MinIO env"]
+async fn pg_live_vfs_catalog_tracks_workspace_heads_and_mounts() {
+    let store = live_store("vfs-catalog", 1024).await;
+    let snapshot_ref = store
+        .put_bytes(b"snapshot manifest".to_vec())
+        .await
+        .expect("put snapshot manifest");
+    let next_ref = store
+        .put_bytes(b"next snapshot manifest".to_vec())
+        .await
+        .expect("put next snapshot manifest");
+
+    let snapshot = VfsSnapshotRecord {
+        snapshot_ref: snapshot_ref.clone(),
+        source: VfsSnapshotSource::new("inline").with_subject("seed"),
+        display_name: Some("Seed".to_string()),
+        created_at_ms: 1,
+    };
+    store
+        .record_snapshot(snapshot.clone())
+        .await
+        .expect("record snapshot");
+    assert_eq!(
+        store
+            .read_snapshot(&snapshot_ref)
+            .await
+            .expect("read snapshot"),
+        snapshot
+    );
+
+    let workspace_id = VfsWorkspaceId::new("workspace-1");
+    let workspace = store
+        .create_workspace(CreateVfsWorkspaceRecord {
+            workspace_id: workspace_id.clone(),
+            base_snapshot_ref: Some(snapshot_ref.clone()),
+            head_snapshot_ref: snapshot_ref.clone(),
+            created_at_ms: 2,
+        })
+        .await
+        .expect("create workspace");
+    assert_eq!(workspace.revision, 0);
+    assert!(matches!(
+        store
+            .create_workspace(CreateVfsWorkspaceRecord {
+                workspace_id: workspace_id.clone(),
+                base_snapshot_ref: None,
+                head_snapshot_ref: snapshot_ref.clone(),
+                created_at_ms: 3,
+            })
+            .await,
+        Err(VfsCatalogError::AlreadyExists { .. })
+    ));
+
+    let updated = store
+        .compare_and_set_head(CompareAndSetVfsWorkspaceHead {
+            workspace_id: workspace_id.clone(),
+            expected_revision: Some(0),
+            new_head_snapshot_ref: next_ref,
+            updated_at_ms: 4,
+        })
+        .await
+        .expect("advance workspace head");
+    assert_eq!(updated.revision, 1);
+    assert!(matches!(
+        store
+            .compare_and_set_head(CompareAndSetVfsWorkspaceHead {
+                workspace_id: workspace_id.clone(),
+                expected_revision: Some(0),
+                new_head_snapshot_ref: snapshot_ref.clone(),
+                updated_at_ms: 5,
+            })
+            .await,
+        Err(VfsCatalogError::RevisionConflict {
+            actual_revision: 1,
+            ..
+        })
+    ));
+
+    let session_id = SessionId::new("session-vfs");
+    let workspace_mount = VfsMountRecord {
+        session_id: session_id.clone(),
+        mount_path: VfsPath::parse("/workspace").expect("workspace mount path"),
+        source: VfsMountSource::Workspace {
+            workspace_id: workspace_id.clone(),
+        },
+        access: VfsMountAccess::ReadWrite,
+    };
+    let snapshot_mount = VfsMountRecord {
+        session_id: session_id.clone(),
+        mount_path: VfsPath::parse("/skills/openai-docs").expect("skill mount path"),
+        source: VfsMountSource::Snapshot {
+            snapshot_ref: snapshot_ref.clone(),
+        },
+        access: VfsMountAccess::ReadOnly,
+    };
+    store
+        .put_mount(workspace_mount.clone())
+        .await
+        .expect("put workspace mount");
+    store
+        .put_mount(snapshot_mount.clone())
+        .await
+        .expect("put snapshot mount");
+    assert_eq!(
+        store.list_mounts(&session_id).await.expect("list mounts"),
+        vec![snapshot_mount.clone(), workspace_mount.clone()]
+    );
+    store
+        .remove_mount(&session_id, &snapshot_mount.mount_path)
+        .await
+        .expect("remove mount");
+    assert_eq!(
+        store.list_mounts(&session_id).await.expect("list mounts"),
+        vec![workspace_mount.clone()]
+    );
+    let deleted = store
+        .delete_workspace(&workspace_id)
+        .await
+        .expect("delete workspace");
+    assert_eq!(deleted.workspace_id, workspace_id);
+    assert!(matches!(
+        store.read_workspace(&deleted.workspace_id).await,
+        Err(VfsCatalogError::NotFound { .. })
+    ));
+    assert_eq!(
+        store.list_mounts(&session_id).await.expect("list mounts"),
+        Vec::<VfsMountRecord>::new()
+    );
 }
 
 async fn live_store(test_name: &str, inline_threshold_bytes: usize) -> PgStore {

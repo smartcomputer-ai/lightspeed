@@ -5,10 +5,13 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1"
+async-trait = "0.1"
+base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }
 crossterm = { version = "0.28", features = ["bracketed-paste", "event-stream"] }
 dotenvy = "0.15"
 api = { path = "../api" }
+engine = { path = "../engine" }
 futures-util = "0.3"
 pulldown-cmark = "0.10"
 serde = { version = "1", features = ["derive"] }
@@ -17,6 +20,7 @@ tokio = { version = "1", features = ["macros", "rt", "signal", "sync", "time"] }
 ratatui = "0.29"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 unicode-width = "0.2"
+vfs = { path = "../vfs" }
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }

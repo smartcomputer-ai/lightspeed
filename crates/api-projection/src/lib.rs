@@ -7,20 +7,24 @@
 use std::collections::BTreeMap;
 
 use api::{
-    AgentApiError, ContextConfigInput, EventCursor, EventJoinsView, GenerationConfig, InputItem,
-    InstructionsView, ModelConfig, ReasoningEffort, RunDefaultsConfig, RunStatus as ApiRunStatus,
-    RunView, SessionConfigView, SessionEventKindView, SessionEventView, SessionItemView,
-    SessionStatus as ApiSessionStatus, SessionView, ToolBatchView, ToolCallDisplayGroup,
-    ToolCallDisplayView, ToolCallEventView, ToolCallView, ToolExecutionTargetView, ToolItemStatus,
+    AgentApiError, CompactionPolicyInput, ContextConfigInput, ContextEntryInputView,
+    ContextEntryKindView, ContextMessageRoleView, ContextView, EventCursor, EventJoinsView,
+    GenerationConfig, InputItem, ModelConfig, ReasoningEffort, RunDefaultsConfig,
+    RunStatus as ApiRunStatus, RunView, SessionConfigView, SessionEventKindView, SessionEventView,
+    SessionItemView, SessionStatus as ApiSessionStatus, SessionView, TokenEstimateQualityView,
+    TokenEstimateView, ToolBatchView, ToolCallDisplayGroup, ToolCallDisplayView, ToolCallEventView,
+    ToolCallView, ToolEffectView, ToolExecutionTargetView, ToolItemStatus,
 };
 use engine::{ApplyEvent, ToolExecutionTarget};
 use engine::{
-    ContextEvent, ContextItem, ContextItemKind, ContextItemSource, ContextMessageRole,
-    CoreAgentCodec, CoreAgentEntry, CoreAgentEventKind, CoreAgentJoins, CoreAgentLifecycleEvent,
-    CoreAgentState, CoreAgentStatus, CoreApplyEvent, EventSeq, LlmGenerationStatus,
-    ModelProviderOptions, ModelSelection, ObservedToolCall, ProviderApiKind,
-    ProviderRequestDefaults, RunEvent, RunId, RunStatus, SessionConfig, SessionId, ToolBatchId,
-    ToolCallStatus, ToolConfigEvent, ToolEvent, TurnEvent, TurnId,
+    CompactionPolicy, ContextCompactionStatus, ContextCompactionTrigger, ContextEntry,
+    ContextEntryId, ContextEntryInput, ContextEntryKind, ContextEntrySource, ContextEvent,
+    ContextMessageRole, ContextRemovalReason, ContextRewriteReason, CoreAgentCodec, CoreAgentEntry,
+    CoreAgentEventKind, CoreAgentJoins, CoreAgentLifecycleEvent, CoreAgentState, CoreAgentStatus,
+    CoreApplyEvent, EventSeq, LlmGenerationStatus, ModelProviderOptions, ModelSelection,
+    ObservedToolCall, ProviderApiKind, ProviderRequestDefaults, RunEvent, RunFailure, RunId,
+    RunStatus, SessionConfig, SessionId, SteeringId, ToolBatchId, ToolCallStatus, ToolConfigEvent,
+    ToolEvent, TurnEvent, TurnId,
     storage::{
         BlobStore, BlobStoreError, DynamicSessionEntry, ReadSessionEvents, SessionRecord,
         SessionStore, SessionStoreError,
@@ -81,6 +85,10 @@ impl<'a> CoreAgentProjector<'a> {
             created_at_ms: params.record.created_at_ms,
             updated_at_ms: params.record.updated_at_ms,
             runs,
+            active_context: self
+                .project_context_state(params.state.context.revision, &params.state.context.entries)
+                .await?,
+            vfs_mounts: Vec::new(),
         })
     }
 
@@ -91,34 +99,47 @@ impl<'a> CoreAgentProjector<'a> {
         status: RunStatus,
     ) -> Result<RunView, AgentApiError> {
         let projection = CoreAgentProjection::new(entries);
-        let context_items = projection.context_items_for_run(run_id);
-        let mut input = Vec::new();
+        let context_entries = projection.context_entries_for_run(run_id);
         let mut items = Vec::new();
 
-        for item in &context_items {
+        for item in &context_entries {
             let projected = self.project_item(item).await?;
-            if let SessionItemView::UserMessage { text, .. } = &projected {
-                input.push(InputItem::Text { text: text.clone() });
-            }
             items.push(projected);
         }
 
         Ok(RunView {
             id: api_run_id(run_id),
             status: core_run_status_to_api_status(status),
-            input,
+            input: self
+                .project_input_entries(&projection.accepted_input_for_run(run_id))
+                .await?,
             items,
             tool_batches: self
-                .project_tool_batches_for_run(&projection, &context_items, run_id)
+                .project_tool_batches_for_run(&projection, &context_entries, run_id)
                 .await?,
         })
     }
 
-    pub async fn project_item(&self, item: &ContextItem) -> Result<SessionItemView, AgentApiError> {
-        let id = format!("item_{}", item.item_id.as_u64());
+    pub async fn project_context_state(
+        &self,
+        revision: u64,
+        entries: &[ContextEntry],
+    ) -> Result<ContextView, AgentApiError> {
+        let mut items = Vec::with_capacity(entries.len());
+        for entry in entries {
+            items.push(self.project_item(entry).await?);
+        }
+        Ok(ContextView { revision, items })
+    }
+
+    pub async fn project_item(
+        &self,
+        item: &ContextEntry,
+    ) -> Result<SessionItemView, AgentApiError> {
+        let id = api_item_id(item.entry_id);
         match &item.kind {
-            ContextItemKind::Message { role } => {
-                let text = self.read_blob_text(&item.native_item_ref).await?;
+            ContextEntryKind::Message { role } => {
+                let text = self.read_blob_text(&item.content_ref).await?;
                 match role {
                     ContextMessageRole::User => Ok(SessionItemView::UserMessage { id, text }),
                     ContextMessageRole::Assistant => {
@@ -126,17 +147,17 @@ impl<'a> CoreAgentProjector<'a> {
                     }
                 }
             }
-            ContextItemKind::ToolCall { call_id, name } => Ok(SessionItemView::ToolCall {
+            ContextEntryKind::ToolCall { call_id, name } => Ok(SessionItemView::ToolCall {
                 id,
                 call_id: call_id.as_str().to_owned(),
                 tool_name: name.as_str().to_owned(),
-                arguments: Some(self.read_blob_text(&item.native_item_ref).await?),
+                arguments: Some(self.read_blob_text(&item.content_ref).await?),
                 status: ToolItemStatus::Requested,
             }),
-            ContextItemKind::ToolResult { call_id, is_error } => Ok(SessionItemView::ToolResult {
+            ContextEntryKind::ToolResult { call_id, is_error } => Ok(SessionItemView::ToolResult {
                 id,
                 call_id: call_id.as_str().to_owned(),
-                output: Some(self.read_blob_text(&item.native_item_ref).await?),
+                output: Some(self.read_blob_text(&item.content_ref).await?),
                 is_error: *is_error,
                 status: if *is_error {
                     ToolItemStatus::Failed
@@ -144,41 +165,82 @@ impl<'a> CoreAgentProjector<'a> {
                     ToolItemStatus::Succeeded
                 },
             }),
-            ContextItemKind::ReasoningState
-            | ContextItemKind::CompactionState
-            | ContextItemKind::ProviderOpaque => Ok(SessionItemView::SystemEvent {
+            ContextEntryKind::Instructions => Ok(SessionItemView::SystemEvent {
+                id,
+                text: item
+                    .preview
+                    .clone()
+                    .unwrap_or_else(|| "instructions".to_owned()),
+            }),
+            ContextEntryKind::SkillCatalog => Ok(SessionItemView::SystemEvent {
+                id,
+                text: item
+                    .preview
+                    .clone()
+                    .unwrap_or_else(|| "skills catalog".to_owned()),
+            }),
+            ContextEntryKind::SkillActivation { skill_id } => Ok(SessionItemView::SystemEvent {
+                id,
+                text: item
+                    .preview
+                    .clone()
+                    .unwrap_or_else(|| format!("skill activated: {skill_id}")),
+            }),
+            ContextEntryKind::ReasoningState => Ok(SessionItemView::SystemEvent {
                 id,
                 text: item
                     .preview
                     .clone()
                     .unwrap_or_else(|| "context item".to_owned()),
             }),
+            ContextEntryKind::ProviderOpaque => Ok(SessionItemView::ProviderContext {
+                id,
+                content_ref: item.content_ref.as_str().to_owned(),
+                media_type: item.media_type.clone(),
+                preview: item.preview.clone(),
+                provider_kind: item.provider_kind.clone(),
+                provider_item_id: item.provider_item_id.clone(),
+                token_estimate: item.token_estimate.as_ref().map(token_estimate_to_api),
+            }),
         }
+    }
+
+    pub async fn project_input_entries(
+        &self,
+        input: &[ContextEntryInput],
+    ) -> Result<Vec<InputItem>, AgentApiError> {
+        let mut projected = Vec::with_capacity(input.len());
+        for entry in input {
+            match entry.kind {
+                ContextEntryKind::Message {
+                    role: ContextMessageRole::User,
+                } => projected.push(InputItem::Text {
+                    text: self.read_blob_text(&entry.content_ref).await?,
+                }),
+                _ => projected.push(InputItem::TextRef {
+                    blob_ref: entry.content_ref.as_str().to_owned(),
+                }),
+            }
+        }
+        Ok(projected)
     }
 
     pub async fn project_session_config(
         &self,
         config: &SessionConfig,
     ) -> Result<SessionConfigView, AgentApiError> {
-        let instructions = match config.context.instructions_ref.as_ref() {
-            Some(blob_ref) => Some(InstructionsView {
-                blob_ref: blob_ref.as_str().to_owned(),
-                text: Some(self.read_blob_text(blob_ref).await?),
-            }),
-            None => None,
-        };
         Ok(SessionConfigView {
             model: model_to_api(&config.model),
-            instructions,
             generation: GenerationConfig {
                 max_output_tokens: config.turn.max_output_tokens,
                 reasoning_effort: reasoning_effort_to_api(&config.turn.provider_request_defaults),
             },
             context: ContextConfigInput {
-                max_context_tokens: config.context.max_context_tokens,
-                target_context_tokens: config.context.target_context_tokens,
-                reserve_output_tokens: config.context.reserve_output_tokens,
-                compaction_enabled: Some(config.context.compaction_enabled),
+                compaction: config
+                    .context
+                    .compaction
+                    .as_ref()
+                    .map(compaction_policy_to_api),
             },
             run_defaults: RunDefaultsConfig {
                 max_turns: config.run.max_turns,
@@ -221,30 +283,28 @@ impl<'a> CoreAgentProjector<'a> {
                 CoreAgentLifecycleEvent::Closed => Ok(SessionEventKindView::SessionClosed),
             },
             CoreAgentEventKind::Run(event) => match event {
-                RunEvent::Queued {
-                    submission_id,
-                    input_ref,
-                    ..
-                } => Ok(SessionEventKindView::RunQueued {
-                    submission_id: submission_id.as_ref().map(|id| id.as_str().to_owned()),
-                    input_ref: input_ref.as_str().to_owned(),
-                }),
-                RunEvent::Started {
+                RunEvent::Accepted {
                     run_id,
                     submission_id,
-                    input_ref,
+                    input,
                     ..
-                } => Ok(SessionEventKindView::RunStarted {
+                } => Ok(SessionEventKindView::RunAccepted {
                     run_id: api_run_id(*run_id),
                     submission_id: submission_id.as_ref().map(|id| id.as_str().to_owned()),
-                    input_ref: input_ref.as_str().to_owned(),
+                    input: project_context_entry_inputs(input),
                 }),
-                RunEvent::SteeringAdded { run_id, input_ref } => {
-                    Ok(SessionEventKindView::RunSteeringAdded {
-                        run_id: api_run_id(*run_id),
-                        input_ref: input_ref.as_str().to_owned(),
-                    })
-                }
+                RunEvent::Started { run_id } => Ok(SessionEventKindView::RunStarted {
+                    run_id: api_run_id(*run_id),
+                }),
+                RunEvent::SteeringAccepted {
+                    run_id,
+                    steering_id,
+                    input,
+                } => Ok(SessionEventKindView::RunSteeringAccepted {
+                    run_id: api_run_id(*run_id),
+                    steering_id: api_steering_id(*steering_id),
+                    input: project_context_entry_inputs(input),
+                }),
                 RunEvent::CancellationRequested { run_id } => {
                     Ok(SessionEventKindView::RunCancellationRequested {
                         run_id: api_run_id(*run_id),
@@ -258,7 +318,7 @@ impl<'a> CoreAgentProjector<'a> {
                 }
                 RunEvent::Failed { run_id, failure } => Ok(SessionEventKindView::RunFailed {
                     run_id: api_run_id(*run_id),
-                    message: format!("{:?}", failure.kind),
+                    message: self.run_failure_message(failure).await,
                 }),
                 RunEvent::Cancelled { run_id } => Ok(SessionEventKindView::RunCancelled {
                     run_id: api_run_id(*run_id),
@@ -296,30 +356,76 @@ impl<'a> CoreAgentProjector<'a> {
                 }),
             },
             CoreAgentEventKind::Context(event) => match event {
-                ContextEvent::ItemsRecorded { items } => {
-                    let mut projected = Vec::with_capacity(items.len());
-                    for item in items {
-                        projected.push(self.project_item(item).await?);
+                ContextEvent::EntriesApplied {
+                    base_revision,
+                    entries,
+                } => {
+                    let mut projected = Vec::with_capacity(entries.len());
+                    for entry in entries {
+                        projected.push(self.project_item(entry).await?);
                     }
-                    Ok(SessionEventKindView::ItemsRecorded { items: projected })
+                    Ok(SessionEventKindView::ContextEntriesApplied {
+                        base_revision: *base_revision,
+                        revision: context_event_revision(*base_revision)?,
+                        items: projected,
+                    })
                 }
-                ContextEvent::WindowPlanned {
-                    run_id, turn_id, ..
-                } => Ok(SessionEventKindView::ContextWindowPlanned {
-                    run_id: api_run_id(*run_id),
-                    turn_id: api_turn_id(*turn_id),
+                ContextEvent::EntriesRemoved {
+                    base_revision,
+                    entry_ids,
+                    reason,
+                } => Ok(SessionEventKindView::ContextEntriesRemoved {
+                    base_revision: *base_revision,
+                    revision: context_event_revision(*base_revision)?,
+                    item_ids: entry_ids
+                        .iter()
+                        .map(|entry_id| api_item_id(*entry_id))
+                        .collect(),
+                    reason: context_removal_reason_to_api(reason).to_owned(),
                 }),
-                ContextEvent::CompactionRecorded {
-                    run_id,
-                    turn_id,
-                    record,
-                } => Ok(SessionEventKindView::CompactionRecorded {
-                    run_id: Some(api_run_id(*run_id)),
-                    turn_id: turn_id.map(api_turn_id),
-                    summary_ref: record
-                        .summary_ref
+                ContextEvent::KeysRemoved {
+                    base_revision,
+                    keys,
+                } => Ok(SessionEventKindView::ContextKeysRemoved {
+                    base_revision: *base_revision,
+                    revision: context_event_revision(*base_revision)?,
+                    keys: keys.iter().map(|key| key.as_str().to_owned()).collect(),
+                }),
+                ContextEvent::StateReplaced {
+                    base_revision,
+                    entries,
+                    reason,
+                } => {
+                    let mut projected = Vec::with_capacity(entries.len());
+                    for entry in entries {
+                        projected.push(self.project_item(entry).await?);
+                    }
+                    Ok(SessionEventKindView::ContextStateReplaced {
+                        base_revision: *base_revision,
+                        revision: context_event_revision(*base_revision)?,
+                        items: projected,
+                        reason: context_rewrite_reason_to_api(reason).to_owned(),
+                    })
+                }
+                ContextEvent::CompactionRequested {
+                    base_revision,
+                    trigger,
+                } => Ok(SessionEventKindView::ContextCompactionRequested {
+                    base_revision: *base_revision,
+                    revision: context_event_revision(*base_revision)?,
+                    trigger: context_compaction_trigger_to_api(*trigger).to_owned(),
+                }),
+                ContextEvent::CompactionFinished {
+                    base_revision,
+                    status,
+                    failure_ref,
+                } => Ok(SessionEventKindView::ContextCompactionFinished {
+                    base_revision: *base_revision,
+                    revision: context_event_revision(*base_revision)?,
+                    status: context_compaction_status_to_api(*status).to_owned(),
+                    failure_ref: failure_ref
                         .as_ref()
-                        .map(|ref_| ref_.as_str().to_owned()),
+                        .map(|blob_ref| blob_ref.as_str().to_owned()),
                 }),
             },
             CoreAgentEventKind::ToolConfig(event) => match event {
@@ -379,6 +485,7 @@ impl<'a> CoreAgentProjector<'a> {
                     batch_id: api_tool_batch_id(*batch_id),
                     call_id: result.call_id.as_str().to_owned(),
                     status: core_tool_status_to_api_status(result.status),
+                    effects: tool_effects_to_api(&result.effects),
                 }),
                 ToolEvent::BatchCompleted {
                     run_id,
@@ -414,10 +521,11 @@ impl<'a> CoreAgentProjector<'a> {
     async fn project_tool_batches_for_run(
         &self,
         projection: &CoreAgentProjection<'_>,
-        context_items: &[&ContextItem],
+        context_entries: &[&ContextEntry],
         run_id: RunId,
     ) -> Result<Vec<ToolBatchView>, AgentApiError> {
-        let result_by_call = self.project_tool_results_for_run(context_items).await?;
+        let result_by_call = self.project_tool_results_for_run(context_entries).await?;
+        let effect_by_call = tool_effects_for_run(projection, run_id);
         let mut batches = Vec::new();
         let mut completed_batches = BTreeMap::new();
 
@@ -446,6 +554,10 @@ impl<'a> CoreAgentProjector<'a> {
                             status: result
                                 .map(|result| result.status)
                                 .unwrap_or(ToolItemStatus::Running),
+                            effects: effect_by_call
+                                .get(call.call_id.as_str())
+                                .cloned()
+                                .unwrap_or_default(),
                             display: tool_call_display(call.tool_name.as_str(), &arguments),
                         });
                     }
@@ -486,17 +598,17 @@ impl<'a> CoreAgentProjector<'a> {
 
     async fn project_tool_results_for_run(
         &self,
-        context_items: &[&ContextItem],
+        context_entries: &[&ContextEntry],
     ) -> Result<BTreeMap<String, ProjectedToolResult>, AgentApiError> {
         let mut result_by_call = BTreeMap::new();
-        for item in context_items {
-            let ContextItemKind::ToolResult { call_id, is_error } = &item.kind else {
+        for item in context_entries {
+            let ContextEntryKind::ToolResult { call_id, is_error } = &item.kind else {
                 continue;
             };
             result_by_call.insert(
                 call_id.as_str().to_owned(),
                 ProjectedToolResult {
-                    output: Some(self.read_blob_text(&item.native_item_ref).await?),
+                    output: Some(self.read_blob_text(&item.content_ref).await?),
                     is_error: *is_error,
                     status: if *is_error {
                         ToolItemStatus::Failed
@@ -514,6 +626,15 @@ impl<'a> CoreAgentProjector<'a> {
             .read_text(blob_ref)
             .await
             .map_err(map_blob_store_error)
+    }
+
+    async fn run_failure_message(&self, failure: &RunFailure) -> String {
+        if let Some(message_ref) = &failure.message_ref
+            && let Ok(message) = self.read_blob_text(message_ref).await
+        {
+            return message;
+        }
+        format!("{:?}", failure.kind)
     }
 }
 
@@ -537,19 +658,36 @@ impl<'a> CoreAgentProjection<'a> {
         self.entries
     }
 
-    pub fn context_items_for_run(&self, run_id: RunId) -> Vec<&'a ContextItem> {
+    pub fn accepted_input_for_run(&self, run_id: RunId) -> Vec<ContextEntryInput> {
+        self.entries
+            .iter()
+            .find_map(|entry| {
+                let CoreAgentEventKind::Run(RunEvent::Accepted {
+                    run_id: event_run_id,
+                    input,
+                    ..
+                }) = &entry.event.kind
+                else {
+                    return None;
+                };
+                (*event_run_id == run_id).then(|| input.clone())
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn context_entries_for_run(&self, run_id: RunId) -> Vec<&'a ContextEntry> {
         self.entries
             .iter()
             .filter_map(|entry| {
-                let CoreAgentEventKind::Context(ContextEvent::ItemsRecorded { items }) =
+                let CoreAgentEventKind::Context(ContextEvent::EntriesApplied { entries, .. }) =
                     &entry.event.kind
                 else {
                     return None;
                 };
                 Some(
-                    items
+                    entries
                         .iter()
-                        .filter(move |item| context_item_run_id(item) == Some(run_id)),
+                        .filter(move |entry| context_entry_run_id(entry) == Some(run_id)),
                 )
             })
             .flatten()
@@ -557,16 +695,14 @@ impl<'a> CoreAgentProjection<'a> {
     }
 }
 
-pub fn context_item_run_id(item: &ContextItem) -> Option<RunId> {
-    match &item.source {
-        ContextItemSource::RunInput { run_id }
-        | ContextItemSource::Steering { run_id }
-        | ContextItemSource::AssistantOutput { run_id, .. }
-        | ContextItemSource::ToolCall { run_id, .. }
-        | ContextItemSource::ToolResult { run_id, .. }
-        | ContextItemSource::Reasoning { run_id, .. } => Some(*run_id),
-        ContextItemSource::Compaction { run_id, .. } => *run_id,
-        ContextItemSource::Instructions | ContextItemSource::Runtime { .. } => None,
+pub fn context_entry_run_id(entry: &ContextEntry) -> Option<RunId> {
+    match &entry.source {
+        ContextEntrySource::RunInput { run_id, .. }
+        | ContextEntrySource::Steering { run_id, .. }
+        | ContextEntrySource::AssistantOutput { run_id, .. }
+        | ContextEntrySource::Tool { run_id, .. }
+        | ContextEntrySource::Reasoning { run_id, .. } => Some(*run_id),
+        ContextEntrySource::ContextEdit | ContextEntrySource::Runtime { .. } => None,
     }
 }
 
@@ -670,6 +806,14 @@ pub fn api_run_id(run_id: RunId) -> String {
     format!("run_{}", run_id.as_u64())
 }
 
+pub fn api_steering_id(steering_id: SteeringId) -> String {
+    format!("steering_{}", steering_id.as_u64())
+}
+
+pub fn api_item_id(entry_id: ContextEntryId) -> String {
+    format!("item_{}", entry_id.as_u64())
+}
+
 pub fn parse_api_run_id(value: &str) -> Result<RunId, AgentApiError> {
     let raw = value.strip_prefix("run_").ok_or_else(|| {
         AgentApiError::invalid_request(format!("run id must use run_<number> form: {value}"))
@@ -685,6 +829,59 @@ pub fn api_turn_id(turn_id: TurnId) -> String {
 
 pub fn api_tool_batch_id(batch_id: ToolBatchId) -> String {
     format!("tool_batch_{}", batch_id.as_u64())
+}
+
+fn context_event_revision(base_revision: u64) -> Result<u64, AgentApiError> {
+    base_revision
+        .checked_add(1)
+        .ok_or_else(|| AgentApiError::internal("context event revision overflow"))
+}
+
+fn context_removal_reason_to_api(reason: &ContextRemovalReason) -> &'static str {
+    match reason {
+        ContextRemovalReason::Pruned => "pruned",
+        ContextRemovalReason::ProviderCompacted => "providerCompacted",
+    }
+}
+
+fn context_rewrite_reason_to_api(reason: &ContextRewriteReason) -> &'static str {
+    match reason {
+        ContextRewriteReason::Pruned => "pruned",
+        ContextRewriteReason::PolicyChanged => "policyChanged",
+        ContextRewriteReason::ProviderCompacted => "providerCompacted",
+    }
+}
+
+fn context_compaction_trigger_to_api(trigger: ContextCompactionTrigger) -> &'static str {
+    match trigger {
+        ContextCompactionTrigger::Manual => "manual",
+        ContextCompactionTrigger::HighWatermark => "highWatermark",
+    }
+}
+
+fn context_compaction_status_to_api(status: ContextCompactionStatus) -> &'static str {
+    match status {
+        ContextCompactionStatus::Succeeded => "succeeded",
+        ContextCompactionStatus::Failed => "failed",
+    }
+}
+
+fn compaction_policy_to_api(policy: &CompactionPolicy) -> CompactionPolicyInput {
+    match policy {
+        CompactionPolicy::Disabled => CompactionPolicyInput::Disabled,
+        CompactionPolicy::ProviderTriggered {
+            compact_threshold_tokens,
+        } => CompactionPolicyInput::ProviderTriggered {
+            compact_threshold_tokens: *compact_threshold_tokens,
+        },
+        CompactionPolicy::ProviderStandalone {
+            compact_threshold_tokens,
+            target_tokens,
+        } => CompactionPolicyInput::ProviderStandalone {
+            compact_threshold_tokens: *compact_threshold_tokens,
+            target_tokens: *target_tokens,
+        },
+    }
 }
 
 pub fn event_joins_to_api(joins: &CoreAgentJoins) -> EventJoinsView {
@@ -807,6 +1004,68 @@ pub fn api_kind_from_str(value: &str) -> Result<ProviderApiKind, AgentApiError> 
     }
 }
 
+pub fn project_context_entry_inputs(input: &[ContextEntryInput]) -> Vec<ContextEntryInputView> {
+    input
+        .iter()
+        .map(|entry| ContextEntryInputView {
+            kind: context_entry_kind_to_api(&entry.kind),
+            content_ref: entry.content_ref.as_str().to_owned(),
+            media_type: entry.media_type.clone(),
+            preview: entry.preview.clone(),
+            provider_kind: entry.provider_kind.clone(),
+            provider_item_id: entry.provider_item_id.clone(),
+            token_estimate: entry.token_estimate.as_ref().map(token_estimate_to_api),
+        })
+        .collect()
+}
+
+fn context_entry_kind_to_api(kind: &ContextEntryKind) -> ContextEntryKindView {
+    match kind {
+        ContextEntryKind::Message { role } => ContextEntryKindView::Message {
+            role: context_message_role_to_api(role),
+        },
+        ContextEntryKind::Instructions => ContextEntryKindView::Instructions,
+        ContextEntryKind::SkillCatalog => ContextEntryKindView::SkillCatalog,
+        ContextEntryKind::SkillActivation { skill_id } => ContextEntryKindView::SkillActivation {
+            skill_id: skill_id.as_str().to_owned(),
+        },
+        ContextEntryKind::ToolCall { call_id, name } => ContextEntryKindView::ToolCall {
+            call_id: call_id.as_str().to_owned(),
+            name: name.as_str().to_owned(),
+        },
+        ContextEntryKind::ToolResult { call_id, is_error } => ContextEntryKindView::ToolResult {
+            call_id: call_id.as_str().to_owned(),
+            is_error: *is_error,
+        },
+        ContextEntryKind::ReasoningState => ContextEntryKindView::ReasoningState,
+        ContextEntryKind::ProviderOpaque => ContextEntryKindView::ProviderOpaque,
+    }
+}
+
+fn context_message_role_to_api(role: &ContextMessageRole) -> ContextMessageRoleView {
+    match role {
+        ContextMessageRole::User => ContextMessageRoleView::User,
+        ContextMessageRole::Assistant => ContextMessageRoleView::Assistant,
+    }
+}
+
+fn token_estimate_to_api(estimate: &engine::TokenEstimate) -> TokenEstimateView {
+    TokenEstimateView {
+        tokens: estimate.tokens,
+        quality: token_estimate_quality_to_api(estimate.quality),
+    }
+}
+
+fn token_estimate_quality_to_api(
+    quality: engine::TokenEstimateQuality,
+) -> TokenEstimateQualityView {
+    match quality {
+        engine::TokenEstimateQuality::Exact => TokenEstimateQualityView::Exact,
+        engine::TokenEstimateQuality::ProviderCounted => TokenEstimateQualityView::ProviderCounted,
+        engine::TokenEstimateQuality::Estimated => TokenEstimateQualityView::Estimated,
+    }
+}
+
 pub fn map_session_store_error(error: SessionStoreError) -> AgentApiError {
     match error {
         SessionStoreError::SessionAlreadyExists { session_id } => {
@@ -876,6 +1135,40 @@ fn tool_execution_target_to_api(target: &ToolExecutionTarget) -> ToolExecutionTa
         namespace: target.namespace.clone(),
         id: target.id.clone(),
     }
+}
+
+fn tool_effects_for_run(
+    projection: &CoreAgentProjection<'_>,
+    run_id: RunId,
+) -> BTreeMap<String, Vec<ToolEffectView>> {
+    let mut effects = BTreeMap::new();
+    for entry in projection.entries() {
+        let CoreAgentEventKind::Tool(ToolEvent::CallCompleted {
+            run_id: event_run_id,
+            result,
+            ..
+        }) = &entry.event.kind
+        else {
+            continue;
+        };
+        if *event_run_id == run_id && !result.effects.is_empty() {
+            effects.insert(
+                result.call_id.as_str().to_owned(),
+                tool_effects_to_api(&result.effects),
+            );
+        }
+    }
+    effects
+}
+
+fn tool_effects_to_api(effects: &[engine::ToolEffect]) -> Vec<ToolEffectView> {
+    effects
+        .iter()
+        .map(|effect| ToolEffectView {
+            kind: effect.kind.clone(),
+            data: effect.data.clone(),
+        })
+        .collect()
 }
 
 fn tool_call_display(tool_name: &str, arguments: &str) -> Option<ToolCallDisplayView> {
@@ -1008,30 +1301,150 @@ fn patch_target(patch: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use engine::{BlobRef, ContextItemId, CoreAgentJoins, EventSeq, SessionPosition};
+    use engine::{
+        BlobRef, ContextEntryId, CoreAgentJoins, EventSeq, SessionPosition, TokenEstimate,
+        TokenEstimateQuality, storage::InMemoryBlobStore,
+    };
 
     use super::*;
 
     #[test]
-    fn context_items_for_run_reads_committed_item_events() {
-        let first = context_item(
+    fn context_entries_for_run_reads_committed_entry_events() {
+        let first = context_entry(
             1,
-            ContextItemSource::RunInput {
+            ContextEntrySource::RunInput {
                 run_id: RunId::new(1),
+                input_index: 0,
             },
         );
-        let second = context_item(
+        let second = context_entry(
             2,
-            ContextItemSource::RunInput {
+            ContextEntrySource::RunInput {
                 run_id: RunId::new(2),
+                input_index: 0,
             },
         );
         let entries = vec![entry(1, vec![first]), entry(2, vec![second])];
 
-        let projected = CoreAgentProjection::new(&entries).context_items_for_run(RunId::new(1));
+        let projected = CoreAgentProjection::new(&entries).context_entries_for_run(RunId::new(1));
 
         assert_eq!(projected.len(), 1);
-        assert_eq!(projected[0].item_id, ContextItemId::new(1));
+        assert_eq!(projected[0].entry_id, ContextEntryId::new(1));
+    }
+
+    #[test]
+    fn context_entry_input_projection_is_ref_backed() {
+        let blob_ref = BlobRef::from_bytes(b"hello");
+        let projected = project_context_entry_inputs(&[ContextEntryInput {
+            kind: ContextEntryKind::Message {
+                role: ContextMessageRole::User,
+            },
+            content_ref: blob_ref.clone(),
+            media_type: Some("text/plain".to_owned()),
+            preview: Some("hello".to_owned()),
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        }]);
+
+        assert_eq!(projected.len(), 1);
+        assert_eq!(projected[0].content_ref, blob_ref.as_str());
+        assert_eq!(projected[0].media_type.as_deref(), Some("text/plain"));
+        assert!(matches!(
+            projected[0].kind,
+            ContextEntryKindView::Message {
+                role: ContextMessageRoleView::User
+            }
+        ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn provider_compaction_context_events_project_reason() {
+        let blobs = InMemoryBlobStore::new();
+        let projector = CoreAgentProjector::new(&blobs);
+
+        let removed = projector
+            .project_event_kind(&CoreAgentEventKind::Context(ContextEvent::EntriesRemoved {
+                base_revision: 7,
+                entry_ids: vec![ContextEntryId::new(11), ContextEntryId::new(12)],
+                reason: ContextRemovalReason::ProviderCompacted,
+            }))
+            .await
+            .expect("project provider-compacted removal");
+        assert_eq!(
+            removed,
+            SessionEventKindView::ContextEntriesRemoved {
+                base_revision: 7,
+                revision: 8,
+                item_ids: vec!["item_11".to_owned(), "item_12".to_owned()],
+                reason: "providerCompacted".to_owned(),
+            }
+        );
+
+        let replaced = projector
+            .project_event_kind(&CoreAgentEventKind::Context(ContextEvent::StateReplaced {
+                base_revision: 8,
+                entries: Vec::new(),
+                reason: ContextRewriteReason::ProviderCompacted,
+            }))
+            .await
+            .expect("project provider-compacted rewrite");
+        assert_eq!(
+            replaced,
+            SessionEventKindView::ContextStateReplaced {
+                base_revision: 8,
+                revision: 9,
+                items: Vec::new(),
+                reason: "providerCompacted".to_owned(),
+            }
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn provider_context_item_exposes_debug_metadata() {
+        let blobs = InMemoryBlobStore::new();
+        let projector = CoreAgentProjector::new(&blobs);
+        let item = ContextEntry {
+            entry_id: ContextEntryId::new(42),
+            key: None,
+            kind: ContextEntryKind::ProviderOpaque,
+            source: ContextEntrySource::AssistantOutput {
+                run_id: RunId::new(7),
+                turn_id: TurnId::new(8),
+            },
+            content_ref: BlobRef::from_bytes(br#"{"type":"compaction"}"#),
+            media_type: Some("application/json".to_owned()),
+            preview: Some("OpenAI Responses compaction item".to_owned()),
+            provider_kind: Some("openai.responses.compaction".to_owned()),
+            provider_item_id: Some("item_compaction_1".to_owned()),
+            token_estimate: Some(TokenEstimate {
+                tokens: 123,
+                quality: TokenEstimateQuality::ProviderCounted,
+            }),
+        };
+
+        let projected = projector
+            .project_item(&item)
+            .await
+            .expect("project provider context item");
+
+        assert_eq!(
+            projected,
+            SessionItemView::ProviderContext {
+                id: "item_42".to_owned(),
+                content_ref: BlobRef::from_bytes(br#"{"type":"compaction"}"#)
+                    .as_str()
+                    .to_owned(),
+                media_type: Some("application/json".to_owned()),
+                preview: Some("OpenAI Responses compaction item".to_owned()),
+                provider_kind: Some("openai.responses.compaction".to_owned()),
+                provider_item_id: Some("item_compaction_1".to_owned()),
+                token_estimate: Some(TokenEstimateView {
+                    tokens: 123,
+                    quality: TokenEstimateQualityView::ProviderCounted,
+                }),
+            }
+        );
     }
 
     #[test]
@@ -1062,7 +1475,7 @@ mod tests {
         assert_eq!(error.kind, api::AgentApiErrorKind::InvalidRequest);
     }
 
-    fn entry(seq: u64, items: Vec<ContextItem>) -> CoreAgentEntry {
+    fn entry(seq: u64, entries: Vec<ContextEntry>) -> CoreAgentEntry {
         CoreAgentEntry {
             position: SessionPosition {
                 seq: EventSeq::new(seq),
@@ -1070,19 +1483,23 @@ mod tests {
             observed_at_ms: seq,
             joins: CoreAgentJoins::default(),
             event: engine::CoreAgentEvent {
-                kind: CoreAgentEventKind::Context(ContextEvent::ItemsRecorded { items }),
+                kind: CoreAgentEventKind::Context(ContextEvent::EntriesApplied {
+                    base_revision: seq - 1,
+                    entries,
+                }),
             },
         }
     }
 
-    fn context_item(id: u64, source: ContextItemSource) -> ContextItem {
-        ContextItem {
-            item_id: ContextItemId::new(id),
-            kind: ContextItemKind::Message {
+    fn context_entry(id: u64, source: ContextEntrySource) -> ContextEntry {
+        ContextEntry {
+            entry_id: ContextEntryId::new(id),
+            key: None,
+            kind: ContextEntryKind::Message {
                 role: ContextMessageRole::User,
             },
             source,
-            native_item_ref: BlobRef::default(),
+            content_ref: BlobRef::default(),
             media_type: None,
             preview: None,
             provider_kind: None,

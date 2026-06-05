@@ -20,9 +20,13 @@ pub mod turn;
 pub use command::*;
 pub use config::*;
 pub use context::{
-    CompactionMode, CompactionRecord, ContextEvent, ContextItem, ContextItemKind,
-    ContextItemSource, ContextMessageRole, ContextState, ContextWindow, ResolvedContextWindow,
-    TokenEstimate, TokenEstimateQuality, UncommittedContextItem,
+    ContextCompactionStatus, ContextCompactionTrigger, ContextEntry, ContextEntryId,
+    ContextEntryInput, ContextEntryKind, ContextEntrySource, ContextEvent, ContextMessageRole,
+    ContextRemovalReason, ContextRewriteReason, ContextSnapshot, ContextState,
+    OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, SKILL_ACTIVATION_CONTEXT_KEY_PREFIX,
+    SKILL_ACTIVATION_PROVIDER_KIND_RUN, SKILL_ACTIVATION_PROVIDER_KIND_SESSION,
+    SKILL_CATALOG_CONTEXT_KEY, TokenEstimate, TokenEstimateQuality,
+    is_run_scoped_skill_activation_entry, skill_activation_context_key,
 };
 pub use error::*;
 pub use event::*;
@@ -31,7 +35,8 @@ pub use lifecycle::{CoreAgentLifecycleEvent, CoreAgentStatus, LifecycleState};
 pub use llm::*;
 pub use log::*;
 pub use run::{
-    ActiveRun, QueuedRun, RunEvent, RunFailure, RunFailureKind, RunQueueState, RunRecord, RunStatus,
+    AcceptedRun, ActiveRun, RunEvent, RunFailure, RunFailureKind, RunInputBatch, RunQueueState,
+    RunRecord, RunStatus, SteeringBatch,
 };
 pub use state::*;
 pub use tooling::{

@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use engine::ToolEffect;
 
 use crate::host::fs::{
     CopyOptions, CreateDirectoryOptions, FileAccessPolicy, FileMetadata, FileSystem, FsError,
@@ -79,6 +80,10 @@ impl FileSystem for ReadOnlyFileSystem {
         _options: CopyOptions,
     ) -> FsResult<()> {
         Err(self.deny_write(destination_path))
+    }
+
+    fn drain_tool_effects(&self) -> Vec<ToolEffect> {
+        self.inner.drain_tool_effects()
     }
 }
 

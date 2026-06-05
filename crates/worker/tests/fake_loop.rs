@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use engine::{
-    AgentHandle, BlobRef, CoreAdmitCommand, CoreAgentCodec, CoreAgentCommand, ModelProviderOptions,
-    ModelSelection, ProviderApiKind, SessionId, SubmissionId, ToolProfileId,
+    AgentHandle, BlobRef, ContextEntryInput, ContextEntryKind, ContextMessageRole,
+    CoreAdmitCommand, CoreAgentCodec, CoreAgentCommand, ModelProviderOptions, ModelSelection,
+    ProviderApiKind, SessionId, SubmissionId, ToolProfileId,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
 };
 use test_support::{DriveCommand, RunnerQuiescence, RunnerStores, SessionRunner};
@@ -50,7 +51,7 @@ async fn fake_llm_tool_loop_completes_a_run() {
         .put_bytes(fake_tool_input_schema())
         .await
         .expect("store schema");
-    let config = default_session_config(model(), None);
+    let config = default_session_config(model());
 
     let opened = runner
         .drive_command(DriveCommand {
@@ -96,7 +97,7 @@ async fn fake_llm_tool_loop_completes_a_run() {
             observed_at_ms: 13,
             command: CoreAgentCommand::RequestRun {
                 submission_id: Some(SubmissionId::new("submit_test")),
-                input_ref,
+                input: user_input(input_ref),
                 run_config: default_run_config(),
             },
             max_steps: Some(64),
@@ -118,7 +119,7 @@ fn core_command_admission_uses_core_agent_codec_shape() {
     let codec = CoreAgentCodec;
     let command = CoreAgentCommand::RequestRun {
         submission_id: Some(SubmissionId::new("submit_test")),
-        input_ref: BlobRef::from_bytes(b"hello"),
+        input: user_input(BlobRef::from_bytes(b"hello")),
         run_config: default_run_config(),
     };
     let dynamic = codec.encode_command(&command).expect("encode command");
@@ -129,4 +130,18 @@ fn core_command_admission_uses_core_agent_codec_shape() {
     );
 
     let _admitter = CoreAdmitCommand;
+}
+
+fn user_input(content_ref: BlobRef) -> Vec<ContextEntryInput> {
+    vec![ContextEntryInput {
+        kind: ContextEntryKind::Message {
+            role: ContextMessageRole::User,
+        },
+        content_ref,
+        media_type: None,
+        preview: None,
+        provider_kind: None,
+        provider_item_id: None,
+        token_estimate: None,
+    }]
 }

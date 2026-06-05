@@ -68,7 +68,6 @@ export FORGE_TEST_POSTGRES_URL=postgres://forge:forge@localhost:15432/forge
 export FORGE_PG_UNIVERSE_ID=00000000-0000-0000-0000-000000000001
 export FORGE_POSTGRES_URL=${FORGE_TEST_POSTGRES_URL}
 export FORGE_TASK_QUEUE=forge-agent
-export FORGE_LLM=fake
 export FORGE_API_URL=http://127.0.0.1:18080/rpc
 
 export FORGE_OBJECT_STORE_BUCKET=forge-dev

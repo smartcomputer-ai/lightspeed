@@ -1,9 +1,11 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    BlobRef, CoreAgentState, DomainError, ModelProviderOptions, ModelSelection, ProviderApiKind,
+    CoreAgentState, DomainError, ModelProviderOptions, ModelSelection, ProviderApiKind,
     ProviderRequestDefaults,
 };
+
+const MIN_OPENAI_RESPONSES_COMPACT_THRESHOLD: u32 = 1000;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionConfig {
@@ -17,6 +19,7 @@ impl SessionConfig {
     pub fn validate_provider_compatibility(&self) -> Result<(), DomainError> {
         validate_model_selection(&self.model)?;
         validate_request_defaults(&self.turn.provider_request_defaults, &self.model.api_kind)?;
+        validate_context_config(&self.context, &self.model.api_kind)?;
         self.run
             .validate_provider_compatibility(&self.model.api_kind)
     }
@@ -141,40 +144,16 @@ impl TurnConfigPatch {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextConfigPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub instructions_ref: Option<OptionalConfigPatch<BlobRef>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_context_tokens: Option<OptionalConfigPatch<u32>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub target_context_tokens: Option<OptionalConfigPatch<u32>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reserve_output_tokens: Option<OptionalConfigPatch<u32>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub compaction_enabled: Option<bool>,
+    pub compaction: Option<OptionalConfigPatch<CompactionPolicy>>,
 }
 
 impl ContextConfigPatch {
     pub fn apply_to(&self, config: &mut ContextConfig) {
-        apply_optional_config_patch(&mut config.instructions_ref, &self.instructions_ref);
-        apply_optional_config_patch(&mut config.max_context_tokens, &self.max_context_tokens);
-        apply_optional_config_patch(
-            &mut config.target_context_tokens,
-            &self.target_context_tokens,
-        );
-        apply_optional_config_patch(
-            &mut config.reserve_output_tokens,
-            &self.reserve_output_tokens,
-        );
-        if let Some(compaction_enabled) = self.compaction_enabled {
-            config.compaction_enabled = compaction_enabled;
-        }
+        apply_optional_config_patch(&mut config.compaction, &self.compaction);
     }
 
     pub fn is_empty(&self) -> bool {
-        self.instructions_ref.is_none()
-            && self.max_context_tokens.is_none()
-            && self.target_context_tokens.is_none()
-            && self.reserve_output_tokens.is_none()
-            && self.compaction_enabled.is_none()
+        self.compaction.is_none()
     }
 }
 
@@ -243,11 +222,23 @@ pub struct TurnConfig {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextConfig {
-    pub instructions_ref: Option<BlobRef>,
-    pub max_context_tokens: Option<u32>,
-    pub target_context_tokens: Option<u32>,
-    pub reserve_output_tokens: Option<u32>,
-    pub compaction_enabled: bool,
+    pub compaction: Option<CompactionPolicy>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "mode")]
+pub enum CompactionPolicy {
+    Disabled,
+    ProviderTriggered {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        compact_threshold_tokens: Option<u32>,
+    },
+    ProviderStandalone {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        compact_threshold_tokens: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        target_tokens: Option<u32>,
+    },
 }
 
 fn validate_model_selection(model: &ModelSelection) -> Result<(), DomainError> {
@@ -281,6 +272,73 @@ fn validate_request_defaults(
             defaults, api_kind
         ))),
     }
+}
+
+fn validate_context_config(
+    context: &ContextConfig,
+    api_kind: &ProviderApiKind,
+) -> Result<(), DomainError> {
+    match (&context.compaction, api_kind) {
+        (None | Some(CompactionPolicy::Disabled), _) => Ok(()),
+        (
+            Some(CompactionPolicy::ProviderTriggered {
+                compact_threshold_tokens,
+            }),
+            ProviderApiKind::OpenAiResponses,
+        ) => validate_openai_responses_compact_threshold(*compact_threshold_tokens),
+        (
+            Some(CompactionPolicy::ProviderStandalone {
+                compact_threshold_tokens,
+                target_tokens,
+            }),
+            ProviderApiKind::OpenAiResponses,
+        ) => validate_provider_standalone_compaction(*compact_threshold_tokens, *target_tokens),
+        (Some(CompactionPolicy::ProviderTriggered { .. }), api_kind) => {
+            Err(DomainError::ProviderCompatibility(format!(
+                "provider-triggered compaction requires OpenAI Responses api kind, got {:?}",
+                api_kind
+            )))
+        }
+        (Some(CompactionPolicy::ProviderStandalone { .. }), api_kind) => {
+            Err(DomainError::ProviderCompatibility(format!(
+                "provider-standalone compaction requires OpenAI Responses api kind, got {:?}",
+                api_kind
+            )))
+        }
+    }
+}
+
+fn validate_openai_responses_compact_threshold(
+    compact_threshold_tokens: Option<u32>,
+) -> Result<(), DomainError> {
+    if compact_threshold_tokens
+        .is_some_and(|threshold| threshold < MIN_OPENAI_RESPONSES_COMPACT_THRESHOLD)
+    {
+        return Err(DomainError::ProviderCompatibility(format!(
+            "OpenAI Responses compact_threshold_tokens must be at least {} when set",
+            MIN_OPENAI_RESPONSES_COMPACT_THRESHOLD
+        )));
+    }
+    Ok(())
+}
+
+fn validate_provider_standalone_compaction(
+    compact_threshold_tokens: Option<u32>,
+    target_tokens: Option<u32>,
+) -> Result<(), DomainError> {
+    if compact_threshold_tokens.is_some_and(|tokens| tokens == 0) {
+        return Err(DomainError::ProviderCompatibility(
+            "provider-standalone compaction compact_threshold_tokens must be greater than 0 when set"
+                .to_owned(),
+        ));
+    }
+    if target_tokens.is_some_and(|tokens| tokens == 0) {
+        return Err(DomainError::ProviderCompatibility(
+            "provider-standalone compaction target_tokens must be greater than 0 when set"
+                .to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn current_config(state: &CoreAgentState) -> Result<&SessionConfig, DomainError> {
@@ -319,13 +377,135 @@ fn validate_active_context_api_kind(
     state: &CoreAgentState,
     api_kind: &ProviderApiKind,
 ) -> Result<(), DomainError> {
-    if let Some(window) = state.context.active_window.as_ref() {
-        if &window.api_kind != api_kind {
-            return Err(DomainError::ProviderCompatibility(format!(
-                "active context window api kind {:?} does not match session api kind {:?}",
-                window.api_kind, api_kind
-            )));
+    let _ = (state, api_kind);
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config(api_kind: ProviderApiKind, compaction: Option<CompactionPolicy>) -> SessionConfig {
+        SessionConfig {
+            model: ModelSelection {
+                api_kind,
+                provider_id: "provider".to_owned(),
+                model: "model".to_owned(),
+                options: ModelProviderOptions::None,
+            },
+            run: RunConfig::default(),
+            turn: TurnConfig {
+                max_output_tokens: None,
+                provider_request_defaults: ProviderRequestDefaults::None,
+            },
+            context: ContextConfig { compaction },
         }
     }
-    Ok(())
+
+    #[test]
+    fn provider_triggered_compaction_rejects_too_small_openai_threshold() {
+        let config = config(
+            ProviderApiKind::OpenAiResponses,
+            Some(CompactionPolicy::ProviderTriggered {
+                compact_threshold_tokens: Some(999),
+            }),
+        );
+
+        let error = config
+            .validate_provider_compatibility()
+            .expect_err("threshold below provider minimum must fail");
+
+        assert!(matches!(error, DomainError::ProviderCompatibility(_)));
+    }
+
+    #[test]
+    fn provider_triggered_compaction_accepts_optional_or_minimum_openai_threshold() {
+        for compact_threshold_tokens in [None, Some(MIN_OPENAI_RESPONSES_COMPACT_THRESHOLD)] {
+            let config = config(
+                ProviderApiKind::OpenAiResponses,
+                Some(CompactionPolicy::ProviderTriggered {
+                    compact_threshold_tokens,
+                }),
+            );
+
+            config
+                .validate_provider_compatibility()
+                .expect("valid OpenAI provider-triggered compaction");
+        }
+    }
+
+    #[test]
+    fn provider_triggered_compaction_rejects_non_openai_responses_api_kind() {
+        let config = config(
+            ProviderApiKind::AnthropicMessages,
+            Some(CompactionPolicy::ProviderTriggered {
+                compact_threshold_tokens: None,
+            }),
+        );
+
+        let error = config
+            .validate_provider_compatibility()
+            .expect_err("provider-triggered compaction is OpenAI Responses only");
+
+        assert!(matches!(error, DomainError::ProviderCompatibility(_)));
+    }
+
+    #[test]
+    fn provider_standalone_compaction_rejects_zero_values() {
+        for compaction in [
+            CompactionPolicy::ProviderStandalone {
+                compact_threshold_tokens: Some(0),
+                target_tokens: Some(128),
+            },
+            CompactionPolicy::ProviderStandalone {
+                compact_threshold_tokens: Some(128),
+                target_tokens: Some(0),
+            },
+        ] {
+            let config = config(ProviderApiKind::OpenAiResponses, Some(compaction));
+
+            let error = config
+                .validate_provider_compatibility()
+                .expect_err("zero standalone compaction values must fail");
+
+            assert!(matches!(error, DomainError::ProviderCompatibility(_)));
+        }
+    }
+
+    #[test]
+    fn provider_standalone_compaction_accepts_optional_or_positive_values() {
+        for compaction in [
+            CompactionPolicy::ProviderStandalone {
+                compact_threshold_tokens: None,
+                target_tokens: None,
+            },
+            CompactionPolicy::ProviderStandalone {
+                compact_threshold_tokens: Some(1),
+                target_tokens: Some(1),
+            },
+        ] {
+            let config = config(ProviderApiKind::OpenAiResponses, Some(compaction));
+
+            config
+                .validate_provider_compatibility()
+                .expect("valid OpenAI provider-standalone compaction");
+        }
+    }
+
+    #[test]
+    fn provider_standalone_compaction_rejects_non_openai_responses_api_kind() {
+        let config = config(
+            ProviderApiKind::AnthropicMessages,
+            Some(CompactionPolicy::ProviderStandalone {
+                compact_threshold_tokens: None,
+                target_tokens: None,
+            }),
+        );
+
+        let error = config
+            .validate_provider_compatibility()
+            .expect_err("provider-standalone compaction is OpenAI Responses only");
+
+        assert!(matches!(error, DomainError::ProviderCompatibility(_)));
+    }
 }

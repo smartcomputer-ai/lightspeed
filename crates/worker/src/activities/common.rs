@@ -1,5 +1,6 @@
 use engine::{
-    BlobRef, CoreAgentIoError, LlmFinish, LlmGenerationFacts, LlmGenerationRequest,
+    BlobRef, ContextCompactionRequest, ContextCompactionRequestKind, ContextCompactionResult,
+    ContextCompactionStatus, CoreAgentIoError, LlmFinish, LlmGenerationFacts, LlmGenerationRequest,
     LlmGenerationResult, LlmGenerationStatus, ToolCallStatus, ToolInvocationBatchRequest,
     ToolInvocationBatchResult, ToolInvocationResult,
     storage::{BlobStore, BlobStoreError},
@@ -28,16 +29,46 @@ pub(super) async fn failed_generation_result_from_error(
         turn_id: request.turn_id,
         status: LlmGenerationStatus::Failed,
         failure_ref: Some(failure_ref),
-        context_items: Vec::new(),
+        context_entries: Vec::new(),
         facts: LlmGenerationFacts {
             provider_response_id: None,
             finish: LlmFinish::Failed,
             usage: None,
             tool_calls: Vec::new(),
             context_token_estimate: None,
-            compaction: None,
         },
     })
+}
+
+pub(super) async fn failed_context_compaction_result_from_error(
+    blobs: &dyn BlobStore,
+    request: ContextCompactionRequest,
+    error: CoreAgentIoError,
+) -> Result<ContextCompactionResult, BlobStoreError> {
+    let context_revision = compaction_request_context_revision(&request);
+    let failure_ref = write_error_blob(
+        blobs,
+        format!(
+            "core agent context compaction failed\nsession_id={}\ncontext_revision={}\nerror={error}\n",
+            request.session_id, context_revision
+        ),
+    )
+    .await?;
+    Ok(ContextCompactionResult {
+        session_id: request.session_id,
+        context_revision,
+        status: ContextCompactionStatus::Failed,
+        failure_ref: Some(failure_ref),
+        context_entries: Vec::new(),
+    })
+}
+
+fn compaction_request_context_revision(request: &ContextCompactionRequest) -> u64 {
+    match &request.request.kind {
+        ContextCompactionRequestKind::OpenAiResponses(openai_request) => {
+            openai_request.input_context.context_revision
+        }
+    }
 }
 
 pub(super) async fn failed_tool_batch_result(
@@ -66,6 +97,7 @@ pub(super) async fn failed_tool_batch_result(
             output_ref: None,
             model_visible_output_ref: Some(error_ref.clone()),
             error_ref: Some(error_ref),
+            effects: Vec::new(),
         });
     }
     Ok(ToolInvocationBatchResult {

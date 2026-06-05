@@ -3,7 +3,7 @@ use std::{net::SocketAddr, sync::Arc};
 use api::{JsonRpcRequest, JsonRpcResponse, dispatch_json_rpc};
 use axum::{
     Json, Router,
-    extract::State,
+    extract::{DefaultBodyLimit, State},
     routing::{get, post},
 };
 use clap::Parser;
@@ -13,6 +13,7 @@ use gateway::{
 };
 
 const DEFAULT_GATEWAY_BIND: &str = "127.0.0.1:18080";
+const DEFAULT_MAX_REQUEST_BODY_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Debug, Parser)]
 #[command(name = "gateway", about = "Run the Forge Agent JSON-RPC gateway")]
@@ -28,6 +29,13 @@ struct Args {
 
     #[arg(long, env = "TEMPORAL_NAMESPACE", default_value = DEFAULT_TEMPORAL_NAMESPACE)]
     namespace: String,
+
+    #[arg(
+        long,
+        env = "FORGE_GATEWAY_MAX_REQUEST_BODY_BYTES",
+        default_value_t = DEFAULT_MAX_REQUEST_BODY_BYTES
+    )]
+    max_request_body_bytes: usize,
 }
 
 #[tokio::main]
@@ -45,6 +53,7 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/health", get(|| async { "ok" }))
         .route("/rpc", post(rpc))
+        .layer(DefaultBodyLimit::max(args.max_request_body_bytes))
         .with_state(api);
     let listener = tokio::net::TcpListener::bind(args.bind).await?;
     eprintln!("gateway listening on http://{}", args.bind);

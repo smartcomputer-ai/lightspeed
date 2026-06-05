@@ -1,28 +1,22 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
-};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
 use api::{
-    AgentApiError, AgentApiErrorKind, AgentApiOutcome, EventCursor, GenerationConfig, InputItem,
-    JsonRpcRequest, JsonRpcResponse, METHOD_RUN_START, METHOD_SESSION_EVENTS_READ,
-    METHOD_SESSION_READ, METHOD_SESSION_START, ModelConfig, ReasoningEffort as ApiReasoningEffort,
-    RequestId, RunStartConfig, RunStartParams, RunStartResponse, SessionConfigInput,
-    SessionEventKindView, SessionEventView, SessionEventsReadParams, SessionEventsReadResponse,
-    SessionItemView, SessionReadParams, SessionReadResponse, SessionStartParams,
-    SessionStartResponse, SessionView, ToolBatchView, ToolCallEventView, ToolCallView,
-    ToolItemStatus,
+    AgentApiOutcome, EventCursor, GenerationConfig, InputItem, ModelConfig,
+    ReasoningEffort as ApiReasoningEffort, RunStartConfig, RunStartParams, RunStartResponse,
+    SessionConfigInput, SessionEventKindView, SessionEventView, SessionEventsReadParams,
+    SessionItemView, SessionReadParams, SessionStartParams, SessionView, ToolBatchView,
+    ToolCallEventView, ToolCallView, ToolItemStatus,
 };
 use clap::Args;
-use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
 
+use crate::api_client::{HttpAgentApi, api_error};
 use crate::chat::preview::compact_preview;
 use crate::chat::protocol::{
     ChatCommand, ChatConnectionInfo, ChatDelta, ChatDraftSettings, ChatErrorView, ChatEvent,
@@ -71,6 +65,12 @@ pub(crate) struct ChatArgs {
     /// Working directory for local file tools. Defaults to the current directory.
     #[arg(long)]
     workdir: Option<PathBuf>,
+    /// Snapshot a local directory, create a VFS workspace, and mount it for this chat.
+    #[arg(long)]
+    mount: Option<PathBuf>,
+    /// VFS path used for --mount. Defaults to /workspace.
+    #[arg(long = "mount-path", default_value = "/workspace")]
+    mount_path: String,
     /// JSON-RPC agent API URL.
     #[arg(long = "api-url", env = "FORGE_API_URL")]
     api_url: String,
@@ -86,7 +86,18 @@ pub(crate) struct ChatArgs {
 
 pub(crate) async fn handle(args: ChatArgs) -> Result<()> {
     let draft = draft_settings(&args)?;
-    let workdir = resolve_chat_workdir(args.workdir)?;
+    if args.mount.is_some() && args.workdir.is_some() {
+        return Err(anyhow!(
+            "--workdir cannot be used with --mount; use --mount-path for the VFS cwd"
+        ));
+    }
+    let mount = args.mount.clone();
+    let mount_path = args.mount_path.clone();
+    let workdir = if mount.is_some() {
+        mount_path.clone()
+    } else {
+        resolve_chat_workdir(args.workdir)?
+    };
     let session_id = if args.new {
         new_session_id()
     } else if let Some(session_id) = args.session {
@@ -96,13 +107,17 @@ pub(crate) async fn handle(args: ChatArgs) -> Result<()> {
     };
 
     let message = (!args.message.is_empty()).then(|| args.message.join(" "));
-    let (mut driver, initial_events) = ChatSessionDriver::open(ChatSessionDriverOptions {
+    let (mut driver, mut initial_events) = ChatSessionDriver::open(ChatSessionDriverOptions {
         session_id,
         draft_settings: draft,
         workdir,
         api_url: args.api_url,
     })
     .await?;
+    if let Some(directory) = mount {
+        let events = driver.mount_local_directory(directory, mount_path).await?;
+        initial_events.extend(events);
+    }
 
     if args.json {
         if let Some(message) = message {
@@ -160,122 +175,13 @@ pub(crate) struct ChatSessionDriver {
     sessions: BTreeSet<String>,
     workdir: String,
     pending_run: Option<PendingRunHandle>,
+    notice_seq: u64,
 }
 
 type PendingRunHandle =
     JoinHandle<std::result::Result<AgentApiOutcome<RunStartResponse>, api::AgentApiError>>;
 
 type ChatAgentApi = Arc<HttpAgentApi>;
-
-struct HttpAgentApi {
-    endpoint: String,
-    client: reqwest::Client,
-    next_id: AtomicU64,
-}
-
-impl HttpAgentApi {
-    fn new(endpoint: impl Into<String>) -> Self {
-        Self {
-            endpoint: endpoint.into(),
-            client: reqwest::Client::new(),
-            next_id: AtomicU64::new(1),
-        }
-    }
-
-    async fn open_or_start_session(
-        &self,
-        params: SessionStartParams,
-    ) -> std::result::Result<AgentApiOutcome<SessionStartResponse>, AgentApiError> {
-        match self.start_session(params.clone()).await {
-            Ok(outcome) => Ok(outcome),
-            Err(error)
-                if matches!(error.kind, AgentApiErrorKind::Conflict)
-                    && params.session_id.is_some() =>
-            {
-                self.read_session(SessionReadParams {
-                    session_id: params.session_id.expect("checked session id present"),
-                })
-                .await
-                .map(|outcome| {
-                    AgentApiOutcome::with_notifications(
-                        SessionStartResponse {
-                            session: outcome.result.session,
-                        },
-                        outcome.notifications,
-                    )
-                })
-            }
-            Err(error) => Err(error),
-        }
-    }
-
-    async fn start_session(
-        &self,
-        params: SessionStartParams,
-    ) -> std::result::Result<AgentApiOutcome<SessionStartResponse>, AgentApiError> {
-        self.request(METHOD_SESSION_START, params).await
-    }
-
-    async fn read_session(
-        &self,
-        params: SessionReadParams,
-    ) -> std::result::Result<AgentApiOutcome<SessionReadResponse>, AgentApiError> {
-        self.request(METHOD_SESSION_READ, params).await
-    }
-
-    async fn read_session_events(
-        &self,
-        params: SessionEventsReadParams,
-    ) -> std::result::Result<AgentApiOutcome<SessionEventsReadResponse>, AgentApiError> {
-        self.request(METHOD_SESSION_EVENTS_READ, params).await
-    }
-
-    async fn start_run(
-        &self,
-        params: RunStartParams,
-    ) -> std::result::Result<AgentApiOutcome<RunStartResponse>, AgentApiError> {
-        self.request(METHOD_RUN_START, params).await
-    }
-
-    async fn request<P, R>(
-        &self,
-        method: &str,
-        params: P,
-    ) -> std::result::Result<AgentApiOutcome<R>, AgentApiError>
-    where
-        P: Serialize,
-        R: DeserializeOwned,
-    {
-        let id = RequestId::Number(self.next_id.fetch_add(1, Ordering::Relaxed));
-        let request = JsonRpcRequest {
-            id,
-            method: method.to_owned(),
-            params: Some(serde_json::to_value(params).map_err(|error| {
-                AgentApiError::invalid_request(format!("failed to encode API params: {error}"))
-            })?),
-        };
-        let response = self
-            .client
-            .post(&self.endpoint)
-            .json(&request)
-            .send()
-            .await
-            .map_err(|error| AgentApiError::internal(format!("API request failed: {error}")))?
-            .error_for_status()
-            .map_err(|error| AgentApiError::internal(format!("API request failed: {error}")))?
-            .json::<JsonRpcResponse>()
-            .await
-            .map_err(|error| AgentApiError::internal(format!("invalid API response: {error}")))?;
-        if let Some(error) = response.error {
-            return Err(agent_error_from_json_rpc(error));
-        }
-        let value = response
-            .result
-            .ok_or_else(|| AgentApiError::internal("JSON-RPC response missing result"))?;
-        serde_json::from_value::<AgentApiOutcome<R>>(value)
-            .map_err(|error| AgentApiError::internal(format!("invalid API result: {error}")))
-    }
-}
 
 impl ChatSessionDriver {
     pub(crate) async fn open(options: ChatSessionDriverOptions) -> Result<(Self, Vec<ChatEvent>)> {
@@ -300,6 +206,7 @@ impl ChatSessionDriver {
             sessions: BTreeSet::from([session_id.clone()]),
             workdir: options.workdir,
             pending_run: None,
+            notice_seq: 0,
         };
         let mut events = vec![ChatEvent::Connected(ChatConnectionInfo {
             world_id: GATEWAY_WORLD_ID.into(),
@@ -331,6 +238,37 @@ impl ChatSessionDriver {
         })
     }
 
+    pub(crate) async fn mount_local_directory(
+        &mut self,
+        directory: PathBuf,
+        mount_path: String,
+    ) -> Result<Vec<ChatEvent>> {
+        if !self.is_quiescent() {
+            return Err(anyhow!("cannot mount a directory while a run is active"));
+        }
+        let summary = crate::vfs_transfer::upload_snapshot_directory(
+            self.api.as_ref(),
+            directory,
+            crate::vfs_transfer::SnapshotUploadOptions::default(),
+        )
+        .await
+        .context("failed to upload chat mount directory")?;
+        let workspace =
+            crate::vfs_cli::create_workspace_from_snapshot(self.api.as_ref(), summary.snapshot_ref)
+                .await
+                .context("failed to create chat mount workspace")?;
+        crate::vfs_cli::mount_workspace(
+            self.api.as_ref(),
+            self.session_id.clone(),
+            mount_path.clone(),
+            workspace.workspace_id,
+        )
+        .await
+        .context("failed to mount chat workspace")?;
+        self.workdir = mount_path;
+        self.refresh().await
+    }
+
     pub(crate) async fn handle_command(&mut self, command: ChatCommand) -> Result<Vec<ChatEvent>> {
         match command {
             ChatCommand::SubmitUserMessage { text } => self.submit_user_message(text).await,
@@ -355,6 +293,13 @@ impl ChatSessionDriver {
                     })
                     .collect(),
             }]),
+            ChatCommand::ListSkills => self.list_skills().await,
+            ChatCommand::ListActiveSkills => self.list_active_skills().await,
+            ChatCommand::PickSkill { scope } => self.pick_skill(scope).await,
+            ChatCommand::ActivateSkill { skill_id, scope } => {
+                self.activate_skill(skill_id, scope).await
+            }
+            ChatCommand::DeactivateSkill { skill_id } => self.deactivate_skill(skill_id).await,
             ChatCommand::NewSession => self.new_session().await,
             ChatCommand::SteerRun { .. } => Ok(vec![ChatEvent::Error(ChatErrorView {
                 message:
@@ -467,6 +412,103 @@ impl ChatSessionDriver {
         }));
 
         Ok(events)
+    }
+
+    async fn list_skills(&mut self) -> Result<Vec<ChatEvent>> {
+        let response = self
+            .api
+            .list_skills(api::SkillListParams {
+                session_id: self.session_id.clone(),
+            })
+            .await
+            .map_err(api_error)?
+            .result;
+        Ok(vec![
+            self.notice_event("skills", format_skill_list(&response)),
+        ])
+    }
+
+    async fn list_active_skills(&mut self) -> Result<Vec<ChatEvent>> {
+        let response = self
+            .api
+            .active_skills(api::SkillActiveParams {
+                session_id: self.session_id.clone(),
+            })
+            .await
+            .map_err(api_error)?
+            .result;
+        Ok(vec![self.notice_event(
+            "active-skills",
+            format_active_skills(&response),
+        )])
+    }
+
+    async fn pick_skill(&mut self, scope: api::SkillActivationScope) -> Result<Vec<ChatEvent>> {
+        let response = self
+            .api
+            .list_skills(api::SkillListParams {
+                session_id: self.session_id.clone(),
+            })
+            .await
+            .map_err(api_error)?
+            .result;
+        Ok(vec![ChatEvent::SkillsListed {
+            session_id: self.session_id.clone(),
+            catalog_ref: response.catalog_ref,
+            skills: response.skills,
+            scope,
+        }])
+    }
+
+    async fn activate_skill(
+        &mut self,
+        skill_id: String,
+        scope: api::SkillActivationScope,
+    ) -> Result<Vec<ChatEvent>> {
+        if !self.is_quiescent() {
+            return Ok(vec![ChatEvent::Error(ChatErrorView {
+                message: "skill activation is only available while no run is active".into(),
+                action: Some("wait for the current run to finish first".into()),
+            })]);
+        }
+
+        let response = self
+            .api
+            .activate_skill(api::SkillActivateParams {
+                session_id: self.session_id.clone(),
+                skill_id,
+                scope,
+            })
+            .await
+            .map_err(api_error)?
+            .result;
+        Ok(vec![self.notice_event(
+            "skill-activated",
+            format_skill_activation_response(&response),
+        )])
+    }
+
+    async fn deactivate_skill(&mut self, skill_id: String) -> Result<Vec<ChatEvent>> {
+        if !self.is_quiescent() {
+            return Ok(vec![ChatEvent::Error(ChatErrorView {
+                message: "skill deactivation is only available while no run is active".into(),
+                action: Some("wait for the current run to finish first".into()),
+            })]);
+        }
+
+        let response = self
+            .api
+            .deactivate_skill(api::SkillDeactivateParams {
+                session_id: self.session_id.clone(),
+                skill_id,
+            })
+            .await
+            .map_err(api_error)?
+            .result;
+        Ok(vec![self.notice_event(
+            "skill-deactivated",
+            format_skill_deactivation_response(&response),
+        )])
     }
 
     async fn collect_finished_run(&mut self) -> Result<Vec<ChatEvent>> {
@@ -598,6 +640,14 @@ impl ChatSessionDriver {
     fn chat_events_from_session_event(&mut self, event: &SessionEventView) -> Vec<ChatEvent> {
         let mut events = Vec::new();
         match &event.kind {
+            SessionEventKindView::RunAccepted { run_id, .. } => {
+                events.push(ChatEvent::RunChanged(self.run_view_from_status(
+                    run_id,
+                    api::RunStatus::Queued,
+                    event.observed_at_ms,
+                )));
+                events.push(self.status_event("queued"));
+            }
             SessionEventKindView::RunStarted { run_id, .. } => {
                 events.push(ChatEvent::RunChanged(self.run_view_from_status(
                     run_id,
@@ -662,21 +712,20 @@ impl ChatSessionDriver {
             SessionEventKindView::ToolCallCompleted { .. } => {
                 events.push(self.status_event("tool result received"));
             }
-            SessionEventKindView::ItemsRecorded { .. } => {}
-            SessionEventKindView::CompactionRecorded { .. } => {
-                events.push(ChatEvent::CompactionsChanged {
-                    session_id: event.session_id.clone(),
-                    compactions: Vec::new(),
-                });
-            }
             SessionEventKindView::SessionOpened { .. }
             | SessionEventKindView::SessionConfigChanged { .. }
             | SessionEventKindView::SessionClosed
-            | SessionEventKindView::RunQueued { .. }
-            | SessionEventKindView::RunSteeringAdded { .. }
+            | SessionEventKindView::RunSteeringAccepted { .. }
             | SessionEventKindView::RunCancellationRequested { .. }
+            | SessionEventKindView::ContextEntriesApplied { .. }
+            | SessionEventKindView::ContextEntriesRemoved { .. }
+            | SessionEventKindView::ContextKeysRemoved { .. }
+            | SessionEventKindView::ContextStateReplaced { .. }
+            | SessionEventKindView::ContextCompactionRequested { .. }
+            | SessionEventKindView::ContextCompactionFinished { .. }
+            | SessionEventKindView::SkillCatalogSet { .. }
+            | SessionEventKindView::SkillActivationsSet { .. }
             | SessionEventKindView::TurnCompleted { .. }
-            | SessionEventKindView::ContextWindowPlanned { .. }
             | SessionEventKindView::ToolRegistryChanged
             | SessionEventKindView::ToolProfileSelected { .. }
             | SessionEventKindView::ToolDefaultTargetChanged { .. } => {}
@@ -853,6 +902,19 @@ impl ChatSessionDriver {
         self.status_event(status)
     }
 
+    fn notice_event(&mut self, prefix: &str, content: String) -> ChatEvent {
+        self.notice_seq = self.notice_seq.saturating_add(1);
+        ChatEvent::TranscriptDelta(ChatDelta::AppendMessage {
+            session_id: self.session_id.clone(),
+            message: ChatMessageView {
+                id: format!("{prefix}:{}", self.notice_seq),
+                role: "system".into(),
+                content,
+                ref_: None,
+            },
+        })
+    }
+
     fn model_locked(&self) -> bool {
         self.run_active()
     }
@@ -996,12 +1058,15 @@ fn project_tool_batch(run_id: &str, batch: &ToolBatchView) -> ChatToolChainView 
 fn event_needs_snapshot(kind: &SessionEventKindView) -> bool {
     matches!(
         kind,
-        SessionEventKindView::ItemsRecorded { .. }
+        SessionEventKindView::ContextEntriesApplied { .. }
+            | SessionEventKindView::ContextEntriesRemoved { .. }
+            | SessionEventKindView::ContextKeysRemoved { .. }
+            | SessionEventKindView::ContextStateReplaced { .. }
+            | SessionEventKindView::ContextCompactionFinished { .. }
             | SessionEventKindView::RunCompleted { .. }
             | SessionEventKindView::RunFailed { .. }
             | SessionEventKindView::RunCancelled { .. }
             | SessionEventKindView::ToolBatchCompleted { .. }
-            | SessionEventKindView::CompactionRecorded { .. }
     )
 }
 
@@ -1219,7 +1284,6 @@ fn model_config(settings: &ChatDraftSettings) -> ModelConfig {
 
 fn session_start_config(settings: &ChatDraftSettings) -> SessionConfigInput {
     SessionConfigInput {
-        instructions: None,
         model: Some(model_config(settings)),
         generation: Some(generation_config(settings)),
         context: None,
@@ -1282,6 +1346,7 @@ fn print_event(event: &ChatEvent) -> Result<()> {
                 println!("{} {status}", session.session_id);
             }
         }
+        ChatEvent::SkillsListed { .. } => {}
         ChatEvent::SessionSelected(summary) => {
             let status = summary.status.map(session_status_text).unwrap_or("unknown");
             println!(
@@ -1333,6 +1398,101 @@ fn progress_label(status: ChatProgressStatus) -> &'static str {
     }
 }
 
+fn format_skill_list(response: &api::SkillListResponse) -> String {
+    let mut lines = vec![format_catalog_ref(response.catalog_ref.as_deref())];
+    if response.skills.is_empty() {
+        lines.push("skills 0".into());
+        return lines.join("\n");
+    }
+
+    lines.push(format!("skills {}", response.skills.len()));
+    for skill in &response.skills {
+        let active = if skill.active { "active" } else { "inactive" };
+        let enabled = if skill.enabled { "enabled" } else { "disabled" };
+        lines.push(format!(
+            "- {} [{} {}] {}",
+            skill.skill_id, active, enabled, skill.name
+        ));
+        if !skill.description.trim().is_empty() {
+            lines.push(format!("  {}", preview(&skill.description)));
+        }
+        if let Some(short_description) = &skill.short_description {
+            lines.push(format!("  short {}", preview(short_description)));
+        }
+    }
+    lines.join("\n")
+}
+
+fn format_active_skills(response: &api::SkillActiveResponse) -> String {
+    let mut lines = vec![format_catalog_ref(response.catalog_ref.as_deref())];
+    if response.activations.is_empty() {
+        lines.push("active 0".into());
+        return lines.join("\n");
+    }
+
+    lines.push(format!("active {}", response.activations.len()));
+    for activation in &response.activations {
+        push_skill_activation_lines(&mut lines, activation);
+    }
+    lines.join("\n")
+}
+
+fn format_skill_activation_response(response: &api::SkillActivateResponse) -> String {
+    let mut lines = vec![format!(
+        "activated {} ({})",
+        response.activation.skill_id,
+        skill_scope_label(response.activation.scope)
+    )];
+    push_skill_activation_lines(&mut lines, &response.activation);
+    lines.push(format!("active {}", response.active.len()));
+    lines.join("\n")
+}
+
+fn format_skill_deactivation_response(response: &api::SkillDeactivateResponse) -> String {
+    [
+        format!("deactivated {}", response.skill_id),
+        format!("active {}", response.active.len()),
+    ]
+    .join("\n")
+}
+
+fn push_skill_activation_lines(lines: &mut Vec<String>, activation: &api::SkillActivationView) {
+    let name = activation.name.as_deref().unwrap_or("-");
+    lines.push(format!(
+        "- {} [{} {}] {}",
+        activation.skill_id,
+        skill_scope_label(activation.scope),
+        skill_source_label(&activation.source),
+        name
+    ));
+    if let Some(description) = &activation.description
+        && !description.trim().is_empty()
+    {
+        lines.push(format!("  {}", preview(description)));
+    }
+    lines.push(format!("  catalogRef {}", activation.catalog_ref));
+}
+
+fn format_catalog_ref(catalog_ref: Option<&str>) -> String {
+    format!("catalogRef {}", catalog_ref.unwrap_or("-"))
+}
+
+fn skill_scope_label(scope: api::SkillActivationScope) -> &'static str {
+    match scope {
+        api::SkillActivationScope::Run => "run",
+        api::SkillActivationScope::Session => "session",
+    }
+}
+
+fn skill_source_label(source: &api::SkillActivationSource) -> String {
+    match source {
+        api::SkillActivationSource::ToolResult { call_id } => format!("toolResult:{call_id}"),
+        api::SkillActivationSource::DirectContext { context_ref } => {
+            format!("directContext:{context_ref}")
+        }
+    }
+}
+
 fn preview(value: &str) -> String {
     compact_preview(value, 180)
 }
@@ -1367,21 +1527,6 @@ fn displayable_reasoning_text(text: &str) -> bool {
     true
 }
 
-fn api_error(error: api::AgentApiError) -> anyhow::Error {
-    anyhow!("{error}")
-}
-
-fn agent_error_from_json_rpc(error: api::JsonRpcError) -> AgentApiError {
-    let kind = match error.code {
-        -32602 => AgentApiErrorKind::InvalidRequest,
-        -32004 => AgentApiErrorKind::NotFound,
-        -32009 => AgentApiErrorKind::Conflict,
-        -32010 => AgentApiErrorKind::Rejected,
-        _ => AgentApiErrorKind::Internal,
-    };
-    AgentApiError::new(kind, error.message)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1405,6 +1550,7 @@ mod tests {
                     output: Some(r#"{"ok":true}"#.into()),
                     is_error: false,
                     status: ToolItemStatus::Succeeded,
+                    effects: Vec::new(),
                     display: Some(api::ToolCallDisplayView {
                         group: api::ToolCallDisplayGroup::Explore,
                         verb: "Read".into(),
@@ -1450,6 +1596,7 @@ mod tests {
                 output: None,
                 is_error: false,
                 status,
+                effects: Vec::new(),
                 display: None,
             }
         }
@@ -1482,6 +1629,8 @@ mod tests {
                     },
                 ],
             }],
+            active_context: api::ContextView::default(),
+            vfs_mounts: Vec::new(),
         };
 
         let settings = ChatDraftSettings {
@@ -1497,6 +1646,54 @@ mod tests {
         assert_eq!(chains.len(), 1);
         assert_eq!(chains[0].id, "run_1:tool_batch_2");
         assert_eq!(chains[0].status, ChatProgressStatus::Running);
+    }
+
+    #[test]
+    fn formats_skill_list_for_transcript_notice() {
+        let response = api::SkillListResponse {
+            catalog_ref: Some("sha256:catalog".into()),
+            skills: vec![api::SkillListItem {
+                skill_id: "forge:review".into(),
+                name: "Review".into(),
+                description: "Review repository changes.".into(),
+                short_description: Some("review diffs".into()),
+                enabled: true,
+                active: true,
+            }],
+        };
+
+        let rendered = format_skill_list(&response);
+
+        assert!(rendered.contains("catalogRef sha256:catalog"));
+        assert!(rendered.contains("- forge:review [active enabled] Review"));
+        assert!(rendered.contains("Review repository changes."));
+        assert!(rendered.contains("short review diffs"));
+    }
+
+    #[test]
+    fn formats_active_skills_for_transcript_notice() {
+        let response = api::SkillActiveResponse {
+            catalog_ref: Some("sha256:catalog".into()),
+            activations: vec![api::SkillActivationView {
+                skill_id: "forge:review".into(),
+                name: Some("Review".into()),
+                description: Some("Review repository changes.".into()),
+                short_description: None,
+                catalog_ref: "sha256:catalog".into(),
+                scope: api::SkillActivationScope::Session,
+                source: api::SkillActivationSource::DirectContext {
+                    context_ref: "sha256:skill-doc".into(),
+                },
+            }],
+        };
+
+        let rendered = format_active_skills(&response);
+
+        assert!(rendered.contains("active 1"));
+        assert!(
+            rendered.contains("- forge:review [session directContext:sha256:skill-doc] Review")
+        );
+        assert!(rendered.contains("catalogRef sha256:catalog"));
     }
 
     #[test]
@@ -1525,6 +1722,8 @@ mod tests {
                 ],
                 tool_batches: Vec::new(),
             }],
+            active_context: api::ContextView::default(),
+            vfs_mounts: Vec::new(),
         };
         let settings = ChatDraftSettings {
             provider: "openai".into(),
@@ -1565,6 +1764,8 @@ mod tests {
                 }],
                 tool_batches: Vec::new(),
             }],
+            active_context: api::ContextView::default(),
+            vfs_mounts: Vec::new(),
         };
         let settings = ChatDraftSettings {
             provider: "openai".into(),
@@ -1662,6 +1863,8 @@ mod tests {
             effort: effort.map(str::to_string),
             max_tokens: None,
             workdir: None,
+            mount: None,
+            mount_path: "/workspace".into(),
             api_url: "http://127.0.0.1:18080/rpc".into(),
             show_tool_details: false,
             json: false,
@@ -1705,13 +1908,50 @@ mod tests {
             run_id: "run_1".into(),
             output_ref: None,
         }));
-        assert!(event_needs_snapshot(&SessionEventKindView::ItemsRecorded {
-            items: Vec::new(),
+        assert!(event_needs_snapshot(
+            &SessionEventKindView::ContextEntriesApplied {
+                base_revision: 0,
+                revision: 1,
+                items: Vec::new(),
+            }
+        ));
+        assert!(event_needs_snapshot(
+            &SessionEventKindView::ContextStateReplaced {
+                base_revision: 1,
+                revision: 2,
+                items: Vec::new(),
+                reason: "pruned".into(),
+            }
+        ));
+        assert!(event_needs_snapshot(
+            &SessionEventKindView::ContextEntriesRemoved {
+                base_revision: 2,
+                revision: 3,
+                item_ids: Vec::new(),
+                reason: "pruned".into(),
+            }
+        ));
+        assert!(event_needs_snapshot(
+            &SessionEventKindView::ContextKeysRemoved {
+                base_revision: 3,
+                revision: 4,
+                keys: Vec::new(),
+            }
+        ));
+        assert!(event_needs_snapshot(
+            &SessionEventKindView::ToolBatchCompleted {
+                run_id: "run_1".into(),
+                turn_id: "turn_1".into(),
+                batch_id: "batch_1".into(),
+            }
+        ));
+        assert!(!event_needs_snapshot(&SessionEventKindView::RunAccepted {
+            run_id: "run_1".into(),
+            submission_id: Some("submit_1".into()),
+            input: Vec::new(),
         }));
         assert!(!event_needs_snapshot(&SessionEventKindView::RunStarted {
             run_id: "run_1".into(),
-            submission_id: None,
-            input_ref: "sha256:input".into(),
         }));
     }
 }

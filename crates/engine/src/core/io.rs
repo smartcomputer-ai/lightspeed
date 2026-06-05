@@ -11,13 +11,16 @@
 //! hold `Send + Sync` async adapters should fulfill `CoreAgentAction` values
 //! directly instead of implementing these traits inside the workflow.
 
+use std::collections::BTreeMap;
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    BlobRef, LlmGenerationFacts, LlmGenerationStatus, LlmRequest, RunId, SessionId, ToolBatchId,
-    ToolCallId, ToolCallStatus, ToolExecutionTarget, ToolName, TurnId, UncommittedContextItem,
+    BlobRef, ContextCompactionRequest, ContextCompactionResult, ContextEntryInput,
+    LlmGenerationFacts, LlmGenerationStatus, LlmRequest, RunId, SessionId, ToolBatchId, ToolCallId,
+    ToolCallStatus, ToolExecutionTarget, ToolName, TurnId,
 };
 
 #[async_trait]
@@ -26,6 +29,16 @@ pub trait CoreAgentLlm: Send + Sync {
         &self,
         request: LlmGenerationRequest,
     ) -> Result<LlmGenerationResult, CoreAgentIoError>;
+
+    async fn compact_context(
+        &self,
+        request: ContextCompactionRequest,
+    ) -> Result<ContextCompactionResult, CoreAgentIoError> {
+        let _ = request;
+        Err(CoreAgentIoError::Failed {
+            message: "context compaction runtime unavailable".to_owned(),
+        })
+    }
 }
 
 #[async_trait]
@@ -51,7 +64,7 @@ pub struct LlmGenerationResult {
     pub status: LlmGenerationStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure_ref: Option<BlobRef>,
-    pub context_items: Vec<UncommittedContextItem>,
+    pub context_entries: Vec<ContextEntryInput>,
     pub facts: LlmGenerationFacts,
 }
 
@@ -96,12 +109,22 @@ impl ToolInvocationBatchResult {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ToolEffect {
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub data: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolInvocationResult {
     pub call_id: ToolCallId,
     pub status: ToolCallStatus,
     pub output_ref: Option<BlobRef>,
     pub model_visible_output_ref: Option<BlobRef>,
     pub error_ref: Option<BlobRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effects: Vec<ToolEffect>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Error)]

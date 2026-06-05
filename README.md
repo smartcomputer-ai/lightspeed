@@ -60,9 +60,8 @@ Prerequisites:
 - `ANTHROPIC_API_KEY` for live Anthropic client tests
 
 Easiest is to copy `.env_example` to `.env` and set provider keys there. The
-local hosted stack defaults to `FORGE_LLM=fake`, so a first smoke test does not
-require a provider key. Set `FORGE_LLM=openai` and `OPENAI_API_KEY` when you
-want the worker to call OpenAI.
+hosted worker registers real provider adapters and session-mounted VFS tools;
+for OpenAI-backed local chat, set `OPENAI_API_KEY`.
 
 Build and test:
 
@@ -105,11 +104,6 @@ Open a first shell:
 ```bash
 source dev/local/env.sh
 
-# Default smoke-test mode. Uses the fake LLM activity implementation.
-export FORGE_LLM=fake
-
-# For real OpenAI-backed chat instead:
-# export FORGE_LLM=openai
 # export OPENAI_API_KEY=...  # omit this if it is already in .env
 
 cargo run -p worker
@@ -169,11 +163,57 @@ To get machine-readable output for a one-shot run:
 cargo run -p cli -- chat --new --json "summarize this repository"
 ```
 
+To chat with a local directory mounted as a writable CAS-backed VFS workspace:
+
+```bash
+cargo run -p cli -- chat --new --mount .
+```
+
+The CLI snapshots the directory locally, uploads missing blobs, creates a VFS
+workspace from that snapshot, mounts it at `/workspace`, and starts the chat
+session with `/workspace` as the working directory. Use `--mount-path` to pick
+a different VFS mount path.
+
 The `cli` package builds the `forge` binary, so installed usage is equivalent:
 
 ```bash
 forge chat --new
 ```
+
+To upload a local directory as a CAS-backed VFS snapshot:
+
+```bash
+cargo run -p cli -- vfs snapshot .
+```
+
+The command walks the directory locally, uploads missing content-addressed blobs
+through the gateway, commits the VFS manifest, and prints the resulting
+`snapshotRef`. Use `--json` for a machine-readable summary.
+
+To materialize a snapshot back to a local directory:
+
+```bash
+cargo run -p cli -- vfs materialize sha256:... ./out
+```
+
+The command downloads only blobs needed for files that do not already match
+locally, writes under the selected destination, and refuses destination
+symlinks that could escape that directory.
+
+To create and mount VFS workspaces explicitly:
+
+```bash
+cargo run -p cli -- vfs workspace create sha256:...
+cargo run -p cli -- vfs workspace read workspace_...
+cargo run -p cli -- vfs workspace update --expected-revision 0 workspace_... sha256:...
+cargo run -p cli -- vfs workspace update workspace_... sha256:...
+cargo run -p cli -- vfs workspace delete workspace_...
+cargo run -p cli -- vfs mount put --session session_1 --path /workspace --workspace workspace_...
+cargo run -p cli -- vfs mount delete --session session_1 --path /workspace
+cargo run -p cli -- vfs mount list --session session_1
+```
+
+Snapshot mounts are read-only; workspace mounts can be read-only or read-write.
 
 ### Stop Or Reset Local Infra
 
@@ -250,7 +290,6 @@ the same variables directly in your shell.
 | `FORGE_CHAT_REASONING_EFFORT` | Default OpenAI Responses reasoning effort |
 | `FORGE_CHAT_MAX_TOKENS` | Default max output token setting for chat runs |
 | `FORGE_API_URL` | CLI JSON-RPC gateway URL |
-| `FORGE_LLM` | Worker LLM mode: `fake` or `openai` |
 | `FORGE_POSTGRES_URL` | PostgreSQL session/CAS database URL |
 | `FORGE_PG_UNIVERSE_ID` | Hosted store universe UUID |
 | `FORGE_TASK_QUEUE` | Temporal task queue used by worker and gateway |

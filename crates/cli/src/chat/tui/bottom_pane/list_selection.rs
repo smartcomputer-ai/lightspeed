@@ -52,6 +52,10 @@ pub(crate) enum PickerSelection {
     MaxTokens(Option<u32>),
     SlashCommand(SlashCommandKind),
     Session(String),
+    Skill {
+        skill_id: String,
+        scope: api::SkillActivationScope,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -118,6 +122,40 @@ impl ListSelectionView {
             );
         }
         Self::new("Select session", rows)
+    }
+
+    pub(crate) fn skills(skills: &[api::SkillListItem], scope: api::SkillActivationScope) -> Self {
+        let rows = skills
+            .iter()
+            .map(|skill| {
+                ListSelectionRow::new(
+                    skill.skill_id.clone(),
+                    skill_description(skill),
+                    PickerSelection::Skill {
+                        skill_id: skill.skill_id.clone(),
+                        scope,
+                    },
+                )
+                .with_disabled_reason((!skill.enabled).then(|| "skill is disabled".to_string()))
+            })
+            .collect::<Vec<_>>();
+        if rows.is_empty() {
+            return Self::new(
+                "Select skill",
+                vec![
+                    ListSelectionRow::new(
+                        "no skills",
+                        "mount a workspace containing .forge/skills or .agents/skills",
+                        PickerSelection::Skill {
+                            skill_id: String::new(),
+                            scope,
+                        },
+                    )
+                    .with_disabled_reason(Some("no skills in the current catalog".into())),
+                ],
+            );
+        }
+        Self::new("Select skill", rows)
     }
 
     pub(crate) fn model(current: &str, editable: bool) -> Self {
@@ -405,6 +443,23 @@ fn session_description(summary: &ChatSessionSummary, current: bool) -> String {
     parts.join("  ")
 }
 
+fn skill_description(skill: &api::SkillListItem) -> String {
+    let mut parts = Vec::new();
+    if skill.active {
+        parts.push("active".to_string());
+    }
+    if !skill.enabled {
+        parts.push("disabled".to_string());
+    }
+    parts.push(skill.name.clone());
+    if let Some(short_description) = &skill.short_description {
+        parts.push(short_description.clone());
+    } else if !skill.description.trim().is_empty() {
+        parts.push(skill.description.clone());
+    }
+    parts.join("  ")
+}
+
 fn short(value: &str) -> String {
     value.get(..8).unwrap_or(value).to_string()
 }
@@ -442,6 +497,49 @@ mod tests {
         assert_eq!(
             picker.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
             ListSelectionAction::Selected(PickerSelection::SlashCommand(SlashCommandKind::Model))
+        );
+    }
+
+    #[test]
+    fn skill_picker_confirms_enabled_skill() {
+        let mut picker = ListSelectionView::skills(
+            &[api::SkillListItem {
+                skill_id: "forge:review".into(),
+                name: "Review".into(),
+                description: "Review diffs".into(),
+                short_description: None,
+                enabled: true,
+                active: false,
+            }],
+            api::SkillActivationScope::Session,
+        );
+
+        assert_eq!(
+            picker.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            ListSelectionAction::Selected(PickerSelection::Skill {
+                skill_id: "forge:review".into(),
+                scope: api::SkillActivationScope::Session,
+            })
+        );
+    }
+
+    #[test]
+    fn skill_picker_rejects_disabled_skill() {
+        let mut picker = ListSelectionView::skills(
+            &[api::SkillListItem {
+                skill_id: "forge:review".into(),
+                name: "Review".into(),
+                description: "Review diffs".into(),
+                short_description: None,
+                enabled: false,
+                active: false,
+            }],
+            api::SkillActivationScope::Run,
+        );
+
+        assert_eq!(
+            picker.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            ListSelectionAction::Rejected("skill is disabled".into())
         );
     }
 }

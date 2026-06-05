@@ -1,5 +1,6 @@
 use engine::{
-    CodecError, CommandError, CommandRejection, CoreAgentDriveError, DomainError, PlanningError,
+    CodecError, CommandError, CommandRejection, CoreAgentDriveError, CoreAgentIoError, DomainError,
+    PlanningError,
     storage::{BlobStoreError, SessionStoreError},
 };
 use thiserror::Error;
@@ -20,6 +21,9 @@ pub enum RunnerError {
 
     #[error(transparent)]
     Planning(#[from] PlanningError),
+
+    #[error(transparent)]
+    CoreAgentIo(#[from] CoreAgentIoError),
 
     #[error("command admission failed: {0}")]
     Command(CommandRejection),

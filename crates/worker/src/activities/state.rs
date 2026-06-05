@@ -1,4 +1,4 @@
-use std::{env, sync::Arc};
+use std::sync::Arc;
 
 use engine::{
     CoreAgentLlm, CoreAgentTools, ProviderApiKind,
@@ -7,8 +7,9 @@ use engine::{
 use llm_clients::openai::responses as oai;
 use llm_runtime::{LlmAdapterRegistry, LlmRuntime, OpenAiResponsesLlmAdapter};
 use store_pg::PgStore;
+use vfs::{VfsMountStore, VfsWorkspaceStore};
 
-use crate::{FakeLlm, FakeTools, pg_store_from_env};
+use crate::{SessionMountedVfsTools, pg_store_from_env};
 
 #[derive(Clone)]
 pub struct StorageActivityDeps {
@@ -29,10 +30,18 @@ pub struct ToolActivityDeps {
 }
 
 #[derive(Clone)]
+pub struct SkillCatalogActivityDeps {
+    pub(super) blobs: Arc<dyn BlobStore>,
+    pub(super) workspace_store: Arc<dyn VfsWorkspaceStore>,
+    pub(super) mount_store: Arc<dyn VfsMountStore>,
+}
+
+#[derive(Clone)]
 pub struct ActivityState {
     storage: StorageActivityDeps,
     llm: LlmActivityDeps,
     tools: ToolActivityDeps,
+    skill_catalog: Option<SkillCatalogActivityDeps>,
 }
 
 impl ActivityState {
@@ -52,7 +61,21 @@ impl ActivityState {
                 blobs: blobs.clone(),
             },
             tools: ToolActivityDeps { tools, blobs },
+            skill_catalog: None,
         }
+    }
+
+    pub fn with_skill_catalog_deps(
+        mut self,
+        workspace_store: Arc<dyn VfsWorkspaceStore>,
+        mount_store: Arc<dyn VfsMountStore>,
+    ) -> Self {
+        self.skill_catalog = Some(SkillCatalogActivityDeps {
+            blobs: self.storage.blobs.clone(),
+            workspace_store,
+            mount_store,
+        });
+        self
     }
 
     pub fn from_pg_store(
@@ -61,15 +84,17 @@ impl ActivityState {
         tools: Arc<dyn CoreAgentTools>,
     ) -> Self {
         let sessions: Arc<dyn SessionStore> = store.clone();
-        let blobs: Arc<dyn BlobStore> = store;
-        Self::new(sessions, blobs, llm, tools)
+        let blobs: Arc<dyn BlobStore> = store.clone();
+        let workspace_store: Arc<dyn VfsWorkspaceStore> = store.clone();
+        let mount_store: Arc<dyn VfsMountStore> = store;
+        Self::new(sessions, blobs, llm, tools).with_skill_catalog_deps(workspace_store, mount_store)
     }
 
     pub async fn from_env() -> anyhow::Result<Self> {
         let store = pg_store_from_env().await?;
         let blobs: Arc<dyn BlobStore> = store.clone();
-        let llm = llm_from_env(blobs.clone())?;
-        let tools = Arc::new(FakeTools::new(blobs)) as Arc<dyn CoreAgentTools>;
+        let llm = openai_responses_llm(blobs)?;
+        let tools = session_mounted_vfs_tools(store.clone());
         Ok(Self::from_pg_store(store, llm, tools))
     }
 
@@ -84,21 +109,23 @@ impl ActivityState {
     pub(super) fn tools(&self) -> &ToolActivityDeps {
         &self.tools
     }
+
+    pub(super) fn skill_catalog(&self) -> Option<&SkillCatalogActivityDeps> {
+        self.skill_catalog.as_ref()
+    }
 }
 
-fn llm_from_env(blobs: Arc<dyn BlobStore>) -> anyhow::Result<Arc<dyn CoreAgentLlm>> {
-    let llm_mode = env::var("FORGE_LLM").unwrap_or_else(|_| "fake".to_owned());
-    match llm_mode.as_str() {
-        "fake" => Ok(Arc::new(FakeLlm::new(blobs))),
-        "openai" => {
-            let openai = oai::Client::new(oai::Config::from_env()?)?;
-            let adapter = Arc::new(OpenAiResponsesLlmAdapter::new(Arc::new(openai), blobs));
-            let runtime = LlmRuntime::new(
-                LlmAdapterRegistry::new()
-                    .with_generation_adapter(ProviderApiKind::OpenAiResponses, adapter),
-            );
-            Ok(Arc::new(runtime))
-        }
-        other => Err(anyhow::anyhow!("unsupported FORGE_LLM value: {other}")),
-    }
+fn session_mounted_vfs_tools(store: Arc<PgStore>) -> Arc<dyn CoreAgentTools> {
+    Arc::new(SessionMountedVfsTools::from_pg_store(store))
+}
+
+fn openai_responses_llm(blobs: Arc<dyn BlobStore>) -> anyhow::Result<Arc<dyn CoreAgentLlm>> {
+    let openai = oai::Client::new(oai::Config::from_env()?)?;
+    let adapter = Arc::new(OpenAiResponsesLlmAdapter::new(Arc::new(openai), blobs));
+    let runtime = LlmRuntime::new(
+        LlmAdapterRegistry::new()
+            .with_generation_adapter(ProviderApiKind::OpenAiResponses, adapter.clone())
+            .with_compaction_adapter(ProviderApiKind::OpenAiResponses, adapter),
+    );
+    Ok(Arc::new(runtime))
 }

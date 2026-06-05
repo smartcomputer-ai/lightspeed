@@ -1,8 +1,7 @@
 use std::{
     env,
-    ffi::OsString,
     future::Future,
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -13,8 +12,8 @@ use api::{
 };
 use api_projection::model_to_api;
 use engine::{
-    CommandCodec, CoreAgentCodec, CoreAgentCommand, DynamicCommand, ModelProviderOptions,
-    ModelSelection, ProviderApiKind, SessionId, storage::BlobStore,
+    CommandCodec, CoreAgentCodec, CoreAgentCommand, CoreAgentLlm, CoreAgentTools, DynamicCommand,
+    ModelProviderOptions, ModelSelection, ProviderApiKind, SessionId, storage::BlobStore,
 };
 use gateway::{GatewayAgentApi, default_model_from_env, pg_store_from_env};
 use temporalio_client::{
@@ -23,7 +22,7 @@ use temporalio_client::{
 use temporalio_common::{telemetry::TelemetryOptions, worker::WorkerTaskTypes};
 use temporalio_sdk::{Worker, WorkerOptions};
 use temporalio_sdk_core::{CoreRuntime, RuntimeOptions};
-use worker::WorkerActivities;
+use worker::{ActivityState, FakeLlm, FakeTools, WorkerActivities};
 use workflow::{
     AgentAdmission, AgentAdmissionFailureKind, AgentSessionWorkflow, DEFAULT_TEMPORAL_NAMESPACE,
     DEFAULT_TEMPORAL_TARGET, connect_temporal,
@@ -36,10 +35,10 @@ static LIVE_TEST_LOCK: Mutex<()> = Mutex::new(());
 async fn temporal_live_session_start_then_run_start_completes_fake_runs() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().expect("live test lock");
     let _ = dotenvy::dotenv();
-    let _llm_mode = EnvVarGuard::set("FORGE_LLM", "fake");
     require_storage_live_env()?;
 
-    run_with_live_worker(run_fake_live_client).await
+    let activities = fake_worker_activities().await?;
+    run_with_live_worker(activities, run_fake_live_client).await
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -47,10 +46,10 @@ async fn temporal_live_session_start_then_run_start_completes_fake_runs() -> any
 async fn temporal_live_continue_as_new_completes_later_fake_run() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().expect("live test lock");
     let _ = dotenvy::dotenv();
-    let _llm_mode = EnvVarGuard::set("FORGE_LLM", "fake");
     require_storage_live_env()?;
 
-    run_with_live_worker(run_continue_as_new_live_client).await
+    let activities = fake_worker_activities().await?;
+    run_with_live_worker(activities, run_continue_as_new_live_client).await
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -58,10 +57,10 @@ async fn temporal_live_continue_as_new_completes_later_fake_run() -> anyhow::Res
 async fn temporal_live_run_start_missing_session_returns_not_found() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().expect("live test lock");
     let _ = dotenvy::dotenv();
-    let _llm_mode = EnvVarGuard::set("FORGE_LLM", "fake");
     require_storage_live_env()?;
 
-    run_with_live_worker(run_missing_session_live_client).await
+    let activities = fake_worker_activities().await?;
+    run_with_live_worker(activities, run_missing_session_live_client).await
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -69,10 +68,10 @@ async fn temporal_live_run_start_missing_session_returns_not_found() -> anyhow::
 async fn temporal_live_admission_failures_do_not_poison_workflow() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().expect("live test lock");
     let _ = dotenvy::dotenv();
-    let _llm_mode = EnvVarGuard::set("FORGE_LLM", "fake");
     require_storage_live_env()?;
 
-    run_with_live_worker(run_admission_failure_live_client).await
+    let activities = fake_worker_activities().await?;
+    run_with_live_worker(activities, run_admission_failure_live_client).await
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -80,14 +79,17 @@ async fn temporal_live_admission_failures_do_not_poison_workflow() -> anyhow::Re
 async fn temporal_live_session_start_then_run_start_completes_openai_run() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().expect("live test lock");
     let _ = dotenvy::dotenv();
-    let _llm_mode = EnvVarGuard::set("FORGE_LLM", "openai");
     require_storage_live_env()?;
     require_openai_live_env()?;
 
-    run_with_live_worker(run_openai_live_client).await
+    let activities = WorkerActivities::from_env().await?;
+    run_with_live_worker(activities, run_openai_live_client).await
 }
 
-async fn run_with_live_worker<F, Fut>(run_client: F) -> anyhow::Result<()>
+async fn run_with_live_worker<F, Fut>(
+    activities: WorkerActivities,
+    run_client: F,
+) -> anyhow::Result<()>
 where
     F: FnOnce(Client, String, SessionId) -> Fut,
     Fut: Future<Output = anyhow::Result<()>>,
@@ -106,7 +108,6 @@ where
             .map_err(|error| anyhow::anyhow!("{error}"))?,
     )?;
     let client = connect_temporal(&temporal_target, &namespace).await?;
-    let activities = WorkerActivities::from_env().await?;
     let worker_options = WorkerOptions::new(task_queue.clone())
         .register_workflow::<AgentSessionWorkflow>()
         .register_activities(activities)
@@ -138,6 +139,16 @@ where
         .await
         .map_err(|_| anyhow::anyhow!("Temporal worker did not shut down within 10 seconds"))??;
     client_result
+}
+
+async fn fake_worker_activities() -> anyhow::Result<WorkerActivities> {
+    let store = pg_store_from_env().await?;
+    let blobs: Arc<dyn BlobStore> = store.clone();
+    let llm = Arc::new(FakeLlm::new(blobs.clone())) as Arc<dyn CoreAgentLlm>;
+    let tools = Arc::new(FakeTools::new(blobs)) as Arc<dyn CoreAgentTools>;
+    Ok(WorkerActivities::new(ActivityState::from_pg_store(
+        store, llm, tools,
+    )))
 }
 
 async fn run_fake_live_client(
@@ -602,36 +613,5 @@ fn openai_live_model() -> ModelSelection {
             .or_else(|_| env::var("FORGE_CHAT_MODEL"))
             .unwrap_or_else(|_| "gpt-5-mini".to_owned()),
         options: ModelProviderOptions::None,
-    }
-}
-
-struct EnvVarGuard {
-    name: &'static str,
-    previous: Option<OsString>,
-}
-
-impl EnvVarGuard {
-    fn set(name: &'static str, value: &str) -> Self {
-        let previous = env::var_os(name);
-        // SAFETY: Agent live tests are serialized by LIVE_TEST_LOCK and set this
-        // before starting the worker that reads the variable.
-        unsafe {
-            env::set_var(name, value);
-        }
-        Self { name, previous }
-    }
-}
-
-impl Drop for EnvVarGuard {
-    fn drop(&mut self) {
-        // SAFETY: The same live-test lock held while creating this guard is
-        // still held when the guard is dropped.
-        unsafe {
-            if let Some(value) = &self.previous {
-                env::set_var(self.name, value);
-            } else {
-                env::remove_var(self.name);
-            }
-        }
     }
 }

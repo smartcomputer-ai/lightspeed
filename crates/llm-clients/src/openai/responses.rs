@@ -351,6 +351,8 @@ pub struct CreateResponseRequest {
     pub store: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_management: Option<Value>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }

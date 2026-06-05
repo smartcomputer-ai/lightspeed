@@ -1,10 +1,11 @@
-use engine::{BlobRef, LlmGenerationResult, ToolInvocationBatchResult};
+use engine::{BlobRef, ContextCompactionResult, LlmGenerationResult, ToolInvocationBatchResult};
 use temporalio_macros::activities;
 use temporalio_sdk::activities::{ActivityContext, ActivityError};
 
 use crate::{
-    AppendEventsRequest, CreateOrLoadSessionRequest, CreateOrLoadSessionResult,
-    LlmGenerateActivityRequest, PutBlobRequest, ReadBlobRequest, ReadBlobResult,
+    AppendEventsRequest, ContextCompactActivityRequest, CreateOrLoadSessionRequest,
+    CreateOrLoadSessionResult, LlmGenerateActivityRequest, PutBlobRequest, ReadBlobRequest,
+    ReadBlobResult, SkillCatalogRefreshActivityRequest, SkillCatalogRefreshActivityResult,
     ToolInvokeBatchActivityRequest,
 };
 
@@ -13,7 +14,9 @@ pub const ACTIVITY_PUT_BLOB: &str = "WorkflowActivities::put_blob";
 pub const ACTIVITY_READ_BLOB: &str = "WorkflowActivities::read_blob";
 pub const ACTIVITY_APPEND_EVENTS: &str = "WorkflowActivities::append_events";
 pub const ACTIVITY_LLM_GENERATE: &str = "WorkflowActivities::llm_generate";
+pub const ACTIVITY_CONTEXT_COMPACT: &str = "WorkflowActivities::context_compact";
 pub const ACTIVITY_TOOL_INVOKE_BATCH: &str = "WorkflowActivities::tool_invoke_batch";
+pub const ACTIVITY_SKILL_CATALOG_REFRESH: &str = "WorkflowActivities::skill_catalog_refresh";
 
 pub struct WorkflowActivities;
 
@@ -59,11 +62,27 @@ impl WorkflowActivities {
         unimplemented!("workflow activity definition only")
     }
 
+    #[activity(name = ACTIVITY_CONTEXT_COMPACT)]
+    pub async fn context_compact(
+        _ctx: ActivityContext,
+        _request: ContextCompactActivityRequest,
+    ) -> Result<ContextCompactionResult, ActivityError> {
+        unimplemented!("workflow activity definition only")
+    }
+
     #[activity(name = ACTIVITY_TOOL_INVOKE_BATCH)]
     pub async fn tool_invoke_batch(
         _ctx: ActivityContext,
         _request: ToolInvokeBatchActivityRequest,
     ) -> Result<ToolInvocationBatchResult, ActivityError> {
+        unimplemented!("workflow activity definition only")
+    }
+
+    #[activity(name = ACTIVITY_SKILL_CATALOG_REFRESH)]
+    pub async fn skill_catalog_refresh(
+        _ctx: ActivityContext,
+        _request: SkillCatalogRefreshActivityRequest,
+    ) -> Result<SkillCatalogRefreshActivityResult, ActivityError> {
         unimplemented!("workflow activity definition only")
     }
 }

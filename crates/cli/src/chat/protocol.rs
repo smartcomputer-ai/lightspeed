@@ -1,4 +1,4 @@
-use api::{RunStatus, SessionStatus};
+use api::{RunStatus, SessionStatus, SkillActivationScope};
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 
@@ -51,18 +51,46 @@ fn default_reasoning_effort_from_env() -> Option<ReasoningEffort> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
 pub(crate) enum ChatCommand {
-    SubmitUserMessage { text: String },
-    SetDraftProvider { provider: String },
-    SetDraftModel { model: String },
-    SetDraftReasoningEffort { effort: Option<ReasoningEffort> },
-    SetDraftMaxTokens { max_tokens: Option<u32> },
+    SubmitUserMessage {
+        text: String,
+    },
+    SetDraftProvider {
+        provider: String,
+    },
+    SetDraftModel {
+        model: String,
+    },
+    SetDraftReasoningEffort {
+        effort: Option<ReasoningEffort>,
+    },
+    SetDraftMaxTokens {
+        max_tokens: Option<u32>,
+    },
     ListSessions,
+    ListSkills,
+    ListActiveSkills,
+    PickSkill {
+        scope: SkillActivationScope,
+    },
+    ActivateSkill {
+        skill_id: String,
+        scope: SkillActivationScope,
+    },
+    DeactivateSkill {
+        skill_id: String,
+    },
     NewSession,
-    SteerRun { text: String },
-    InterruptRun { reason: Option<String> },
+    SteerRun {
+        text: String,
+    },
+    InterruptRun {
+        reason: Option<String>,
+    },
     PauseSession,
     ResumeSession,
-    SwitchSession { session_id: String },
+    SwitchSession {
+        session_id: String,
+    },
     Refresh,
     Shutdown,
 }
@@ -74,6 +102,12 @@ pub(crate) enum ChatEvent {
     SessionsListed {
         world_id: String,
         sessions: Vec<ChatSessionSummary>,
+    },
+    SkillsListed {
+        session_id: String,
+        catalog_ref: Option<String>,
+        skills: Vec<api::SkillListItem>,
+        scope: SkillActivationScope,
     },
     SessionSelected(ChatSessionSummary),
     HistoryReset {

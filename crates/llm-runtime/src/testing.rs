@@ -1,13 +1,14 @@
-use engine::{ContextItem, ProviderApiKind, ResolvedContextWindow, TokenEstimate};
+use engine::{ContextEntry, ContextSnapshot, ProviderApiKind, TokenEstimate};
 
-pub fn resolved_context_window(
+pub fn context_snapshot(
     api_kind: ProviderApiKind,
-    items: impl IntoIterator<Item = ContextItem>,
+    entries: impl IntoIterator<Item = ContextEntry>,
     token_estimate: Option<TokenEstimate>,
-) -> ResolvedContextWindow {
-    ResolvedContextWindow {
+) -> ContextSnapshot {
+    ContextSnapshot {
         api_kind,
-        items: items.into_iter().collect(),
+        context_revision: 0,
+        entries: entries.into_iter().collect(),
         token_estimate,
     }
 }

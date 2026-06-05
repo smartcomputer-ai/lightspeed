@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
-use engine::{BlobRef, ToolName, ToolParallelism, ToolProfileId, ToolRegistry};
+use engine::{BlobRef, ToolEffect, ToolName, ToolParallelism, ToolProfileId, ToolRegistry};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -117,6 +117,8 @@ pub enum ToolExecutionMode {
 pub struct ToolInvocationOutput {
     pub output_json: Value,
     pub model_visible_text: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effects: Vec<ToolEffect>,
 }
 
 #[async_trait]
@@ -150,5 +152,6 @@ where
     Ok(ToolInvocationOutput {
         output_json,
         model_visible_text: model_visible_text.into(),
+        effects: Vec::new(),
     })
 }

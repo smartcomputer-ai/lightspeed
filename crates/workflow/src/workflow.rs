@@ -1,10 +1,11 @@
 use std::{collections::BTreeMap, time::UNIX_EPOCH};
 
 use engine::{
-    ApplyEvent, CommandCodec, CommandError, CoreAgentAction, CoreAgentCodec, CoreAgentCommand,
-    CoreAgentDrive, CoreAgentDriveError, CoreAgentEntry, CoreAgentEventKind, CoreAgentState,
-    CoreApplyEvent, LlmGenerationRequest, RunEvent, SessionId, SessionPosition, SubmissionId,
-    ToolInvocationBatchRequest, ToolProfileId,
+    ApplyEvent, BlobRef, CommandCodec, CommandError, ContextEntryInput, ContextEntryKey,
+    ContextEntryKind, CoreAgentAction, CoreAgentCodec, CoreAgentCommand, CoreAgentDrive,
+    CoreAgentDriveError, CoreAgentEntry, CoreAgentEventKind, CoreAgentState, CoreApplyEvent,
+    LlmGenerationRequest, RunEvent, SKILL_CATALOG_CONTEXT_KEY, SessionId, SessionPosition,
+    SubmissionId, ToolInvocationBatchRequest, ToolProfileId,
 };
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
@@ -16,8 +17,8 @@ use crate::{
     AgentCompletedRunSummary, AgentQueuedRunSummary, AgentSessionArgs, AgentSessionStatus,
     AppendEventsRequest, CreateOrLoadSessionRequest, DEFAULT_CONTINUE_AS_NEW_HISTORY_THRESHOLD,
     FAKE_TOOL_PROFILE_ID, LlmGenerateActivityRequest, PutBlobRequest,
-    ToolInvokeBatchActivityRequest, WorkflowActivities, activity_options, default_instructions,
-    fake_tool_input_schema, fake_tool_registry,
+    SkillCatalogRefreshActivityRequest, ToolInvokeBatchActivityRequest, WorkflowActivities,
+    activity_options, default_instructions, fake_tool_input_schema, fake_tool_registry,
 };
 
 const DEFAULT_MAX_STEPS_PER_INPUT: usize = 256;
@@ -124,7 +125,7 @@ impl AgentSessionWorkflow {
                 .iter()
                 .map(|run| AgentQueuedRunSummary {
                     submission_id: run.submission_id.clone(),
-                    input_ref: run.input_ref.clone(),
+                    input: run.input.clone(),
                 })
                 .collect(),
             completed_runs: self
@@ -210,7 +211,7 @@ async fn open_new_session(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     args: AgentSessionArgs,
 ) -> anyhow::Result<()> {
-    let instructions_ref = match args.session_config.context.instructions_ref.clone() {
+    let instructions_ref = match args.instructions_ref.clone() {
         Some(blob_ref) => Some(blob_ref),
         None => {
             let blob_ref = ctx
@@ -226,8 +227,7 @@ async fn open_new_session(
             Some(blob_ref)
         }
     };
-    let mut session_config = args.session_config;
-    session_config.context.instructions_ref = instructions_ref;
+    let session_config = args.session_config;
     let schema_ref = ctx
         .start_activity(
             WorkflowActivities::put_blob,
@@ -248,6 +248,17 @@ async fn open_new_session(
         },
     )
     .await?;
+    if let Some(instructions_ref) = instructions_ref {
+        append_command(
+            ctx,
+            &mut drive,
+            CoreAgentCommand::UpsertContext {
+                key: ContextEntryKey::new("instructions.000.default"),
+                entry: instruction_context_input(instructions_ref),
+            },
+        )
+        .await?;
+    }
     append_command(
         ctx,
         &mut drive,
@@ -265,6 +276,18 @@ async fn open_new_session(
     )
     .await?;
     Ok(())
+}
+
+fn instruction_context_input(content_ref: BlobRef) -> ContextEntryInput {
+    ContextEntryInput {
+        kind: ContextEntryKind::Instructions,
+        content_ref,
+        media_type: Some("text/plain".to_owned()),
+        preview: None,
+        provider_kind: None,
+        provider_item_id: None,
+        token_estimate: None,
+    }
 }
 
 async fn process_admissions(
@@ -288,6 +311,9 @@ async fn process_admissions(
                 continue;
             }
         };
+        if should_refresh_skill_catalog_before_admitting(drive.state(), &command) {
+            refresh_skill_catalog_before_run(ctx, &mut drive).await?;
+        }
         match admit_and_append_command(ctx, &mut drive, command).await? {
             CommandAdmissionResult::Accepted => {}
             CommandAdmissionResult::Rejected(failure) => {
@@ -296,6 +322,60 @@ async fn process_admissions(
         }
     }
     drive_until_idle(ctx, args, &mut drive).await
+}
+
+fn should_refresh_skill_catalog_before_admitting(
+    state: &CoreAgentState,
+    command: &CoreAgentCommand,
+) -> bool {
+    matches!(command, CoreAgentCommand::RequestRun { .. })
+        && state.runs.active.is_none()
+        && state.runs.queued.is_empty()
+}
+
+async fn refresh_skill_catalog_before_run(
+    ctx: &mut WorkflowContext<AgentSessionWorkflow>,
+    drive: &mut CoreAgentDrive,
+) -> anyhow::Result<()> {
+    let result = ctx
+        .start_activity(
+            WorkflowActivities::skill_catalog_refresh,
+            SkillCatalogRefreshActivityRequest {
+                session_id: drive.session_id().clone(),
+                active_catalog_ref: active_skill_catalog_ref(drive.state()),
+            },
+            activity_options(),
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    let Some(command) = result.command else {
+        return Ok(());
+    };
+    match admit_and_append_command(ctx, drive, command).await? {
+        CommandAdmissionResult::Accepted => Ok(()),
+        CommandAdmissionResult::Rejected(failure) => {
+            anyhow::bail!(
+                "skill catalog refresh command rejected: {}",
+                failure.message
+            )
+        }
+    }
+}
+
+fn active_skill_catalog_ref(state: &CoreAgentState) -> Option<BlobRef> {
+    state
+        .context
+        .entries
+        .iter()
+        .find(|entry| {
+            entry
+                .key
+                .as_ref()
+                .is_some_and(|key| key.as_str() == SKILL_CATALOG_CONTEXT_KEY)
+                && matches!(entry.kind, ContextEntryKind::SkillCatalog)
+        })
+        .map(|entry| entry.content_ref.clone())
 }
 
 enum CommandAdmissionResult {
@@ -377,6 +457,10 @@ async fn drive_until_idle(
                 let result = call_llm_generate(ctx, request).await?;
                 action = drive.resume_generation(result, workflow_time_ms(ctx))?;
             }
+            CoreAgentAction::CompactContext { request } => {
+                let result = call_context_compact(ctx, request).await?;
+                action = drive.resume_context_compaction(result, workflow_time_ms(ctx))?;
+            }
             CoreAgentAction::InvokeTools { request } => {
                 let result = call_tool_invoke_batch(ctx, request).await?;
                 action = drive.resume_tool_batch(result, workflow_time_ms(ctx))?;
@@ -396,9 +480,9 @@ async fn append_events(
     drive: &mut CoreAgentDrive,
     expected_head: Option<SessionPosition>,
     events: Vec<engine::storage::DynamicUncommittedSessionEvent>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<CoreAgentEntry>> {
     if events.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let appended = ctx
         .start_activity(
@@ -424,7 +508,7 @@ async fn append_events(
         state.last_error = None;
         Ok(())
     })?;
-    Ok(())
+    Ok(entries)
 }
 
 fn drive_from_state(ctx: &WorkflowContext<AgentSessionWorkflow>) -> anyhow::Result<CoreAgentDrive> {
@@ -454,6 +538,19 @@ async fn call_llm_generate(
     .map_err(|error| anyhow::anyhow!("{error}"))
 }
 
+async fn call_context_compact(
+    ctx: &mut WorkflowContext<AgentSessionWorkflow>,
+    request: engine::ContextCompactionRequest,
+) -> anyhow::Result<engine::ContextCompactionResult> {
+    ctx.start_activity(
+        WorkflowActivities::context_compact,
+        crate::ContextCompactActivityRequest { request },
+        activity_options(),
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!("{error}"))
+}
+
 async fn call_tool_invoke_batch(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     request: ToolInvocationBatchRequest,
@@ -474,7 +571,7 @@ fn apply_entries(
     run_submissions: &mut BTreeMap<u64, Option<SubmissionId>>,
 ) -> anyhow::Result<()> {
     for entry in entries {
-        if let CoreAgentEventKind::Run(RunEvent::Started {
+        if let CoreAgentEventKind::Run(RunEvent::Accepted {
             run_id,
             submission_id,
             ..
@@ -535,7 +632,7 @@ fn should_continue_as_new(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use engine::DynamicCommand;
+    use engine::{ContextEntryInput, ContextEntryKind, ContextMessageRole, DynamicCommand};
 
     #[test]
     fn pending_admissions_are_fifo() {
@@ -590,7 +687,7 @@ mod tests {
         let submission_id = SubmissionId::new("submit_test");
         let command = CoreAgentCommand::RequestRun {
             submission_id: Some(submission_id.clone()),
-            input_ref: engine::BlobRef::from_bytes(b"hello"),
+            input: user_input(engine::BlobRef::from_bytes(b"hello")),
             run_config: crate::default_run_config(),
         };
 
@@ -627,10 +724,24 @@ mod tests {
         CoreAgentCodec
             .encode_command(&CoreAgentCommand::RequestRun {
                 submission_id: Some(SubmissionId::new(submission_id)),
-                input_ref: engine::BlobRef::from_bytes(submission_id.as_bytes()),
+                input: user_input(engine::BlobRef::from_bytes(submission_id.as_bytes())),
                 run_config: crate::default_run_config(),
             })
             .expect("encode request run")
+    }
+
+    fn user_input(content_ref: engine::BlobRef) -> Vec<ContextEntryInput> {
+        vec![ContextEntryInput {
+            kind: ContextEntryKind::Message {
+                role: ContextMessageRole::User,
+            },
+            content_ref,
+            media_type: None,
+            preview: None,
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        }]
     }
 
     fn admission(command: DynamicCommand) -> AgentAdmission {
