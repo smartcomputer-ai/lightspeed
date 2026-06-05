@@ -1,17 +1,20 @@
 # P64: Provider-Native Context Compaction
 
 **Status**
-- Planned.
+- In progress.
 - Depends on P50/P53 provider-native request materialization and P62 CAS-backed
   blob retention.
 - Follows P63's context-entry direction: canonical Forge context such as
   instructions, skill catalog entries, and active skill activations lives as
   explicit context entries and must be preserved independently from compacted
   conversation history.
-- Current implementation has context rewrite primitives and an OpenAI
-  `/responses/compact` client method, but no CoreAgent compaction policy,
-  provider-triggered compaction capture, context pruning, workflow activity, or
-  public API surface.
+- As of 2026-06-05, the OpenAI Responses provider-triggered first cut is
+  implemented through CoreAgent policy/config validation, request lowering,
+  runtime capture of returned native compaction items, deterministic active
+  context pruning, API config mapping, and ignored live contract tests.
+- Remaining work is integration/projection coverage, active-context debugging
+  surface polish, live verification against OpenAI, and the deferred
+  standalone/fallback modes.
 
 ## Goal
 
@@ -74,9 +77,13 @@ Forge already has several pieces this needs:
 - raw OpenAI output item retention for message, reasoning, and function-call
   items
 
-The missing piece is policy and lifecycle: when native compaction is enabled,
-how returned native compaction items become active context, and how the active
-window is pruned safely.
+The provider-triggered policy and lifecycle now exist for OpenAI Responses:
+native compaction configuration is lowered into normal generation requests,
+returned compaction output items become `ProviderOpaque` context entries, and
+eligible superseded entries are pruned with a `ProviderCompacted` reason.
+Remaining work is to broaden integration coverage, expose enough active-context
+metadata for debugging opaque items, and implement standalone/fallback paths
+only when there is a concrete use case.
 
 ## Non-Goals
 
@@ -484,43 +491,47 @@ Live tests:
 
 ### G1: Policy And Request Lowering
 
-- Add compaction policy to session/run config.
-- Lower OpenAI Responses provider-triggered policy into
+- [x] Add compaction policy to session/run config.
+- [x] Lower OpenAI Responses provider-triggered policy into
   `context_management`.
-- Add unit tests for request planning and adapter materialization.
+- [x] Add unit tests for request planning and adapter materialization.
 
 ### G2: Capture Native Compaction Items
 
-- Extend OpenAI Responses result parsing to detect compaction output items.
-- Store exact native item JSON in CAS.
-- Emit `ProviderOpaque` context input with stable provider kind.
-- Add adapter tests.
+- [x] Extend OpenAI Responses result parsing to detect compaction output items.
+- [x] Store exact native item JSON in CAS.
+- [x] Emit `ProviderOpaque` context input with stable provider kind.
+- [x] Add adapter tests.
 
 ### G3: Deterministic Active-Context Pruning
 
-- Add context prune/rewrite reason for provider compaction.
-- Plan pruning after a committed compaction item.
-- Preserve canonical keyed context and unconsumed run inputs.
-- Add core tests for prune eligibility and invariants.
+- [x] Add context prune/rewrite reason for provider compaction.
+- [x] Plan pruning after a committed compaction item.
+- [x] Preserve canonical keyed context and unconsumed run inputs.
+- [ ] Add broader core tests for prune eligibility and active tool invariants.
 
 ### G4: Runtime And Projection Integration
 
-- Ensure Temporal workflow and in-process runner commit compaction context
+- [ ] Ensure Temporal workflow and in-process runner commit compaction context
   entries and pruning events in the right order.
-- Project context prune/rewrite events clearly through `api-projection`.
-- Add CLI/TUI display support only if current context events are too opaque.
+- [x] Project context prune/rewrite events clearly through `api-projection`.
+- [x] Expose active context entries enough for debugging provider-native
+  compaction items without dumping encrypted payloads.
+- [ ] Add CLI/TUI display support only if current context events are too opaque.
 
 ### G5: Live OpenAI Contract
 
-- Add ignored OpenAI Responses live test for server-side compaction.
-- Keep standalone `/responses/compact` live test as a provider-client contract.
-- Verify ZDR-friendly configuration with `store=false` where relevant.
+- [x] Add ignored OpenAI Responses live test for server-side compaction.
+- [x] Keep standalone `/responses/compact` live test as a provider-client contract.
+- [ ] Run the ignored OpenAI Responses compaction tests against a
+  compaction-capable model.
+- [ ] Verify ZDR-friendly configuration with `store=false` where relevant.
 
 ### G6: Standalone And Fallback Paths
 
-- Add `CompactContext` action only when standalone compaction is needed.
-- Wire OpenAI `/responses/compact` through runtime/workflow.
-- Add Forge-managed summary fallback for providers without native compaction.
+- [ ] Add `CompactContext` action only when standalone compaction is needed.
+- [ ] Wire OpenAI `/responses/compact` through runtime/workflow.
+- [ ] Add Forge-managed summary fallback for providers without native compaction.
 
 ## Open Questions
 

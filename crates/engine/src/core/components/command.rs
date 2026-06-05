@@ -34,6 +34,7 @@ pub enum CoreAgentCommand {
     RemoveContext {
         key: ContextEntryKey,
     },
+    CompactContext,
     RequestRun {
         submission_id: Option<SubmissionId>,
         input: Vec<ContextEntryInput>,

@@ -6,8 +6,8 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     ActiveRun, CompactionPolicy, ContextSnapshot, CoreAgentState, DomainError, PlanningError,
-    RunConfig, RunId, SessionConfig, ToolChoice, ToolChoiceMode, ToolKind, ToolName, ToolSpec,
-    TurnId,
+    RunConfig, RunId, SessionConfig, SessionId, ToolChoice, ToolChoiceMode, ToolKind, ToolName,
+    ToolSpec, TurnId,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -139,6 +139,50 @@ pub struct LlmRequest {
     pub model: ModelSelection,
     pub request_fingerprint: String,
     pub kind: LlmRequestKind,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextCompactionRequest {
+    pub session_id: SessionId,
+    pub request: ContextCompactionTask,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextCompactionTask {
+    pub model: ModelSelection,
+    pub request_fingerprint: String,
+    pub kind: ContextCompactionRequestKind,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextCompactionRequestKind {
+    OpenAiResponses(OpenAiResponsesCompactionRequest),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OpenAiResponsesCompactionRequest {
+    pub input_context: ContextSnapshot,
+    pub target_tokens: Option<u32>,
+    pub store: Option<bool>,
+    pub extra: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextCompactionResult {
+    pub session_id: SessionId,
+    pub context_revision: u64,
+    pub status: ContextCompactionStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_ref: Option<crate::BlobRef>,
+    pub context_entries: Vec<crate::ContextEntryInput>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextCompactionStatus {
+    Succeeded,
+    Failed,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

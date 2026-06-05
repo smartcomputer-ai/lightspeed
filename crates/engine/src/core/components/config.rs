@@ -254,6 +254,12 @@ pub enum CompactionPolicy {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         compact_threshold: Option<u32>,
     },
+    ProviderStandalone {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        trigger_tokens: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        target_tokens: Option<u32>,
+    },
 }
 
 fn validate_model_selection(model: &ModelSelection) -> Result<(), DomainError> {
@@ -299,9 +305,21 @@ fn validate_context_config(
             Some(CompactionPolicy::ProviderTriggered { compact_threshold }),
             ProviderApiKind::OpenAiResponses,
         ) => validate_openai_responses_compact_threshold(*compact_threshold),
+        (
+            Some(CompactionPolicy::ProviderStandalone {
+                trigger_tokens, ..
+            }),
+            ProviderApiKind::OpenAiResponses,
+        ) => validate_provider_standalone_compaction(*trigger_tokens),
         (Some(CompactionPolicy::ProviderTriggered { .. }), api_kind) => {
             Err(DomainError::ProviderCompatibility(format!(
                 "provider-triggered compaction requires OpenAI Responses api kind, got {:?}",
+                api_kind
+            )))
+        }
+        (Some(CompactionPolicy::ProviderStandalone { .. }), api_kind) => {
+            Err(DomainError::ProviderCompatibility(format!(
+                "provider-standalone compaction requires OpenAI Responses api kind, got {:?}",
                 api_kind
             )))
         }
@@ -317,6 +335,18 @@ fn validate_openai_responses_compact_threshold(
             "OpenAI Responses compact_threshold must be at least {} when set",
             MIN_OPENAI_RESPONSES_COMPACT_THRESHOLD
         )));
+    }
+    Ok(())
+}
+
+fn validate_provider_standalone_compaction(
+    trigger_tokens: Option<u32>,
+) -> Result<(), DomainError> {
+    if trigger_tokens.is_some_and(|tokens| tokens == 0) {
+        return Err(DomainError::ProviderCompatibility(
+            "provider-standalone compaction trigger_tokens must be greater than 0 when set"
+                .to_owned(),
+        ));
     }
     Ok(())
 }

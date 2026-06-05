@@ -1306,6 +1306,20 @@ pub enum SessionItemView {
         id: ItemId,
         text: String,
     },
+    ProviderContext {
+        id: ItemId,
+        content_ref: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        media_type: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        preview: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider_kind: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider_item_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        token_estimate: Option<TokenEstimateView>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -2250,6 +2264,41 @@ mod tests {
                     "group": "explore",
                     "verb": "Read",
                     "target": "README.md"
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn provider_context_item_serializes_debug_metadata() {
+        let item = SessionItemView::ProviderContext {
+            id: "item_42".to_owned(),
+            content_ref: "sha256:compact".to_owned(),
+            media_type: Some("application/json".to_owned()),
+            preview: Some("OpenAI Responses compaction item".to_owned()),
+            provider_kind: Some("openai.responses.compaction".to_owned()),
+            provider_item_id: Some("item_compaction_1".to_owned()),
+            token_estimate: Some(TokenEstimateView {
+                tokens: 123,
+                quality: TokenEstimateQualityView::ProviderCounted,
+            }),
+        };
+
+        let value = serde_json::to_value(item).expect("serialize provider context item");
+
+        assert_eq!(
+            value,
+            json!({
+                "type": "providerContext",
+                "id": "item_42",
+                "contentRef": "sha256:compact",
+                "mediaType": "application/json",
+                "preview": "OpenAI Responses compaction item",
+                "providerKind": "openai.responses.compaction",
+                "providerItemId": "item_compaction_1",
+                "tokenEstimate": {
+                    "tokens": 123,
+                    "quality": "providerCounted"
                 }
             })
         );

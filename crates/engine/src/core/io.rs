@@ -18,8 +18,9 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    BlobRef, ContextEntryInput, LlmGenerationFacts, LlmGenerationStatus, LlmRequest, RunId,
-    SessionId, ToolBatchId, ToolCallId, ToolCallStatus, ToolExecutionTarget, ToolName, TurnId,
+    BlobRef, ContextCompactionRequest, ContextCompactionResult, ContextEntryInput,
+    LlmGenerationFacts, LlmGenerationStatus, LlmRequest, RunId, SessionId, ToolBatchId,
+    ToolCallId, ToolCallStatus, ToolExecutionTarget, ToolName, TurnId,
 };
 
 #[async_trait]
@@ -28,6 +29,16 @@ pub trait CoreAgentLlm: Send + Sync {
         &self,
         request: LlmGenerationRequest,
     ) -> Result<LlmGenerationResult, CoreAgentIoError>;
+
+    async fn compact_context(
+        &self,
+        request: ContextCompactionRequest,
+    ) -> Result<ContextCompactionResult, CoreAgentIoError> {
+        let _ = request;
+        Err(CoreAgentIoError::Failed {
+            message: "context compaction runtime unavailable".to_owned(),
+        })
+    }
 }
 
 #[async_trait]

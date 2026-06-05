@@ -185,15 +185,22 @@ impl<'a> CoreAgentProjector<'a> {
                     .clone()
                     .unwrap_or_else(|| format!("skill activated: {skill_id}")),
             }),
-            ContextEntryKind::ReasoningState | ContextEntryKind::ProviderOpaque => {
-                Ok(SessionItemView::SystemEvent {
-                    id,
-                    text: item
-                        .preview
-                        .clone()
-                        .unwrap_or_else(|| "context item".to_owned()),
-                })
-            }
+            ContextEntryKind::ReasoningState => Ok(SessionItemView::SystemEvent {
+                id,
+                text: item
+                    .preview
+                    .clone()
+                    .unwrap_or_else(|| "context item".to_owned()),
+            }),
+            ContextEntryKind::ProviderOpaque => Ok(SessionItemView::ProviderContext {
+                id,
+                content_ref: item.content_ref.as_str().to_owned(),
+                media_type: item.media_type.clone(),
+                preview: item.preview.clone(),
+                provider_kind: item.provider_kind.clone(),
+                provider_item_id: item.provider_item_id.clone(),
+                token_estimate: item.token_estimate.as_ref().map(token_estimate_to_api),
+            }),
         }
     }
 
@@ -1255,7 +1262,10 @@ fn patch_target(patch: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use engine::{BlobRef, ContextEntryId, CoreAgentJoins, EventSeq, SessionPosition};
+    use engine::{
+        BlobRef, ContextEntryId, CoreAgentJoins, EventSeq, SessionPosition, TokenEstimate,
+        TokenEstimateQuality, storage::InMemoryBlobStore,
+    };
 
     use super::*;
 
@@ -1307,6 +1317,95 @@ mod tests {
                 role: ContextMessageRoleView::User
             }
         ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn provider_compaction_context_events_project_reason() {
+        let blobs = InMemoryBlobStore::new();
+        let projector = CoreAgentProjector::new(&blobs);
+
+        let removed = projector
+            .project_event_kind(&CoreAgentEventKind::Context(ContextEvent::EntriesRemoved {
+                base_revision: 7,
+                entry_ids: vec![ContextEntryId::new(11), ContextEntryId::new(12)],
+                reason: ContextRemovalReason::ProviderCompacted,
+            }))
+            .await
+            .expect("project provider-compacted removal");
+        assert_eq!(
+            removed,
+            SessionEventKindView::ContextEntriesRemoved {
+                base_revision: 7,
+                revision: 8,
+                item_ids: vec!["item_11".to_owned(), "item_12".to_owned()],
+                reason: "providerCompacted".to_owned(),
+            }
+        );
+
+        let replaced = projector
+            .project_event_kind(&CoreAgentEventKind::Context(ContextEvent::StateReplaced {
+                base_revision: 8,
+                entries: Vec::new(),
+                reason: ContextRewriteReason::ProviderCompacted,
+            }))
+            .await
+            .expect("project provider-compacted rewrite");
+        assert_eq!(
+            replaced,
+            SessionEventKindView::ContextStateReplaced {
+                base_revision: 8,
+                revision: 9,
+                items: Vec::new(),
+                reason: "providerCompacted".to_owned(),
+            }
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn provider_context_item_exposes_debug_metadata() {
+        let blobs = InMemoryBlobStore::new();
+        let projector = CoreAgentProjector::new(&blobs);
+        let item = ContextEntry {
+            entry_id: ContextEntryId::new(42),
+            key: None,
+            kind: ContextEntryKind::ProviderOpaque,
+            source: ContextEntrySource::AssistantOutput {
+                run_id: RunId::new(7),
+                turn_id: TurnId::new(8),
+            },
+            content_ref: BlobRef::from_bytes(br#"{"type":"compaction"}"#),
+            media_type: Some("application/json".to_owned()),
+            preview: Some("OpenAI Responses compaction item".to_owned()),
+            provider_kind: Some("openai.responses.compaction".to_owned()),
+            provider_item_id: Some("item_compaction_1".to_owned()),
+            token_estimate: Some(TokenEstimate {
+                tokens: 123,
+                quality: TokenEstimateQuality::ProviderCounted,
+            }),
+        };
+
+        let projected = projector
+            .project_item(&item)
+            .await
+            .expect("project provider context item");
+
+        assert_eq!(
+            projected,
+            SessionItemView::ProviderContext {
+                id: "item_42".to_owned(),
+                content_ref: BlobRef::from_bytes(br#"{"type":"compaction"}"#)
+                    .as_str()
+                    .to_owned(),
+                media_type: Some("application/json".to_owned()),
+                preview: Some("OpenAI Responses compaction item".to_owned()),
+                provider_kind: Some("openai.responses.compaction".to_owned()),
+                provider_item_id: Some("item_compaction_1".to_owned()),
+                token_estimate: Some(TokenEstimateView {
+                    tokens: 123,
+                    quality: TokenEstimateQualityView::ProviderCounted,
+                }),
+            }
+        );
     }
 
     #[test]
