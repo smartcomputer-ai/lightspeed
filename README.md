@@ -38,9 +38,8 @@ We belive running and coordination agents at scale are best managed by durable w
 | `engine` | `crates/engine` | Deterministic session kernel plus built-in CoreAgent: dynamic session log storage, CoreAgent command/event/state models, planning, codecs, and the substrate-neutral drive machine |
 | `api` | `crates/api` | Client-facing session/run/item API types, views, and notifications |
 | `api-projection` | `crates/api-projection` | Shared CoreAgent-to-`api` projection helpers for local and workflow-backed gateways |
-| `workflow` | `crates/workflow` | Temporal workflow, signals, queries, and activity request/response DTOs |
-| `worker` | `crates/worker` | Temporal worker binary and activity implementations over Pg/CAS, LLM, and tools |
-| `gateway` | `crates/gateway` | HTTP/JSON-RPC gateway over Temporal and Pg/CAS |
+| `temporal-workflow` | `crates/temporal-workflow` | Temporal workflow, signals, queries, and activity request/response DTOs |
+| `temporal-server` | `crates/temporal-server` | Hosted runtime binary and modules for the Temporal worker, HTTP/JSON-RPC gateway, and combined local/small-deployment mode |
 | `test-support` | `crates/test-support` | Fast in-process runner harness for tests/evals; not a production runtime |
 | `tools` | `crates/tools` | Optional host filesystem/process tool package |
 | `store-fs` | `crates/store-fs` | Filesystem-backed session log and content-addressed blob store adapters |
@@ -60,8 +59,8 @@ Prerequisites:
 - `ANTHROPIC_API_KEY` for live Anthropic client tests
 
 Easiest is to copy `.env_example` to `.env` and set provider keys there. The
-hosted worker registers real provider adapters and session-mounted VFS tools;
-for OpenAI-backed local chat, set `OPENAI_API_KEY`.
+hosted server worker mode registers real provider adapters and session-mounted
+VFS tools; for OpenAI-backed local chat, set `OPENAI_API_KEY`.
 
 Build and test:
 
@@ -72,12 +71,13 @@ cargo test
 
 ## Run Forge Locally
 
-The hosted path runs four pieces locally:
+The hosted path runs three pieces locally:
 
 1. Docker infra: Postgres/CAS catalog, MinIO object storage, Temporal.
-2. `worker`: registers the Temporal workflow and executes activities.
-3. `gateway`: exposes the public JSON-RPC API on HTTP.
-4. `cli`: starts or resumes sessions and submits chat messages through the
+2. `temporal-server`: registers the Temporal workflow/activities and exposes
+   the public JSON-RPC API on HTTP. Its binary is still named `server`, and it
+   can also run only the worker or only the gateway.
+3. `cli`: starts or resumes sessions and submits chat messages through the
    gateway.
 
 ### 1. Start Local Infra
@@ -97,7 +97,7 @@ Each shell that runs Forge commands should load the local environment:
 source dev/local/env.sh
 ```
 
-### 2. Run The Worker
+### 2. Run The Server
 
 Open a first shell:
 
@@ -106,30 +106,27 @@ source dev/local/env.sh
 
 # export OPENAI_API_KEY=...  # omit this if it is already in .env
 
-cargo run -p worker
+cargo run -p temporal-server
 ```
 
-Keep this process running.
-
-### 3. Run The Gateway
-
-Open a second shell:
-
-```bash
-source dev/local/env.sh
-cargo run -p gateway
-```
-
-The gateway listens on `http://127.0.0.1:18080` by default. Optional health
-check:
+With no subcommand, the `server` binary runs the gateway and Temporal worker
+together in one process. The gateway listens on `http://127.0.0.1:18080` by default.
+Optional health check:
 
 ```bash
 curl http://127.0.0.1:18080/health
 ```
 
-### 4. Start Chatting With The CLI
+For split deployments, run the two roles separately:
 
-Open a third shell:
+```bash
+cargo run -p temporal-server -- worker
+cargo run -p temporal-server -- gateway
+```
+
+### 3. Start Chatting With The CLI
+
+Open another shell:
 
 ```bash
 source dev/local/env.sh
@@ -292,5 +289,7 @@ the same variables directly in your shell.
 | `FORGE_API_URL` | CLI JSON-RPC gateway URL |
 | `FORGE_POSTGRES_URL` | PostgreSQL session/CAS database URL |
 | `FORGE_PG_UNIVERSE_ID` | Hosted store universe UUID |
-| `FORGE_TASK_QUEUE` | Temporal task queue used by worker and gateway |
+| `FORGE_TASK_QUEUE` | Temporal task queue used by the temporal-server worker and gateway modes |
 | `FORGE_OBJECT_STORE_ENDPOINT` | S3-compatible object store endpoint |
+| `RUST_LOG` | Server log filter. Defaults to app/Temporal info and dependency warnings; use `temporal_server=debug,temporal_workflow=debug` for more detail |
+| `FORGE_LOG_FORMAT` | Server log format: `compact` (default), `pretty`, or `json` |

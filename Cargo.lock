@@ -997,33 +997,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gateway"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "api",
- "api-projection",
- "async-trait",
- "axum",
- "base64",
- "clap",
- "dotenvy",
- "engine",
- "serde_json",
- "store-pg",
- "temporalio-client",
- "temporalio-common",
- "temporalio-sdk",
- "temporalio-sdk-core",
- "tokio",
- "tools",
- "uuid",
- "vfs",
- "worker",
- "workflow",
-]
-
-[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3372,6 +3345,55 @@ dependencies = [
 ]
 
 [[package]]
+name = "temporal-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "api",
+ "api-projection",
+ "async-trait",
+ "axum",
+ "base64",
+ "clap",
+ "dotenvy",
+ "engine",
+ "futures",
+ "llm-clients",
+ "llm-runtime",
+ "serde_json",
+ "store-pg",
+ "temporal-workflow",
+ "temporalio-client",
+ "temporalio-common",
+ "temporalio-macros",
+ "temporalio-sdk",
+ "temporalio-sdk-core",
+ "test-support",
+ "tokio",
+ "tools",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "vfs",
+]
+
+[[package]]
+name = "temporal-workflow"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "engine",
+ "futures",
+ "futures-util",
+ "serde",
+ "temporalio-client",
+ "temporalio-common",
+ "temporalio-macros",
+ "temporalio-sdk",
+ "temporalio-sdk-core",
+]
+
+[[package]]
 name = "temporalio-client"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3910,6 +3932,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "tracing-log"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee855f1f400bd0e5c02d150ae5de3840039a3f54b025156404e34c23c03f47c3"
+dependencies = [
+ "log",
+ "once_cell",
+ "tracing-core",
+]
+
+[[package]]
+name = "tracing-serde"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "704b1aeb7be0d0a84fc9828cae51dab5970fee5088f83d1dd7ee6f6246fc6ff1"
+dependencies = [
+ "serde",
+ "tracing-core",
+]
+
+[[package]]
 name = "tracing-subscriber"
 version = "0.3.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3920,10 +3963,15 @@ dependencies = [
  "once_cell",
  "parking_lot",
  "regex-automata",
+ "serde",
+ "serde_json",
  "sharded-slab",
+ "smallvec",
  "thread_local",
  "tracing",
  "tracing-core",
+ "tracing-log",
+ "tracing-serde",
 ]
 
 [[package]]
@@ -4790,48 +4838,6 @@ dependencies = [
  "serde_json",
  "unicode-xid",
  "wasmparser",
-]
-
-[[package]]
-name = "worker"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "clap",
- "dotenvy",
- "engine",
- "futures",
- "llm-clients",
- "llm-runtime",
- "serde_json",
- "store-pg",
- "temporalio-common",
- "temporalio-macros",
- "temporalio-sdk",
- "temporalio-sdk-core",
- "test-support",
- "tokio",
- "tools",
- "uuid",
- "vfs",
- "workflow",
-]
-
-[[package]]
-name = "workflow"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "engine",
- "futures",
- "futures-util",
- "serde",
- "temporalio-client",
- "temporalio-common",
- "temporalio-macros",
- "temporalio-sdk",
- "temporalio-sdk-core",
 ]
 
 [[package]]

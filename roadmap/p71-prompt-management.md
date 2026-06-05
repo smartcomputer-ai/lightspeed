@@ -40,11 +40,12 @@ small:
 
 - `api` accepts `SessionConfigInput.instructions` as inline text or a CAS blob
   ref in `crates/api/src/lib.rs`.
-- `gateway` converts that API value into a `BlobRef`, writing inline
+- `temporal-server` converts that API value into a `BlobRef`, writing inline
   instructions to CAS or validating an existing blob ref in
-  `crates/gateway/src/service.rs`.
-- `workflow` writes default instructions to CAS when a session is opened without
-  an explicit instructions ref in `crates/workflow/src/workflow.rs`.
+  `crates/temporal-server/src/gateway/service.rs`.
+- `temporal-workflow` writes default instructions to CAS when a session is
+  opened without an explicit instructions ref in
+  `crates/temporal-workflow/src/workflow.rs`.
 - `engine` stores only `ContextConfig.instructions_ref` in
   `crates/engine/src/core/components/config.rs`.
 - `engine` copies that ref into provider-native LLM request structs in
@@ -80,14 +81,14 @@ Low-level API and config:
   - `SessionConfigInput.instructions`
   - `InstructionsSource::{Text, BlobRef}`
   - `SessionConfigPatchInput.instructions`
-- `crates/gateway/src/service.rs`
+- `crates/temporal-server/src/gateway/service.rs`
   - `session_config_for_start`
   - `apply_session_config_input`
   - `instructions_ref_from_source`
   - `core_session_patch_from_api`
-- `crates/workflow/src/workflow.rs`
+- `crates/temporal-workflow/src/workflow.rs`
   - `open_new_session` default-instructions CAS write
-- `crates/workflow/src/config.rs`
+- `crates/temporal-workflow/src/config.rs`
   - `default_session_config`
   - `default_instructions`
 
@@ -846,12 +847,12 @@ crates/api
   PromptBundleInput API types
   prompt status/query response types
 
-crates/gateway
+crates/temporal-server
   API-to-materialization orchestration for local/hosted paths
   VFS/blob source resolution
   session/start and session/update prompt compilation
 
-crates/workflow / crates/worker
+crates/temporal-workflow / crates/temporal-server
   optional prompt materialization activities for hosted reload paths
   history records refs/revisions/hashes, not raw file reads
 
@@ -1093,4 +1094,3 @@ P71 is successful when:
   provider-native instructions path,
 - the design leaves room for heartbeat, bootstrap, memory, and skills without
   turning them all into one permanent system prompt.
-

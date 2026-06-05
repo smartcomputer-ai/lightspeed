@@ -1,0 +1,40 @@
+[package]
+name = "temporal-server"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+temporal-workflow = { path = "../temporal-workflow" }
+api = { path = "../api" }
+api-projection = { path = "../api-projection" }
+engine = { path = "../engine" }
+vfs = { path = "../vfs" }
+anyhow = "1"
+async-trait = "0.1"
+axum = "0.7"
+base64 = "0.22"
+clap = { version = "4", features = ["derive", "env"] }
+dotenvy = "0.15"
+futures = "0.3"
+llm-clients = { path = "../llm-clients" }
+llm-runtime = { path = "../llm-runtime" }
+serde_json = "1"
+store-pg = { path = "../store-pg" }
+temporalio-common = "0.4.0"
+temporalio-client = "0.4.0"
+temporalio-macros = "0.4.0"
+temporalio-sdk = "0.4.0"
+temporalio-sdk-core = "0.4.0"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal", "time"] }
+tools = { path = "../tools" }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+test-support = { path = "../test-support" }
+dotenvy = "0.15"
+
+[[bin]]
+name = "server"
+path = "src/main.rs"

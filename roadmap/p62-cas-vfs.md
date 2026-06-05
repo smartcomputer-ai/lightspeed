@@ -4,7 +4,7 @@
 - Complete for the accepted P62 scope.
 - Implemented: G1-G2.5, first-cut G3, first-cut G4, and G7 across
   `crates/vfs`, `crates/tools`, `crates/store-fs`, `crates/store-pg`,
-  `crates/api`, `crates/gateway`, `crates/worker`, and `crates/cli`.
+  `crates/api`, `crates/temporal-server`, and `crates/cli`.
 - Out of scope for P62 completion: G5 and the host-target portion of G6,
   deferred until real VM host targets exist.
 - Out of scope for P62 completion: G3 workspace quotas and mount policy limits,

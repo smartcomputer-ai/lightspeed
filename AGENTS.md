@@ -26,9 +26,8 @@ cargo test
 cargo test -p engine
 cargo test -p api
 cargo test -p api-projection
-cargo test -p workflow
-cargo test -p worker
-cargo test -p gateway
+cargo test -p temporal-workflow
+cargo test -p temporal-server
 cargo test -p test-support
 cargo test -p tools
 cargo test -p store-fs
@@ -56,9 +55,8 @@ CLI usage:
 cargo run -p cli -- chat --api-url http://127.0.0.1:18080/rpc --new
 cargo run -p cli -- chat --api-url http://127.0.0.1:18080/rpc --new "summarize this repository"
 cargo run -p cli -- chat --api-url http://127.0.0.1:18080/rpc --new --json "summarize this repository"
-# Run worker and gateway in separate shells before using --api-url.
-cargo run -p worker
-cargo run -p gateway
+# Run the server before using --api-url.
+cargo run -p temporal-server
 cargo run -p cli -- chat --api-url http://127.0.0.1:18080/rpc --session session_1 "hello"
 ```
 
@@ -71,9 +69,10 @@ cargo run -p cli -- chat --api-url http://127.0.0.1:18080/rpc --session session_
   notifications.
 - `crates/api-projection/` — shared CoreAgent-to-`api` projection
   helpers for local and workflow-backed gateways.
-- `crates/workflow/` — Temporal workflow, signals, queries, and activity DTOs.
-- `crates/worker/` — Temporal worker binary and activity implementations.
-- `crates/gateway/` — HTTP/JSON-RPC gateway over Temporal and Pg/CAS.
+- `crates/temporal-workflow/` — Temporal workflow, signals, queries, and
+  activity DTOs.
+- `crates/temporal-server/` — hosted runtime binary and modules for the Temporal
+  worker, HTTP/JSON-RPC gateway, and combined local/small-deployment mode.
 - `crates/test-support/` — fast in-process runner harness for tests/evals. It
   is not a production runtime and must not expose an `AgentApiService`.
 - `crates/tools/` — optional host filesystem/process tool package.

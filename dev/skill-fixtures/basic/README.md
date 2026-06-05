@@ -4,8 +4,7 @@ Mount this directory in chat to exercise skill discovery, the TUI picker, and
 direct skill activation.
 
 ```bash
-cargo run -p worker
-cargo run -p gateway
+cargo run -p temporal-server
 cargo run -p cli -- chat --new --api-url http://127.0.0.1:18080/rpc --mount dev/skill-fixtures/basic
 ```
 
