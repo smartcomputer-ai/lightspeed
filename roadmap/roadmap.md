@@ -2,11 +2,11 @@
 
 - [x] vfs
 - [x] skills (P63 first cut)
-- compaction (P64 provider-native)
-- timers/schedules/cron
-- search & web requests
+- [x] compaction (P64 provider-native)
 - vfs watches (inject/update on change)
 - prompt management (ala claw)
+- search & web requests
 - (go live)
+- timers/schedules/cron
 - vms/sandboxes
 - fleet
