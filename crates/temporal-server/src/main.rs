@@ -11,6 +11,7 @@ use temporal_server::{
     },
     worker::{self, WorkerActivities, WorkerServerConfig},
 };
+use tracing_subscriber::{EnvFilter, fmt};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -122,6 +123,7 @@ impl BothArgs {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let _ = dotenvy::dotenv();
+    init_logging()?;
     let cli = Cli::parse();
     match cli.command {
         Some(Command::Gateway(args)) => {
@@ -166,6 +168,14 @@ async fn run_both(args: BothArgs) -> anyhow::Result<()> {
     let worker_future = temporal_worker.run();
     tokio::pin!(worker_future);
 
+    tracing::info!(
+        target: "temporal_server",
+        temporal_target = %args.temporal.temporal_target,
+        namespace = %args.temporal.namespace,
+        task_queue = %args.temporal.task_queue,
+        "temporal worker polling"
+    );
+
     let api = Arc::new(
         GatewayAgentApi::builder(client, store)
             .with_task_queue(args.temporal.task_queue)
@@ -173,10 +183,7 @@ async fn run_both(args: BothArgs) -> anyhow::Result<()> {
     );
     let app = gateway_router(api, args.max_request_body_bytes);
     let listener = tokio::net::TcpListener::bind(args.bind).await?;
-    eprintln!(
-        "server listening on http://{} with embedded worker",
-        args.bind
-    );
+    tracing::info!(target: "temporal_server", bind = %args.bind, "gateway listening");
     let gateway_future = async {
         axum::serve(listener, app)
             .with_graceful_shutdown(shutdown_signal())
@@ -204,6 +211,36 @@ async fn run_both(args: BothArgs) -> anyhow::Result<()> {
 
 async fn shutdown_signal() {
     if let Err(error) = tokio::signal::ctrl_c().await {
-        eprintln!("failed to listen for shutdown signal: {error}");
+        tracing::warn!(target: "temporal_server", %error, "failed to listen for shutdown signal");
     }
+}
+
+fn init_logging() -> anyhow::Result<()> {
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        EnvFilter::new("warn,temporal_server=info,temporal_workflow=info,temporalio_sdk_core=info")
+    });
+    match env::var("FORGE_LOG_FORMAT")
+        .unwrap_or_else(|_| "compact".to_owned())
+        .as_str()
+    {
+        "json" => fmt()
+            .with_env_filter(env_filter)
+            .json()
+            .try_init()
+            .map_err(|error| anyhow::anyhow!("{error}"))?,
+        "pretty" => fmt()
+            .with_env_filter(env_filter)
+            .pretty()
+            .try_init()
+            .map_err(|error| anyhow::anyhow!("{error}"))?,
+        "compact" | "" => fmt()
+            .with_env_filter(env_filter)
+            .compact()
+            .try_init()
+            .map_err(|error| anyhow::anyhow!("{error}"))?,
+        other => anyhow::bail!(
+            "invalid FORGE_LOG_FORMAT={other:?}; expected one of: compact, pretty, json"
+        ),
+    }
+    Ok(())
 }

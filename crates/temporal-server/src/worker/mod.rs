@@ -61,7 +61,15 @@ pub async fn run_worker(config: WorkerServerConfig) -> anyhow::Result<()> {
     let runtime = core_runtime()?;
     let client = connect_temporal(&config.temporal_target, &config.namespace).await?;
     let activities = WorkerActivities::from_env().await?;
-    let mut worker = worker_with_activities(&runtime, client, config.task_queue, activities)?;
+    let mut worker =
+        worker_with_activities(&runtime, client, config.task_queue.clone(), activities)?;
+    tracing::info!(
+        target: "temporal_server",
+        temporal_target = %config.temporal_target,
+        namespace = %config.namespace,
+        task_queue = %config.task_queue,
+        "temporal worker polling"
+    );
     worker.run().await?;
     Ok(())
 }

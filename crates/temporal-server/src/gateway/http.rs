@@ -43,7 +43,7 @@ pub async fn serve_gateway_with_client_store(
     );
     let app = gateway_router(api, config.max_request_body_bytes);
     let listener = tokio::net::TcpListener::bind(config.bind).await?;
-    eprintln!("gateway listening on http://{}", config.bind);
+    tracing::info!(target: "temporal_server", bind = %config.bind, "gateway listening");
     axum::serve(listener, app).await?;
     Ok(())
 }
