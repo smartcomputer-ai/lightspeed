@@ -360,15 +360,15 @@ pub(crate) fn build_context_compaction_task(
             ContextCompactionRequestKind::OpenAiResponses(OpenAiResponsesCompactionRequest {
                 input_context: context,
                 target_tokens: *target_tokens,
-                store: OpenAiResponsesRequestDefaults::default().store,
+                store: None,
                 extra: BTreeMap::new(),
             })
         }
-        (ProviderApiKind::OpenAiResponses, ProviderRequestDefaults::OpenAiResponses(defaults)) => {
+        (ProviderApiKind::OpenAiResponses, ProviderRequestDefaults::OpenAiResponses(_)) => {
             ContextCompactionRequestKind::OpenAiResponses(OpenAiResponsesCompactionRequest {
                 input_context: context,
                 target_tokens: *target_tokens,
-                store: defaults.store,
+                store: None,
                 extra: BTreeMap::new(),
             })
         }

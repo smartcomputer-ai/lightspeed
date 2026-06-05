@@ -1,11 +1,12 @@
 use std::{path::PathBuf, sync::Arc};
 
 use engine::{
-    AgentHandle, BlobRef, CompactionPolicy, ContextConfig, ContextEntryInput, ContextEntryKind,
-    ContextMessageRole, ContextRemovalReason, CoreAgentCommand, CoreAgentEventKind,
-    ModelProviderOptions, ModelSelection, OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND,
-    OpenAiResponsesRequestDefaults, ProviderApiKind, ProviderRequestDefaults, RunConfig, RunStatus,
-    SessionConfig, SessionId, TurnConfig,
+    AgentHandle, BlobRef, CompactionPolicy, ContextCompactionStatus, ContextCompactionTrigger,
+    ContextConfig, ContextEntryInput, ContextEntryKey, ContextEntryKind, ContextMessageRole,
+    ContextRemovalReason, CoreAgentCommand, CoreAgentEventKind, ModelProviderOptions,
+    ModelSelection, OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, OpenAiResponsesRequestDefaults,
+    ProviderApiKind, ProviderRequestDefaults, RunConfig, RunStatus, SessionConfig, SessionId,
+    TokenEstimate, TokenEstimateQuality, TurnConfig,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
 };
 use llm_clients::openai::responses::{Client, Config};
@@ -214,6 +215,190 @@ async fn openai_responses_live_engine_prunes_and_reuses_provider_compaction() {
     );
 }
 
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires OPENAI_API_KEY and a compaction-capable OpenAI Responses model (costs real money)"]
+async fn openai_responses_live_manual_standalone_compaction() {
+    let session_id = SessionId::new("session-live-manual-standalone-compaction");
+    let (runner, blobs) = live_runner(&session_id).await;
+
+    runner
+        .drive_command(DriveCommand {
+            session_id: session_id.clone(),
+            observed_at_ms: 10,
+            command: CoreAgentCommand::OpenSession {
+                config: standalone_session_config(live_model_selection(), None),
+            },
+            max_steps: Some(64),
+        })
+        .await
+        .expect("open session");
+
+    let context_ref = store_openai_raw_message(
+        blobs.as_ref(),
+        "Summarize this short context for future continuation: Forge is testing manual standalone compaction.",
+    )
+    .await;
+    let seed = runner
+        .drive_command(DriveCommand {
+            session_id: session_id.clone(),
+            observed_at_ms: 20,
+            command: CoreAgentCommand::UpsertContext {
+                key: ContextEntryKey::new("client.openai.raw.manual"),
+                entry: openai_raw_context_input(context_ref.clone(), None),
+            },
+            max_steps: Some(64),
+        })
+        .await
+        .expect("seed context");
+
+    assert!(seed.accepted);
+    assert_eq!(seed.quiescence, RunnerQuiescence::Idle);
+    assert!(
+        provider_compaction_entries(&seed.state).is_empty(),
+        "manual standalone compaction should not run before the explicit command"
+    );
+
+    let compacted = runner
+        .drive_command(DriveCommand {
+            session_id,
+            observed_at_ms: 30,
+            command: CoreAgentCommand::CompactContext,
+            max_steps: Some(128),
+        })
+        .await
+        .expect("manual compact context");
+
+    assert_eq!(compacted.quiescence, RunnerQuiescence::Idle);
+    assert!(
+        has_compaction_requested(&compacted.emitted_entries, ContextCompactionTrigger::Manual),
+        "expected manual compaction request event"
+    );
+    assert!(
+        has_compaction_finished(
+            &compacted.emitted_entries,
+            ContextCompactionStatus::Succeeded
+        ),
+        "{}",
+        compaction_failure_text(blobs.as_ref(), &compacted.emitted_entries).await
+    );
+    assert!(
+        has_provider_compacted_removal(&compacted.emitted_entries),
+        "expected provider-compacted prune after standalone compaction"
+    );
+    assert!(
+        !active_context_contains_ref(&compacted.state, &context_ref),
+        "pre-compaction context should be pruned from active context"
+    );
+    assert_eq!(
+        provider_compaction_entries(&compacted.state).len(),
+        1,
+        "active context should retain exactly one OpenAI compaction item"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires OPENAI_API_KEY and a compaction-capable OpenAI Responses model (costs real money)"]
+async fn openai_responses_live_high_watermark_standalone_compaction() {
+    let session_id = SessionId::new("session-live-high-watermark-standalone-compaction");
+    let (runner, blobs) = live_runner(&session_id).await;
+
+    runner
+        .drive_command(DriveCommand {
+            session_id: session_id.clone(),
+            observed_at_ms: 10,
+            command: CoreAgentCommand::OpenSession {
+                config: standalone_session_config(live_model_selection(), Some(10)),
+            },
+            max_steps: Some(64),
+        })
+        .await
+        .expect("open session");
+
+    let context_ref = store_openai_raw_message(
+        blobs.as_ref(),
+        "Summarize this short context for future continuation: Forge is testing idle high-watermark standalone compaction.",
+    )
+    .await;
+    let compacted = runner
+        .drive_command(DriveCommand {
+            session_id,
+            observed_at_ms: 20,
+            command: CoreAgentCommand::UpsertContext {
+                key: ContextEntryKey::new("client.openai.raw.high_watermark"),
+                entry: openai_raw_context_input(context_ref.clone(), Some(11)),
+            },
+            max_steps: Some(128),
+        })
+        .await
+        .expect("seed context and compact at high watermark");
+
+    assert_eq!(compacted.quiescence, RunnerQuiescence::Idle);
+    assert!(
+        has_compaction_requested(
+            &compacted.emitted_entries,
+            ContextCompactionTrigger::HighWatermark
+        ),
+        "expected high-watermark compaction request event"
+    );
+    assert!(
+        has_compaction_finished(
+            &compacted.emitted_entries,
+            ContextCompactionStatus::Succeeded
+        ),
+        "{}",
+        compaction_failure_text(blobs.as_ref(), &compacted.emitted_entries).await
+    );
+    assert!(
+        has_provider_compacted_removal(&compacted.emitted_entries),
+        "expected provider-compacted prune after high-watermark compaction"
+    );
+    assert!(
+        !active_context_contains_ref(&compacted.state, &context_ref),
+        "pre-compaction context should be pruned from active context"
+    );
+    assert_eq!(
+        provider_compaction_entries(&compacted.state).len(),
+        1,
+        "active context should retain exactly one OpenAI compaction item"
+    );
+}
+
+async fn live_runner(session_id: &SessionId) -> (SessionRunner, Arc<InMemoryBlobStore>) {
+    let sessions = Arc::new(InMemorySessionStore::new());
+    let blobs = Arc::new(InMemoryBlobStore::new());
+    sessions
+        .create_session(CreateSession {
+            session_id: session_id.clone(),
+            agent_handle: AgentHandle::new("forge.live-compaction"),
+            created_at_ms: 1,
+        })
+        .await
+        .expect("create session");
+
+    let adapter = Arc::new(OpenAiResponsesLlmAdapter::new(
+        Arc::new(live_client()),
+        blobs.clone(),
+    ));
+    let llm = Arc::new(LlmRuntime::new(
+        LlmAdapterRegistry::new()
+            .with_generation_adapter(ProviderApiKind::OpenAiResponses, adapter.clone())
+            .with_compaction_adapter(ProviderApiKind::OpenAiResponses, adapter),
+    ));
+    (
+        SessionRunner::new(RunnerStores::new(sessions, blobs.clone()), llm),
+        blobs,
+    )
+}
+
+fn live_model_selection() -> ModelSelection {
+    ModelSelection {
+        api_kind: ProviderApiKind::OpenAiResponses,
+        provider_id: "openai".to_string(),
+        model: live_compaction_model(),
+        options: ModelProviderOptions::None,
+    }
+}
+
 fn session_config(model: ModelSelection) -> SessionConfig {
     SessionConfig {
         model,
@@ -231,6 +416,32 @@ fn session_config(model: ModelSelection) -> SessionConfig {
         context: ContextConfig {
             compaction: Some(CompactionPolicy::ProviderTriggered {
                 compact_threshold_tokens: Some(2_000),
+            }),
+        },
+    }
+}
+
+fn standalone_session_config(
+    model: ModelSelection,
+    compact_threshold_tokens: Option<u32>,
+) -> SessionConfig {
+    SessionConfig {
+        model,
+        run: run_config(),
+        turn: TurnConfig {
+            max_output_tokens: Some(160),
+            provider_request_defaults: ProviderRequestDefaults::OpenAiResponses(
+                OpenAiResponsesRequestDefaults {
+                    store: Some(false),
+                    stream: Some(false),
+                    ..OpenAiResponsesRequestDefaults::default()
+                },
+            ),
+        },
+        context: ContextConfig {
+            compaction: Some(CompactionPolicy::ProviderStandalone {
+                compact_threshold_tokens,
+                target_tokens: Some(128),
             }),
         },
     }
@@ -260,6 +471,35 @@ fn user_input(content_ref: BlobRef) -> Vec<ContextEntryInput> {
     }]
 }
 
+async fn store_openai_raw_message(blobs: &dyn BlobStore, text: &str) -> BlobRef {
+    let raw = serde_json::json!({
+        "role": "user",
+        "content": text,
+    });
+    blobs
+        .put_bytes(serde_json::to_vec(&raw).expect("raw OpenAI message JSON"))
+        .await
+        .expect("store raw OpenAI message")
+}
+
+fn openai_raw_context_input(
+    content_ref: BlobRef,
+    token_estimate: Option<u32>,
+) -> ContextEntryInput {
+    ContextEntryInput {
+        kind: ContextEntryKind::ProviderOpaque,
+        content_ref,
+        media_type: Some("application/json".to_owned()),
+        preview: Some("OpenAI raw input message".to_owned()),
+        provider_kind: Some("openai.responses.input_message".to_owned()),
+        provider_item_id: None,
+        token_estimate: token_estimate.map(|tokens| TokenEstimate {
+            tokens,
+            quality: TokenEstimateQuality::Estimated,
+        }),
+    }
+}
+
 fn first_prompt() -> String {
     let repeated = format!(
         "The exact live marker is {LIVE_MARKER}. Preserve this exact marker for a later question."
@@ -282,6 +522,56 @@ fn provider_compaction_entries(state: &engine::CoreAgentState) -> Vec<&engine::C
             entry.provider_kind.as_deref() == Some(OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND)
         })
         .collect()
+}
+
+fn active_context_contains_ref(state: &engine::CoreAgentState, content_ref: &BlobRef) -> bool {
+    state
+        .context
+        .entries
+        .iter()
+        .any(|entry| &entry.content_ref == content_ref)
+}
+
+fn has_compaction_requested(
+    entries: &[engine::CoreAgentEntry],
+    expected_trigger: ContextCompactionTrigger,
+) -> bool {
+    entries.iter().any(|entry| {
+        matches!(
+            &entry.event.kind,
+            CoreAgentEventKind::Context(engine::ContextEvent::CompactionRequested {
+                trigger,
+                ..
+            }) if *trigger == expected_trigger
+        )
+    })
+}
+
+fn has_compaction_finished(
+    entries: &[engine::CoreAgentEntry],
+    expected_status: ContextCompactionStatus,
+) -> bool {
+    entries.iter().any(|entry| {
+        matches!(
+            &entry.event.kind,
+            CoreAgentEventKind::Context(engine::ContextEvent::CompactionFinished {
+                status,
+                ..
+            }) if *status == expected_status
+        )
+    })
+}
+
+fn has_provider_compacted_removal(entries: &[engine::CoreAgentEntry]) -> bool {
+    entries.iter().any(|entry| {
+        matches!(
+            &entry.event.kind,
+            CoreAgentEventKind::Context(engine::ContextEvent::EntriesRemoved {
+                reason: ContextRemovalReason::ProviderCompacted,
+                ..
+            })
+        )
+    })
 }
 
 async fn assistant_text(blobs: &dyn BlobStore, entries: &[engine::CoreAgentEntry]) -> String {
@@ -310,6 +600,26 @@ async fn assistant_text(blobs: &dyn BlobStore, entries: &[engine::CoreAgentEntry
         }
     }
     text
+}
+
+async fn compaction_failure_text(
+    blobs: &dyn BlobStore,
+    entries: &[engine::CoreAgentEntry],
+) -> String {
+    for entry in entries {
+        if let CoreAgentEventKind::Context(engine::ContextEvent::CompactionFinished {
+            status: ContextCompactionStatus::Failed,
+            failure_ref: Some(failure_ref),
+            ..
+        }) = &entry.event.kind
+        {
+            return blobs
+                .read_text(failure_ref)
+                .await
+                .unwrap_or_else(|error| format!("failed to read compaction failure: {error}"));
+        }
+    }
+    "compaction did not finish with a failure ref".to_owned()
 }
 
 async fn run_failure_text(blobs: &dyn BlobStore, state: &engine::CoreAgentState) -> String {

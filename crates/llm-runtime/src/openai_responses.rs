@@ -186,13 +186,7 @@ pub async fn materialize_compact_request(
     model: &str,
 ) -> LlmAdapterResult<oai::CompactResponseRequest> {
     let input_items = materialize_input_items(blobs, &request.input_context.entries).await?;
-    let mut extra = request.extra.clone();
-    if let Some(target_tokens) = request.target_tokens {
-        extra.insert("target_tokens".to_owned(), Value::from(target_tokens));
-    }
-    if let Some(store) = request.store {
-        extra.insert("store".to_owned(), Value::from(store));
-    }
+    let extra = request.extra.clone();
     Ok(oai::CompactResponseRequest {
         model: model.to_owned(),
         input: Some(oai::ResponseInput::Items(input_items)),
@@ -1445,8 +1439,6 @@ mod tests {
             json!({
                 "model": "gpt-5.1",
                 "input": [{ "role": "user", "content": "Summarize the prior work." }],
-                "target_tokens": 128,
-                "store": false,
                 "service_tier": "flex"
             })
         );
