@@ -644,16 +644,15 @@ fn high_watermark_compaction_proposal(
     else {
         return Ok(None);
     };
-    let snapshot = planned_context_snapshot(state, config.model.api_kind.clone())
+    if compactable_context_entry_ids(state).is_empty() {
+        return Ok(None);
+    }
+    let snapshot = compactable_context_snapshot(state, config.model.api_kind.clone())
         .map_err(|error| DomainError::InvariantViolation(error.to_string()))?;
     let Some(estimate) = snapshot.token_estimate else {
         return Ok(None);
     };
     if estimate.tokens < *compact_threshold_tokens {
-        return Ok(None);
-    }
-    let entry_ids = compactable_context_entry_ids(state);
-    if entry_ids.is_empty() {
         return Ok(None);
     }
     Ok(Some(compaction_requested_proposal(

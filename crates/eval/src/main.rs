@@ -161,6 +161,28 @@ impl OpenAiResponsesApi for DiagnosticOpenAiResponsesApi {
         });
         result
     }
+
+    async fn compact(
+        &self,
+        request: oai::CompactResponseRequest,
+    ) -> Result<ApiResponse<oai::CompactResponse>, llm_clients::LlmApiError> {
+        let request_text = serde_json::to_string(&request)
+            .unwrap_or_else(|error| format!("failed to encode compact request: {error}"));
+        let result = self.inner.compact(request).await;
+        let outcome = match &result {
+            Ok(response) => format!(
+                "http_status={} raw={}",
+                response.status,
+                serde_json::to_string(&response.raw_json).unwrap_or_default()
+            ),
+            Err(error) => format!("api_error={error}"),
+        };
+        self.diagnostics.record(LlmCallDiagnostic {
+            request: request_text,
+            outcome,
+        });
+        result
+    }
 }
 
 struct EvalInvocation {
@@ -816,7 +838,9 @@ fn collect_observations(
                         .push("missing tool error output".into());
                 }
             }
-            SessionItemView::UserMessage { .. } | SessionItemView::SystemEvent { .. } => {}
+            SessionItemView::UserMessage { .. }
+            | SessionItemView::SystemEvent { .. }
+            | SessionItemView::ProviderContext { .. } => {}
         }
     }
     observations.assistant_text = observations.assistant_text.trim().to_string();

@@ -1285,6 +1285,66 @@ mod tests {
     }
 
     #[test]
+    fn failed_manual_standalone_compaction_clears_pending_state() {
+        let session_id = SessionId::new("session-a");
+        let mut drive =
+            CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+        open_session_with_config(&mut drive, standalone_compaction_config(None, Some(256)));
+        let upsert = drive
+            .admit_command(
+                CoreAgentCommand::UpsertContext {
+                    key: ContextEntryKey::new("client.native"),
+                    entry: provider_opaque_input(BlobRef::from_bytes(b"native context")),
+                },
+                20,
+            )
+            .expect("context edit");
+        commit_action(&mut drive, upsert);
+
+        let request_compaction = drive
+            .admit_command(CoreAgentCommand::CompactContext, 30)
+            .expect("manual compaction");
+        commit_action(&mut drive, request_compaction);
+
+        let CoreAgentAction::CompactContext { request } =
+            drive.next_action(31, 64).expect("compact action")
+        else {
+            panic!("expected compact action");
+        };
+        let ContextCompactionRequestKind::OpenAiResponses(openai_request) = &request.request.kind;
+        let failure_ref = BlobRef::from_bytes(b"compact failed");
+        let completed = drive
+            .resume_context_compaction(
+                ContextCompactionResult {
+                    session_id,
+                    context_revision: openai_request.input_context.context_revision,
+                    status: ContextCompactionStatus::Failed,
+                    failure_ref: Some(failure_ref.clone()),
+                    context_entries: Vec::new(),
+                },
+                32,
+            )
+            .expect("resume failed compaction");
+        let completed_entries = commit_action(&mut drive, completed);
+
+        let CoreAgentEventKind::Context(ContextEvent::CompactionFinished {
+            status,
+            failure_ref: event_failure_ref,
+            ..
+        }) = &completed_entries[0].event.kind
+        else {
+            panic!("expected compaction finished");
+        };
+        assert_eq!(status, &ContextCompactionStatus::Failed);
+        assert_eq!(event_failure_ref.as_ref(), Some(&failure_ref));
+        assert!(!drive.state().context.pending_compaction);
+        assert!(matches!(
+            drive.next_action(33, 64).expect("next action"),
+            CoreAgentAction::Idle
+        ));
+    }
+
+    #[test]
     fn pending_standalone_compaction_blocks_context_mutations_and_runs() {
         let session_id = SessionId::new("session-a");
         let mut drive =
@@ -1386,6 +1446,73 @@ mod tests {
         let ContextCompactionRequestKind::OpenAiResponses(openai_request) = &request.request.kind;
         assert_eq!(openai_request.target_tokens, Some(4));
         assert_eq!(openai_request.input_context.entry_ids(), entry_ids);
+        assert_eq!(
+            openai_request
+                .input_context
+                .token_estimate
+                .as_ref()
+                .map(|estimate| estimate.tokens),
+            Some(11)
+        );
+    }
+
+    #[test]
+    fn high_watermark_standalone_compaction_uses_compactable_context_estimate() {
+        let session_id = SessionId::new("session-a");
+        let mut drive =
+            CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+        open_session_with_config(&mut drive, standalone_compaction_config(Some(10), Some(4)));
+
+        let instructions = drive
+            .admit_command(
+                CoreAgentCommand::UpsertContext {
+                    key: ContextEntryKey::new("instructions.100.base"),
+                    entry: instruction_input(BlobRef::from_bytes(b"base instructions")),
+                },
+                20,
+            )
+            .expect("instruction edit");
+        commit_action(&mut drive, instructions);
+        let context = drive
+            .admit_command(
+                CoreAgentCommand::UpsertContext {
+                    key: ContextEntryKey::new("client.native"),
+                    entry: provider_opaque_input_with_tokens(
+                        BlobRef::from_bytes(b"native context"),
+                        11,
+                    ),
+                },
+                21,
+            )
+            .expect("context edit");
+        commit_action(&mut drive, context);
+
+        let action = drive.next_action(30, 64).expect("high watermark plan");
+        let requested_entries = commit_action(&mut drive, action);
+        assert!(matches!(
+            requested_entries[0].event.kind,
+            CoreAgentEventKind::Context(ContextEvent::CompactionRequested {
+                trigger: ContextCompactionTrigger::HighWatermark,
+                ..
+            })
+        ));
+
+        let CoreAgentAction::CompactContext { request } =
+            drive.next_action(31, 64).expect("compact action")
+        else {
+            panic!("expected compact action");
+        };
+        assert_eq!(request.session_id, session_id);
+        let ContextCompactionRequestKind::OpenAiResponses(openai_request) = &request.request.kind;
+        assert_eq!(
+            openai_request.input_context.entries.len(),
+            1,
+            "instructions are preserved outside the compactable provider window"
+        );
+        assert!(matches!(
+            openai_request.input_context.entries[0].kind,
+            ContextEntryKind::ProviderOpaque
+        ));
         assert_eq!(
             openai_request
                 .input_context

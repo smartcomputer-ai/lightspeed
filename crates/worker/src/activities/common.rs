@@ -1,5 +1,6 @@
 use engine::{
-    BlobRef, CoreAgentIoError, LlmFinish, LlmGenerationFacts, LlmGenerationRequest,
+    BlobRef, ContextCompactionRequest, ContextCompactionRequestKind, ContextCompactionResult,
+    ContextCompactionStatus, CoreAgentIoError, LlmFinish, LlmGenerationFacts, LlmGenerationRequest,
     LlmGenerationResult, LlmGenerationStatus, ToolCallStatus, ToolInvocationBatchRequest,
     ToolInvocationBatchResult, ToolInvocationResult,
     storage::{BlobStore, BlobStoreError},
@@ -37,6 +38,37 @@ pub(super) async fn failed_generation_result_from_error(
             context_token_estimate: None,
         },
     })
+}
+
+pub(super) async fn failed_context_compaction_result_from_error(
+    blobs: &dyn BlobStore,
+    request: ContextCompactionRequest,
+    error: CoreAgentIoError,
+) -> Result<ContextCompactionResult, BlobStoreError> {
+    let context_revision = compaction_request_context_revision(&request);
+    let failure_ref = write_error_blob(
+        blobs,
+        format!(
+            "core agent context compaction failed\nsession_id={}\ncontext_revision={}\nerror={error}\n",
+            request.session_id, context_revision
+        ),
+    )
+    .await?;
+    Ok(ContextCompactionResult {
+        session_id: request.session_id,
+        context_revision,
+        status: ContextCompactionStatus::Failed,
+        failure_ref: Some(failure_ref),
+        context_entries: Vec::new(),
+    })
+}
+
+fn compaction_request_context_revision(request: &ContextCompactionRequest) -> u64 {
+    match &request.request.kind {
+        ContextCompactionRequestKind::OpenAiResponses(openai_request) => {
+            openai_request.input_context.context_revision
+        }
+    }
 }
 
 pub(super) async fn failed_tool_batch_result(

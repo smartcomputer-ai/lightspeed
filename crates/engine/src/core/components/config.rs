@@ -289,10 +289,10 @@ fn validate_context_config(
         (
             Some(CompactionPolicy::ProviderStandalone {
                 compact_threshold_tokens,
-                ..
+                target_tokens,
             }),
             ProviderApiKind::OpenAiResponses,
-        ) => validate_provider_standalone_compaction(*compact_threshold_tokens),
+        ) => validate_provider_standalone_compaction(*compact_threshold_tokens, *target_tokens),
         (Some(CompactionPolicy::ProviderTriggered { .. }), api_kind) => {
             Err(DomainError::ProviderCompatibility(format!(
                 "provider-triggered compaction requires OpenAI Responses api kind, got {:?}",
@@ -324,10 +324,17 @@ fn validate_openai_responses_compact_threshold(
 
 fn validate_provider_standalone_compaction(
     compact_threshold_tokens: Option<u32>,
+    target_tokens: Option<u32>,
 ) -> Result<(), DomainError> {
     if compact_threshold_tokens.is_some_and(|tokens| tokens == 0) {
         return Err(DomainError::ProviderCompatibility(
             "provider-standalone compaction compact_threshold_tokens must be greater than 0 when set"
+                .to_owned(),
+        ));
+    }
+    if target_tokens.is_some_and(|tokens| tokens == 0) {
+        return Err(DomainError::ProviderCompatibility(
+            "provider-standalone compaction target_tokens must be greater than 0 when set"
                 .to_owned(),
         ));
     }
@@ -439,6 +446,65 @@ mod tests {
         let error = config
             .validate_provider_compatibility()
             .expect_err("provider-triggered compaction is OpenAI Responses only");
+
+        assert!(matches!(error, DomainError::ProviderCompatibility(_)));
+    }
+
+    #[test]
+    fn provider_standalone_compaction_rejects_zero_values() {
+        for compaction in [
+            CompactionPolicy::ProviderStandalone {
+                compact_threshold_tokens: Some(0),
+                target_tokens: Some(128),
+            },
+            CompactionPolicy::ProviderStandalone {
+                compact_threshold_tokens: Some(128),
+                target_tokens: Some(0),
+            },
+        ] {
+            let config = config(ProviderApiKind::OpenAiResponses, Some(compaction));
+
+            let error = config
+                .validate_provider_compatibility()
+                .expect_err("zero standalone compaction values must fail");
+
+            assert!(matches!(error, DomainError::ProviderCompatibility(_)));
+        }
+    }
+
+    #[test]
+    fn provider_standalone_compaction_accepts_optional_or_positive_values() {
+        for compaction in [
+            CompactionPolicy::ProviderStandalone {
+                compact_threshold_tokens: None,
+                target_tokens: None,
+            },
+            CompactionPolicy::ProviderStandalone {
+                compact_threshold_tokens: Some(1),
+                target_tokens: Some(1),
+            },
+        ] {
+            let config = config(ProviderApiKind::OpenAiResponses, Some(compaction));
+
+            config
+                .validate_provider_compatibility()
+                .expect("valid OpenAI provider-standalone compaction");
+        }
+    }
+
+    #[test]
+    fn provider_standalone_compaction_rejects_non_openai_responses_api_kind() {
+        let config = config(
+            ProviderApiKind::AnthropicMessages,
+            Some(CompactionPolicy::ProviderStandalone {
+                compact_threshold_tokens: None,
+                target_tokens: None,
+            }),
+        );
+
+        let error = config
+            .validate_provider_compatibility()
+            .expect_err("provider-standalone compaction is OpenAI Responses only");
 
         assert!(matches!(error, DomainError::ProviderCompatibility(_)));
     }

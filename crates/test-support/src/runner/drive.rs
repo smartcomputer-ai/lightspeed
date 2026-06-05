@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
 use engine::{
-    ApplyEvent, BlobRef, CoreAgentAction, CoreAgentCommand, CoreAgentDrive, CoreAgentDriveError,
-    CoreAgentIoError, CoreAgentLlm, CoreAgentState, CoreAgentTools, CoreApplyEvent, EventSeq,
-    LlmFinish, LlmGenerationFacts, LlmGenerationRequest, LlmGenerationResult, LlmGenerationStatus,
-    SKILL_CATALOG_CONTEXT_KEY, SessionId, ToolCallStatus, ToolInvocationBatchRequest,
-    ToolInvocationBatchResult, ToolInvocationResult,
+    ApplyEvent, BlobRef, ContextCompactionRequest, ContextCompactionRequestKind,
+    ContextCompactionResult, ContextCompactionStatus, CoreAgentAction, CoreAgentCommand,
+    CoreAgentDrive, CoreAgentDriveError, CoreAgentIoError, CoreAgentLlm, CoreAgentState,
+    CoreAgentTools, CoreApplyEvent, EventSeq, LlmFinish, LlmGenerationFacts, LlmGenerationRequest,
+    LlmGenerationResult, LlmGenerationStatus, SKILL_CATALOG_CONTEXT_KEY, SessionId, ToolCallStatus,
+    ToolInvocationBatchRequest, ToolInvocationBatchResult, ToolInvocationResult,
     storage::{AppendSessionEvents, BlobStore, ReadSessionEvents},
 };
 use tools::skills::{
@@ -300,7 +301,17 @@ impl SessionRunner {
                     action = drive.resume_generation(result, observed_at_ms)?;
                 }
                 CoreAgentAction::CompactContext { request } => {
-                    let result = self.llm.compact_context(request).await?;
+                    let result = match self.llm.compact_context(request.clone()).await {
+                        Ok(result) => result,
+                        Err(error) => {
+                            failed_context_compaction_result_from_error(
+                                self.stores.blobs.as_ref(),
+                                request,
+                                error,
+                            )
+                            .await?
+                        }
+                    };
                     action = drive.resume_context_compaction(result, observed_at_ms)?;
                 }
                 CoreAgentAction::InvokeTools { request } => {
@@ -413,6 +424,37 @@ async fn failed_generation_result_from_error(
     })
 }
 
+async fn failed_context_compaction_result_from_error(
+    blobs: &dyn BlobStore,
+    request: ContextCompactionRequest,
+    error: CoreAgentIoError,
+) -> Result<ContextCompactionResult, engine::storage::BlobStoreError> {
+    let context_revision = compaction_request_context_revision(&request);
+    let failure_ref = write_error_blob(
+        blobs,
+        format!(
+            "core agent context compaction failed\nsession_id={}\ncontext_revision={}\nerror={error}\n",
+            request.session_id, context_revision
+        ),
+    )
+    .await?;
+    Ok(ContextCompactionResult {
+        session_id: request.session_id,
+        context_revision,
+        status: ContextCompactionStatus::Failed,
+        failure_ref: Some(failure_ref),
+        context_entries: Vec::new(),
+    })
+}
+
+fn compaction_request_context_revision(request: &ContextCompactionRequest) -> u64 {
+    match &request.request.kind {
+        ContextCompactionRequestKind::OpenAiResponses(openai_request) => {
+            openai_request.input_context.context_revision
+        }
+    }
+}
+
 async fn failed_tool_batch_result(
     blobs: &dyn BlobStore,
     request: &ToolInvocationBatchRequest,
@@ -466,12 +508,13 @@ mod tests {
 
     use async_trait::async_trait;
     use engine::{
-        AgentHandle, ContextConfig, ContextEntryInput, ContextEntryKind, ContextMessageRole,
-        CoreAgentCommand, CoreAgentEventKind, FunctionToolSpec, LlmFinish, ModelProviderOptions,
-        ModelSelection, ObservedToolCall, ProviderApiKind, ProviderRequestDefaults, RunConfig,
-        RunStatus, SessionConfig, SessionId, ToolCallResult, ToolExecutionTarget, ToolKind,
-        ToolName, ToolParallelism, ToolProfile, ToolProfileId, ToolRegistry, ToolSpec,
-        ToolTargetRequirement, TurnConfig, TurnEvent,
+        AgentHandle, CompactionPolicy, ContextCompactionRequest, ContextCompactionResult,
+        ContextCompactionStatus, ContextConfig, ContextEntryInput, ContextEntryKey,
+        ContextEntryKind, ContextMessageRole, CoreAgentCommand, CoreAgentEventKind,
+        FunctionToolSpec, LlmFinish, ModelProviderOptions, ModelSelection, ObservedToolCall,
+        ProviderApiKind, ProviderRequestDefaults, RunConfig, RunStatus, SessionConfig, SessionId,
+        ToolCallResult, ToolExecutionTarget, ToolKind, ToolName, ToolParallelism, ToolProfile,
+        ToolProfileId, ToolRegistry, ToolSpec, ToolTargetRequirement, TurnConfig, TurnEvent,
         storage::{
             BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore,
         },
@@ -499,6 +542,8 @@ mod tests {
         calls: Mutex<u32>,
     }
 
+    struct FailCompactionLlm;
+
     #[async_trait]
     impl CoreAgentLlm for FailOnceLlm {
         async fn generate(
@@ -516,6 +561,25 @@ mod tests {
                 });
             }
             Ok(final_output_result(&request))
+        }
+    }
+
+    #[async_trait]
+    impl CoreAgentLlm for FailCompactionLlm {
+        async fn generate(
+            &self,
+            request: LlmGenerationRequest,
+        ) -> Result<LlmGenerationResult, CoreAgentIoError> {
+            Ok(final_output_result(&request))
+        }
+
+        async fn compact_context(
+            &self,
+            _request: ContextCompactionRequest,
+        ) -> Result<ContextCompactionResult, CoreAgentIoError> {
+            Err(CoreAgentIoError::Failed {
+                message: "compact endpoint unavailable".to_owned(),
+            })
         }
     }
 
@@ -804,6 +868,15 @@ mod tests {
         }
     }
 
+    fn standalone_compaction_config() -> SessionConfig {
+        let mut config = config();
+        config.context.compaction = Some(CompactionPolicy::ProviderStandalone {
+            compact_threshold_tokens: None,
+            target_tokens: Some(128),
+        });
+        config
+    }
+
     fn run_config() -> RunConfig {
         RunConfig {
             max_turns: None,
@@ -858,6 +931,63 @@ mod tests {
                 },
             )]),
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn compact_context_provider_error_finishes_failed_compaction() {
+        let (runner, session_id) = runner_with(Arc::new(FailCompactionLlm)).await;
+        runner
+            .drive_command(DriveCommand {
+                session_id: session_id.clone(),
+                observed_at_ms: 10,
+                command: CoreAgentCommand::OpenSession {
+                    config: standalone_compaction_config(),
+                },
+                max_steps: None,
+            })
+            .await
+            .expect("open session");
+        runner
+            .drive_command(DriveCommand {
+                session_id: session_id.clone(),
+                observed_at_ms: 20,
+                command: CoreAgentCommand::UpsertContext {
+                    key: ContextEntryKey::new("client.native"),
+                    entry: ContextEntryInput {
+                        kind: ContextEntryKind::ProviderOpaque,
+                        content_ref: BlobRef::from_bytes(br#"{"type":"input"}"#),
+                        media_type: Some("application/json".to_owned()),
+                        preview: None,
+                        provider_kind: None,
+                        provider_item_id: None,
+                        token_estimate: None,
+                    },
+                },
+                max_steps: None,
+            })
+            .await
+            .expect("upsert context");
+
+        let outcome = runner
+            .drive_command(DriveCommand {
+                session_id,
+                observed_at_ms: 30,
+                command: CoreAgentCommand::CompactContext,
+                max_steps: Some(64),
+            })
+            .await
+            .expect("compact context");
+
+        assert!(outcome.accepted);
+        assert!(!outcome.state.context.pending_compaction);
+        assert!(outcome.emitted_entries.iter().any(|entry| matches!(
+            &entry.event.kind,
+            CoreAgentEventKind::Context(engine::ContextEvent::CompactionFinished {
+                status: ContextCompactionStatus::Failed,
+                failure_ref: Some(_),
+                ..
+            })
+        )));
     }
 
     #[tokio::test(flavor = "current_thread")]
