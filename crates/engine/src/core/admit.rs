@@ -141,6 +141,44 @@ impl AdmitCommand for CoreAdmitCommand {
                     }),
                 )])
             }
+            CoreAgentCommand::ReplaceContextPrefix {
+                key_prefix,
+                entries,
+            } => {
+                require_open(state)?;
+                require_no_pending_compaction(
+                    state,
+                    "context cannot be edited while context compaction is pending",
+                )?;
+                crate::core::components::context::validate_external_context_prefix_replacement(
+                    &key_prefix,
+                    &entries,
+                )
+                .map_err(command_rejection_from_domain)?;
+                if crate::core::components::context::context_prefix_replacement_is_noop(
+                    state,
+                    &key_prefix,
+                    &entries,
+                ) {
+                    return Ok(Vec::new());
+                }
+                let entries = crate::core::components::context::context_entries_from_inputs(
+                    state,
+                    entries
+                        .into_iter()
+                        .map(|(key, entry)| (Some(key), ContextEntrySource::ContextEdit, entry))
+                        .collect(),
+                )
+                .map_err(CommandError::Domain)?;
+                Ok(vec![CoreAgentEventProposal::new(
+                    CoreAgentJoins::default(),
+                    CoreAgentEventKind::Context(ContextEvent::KeyPrefixReplaced {
+                        base_revision: state.context.revision,
+                        key_prefix,
+                        entries,
+                    }),
+                )])
+            }
             CoreAgentCommand::RemoveContext { key } => {
                 require_open(state)?;
                 require_no_pending_compaction(

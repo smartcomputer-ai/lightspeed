@@ -24,6 +24,7 @@ pub const METHOD_SESSION_CLOSE: &str = "session/close";
 pub const METHOD_CONTEXT_COMPACT: &str = "context/compact";
 pub const METHOD_RUN_START: &str = "run/start";
 pub const METHOD_RUN_CANCEL: &str = "run/cancel";
+pub const METHOD_PROMPTS_ACTIVE: &str = "prompts/active";
 pub const METHOD_SKILLS_LIST: &str = "skills/list";
 pub const METHOD_SKILLS_ACTIVE: &str = "skills/active";
 pub const METHOD_SKILLS_ACTIVATE: &str = "skills/activate";
@@ -141,6 +142,11 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: RunCancelParams,
     ) -> Result<AgentApiOutcome<RunCancelResponse>, AgentApiError>;
+
+    async fn active_prompts(
+        &self,
+        params: PromptsActiveParams,
+    ) -> Result<AgentApiOutcome<PromptsActiveResponse>, AgentApiError>;
 
     async fn list_skills(
         &self,
@@ -607,6 +613,12 @@ pub enum SessionEventKindView {
         revision: u64,
         keys: Vec<String>,
     },
+    ContextKeyPrefixReplaced {
+        base_revision: u64,
+        revision: u64,
+        key_prefix: String,
+        items: Vec<SessionItemView>,
+    },
     ContextStateReplaced {
         base_revision: u64,
         revision: u64,
@@ -732,6 +744,34 @@ pub struct RunCancelParams {
 #[serde(rename_all = "camelCase")]
 pub struct RunCancelResponse {
     pub run: RunView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptsActiveParams {
+    pub session_id: SessionId,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptsActiveResponse {
+    #[serde(default)]
+    pub instructions: Vec<PromptInstructionView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report: Option<Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptInstructionView {
+    pub key: String,
+    pub instructions_ref: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1619,6 +1659,10 @@ pub async fn dispatch_json_rpc(
             Ok(params) => json_rpc_outcome(id, service.cancel_run(params).await),
             Err(error) => JsonRpcResponse::failure(id, error),
         },
+        METHOD_PROMPTS_ACTIVE => match json_rpc_params::<PromptsActiveParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.active_prompts(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
         METHOD_SKILLS_LIST => match json_rpc_params::<SkillListParams>(request.params) {
             Ok(params) => json_rpc_outcome(id, service.list_skills(params).await),
             Err(error) => JsonRpcResponse::failure(id, error),
@@ -1906,6 +1950,25 @@ mod tests {
         assert_eq!(
             response.result.expect("result")["result"]["run"]["status"],
             json!("cancelled")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_prompts_active() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_PROMPTS_ACTIVE.to_owned(),
+                params: Some(json!({ "sessionId": "session_1" })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["report"]["total_chars"],
+            json!(42)
         );
     }
 
@@ -2542,6 +2605,25 @@ mod tests {
         ) -> Result<AgentApiOutcome<RunCancelResponse>, AgentApiError> {
             Ok(AgentApiOutcome::new(RunCancelResponse {
                 run: test_run(params.run_id, RunStatus::Cancelled),
+            }))
+        }
+
+        async fn active_prompts(
+            &self,
+            _params: PromptsActiveParams,
+        ) -> Result<AgentApiOutcome<PromptsActiveResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(PromptsActiveResponse {
+                instructions: vec![PromptInstructionView {
+                    key: "instructions.100.prompts.0000.project".to_owned(),
+                    instructions_ref: format!("sha256:{}", "4".repeat(64)),
+                    media_type: Some("text/markdown".to_owned()),
+                    preview: Some("prompt instructions: instructions.md".to_owned()),
+                }],
+                report_ref: Some(format!("sha256:{}", "5".repeat(64))),
+                report: Some(json!({
+                    "schema_version": "forge.prompts.instructions.report.v1",
+                    "total_chars": 42
+                })),
             }))
         }
 

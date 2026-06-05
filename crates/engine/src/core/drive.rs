@@ -906,6 +906,109 @@ mod tests {
     }
 
     #[test]
+    fn replace_context_prefix_syncs_managed_instruction_entries() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        open_session(&mut drive);
+
+        for (key, content) in [
+            ("instructions.000.default", b"default".as_slice()),
+            ("instructions.100.prompts.old", b"old prompt".as_slice()),
+            ("instructions.100.promptsettings", b"adjacent".as_slice()),
+            ("instructions.200.other", b"other".as_slice()),
+        ] {
+            let action = drive
+                .admit_command(
+                    CoreAgentCommand::UpsertContext {
+                        key: ContextEntryKey::new(key),
+                        entry: instruction_input(BlobRef::from_bytes(content)),
+                    },
+                    20,
+                )
+                .expect("instruction context edit");
+            commit_action(&mut drive, action);
+        }
+
+        let first_ref = BlobRef::from_bytes(b"first prompt");
+        let second_ref = BlobRef::from_bytes(b"second prompt");
+        let mut entries = std::collections::BTreeMap::new();
+        entries.insert(
+            ContextEntryKey::new("instructions.100.prompts.0000.base"),
+            instruction_input(first_ref.clone()),
+        );
+        entries.insert(
+            ContextEntryKey::new("instructions.100.prompts.0001.style"),
+            instruction_input(second_ref.clone()),
+        );
+        let before_revision = drive.state().context.revision;
+
+        let action = drive
+            .admit_command(
+                CoreAgentCommand::ReplaceContextPrefix {
+                    key_prefix: ContextEntryKey::new("instructions.100.prompts"),
+                    entries,
+                },
+                20,
+            )
+            .expect("replace prompt prefix");
+        let events = commit_action(&mut drive, action);
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(drive.state().context.revision, before_revision + 1);
+        let keys = drive
+            .state()
+            .context
+            .entries
+            .iter()
+            .filter_map(|entry| entry.key.as_ref().map(|key| key.as_str().to_owned()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            keys,
+            vec![
+                "instructions.000.default",
+                "instructions.100.promptsettings",
+                "instructions.200.other",
+                "instructions.100.prompts.0000.base",
+                "instructions.100.prompts.0001.style"
+            ]
+        );
+        assert!(drive.state().context.entries.iter().all(|entry| {
+            entry
+                .key
+                .as_ref()
+                .is_none_or(|key| key.as_str() != "instructions.100.prompts.old")
+        }));
+    }
+
+    #[test]
+    fn replace_context_prefix_rejects_entries_outside_prefix() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        open_session(&mut drive);
+        let mut entries = std::collections::BTreeMap::new();
+        entries.insert(
+            ContextEntryKey::new("instructions.200.other"),
+            instruction_input(BlobRef::from_bytes(b"other")),
+        );
+
+        let error = drive
+            .admit_command(
+                CoreAgentCommand::ReplaceContextPrefix {
+                    key_prefix: ContextEntryKey::new("instructions.100.prompts"),
+                    entries,
+                },
+                20,
+            )
+            .expect_err("entry outside prefix must be rejected");
+
+        let CoreAgentDriveError::Command(crate::CommandError::Rejected(rejection)) = error else {
+            panic!("expected rejected command");
+        };
+        assert_eq!(rejection.kind, CommandRejectionKind::InvariantViolation);
+        assert!(rejection.message.contains("outside prefix"));
+    }
+
+    #[test]
     fn upsert_context_rejects_instruction_entry_without_instruction_key() {
         let session_id = SessionId::new("session-a");
         let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
