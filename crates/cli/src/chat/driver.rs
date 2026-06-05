@@ -721,6 +721,8 @@ impl ChatSessionDriver {
             | SessionEventKindView::ContextEntriesRemoved { .. }
             | SessionEventKindView::ContextKeysRemoved { .. }
             | SessionEventKindView::ContextStateReplaced { .. }
+            | SessionEventKindView::ContextCompactionRequested { .. }
+            | SessionEventKindView::ContextCompactionFinished { .. }
             | SessionEventKindView::SkillCatalogSet { .. }
             | SessionEventKindView::SkillActivationsSet { .. }
             | SessionEventKindView::TurnCompleted { .. }
@@ -1060,6 +1062,7 @@ fn event_needs_snapshot(kind: &SessionEventKindView) -> bool {
             | SessionEventKindView::ContextEntriesRemoved { .. }
             | SessionEventKindView::ContextKeysRemoved { .. }
             | SessionEventKindView::ContextStateReplaced { .. }
+            | SessionEventKindView::ContextCompactionFinished { .. }
             | SessionEventKindView::RunCompleted { .. }
             | SessionEventKindView::RunFailed { .. }
             | SessionEventKindView::RunCancelled { .. }

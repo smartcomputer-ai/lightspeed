@@ -10,14 +10,14 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    AdmitCommand, ApplyEvent, BlobRef, CodecError, CommandError, ContextEntryInput,
-    ContextEntryKind, ContextEntrySource, ContextEvent, ContextMessageRole, CoreAdmitCommand,
-    CoreAgentCodec, CoreAgentEntry, CoreAgentEventKind, CoreAgentEventProposal, CoreAgentJoins,
-    CoreAgentState, CoreAgentStatus, CoreApplyEvent, CorePlanner, DomainError, LlmFinish,
-    LlmGenerationRequest, LlmGenerationResult, LlmGenerationStatus, PlanNext, PlanningError,
-    SessionId, SessionPosition, ToolCallResult, ToolCallStatus, ToolEvent,
-    ToolInvocationBatchRequest, ToolInvocationBatchResult, ToolInvocationRequest, TurnEvent,
-    TurnOutcome,
+    AdmitCommand, ApplyEvent, BlobRef, CodecError, CommandError, ContextCompactionRequest,
+    ContextCompactionResult, ContextEntryInput, ContextEntryKind, ContextEntrySource, ContextEvent,
+    ContextMessageRole, CoreAdmitCommand, CoreAgentCodec, CoreAgentEntry, CoreAgentEventKind,
+    CoreAgentEventProposal, CoreAgentJoins, CoreAgentState, CoreAgentStatus, CoreApplyEvent,
+    CorePlanner, DomainError, LlmFinish, LlmGenerationRequest, LlmGenerationResult,
+    LlmGenerationStatus, PlanNext, PlanningError, SessionId, SessionPosition, ToolCallResult,
+    ToolCallStatus, ToolEvent, ToolInvocationBatchRequest, ToolInvocationBatchResult,
+    ToolInvocationRequest, TurnEvent, TurnOutcome,
     core::components::context::context_entries_from_inputs,
     session::{DynamicSessionEntry, DynamicUncommittedSessionEvent},
 };
@@ -31,6 +31,9 @@ pub enum CoreAgentAction {
     },
     GenerateLlm {
         request: LlmGenerationRequest,
+    },
+    CompactContext {
+        request: ContextCompactionRequest,
     },
     InvokeTools {
         request: ToolInvocationBatchRequest,
@@ -99,6 +102,13 @@ impl CoreAgentDrive {
             return Ok(CoreAgentAction::GenerateLlm { request });
         }
 
+        if let Some(request) = next_context_compaction_request(&self.session_id, &self.state)? {
+            if !self.increment_steps(max_steps) {
+                return Ok(CoreAgentAction::StepLimitReached);
+            }
+            return Ok(CoreAgentAction::CompactContext { request });
+        }
+
         if let Some(request) = next_tool_batch_request(&self.session_id, &self.state)? {
             if !self.increment_steps(max_steps) {
                 return Ok(CoreAgentAction::StepLimitReached);
@@ -130,6 +140,22 @@ impl CoreAgentDrive {
         observed_at_ms: u64,
     ) -> Result<CoreAgentAction, CoreAgentDriveError> {
         let proposals = generation_result_proposals(&self.state, result)?;
+        self.append_action(proposals, observed_at_ms)
+    }
+
+    pub fn resume_context_compaction(
+        &mut self,
+        result: ContextCompactionResult,
+        observed_at_ms: u64,
+    ) -> Result<CoreAgentAction, CoreAgentDriveError> {
+        if result.session_id != self.session_id {
+            return Err(DomainError::InvariantViolation(format!(
+                "context compaction result session {} does not match drive session {}",
+                result.session_id, self.session_id
+            ))
+            .into());
+        }
+        let proposals = context_compaction_result_proposals(&self.state, result)?;
         self.append_action(proposals, observed_at_ms)
     }
 
@@ -232,6 +258,21 @@ pub fn next_generation_request(
         session_id: session_id.clone(),
         run_id: active_run.run_id,
         turn_id,
+        request,
+    }))
+}
+
+pub fn next_context_compaction_request(
+    session_id: &SessionId,
+    state: &CoreAgentState,
+) -> Result<Option<ContextCompactionRequest>, DomainError> {
+    if !state.context.pending_compaction {
+        return Ok(None);
+    }
+    let request = crate::core::components::llm::build_context_compaction_task(state)
+        .map_err(|error| DomainError::InvariantViolation(error.to_string()))?;
+    Ok(Some(ContextCompactionRequest {
+        session_id: session_id.clone(),
         request,
     }))
 }
@@ -358,6 +399,63 @@ fn final_output_ref(context_entries: &[ContextEntryInput]) -> Option<BlobRef> {
         })
 }
 
+pub fn context_compaction_result_proposals(
+    state: &CoreAgentState,
+    result: ContextCompactionResult,
+) -> Result<Vec<CoreAgentEventProposal>, DomainError> {
+    if !state.context.pending_compaction {
+        return Err(DomainError::InvariantViolation(
+            "context compaction result received without pending request".to_owned(),
+        ));
+    }
+    if result.context_revision != state.context.revision {
+        return Err(DomainError::InvariantViolation(format!(
+            "context compaction result revision {} does not match active context revision {}",
+            result.context_revision, state.context.revision
+        )));
+    }
+    let mut proposals = Vec::new();
+    let mut base_revision = state.context.revision;
+    if !result.context_entries.is_empty() {
+        let entries = context_entries_from_inputs(
+            state,
+            result
+                .context_entries
+                .iter()
+                .cloned()
+                .map(|entry| {
+                    (
+                        None,
+                        ContextEntrySource::Runtime {
+                            label: "provider_standalone_compaction".to_owned(),
+                        },
+                        entry,
+                    )
+                })
+                .collect(),
+        )?;
+        proposals.push(CoreAgentEventProposal::new(
+            CoreAgentJoins::default(),
+            CoreAgentEventKind::Context(ContextEvent::EntriesApplied {
+                base_revision,
+                entries,
+            }),
+        ));
+        base_revision = base_revision.checked_add(1).ok_or_else(|| {
+            DomainError::InvariantViolation("context revision exhausted".to_owned())
+        })?;
+    }
+    proposals.push(CoreAgentEventProposal::new(
+        CoreAgentJoins::default(),
+        CoreAgentEventKind::Context(ContextEvent::CompactionFinished {
+            base_revision,
+            status: result.status,
+            failure_ref: result.failure_ref,
+        }),
+    ));
+    Ok(proposals)
+}
+
 pub fn next_tool_batch_request(
     session_id: &SessionId,
     state: &CoreAgentState,
@@ -447,14 +545,16 @@ fn validate_tool_batch_result(result: &ToolInvocationBatchResult) -> Result<(), 
 mod tests {
     use super::*;
     use crate::{
-        BlobRef, CommandRejectionKind, ContextConfig, ContextConfigPatch, ContextEntry,
-        ContextEntryId, ContextEntryInput, ContextEntryKey, ContextEntryKind, ContextRemovalReason,
-        ContextRewriteReason, CoreAgentCommand, LlmGenerationFacts, LlmRequestKind,
-        ModelProviderOptions, ModelSelection, OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND,
-        OptionalConfigPatch, ProviderApiKind, ProviderRequestDefaults, RunConfig, RunFailureKind,
-        RunStatus, SKILL_ACTIVATION_PROVIDER_KIND_RUN, SKILL_CATALOG_CONTEXT_KEY, SessionConfig,
-        SessionConfigPatch, SkillId, TurnConfig, TurnConfigPatch, TurnStatus,
-        skill_activation_context_key,
+        BlobRef, CommandRejectionKind, CompactionPolicy, ContextCompactionRequestKind,
+        ContextCompactionStatus, ContextCompactionTrigger, ContextConfig, ContextConfigPatch,
+        ContextEntry, ContextEntryId, ContextEntryInput, ContextEntryKey, ContextEntryKind,
+        ContextRemovalReason, ContextRewriteReason, CoreAgentCommand, LlmGenerationFacts,
+        LlmRequestKind, ModelProviderOptions, ModelSelection,
+        OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, OptionalConfigPatch, ProviderApiKind,
+        ProviderRequestDefaults, RunConfig, RunFailureKind, RunStatus,
+        SKILL_ACTIVATION_PROVIDER_KIND_RUN, SKILL_CATALOG_CONTEXT_KEY, SessionConfig,
+        SessionConfigPatch, SkillId, TokenEstimate, TokenEstimateQuality, TurnConfig,
+        TurnConfigPatch, TurnStatus, skill_activation_context_key,
     };
 
     fn config() -> SessionConfig {
@@ -476,12 +576,7 @@ mod tests {
                 max_output_tokens: None,
                 provider_request_defaults: ProviderRequestDefaults::None,
             },
-            context: ContextConfig {
-                max_context_tokens: None,
-                target_context_tokens: None,
-                reserve_output_tokens: None,
-                compaction: None,
-            },
+            context: ContextConfig { compaction: None },
         }
     }
 
@@ -493,6 +588,18 @@ mod tests {
             max_output_tokens: None,
             provider_request_defaults: None,
         }
+    }
+
+    fn standalone_compaction_config(
+        compact_threshold_tokens: Option<u32>,
+        target_tokens: Option<u32>,
+    ) -> SessionConfig {
+        let mut config = config();
+        config.context.compaction = Some(CompactionPolicy::ProviderStandalone {
+            compact_threshold_tokens,
+            target_tokens,
+        });
+        config
     }
 
     fn commit_action(drive: &mut CoreAgentDrive, action: CoreAgentAction) -> Vec<CoreAgentEntry> {
@@ -566,8 +673,12 @@ mod tests {
     }
 
     fn open_session(drive: &mut CoreAgentDrive) {
+        open_session_with_config(drive, config());
+    }
+
+    fn open_session_with_config(drive: &mut CoreAgentDrive, config: SessionConfig) {
         let open = drive
-            .admit_command(CoreAgentCommand::OpenSession { config: config() }, 10)
+            .admit_command(CoreAgentCommand::OpenSession { config }, 10)
             .expect("open");
         commit_action(drive, open);
     }
@@ -612,6 +723,15 @@ mod tests {
             provider_item_id: None,
             token_estimate: None,
         }
+    }
+
+    fn provider_opaque_input_with_tokens(content_ref: BlobRef, tokens: u32) -> ContextEntryInput {
+        let mut input = provider_opaque_input(content_ref);
+        input.token_estimate = Some(TokenEstimate {
+            tokens,
+            quality: TokenEstimateQuality::Estimated,
+        });
+        input
     }
 
     fn openai_compaction_input(content_ref: BlobRef) -> ContextEntryInput {
@@ -1076,6 +1196,207 @@ mod tests {
     }
 
     #[test]
+    fn manual_standalone_compaction_emits_provider_request_and_prunes_replaced_entries() {
+        let session_id = SessionId::new("session-a");
+        let mut drive =
+            CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+        open_session_with_config(&mut drive, standalone_compaction_config(None, Some(256)));
+        let context_ref = BlobRef::from_bytes(b"native context");
+        let upsert = drive
+            .admit_command(
+                CoreAgentCommand::UpsertContext {
+                    key: ContextEntryKey::new("client.native"),
+                    entry: provider_opaque_input(context_ref.clone()),
+                },
+                20,
+            )
+            .expect("context edit");
+        commit_action(&mut drive, upsert);
+        let original_entry_id = drive.state().context.entries[0].entry_id;
+
+        let request_compaction = drive
+            .admit_command(CoreAgentCommand::CompactContext, 30)
+            .expect("manual compaction");
+        let requested_entries = commit_action(&mut drive, request_compaction);
+        let CoreAgentEventKind::Context(ContextEvent::CompactionRequested { trigger, .. }) =
+            &requested_entries[0].event.kind
+        else {
+            panic!("expected compaction request");
+        };
+        assert_eq!(trigger, &ContextCompactionTrigger::Manual);
+
+        let CoreAgentAction::CompactContext { request } =
+            drive.next_action(31, 64).expect("compact action")
+        else {
+            panic!("expected compact action");
+        };
+        assert_eq!(request.session_id, session_id);
+        let ContextCompactionRequestKind::OpenAiResponses(openai_request) = &request.request.kind;
+        assert_eq!(openai_request.target_tokens, Some(256));
+        assert_eq!(
+            openai_request.input_context.entry_ids(),
+            vec![original_entry_id]
+        );
+        assert_eq!(openai_request.input_context.context_revision, 2);
+
+        let completed = drive
+            .resume_context_compaction(
+                ContextCompactionResult {
+                    session_id: request.session_id,
+                    context_revision: openai_request.input_context.context_revision,
+                    status: ContextCompactionStatus::Succeeded,
+                    failure_ref: None,
+                    context_entries: vec![openai_compaction_input(BlobRef::from_bytes(
+                        br#"{"type":"compaction","encrypted_content":"opaque"}"#,
+                    ))],
+                },
+                32,
+            )
+            .expect("resume compaction");
+        let completed_entries = commit_action(&mut drive, completed);
+        assert!(matches!(
+            completed_entries[0].event.kind,
+            CoreAgentEventKind::Context(ContextEvent::EntriesApplied { .. })
+        ));
+        assert!(matches!(
+            completed_entries[1].event.kind,
+            CoreAgentEventKind::Context(ContextEvent::CompactionFinished {
+                status: ContextCompactionStatus::Succeeded,
+                ..
+            })
+        ));
+        assert!(!drive.state().context.pending_compaction);
+
+        let prune = drive.next_action(33, 64).expect("prune compacted entries");
+        let pruned_entries = commit_action(&mut drive, prune);
+        let CoreAgentEventKind::Context(ContextEvent::EntriesRemoved {
+            entry_ids, reason, ..
+        }) = &pruned_entries[0].event.kind
+        else {
+            panic!("expected provider compaction prune");
+        };
+        assert_eq!(entry_ids, &vec![original_entry_id]);
+        assert_eq!(reason, &ContextRemovalReason::ProviderCompacted);
+        assert_eq!(drive.state().context.entries.len(), 1);
+        assert_eq!(
+            drive.state().context.entries[0].provider_kind.as_deref(),
+            Some(OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND)
+        );
+    }
+
+    #[test]
+    fn pending_standalone_compaction_blocks_context_mutations_and_runs() {
+        let session_id = SessionId::new("session-a");
+        let mut drive =
+            CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+        open_session_with_config(&mut drive, standalone_compaction_config(None, Some(256)));
+        let upsert = drive
+            .admit_command(
+                CoreAgentCommand::UpsertContext {
+                    key: ContextEntryKey::new("client.native"),
+                    entry: provider_opaque_input(BlobRef::from_bytes(b"native context")),
+                },
+                20,
+            )
+            .expect("context edit");
+        commit_action(&mut drive, upsert);
+
+        let request_compaction = drive
+            .admit_command(CoreAgentCommand::CompactContext, 30)
+            .expect("manual compaction");
+        commit_action(&mut drive, request_compaction);
+
+        let run_error = drive
+            .admit_command(
+                CoreAgentCommand::RequestRun {
+                    submission_id: None,
+                    input: user_input(BlobRef::from_bytes(b"new work")),
+                    run_config: run_config(),
+                },
+                31,
+            )
+            .expect_err("run should be rejected while compaction is pending");
+        assert!(matches!(
+            run_error,
+            CoreAgentDriveError::Command(CommandError::Rejected(ref rejection))
+                if rejection.kind == CommandRejectionKind::ActiveWork
+        ));
+
+        let edit_error = drive
+            .admit_command(
+                CoreAgentCommand::UpsertContext {
+                    key: ContextEntryKey::new("client.native.2"),
+                    entry: provider_opaque_input(BlobRef::from_bytes(b"changed context")),
+                },
+                32,
+            )
+            .expect_err("context edit should be rejected while compaction is pending");
+        assert!(matches!(
+            edit_error,
+            CoreAgentDriveError::Command(CommandError::Rejected(ref rejection))
+                if rejection.kind == CommandRejectionKind::ActiveWork
+        ));
+    }
+
+    #[test]
+    fn high_watermark_standalone_compaction_requests_provider_call_when_idle() {
+        let session_id = SessionId::new("session-a");
+        let mut drive =
+            CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+        open_session_with_config(&mut drive, standalone_compaction_config(Some(10), Some(4)));
+
+        for (index, tokens) in [6, 5].into_iter().enumerate() {
+            let upsert = drive
+                .admit_command(
+                    CoreAgentCommand::UpsertContext {
+                        key: ContextEntryKey::new(format!("client.native.{index}")),
+                        entry: provider_opaque_input_with_tokens(
+                            BlobRef::from_bytes(format!("native {index}").as_bytes()),
+                            tokens,
+                        ),
+                    },
+                    20 + index as u64,
+                )
+                .expect("context edit");
+            commit_action(&mut drive, upsert);
+        }
+        let entry_ids = drive
+            .state()
+            .context
+            .entries
+            .iter()
+            .map(|entry| entry.entry_id)
+            .collect::<Vec<_>>();
+
+        let action = drive.next_action(30, 64).expect("high watermark plan");
+        let requested_entries = commit_action(&mut drive, action);
+        let CoreAgentEventKind::Context(ContextEvent::CompactionRequested { trigger, .. }) =
+            &requested_entries[0].event.kind
+        else {
+            panic!("expected compaction request");
+        };
+        assert_eq!(trigger, &ContextCompactionTrigger::HighWatermark);
+
+        let CoreAgentAction::CompactContext { request } =
+            drive.next_action(31, 64).expect("compact action")
+        else {
+            panic!("expected compact action");
+        };
+        assert_eq!(request.session_id, session_id);
+        let ContextCompactionRequestKind::OpenAiResponses(openai_request) = &request.request.kind;
+        assert_eq!(openai_request.target_tokens, Some(4));
+        assert_eq!(openai_request.input_context.entry_ids(), entry_ids);
+        assert_eq!(
+            openai_request
+                .input_context
+                .token_estimate
+                .as_ref()
+                .map(|estimate| estimate.tokens),
+            Some(11)
+        );
+    }
+
+    #[test]
     fn stale_context_base_revision_is_rejected() {
         let session_id = SessionId::new("session-a");
         let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
@@ -1284,10 +1605,7 @@ mod tests {
                 max_output_tokens: Some(OptionalConfigPatch::Set(2048)),
                 ..TurnConfigPatch::default()
             },
-            context: ContextConfigPatch {
-                target_context_tokens: Some(OptionalConfigPatch::Set(4096)),
-                ..ContextConfigPatch::default()
-            },
+            context: ContextConfigPatch::default(),
             ..SessionConfigPatch::default()
         };
         let action = drive
@@ -1309,7 +1627,6 @@ mod tests {
             .expect("session config");
         assert_eq!(drive.state().lifecycle.config_revision, 1);
         assert_eq!(config.turn.max_output_tokens, Some(2048));
-        assert_eq!(config.context.target_context_tokens, Some(4096));
     }
 
     #[test]

@@ -1,19 +1,20 @@
 use std::sync::Arc;
 
-use engine::{BlobRef, LlmGenerationResult, ToolInvocationBatchResult};
+use engine::{BlobRef, ContextCompactionResult, LlmGenerationResult, ToolInvocationBatchResult};
 use temporalio_macros::activities;
 use temporalio_sdk::activities::{ActivityContext, ActivityError};
 
 use crate::{
-    ACTIVITY_APPEND_EVENTS, ACTIVITY_CREATE_OR_LOAD_SESSION, ACTIVITY_LLM_GENERATE,
-    ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB, ACTIVITY_SKILL_CATALOG_REFRESH,
-    ACTIVITY_TOOL_INVOKE_BATCH, AppendEventsRequest, CreateOrLoadSessionRequest,
-    CreateOrLoadSessionResult, LlmGenerateActivityRequest, PutBlobRequest, ReadBlobRequest,
-    ReadBlobResult, SkillCatalogRefreshActivityRequest, SkillCatalogRefreshActivityResult,
-    ToolInvokeBatchActivityRequest,
+    ACTIVITY_APPEND_EVENTS, ACTIVITY_CONTEXT_COMPACT, ACTIVITY_CREATE_OR_LOAD_SESSION,
+    ACTIVITY_LLM_GENERATE, ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB, ACTIVITY_SKILL_CATALOG_REFRESH,
+    ACTIVITY_TOOL_INVOKE_BATCH, AppendEventsRequest, ContextCompactActivityRequest,
+    CreateOrLoadSessionRequest, CreateOrLoadSessionResult, LlmGenerateActivityRequest,
+    PutBlobRequest, ReadBlobRequest, ReadBlobResult, SkillCatalogRefreshActivityRequest,
+    SkillCatalogRefreshActivityResult, ToolInvokeBatchActivityRequest,
 };
 
 mod common;
+mod compaction;
 mod llm;
 mod skills;
 mod state;
@@ -77,6 +78,10 @@ mod tests {
         assert_eq!(
             WorkerActivities::llm_generate.name(),
             workflow::WorkflowActivities::llm_generate.name()
+        );
+        assert_eq!(
+            WorkerActivities::context_compact.name(),
+            workflow::WorkflowActivities::context_compact.name()
         );
         assert_eq!(
             WorkerActivities::tool_invoke_batch.name(),
@@ -223,6 +228,15 @@ impl WorkerActivities {
         request: LlmGenerateActivityRequest,
     ) -> Result<LlmGenerationResult, ActivityError> {
         llm::generate(self.state.llm(), request).await
+    }
+
+    #[activity(name = ACTIVITY_CONTEXT_COMPACT)]
+    pub async fn context_compact(
+        self: Arc<Self>,
+        _ctx: ActivityContext,
+        request: ContextCompactActivityRequest,
+    ) -> Result<ContextCompactionResult, ActivityError> {
+        compaction::compact_context(self.state.llm(), request).await
     }
 
     #[activity(name = ACTIVITY_TOOL_INVOKE_BATCH)]

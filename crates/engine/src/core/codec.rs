@@ -173,6 +173,8 @@ fn is_core_agent_event_envelope_kind(kind: &str) -> bool {
             | "forge.core.context.entries_removed"
             | "forge.core.context.keys_removed"
             | "forge.core.context.state_replaced"
+            | "forge.core.context.compaction_requested"
+            | "forge.core.context.compaction_finished"
             | "forge.core.tool_config.registry_changed"
             | "forge.core.tool_config.profile_selected"
             | "forge.core.tool_config.default_target_set"
@@ -212,6 +214,8 @@ fn core_agent_event_envelope_kind(event: &CoreAgentEvent) -> &'static str {
             ContextEvent::EntriesRemoved { .. } => "forge.core.context.entries_removed",
             ContextEvent::KeysRemoved { .. } => "forge.core.context.keys_removed",
             ContextEvent::StateReplaced { .. } => "forge.core.context.state_replaced",
+            ContextEvent::CompactionRequested { .. } => "forge.core.context.compaction_requested",
+            ContextEvent::CompactionFinished { .. } => "forge.core.context.compaction_finished",
         },
         CoreAgentEventKind::ToolConfig(event) => match event {
             ToolConfigEvent::RegistryChanged { .. } => "forge.core.tool_config.registry_changed",

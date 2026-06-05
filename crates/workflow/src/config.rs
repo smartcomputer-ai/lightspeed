@@ -37,12 +37,7 @@ pub fn default_session_config(model: ModelSelection) -> SessionConfig {
             max_output_tokens: None,
             provider_request_defaults,
         },
-        context: ContextConfig {
-            max_context_tokens: None,
-            target_context_tokens: None,
-            reserve_output_tokens: None,
-            compaction: None,
-        },
+        context: ContextConfig { compaction: None },
     }
 }
 

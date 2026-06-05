@@ -2,7 +2,8 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use async_trait::async_trait;
 use engine::{
-    CoreAgentIoError, CoreAgentLlm, LlmGenerationRequest, LlmGenerationResult, ProviderApiKind,
+    ContextCompactionRequest, ContextCompactionResult, CoreAgentIoError, CoreAgentLlm,
+    LlmGenerationRequest, LlmGenerationResult, ProviderApiKind,
 };
 
 use crate::{error::LlmAdapterResult, result::LlmGenerationExecution};
@@ -15,9 +16,18 @@ pub trait LlmGenerationAdapter: Send + Sync {
     ) -> LlmAdapterResult<LlmGenerationExecution>;
 }
 
+#[async_trait]
+pub trait LlmCompactionAdapter: Send + Sync {
+    async fn compact_context(
+        &self,
+        request: ContextCompactionRequest,
+    ) -> LlmAdapterResult<ContextCompactionResult>;
+}
+
 #[derive(Clone, Default)]
 pub struct LlmAdapterRegistry {
     generation: BTreeMap<ProviderApiKind, Arc<dyn LlmGenerationAdapter>>,
+    compaction: BTreeMap<ProviderApiKind, Arc<dyn LlmCompactionAdapter>>,
 }
 
 impl LlmAdapterRegistry {
@@ -34,6 +44,15 @@ impl LlmAdapterRegistry {
         self
     }
 
+    pub fn with_compaction_adapter(
+        mut self,
+        api_kind: ProviderApiKind,
+        adapter: Arc<dyn LlmCompactionAdapter>,
+    ) -> Self {
+        self.insert_compaction_adapter(api_kind, adapter);
+        self
+    }
+
     pub fn insert_generation_adapter(
         &mut self,
         api_kind: ProviderApiKind,
@@ -42,11 +61,26 @@ impl LlmAdapterRegistry {
         self.generation.insert(api_kind, adapter);
     }
 
+    pub fn insert_compaction_adapter(
+        &mut self,
+        api_kind: ProviderApiKind,
+        adapter: Arc<dyn LlmCompactionAdapter>,
+    ) {
+        self.compaction.insert(api_kind, adapter);
+    }
+
     pub fn generation_adapter(
         &self,
         api_kind: &ProviderApiKind,
     ) -> Option<&Arc<dyn LlmGenerationAdapter>> {
         self.generation.get(api_kind)
+    }
+
+    pub fn compaction_adapter(
+        &self,
+        api_kind: &ProviderApiKind,
+    ) -> Option<&Arc<dyn LlmCompactionAdapter>> {
+        self.compaction.get(api_kind)
     }
 }
 
@@ -84,6 +118,30 @@ impl LlmRuntime {
                 message: error.to_string(),
             })
     }
+
+    async fn compact_context_request(
+        &self,
+        request: ContextCompactionRequest,
+    ) -> Result<ContextCompactionResult, CoreAgentIoError> {
+        let Some(adapter) = self
+            .registry
+            .compaction_adapter(&request.request.model.api_kind)
+        else {
+            return Err(CoreAgentIoError::Failed {
+                message: format!(
+                    "no LLM compaction adapter registered for {:?}",
+                    request.request.model.api_kind
+                ),
+            });
+        };
+
+        adapter
+            .compact_context(request)
+            .await
+            .map_err(|error| CoreAgentIoError::Failed {
+                message: error.to_string(),
+            })
+    }
 }
 
 #[async_trait]
@@ -93,6 +151,13 @@ impl CoreAgentLlm for LlmRuntime {
         request: LlmGenerationRequest,
     ) -> Result<LlmGenerationResult, CoreAgentIoError> {
         self.generate_request(request).await
+    }
+
+    async fn compact_context(
+        &self,
+        request: ContextCompactionRequest,
+    ) -> Result<ContextCompactionResult, CoreAgentIoError> {
+        self.compact_context_request(request).await
     }
 }
 

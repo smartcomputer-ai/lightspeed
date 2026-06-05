@@ -457,6 +457,10 @@ async fn drive_until_idle(
                 let result = call_llm_generate(ctx, request).await?;
                 action = drive.resume_generation(result, workflow_time_ms(ctx))?;
             }
+            CoreAgentAction::CompactContext { request } => {
+                let result = call_context_compact(ctx, request).await?;
+                action = drive.resume_context_compaction(result, workflow_time_ms(ctx))?;
+            }
             CoreAgentAction::InvokeTools { request } => {
                 let result = call_tool_invoke_batch(ctx, request).await?;
                 action = drive.resume_tool_batch(result, workflow_time_ms(ctx))?;
@@ -528,6 +532,19 @@ async fn call_llm_generate(
     ctx.start_activity(
         WorkflowActivities::llm_generate,
         LlmGenerateActivityRequest { request },
+        activity_options(),
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!("{error}"))
+}
+
+async fn call_context_compact(
+    ctx: &mut WorkflowContext<AgentSessionWorkflow>,
+    request: engine::ContextCompactionRequest,
+) -> anyhow::Result<engine::ContextCompactionResult> {
+    ctx.start_activity(
+        WorkflowActivities::context_compact,
+        crate::ContextCompactActivityRequest { request },
         activity_options(),
     )
     .await

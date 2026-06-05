@@ -12,9 +12,15 @@
   implemented through CoreAgent policy/config validation, request lowering,
   runtime capture of returned native compaction items, deterministic active
   context pruning, API config mapping, and ignored live contract tests.
-- Remaining work is integration/projection coverage, active-context debugging
-  surface polish, live verification against OpenAI, and the deferred
-  standalone/fallback modes.
+- Also as of 2026-06-05, explicit OpenAI Responses provider-standalone
+  compaction is implemented for `ProviderStandalone`: core can request
+  compaction manually or from an idle high-watermark, runtime/worker/test
+  runners call `/responses/compact`, gateway exposes `context/compact`, and
+  API projection emits compaction requested/finished events plus debug
+  provider context items.
+- Remaining work is broader integration coverage, live verification against
+  OpenAI, and the deferred Forge-managed fallback mode for providers without
+  native compaction.
 
 ## Goal
 
@@ -81,9 +87,10 @@ The provider-triggered policy and lifecycle now exist for OpenAI Responses:
 native compaction configuration is lowered into normal generation requests,
 returned compaction output items become `ProviderOpaque` context entries, and
 eligible superseded entries are pruned with a `ProviderCompacted` reason.
-Remaining work is to broaden integration coverage, expose enough active-context
-metadata for debugging opaque items, and implement standalone/fallback paths
-only when there is a concrete use case.
+The provider-standalone policy now exists for OpenAI Responses as an explicit
+manual/API or idle high-watermark path. Remaining work is to broaden
+integration coverage, run live verification, and implement Forge-managed
+fallback only when there is a concrete use case.
 
 ## Non-Goals
 
@@ -183,6 +190,13 @@ This path is useful for manual compaction commands, idle-time maintenance, or
 recovering from context pressure before starting the next turn. It should not
 be the default path for normal OpenAI Responses generations.
 
+Forge implements this for OpenAI Responses behind the explicit
+`ProviderStandalone` policy. Core records a pending compaction request with a
+trigger (`manual` or `highWatermark`), emits substrate-neutral
+`CompactContext`, and only runtime/worker adapters perform the provider call.
+The result appends provider-opaque compaction context and the existing
+deterministic provider-compaction prune step removes superseded active entries.
+
 ### Forge-Managed Fallback Compaction
 
 This is the last resort.
@@ -202,23 +216,20 @@ shape:
 
 ```rust
 pub struct ContextConfig {
-    pub max_context_tokens: Option<u32>,
-    pub target_context_tokens: Option<u32>,
-    pub reserve_output_tokens: Option<u32>,
     pub compaction: Option<CompactionPolicy>,
 }
 
 pub enum CompactionPolicy {
     Disabled,
     ProviderTriggered {
-        compact_threshold: Option<u32>,
+        compact_threshold_tokens: Option<u32>,
     },
     ProviderStandalone {
-        trigger_tokens: Option<u32>,
+        compact_threshold_tokens: Option<u32>,
         target_tokens: Option<u32>,
     },
     ForgeManaged {
-        trigger_tokens: Option<u32>,
+        compact_threshold_tokens: Option<u32>,
         target_tokens: Option<u32>,
     },
 }
@@ -226,9 +237,12 @@ pub enum CompactionPolicy {
 
 The exact shape can differ, but it should keep the distinction between
 provider-triggered, provider-standalone, and Forge-managed fallback explicit.
-`ProviderTriggered.compact_threshold` is intentionally optional: `None` means
-use the provider's default server-side threshold and omit `compact_threshold`
-from the provider request.
+`compact_threshold_tokens` is intentionally optional: for `ProviderTriggered`,
+`None` means use the provider's default server-side threshold and omit
+`compact_threshold` from the provider request; for `ProviderStandalone`,
+`None` means no idle high-watermark auto-compaction and manual/API compaction
+can still be requested. `target_tokens` is a provider compact-endpoint target
+hint for how small the compacted output should be.
 
 OpenAI Responses request planning should lower `ProviderTriggered` into the
 provider-native request record:
@@ -237,8 +251,8 @@ provider-native request record:
 let mut compaction = json!({
     "type": "compaction"
 });
-if let Some(compact_threshold) = compact_threshold {
-    compaction["compact_threshold"] = json!(compact_threshold);
+if let Some(compact_threshold_tokens) = compact_threshold_tokens {
+    compaction["compact_threshold"] = json!(compact_threshold_tokens);
 }
 
 OpenAiResponsesRequest {
@@ -259,8 +273,9 @@ CoreAgentAction::CompactContext {
 }
 ```
 
-That action should be added only when the standalone path is implemented.
-Server-side OpenAI compaction can ship first without it.
+That action now exists for the explicit `ProviderStandalone` path. Server-side
+OpenAI compaction still rides on ordinary `GenerateLlm` and does not use this
+action.
 
 ## Context Entries
 
@@ -425,7 +440,7 @@ The context pruning step should be deterministic and planned by core after the
 generation result is committed. It should not require the worker to decide
 which Forge context entries to remove.
 
-Standalone compaction needs a new activity later:
+Standalone compaction now uses a dedicated activity:
 
 ```text
 drive emits CompactContext
@@ -434,8 +449,10 @@ drive emits CompactContext
   -> core prunes active context
 ```
 
-Implement server-side OpenAI compaction first. Add standalone compaction only
-after there is a concrete manual or idle maintenance use case.
+The same action is handled by the in-process runner for tests/evals. Worker
+errors remain activity failures so Temporal retry policy owns transient
+provider/runtime failures instead of encoding retry suppression in context
+state.
 
 ## API And Client Surface
 
@@ -446,6 +463,11 @@ First cut:
 
 - project `ProviderCompacted` context removals/replacements as ordinary context
   delta events,
+- expose `context/compact` as an explicit "compact according to policy"
+  command for manual/API use,
+- project `ContextCompactionRequested` and `ContextCompactionFinished` so
+  clients can show that compaction happened even when the opaque provider item
+  itself is not human-readable,
 - add a compact status item only if the UI needs a dedicated activity row,
 - show token estimates before/after when available,
 - expose active context entries enough for debugging provider-native compact
@@ -470,6 +492,10 @@ Unit tests:
   instructions, skill catalog, active skill activations, unconsumed run input,
   and entries after compaction.
 - Core does not prune while a turn/tool invariant requires an entry.
+- Core emits standalone compaction requests from manual command admission and
+  idle high-watermark pressure.
+- OpenAI runtime materializes `/responses/compact` requests and captures
+  compaction output items as provider-opaque context.
 
 Integration tests:
 
@@ -477,6 +503,7 @@ Integration tests:
   compaction item and old context is pruned before the next turn.
 - Gateway/session projection surfaces context replacement/removal events with
   the compaction reason.
+- Gateway maps `ProviderStandalone` API config and routes `context/compact`.
 
 Live tests:
 
@@ -512,11 +539,14 @@ Live tests:
 
 ### G4: Runtime And Projection Integration
 
-- [ ] Ensure Temporal workflow and in-process runner commit compaction context
-  entries and pruning events in the right order.
+- [x] Wire Temporal workflow, worker activity registration, and in-process
+  runner handling for `CompactContext`.
+- [ ] Add end-to-end workflow/runner tests that commit standalone compaction
+  context entries and pruning events in the right order.
 - [x] Project context prune/rewrite events clearly through `api-projection`.
 - [x] Expose active context entries enough for debugging provider-native
   compaction items without dumping encrypted payloads.
+- [x] Project compaction requested/finished events for UI/debug visibility.
 - [ ] Add CLI/TUI display support only if current context events are too opaque.
 
 ### G5: Live OpenAI Contract
@@ -529,13 +559,17 @@ Live tests:
 
 ### G6: Standalone And Fallback Paths
 
-- [ ] Add `CompactContext` action only when standalone compaction is needed.
-- [ ] Wire OpenAI `/responses/compact` through runtime/workflow.
+- [x] Add `CompactContext` action for explicit `ProviderStandalone`
+  compaction.
+- [x] Trigger standalone compaction from manual command/API admission.
+- [x] Trigger standalone compaction from idle context high-watermark pressure.
+- [x] Wire OpenAI `/responses/compact` through runtime/workflow/worker and
+  in-process runner.
 - [ ] Add Forge-managed summary fallback for providers without native compaction.
 
 ## Open Questions
 
-- What default `compact_threshold` should Forge use per model family?
+- What default `compact_threshold_tokens` should Forge use per model family?
 - Should compaction policy live in `ContextConfig`, provider request defaults,
   or both?
 - Should server-side native compaction pruning happen immediately after the

@@ -3,10 +3,10 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    BlobRef, ContextEntryKey, ContextItemId, CoreAgentEventKind, CoreAgentEventProposal,
-    CoreAgentJoins, CoreAgentState, CoreAgentStatus, DomainError, PlanNext, PlanningError,
-    ProviderApiKind, RunId, RunStatus, SkillId, SteeringId, ToolBatchId, ToolCallId, ToolName,
-    TurnId,
+    BlobRef, CompactionPolicy, ContextEntryKey, ContextItemId, CoreAgentEventKind,
+    CoreAgentEventProposal, CoreAgentJoins, CoreAgentState, CoreAgentStatus, DomainError, PlanNext,
+    PlanningError, ProviderApiKind, RunId, RunStatus, SkillId, SteeringId, ToolBatchId, ToolCallId,
+    ToolName, TurnId,
 };
 
 const INSTRUCTIONS_KEY_PREFIX: &str = "instructions.";
@@ -47,6 +47,15 @@ pub enum Event {
         entries: Vec<ContextEntry>,
         reason: ContextRewriteReason,
     },
+    CompactionRequested {
+        base_revision: u64,
+        trigger: ContextCompactionTrigger,
+    },
+    CompactionFinished {
+        base_revision: u64,
+        status: ContextCompactionStatus,
+        failure_ref: Option<BlobRef>,
+    },
 }
 
 pub type ContextEvent = Event;
@@ -58,6 +67,12 @@ pub struct ContextState {
     /// Active context entries in strictly increasing `entry_id` order. Gaps are
     /// expected after removals and state rewrites; ids are never reused.
     pub entries: Vec<ContextEntry>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub pending_compaction: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -87,6 +102,20 @@ pub enum ContextRewriteReason {
     Pruned,
     PolicyChanged,
     ProviderCompacted,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextCompactionTrigger {
+    Manual,
+    HighWatermark,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextCompactionStatus {
+    Succeeded,
+    Failed,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -278,6 +307,42 @@ pub(crate) fn planned_context_snapshot(
     api_kind: ProviderApiKind,
 ) -> Result<ContextSnapshot, PlanningError> {
     let entry_ids = planned_context_entry_ids(state);
+    let entries = context_entries_by_id(state, &entry_ids)?;
+    Ok(ContextSnapshot {
+        api_kind,
+        context_revision: state.context.revision,
+        token_estimate: combined_token_estimate(&entries),
+        entries,
+    })
+}
+
+pub(crate) fn compactable_context_entry_ids(state: &CoreAgentState) -> Vec<ContextEntryId> {
+    planned_context_entry_ids(state)
+        .into_iter()
+        .filter(|entry_id| {
+            entry_by_id(state, *entry_id).is_some_and(|entry| {
+                !matches!(
+                    entry.kind,
+                    ContextEntryKind::Instructions
+                        | ContextEntryKind::SkillCatalog
+                        | ContextEntryKind::SkillActivation { .. }
+                )
+            })
+        })
+        .collect()
+}
+
+pub(crate) fn compactable_context_snapshot(
+    state: &CoreAgentState,
+    api_kind: ProviderApiKind,
+) -> Result<ContextSnapshot, PlanningError> {
+    let entry_ids = compactable_context_entry_ids(state);
+    if entry_ids.is_empty() {
+        return Err(DomainError::InvariantViolation(
+            "no compactable context entries are active".to_owned(),
+        )
+        .into());
+    }
     let entries = context_entries_by_id(state, &entry_ids)?;
     Ok(ContextSnapshot {
         api_kind,
@@ -512,6 +577,10 @@ impl PlanNext for CoreContextPlanner {
             return Ok(vec![proposal]);
         }
 
+        if let Some(proposal) = high_watermark_compaction_proposal(state)? {
+            return Ok(vec![proposal]);
+        }
+
         let Some(active_run) = state.runs.active.as_ref() else {
             return Ok(Vec::new());
         };
@@ -539,6 +608,100 @@ impl PlanNext for CoreContextPlanner {
 
         Ok(Vec::new())
     }
+}
+
+pub(crate) fn manual_compaction_requested_proposal(
+    state: &CoreAgentState,
+) -> Result<CoreAgentEventProposal, DomainError> {
+    validate_standalone_compaction_can_start(state)?;
+    if compactable_context_entry_ids(state).is_empty() {
+        return Err(DomainError::InvariantViolation(
+            "no compactable context entries are active".to_owned(),
+        ));
+    }
+    Ok(compaction_requested_proposal(
+        state,
+        ContextCompactionTrigger::Manual,
+    ))
+}
+
+fn high_watermark_compaction_proposal(
+    state: &CoreAgentState,
+) -> Result<Option<CoreAgentEventProposal>, DomainError> {
+    if state.context.pending_compaction || state.runs.active.is_some() {
+        return Ok(None);
+    }
+    if !state.runs.queued.is_empty() {
+        return Ok(None);
+    }
+    let Some(config) = state.lifecycle.config.as_ref() else {
+        return Ok(None);
+    };
+    let Some(CompactionPolicy::ProviderStandalone {
+        compact_threshold_tokens: Some(compact_threshold_tokens),
+        ..
+    }) = &config.context.compaction
+    else {
+        return Ok(None);
+    };
+    let snapshot = planned_context_snapshot(state, config.model.api_kind.clone())
+        .map_err(|error| DomainError::InvariantViolation(error.to_string()))?;
+    let Some(estimate) = snapshot.token_estimate else {
+        return Ok(None);
+    };
+    if estimate.tokens < *compact_threshold_tokens {
+        return Ok(None);
+    }
+    let entry_ids = compactable_context_entry_ids(state);
+    if entry_ids.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(compaction_requested_proposal(
+        state,
+        ContextCompactionTrigger::HighWatermark,
+    )))
+}
+
+fn compaction_requested_proposal(
+    state: &CoreAgentState,
+    trigger: ContextCompactionTrigger,
+) -> CoreAgentEventProposal {
+    CoreAgentEventProposal::new(
+        CoreAgentJoins::default(),
+        CoreAgentEventKind::Context(Event::CompactionRequested {
+            base_revision: state.context.revision,
+            trigger,
+        }),
+    )
+}
+
+pub(crate) fn validate_standalone_compaction_can_start(
+    state: &CoreAgentState,
+) -> Result<(), DomainError> {
+    let Some(config) = state.lifecycle.config.as_ref() else {
+        return Err(DomainError::InvariantViolation(
+            "open session is missing config".to_owned(),
+        ));
+    };
+    if !matches!(
+        config.context.compaction,
+        Some(CompactionPolicy::ProviderStandalone { .. })
+    ) {
+        return Err(DomainError::ProviderCompatibility(
+            "context compaction command requires provider-standalone compaction policy".to_owned(),
+        ));
+    }
+    if state.context.pending_compaction {
+        return Err(DomainError::InvariantViolation(
+            "context compaction is already pending".to_owned(),
+        ));
+    }
+    if state.runs.active.is_some() || !state.runs.queued.is_empty() {
+        return Err(DomainError::InvariantViolation(
+            "context compaction can only run while no run is active or queued".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn missing_run_input_entries(state: &CoreAgentState) -> Result<Vec<ContextEntry>, DomainError> {
@@ -796,7 +959,47 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
             bump_context_revision(state)?;
             Ok(())
         }
+        Event::CompactionRequested {
+            base_revision,
+            trigger: _,
+        } => {
+            validate_base_revision(state, *base_revision)?;
+            validate_compaction_requested(state)?;
+            state.context.pending_compaction = true;
+            bump_context_revision(state)?;
+            Ok(())
+        }
+        Event::CompactionFinished {
+            base_revision,
+            status,
+            failure_ref,
+        } => {
+            validate_base_revision(state, *base_revision)?;
+            if matches!(status, ContextCompactionStatus::Succeeded) && failure_ref.is_some() {
+                return Err(DomainError::InvariantViolation(
+                    "successful context compaction cannot include a failure ref".to_owned(),
+                ));
+            }
+            if !state.context.pending_compaction {
+                return Err(DomainError::InvariantViolation(
+                    "context compaction finished without a pending request".to_owned(),
+                ));
+            }
+            state.context.pending_compaction = false;
+            bump_context_revision(state)?;
+            Ok(())
+        }
     }
+}
+
+fn validate_compaction_requested(state: &CoreAgentState) -> Result<(), DomainError> {
+    validate_standalone_compaction_can_start(state)?;
+    if compactable_context_entry_ids(state).is_empty() {
+        return Err(DomainError::InvariantViolation(
+            "context compaction request must contain at least one entry".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_base_revision(state: &CoreAgentState, base_revision: u64) -> Result<(), DomainError> {

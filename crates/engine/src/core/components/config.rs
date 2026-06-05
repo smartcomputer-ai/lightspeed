@@ -144,34 +144,16 @@ impl TurnConfigPatch {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextConfigPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_context_tokens: Option<OptionalConfigPatch<u32>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub target_context_tokens: Option<OptionalConfigPatch<u32>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reserve_output_tokens: Option<OptionalConfigPatch<u32>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compaction: Option<OptionalConfigPatch<CompactionPolicy>>,
 }
 
 impl ContextConfigPatch {
     pub fn apply_to(&self, config: &mut ContextConfig) {
-        apply_optional_config_patch(&mut config.max_context_tokens, &self.max_context_tokens);
-        apply_optional_config_patch(
-            &mut config.target_context_tokens,
-            &self.target_context_tokens,
-        );
-        apply_optional_config_patch(
-            &mut config.reserve_output_tokens,
-            &self.reserve_output_tokens,
-        );
         apply_optional_config_patch(&mut config.compaction, &self.compaction);
     }
 
     pub fn is_empty(&self) -> bool {
-        self.max_context_tokens.is_none()
-            && self.target_context_tokens.is_none()
-            && self.reserve_output_tokens.is_none()
-            && self.compaction.is_none()
+        self.compaction.is_none()
     }
 }
 
@@ -240,9 +222,6 @@ pub struct TurnConfig {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextConfig {
-    pub max_context_tokens: Option<u32>,
-    pub target_context_tokens: Option<u32>,
-    pub reserve_output_tokens: Option<u32>,
     pub compaction: Option<CompactionPolicy>,
 }
 
@@ -252,11 +231,11 @@ pub enum CompactionPolicy {
     Disabled,
     ProviderTriggered {
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        compact_threshold: Option<u32>,
+        compact_threshold_tokens: Option<u32>,
     },
     ProviderStandalone {
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        trigger_tokens: Option<u32>,
+        compact_threshold_tokens: Option<u32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         target_tokens: Option<u32>,
     },
@@ -302,15 +281,18 @@ fn validate_context_config(
     match (&context.compaction, api_kind) {
         (None | Some(CompactionPolicy::Disabled), _) => Ok(()),
         (
-            Some(CompactionPolicy::ProviderTriggered { compact_threshold }),
-            ProviderApiKind::OpenAiResponses,
-        ) => validate_openai_responses_compact_threshold(*compact_threshold),
-        (
-            Some(CompactionPolicy::ProviderStandalone {
-                trigger_tokens, ..
+            Some(CompactionPolicy::ProviderTriggered {
+                compact_threshold_tokens,
             }),
             ProviderApiKind::OpenAiResponses,
-        ) => validate_provider_standalone_compaction(*trigger_tokens),
+        ) => validate_openai_responses_compact_threshold(*compact_threshold_tokens),
+        (
+            Some(CompactionPolicy::ProviderStandalone {
+                compact_threshold_tokens,
+                ..
+            }),
+            ProviderApiKind::OpenAiResponses,
+        ) => validate_provider_standalone_compaction(*compact_threshold_tokens),
         (Some(CompactionPolicy::ProviderTriggered { .. }), api_kind) => {
             Err(DomainError::ProviderCompatibility(format!(
                 "provider-triggered compaction requires OpenAI Responses api kind, got {:?}",
@@ -327,12 +309,13 @@ fn validate_context_config(
 }
 
 fn validate_openai_responses_compact_threshold(
-    compact_threshold: Option<u32>,
+    compact_threshold_tokens: Option<u32>,
 ) -> Result<(), DomainError> {
-    if compact_threshold.is_some_and(|threshold| threshold < MIN_OPENAI_RESPONSES_COMPACT_THRESHOLD)
+    if compact_threshold_tokens
+        .is_some_and(|threshold| threshold < MIN_OPENAI_RESPONSES_COMPACT_THRESHOLD)
     {
         return Err(DomainError::ProviderCompatibility(format!(
-            "OpenAI Responses compact_threshold must be at least {} when set",
+            "OpenAI Responses compact_threshold_tokens must be at least {} when set",
             MIN_OPENAI_RESPONSES_COMPACT_THRESHOLD
         )));
     }
@@ -340,11 +323,11 @@ fn validate_openai_responses_compact_threshold(
 }
 
 fn validate_provider_standalone_compaction(
-    trigger_tokens: Option<u32>,
+    compact_threshold_tokens: Option<u32>,
 ) -> Result<(), DomainError> {
-    if trigger_tokens.is_some_and(|tokens| tokens == 0) {
+    if compact_threshold_tokens.is_some_and(|tokens| tokens == 0) {
         return Err(DomainError::ProviderCompatibility(
-            "provider-standalone compaction trigger_tokens must be greater than 0 when set"
+            "provider-standalone compaction compact_threshold_tokens must be greater than 0 when set"
                 .to_owned(),
         ));
     }
@@ -408,12 +391,7 @@ mod tests {
                 max_output_tokens: None,
                 provider_request_defaults: ProviderRequestDefaults::None,
             },
-            context: ContextConfig {
-                max_context_tokens: None,
-                target_context_tokens: None,
-                reserve_output_tokens: None,
-                compaction,
-            },
+            context: ContextConfig { compaction },
         }
     }
 
@@ -422,7 +400,7 @@ mod tests {
         let config = config(
             ProviderApiKind::OpenAiResponses,
             Some(CompactionPolicy::ProviderTriggered {
-                compact_threshold: Some(999),
+                compact_threshold_tokens: Some(999),
             }),
         );
 
@@ -435,10 +413,12 @@ mod tests {
 
     #[test]
     fn provider_triggered_compaction_accepts_optional_or_minimum_openai_threshold() {
-        for compact_threshold in [None, Some(MIN_OPENAI_RESPONSES_COMPACT_THRESHOLD)] {
+        for compact_threshold_tokens in [None, Some(MIN_OPENAI_RESPONSES_COMPACT_THRESHOLD)] {
             let config = config(
                 ProviderApiKind::OpenAiResponses,
-                Some(CompactionPolicy::ProviderTriggered { compact_threshold }),
+                Some(CompactionPolicy::ProviderTriggered {
+                    compact_threshold_tokens,
+                }),
             );
 
             config
@@ -452,7 +432,7 @@ mod tests {
         let config = config(
             ProviderApiKind::AnthropicMessages,
             Some(CompactionPolicy::ProviderTriggered {
-                compact_threshold: None,
+                compact_threshold_tokens: None,
             }),
         );
 

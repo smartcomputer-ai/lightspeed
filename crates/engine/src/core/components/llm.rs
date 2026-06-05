@@ -172,17 +172,10 @@ pub struct OpenAiResponsesCompactionRequest {
 pub struct ContextCompactionResult {
     pub session_id: SessionId,
     pub context_revision: u64,
-    pub status: ContextCompactionStatus,
+    pub status: crate::ContextCompactionStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure_ref: Option<crate::BlobRef>,
     pub context_entries: Vec<crate::ContextEntryInput>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ContextCompactionStatus {
-    Succeeded,
-    Failed,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -329,6 +322,72 @@ pub(crate) fn build_llm_request(
     })
 }
 
+pub(crate) fn build_context_compaction_task(
+    state: &CoreAgentState,
+) -> Result<ContextCompactionTask, PlanningError> {
+    let Some(config) = state.lifecycle.config.as_ref() else {
+        return Err(
+            DomainError::InvariantViolation("active session is missing config".to_owned()).into(),
+        );
+    };
+    if !state.context.pending_compaction {
+        return Err(DomainError::InvariantViolation(
+            "context compaction request is missing pending state".to_owned(),
+        )
+        .into());
+    }
+    let CompactionPolicy::ProviderStandalone { target_tokens, .. } =
+        config.context.compaction.as_ref().ok_or_else(|| {
+            DomainError::ProviderCompatibility(
+                "pending context compaction requires provider-standalone policy".to_owned(),
+            )
+        })?
+    else {
+        return Err(DomainError::ProviderCompatibility(
+            "pending context compaction requires provider-standalone policy".to_owned(),
+        )
+        .into());
+    };
+    let context = crate::core::components::context::compactable_context_snapshot(
+        state,
+        config.model.api_kind.clone(),
+    )?;
+    let kind = match (
+        &config.model.api_kind,
+        &config.turn.provider_request_defaults,
+    ) {
+        (ProviderApiKind::OpenAiResponses, ProviderRequestDefaults::None) => {
+            ContextCompactionRequestKind::OpenAiResponses(OpenAiResponsesCompactionRequest {
+                input_context: context,
+                target_tokens: *target_tokens,
+                store: OpenAiResponsesRequestDefaults::default().store,
+                extra: BTreeMap::new(),
+            })
+        }
+        (ProviderApiKind::OpenAiResponses, ProviderRequestDefaults::OpenAiResponses(defaults)) => {
+            ContextCompactionRequestKind::OpenAiResponses(OpenAiResponsesCompactionRequest {
+                input_context: context,
+                target_tokens: *target_tokens,
+                store: defaults.store,
+                extra: BTreeMap::new(),
+            })
+        }
+        (api_kind, _) => {
+            return Err(DomainError::ProviderCompatibility(format!(
+                "provider-standalone compaction requires OpenAI Responses api kind, got {:?}",
+                api_kind
+            ))
+            .into());
+        }
+    };
+    let request_fingerprint = compaction_request_fingerprint(&config.model, &kind)?;
+    Ok(ContextCompactionTask {
+        model: config.model.clone(),
+        request_fingerprint,
+        kind,
+    })
+}
+
 fn session_config_for_run(config: &SessionConfig, run_config: &RunConfig) -> SessionConfig {
     let mut config = config.clone();
     if let Some(max_output_tokens) = run_config.max_output_tokens {
@@ -410,14 +469,18 @@ fn openai_responses_request(
 
 fn openai_responses_context_management(config: &SessionConfig) -> Option<Value> {
     match &config.context.compaction {
-        Some(CompactionPolicy::ProviderTriggered { compact_threshold }) => {
+        Some(CompactionPolicy::ProviderTriggered {
+            compact_threshold_tokens,
+        }) => {
             let mut compaction = json!({ "type": "compaction" });
-            if let Some(compact_threshold) = compact_threshold {
-                compaction["compact_threshold"] = json!(compact_threshold);
+            if let Some(compact_threshold_tokens) = compact_threshold_tokens {
+                compaction["compact_threshold"] = json!(compact_threshold_tokens);
             }
             Some(json!([compaction]))
         }
-        None | Some(CompactionPolicy::Disabled) => None,
+        None | Some(CompactionPolicy::Disabled | CompactionPolicy::ProviderStandalone { .. }) => {
+            None
+        }
     }
 }
 
@@ -525,6 +588,17 @@ fn request_fingerprint(
 ) -> Result<String, PlanningError> {
     let encoded = serde_json::to_vec(&(model, kind, run_id, turn_id)).map_err(|error| {
         PlanningError::Rejected(format!("failed to fingerprint request: {error}"))
+    })?;
+    let digest = Sha256::digest(encoded);
+    Ok(format!("sha256:{}", hex::encode(digest)))
+}
+
+fn compaction_request_fingerprint(
+    model: &ModelSelection,
+    kind: &ContextCompactionRequestKind,
+) -> Result<String, PlanningError> {
+    let encoded = serde_json::to_vec(&(model, kind)).map_err(|error| {
+        PlanningError::Rejected(format!("failed to fingerprint compaction request: {error}"))
     })?;
     let digest = Sha256::digest(encoded);
     Ok(format!("sha256:{}", hex::encode(digest)))
@@ -698,12 +772,7 @@ mod tests {
                 max_output_tokens: None,
                 provider_request_defaults: ProviderRequestDefaults::None,
             },
-            context: crate::ContextConfig {
-                max_context_tokens: None,
-                target_context_tokens: None,
-                reserve_output_tokens: None,
-                compaction: None,
-            },
+            context: crate::ContextConfig { compaction: None },
         };
         let run_config = RunConfig {
             max_output_tokens: Some(2048),
@@ -737,11 +806,8 @@ mod tests {
                 provider_request_defaults: ProviderRequestDefaults::None,
             },
             context: crate::ContextConfig {
-                max_context_tokens: None,
-                target_context_tokens: None,
-                reserve_output_tokens: None,
                 compaction: Some(CompactionPolicy::ProviderTriggered {
-                    compact_threshold: Some(120_000),
+                    compact_threshold_tokens: Some(120_000),
                 }),
             },
         };
@@ -785,11 +851,8 @@ mod tests {
                 provider_request_defaults: ProviderRequestDefaults::None,
             },
             context: crate::ContextConfig {
-                max_context_tokens: None,
-                target_context_tokens: None,
-                reserve_output_tokens: None,
                 compaction: Some(CompactionPolicy::ProviderTriggered {
-                    compact_threshold: None,
+                    compact_threshold_tokens: None,
                 }),
             },
         };

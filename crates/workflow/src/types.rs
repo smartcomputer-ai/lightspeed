@@ -111,6 +111,11 @@ pub struct LlmGenerateActivityRequest {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextCompactActivityRequest {
+    pub request: engine::ContextCompactionRequest,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolInvokeBatchActivityRequest {
     pub request: engine::ToolInvocationBatchRequest,
 }

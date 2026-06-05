@@ -124,7 +124,8 @@ fn openai_responses_llm(blobs: Arc<dyn BlobStore>) -> anyhow::Result<Arc<dyn Cor
     let adapter = Arc::new(OpenAiResponsesLlmAdapter::new(Arc::new(openai), blobs));
     let runtime = LlmRuntime::new(
         LlmAdapterRegistry::new()
-            .with_generation_adapter(ProviderApiKind::OpenAiResponses, adapter),
+            .with_generation_adapter(ProviderApiKind::OpenAiResponses, adapter.clone())
+            .with_compaction_adapter(ProviderApiKind::OpenAiResponses, adapter),
     );
     Ok(Arc::new(runtime))
 }

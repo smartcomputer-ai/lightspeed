@@ -11,15 +11,15 @@ use api::{
     AgentApiError, AgentApiErrorKind, AgentApiOutcome, AgentApiService, BlobGetParams,
     BlobGetResponse, BlobHasItem, BlobHasManyParams, BlobHasManyResponse, BlobPutManyParams,
     BlobPutManyResponse, BlobPutParams, BlobPutResponse, ClientCapabilities, CompactionPolicyInput,
-    ContextConfigInput as ApiContextConfigInput, ContextConfigPatchInput, FieldPatch,
-    GenerationConfig, GenerationConfigPatch, InitializeParams, InitializeResponse, InputItem,
-    ModelConfig, ReasoningEffort, RunCancelParams, RunCancelResponse, RunDefaultsConfig,
-    RunDefaultsPatch, RunLimitsConfig, RunStartConfig, RunStartParams, RunStartResponse, RunView,
-    ServerCapabilities, ServerInfo, SessionCloseParams, SessionCloseResponse, SessionConfigInput,
-    SessionConfigPatchInput, SessionEventsReadParams, SessionEventsReadResponse, SessionReadParams,
-    SessionReadResponse, SessionStartParams, SessionStartResponse, SessionUpdateParams,
-    SessionUpdateResponse, SessionView, SkillActivateParams, SkillActivateResponse,
-    SkillActivationScope as ApiSkillActivationScope,
+    ContextCompactParams, ContextCompactResponse, ContextConfigInput as ApiContextConfigInput,
+    ContextConfigPatchInput, FieldPatch, GenerationConfig, GenerationConfigPatch, InitializeParams,
+    InitializeResponse, InputItem, ModelConfig, ReasoningEffort, RunCancelParams,
+    RunCancelResponse, RunDefaultsConfig, RunDefaultsPatch, RunLimitsConfig, RunStartConfig,
+    RunStartParams, RunStartResponse, RunView, ServerCapabilities, ServerInfo, SessionCloseParams,
+    SessionCloseResponse, SessionConfigInput, SessionConfigPatchInput, SessionEventsReadParams,
+    SessionEventsReadResponse, SessionReadParams, SessionReadResponse, SessionStartParams,
+    SessionStartResponse, SessionUpdateParams, SessionUpdateResponse, SessionView,
+    SkillActivateParams, SkillActivateResponse, SkillActivationScope as ApiSkillActivationScope,
     SkillActivationSource as ApiSkillActivationSource, SkillActivationView, SkillActiveParams,
     SkillActiveResponse, SkillDeactivateParams, SkillDeactivateResponse, SkillListItem,
     SkillListParams, SkillListResponse, VfsMountAccess as ApiVfsMountAccess, VfsMountDeleteParams,
@@ -1133,6 +1133,41 @@ impl GatewayAgentApi {
         }
     }
 
+    async fn wait_for_context_compaction_complete(
+        &self,
+        session_id: &SessionId,
+        baseline_revision: u64,
+        baseline_failures: usize,
+    ) -> Result<SessionView, AgentApiError> {
+        let started = Instant::now();
+        loop {
+            if started.elapsed() > self.operation_timeout {
+                return Err(AgentApiError::internal(format!(
+                    "timed out waiting for agent context update: {session_id}"
+                )));
+            }
+            if let Some(status) = self.query_status_optional(session_id).await? {
+                if status.admission_failures.len() > baseline_failures {
+                    if let Some(failure) = status.admission_failures.last() {
+                        return Err(map_admission_failure_to_api_error(failure));
+                    }
+                }
+                if let Some(error) = status.last_error {
+                    return Err(AgentApiError::internal(format!(
+                        "agent workflow reported error: {error}"
+                    )));
+                }
+            }
+            let loaded = self.load_session_state(session_id).await?;
+            if loaded.state.context.revision > baseline_revision
+                && !loaded.state.context.pending_compaction
+            {
+                return self.project_session_by_id(session_id).await;
+            }
+            tokio::time::sleep(self.poll_interval).await;
+        }
+    }
+
     async fn wait_for_run_accepted(
         &self,
         session_id: &SessionId,
@@ -1504,6 +1539,28 @@ impl AgentApiService for GatewayAgentApi {
             .map_err(map_workflow_interaction_error)?;
         let session = self.wait_for_closed_session(&session_id).await?;
         Ok(AgentApiOutcome::new(SessionCloseResponse { session }))
+    }
+
+    async fn compact_context(
+        &self,
+        params: ContextCompactParams,
+    ) -> Result<AgentApiOutcome<ContextCompactResponse>, AgentApiError> {
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let loaded = self.load_session_state(&session_id).await?;
+        let baseline_revision = loaded.state.context.revision;
+        let baseline_failures = self
+            .query_status_optional(&session_id)
+            .await?
+            .map(|status| status.admission_failures.len())
+            .unwrap_or(0);
+        self.submit_core_command(&session_id, CoreAgentCommand::CompactContext)
+            .await?;
+        let session = self
+            .wait_for_context_compaction_complete(&session_id, baseline_revision, baseline_failures)
+            .await?;
+        Ok(AgentApiOutcome::new(ContextCompactResponse { session }))
     }
 
     async fn start_run(
@@ -2424,15 +2481,6 @@ fn apply_context_config(
     let Some(context) = context else {
         return;
     };
-    if let Some(max_context_tokens) = context.max_context_tokens {
-        config.max_context_tokens = Some(max_context_tokens);
-    }
-    if let Some(target_context_tokens) = context.target_context_tokens {
-        config.target_context_tokens = Some(target_context_tokens);
-    }
-    if let Some(reserve_output_tokens) = context.reserve_output_tokens {
-        config.reserve_output_tokens = Some(reserve_output_tokens);
-    }
     if let Some(compaction) = context.compaction {
         config.compaction = Some(compaction_policy_from_api(compaction));
     }
@@ -2534,9 +2582,6 @@ fn context_config_patch_from_api(patch: Option<ContextConfigPatchInput>) -> Cont
         return ContextConfigPatch::default();
     };
     ContextConfigPatch {
-        max_context_tokens: patch.max_context_tokens.map(optional_patch_from_api),
-        target_context_tokens: patch.target_context_tokens.map(optional_patch_from_api),
-        reserve_output_tokens: patch.reserve_output_tokens.map(optional_patch_from_api),
         compaction: patch
             .compaction
             .map(|patch| optional_patch_from_api_map(patch, compaction_policy_from_api)),
@@ -2563,9 +2608,18 @@ fn optional_patch_from_api_map<T, U>(
 fn compaction_policy_from_api(policy: CompactionPolicyInput) -> CompactionPolicy {
     match policy {
         CompactionPolicyInput::Disabled => CompactionPolicy::Disabled,
-        CompactionPolicyInput::ProviderTriggered { compact_threshold } => {
-            CompactionPolicy::ProviderTriggered { compact_threshold }
-        }
+        CompactionPolicyInput::ProviderTriggered {
+            compact_threshold_tokens,
+        } => CompactionPolicy::ProviderTriggered {
+            compact_threshold_tokens,
+        },
+        CompactionPolicyInput::ProviderStandalone {
+            compact_threshold_tokens,
+            target_tokens,
+        } => CompactionPolicy::ProviderStandalone {
+            compact_threshold_tokens,
+            target_tokens,
+        },
     }
 }
 
@@ -3012,7 +3066,7 @@ mod tests {
             &mut config.context,
             Some(ApiContextConfigInput {
                 compaction: Some(CompactionPolicyInput::ProviderTriggered {
-                    compact_threshold: Some(120_000),
+                    compact_threshold_tokens: Some(120_000),
                 }),
                 ..ApiContextConfigInput::default()
             }),
@@ -3021,7 +3075,31 @@ mod tests {
         assert_eq!(
             config.context.compaction,
             Some(CompactionPolicy::ProviderTriggered {
-                compact_threshold: Some(120_000)
+                compact_threshold_tokens: Some(120_000)
+            })
+        );
+    }
+
+    #[test]
+    fn session_start_config_maps_provider_standalone_compaction() {
+        let mut config = default_session_config(openai_model());
+
+        apply_context_config(
+            &mut config.context,
+            Some(ApiContextConfigInput {
+                compaction: Some(CompactionPolicyInput::ProviderStandalone {
+                    compact_threshold_tokens: Some(120_000),
+                    target_tokens: Some(80_000),
+                }),
+                ..ApiContextConfigInput::default()
+            }),
+        );
+
+        assert_eq!(
+            config.context.compaction,
+            Some(CompactionPolicy::ProviderStandalone {
+                compact_threshold_tokens: Some(120_000),
+                target_tokens: Some(80_000),
             })
         );
     }

@@ -229,11 +229,8 @@ fn session_config(model: ModelSelection) -> SessionConfig {
             ),
         },
         context: ContextConfig {
-            max_context_tokens: None,
-            target_context_tokens: None,
-            reserve_output_tokens: None,
             compaction: Some(CompactionPolicy::ProviderTriggered {
-                compact_threshold: Some(2_000),
+                compact_threshold_tokens: Some(2_000),
             }),
         },
     }

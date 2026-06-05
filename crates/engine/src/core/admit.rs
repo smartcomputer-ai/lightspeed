@@ -46,7 +46,7 @@ impl AdmitCommand for CoreAdmitCommand {
                 require_open(state)?;
                 require_no_active_or_queued_work(
                     state,
-                    "session config can only change while no run is active or queued",
+                    "session config can only change while no run or compaction is active or queued",
                 )?;
                 if let Some(expected_revision) = expected_revision {
                     let actual_revision = state.lifecycle.config_revision;
@@ -91,6 +91,10 @@ impl AdmitCommand for CoreAdmitCommand {
                 run_config,
             } => {
                 require_open(state)?;
+                require_no_pending_compaction(
+                    state,
+                    "run cannot be requested while context compaction is pending",
+                )?;
                 validate_run_config_for_state(state, &run_config)
                     .map_err(command_rejection_from_domain)?;
                 crate::core::components::context::validate_run_input_entries(&input)
@@ -118,6 +122,10 @@ impl AdmitCommand for CoreAdmitCommand {
             }
             CoreAgentCommand::UpsertContext { key, entry } => {
                 require_open(state)?;
+                require_no_pending_compaction(
+                    state,
+                    "context cannot be edited while context compaction is pending",
+                )?;
                 crate::core::components::context::validate_external_context_edit(&key, &entry)
                     .map_err(command_rejection_from_domain)?;
                 let entries = crate::core::components::context::context_entries_from_inputs(
@@ -135,6 +143,10 @@ impl AdmitCommand for CoreAdmitCommand {
             }
             CoreAgentCommand::RemoveContext { key } => {
                 require_open(state)?;
+                require_no_pending_compaction(
+                    state,
+                    "context cannot be edited while context compaction is pending",
+                )?;
                 crate::core::components::context::validate_context_key_exists(state, &key)
                     .map_err(unknown_reference_rejection_from_domain)?;
                 Ok(vec![CoreAgentEventProposal::new(
@@ -145,9 +157,18 @@ impl AdmitCommand for CoreAdmitCommand {
                     }),
                 )])
             }
+            CoreAgentCommand::CompactContext => {
+                require_open(state)?;
+                crate::core::components::context::manual_compaction_requested_proposal(state)
+                    .map(|proposal| vec![proposal])
+                    .map_err(command_rejection_from_domain)
+            }
             CoreAgentCommand::CloseSession => {
                 require_open(state)?;
-                if state.runs.active.is_some() || !state.runs.queued.is_empty() {
+                if state.runs.active.is_some()
+                    || !state.runs.queued.is_empty()
+                    || state.context.pending_compaction
+                {
                     return reject(
                         CommandRejectionKind::ActiveWork,
                         "session cannot close with active work",
@@ -249,7 +270,21 @@ fn require_no_active_or_queued_work(
     state: &CoreAgentState,
     message: &'static str,
 ) -> Result<(), CommandError> {
-    if state.runs.active.is_some() || !state.runs.queued.is_empty() {
+    if state.runs.active.is_some()
+        || !state.runs.queued.is_empty()
+        || state.context.pending_compaction
+    {
+        reject(CommandRejectionKind::ActiveWork, message)
+    } else {
+        Ok(())
+    }
+}
+
+fn require_no_pending_compaction(
+    state: &CoreAgentState,
+    message: &'static str,
+) -> Result<(), CommandError> {
+    if state.context.pending_compaction {
         reject(CommandRejectionKind::ActiveWork, message)
     } else {
         Ok(())

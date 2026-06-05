@@ -299,6 +299,10 @@ impl SessionRunner {
                     };
                     action = drive.resume_generation(result, observed_at_ms)?;
                 }
+                CoreAgentAction::CompactContext { request } => {
+                    let result = self.llm.compact_context(request).await?;
+                    action = drive.resume_context_compaction(result, observed_at_ms)?;
+                }
                 CoreAgentAction::InvokeTools { request } => {
                     let result = match self.tools.as_deref() {
                         Some(tools) => match tools.invoke_batch(request.clone()).await {
@@ -796,12 +800,7 @@ mod tests {
                 max_output_tokens: None,
                 provider_request_defaults: ProviderRequestDefaults::None,
             },
-            context: ContextConfig {
-                max_context_tokens: None,
-                target_context_tokens: None,
-                reserve_output_tokens: None,
-                compaction: None,
-            },
+            context: ContextConfig { compaction: None },
         }
     }
 

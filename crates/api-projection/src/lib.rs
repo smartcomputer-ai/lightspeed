@@ -17,13 +17,14 @@ use api::{
 };
 use engine::{ApplyEvent, ToolExecutionTarget};
 use engine::{
-    CompactionPolicy, ContextEntry, ContextEntryId, ContextEntryInput, ContextEntryKind,
-    ContextEntrySource, ContextEvent, ContextMessageRole, ContextRemovalReason,
-    ContextRewriteReason, CoreAgentCodec, CoreAgentEntry, CoreAgentEventKind, CoreAgentJoins,
-    CoreAgentLifecycleEvent, CoreAgentState, CoreAgentStatus, CoreApplyEvent, EventSeq,
-    LlmGenerationStatus, ModelProviderOptions, ModelSelection, ObservedToolCall, ProviderApiKind,
-    ProviderRequestDefaults, RunEvent, RunFailure, RunId, RunStatus, SessionConfig, SessionId,
-    SteeringId, ToolBatchId, ToolCallStatus, ToolConfigEvent, ToolEvent, TurnEvent, TurnId,
+    CompactionPolicy, ContextCompactionStatus, ContextCompactionTrigger, ContextEntry,
+    ContextEntryId, ContextEntryInput, ContextEntryKind, ContextEntrySource, ContextEvent,
+    ContextMessageRole, ContextRemovalReason, ContextRewriteReason, CoreAgentCodec, CoreAgentEntry,
+    CoreAgentEventKind, CoreAgentJoins, CoreAgentLifecycleEvent, CoreAgentState, CoreAgentStatus,
+    CoreApplyEvent, EventSeq, LlmGenerationStatus, ModelProviderOptions, ModelSelection,
+    ObservedToolCall, ProviderApiKind, ProviderRequestDefaults, RunEvent, RunFailure, RunId,
+    RunStatus, SessionConfig, SessionId, SteeringId, ToolBatchId, ToolCallStatus, ToolConfigEvent,
+    ToolEvent, TurnEvent, TurnId,
     storage::{
         BlobStore, BlobStoreError, DynamicSessionEntry, ReadSessionEvents, SessionRecord,
         SessionStore, SessionStoreError,
@@ -235,9 +236,6 @@ impl<'a> CoreAgentProjector<'a> {
                 reasoning_effort: reasoning_effort_to_api(&config.turn.provider_request_defaults),
             },
             context: ContextConfigInput {
-                max_context_tokens: config.context.max_context_tokens,
-                target_context_tokens: config.context.target_context_tokens,
-                reserve_output_tokens: config.context.reserve_output_tokens,
                 compaction: config
                     .context
                     .compaction
@@ -409,6 +407,26 @@ impl<'a> CoreAgentProjector<'a> {
                         reason: context_rewrite_reason_to_api(reason).to_owned(),
                     })
                 }
+                ContextEvent::CompactionRequested {
+                    base_revision,
+                    trigger,
+                } => Ok(SessionEventKindView::ContextCompactionRequested {
+                    base_revision: *base_revision,
+                    revision: context_event_revision(*base_revision)?,
+                    trigger: context_compaction_trigger_to_api(*trigger).to_owned(),
+                }),
+                ContextEvent::CompactionFinished {
+                    base_revision,
+                    status,
+                    failure_ref,
+                } => Ok(SessionEventKindView::ContextCompactionFinished {
+                    base_revision: *base_revision,
+                    revision: context_event_revision(*base_revision)?,
+                    status: context_compaction_status_to_api(*status).to_owned(),
+                    failure_ref: failure_ref
+                        .as_ref()
+                        .map(|blob_ref| blob_ref.as_str().to_owned()),
+                }),
             },
             CoreAgentEventKind::ToolConfig(event) => match event {
                 ToolConfigEvent::RegistryChanged { .. } => {
@@ -834,14 +852,35 @@ fn context_rewrite_reason_to_api(reason: &ContextRewriteReason) -> &'static str 
     }
 }
 
+fn context_compaction_trigger_to_api(trigger: ContextCompactionTrigger) -> &'static str {
+    match trigger {
+        ContextCompactionTrigger::Manual => "manual",
+        ContextCompactionTrigger::HighWatermark => "highWatermark",
+    }
+}
+
+fn context_compaction_status_to_api(status: ContextCompactionStatus) -> &'static str {
+    match status {
+        ContextCompactionStatus::Succeeded => "succeeded",
+        ContextCompactionStatus::Failed => "failed",
+    }
+}
+
 fn compaction_policy_to_api(policy: &CompactionPolicy) -> CompactionPolicyInput {
     match policy {
         CompactionPolicy::Disabled => CompactionPolicyInput::Disabled,
-        CompactionPolicy::ProviderTriggered { compact_threshold } => {
-            CompactionPolicyInput::ProviderTriggered {
-                compact_threshold: *compact_threshold,
-            }
-        }
+        CompactionPolicy::ProviderTriggered {
+            compact_threshold_tokens,
+        } => CompactionPolicyInput::ProviderTriggered {
+            compact_threshold_tokens: *compact_threshold_tokens,
+        },
+        CompactionPolicy::ProviderStandalone {
+            compact_threshold_tokens,
+            target_tokens,
+        } => CompactionPolicyInput::ProviderStandalone {
+            compact_threshold_tokens: *compact_threshold_tokens,
+            target_tokens: *target_tokens,
+        },
     }
 }
 

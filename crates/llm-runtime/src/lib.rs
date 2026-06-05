@@ -14,6 +14,6 @@ pub mod result;
 pub mod testing;
 
 pub use error::{LlmAdapterError, LlmAdapterResult};
-pub use executor::{LlmAdapterRegistry, LlmGenerationAdapter, LlmRuntime};
+pub use executor::{LlmAdapterRegistry, LlmCompactionAdapter, LlmGenerationAdapter, LlmRuntime};
 pub use openai_responses::{OpenAiResponsesApi, OpenAiResponsesLlmAdapter};
 pub use result::{LlmGenerationExecution, failed_generation_result};

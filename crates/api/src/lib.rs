@@ -21,6 +21,7 @@ pub const METHOD_SESSION_UPDATE: &str = "session/update";
 pub const METHOD_SESSION_READ: &str = "session/read";
 pub const METHOD_SESSION_EVENTS_READ: &str = "session/events/read";
 pub const METHOD_SESSION_CLOSE: &str = "session/close";
+pub const METHOD_CONTEXT_COMPACT: &str = "context/compact";
 pub const METHOD_RUN_START: &str = "run/start";
 pub const METHOD_RUN_CANCEL: &str = "run/cancel";
 pub const METHOD_SKILLS_LIST: &str = "skills/list";
@@ -125,6 +126,11 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: SessionCloseParams,
     ) -> Result<AgentApiOutcome<SessionCloseResponse>, AgentApiError>;
+
+    async fn compact_context(
+        &self,
+        params: ContextCompactParams,
+    ) -> Result<AgentApiOutcome<ContextCompactResponse>, AgentApiError>;
 
     async fn start_run(
         &self,
@@ -327,12 +333,6 @@ pub struct GenerationConfig {
 #[serde(rename_all = "camelCase")]
 pub struct ContextConfigInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_context_tokens: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub target_context_tokens: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reserve_output_tokens: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compaction: Option<CompactionPolicyInput>,
 }
 
@@ -342,7 +342,13 @@ pub enum CompactionPolicyInput {
     Disabled,
     ProviderTriggered {
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        compact_threshold: Option<u32>,
+        compact_threshold_tokens: Option<u32>,
+    },
+    ProviderStandalone {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        compact_threshold_tokens: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        target_tokens: Option<u32>,
     },
 }
 
@@ -404,12 +410,6 @@ pub struct GenerationConfigPatch {
 #[serde(rename_all = "camelCase")]
 pub struct ContextConfigPatchInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_context_tokens: Option<FieldPatch<u32>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub target_context_tokens: Option<FieldPatch<u32>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reserve_output_tokens: Option<FieldPatch<u32>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compaction: Option<FieldPatch<CompactionPolicyInput>>,
 }
 
@@ -425,6 +425,18 @@ pub struct RunDefaultsPatch {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionUpdateResponse {
+    pub session: SessionView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextCompactParams {
+    pub session_id: SessionId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextCompactResponse {
     pub session: SessionView,
 }
 
@@ -600,6 +612,18 @@ pub enum SessionEventKindView {
         revision: u64,
         items: Vec<SessionItemView>,
         reason: String,
+    },
+    ContextCompactionRequested {
+        base_revision: u64,
+        revision: u64,
+        trigger: String,
+    },
+    ContextCompactionFinished {
+        base_revision: u64,
+        revision: u64,
+        status: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        failure_ref: Option<String>,
     },
     SkillCatalogSet {
         catalog_ref: Option<String>,
@@ -1583,6 +1607,10 @@ pub async fn dispatch_json_rpc(
             Ok(params) => json_rpc_outcome(id, service.close_session(params).await),
             Err(error) => JsonRpcResponse::failure(id, error),
         },
+        METHOD_CONTEXT_COMPACT => match json_rpc_params::<ContextCompactParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.compact_context(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
         METHOD_RUN_START => match json_rpc_params::<RunStartParams>(request.params) {
             Ok(params) => json_rpc_outcome(id, service.start_run(params).await),
             Err(error) => JsonRpcResponse::failure(id, error),
@@ -1829,6 +1857,25 @@ mod tests {
                         }
                     }
                 })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["session"]["id"],
+            json!("session_1")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_context_compact() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_CONTEXT_COMPACT.to_owned(),
+                params: Some(json!({ "sessionId": "session_1" })),
             },
         )
         .await;
@@ -2462,6 +2509,15 @@ mod tests {
         ) -> Result<AgentApiOutcome<SessionCloseResponse>, AgentApiError> {
             Ok(AgentApiOutcome::new(SessionCloseResponse {
                 session: test_session(params.session_id, SessionStatus::Closed),
+            }))
+        }
+
+        async fn compact_context(
+            &self,
+            params: ContextCompactParams,
+        ) -> Result<AgentApiOutcome<ContextCompactResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(ContextCompactResponse {
+                session: test_session(params.session_id, SessionStatus::Idle),
             }))
         }
 

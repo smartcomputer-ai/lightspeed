@@ -2,12 +2,13 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use engine::{
-    BlobRef, ContextEntry, ContextEntryInput, ContextEntryKind, ContextMessageRole, LlmFinish,
-    LlmGenerationFacts, LlmGenerationRequest, LlmGenerationResult, LlmGenerationStatus,
+    BlobRef, ContextCompactionRequest, ContextCompactionRequestKind, ContextCompactionResult,
+    ContextCompactionStatus, ContextEntry, ContextEntryInput, ContextEntryKind, ContextMessageRole,
+    LlmFinish, LlmGenerationFacts, LlmGenerationRequest, LlmGenerationResult, LlmGenerationStatus,
     LlmRequestKind, LlmUsage, OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, ObservedToolCall,
-    OpenAiResponsesRequest, OpenAiResponsesToolChoice, ProviderApiKind,
-    ProviderNativeToolExecution, SkillId, TokenEstimate, TokenEstimateQuality, ToolCallId,
-    ToolKind, ToolName, ToolSpec, storage::BlobStore,
+    OpenAiResponsesCompactionRequest, OpenAiResponsesRequest, OpenAiResponsesToolChoice,
+    ProviderApiKind, ProviderNativeToolExecution, SkillId, TokenEstimate, TokenEstimateQuality,
+    ToolCallId, ToolKind, ToolName, ToolSpec, storage::BlobStore,
 };
 use llm_clients::{ApiResponse, openai::responses as oai};
 use serde_json::Value;
@@ -16,7 +17,7 @@ use tools::skills::{SkillCatalogSnapshot, SkillLocation, SkillMetadata};
 use crate::{
     blob_io::{put_json, put_text, read_json, read_text},
     error::{LlmAdapterError, LlmAdapterResult},
-    executor::LlmGenerationAdapter,
+    executor::{LlmCompactionAdapter, LlmGenerationAdapter},
     result::LlmGenerationExecution,
 };
 
@@ -31,6 +32,11 @@ pub trait OpenAiResponsesApi: Send + Sync {
         &self,
         request: oai::CreateResponseRequest,
     ) -> Result<ApiResponse<oai::Response>, llm_clients::LlmApiError>;
+
+    async fn compact(
+        &self,
+        request: oai::CompactResponseRequest,
+    ) -> Result<ApiResponse<oai::CompactResponse>, llm_clients::LlmApiError>;
 }
 
 #[async_trait]
@@ -40,6 +46,13 @@ impl OpenAiResponsesApi for oai::Client {
         request: oai::CreateResponseRequest,
     ) -> Result<ApiResponse<oai::Response>, llm_clients::LlmApiError> {
         oai::Client::create(self, request).await
+    }
+
+    async fn compact(
+        &self,
+        request: oai::CompactResponseRequest,
+    ) -> Result<ApiResponse<oai::CompactResponse>, llm_clients::LlmApiError> {
+        oai::Client::compact(self, request).await
     }
 }
 
@@ -60,6 +73,14 @@ impl OpenAiResponsesLlmAdapter {
         model: &str,
     ) -> LlmAdapterResult<oai::CreateResponseRequest> {
         materialize_create_request(self.blobs.as_ref(), request, model).await
+    }
+
+    pub async fn materialize_compact_request(
+        &self,
+        request: &OpenAiResponsesCompactionRequest,
+        model: &str,
+    ) -> LlmAdapterResult<oai::CompactResponseRequest> {
+        materialize_compact_request(self.blobs.as_ref(), request, model).await
     }
 }
 
@@ -91,6 +112,23 @@ impl LlmGenerationAdapter for OpenAiResponsesLlmAdapter {
             provider_request_ref,
             raw_response_ref,
         })
+    }
+}
+
+#[async_trait]
+impl LlmCompactionAdapter for OpenAiResponsesLlmAdapter {
+    async fn compact_context(
+        &self,
+        request: ContextCompactionRequest,
+    ) -> LlmAdapterResult<ContextCompactionResult> {
+        let ContextCompactionRequestKind::OpenAiResponses(openai_request) = &request.request.kind;
+        let provider_request = self
+            .materialize_compact_request(openai_request, &request.request.model.model)
+            .await?;
+        let _provider_request_ref = put_json(self.blobs.as_ref(), &provider_request).await?;
+        let response = self.client.compact(provider_request).await?;
+        let _raw_response_ref = put_json(self.blobs.as_ref(), &response.raw_json).await?;
+        result_from_compact_response(self.blobs.as_ref(), &request, openai_request, &response).await
     }
 }
 
@@ -138,6 +176,26 @@ pub async fn materialize_create_request(
         store: request.store,
         stream: request.stream,
         context_management: request.context_management.clone(),
+        extra,
+    })
+}
+
+pub async fn materialize_compact_request(
+    blobs: &dyn BlobStore,
+    request: &OpenAiResponsesCompactionRequest,
+    model: &str,
+) -> LlmAdapterResult<oai::CompactResponseRequest> {
+    let input_items = materialize_input_items(blobs, &request.input_context.entries).await?;
+    let mut extra = request.extra.clone();
+    if let Some(target_tokens) = request.target_tokens {
+        extra.insert("target_tokens".to_owned(), Value::from(target_tokens));
+    }
+    if let Some(store) = request.store {
+        extra.insert("store".to_owned(), Value::from(store));
+    }
+    Ok(oai::CompactResponseRequest {
+        model: model.to_owned(),
+        input: Some(oai::ResponseInput::Items(input_items)),
         extra,
     })
 }
@@ -483,6 +541,39 @@ pub async fn result_from_response(
     })
 }
 
+pub async fn result_from_compact_response(
+    blobs: &dyn BlobStore,
+    request: &ContextCompactionRequest,
+    openai_request: &OpenAiResponsesCompactionRequest,
+    response: &ApiResponse<oai::CompactResponse>,
+) -> LlmAdapterResult<ContextCompactionResult> {
+    let mut context_entries = Vec::new();
+    for (index, item) in response.parsed.output.iter().enumerate() {
+        let raw_item = raw_output_item(&response.raw_json, index, item)?;
+        if matches!(
+            item.r#type.as_str(),
+            "compaction" | "compaction_summary" | "context_compaction"
+        ) {
+            context_entries.push(compaction_context_entry(blobs, item, raw_item).await?);
+        }
+    }
+    if context_entries.is_empty() {
+        return Err(LlmAdapterError::InvalidProviderRequest {
+            message: format!(
+                "OpenAI Responses compact response {} did not include a compaction output item",
+                response.parsed.id
+            ),
+        });
+    }
+    Ok(ContextCompactionResult {
+        session_id: request.session_id.clone(),
+        context_revision: openai_request.input_context.context_revision,
+        status: ContextCompactionStatus::Succeeded,
+        failure_ref: None,
+        context_entries,
+    })
+}
+
 async fn provider_failure_ref(
     blobs: &dyn BlobStore,
     response: &oai::Response,
@@ -717,8 +808,8 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use engine::{
-        ContextEntryId, ContextEntrySource, ContextSnapshot, CoreAgentLlm, FunctionToolSpec,
-        LlmGenerationRequest, LlmRequest, ModelProviderOptions, ModelSelection,
+        ContextCompactionTask, ContextEntryId, ContextEntrySource, ContextSnapshot, CoreAgentLlm,
+        FunctionToolSpec, LlmGenerationRequest, LlmRequest, ModelProviderOptions, ModelSelection,
         OpenAiReasoningConfig, RunId, SessionId, ToolExecutionTarget, ToolParallelism, TurnId,
         storage::InMemoryBlobStore,
     };
@@ -733,7 +824,9 @@ mod tests {
 
     struct FakeOpenAiResponsesApi {
         response: ApiResponse<oai::Response>,
+        compact_response: ApiResponse<oai::CompactResponse>,
         seen: Mutex<Vec<oai::CreateResponseRequest>>,
+        seen_compact: Mutex<Vec<oai::CompactResponseRequest>>,
     }
 
     #[async_trait]
@@ -744,6 +837,14 @@ mod tests {
         ) -> Result<ApiResponse<oai::Response>, llm_clients::LlmApiError> {
             self.seen.lock().expect("lock").push(request);
             Ok(self.response.clone())
+        }
+
+        async fn compact(
+            &self,
+            request: oai::CompactResponseRequest,
+        ) -> Result<ApiResponse<oai::CompactResponse>, llm_clients::LlmApiError> {
+            self.seen_compact.lock().expect("lock").push(request);
+            Ok(self.compact_response.clone())
         }
     }
 
@@ -1113,7 +1214,14 @@ mod tests {
         };
         let api = Arc::new(FakeOpenAiResponsesApi {
             response,
+            compact_response: ApiResponse {
+                parsed: oai::CompactResponse::default(),
+                raw_json: json!({ "id": "compact_empty", "output": [] }),
+                status: 200,
+                headers: HeaderSnapshot::default(),
+            },
             seen: Mutex::new(Vec::new()),
+            seen_compact: Mutex::new(Vec::new()),
         });
         let adapter = Arc::new(OpenAiResponsesLlmAdapter::new(api.clone(), blobs.clone()));
         let registry = LlmAdapterRegistry::new()
@@ -1238,6 +1346,110 @@ mod tests {
             ])
         );
         assert_eq!(api.seen.lock().expect("lock").len(), 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn llm_runtime_runs_openai_response_compaction() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let input_ref = text_blob(&blobs, "Summarize the prior work.").await;
+        let context = ContextEntry {
+            key: None,
+            entry_id: ContextEntryId::new(1),
+            kind: ContextEntryKind::Message {
+                role: ContextMessageRole::User,
+            },
+            source: ContextEntrySource::RunInput {
+                run_id: RunId::new(1),
+                input_index: 0,
+            },
+            content_ref: input_ref,
+            media_type: None,
+            preview: None,
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        };
+        let raw_json = json!({
+            "id": "cmp_resp_1",
+            "output": [{
+                "id": "cmp_1",
+                "type": "compaction",
+                "encrypted_content": "opaque"
+            }]
+        });
+        let api = Arc::new(FakeOpenAiResponsesApi {
+            response: ApiResponse {
+                parsed: oai::Response::default(),
+                raw_json: json!({ "id": "unused", "output": [] }),
+                status: 200,
+                headers: HeaderSnapshot::default(),
+            },
+            compact_response: ApiResponse {
+                parsed: serde_json::from_value(raw_json.clone()).expect("compact response"),
+                raw_json,
+                status: 200,
+                headers: HeaderSnapshot::default(),
+            },
+            seen: Mutex::new(Vec::new()),
+            seen_compact: Mutex::new(Vec::new()),
+        });
+        let adapter = Arc::new(OpenAiResponsesLlmAdapter::new(api.clone(), blobs.clone()));
+        let registry = LlmAdapterRegistry::new()
+            .with_compaction_adapter(ProviderApiKind::OpenAiResponses, adapter);
+        let executor = LlmRuntime::new(registry);
+        let request = ContextCompactionRequest {
+            session_id: SessionId::new("session-a"),
+            request: ContextCompactionTask {
+                model: model(),
+                request_fingerprint: "sha256:compact".to_string(),
+                kind: ContextCompactionRequestKind::OpenAiResponses(
+                    OpenAiResponsesCompactionRequest {
+                        input_context: ContextSnapshot {
+                            api_kind: ProviderApiKind::OpenAiResponses,
+                            context_revision: 7,
+                            entries: vec![context],
+                            token_estimate: None,
+                        },
+                        target_tokens: Some(128),
+                        store: Some(false),
+                        extra: BTreeMap::from([("service_tier".to_string(), json!("flex"))]),
+                    },
+                ),
+            },
+        };
+
+        let result = CoreAgentLlm::compact_context(&executor, request)
+            .await
+            .expect("compact context");
+
+        assert_eq!(result.status, ContextCompactionStatus::Succeeded);
+        assert_eq!(result.context_revision, 7);
+        assert_eq!(result.context_entries.len(), 1);
+        let entry = &result.context_entries[0];
+        assert!(matches!(entry.kind, ContextEntryKind::ProviderOpaque));
+        assert_eq!(
+            entry.provider_kind.as_deref(),
+            Some(OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND)
+        );
+        assert_eq!(entry.provider_item_id.as_deref(), Some("cmp_1"));
+        assert_eq!(
+            crate::blob_io::read_json(blobs.as_ref(), &entry.content_ref)
+                .await
+                .expect("blob")["encrypted_content"],
+            json!("opaque")
+        );
+        let seen = api.seen_compact.lock().expect("seen compact");
+        assert_eq!(seen.len(), 1);
+        assert_eq!(
+            serde_json::to_value(&seen[0]).expect("request json"),
+            json!({
+                "model": "gpt-5.1",
+                "input": [{ "role": "user", "content": "Summarize the prior work." }],
+                "target_tokens": 128,
+                "store": false,
+                "service_tier": "flex"
+            })
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
