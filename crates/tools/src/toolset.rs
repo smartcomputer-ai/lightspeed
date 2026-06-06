@@ -9,10 +9,7 @@ use engine::{
 
 use crate::{
     error::{ToolError, ToolResult},
-    host::{
-        HostToolContext,
-        tools::{HostTool, HostToolOperation, HostToolSurface},
-    },
+    host::tools::{HostTool, HostToolOperation, HostToolSurface},
     runtime::{ToolCatalog, ToolDocument, ToolExecutionMode, ToolSpecBundle, ToolTarget},
     web::search::{
         OpenAiResponsesWebSearchConfig, apply_openai_responses_web_search_defaults,
@@ -245,7 +242,6 @@ impl HostProcessToolsetConfig {
 
 pub struct ToolsetEnvironment<'a> {
     pub target: &'a ToolTarget,
-    pub host: Option<&'a HostToolContext>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -323,10 +319,7 @@ pub fn resolve_toolset(
     let mut builder = ToolsetBuilder::new(config.profile_id.clone(), config.tool_choice.clone());
 
     if config.host.enabled() {
-        let host = env.host.ok_or_else(|| ToolError::InvalidRequest {
-            message: "host tools require a host tool context".to_owned(),
-        })?;
-        builder.add_host_tools(host, env.target, &config.host)?;
+        builder.add_host_tools(env.target, &config.host)?;
     }
 
     if config.openai_web_search.enabled() {
@@ -379,11 +372,9 @@ impl ToolsetBuilder {
 
     fn add_host_tools(
         &mut self,
-        host: &HostToolContext,
         target: &ToolTarget,
         config: &HostToolsetConfig,
     ) -> ToolResult<()> {
-        let scoped_paths = is_scoped_host(host);
         let surface = config.presentation.surface(target);
         let omit_unsupported = config.presentation == HostToolPresentation::ProviderDefault;
         for operation in config
@@ -393,7 +384,7 @@ impl ToolsetBuilder {
             .chain(config.process.operations())
         {
             let tool = HostTool::new(operation, surface);
-            let bundle = match tool.spec_bundle(target, scoped_paths) {
+            let bundle = match tool.spec_bundle(target, STATIC_SCOPED_HOST_PATHS) {
                 Ok(bundle) => bundle,
                 Err(ToolError::UnsupportedCapability { .. }) if omit_unsupported => continue,
                 Err(error) => return Err(error),
@@ -442,32 +433,15 @@ impl ToolsetBuilder {
     }
 }
 
-fn is_scoped_host(host: &HostToolContext) -> bool {
-    matches!(
-        host.fs.access_policy(),
-        crate::host::fs::FileAccessPolicy::ScopedReadWrite { .. }
-            | crate::host::fs::FileAccessPolicy::ScopedReadOnly { .. }
-    )
-}
+const STATIC_SCOPED_HOST_PATHS: bool = true;
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
-    use engine::{ProviderRequestDefaults, storage::InMemoryBlobStore};
+    use engine::ProviderRequestDefaults;
     use serde_json::{Value, json};
 
     use super::*;
-    use crate::host::fs::{FileAccessPolicy, InMemoryFileSystem};
     use crate::web::search::{WebSearchContextSize, WebSearchMode};
-
-    fn host(policy: FileAccessPolicy) -> HostToolContext {
-        HostToolContext::new(
-            Arc::new(InMemoryFileSystem::new(policy)),
-            None,
-            Arc::new(InMemoryBlobStore::new()),
-        )
-    }
 
     fn target(api_kind: ProviderApiKind) -> ToolTarget {
         ToolTarget::api_kind(api_kind)
@@ -487,14 +461,10 @@ mod tests {
 
     #[test]
     fn workspace_toolset_renders_openai_canonical_host_tools() {
-        let ctx = host(FileAccessPolicy::FullReadWrite);
         let target = target(ProviderApiKind::OpenAiResponses);
 
         let toolset = resolve_toolset(
-            ToolsetEnvironment {
-                target: &target,
-                host: Some(&ctx),
-            },
+            ToolsetEnvironment { target: &target },
             &ToolsetConfig::workspace(),
         )
         .expect("toolset");
@@ -517,7 +487,6 @@ mod tests {
 
     #[test]
     fn host_tool_presentation_defaults_to_claude_style_for_anthropic() {
-        let ctx = host(FileAccessPolicy::FullReadOnly);
         let target = target(ProviderApiKind::AnthropicMessages);
         let mut config = ToolsetConfig::empty();
         config.host = HostToolsetConfig {
@@ -528,14 +497,8 @@ mod tests {
             ..HostToolsetConfig::disabled()
         };
 
-        let toolset = resolve_toolset(
-            ToolsetEnvironment {
-                target: &target,
-                host: Some(&ctx),
-            },
-            &config,
-        )
-        .expect("toolset");
+        let toolset =
+            resolve_toolset(ToolsetEnvironment { target: &target }, &config).expect("toolset");
 
         assert_eq!(visible_names(&toolset), vec!["Read"]);
         assert!(
@@ -548,14 +511,10 @@ mod tests {
 
     #[test]
     fn workspace_provider_default_omits_host_tools_unsupported_by_provider_surface() {
-        let ctx = host(FileAccessPolicy::FullReadWrite);
         let target = target(ProviderApiKind::AnthropicMessages);
 
         let toolset = resolve_toolset(
-            ToolsetEnvironment {
-                target: &target,
-                host: Some(&ctx),
-            },
+            ToolsetEnvironment { target: &target },
             &ToolsetConfig::workspace(),
         )
         .expect("toolset");
@@ -579,14 +538,8 @@ mod tests {
             include_sources: true,
         };
 
-        let toolset = resolve_toolset(
-            ToolsetEnvironment {
-                target: &target,
-                host: None,
-            },
-            &config,
-        )
-        .expect("toolset");
+        let toolset =
+            resolve_toolset(ToolsetEnvironment { target: &target }, &config).expect("toolset");
 
         assert_eq!(visible_names(&toolset), vec!["web_search"]);
         assert!(toolset.catalog.is_empty());
@@ -625,14 +578,8 @@ mod tests {
         let mut config = ToolsetConfig::empty();
         config.openai_web_search = OpenAiResponsesWebSearchConfig::cached();
 
-        let error = resolve_toolset(
-            ToolsetEnvironment {
-                target: &target,
-                host: None,
-            },
-            &config,
-        )
-        .expect_err("web search should reject Anthropic target");
+        let error = resolve_toolset(ToolsetEnvironment { target: &target }, &config)
+            .expect_err("web search should reject Anthropic target");
 
         assert!(matches!(error, ToolError::UnsupportedCapability { .. }));
     }

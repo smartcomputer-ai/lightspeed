@@ -300,10 +300,7 @@ async fn openai_responses_live_selects_and_activates_the_matching_skill() {
     };
     let target = tools::runtime::ToolTarget::from(&model);
     let toolset = resolve_toolset(
-        ToolsetEnvironment {
-            target: &target,
-            host: Some(&host_ctx),
-        },
+        ToolsetEnvironment { target: &target },
         &ToolsetConfig::workspace(),
     )
     .expect("toolset");
@@ -455,6 +452,7 @@ fn session_config(model: ModelSelection) -> SessionConfig {
             ),
         },
         context: ContextConfig { compaction: None },
+        tools: Default::default(),
     }
 }
 

@@ -47,14 +47,14 @@ use api::{
     SkillActivationScope as ApiSkillActivationScope,
     SkillActivationSource as ApiSkillActivationSource, SkillActivationView, SkillActiveParams,
     SkillActiveResponse, SkillDeactivateParams, SkillDeactivateResponse, SkillListItem,
-    SkillListParams, SkillListResponse, VfsMountAccess as ApiVfsMountAccess, VfsMountDeleteParams,
-    VfsMountDeleteResponse, VfsMountListParams, VfsMountListResponse, VfsMountPutParams,
-    VfsMountPutResponse, VfsMountSourceInput, VfsMountSourceView, VfsMountView,
-    VfsSnapshotCommitParams, VfsSnapshotCommitResponse, VfsSnapshotReadParams,
-    VfsSnapshotReadResponse, VfsWorkspaceCreateParams, VfsWorkspaceCreateResponse,
-    VfsWorkspaceDeleteParams, VfsWorkspaceDeleteResponse, VfsWorkspaceReadParams,
-    VfsWorkspaceReadResponse, VfsWorkspaceUpdateParams, VfsWorkspaceUpdateResponse,
-    VfsWorkspaceView,
+    SkillListParams, SkillListResponse, ToolConfigInput, ToolConfigPatchInput,
+    VfsMountAccess as ApiVfsMountAccess, VfsMountDeleteParams, VfsMountDeleteResponse,
+    VfsMountListParams, VfsMountListResponse, VfsMountPutParams, VfsMountPutResponse,
+    VfsMountSourceInput, VfsMountSourceView, VfsMountView, VfsSnapshotCommitParams,
+    VfsSnapshotCommitResponse, VfsSnapshotReadParams, VfsSnapshotReadResponse,
+    VfsWorkspaceCreateParams, VfsWorkspaceCreateResponse, VfsWorkspaceDeleteParams,
+    VfsWorkspaceDeleteResponse, VfsWorkspaceReadParams, VfsWorkspaceReadResponse,
+    VfsWorkspaceUpdateParams, VfsWorkspaceUpdateResponse, VfsWorkspaceView,
 };
 use api_projection::{
     CoreAgentProjector, MAX_EVENT_PAGE_LIMIT, ProjectSession, api_kind_from_str, api_run_id,
@@ -66,7 +66,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use engine::{
     AnthropicMessagesRequestDefaults, BlobRef, CommandCodec, CompactionPolicy, ContextConfigPatch,
     ContextEntry, ContextEntryInput, ContextEntryKey, ContextEntryKind, ContextMessageRole,
-    CoreAgentCommand, CoreAgentStatus, ModelProviderOptions, ModelSelection,
+    CoreAgentCommand, CoreAgentStatus, HostToolMode, ModelProviderOptions, ModelSelection,
     OpenAiCompletionsRequestDefaults, OpenAiReasoningConfig, OpenAiResponsesRequestDefaults,
     OptionalConfigPatch, ProviderApiKind, ProviderRequestDefaults, RunConfig, RunConfigPatch,
     RunId, RunStatus, SKILL_ACTIVATION_PROVIDER_KIND_RUN, SKILL_ACTIVATION_PROVIDER_KIND_SESSION,
@@ -81,16 +81,17 @@ use temporalio_client::{
 };
 use tools::{
     host::{
-        HostToolContext, HostToolTargets,
+        HostToolTargets,
         fs::{FileSystem, FsPath, MountedVfsFileSystem},
     },
-    runtime::ToolDocument,
+    runtime::{ToolDocument, ToolTarget},
     skills::{
         SkillCatalogSnapshot, SkillLocation, SkillMetadata, conventional_vfs_skill_root_specs,
         prepare_skill_catalog_publication, resolve_mounted_vfs_skill_roots,
         skill_catalog_context_input,
     },
-    toolset::{ToolsetConfig, ToolsetEnvironment, resolve_toolset},
+    toolset::{ResolvedToolset, ToolsetConfig, ToolsetEnvironment, resolve_toolset},
+    web::search::OpenAiResponsesWebSearchConfig,
 };
 use vfs::{
     CompareAndSetVfsWorkspaceHead, CreateVfsWorkspaceRecord, VfsCatalogError, VfsMountAccess,
@@ -240,7 +241,10 @@ impl GatewayAgentApi {
                         })?;
                 self.write_session_metadata(
                     session_id.clone(),
-                    GatewaySessionMetadata { cwd: params.cwd },
+                    GatewaySessionMetadata {
+                        cwd: params.cwd,
+                        ..self.session_metadata(&session_id)?
+                    },
                 )?;
                 let session = self.wait_for_open_session(&session_id).await?;
                 Ok(AgentApiOutcome::new(SessionStartResponse { session }))
@@ -278,6 +282,22 @@ impl GatewayAgentApi {
             .map_err(|_| AgentApiError::internal("gateway metadata lock poisoned"))?
             .insert(session_id, metadata);
         Ok(())
+    }
+
+    fn session_toolset_config(&self, session_config: &SessionConfig) -> ToolsetConfig {
+        let mut config = ToolsetConfig::empty();
+        config.host = match effective_host_tool_mode(session_config) {
+            HostToolMode::None => tools::toolset::HostToolsetConfig::disabled(),
+            HostToolMode::ReadOnly => tools::toolset::HostToolsetConfig {
+                fs: tools::toolset::HostFsToolsetConfig::read_only(),
+                ..tools::toolset::HostToolsetConfig::disabled()
+            },
+            HostToolMode::Edit => tools::toolset::HostToolsetConfig::workspace(),
+        };
+        if effective_web_search_enabled(session_config) {
+            config.openai_web_search = OpenAiResponsesWebSearchConfig::cached();
+        }
+        config
     }
 
     fn workflow_args(
@@ -335,7 +355,7 @@ impl GatewayAgentApi {
                 state: &loaded.state,
                 record: &loaded.record,
                 entries: &loaded.entries,
-                cwd: metadata.cwd,
+                cwd: metadata.cwd.clone(),
             })
             .await?;
         session.vfs_mounts = self.project_vfs_mounts(session_id).await?;
@@ -362,6 +382,15 @@ impl GatewayAgentApi {
             .project_run(&loaded.entries, run_id, status)
             .await
     }
+}
+
+fn effective_web_search_enabled(session_config: &SessionConfig) -> bool {
+    session_config.model.api_kind == ProviderApiKind::OpenAiResponses
+        && session_config.tools.web_search.unwrap_or(true)
+}
+
+fn effective_host_tool_mode(session_config: &SessionConfig) -> HostToolMode {
+    session_config.tools.host.unwrap_or(HostToolMode::Edit)
 }
 
 pub(super) struct LoadedSession {
@@ -409,7 +438,7 @@ impl AgentApiService for GatewayAgentApi {
             })?,
             None => self.allocate_session_id(),
         };
-        let session_config = self.session_config_for_start(config).await?;
+        let session_config = self.session_config_for_start(config.clone()).await?;
         self.write_session_metadata(session_id.clone(), GatewaySessionMetadata { cwd })?;
         self.client
             .start_workflow(
@@ -419,7 +448,9 @@ impl AgentApiService for GatewayAgentApi {
             )
             .await
             .map_err(map_workflow_start_error)?;
-        let session = self.wait_for_open_session(&session_id).await?;
+        self.wait_for_open_session(&session_id).await?;
+        let loaded = self.load_session_state(&session_id).await?;
+        let session = self.configure_session_toolset(&session_id, &loaded).await?;
         Ok(AgentApiOutcome::new(SessionStartResponse { session }))
     }
 
@@ -485,9 +516,10 @@ impl AgentApiService for GatewayAgentApi {
             )
             .await
             .map_err(map_workflow_interaction_error)?;
-        let session = self
-            .wait_for_config_revision(&session_id, target_revision, baseline_failures)
+        self.wait_for_config_revision(&session_id, target_revision, baseline_failures)
             .await?;
+        let loaded = self.load_session_state(&session_id).await?;
+        let session = self.configure_session_toolset(&session_id, &loaded).await?;
         Ok(AgentApiOutcome::new(SessionUpdateResponse { session }))
     }
 

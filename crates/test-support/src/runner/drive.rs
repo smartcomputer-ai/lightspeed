@@ -1002,6 +1002,7 @@ mod tests {
                 provider_request_defaults: ProviderRequestDefaults::None,
             },
             context: ContextConfig { compaction: None },
+            tools: Default::default(),
         }
     }
 
@@ -1479,10 +1480,7 @@ mod tests {
             .with_cwd(FsPath::root());
         let target = ToolTarget::api_kind(ProviderApiKind::OpenAiResponses);
         let toolset = resolve_toolset(
-            ToolsetEnvironment {
-                target: &target,
-                host: Some(&ctx),
-            },
+            ToolsetEnvironment { target: &target },
             &ToolsetConfig::workspace(),
         )
         .expect("toolset");
@@ -1636,10 +1634,7 @@ mod tests {
             .with_cwd(FsPath::root());
         let target = ToolTarget::api_kind(ProviderApiKind::OpenAiResponses);
         let toolset = resolve_toolset(
-            ToolsetEnvironment {
-                target: &target,
-                host: Some(&ctx),
-            },
+            ToolsetEnvironment { target: &target },
             &ToolsetConfig::workspace(),
         )
         .expect("toolset");

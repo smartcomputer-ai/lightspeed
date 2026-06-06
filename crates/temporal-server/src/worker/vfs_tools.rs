@@ -53,12 +53,12 @@ impl SessionMountedVfsTools {
                 .map_err(io_error)?;
         let cwd = mounted_vfs_cwd(fs.mounts())?;
         let ctx = HostToolContext::new(Arc::new(fs), None, self.blobs.clone()).with_cwd(cwd);
-        let catalog = workspace_catalog_for_host(&ctx)?;
+        let catalog = workspace_catalog()?;
         Ok(InlineHostToolRuntime::new(ctx, catalog))
     }
 }
 
-fn workspace_catalog_for_host(ctx: &HostToolContext) -> Result<ToolCatalog, CoreAgentIoError> {
+fn workspace_catalog() -> Result<ToolCatalog, CoreAgentIoError> {
     let mut catalog = ToolCatalog::new();
     for api_kind in [
         ProviderApiKind::OpenAiResponses,
@@ -67,10 +67,7 @@ fn workspace_catalog_for_host(ctx: &HostToolContext) -> Result<ToolCatalog, Core
     ] {
         let target = ToolTarget::api_kind(api_kind);
         let toolset = resolve_toolset(
-            ToolsetEnvironment {
-                target: &target,
-                host: Some(ctx),
-            },
+            ToolsetEnvironment { target: &target },
             &ToolsetConfig::workspace(),
         )
         .map_err(|error| io_error(format!("build mounted vfs tool profile: {error}")))?;

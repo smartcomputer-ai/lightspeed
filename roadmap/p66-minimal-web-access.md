@@ -17,10 +17,15 @@
   OpenAI Responses runtime preserves `web_search_call` output items as
   provider-opaque context, and an ignored live test documents the OpenAI
   prerequisites.
-- As of 2026-06-06, a first-cut `tools::toolset` resolver can compose
-  provider-rendered host filesystem tools and optional OpenAI Responses
-  `web_search` into one selected tool profile. Product-level API/gateway
-  toggles and G2 `web_fetch` remain pending.
+- As of 2026-06-06, product-level session config can compose provider-rendered
+  host filesystem tools and OpenAI Responses `web_search` into one selected
+  tool profile. OpenAI Responses sessions default to cached hosted web search
+  and editable host filesystem tools, with explicit API/CLI controls to disable
+  web search or choose host tool mode `edit`, `readOnly`, or `none`.
+- VFS mounts and sandbox backing are now independent of tool selection. Mount
+  changes update VFS state only; configured tools remain a static session
+  toolset and execution fails clearly if the required backing is absent.
+- G2 `web_fetch` remains pending.
 
 ## Goal
 
@@ -164,9 +169,9 @@ pub enum WebSearchContextSize {
 }
 ```
 
-Default should be `disabled` at the Forge API/config layer until the product
-surface has an explicit decision. A hosted product profile can later default to
-`cached`, matching Codex's conservative baseline.
+OpenAI Responses sessions default to `cached` at the Forge API/config layer,
+matching Codex's conservative baseline. Explicit `tools.webSearch = false`
+disables the provider-native search tool for a session.
 
 ### G1 Implementation Shape
 

@@ -35,6 +35,7 @@ pub fn default_session_config(model: ModelSelection) -> SessionConfig {
             provider_request_defaults,
         },
         context: ContextConfig { compaction: None },
+        tools: engine::ToolConfig::default(),
     }
 }
 

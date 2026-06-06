@@ -1423,10 +1423,7 @@ mod tests {
         let ctx = HostToolContext::new(Arc::new(fs), None, blobs.clone());
         let target = ToolTarget::api_kind(engine::ProviderApiKind::OpenAiResponses);
         let toolset = resolve_toolset(
-            ToolsetEnvironment {
-                target: &target,
-                host: Some(&ctx),
-            },
+            ToolsetEnvironment { target: &target },
             &ToolsetConfig::workspace(),
         )
         .expect("toolset");

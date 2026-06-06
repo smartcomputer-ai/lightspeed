@@ -390,6 +390,7 @@ fn session_config(model: ModelSelection) -> SessionConfig {
             ),
         },
         context: ContextConfig { compaction: None },
+        tools: Default::default(),
     }
 }
 

@@ -422,6 +422,7 @@ fn session_config(model: ModelSelection) -> SessionConfig {
                 compact_threshold_tokens: Some(2_000),
             }),
         },
+        tools: Default::default(),
     }
 }
 
@@ -448,6 +449,7 @@ fn standalone_session_config(
                 target_tokens: Some(128),
             }),
         },
+        tools: Default::default(),
     }
 }
 

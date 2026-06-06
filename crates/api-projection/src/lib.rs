@@ -9,11 +9,12 @@ use std::collections::BTreeMap;
 use api::{
     AgentApiError, CompactionPolicyInput, ContextConfigInput, ContextEntryInputView,
     ContextEntryKindView, ContextMessageRoleView, ContextView, EventCursor, EventJoinsView,
-    GenerationConfig, InputItem, ModelConfig, ReasoningEffort, RunDefaultsConfig,
-    RunStatus as ApiRunStatus, RunView, SessionConfigView, SessionEventKindView, SessionEventView,
-    SessionItemView, SessionStatus as ApiSessionStatus, SessionView, TokenEstimateQualityView,
-    TokenEstimateView, ToolBatchView, ToolCallDisplayGroup, ToolCallDisplayView, ToolCallEventView,
-    ToolCallView, ToolEffectView, ToolExecutionTargetView, ToolItemStatus,
+    GenerationConfig, HostToolMode as ApiHostToolMode, InputItem, ModelConfig, ReasoningEffort,
+    RunDefaultsConfig, RunStatus as ApiRunStatus, RunView, SessionConfigView, SessionEventKindView,
+    SessionEventView, SessionItemView, SessionStatus as ApiSessionStatus, SessionView,
+    TokenEstimateQualityView, TokenEstimateView, ToolBatchView, ToolCallDisplayGroup,
+    ToolCallDisplayView, ToolCallEventView, ToolCallView, ToolConfigView, ToolEffectView,
+    ToolExecutionTargetView, ToolItemStatus,
 };
 use engine::{ApplyEvent, ToolExecutionTarget};
 use engine::{
@@ -245,6 +246,10 @@ impl<'a> CoreAgentProjector<'a> {
             run_defaults: RunDefaultsConfig {
                 max_turns: config.run.max_turns,
                 max_tool_rounds: config.run.max_tool_rounds,
+            },
+            tools: ToolConfigView {
+                web_search: effective_web_search_enabled(config),
+                host: host_tool_mode_to_api(effective_host_tool_mode(config)),
             },
         })
     }
@@ -972,6 +977,23 @@ fn reasoning_effort_to_api(defaults: &ProviderRequestDefaults) -> Option<Reasoni
             }
         }
         _ => None,
+    }
+}
+
+fn effective_web_search_enabled(config: &SessionConfig) -> bool {
+    config.model.api_kind == ProviderApiKind::OpenAiResponses
+        && config.tools.web_search.unwrap_or(true)
+}
+
+fn effective_host_tool_mode(config: &SessionConfig) -> engine::HostToolMode {
+    config.tools.host.unwrap_or(engine::HostToolMode::Edit)
+}
+
+fn host_tool_mode_to_api(mode: engine::HostToolMode) -> ApiHostToolMode {
+    match mode {
+        engine::HostToolMode::None => ApiHostToolMode::None,
+        engine::HostToolMode::ReadOnly => ApiHostToolMode::ReadOnly,
+        engine::HostToolMode::Edit => ApiHostToolMode::Edit,
     }
 }
 

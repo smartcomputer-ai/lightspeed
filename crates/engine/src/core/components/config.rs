@@ -13,6 +13,8 @@ pub struct SessionConfig {
     pub run: RunConfig,
     pub turn: TurnConfig,
     pub context: ContextConfig,
+    #[serde(default)]
+    pub tools: ToolConfig,
 }
 
 impl SessionConfig {
@@ -20,6 +22,7 @@ impl SessionConfig {
         validate_model_selection(&self.model)?;
         validate_request_defaults(&self.turn.provider_request_defaults, &self.model.api_kind)?;
         validate_context_config(&self.context, &self.model.api_kind)?;
+        validate_tool_config(&self.tools, &self.model.api_kind)?;
         self.run
             .validate_provider_compatibility(&self.model.api_kind)
     }
@@ -47,6 +50,8 @@ pub struct SessionConfigPatch {
     pub turn: TurnConfigPatch,
     #[serde(default, skip_serializing_if = "ContextConfigPatch::is_empty")]
     pub context: ContextConfigPatch,
+    #[serde(default, skip_serializing_if = "ToolConfigPatch::is_empty")]
+    pub tools: ToolConfigPatch,
 }
 
 impl SessionConfigPatch {
@@ -58,6 +63,7 @@ impl SessionConfigPatch {
         self.run.apply_to(&mut next.run);
         self.turn.apply_to(&mut next.turn);
         self.context.apply_to(&mut next.context);
+        self.tools.apply_to(&mut next.tools);
         next
     }
 
@@ -66,6 +72,7 @@ impl SessionConfigPatch {
             && self.run.is_empty()
             && self.turn.is_empty()
             && self.context.is_empty()
+            && self.tools.is_empty()
     }
 }
 
@@ -157,6 +164,25 @@ impl ContextConfigPatch {
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolConfigPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_search: Option<OptionalConfigPatch<bool>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<OptionalConfigPatch<HostToolMode>>,
+}
+
+impl ToolConfigPatch {
+    pub fn apply_to(&self, config: &mut ToolConfig) {
+        apply_optional_config_patch(&mut config.web_search, &self.web_search);
+        apply_optional_config_patch(&mut config.host, &self.host);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.web_search.is_none() && self.host.is_none()
+    }
+}
+
 fn apply_optional_config_patch<T: Clone>(
     value: &mut Option<T>,
     patch: &Option<OptionalConfigPatch<T>>,
@@ -223,6 +249,22 @@ pub struct TurnConfig {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextConfig {
     pub compaction: Option<CompactionPolicy>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_search: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<HostToolMode>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HostToolMode {
+    None,
+    ReadOnly,
+    Edit,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -306,6 +348,16 @@ fn validate_context_config(
             )))
         }
     }
+}
+
+fn validate_tool_config(tools: &ToolConfig, api_kind: &ProviderApiKind) -> Result<(), DomainError> {
+    if tools.web_search == Some(true) && api_kind != &ProviderApiKind::OpenAiResponses {
+        return Err(DomainError::ProviderCompatibility(format!(
+            "web search requires OpenAI Responses api kind, got {:?}",
+            api_kind
+        )));
+    }
+    Ok(())
 }
 
 fn validate_openai_responses_compact_threshold(
@@ -399,6 +451,7 @@ mod tests {
                 provider_request_defaults: ProviderRequestDefaults::None,
             },
             context: ContextConfig { compaction },
+            tools: Default::default(),
         }
     }
 
@@ -505,6 +558,18 @@ mod tests {
         let error = config
             .validate_provider_compatibility()
             .expect_err("provider-standalone compaction is OpenAI Responses only");
+
+        assert!(matches!(error, DomainError::ProviderCompatibility(_)));
+    }
+
+    #[test]
+    fn web_search_enable_requires_openai_responses() {
+        let mut config = config(ProviderApiKind::AnthropicMessages, None);
+        config.tools.web_search = Some(true);
+
+        let error = config
+            .validate_provider_compatibility()
+            .expect_err("web search should reject Anthropic");
 
         assert!(matches!(error, DomainError::ProviderCompatibility(_)));
     }

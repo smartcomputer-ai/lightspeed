@@ -679,7 +679,7 @@ async fn build_runtime(
             .with_context(|| format!("open eval workspace '{}'", workdir.display()))?,
     );
     let host_ctx = HostToolContext::new(fs, None, blobs.clone()).with_cwd(FsPath::root());
-    let host_profile = resolve_eval_toolset(&host_ctx, &model, case)?;
+    let host_profile = resolve_eval_toolset(&model, case)?;
     store_tool_documents(blobs.as_ref(), &host_profile.documents).await?;
     let tool_id_by_name = host_profile
         .catalog
@@ -711,11 +711,7 @@ async fn build_runtime(
     })
 }
 
-fn resolve_eval_toolset(
-    ctx: &HostToolContext,
-    model: &ModelSelection,
-    case: &EvalCase,
-) -> Result<ResolvedToolset> {
+fn resolve_eval_toolset(model: &ModelSelection, case: &EvalCase) -> Result<ResolvedToolset> {
     let mut config = ToolsetConfig::workspace();
     if let Some(allowed) = case.run.allowed_tools.as_ref() {
         if allowed.is_empty() {
@@ -734,7 +730,6 @@ fn resolve_eval_toolset(
     resolve_toolset(
         ToolsetEnvironment {
             target: &model.into(),
-            host: Some(ctx),
         },
         &config,
     )
@@ -758,6 +753,7 @@ fn session_config(case: &EvalCase, model: ModelSelection) -> SessionConfig {
             ),
         },
         context: ContextConfig { compaction: None },
+        tools: Default::default(),
     }
 }
 

@@ -308,13 +308,10 @@ mod tests {
         }
     }
 
-    fn workspace_catalog(ctx: &HostToolContext, api_kind: engine::ProviderApiKind) -> ToolCatalog {
+    fn workspace_catalog(api_kind: engine::ProviderApiKind) -> ToolCatalog {
         let target = ToolTarget::api_kind(api_kind);
         resolve_toolset(
-            ToolsetEnvironment {
-                target: &target,
-                host: Some(ctx),
-            },
+            ToolsetEnvironment { target: &target },
             &ToolsetConfig::workspace(),
         )
         .expect("toolset")
@@ -322,7 +319,6 @@ mod tests {
     }
 
     fn catalog_for_operations_with_presentation(
-        ctx: &HostToolContext,
         api_kind: engine::ProviderApiKind,
         presentation: HostToolPresentation,
         operations: impl IntoIterator<Item = crate::host::tools::HostToolOperation>,
@@ -331,15 +327,9 @@ mod tests {
         let mut config = ToolsetConfig::empty();
         config.host = crate::toolset::HostToolsetConfig::from_operations(operations);
         config.host.presentation = presentation;
-        resolve_toolset(
-            ToolsetEnvironment {
-                target: &target,
-                host: Some(ctx),
-            },
-            &config,
-        )
-        .expect("toolset")
-        .catalog
+        resolve_toolset(ToolsetEnvironment { target: &target }, &config)
+            .expect("toolset")
+            .catalog
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -350,7 +340,7 @@ mod tests {
             .await
             .expect("write file");
         let ctx = HostToolContext::new(Arc::new(fs), None, blobs.clone());
-        let catalog = workspace_catalog(&ctx, engine::ProviderApiKind::OpenAiResponses);
+        let catalog = workspace_catalog(engine::ProviderApiKind::OpenAiResponses);
         let runtime = InlineHostToolRuntime::new(ctx, catalog);
 
         let output = runtime
@@ -374,7 +364,6 @@ mod tests {
             .expect("write file");
         let ctx = HostToolContext::new(Arc::new(fs), None, blobs);
         let catalog = catalog_for_operations_with_presentation(
-            &ctx,
             engine::ProviderApiKind::AnthropicMessages,
             HostToolPresentation::ClaudeCodeLike,
             [crate::host::tools::HostToolOperation::ReadFile],
@@ -401,7 +390,7 @@ mod tests {
             .await
             .expect("write file");
         let ctx = HostToolContext::new(Arc::new(fs), None, blobs.clone());
-        let catalog = workspace_catalog(&ctx, engine::ProviderApiKind::OpenAiResponses);
+        let catalog = workspace_catalog(engine::ProviderApiKind::OpenAiResponses);
         let runtime = InlineHostToolRuntime::new(ctx, catalog);
         let args_ref = blobs
             .put_bytes(br#"{"path":"/file.txt","offset":null,"limit":null}"#.to_vec())
@@ -429,7 +418,7 @@ mod tests {
             .await
             .expect("write file");
         let ctx = HostToolContext::new(Arc::new(fs), None, blobs.clone());
-        let catalog = workspace_catalog(&ctx, engine::ProviderApiKind::OpenAiResponses);
+        let catalog = workspace_catalog(engine::ProviderApiKind::OpenAiResponses);
         let runtime = InlineHostToolRuntime::new(ctx, catalog);
         let args_ref = blobs
             .put_bytes(br#"{"path":"/file.txt","offset":null,"limit":null}"#.to_vec())
@@ -479,7 +468,7 @@ mod tests {
             .expect("write second file");
         let ctx_one = HostToolContext::new(Arc::new(fs_one), None, blobs.clone());
         let ctx_two = HostToolContext::new(Arc::new(fs_two), None, blobs.clone());
-        let catalog = workspace_catalog(&ctx_one, engine::ProviderApiKind::OpenAiResponses);
+        let catalog = workspace_catalog(engine::ProviderApiKind::OpenAiResponses);
         let runtime = InlineHostToolRuntime::with_targets(
             HostToolTargets::new()
                 .with_target("one", ctx_one)
@@ -514,7 +503,7 @@ mod tests {
         let blobs = Arc::new(InMemoryBlobStore::new());
         let fs = InMemoryFileSystem::full_access();
         let ctx = HostToolContext::new(Arc::new(fs), None, blobs.clone());
-        let catalog = workspace_catalog(&ctx, engine::ProviderApiKind::OpenAiResponses);
+        let catalog = workspace_catalog(engine::ProviderApiKind::OpenAiResponses);
         let runtime = InlineHostToolRuntime::new(ctx, catalog);
 
         let result = runtime
@@ -539,7 +528,7 @@ mod tests {
         let blobs = Arc::new(InMemoryBlobStore::new());
         let fs = InMemoryFileSystem::full_access();
         let ctx = HostToolContext::new(Arc::new(fs), None, blobs.clone());
-        let catalog = workspace_catalog(&ctx, engine::ProviderApiKind::OpenAiResponses);
+        let catalog = workspace_catalog(engine::ProviderApiKind::OpenAiResponses);
         let runtime = InlineHostToolRuntime::new(ctx, catalog);
 
         let cases = [

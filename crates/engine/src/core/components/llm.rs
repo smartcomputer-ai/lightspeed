@@ -774,6 +774,7 @@ mod tests {
                 provider_request_defaults: ProviderRequestDefaults::None,
             },
             context: crate::ContextConfig { compaction: None },
+            tools: Default::default(),
         };
         let run_config = RunConfig {
             max_output_tokens: Some(2048),
@@ -852,6 +853,7 @@ mod tests {
                     compact_threshold_tokens: Some(120_000),
                 }),
             },
+            tools: Default::default(),
         };
 
         let request = openai_responses_request(
@@ -897,6 +899,7 @@ mod tests {
                     compact_threshold_tokens: None,
                 }),
             },
+            tools: Default::default(),
         };
 
         let request = openai_responses_request(
