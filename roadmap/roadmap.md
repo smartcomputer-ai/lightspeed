@@ -3,9 +3,9 @@
 - [x] vfs
 - [x] skills (P63 first cut)
 - [x] compaction (P64 provider-native)
-- vfs watches (inject/update on change)
-- prompt management (ala claw)
-- search & web requests
+- [x] vfs watches (inject/update on change)
+- [x] prompt management (ala claw)
+- [ ] search & web requests ([P66 first cut](p66-minimal-web-access.md))
 - (go live)
 - timers/schedules/cron
 - vms/sandboxes
