@@ -32,13 +32,12 @@ use tools::{
     host::{
         HostToolContext, HostToolTargets, InlineHostToolRuntime,
         fs::{FsPath, ScopedLocalFileSystem},
-        profiles::{
-            HostToolPreset, HostToolSelection, resolve_host_profile_for_model,
-            resolve_host_selection,
-        },
-        tools::{HostTool, HostToolOperation},
+        tools::HostToolOperation,
     },
-    runtime::{ResolvedToolProfile, ToolDocument},
+    runtime::ToolDocument,
+    toolset::{
+        HostToolsetConfig, ResolvedToolset, ToolsetConfig, ToolsetEnvironment, resolve_toolset,
+    },
 };
 
 const CASES_ROOT: &str = "crates/eval/cases";
@@ -680,7 +679,7 @@ async fn build_runtime(
             .with_context(|| format!("open eval workspace '{}'", workdir.display()))?,
     );
     let host_ctx = HostToolContext::new(fs, None, blobs.clone()).with_cwd(FsPath::root());
-    let host_profile = resolve_eval_host_profile(&host_ctx, &model, case)?;
+    let host_profile = resolve_eval_toolset(&host_ctx, &model, case)?;
     store_tool_documents(blobs.as_ref(), &host_profile.documents).await?;
     let tool_id_by_name = host_profile
         .catalog
@@ -712,28 +711,34 @@ async fn build_runtime(
     })
 }
 
-fn resolve_eval_host_profile(
+fn resolve_eval_toolset(
     ctx: &HostToolContext,
     model: &ModelSelection,
     case: &EvalCase,
-) -> Result<ResolvedToolProfile> {
+) -> Result<ResolvedToolset> {
+    let mut config = ToolsetConfig::workspace();
     if let Some(allowed) = case.run.allowed_tools.as_ref() {
         if allowed.is_empty() {
             bail!("case '{}' has empty run.allowed_tools", case.id);
         }
-        let tools = allowed
+        let operations = allowed
             .iter()
             .map(|id| {
-                host_tool_for_id(id)
+                host_operation_for_id(id)
                     .ok_or_else(|| anyhow!("case '{}' references unknown tool '{id}'", case.id))
             })
             .collect::<Result<Vec<_>>>()?;
-        let selection = HostToolSelection::new(ToolProfileId::new("forge_eval_case"), tools);
-        resolve_host_selection(ctx, &model.into(), selection).context("build eval host tools")
-    } else {
-        resolve_host_profile_for_model(ctx, model, HostToolPreset::DirectFs)
-            .context("build eval host tools")
+        config.profile_id = ToolProfileId::new("forge_eval_case");
+        config.host = HostToolsetConfig::from_operations(operations);
     }
+    resolve_toolset(
+        ToolsetEnvironment {
+            target: &model.into(),
+            host: Some(ctx),
+        },
+        &config,
+    )
+    .context("build eval host tools")
 }
 
 fn session_config(case: &EvalCase, model: ModelSelection) -> SessionConfig {
@@ -933,9 +938,9 @@ fn safe_case_path(root: &Path, path: &str) -> Result<PathBuf> {
     Ok(root.join(candidate))
 }
 
-fn host_tool_for_id(id: &str) -> Option<HostTool> {
+fn host_operation_for_id(id: &str) -> Option<HostToolOperation> {
     let id = canonical_tool_id(id);
-    let operation = match id.as_str() {
+    Some(match id.as_str() {
         "host.read_file" => HostToolOperation::ReadFile,
         "host.write_file" => HostToolOperation::WriteFile,
         "host.edit_file" => HostToolOperation::EditFile,
@@ -946,8 +951,7 @@ fn host_tool_for_id(id: &str) -> Option<HostTool> {
         "host.run_process" => HostToolOperation::RunProcess,
         "host.write_process_stdin" => HostToolOperation::WriteProcessStdin,
         _ => return None,
-    };
-    Some(HostTool::canonical(operation))
+    })
 }
 
 fn canonical_tool_id(value: &str) -> String {
@@ -1179,16 +1183,8 @@ mod tests {
     }
 
     #[test]
-    fn host_tool_for_id_resolves_supported_tools() {
-        let tool = host_tool_for_id("host.fs.grep").expect("tool");
-        assert_eq!(
-            tool.name(&tools::runtime::ToolTarget::from(&ModelSelection {
-                api_kind: ProviderApiKind::OpenAiResponses,
-                provider_id: "openai".into(),
-                model: "gpt-5.5".into(),
-                options: ModelProviderOptions::None,
-            })),
-            engine::ToolName::new("grep")
-        );
+    fn host_operation_for_id_resolves_supported_tools() {
+        let operation = host_operation_for_id("host.fs.grep").expect("tool");
+        assert_eq!(operation, HostToolOperation::Grep);
     }
 }

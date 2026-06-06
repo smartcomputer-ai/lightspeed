@@ -19,10 +19,9 @@ use tools::{
     host::{
         HostToolContext, InlineHostToolRuntime,
         fs::{FsPath, MountedVfsFileSystem},
-        profiles::{HostToolPreset, resolve_host_profile},
         tools::ReadFileResult,
     },
-    runtime::ToolTarget,
+    toolset::{ToolsetConfig, ToolsetEnvironment, resolve_toolset},
 };
 use vfs::{
     CompareAndSetVfsWorkspaceHead, CreateInlineSnapshotRequest, CreateVfsWorkspaceRecord,
@@ -299,16 +298,19 @@ async fn openai_responses_live_selects_and_activates_the_matching_skill() {
         model: live_model(),
         options: ModelProviderOptions::None,
     };
-    let profile = resolve_host_profile(
-        &host_ctx,
-        &ToolTarget::from(&model),
-        HostToolPreset::DirectFs,
+    let target = tools::runtime::ToolTarget::from(&model);
+    let toolset = resolve_toolset(
+        ToolsetEnvironment {
+            target: &target,
+            host: Some(&host_ctx),
+        },
+        &ToolsetConfig::workspace(),
     )
-    .expect("host profile");
-    store_tool_documents(blobs.as_ref(), &profile.documents).await;
+    .expect("toolset");
+    store_tool_documents(blobs.as_ref(), &toolset.documents).await;
     let tools = Arc::new(InlineHostToolRuntime::new(
         host_ctx,
-        profile.catalog.clone(),
+        toolset.catalog.clone(),
     ));
 
     let llm = Arc::new(LlmRuntime::new(
@@ -340,7 +342,7 @@ async fn openai_responses_live_selects_and_activates_the_matching_skill() {
             session_id: session_id.clone(),
             observed_at_ms: 11,
             command: CoreAgentCommand::SetToolRegistry {
-                registry: profile.registry,
+                registry: toolset.registry,
             },
             max_steps: None,
         })
@@ -351,7 +353,7 @@ async fn openai_responses_live_selects_and_activates_the_matching_skill() {
             session_id: session_id.clone(),
             observed_at_ms: 12,
             command: CoreAgentCommand::SelectToolProfile {
-                profile_id: profile.profile_id,
+                profile_id: toolset.profile_id,
             },
             max_steps: None,
         })

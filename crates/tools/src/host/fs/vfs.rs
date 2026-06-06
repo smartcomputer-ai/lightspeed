@@ -893,7 +893,6 @@ mod tests {
     use crate::host::{
         context::HostToolContext,
         executor::InlineHostToolRuntime,
-        profiles::{HostToolPreset, resolve_host_profile},
         targets::HostToolTargets,
         tools::{
             ApplyPatchArgs, EditFileArgs, GlobArgs, GrepArgs, ListDirArgs, ReadFileArgs,
@@ -902,6 +901,7 @@ mod tests {
         },
     };
     use crate::runtime::ToolTarget;
+    use crate::toolset::{ToolsetConfig, ToolsetEnvironment, resolve_toolset};
 
     #[derive(Debug, Default)]
     struct TestWorkspaceStore {
@@ -1421,13 +1421,16 @@ mod tests {
         let (blobs, fs, workspace_id, _base_snapshot_ref) =
             test_workspace_fs(store.clone(), Vec::new()).await;
         let ctx = HostToolContext::new(Arc::new(fs), None, blobs.clone());
-        let profile = resolve_host_profile(
-            &ctx,
-            &ToolTarget::api_kind(engine::ProviderApiKind::OpenAiResponses),
-            HostToolPreset::DirectFs,
+        let target = ToolTarget::api_kind(engine::ProviderApiKind::OpenAiResponses);
+        let toolset = resolve_toolset(
+            ToolsetEnvironment {
+                target: &target,
+                host: Some(&ctx),
+            },
+            &ToolsetConfig::workspace(),
         )
-        .expect("profile");
-        let runtime = InlineHostToolRuntime::new(ctx, profile.catalog);
+        .expect("toolset");
+        let runtime = InlineHostToolRuntime::new(ctx, toolset.catalog);
         let args_ref = blobs
             .put_bytes(br#"{"path":"/README.md","content":"updated\n"}"#.to_vec())
             .await

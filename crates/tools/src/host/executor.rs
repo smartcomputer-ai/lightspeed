@@ -271,11 +271,11 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::host::{
-        fs::{FileSystem, FsPath, InMemoryFileSystem},
-        profiles::{HostToolPreset, resolve_host_profile},
+    use crate::host::fs::{FileSystem, FsPath, InMemoryFileSystem};
+    use crate::runtime::{ToolCatalog, ToolTarget};
+    use crate::toolset::{
+        HostToolPresentation, ToolsetConfig, ToolsetEnvironment, resolve_toolset,
     };
-    use crate::runtime::ToolTarget;
 
     fn call(arguments_ref: BlobRef, tool_name: &str) -> ToolInvocationRequest {
         call_with_target(
@@ -308,6 +308,40 @@ mod tests {
         }
     }
 
+    fn workspace_catalog(ctx: &HostToolContext, api_kind: engine::ProviderApiKind) -> ToolCatalog {
+        let target = ToolTarget::api_kind(api_kind);
+        resolve_toolset(
+            ToolsetEnvironment {
+                target: &target,
+                host: Some(ctx),
+            },
+            &ToolsetConfig::workspace(),
+        )
+        .expect("toolset")
+        .catalog
+    }
+
+    fn catalog_for_operations_with_presentation(
+        ctx: &HostToolContext,
+        api_kind: engine::ProviderApiKind,
+        presentation: HostToolPresentation,
+        operations: impl IntoIterator<Item = crate::host::tools::HostToolOperation>,
+    ) -> ToolCatalog {
+        let target = ToolTarget::api_kind(api_kind);
+        let mut config = ToolsetConfig::empty();
+        config.host = crate::toolset::HostToolsetConfig::from_operations(operations);
+        config.host.presentation = presentation;
+        resolve_toolset(
+            ToolsetEnvironment {
+                target: &target,
+                host: Some(ctx),
+            },
+            &config,
+        )
+        .expect("toolset")
+        .catalog
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn inline_runtime_maps_tool_name_to_host_operation() {
         let blobs = Arc::new(InMemoryBlobStore::new());
@@ -316,13 +350,8 @@ mod tests {
             .await
             .expect("write file");
         let ctx = HostToolContext::new(Arc::new(fs), None, blobs.clone());
-        let profile = resolve_host_profile(
-            &ctx,
-            &ToolTarget::api_kind(engine::ProviderApiKind::OpenAiResponses),
-            HostToolPreset::DirectFs,
-        )
-        .expect("profile");
-        let runtime = InlineHostToolRuntime::new(ctx, profile.catalog);
+        let catalog = workspace_catalog(&ctx, engine::ProviderApiKind::OpenAiResponses);
+        let runtime = InlineHostToolRuntime::new(ctx, catalog);
 
         let output = runtime
             .invoke_json(
@@ -344,13 +373,13 @@ mod tests {
             .await
             .expect("write file");
         let ctx = HostToolContext::new(Arc::new(fs), None, blobs);
-        let profile = resolve_host_profile(
+        let catalog = catalog_for_operations_with_presentation(
             &ctx,
-            &ToolTarget::api_kind(engine::ProviderApiKind::AnthropicMessages),
-            HostToolPreset::ClaudeCodeLike,
-        )
-        .expect("profile");
-        let runtime = InlineHostToolRuntime::new(ctx, profile.catalog);
+            engine::ProviderApiKind::AnthropicMessages,
+            HostToolPresentation::ClaudeCodeLike,
+            [crate::host::tools::HostToolOperation::ReadFile],
+        );
+        let runtime = InlineHostToolRuntime::new(ctx, catalog);
 
         let output = runtime
             .invoke_json(
@@ -372,13 +401,8 @@ mod tests {
             .await
             .expect("write file");
         let ctx = HostToolContext::new(Arc::new(fs), None, blobs.clone());
-        let profile = resolve_host_profile(
-            &ctx,
-            &ToolTarget::api_kind(engine::ProviderApiKind::OpenAiResponses),
-            HostToolPreset::DirectFs,
-        )
-        .expect("profile");
-        let runtime = InlineHostToolRuntime::new(ctx, profile.catalog);
+        let catalog = workspace_catalog(&ctx, engine::ProviderApiKind::OpenAiResponses);
+        let runtime = InlineHostToolRuntime::new(ctx, catalog);
         let args_ref = blobs
             .put_bytes(br#"{"path":"/file.txt","offset":null,"limit":null}"#.to_vec())
             .await
@@ -405,13 +429,8 @@ mod tests {
             .await
             .expect("write file");
         let ctx = HostToolContext::new(Arc::new(fs), None, blobs.clone());
-        let profile = resolve_host_profile(
-            &ctx,
-            &ToolTarget::api_kind(engine::ProviderApiKind::OpenAiResponses),
-            HostToolPreset::DirectFs,
-        )
-        .expect("profile");
-        let runtime = InlineHostToolRuntime::new(ctx, profile.catalog);
+        let catalog = workspace_catalog(&ctx, engine::ProviderApiKind::OpenAiResponses);
+        let runtime = InlineHostToolRuntime::new(ctx, catalog);
         let args_ref = blobs
             .put_bytes(br#"{"path":"/file.txt","offset":null,"limit":null}"#.to_vec())
             .await
@@ -460,17 +479,12 @@ mod tests {
             .expect("write second file");
         let ctx_one = HostToolContext::new(Arc::new(fs_one), None, blobs.clone());
         let ctx_two = HostToolContext::new(Arc::new(fs_two), None, blobs.clone());
-        let profile = resolve_host_profile(
-            &ctx_one,
-            &ToolTarget::api_kind(engine::ProviderApiKind::OpenAiResponses),
-            HostToolPreset::DirectFs,
-        )
-        .expect("profile");
+        let catalog = workspace_catalog(&ctx_one, engine::ProviderApiKind::OpenAiResponses);
         let runtime = InlineHostToolRuntime::with_targets(
             HostToolTargets::new()
                 .with_target("one", ctx_one)
                 .with_target("two", ctx_two),
-            profile.catalog,
+            catalog,
         );
         let args_ref = blobs
             .put_bytes(br#"{"path":"/file.txt","offset":null,"limit":null}"#.to_vec())
@@ -500,13 +514,8 @@ mod tests {
         let blobs = Arc::new(InMemoryBlobStore::new());
         let fs = InMemoryFileSystem::full_access();
         let ctx = HostToolContext::new(Arc::new(fs), None, blobs.clone());
-        let profile = resolve_host_profile(
-            &ctx,
-            &ToolTarget::api_kind(engine::ProviderApiKind::OpenAiResponses),
-            HostToolPreset::DirectFs,
-        )
-        .expect("profile");
-        let runtime = InlineHostToolRuntime::new(ctx, profile.catalog);
+        let catalog = workspace_catalog(&ctx, engine::ProviderApiKind::OpenAiResponses);
+        let runtime = InlineHostToolRuntime::new(ctx, catalog);
 
         let result = runtime
             .invoke_batch(batch_request(call_with_target(
@@ -530,13 +539,8 @@ mod tests {
         let blobs = Arc::new(InMemoryBlobStore::new());
         let fs = InMemoryFileSystem::full_access();
         let ctx = HostToolContext::new(Arc::new(fs), None, blobs.clone());
-        let profile = resolve_host_profile(
-            &ctx,
-            &ToolTarget::api_kind(engine::ProviderApiKind::OpenAiResponses),
-            HostToolPreset::DirectFs,
-        )
-        .expect("profile");
-        let runtime = InlineHostToolRuntime::new(ctx, profile.catalog);
+        let catalog = workspace_catalog(&ctx, engine::ProviderApiKind::OpenAiResponses);
+        let runtime = InlineHostToolRuntime::new(ctx, catalog);
 
         let cases = [
             (

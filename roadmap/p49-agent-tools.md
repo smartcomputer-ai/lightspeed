@@ -7,8 +7,10 @@
 - Scaffolded `crates/forge-agent-tools` and added it to the workspace.
 - Reworked the crate around optional tool packages. The first package is now
   `host`, not a top-level workspace/filesystem design.
-- Added `runtime::{ToolTarget, ToolCatalog, ToolBinding, ResolvedToolProfile}`
-  so model-facing profiles and invocation dispatch metadata are built together.
+- Added `runtime::{ToolTarget, ToolCatalog, ToolBinding}` plus
+  `tools::toolset::{ToolsetConfig, ResolvedToolset}` so session tool
+  composition builds durable model-facing data and invocation dispatch metadata
+  through one path.
 - Added host filesystem capability types under `src/host/fs/`: `FileSystem`,
   `FsPath`, `FileAccessPolicy`, filesystem operation option/result types, and
   error types.
@@ -36,10 +38,10 @@
 - Ported the core Codex apply-patch parser, hunk matcher, and filesystem
   application engine into `src/host/apply_patch/`, adapted to Forge `FileSystem`;
   added `invoke_apply_patch` and tests for add/update/delete/move/error paths.
-- Added host profile builders in `src/host/profiles.rs`: `DirectFs`,
-  `CodexLike`, `ClaudeCodeLike`, and `Custom`. Profile resolution now returns a
-  `ResolvedToolProfile` containing the Forge `ToolRegistry`, schema/description
-  documents, and the invocation `ToolCatalog`.
+- Added provider-aware session toolset composition in `src/toolset.rs`.
+  `ToolsetConfig` composes host tools and provider-native tools into one
+  `ResolvedToolset` containing the Forge `ToolRegistry`, schema/description
+  documents, invocation `ToolCatalog`, and provider request defaults patches.
 - Added a Claude Code-like host tool surface for `Read`, `Write`, `Edit`,
   `Glob`, `Grep`, and `Bash`. The surface owns Claude-shaped schemas and JSON
   argument adapters, then normalizes calls into the same canonical host
@@ -52,14 +54,9 @@
   `canonical.rs`, `codex.rs`, `claude.rs`, and `shared.rs`. Operation modules
   remain provider-neutral; surface modules own model-visible schemas, argument
   adapters, and output shaping.
-- Added `InlineHostToolRuntime` for direct in-process invocation and
-  `HostToolEffectExecutor` for Forge `ToolInvoke` effects. The catalog binding
-  records an activity type and execution mode so a Temporal activity dispatcher
-  can use the same resolved profile without changing tool modules.
-- Updated `HostToolEffectExecutor` to the narrow `EffectExecutionRequest`
-  runner boundary (`session_id` plus intent) so host tools compose with LLM
-  adapters under the local runtime router while still receiving the same durable
-  `ToolInvoke` intent.
+- Added `InlineHostToolRuntime` for direct in-process invocation. The catalog
+  binding records an activity type and execution mode so a Temporal activity
+  dispatcher can use the same resolved toolset without changing tool modules.
 
 **Design correction**
 - `forge-agent-tools` should not be a filesystem/process crate. It should be an
@@ -107,7 +104,7 @@ The Forge core should see tools as durable data:
 - typed args and result records
 - JSON schemas and descriptions
 - `ToolRegistry`/`ToolSpec` builders
-- package/profile builders that also produce a `ToolCatalog`
+- package/toolset builders that also produce a `ToolCatalog`
 - canonical operation functions where a package has local behavior
 - inline `EffectExecutor` implementations for in-process runners and tests
 - catalog metadata, including activity type, that future Temporal activities can
@@ -150,8 +147,8 @@ Use neutral names for the capability layer:
 | `InMemoryWorkspaceFileSystem` | `InMemoryFileSystem` | Useful beyond workspace tests. |
 | `WorkspaceProcessExecutor` | `ProcessExecutor` | Process capability available to an agent. |
 | `WorkspaceProcessHandle` | `ProcessHandle` | Handle is not workspace-specific. |
-| `WorkspaceToolProfilePreset` | `HostToolPreset` | Host tool surface controls model-visible host tools, not filesystem scope. |
-| `WorkspaceToolExecutor` | `HostToolEffectExecutor` | Executes host tool effects inline for local runners/tests. |
+| `WorkspaceToolsetPreset` | `HostToolsetConfig` | Host tool configuration controls model-visible host tools, not filesystem scope. |
+| `WorkspaceToolExecutor` | `InlineHostToolRuntime` | Executes host tool effects inline for local runners/tests. |
 
 Use `fs` as the module abbreviation because it is conventional. Spell out
 `process` in module names and public APIs.
@@ -200,26 +197,37 @@ crates/forge-agent-tools/
   src/host/apply_patch/seek_sequence.rs
   src/host/apply_patch/invocation.rs
   src/host/apply_patch/engine.rs
-  src/host/profiles.rs
+  src/toolset.rs
+  src/web/mod.rs
+  src/web/search.rs
 ```
 
 `runtime` is package-neutral and owns catalog/profile assembly types.
+`toolset` is the session composition layer that combines provider-native tools
+and concrete packages into a single Forge tool registry plus runtime catalog.
 `host` is the first concrete package and owns host filesystem/process
-capabilities, concrete tools, profile presets, and inline effect execution.
+capabilities, concrete tools, surface definitions, and inline effect execution.
 There should be no top-level `ops`, `schema`, `registry`, or `toolsets` split.
 
 Candidate public entry points:
 
 ```rust
 let target = ToolTarget::from(&model_selection);
-let resolved = resolve_host_profile(&ctx, &target, HostToolPreset::CodexLike)?;
-let resolved = resolve_host_profile_for_model(&ctx, &model_selection, HostToolPreset::CodexLike)?;
+let config = ToolsetConfig::workspace();
+let resolved = resolve_toolset(
+    ToolsetEnvironment {
+        target: &target,
+        host: Some(&ctx),
+    },
+    &config,
+)?;
 
 resolved.registry      // durable Forge model-facing data
 resolved.documents     // schema/description blobs to store
 resolved.catalog       // host-side invocation bindings
+resolved.provider_request_defaults_patch // provider request defaults to merge
 
-HostToolEffectExecutor::new(ctx, resolved.catalog)
+InlineHostToolRuntime::new(ctx, resolved.catalog)
 ```
 
 ## Layering Contract
@@ -233,7 +241,8 @@ Layer 1 is the package-neutral runtime/catalog API:
 - `ToolBinding` with visible name, logical id, activity type, execution mode,
   and parallelism
 - `ToolCatalog`, the sidecar that maps `ToolName` to invocation metadata
-- `ResolvedToolProfile`, which carries `ToolRegistry`, documents, and catalog
+- `ResolvedToolset`, which carries `ToolRegistry`, documents, catalog, and
+  provider request defaults patches
 
 Layer 2 is the host substrate API. It is provider-neutral and close to the host
 effects the agent needs:
@@ -265,7 +274,7 @@ Layer 3 is the host tool package:
 Do not let model-trained tool names leak into the host capability API. For
 example, `Read`, `read_file`, and an MCP-style `filesystem_read_file` can all
 map to `invoke_read_file`. Likewise, `Bash` and `exec_command` can map to
-`invoke_run_process` through different host profile/tool bindings if both
+`invoke_run_process` through different host tool bindings if both
 surfaces are enabled later.
 
 ## Internal Capability API
@@ -507,39 +516,55 @@ If a substrate has a better index or native search implementation, add an
 optional search extension later rather than forcing every filesystem to expose
 search primitives up front.
 
-## Host Tool Profiles
+## Session Toolsets
 
 Use the existing `forge-agent` `ToolRegistry` and `ToolProfile` model. Do not
 add a second durable selection mechanism. The tools crate may keep a sidecar
 `ToolCatalog` for invocation dispatch, because that catalog is runner-side
 metadata rather than Forge session state.
 
-Start with fewer model-visible presets:
+Compose a session from a small explicit config:
 
 ```rust
-pub enum HostToolPreset {
-    DirectFs,
+pub struct ToolsetConfig {
+    pub profile_id: ToolProfileId,
+    pub host: HostToolsetConfig,
+    pub openai_web_search: OpenAiResponsesWebSearchConfig,
+    pub tool_choice: Option<ToolChoice>,
+}
+
+pub enum HostToolPresentation {
+    ProviderDefault,
+    Canonical,
     CodexLike,
     ClaudeCodeLike,
-    Custom(HostToolSelection),
 }
 ```
 
-Preset intent:
+Configuration intent:
 
-- `DirectFs`: expose direct filesystem tools using Forge canonical names:
+- `ToolsetConfig::workspace()`: expose direct filesystem tools using
+  provider-default names for the selected target. OpenAI currently resolves to
+  canonical names; Anthropic resolves to Claude Code-like names and omits host
+  operations that surface cannot represent yet.
+- `HostToolPresentation::Canonical`: expose direct filesystem tools using Forge
+  canonical names:
   `read_file`, `grep`, `glob`, `list_dir`, and write tools when the filesystem
   policy permits writes.
-- `CodexLike`: expose Codex-compatible process/patch behavior:
+- `HostToolPresentation::CodexLike`: expose Codex-compatible process/patch
+  behavior:
   `exec_command`, `write_stdin`, `apply_patch`, and `list_dir` when supported.
-- `ClaudeCodeLike`: expose Claude Code-style direct host tools:
+- `HostToolPresentation::ClaudeCodeLike`: expose Claude Code-style direct host
+  tools:
   `Read`, `Write`, `Edit`, `Glob`, `Grep`, and `Bash` when supported. These
   tools use Claude-shaped model-visible arguments but dispatch through the same
   canonical Forge operations.
-- `Custom`: allow callers to select an exact host tool set for a specific model,
-  provider, runner, or product surface.
+- `HostToolsetConfig::from_operations`: allow callers to select an exact host
+  tool set for a specific model, provider, runner, product surface, or eval.
+- `OpenAiResponsesWebSearchConfig`: exposes provider-native OpenAI Responses
+  `web_search` without adding host dispatch metadata.
 
-Preset construction must be capability-gated:
+Host tool construction must be capability-gated:
 
 - If `ctx.process` is `None`, omit process tools.
 - If `ctx.fs.access_policy()` is read-only, omit `write_file`, `edit_file`, and
@@ -557,15 +582,15 @@ For the initial pass, local process execution is full-authority.
 
 Initial mappings:
 
-| Preset | Model-visible tool | Internal operation |
+| Presentation | Model-visible tool | Internal operation |
 |---|---|---|
-| `DirectFs` | `read_file` | `invoke_read_file` |
-| `DirectFs` | `write_file` | `invoke_write_file` |
-| `DirectFs` | `edit_file` | `invoke_edit_file` |
-| `DirectFs` | `apply_patch` | `invoke_apply_patch` |
-| `DirectFs` | `grep` | `invoke_grep` |
-| `DirectFs` | `glob` | `invoke_glob` |
-| `DirectFs` | `list_dir` | `invoke_list_dir` |
+| `Canonical` | `read_file` | `invoke_read_file` |
+| `Canonical` | `write_file` | `invoke_write_file` |
+| `Canonical` | `edit_file` | `invoke_edit_file` |
+| `Canonical` | `apply_patch` | `invoke_apply_patch` |
+| `Canonical` | `grep` | `invoke_grep` |
+| `Canonical` | `glob` | `invoke_glob` |
+| `Canonical` | `list_dir` | `invoke_list_dir` |
 | `CodexLike` | `exec_command` | `invoke_run_process` |
 | `CodexLike` | `write_stdin` | `invoke_write_process_stdin` |
 | `CodexLike` | `apply_patch` | `invoke_apply_patch` |
@@ -577,7 +602,8 @@ Initial mappings:
 | `ClaudeCodeLike` | `Grep` | `invoke_grep` |
 | `ClaudeCodeLike` | `Bash` | `invoke_run_process` |
 
-`Custom` exposes exactly the caller-selected host tools after capability gating.
+`HostToolsetConfig::from_operations` exposes exactly the caller-selected host
+operations after capability gating.
 
 Keep `list_dir` as a standard tool. It is useful for process-free substrates
 and gives models a cheap directory inspection tool without requiring shell.
@@ -585,7 +611,7 @@ and gives models a cheap directory inspection tool without requiring shell.
 Do not include `stat` or `exists` as initial model-visible tools. Keep metadata
 and existence checks on the filesystem trait for tool implementation and
 validation, and add model-visible `stat`/`exists` later only if a concrete model
-profile or product flow benefits from them.
+target or product flow benefits from them.
 
 ## Migration Plan
 
@@ -599,11 +625,11 @@ The first refactor has moved the implementation in place:
 4. Split host tool identity into `HostToolOperation`, `HostToolSurface`, and
    `HostTool`. `HostToolOperation` is the logical behavior, `HostToolSurface`
    is the model-visible naming/schema family, and `HostTool` is the concrete
-   binding used in profiles.
-5. Put host profile selection and `ResolvedToolProfile` construction under
-   `host::profiles`.
+   binding used in toolsets.
+5. Put session tool composition and `ResolvedToolset` construction under
+   `tools::toolset`.
 6. Keep inline execution as one runtime implementation through
-   `InlineHostToolRuntime` and `HostToolEffectExecutor`.
+   `InlineHostToolRuntime`.
 7. Keep activity dispatch pluggable by recording `ToolBinding.activity_type` and
    `ToolBinding.execution`.
 

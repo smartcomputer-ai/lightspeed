@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
-use engine::{BlobRef, ToolEffect, ToolName, ToolParallelism, ToolProfileId, ToolRegistry};
+use engine::{BlobRef, ToolEffect, ToolName, ToolParallelism};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -43,14 +43,6 @@ impl ToolDocument {
 pub struct ToolSpecBundle {
     pub spec: engine::ToolSpec,
     pub documents: Vec<ToolDocument>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ResolvedToolProfile {
-    pub profile_id: ToolProfileId,
-    pub registry: ToolRegistry,
-    pub documents: Vec<ToolDocument>,
-    pub catalog: ToolCatalog,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

@@ -79,6 +79,28 @@ impl HostToolsetConfig {
         }
     }
 
+    pub fn from_operations(operations: impl IntoIterator<Item = HostToolOperation>) -> Self {
+        let mut config = Self::disabled();
+        for operation in operations {
+            config.enable_operation(operation);
+        }
+        config
+    }
+
+    pub fn enable_operation(&mut self, operation: HostToolOperation) {
+        match operation {
+            HostToolOperation::ReadFile => self.fs.read_file = true,
+            HostToolOperation::WriteFile => self.fs.write_file = true,
+            HostToolOperation::EditFile => self.fs.edit_file = true,
+            HostToolOperation::ApplyPatch => self.fs.apply_patch = true,
+            HostToolOperation::Grep => self.fs.grep = true,
+            HostToolOperation::Glob => self.fs.glob = true,
+            HostToolOperation::ListDir => self.fs.list_dir = true,
+            HostToolOperation::RunProcess => self.process.run_process = true,
+            HostToolOperation::WriteProcessStdin => self.process.write_process_stdin = true,
+        }
+    }
+
     pub fn enabled(&self) -> bool {
         self.fs.enabled() || self.process.enabled()
     }

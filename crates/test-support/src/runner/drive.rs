@@ -642,10 +642,10 @@ mod tests {
         host::{
             HostToolContext, InlineHostToolRuntime,
             fs::{FileSystem, FsPath, MountedVfsFileSystem},
-            profiles::{HostToolPreset, resolve_host_profile},
             tools::ReadFileResult,
         },
         runtime::ToolTarget,
+        toolset::{ToolsetConfig, ToolsetEnvironment, resolve_toolset},
     };
     use vfs::{
         CompareAndSetVfsWorkspaceHead, CreateInlineSnapshotRequest, CreateVfsWorkspaceRecord,
@@ -1478,11 +1478,17 @@ mod tests {
         let ctx = HostToolContext::new(Arc::new(mounted_fs), None, blob_store.clone())
             .with_cwd(FsPath::root());
         let target = ToolTarget::api_kind(ProviderApiKind::OpenAiResponses);
-        let profile =
-            resolve_host_profile(&ctx, &target, HostToolPreset::DirectFs).expect("host profile");
-        let registry = profile.registry.clone();
-        let profile_id = profile.profile_id.clone();
-        let tools = InlineHostToolRuntime::new(ctx, profile.catalog);
+        let toolset = resolve_toolset(
+            ToolsetEnvironment {
+                target: &target,
+                host: Some(&ctx),
+            },
+            &ToolsetConfig::workspace(),
+        )
+        .expect("toolset");
+        let registry = toolset.registry.clone();
+        let profile_id = toolset.profile_id.clone();
+        let tools = InlineHostToolRuntime::new(ctx, toolset.catalog);
         let runner = SessionRunner::new(
             stores,
             Arc::new(ReadFileThenFinalLlm {
@@ -1629,11 +1635,17 @@ mod tests {
         let ctx = HostToolContext::new(Arc::new(mounted_fs), None, blob_store.clone())
             .with_cwd(FsPath::root());
         let target = ToolTarget::api_kind(ProviderApiKind::OpenAiResponses);
-        let profile =
-            resolve_host_profile(&ctx, &target, HostToolPreset::DirectFs).expect("host profile");
-        let registry = profile.registry.clone();
-        let profile_id = profile.profile_id.clone();
-        let tools = InlineHostToolRuntime::new(ctx, profile.catalog);
+        let toolset = resolve_toolset(
+            ToolsetEnvironment {
+                target: &target,
+                host: Some(&ctx),
+            },
+            &ToolsetConfig::workspace(),
+        )
+        .expect("toolset");
+        let registry = toolset.registry.clone();
+        let profile_id = toolset.profile_id.clone();
+        let tools = InlineHostToolRuntime::new(ctx, toolset.catalog);
         let runner = SessionRunner::new(
             stores,
             Arc::new(ReadFileThenFinalLlm {

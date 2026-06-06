@@ -13,9 +13,8 @@ pub use activities::{
 };
 pub use config::{
     DEFAULT_CONTINUE_AS_NEW_HISTORY_THRESHOLD, DEFAULT_MODEL, DEFAULT_TASK_QUEUE,
-    DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET, FAKE_TOOL_NAME, FAKE_TOOL_PROFILE_ID,
-    activity_options, default_instructions, default_run_config, default_session_config,
-    fake_tool_input_schema, fake_tool_registry,
+    DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET, FAKE_TOOL_NAME, activity_options,
+    default_instructions, default_run_config, default_session_config,
 };
 pub use temporal_helpers::connect_temporal;
 pub use types::{

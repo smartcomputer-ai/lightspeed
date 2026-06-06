@@ -5,7 +5,7 @@ use engine::{
     ContextEntryKind, CoreAgentAction, CoreAgentCodec, CoreAgentCommand, CoreAgentDrive,
     CoreAgentDriveError, CoreAgentEntry, CoreAgentEventKind, CoreAgentState, CoreApplyEvent,
     LlmGenerationRequest, RunEvent, SKILL_CATALOG_CONTEXT_KEY, SessionId, SessionPosition,
-    SubmissionId, ToolInvocationBatchRequest, ToolProfileId,
+    SubmissionId, ToolInvocationBatchRequest,
 };
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
@@ -16,9 +16,8 @@ use crate::{
     AgentActiveRunSummary, AgentAdmission, AgentAdmissionFailure, AgentAdmissionFailureKind,
     AgentCompletedRunSummary, AgentQueuedRunSummary, AgentSessionArgs, AgentSessionStatus,
     AppendEventsRequest, CreateOrLoadSessionRequest, DEFAULT_CONTINUE_AS_NEW_HISTORY_THRESHOLD,
-    FAKE_TOOL_PROFILE_ID, LlmGenerateActivityRequest, PutBlobRequest,
-    SkillCatalogRefreshActivityRequest, ToolInvokeBatchActivityRequest, WorkflowActivities,
-    activity_options, default_instructions, fake_tool_input_schema, fake_tool_registry,
+    LlmGenerateActivityRequest, PutBlobRequest, SkillCatalogRefreshActivityRequest,
+    ToolInvokeBatchActivityRequest, WorkflowActivities, activity_options, default_instructions,
 };
 
 const DEFAULT_MAX_STEPS_PER_INPUT: usize = 256;
@@ -228,16 +227,6 @@ async fn open_new_session(
         }
     };
     let session_config = args.session_config;
-    let schema_ref = ctx
-        .start_activity(
-            WorkflowActivities::put_blob,
-            PutBlobRequest {
-                bytes: fake_tool_input_schema(),
-            },
-            activity_options(),
-        )
-        .await
-        .map_err(|error| anyhow::anyhow!("{error}"))?;
 
     let mut drive = drive_from_state(ctx)?;
     append_command(
@@ -259,22 +248,6 @@ async fn open_new_session(
         )
         .await?;
     }
-    append_command(
-        ctx,
-        &mut drive,
-        CoreAgentCommand::SetToolRegistry {
-            registry: fake_tool_registry(schema_ref),
-        },
-    )
-    .await?;
-    append_command(
-        ctx,
-        &mut drive,
-        CoreAgentCommand::SelectToolProfile {
-            profile_id: ToolProfileId::new(FAKE_TOOL_PROFILE_ID),
-        },
-    )
-    .await?;
     Ok(())
 }
 
