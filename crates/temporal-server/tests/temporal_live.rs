@@ -615,7 +615,7 @@ fn openai_live_model() -> ModelSelection {
             .or_else(|_| env::var("OPENAI_RESPONSES_MODEL"))
             .or_else(|_| env::var("OPENAI_LIVE_MODEL"))
             .or_else(|_| env::var("FORGE_CHAT_MODEL"))
-            .unwrap_or_else(|_| "gpt-5-mini".to_owned()),
+            .unwrap_or_else(|_| "gpt-5.5".to_owned()),
         options: ModelProviderOptions::None,
     }
 }

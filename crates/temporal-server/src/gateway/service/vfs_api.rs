@@ -328,15 +328,21 @@ impl GatewayAgentApi {
         let cwd = mounted_vfs_cwd(fs.mounts())?;
         let ctx = HostToolContext::new(Arc::new(fs), None, blobs.clone()).with_cwd(cwd);
         let target = tools::runtime::ToolTarget::from(&session_config.model);
-        let profile = resolve_host_profile(&ctx, &target, HostToolPreset::DirectFs)
-            .map_err(|error| AgentApiError::internal(format!("build vfs host tools: {error}")))?;
-        store_tool_documents(blobs.as_ref(), &profile.documents).await?;
+        let toolset = resolve_toolset(
+            ToolsetEnvironment {
+                target: &target,
+                host: Some(&ctx),
+            },
+            &ToolsetConfig::workspace(),
+        )
+        .map_err(|error| AgentApiError::internal(format!("build vfs host tools: {error}")))?;
+        store_tool_documents(blobs.as_ref(), &toolset.documents).await?;
 
         let mut registry = loaded.state.tooling.registry.clone();
-        for (tool_name, spec) in profile.registry.tools {
+        for (tool_name, spec) in toolset.registry.tools {
             registry.tools.insert(tool_name, spec);
         }
-        for (profile_id, tool_profile) in profile.registry.profiles {
+        for (profile_id, tool_profile) in toolset.registry.profiles {
             registry.profiles.insert(profile_id, tool_profile);
         }
 
@@ -357,11 +363,11 @@ impl GatewayAgentApi {
         self.submit_core_command(
             session_id,
             CoreAgentCommand::SelectToolProfile {
-                profile_id: profile.profile_id.clone(),
+                profile_id: toolset.profile_id.clone(),
             },
         )
         .await?;
-        self.wait_for_vfs_tooling(session_id, &profile.profile_id, baseline_failures)
+        self.wait_for_vfs_tooling(session_id, &toolset.profile_id, baseline_failures)
             .await
     }
 

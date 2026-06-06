@@ -9,5 +9,7 @@ pub mod host;
 pub mod prompts;
 pub mod runtime;
 pub mod skills;
+pub mod toolset;
+pub mod web;
 
 pub use error::{ToolError, ToolResult};

@@ -1,7 +1,7 @@
 # P66: Minimal Web Access
 
 **Status**
-- Proposed.
+- In progress.
 - First cut is deliberately two pieces:
   1. OpenAI Responses provider-native `web_search`.
   2. A Forge-owned, guarded, recorded `web_fetch` function tool.
@@ -11,6 +11,16 @@
   deferred.
 - Builds on P49 tool packages, P50 provider-native request materialization, and
   P64's pattern for recording opaque provider-native output items.
+- As of 2026-06-06, G1 is implemented at the standard tool/runtime layer:
+  `tools::web::search` builds OpenAI Responses hosted `web_search` provider-native
+  tools, request defaults can opt into `web_search_call.action.sources`, the
+  OpenAI Responses runtime preserves `web_search_call` output items as
+  provider-opaque context, and an ignored live test documents the OpenAI
+  prerequisites.
+- As of 2026-06-06, a first-cut `tools::toolset` resolver can compose
+  provider-rendered host filesystem tools and optional OpenAI Responses
+  `web_search` into one selected tool profile. Product-level API/gateway
+  toggles and G2 `web_fetch` remain pending.
 
 ## Goal
 

@@ -30,12 +30,16 @@ use vfs::{
     VfsPath, VfsWorkspaceId, VfsWorkspaceRecord, VfsWorkspaceStore, create_inline_snapshot,
 };
 
+mod support;
+
+use support::retrying_openai_responses_client;
+
 const LIVE_MARKER: &str = "LIVE-SKILL-MATRIX-7392";
 
 fn live_model() -> String {
     env_or_dotenv_var("OPENAI_RESPONSES_MODEL")
         .or_else(|_| env_or_dotenv_var("OPENAI_LIVE_MODEL"))
-        .unwrap_or_else(|_| "gpt-5-mini".to_string())
+        .unwrap_or_else(|_| "gpt-5.5".to_string())
 }
 
 fn live_client() -> Client {
@@ -311,7 +315,7 @@ async fn openai_responses_live_selects_and_activates_the_matching_skill() {
         LlmAdapterRegistry::new().with_generation_adapter(
             ProviderApiKind::OpenAiResponses,
             Arc::new(OpenAiResponsesLlmAdapter::new(
-                Arc::new(live_client()),
+                retrying_openai_responses_client(live_client()),
                 blobs.clone(),
             )),
         ),
@@ -440,7 +444,7 @@ fn session_config(model: ModelSelection) -> SessionConfig {
         model,
         run: run_config(),
         turn: engine::TurnConfig {
-            max_output_tokens: Some(512),
+            max_output_tokens: Some(1024),
             provider_request_defaults: ProviderRequestDefaults::OpenAiResponses(
                 OpenAiResponsesRequestDefaults {
                     store: Some(false),

@@ -83,7 +83,6 @@ use tools::{
     host::{
         HostToolContext, HostToolTargets,
         fs::{FileSystem, FsPath, MountedVfsFileSystem},
-        profiles::{HostToolPreset, resolve_host_profile},
     },
     runtime::ToolDocument,
     skills::{
@@ -91,6 +90,7 @@ use tools::{
         prepare_skill_catalog_publication, resolve_mounted_vfs_skill_roots,
         skill_catalog_context_input,
     },
+    toolset::{ToolsetConfig, ToolsetEnvironment, resolve_toolset},
 };
 use vfs::{
     CompareAndSetVfsWorkspaceHead, CreateVfsWorkspaceRecord, VfsCatalogError, VfsMountAccess,

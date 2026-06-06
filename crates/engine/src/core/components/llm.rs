@@ -61,6 +61,7 @@ pub enum ProviderRequestDefaults {
 
 pub const OPENAI_RESPONSES_REASONING_ENCRYPTED_CONTENT_INCLUDE: &str =
     "reasoning.encrypted_content";
+pub const OPENAI_RESPONSES_WEB_SEARCH_SOURCES_INCLUDE: &str = "web_search_call.action.sources";
 
 fn default_openai_responses_include() -> Vec<String> {
     vec![OPENAI_RESPONSES_REASONING_ENCRYPTED_CONTENT_INCLUDE.to_owned()]
@@ -789,6 +790,47 @@ mod tests {
             resolved.turn.provider_request_defaults,
             ProviderRequestDefaults::OpenAiResponses(defaults)
         );
+    }
+
+    #[test]
+    fn provider_native_tool_rejects_mismatched_request_api_kind() {
+        let mut state = CoreAgentState::new();
+        let profile_id = crate::ToolProfileId::new("web");
+        let tool_name = ToolName::new("web_search");
+        state.tooling.registry.tools.insert(
+            tool_name.clone(),
+            ToolSpec {
+                name: tool_name.clone(),
+                kind: ToolKind::ProviderNative(crate::ProviderNativeToolSpec {
+                    api_kind: ProviderApiKind::OpenAiResponses,
+                    native_tool_ref: crate::BlobRef::from_bytes(
+                        br#"{"type":"web_search","external_web_access":false}"#,
+                    ),
+                    execution: crate::ProviderNativeToolExecution::ProviderHosted,
+                }),
+                parallelism: crate::ToolParallelism::ParallelSafe,
+                target_requirement: crate::ToolTargetRequirement::None,
+            },
+        );
+        state.tooling.registry.profiles.insert(
+            profile_id.clone(),
+            crate::ToolProfile {
+                profile_id: profile_id.clone(),
+                visible_tools: vec![tool_name],
+                tool_choice: None,
+            },
+        );
+        state.tooling.selected_profile_id = Some(profile_id);
+
+        let error = selected_tools_and_choice(&state, &ProviderApiKind::AnthropicMessages)
+            .expect_err("provider-native tool must reject mismatched api kind");
+
+        let PlanningError::Domain(DomainError::ProviderCompatibility(message)) = error else {
+            panic!("expected provider compatibility error, got {error:?}");
+        };
+        assert!(message.contains("provider-native tool web_search"));
+        assert!(message.contains("OpenAiResponses"));
+        assert!(message.contains("AnthropicMessages"));
     }
 
     #[test]

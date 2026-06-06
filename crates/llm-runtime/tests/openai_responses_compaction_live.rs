@@ -13,6 +13,10 @@ use llm_clients::openai::responses::{Client, Config};
 use llm_runtime::{LlmAdapterRegistry, LlmRuntime, OpenAiResponsesLlmAdapter};
 use test_support::{DriveCommand, RunnerQuiescence, RunnerStores, SessionRunner};
 
+mod support;
+
+use support::retrying_openai_responses_client;
+
 const LIVE_MARKER: &str = "FORGE-COMPACTION-LIVE-87421";
 
 fn live_compaction_model() -> String {
@@ -112,7 +116,7 @@ async fn openai_responses_live_engine_prunes_and_reuses_provider_compaction() {
         LlmAdapterRegistry::new().with_generation_adapter(
             ProviderApiKind::OpenAiResponses,
             Arc::new(OpenAiResponsesLlmAdapter::new(
-                Arc::new(live_client()),
+                retrying_openai_responses_client(live_client()),
                 blobs.clone(),
             )),
         ),
@@ -376,7 +380,7 @@ async fn live_runner(session_id: &SessionId) -> (SessionRunner, Arc<InMemoryBlob
         .expect("create session");
 
     let adapter = Arc::new(OpenAiResponsesLlmAdapter::new(
-        Arc::new(live_client()),
+        retrying_openai_responses_client(live_client()),
         blobs.clone(),
     ));
     let llm = Arc::new(LlmRuntime::new(

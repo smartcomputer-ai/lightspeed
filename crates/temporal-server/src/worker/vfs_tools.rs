@@ -11,9 +11,9 @@ use tools::{
     host::{
         HostToolContext, InlineHostToolRuntime,
         fs::{FsPath, MountedVfsFileSystem},
-        profiles::{HostToolPreset, resolve_host_profile},
     },
-    runtime::ToolTarget,
+    runtime::{ToolCatalog, ToolTarget},
+    toolset::{ToolsetConfig, ToolsetEnvironment, resolve_toolset},
 };
 use vfs::{VfsCatalogError, VfsMountRecord, VfsMountStore, VfsWorkspaceStore};
 
@@ -53,11 +53,32 @@ impl SessionMountedVfsTools {
                 .map_err(io_error)?;
         let cwd = mounted_vfs_cwd(fs.mounts())?;
         let ctx = HostToolContext::new(Arc::new(fs), None, self.blobs.clone()).with_cwd(cwd);
-        let target = ToolTarget::api_kind(ProviderApiKind::OpenAiResponses);
-        let profile = resolve_host_profile(&ctx, &target, HostToolPreset::DirectFs)
-            .map_err(|error| io_error(format!("build mounted vfs tool profile: {error}")))?;
-        Ok(InlineHostToolRuntime::new(ctx, profile.catalog))
+        let catalog = workspace_catalog_for_host(&ctx)?;
+        Ok(InlineHostToolRuntime::new(ctx, catalog))
     }
+}
+
+fn workspace_catalog_for_host(ctx: &HostToolContext) -> Result<ToolCatalog, CoreAgentIoError> {
+    let mut catalog = ToolCatalog::new();
+    for api_kind in [
+        ProviderApiKind::OpenAiResponses,
+        ProviderApiKind::AnthropicMessages,
+        ProviderApiKind::OpenAiCompletions,
+    ] {
+        let target = ToolTarget::api_kind(api_kind);
+        let toolset = resolve_toolset(
+            ToolsetEnvironment {
+                target: &target,
+                host: Some(ctx),
+            },
+            &ToolsetConfig::workspace(),
+        )
+        .map_err(|error| io_error(format!("build mounted vfs tool profile: {error}")))?;
+        for binding in toolset.catalog.bindings() {
+            catalog.insert(binding.clone());
+        }
+    }
+    Ok(catalog)
 }
 
 #[async_trait]
@@ -272,8 +293,7 @@ mod tests {
         }
     }
 
-    #[tokio::test(flavor = "current_thread")]
-    async fn mounted_vfs_tools_read_session_workspace_mount() {
+    async fn mounted_readme_tools() -> (Arc<InMemoryBlobStore>, SessionMountedVfsTools, SessionId) {
         let blobs = Arc::new(InMemoryBlobStore::new());
         let catalog = Arc::new(TestCatalog::default());
         let session_id = SessionId::new("session_1");
@@ -305,6 +325,12 @@ mod tests {
             .await
             .expect("mount");
         let tools = SessionMountedVfsTools::new(blobs.clone(), catalog.clone(), catalog);
+        (blobs, tools, session_id)
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn mounted_vfs_tools_read_session_workspace_mount() {
+        let (blobs, tools, session_id) = mounted_readme_tools().await;
         let arguments_ref = blobs
             .put_bytes(br#"{"path":"README.md","offset":1,"limit":10}"#.to_vec())
             .await
@@ -319,6 +345,38 @@ mod tests {
                 calls: vec![engine::ToolInvocationRequest {
                     call_id: ToolCallId::new("call_1"),
                     tool_name: ToolName::new("read_file"),
+                    arguments_ref,
+                    execution_target: Some(ToolExecutionTarget::new("host", "local")),
+                }],
+            })
+            .await
+            .expect("invoke");
+
+        assert_eq!(result.results[0].status, ToolCallStatus::Succeeded);
+        let output = blobs
+            .read_text(result.results[0].output_ref.as_ref().expect("output ref"))
+            .await
+            .expect("output");
+        assert!(output.contains("hello"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn mounted_vfs_tools_accept_claude_style_read_tool() {
+        let (blobs, tools, session_id) = mounted_readme_tools().await;
+        let arguments_ref = blobs
+            .put_bytes(br#"{"file_path":"README.md","offset":1,"limit":10}"#.to_vec())
+            .await
+            .expect("arguments");
+
+        let result = tools
+            .invoke_batch(ToolInvocationBatchRequest {
+                session_id,
+                run_id: RunId::new(1),
+                turn_id: TurnId::new(1),
+                batch_id: ToolBatchId::new(1),
+                calls: vec![engine::ToolInvocationRequest {
+                    call_id: ToolCallId::new("call_1"),
+                    tool_name: ToolName::new("Read"),
                     arguments_ref,
                     execution_target: Some(ToolExecutionTarget::new("host", "local")),
                 }],
