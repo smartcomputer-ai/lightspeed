@@ -9,9 +9,15 @@ use engine::{
     ToolInvocationBatchRequest, ToolInvocationBatchResult, ToolInvocationResult,
     storage::{AppendSessionEvents, BlobStore, ReadSessionEvents},
 };
-use tools::skills::{
-    conventional_vfs_skill_root_specs, prepare_skill_catalog_publication,
-    resolve_mounted_vfs_skill_roots,
+use tools::{
+    prompts::{
+        PromptAssemblyLimits, conventional_vfs_prompt_root_specs,
+        prepare_prompt_instructions_publication, resolve_mounted_vfs_prompt_roots,
+    },
+    skills::{
+        conventional_vfs_skill_root_specs, prepare_skill_catalog_publication,
+        resolve_mounted_vfs_skill_roots,
+    },
 };
 
 use super::{
@@ -50,12 +56,119 @@ impl SessionRunner {
         self
     }
 
+    async fn refresh_prompt_instructions_before_run(
+        &self,
+        drive: &mut CoreAgentDrive,
+        observed_at_ms: u64,
+        emitted_entries: &mut Vec<engine::CoreAgentEntry>,
+    ) -> Result<(), RunnerError> {
+        let Some(command) = self
+            .refresh_prompt_instructions_command(drive.session_id(), drive.state())
+            .await?
+        else {
+            return Ok(());
+        };
+        let action = drive.admit_command(command, observed_at_ms)?;
+        match action {
+            CoreAgentAction::AppendEvents {
+                expected_head,
+                events,
+            } => {
+                let appended = self
+                    .stores
+                    .sessions
+                    .append(AppendSessionEvents {
+                        session_id: drive.session_id().clone(),
+                        expected_head,
+                        events,
+                    })
+                    .await?;
+                let entries = drive.resume_appended(appended.entries)?;
+                emitted_entries.extend(entries);
+                Ok(())
+            }
+            CoreAgentAction::Idle | CoreAgentAction::Closed => Ok(()),
+            other => Err(RunnerError::InvalidRequest {
+                message: format!(
+                    "prompt instructions refresh emitted unexpected action: {other:?}"
+                ),
+            }),
+        }
+    }
+
+    async fn refresh_prompt_instructions_command(
+        &self,
+        session_id: &SessionId,
+        state: &CoreAgentState,
+    ) -> Result<Option<CoreAgentCommand>, RunnerError> {
+        let Some(workspace_store) = self.stores.vfs_workspace_store.as_ref() else {
+            return Ok(None);
+        };
+        let Some(mount_store) = self.stores.vfs_mount_store.as_ref() else {
+            return Ok(None);
+        };
+
+        let mounts = mount_store.list_mounts(session_id).await.map_err(|error| {
+            RunnerError::InvalidRequest {
+                message: format!("load VFS mounts for prompt instructions refresh: {error}"),
+            }
+        })?;
+        let specs = conventional_vfs_prompt_root_specs(&mounts);
+        if specs.is_empty() {
+            let publication = prepare_prompt_instructions_publication(
+                self.stores.blobs.as_ref(),
+                state,
+                &[],
+                PromptAssemblyLimits::default(),
+            )
+            .await
+            .map_err(|error| RunnerError::InvalidRequest {
+                message: format!("prepare prompt instructions publication: {error}"),
+            })?;
+            return Ok(publication.command);
+        }
+
+        let resolved = resolve_mounted_vfs_prompt_roots(
+            self.stores.blobs.clone(),
+            workspace_store.clone(),
+            mounts,
+            specs,
+        )
+        .await
+        .map_err(|error| RunnerError::InvalidRequest {
+            message: format!("resolve VFS prompt roots: {error}"),
+        })?;
+        let inputs = resolved
+            .existing_directory_inputs()
+            .await
+            .map_err(|error| RunnerError::InvalidRequest {
+                message: format!("filter VFS prompt roots: {error}"),
+            })?;
+        let publication = prepare_prompt_instructions_publication(
+            self.stores.blobs.as_ref(),
+            state,
+            &inputs,
+            PromptAssemblyLimits::default(),
+        )
+        .await
+        .map_err(|error| RunnerError::InvalidRequest {
+            message: format!("prepare prompt instructions publication: {error}"),
+        })?;
+        Ok(publication.command)
+    }
+
     pub async fn drive_command(&self, request: DriveCommand) -> Result<DriveOutcome, RunnerError> {
         let max_steps = resolve_max_steps(request.max_steps)?;
         let mut drive = self.load_drive(&request.session_id).await?;
         let mut emitted_entries = Vec::new();
 
-        if should_refresh_skill_catalog_before_admitting(drive.state(), &request.command) {
+        if should_refresh_run_context_before_admitting(drive.state(), &request.command) {
+            self.refresh_prompt_instructions_before_run(
+                &mut drive,
+                request.observed_at_ms,
+                &mut emitted_entries,
+            )
+            .await?;
             self.refresh_skill_catalog_before_run(
                 &mut drive,
                 request.observed_at_ms,
@@ -348,7 +461,7 @@ impl SessionRunner {
     }
 }
 
-fn should_refresh_skill_catalog_before_admitting(
+fn should_refresh_run_context_before_admitting(
     state: &CoreAgentState,
     command: &CoreAgentCommand,
 ) -> bool {
@@ -511,13 +624,18 @@ mod tests {
         AgentHandle, CompactionPolicy, ContextCompactionRequest, ContextCompactionResult,
         ContextCompactionStatus, ContextConfig, ContextEntryInput, ContextEntryKey,
         ContextEntryKind, ContextMessageRole, CoreAgentCommand, CoreAgentEventKind,
-        FunctionToolSpec, LlmFinish, ModelProviderOptions, ModelSelection, ObservedToolCall,
-        ProviderApiKind, ProviderRequestDefaults, RunConfig, RunStatus, SessionConfig, SessionId,
-        ToolCallResult, ToolExecutionTarget, ToolKind, ToolName, ToolParallelism, ToolProfile,
-        ToolProfileId, ToolRegistry, ToolSpec, ToolTargetRequirement, TurnConfig, TurnEvent,
+        FunctionToolSpec, LlmFinish, LlmRequestKind, ModelProviderOptions, ModelSelection,
+        ObservedToolCall, ProviderApiKind, ProviderRequestDefaults, RunConfig, RunStatus,
+        SessionConfig, SessionId, ToolCallResult, ToolExecutionTarget, ToolKind, ToolName,
+        ToolParallelism, ToolProfile, ToolProfileId, ToolRegistry, ToolSpec, ToolTargetRequirement,
+        TurnConfig, TurnEvent,
         storage::{
             BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore,
         },
+    };
+    use tools::prompts::{
+        PROMPT_INSTRUCTIONS_CONTEXT_KEY_PREFIX, PROMPT_INSTRUCTIONS_PROVIDER_KIND,
+        PromptInstructionsReport,
     };
     use tools::skills::{SkillCatalogSnapshot, SkillLocation};
     use tools::{
@@ -595,6 +713,11 @@ mod tests {
         offset: Option<usize>,
         limit: Option<usize>,
         call_id: String,
+    }
+
+    #[derive(Default)]
+    struct CaptureFinalLlm {
+        requests: Mutex<Vec<LlmGenerationRequest>>,
     }
 
     #[derive(Default)]
@@ -806,6 +929,20 @@ mod tests {
                     },
                 });
             }
+            Ok(final_output_result(&request))
+        }
+    }
+
+    #[async_trait]
+    impl CoreAgentLlm for CaptureFinalLlm {
+        async fn generate(
+            &self,
+            request: LlmGenerationRequest,
+        ) -> Result<LlmGenerationResult, CoreAgentIoError> {
+            self.requests
+                .lock()
+                .expect("request lock")
+                .push(request.clone());
             Ok(final_output_result(&request))
         }
     }
@@ -1086,6 +1223,209 @@ mod tests {
                     })
             )
         }));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn request_run_refreshes_conventional_vfs_prompt_instructions_before_planning() {
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let vfs = Arc::new(TestVfsCatalog::default());
+        let stores = RunnerStores::new(sessions.clone(), blobs.clone())
+            .with_vfs_catalog(vfs.clone(), vfs.clone());
+        let session_id = SessionId::new("session-prompts");
+        sessions
+            .create_session(CreateSession {
+                session_id: session_id.clone(),
+                agent_handle: AgentHandle::new("forge.default"),
+                created_at_ms: 1,
+            })
+            .await
+            .expect("create session");
+        let initial_snapshot = create_inline_snapshot(
+            blobs.as_ref(),
+            CreateInlineSnapshotRequest::new(vec![
+                InlineFile::new(
+                    ".forge/prompts/instructions.md",
+                    b"Keep replies concise.\n".to_vec(),
+                )
+                .unwrap(),
+                InlineFile::new(
+                    ".forge/prompts/instructions.d/010-style.md",
+                    b"Prefer concrete file references.\n".to_vec(),
+                )
+                .unwrap(),
+            ]),
+        )
+        .await
+        .expect("create initial prompt snapshot");
+        let workspace_id = VfsWorkspaceId::new("workspace-prompts");
+        vfs.create_workspace(CreateVfsWorkspaceRecord {
+            workspace_id: workspace_id.clone(),
+            base_snapshot_ref: Some(initial_snapshot.snapshot_ref.clone()),
+            head_snapshot_ref: initial_snapshot.snapshot_ref,
+            created_at_ms: 1,
+        })
+        .await
+        .expect("create workspace");
+        vfs.put_mount(VfsMountRecord {
+            session_id: session_id.clone(),
+            mount_path: VfsPath::parse("/workspace").unwrap(),
+            source: VfsMountSource::Workspace {
+                workspace_id: workspace_id.clone(),
+            },
+            access: VfsMountAccess::ReadWrite,
+        })
+        .await
+        .expect("mount workspace");
+        let llm = Arc::new(CaptureFinalLlm::default());
+        let runner = SessionRunner::new(stores, llm.clone());
+        runner
+            .drive_command(DriveCommand {
+                session_id: session_id.clone(),
+                observed_at_ms: 10,
+                command: CoreAgentCommand::OpenSession { config: config() },
+                max_steps: None,
+            })
+            .await
+            .expect("open session");
+
+        let first_outcome = runner
+            .drive_command(DriveCommand {
+                session_id: session_id.clone(),
+                observed_at_ms: 20,
+                command: CoreAgentCommand::RequestRun {
+                    submission_id: None,
+                    input: user_input(BlobRef::from_bytes(b"first input")),
+                    run_config: run_config(),
+                },
+                max_steps: Some(64),
+            })
+            .await
+            .expect("drive first request");
+
+        let first_prompts = tools::prompts::active_prompt_instruction_entries(&first_outcome.state);
+        assert_eq!(first_prompts.len(), 2);
+        assert_prompt_entry_metadata(&first_prompts);
+        assert_eq!(
+            prompt_entry_texts(blobs.as_ref(), &first_prompts).await,
+            vec![
+                "Keep replies concise.\n".to_owned(),
+                "Prefer concrete file references.\n".to_owned(),
+            ]
+        );
+        let first_report_ref = prompt_report_ref_from_entries(&first_prompts);
+        let first_report: PromptInstructionsReport = serde_json::from_slice(
+            &blobs
+                .read_bytes(&first_report_ref)
+                .await
+                .expect("read first prompt report"),
+        )
+        .expect("decode first prompt report");
+        let mut first_report_paths = first_report
+            .sources
+            .iter()
+            .map(|source| source.path.as_str())
+            .collect::<Vec<_>>();
+        first_report_paths.sort_unstable();
+        assert_eq!(
+            first_report_paths,
+            vec![
+                "/workspace/.forge/prompts/instructions.d/010-style.md",
+                "/workspace/.forge/prompts/instructions.md",
+            ]
+        );
+        assert!(first_report.sources.iter().all(|source| source.published));
+        assert!(first_outcome.emitted_entries.iter().any(|entry| {
+            matches!(
+                &entry.event.kind,
+                CoreAgentEventKind::Context(engine::ContextEvent::KeyPrefixReplaced {
+                    key_prefix,
+                    entries,
+                    ..
+                }) if key_prefix.as_str() == PROMPT_INSTRUCTIONS_CONTEXT_KEY_PREFIX
+                    && entries.len() == 2
+            )
+        }));
+
+        let first_prompt_refs = prompt_content_refs(&first_prompts);
+        {
+            let requests = llm.requests.lock().expect("requests lock");
+            assert_eq!(requests.len(), 1);
+            assert_eq!(
+                prompt_content_refs(&prompt_instruction_entries_in_request(&requests[0])),
+                first_prompt_refs
+            );
+            assert_prompts_precede_user_message(&requests[0]);
+        }
+
+        let updated_snapshot = create_inline_snapshot(
+            blobs.as_ref(),
+            CreateInlineSnapshotRequest::new(vec![
+                InlineFile::new(
+                    ".forge/prompts/instructions.d/020-focus.md",
+                    b"Mention tradeoffs explicitly.\n".to_vec(),
+                )
+                .unwrap(),
+            ]),
+        )
+        .await
+        .expect("create updated prompt snapshot");
+        let workspace = vfs
+            .read_workspace(&workspace_id)
+            .await
+            .expect("read workspace");
+        vfs.compare_and_set_head(CompareAndSetVfsWorkspaceHead {
+            workspace_id: workspace_id.clone(),
+            expected_revision: Some(workspace.revision),
+            new_head_snapshot_ref: updated_snapshot.snapshot_ref,
+            updated_at_ms: 30,
+        })
+        .await
+        .expect("update workspace head");
+
+        let second_outcome = runner
+            .drive_command(DriveCommand {
+                session_id: session_id.clone(),
+                observed_at_ms: 40,
+                command: CoreAgentCommand::RequestRun {
+                    submission_id: None,
+                    input: user_input(BlobRef::from_bytes(b"second input")),
+                    run_config: run_config(),
+                },
+                max_steps: Some(64),
+            })
+            .await
+            .expect("drive second request");
+
+        let second_prompts =
+            tools::prompts::active_prompt_instruction_entries(&second_outcome.state);
+        assert_eq!(second_prompts.len(), 1);
+        assert_prompt_entry_metadata(&second_prompts);
+        assert_eq!(
+            prompt_entry_texts(blobs.as_ref(), &second_prompts).await,
+            vec!["Mention tradeoffs explicitly.\n".to_owned()]
+        );
+        assert!(second_outcome.emitted_entries.iter().any(|entry| {
+            matches!(
+                &entry.event.kind,
+                CoreAgentEventKind::Context(engine::ContextEvent::KeyPrefixReplaced {
+                    key_prefix,
+                    entries,
+                    ..
+                }) if key_prefix.as_str() == PROMPT_INSTRUCTIONS_CONTEXT_KEY_PREFIX
+                    && entries.len() == 1
+            )
+        }));
+        let second_prompt_refs = prompt_content_refs(&second_prompts);
+        {
+            let requests = llm.requests.lock().expect("requests lock");
+            assert_eq!(requests.len(), 2);
+            assert_eq!(
+                prompt_content_refs(&prompt_instruction_entries_in_request(&requests[1])),
+                second_prompt_refs
+            );
+            assert_prompts_precede_user_message(&requests[1]);
+        }
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1424,6 +1764,108 @@ mod tests {
     async fn read_file_result(blobs: &dyn BlobStore, output_ref: &BlobRef) -> ReadFileResult {
         let bytes = blobs.read_bytes(output_ref).await.expect("read output");
         serde_json::from_slice(&bytes).expect("decode read_file result")
+    }
+
+    fn assert_prompt_entry_metadata(entries: &[&engine::ContextEntry]) {
+        for entry in entries {
+            assert!(matches!(entry.kind, ContextEntryKind::Instructions));
+            assert!(entry.key.as_ref().is_some_and(|key| {
+                key.as_str()
+                    .starts_with(PROMPT_INSTRUCTIONS_CONTEXT_KEY_PREFIX)
+            }));
+            assert_eq!(
+                entry.provider_kind.as_deref(),
+                Some(PROMPT_INSTRUCTIONS_PROVIDER_KIND)
+            );
+            assert!(
+                entry
+                    .provider_item_id
+                    .as_deref()
+                    .is_some_and(|value| BlobRef::parse(value.to_owned()).is_ok())
+            );
+        }
+    }
+
+    fn prompt_content_refs(entries: &[&engine::ContextEntry]) -> Vec<BlobRef> {
+        let mut refs = entries
+            .iter()
+            .map(|entry| entry.content_ref.clone())
+            .collect::<Vec<_>>();
+        refs.sort();
+        refs
+    }
+
+    fn prompt_report_ref_from_entries(entries: &[&engine::ContextEntry]) -> BlobRef {
+        let first = entries
+            .first()
+            .and_then(|entry| entry.provider_item_id.as_deref())
+            .expect("prompt report ref");
+        let report_ref = BlobRef::parse(first.to_owned()).expect("valid prompt report ref");
+        for entry in entries {
+            assert_eq!(entry.provider_item_id.as_deref(), Some(first));
+        }
+        report_ref
+    }
+
+    async fn prompt_entry_texts(
+        blobs: &dyn BlobStore,
+        entries: &[&engine::ContextEntry],
+    ) -> Vec<String> {
+        let mut texts = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let bytes = blobs
+                .read_bytes(&entry.content_ref)
+                .await
+                .expect("read prompt source");
+            texts.push(String::from_utf8(bytes).expect("prompt source utf8"));
+        }
+        texts.sort();
+        texts
+    }
+
+    fn prompt_instruction_entries_in_request(
+        request: &LlmGenerationRequest,
+    ) -> Vec<&engine::ContextEntry> {
+        request_context_entries(request)
+            .iter()
+            .filter(|entry| is_prompt_instruction_entry(entry))
+            .collect()
+    }
+
+    fn request_context_entries(request: &LlmGenerationRequest) -> &[engine::ContextEntry] {
+        let LlmRequestKind::OpenAiResponses(openai) = &request.request.kind else {
+            panic!("expected OpenAI Responses request");
+        };
+        &openai.input_context.entries
+    }
+
+    fn is_prompt_instruction_entry(entry: &engine::ContextEntry) -> bool {
+        matches!(entry.kind, ContextEntryKind::Instructions)
+            && entry.key.as_ref().is_some_and(|key| {
+                key.as_str()
+                    .starts_with(PROMPT_INSTRUCTIONS_CONTEXT_KEY_PREFIX)
+            })
+            && entry.provider_kind.as_deref() == Some(PROMPT_INSTRUCTIONS_PROVIDER_KIND)
+    }
+
+    fn assert_prompts_precede_user_message(request: &LlmGenerationRequest) {
+        let entries = request_context_entries(request);
+        let user_position = entries
+            .iter()
+            .position(|entry| {
+                matches!(
+                    entry.kind,
+                    ContextEntryKind::Message {
+                        role: ContextMessageRole::User
+                    }
+                )
+            })
+            .expect("user message in request context");
+        for (index, entry) in entries.iter().enumerate() {
+            if is_prompt_instruction_entry(entry) {
+                assert!(index < user_position);
+            }
+        }
     }
 
     #[tokio::test(flavor = "current_thread")]

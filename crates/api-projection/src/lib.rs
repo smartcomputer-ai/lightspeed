@@ -391,6 +391,22 @@ impl<'a> CoreAgentProjector<'a> {
                     revision: context_event_revision(*base_revision)?,
                     keys: keys.iter().map(|key| key.as_str().to_owned()).collect(),
                 }),
+                ContextEvent::KeyPrefixReplaced {
+                    base_revision,
+                    key_prefix,
+                    entries,
+                } => {
+                    let mut projected = Vec::with_capacity(entries.len());
+                    for entry in entries {
+                        projected.push(self.project_item(entry).await?);
+                    }
+                    Ok(SessionEventKindView::ContextKeyPrefixReplaced {
+                        base_revision: *base_revision,
+                        revision: context_event_revision(*base_revision)?,
+                        key_prefix: key_prefix.as_str().to_owned(),
+                        items: projected,
+                    })
+                }
                 ContextEvent::StateReplaced {
                     base_revision,
                     entries,

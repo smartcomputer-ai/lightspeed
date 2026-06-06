@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -30,6 +32,10 @@ pub enum CoreAgentCommand {
     UpsertContext {
         key: ContextEntryKey,
         entry: ContextEntryInput,
+    },
+    ReplaceContextPrefix {
+        key_prefix: ContextEntryKey,
+        entries: BTreeMap<ContextEntryKey, ContextEntryInput>,
     },
     RemoveContext {
         key: ContextEntryKey,

@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 
 use super::*;
+use crate::gateway::service::prompts::{active_prompt_context_entries, prompt_report_ref};
 
 #[test]
 fn admission_failure_mapping_uses_gateway_error_kinds() {
@@ -138,6 +139,42 @@ fn active_skill_ids_after_remove_drops_selected_skill() {
     let remaining = active_skill_ids_after_remove(&state, &SkillId::new("skill:review"));
 
     assert_eq!(remaining, vec![SkillId::new("skill:deploy")]);
+}
+
+#[test]
+fn prompt_report_ref_reads_prompt_provider_metadata() {
+    let prompt_ref = BlobRef::from_bytes(b"prompt");
+    let report_ref = BlobRef::from_bytes(b"prompt-report");
+    let input = tools::prompts::prompt_source_instructions_context_input(
+        prompt_ref,
+        report_ref.clone(),
+        "prompt instructions: instructions.md",
+    );
+    let entry = ContextEntry {
+        entry_id: engine::ContextEntryId::new(1),
+        key: Some(ContextEntryKey::new(format!(
+            "{}.0000.project",
+            tools::prompts::PROMPT_INSTRUCTIONS_CONTEXT_KEY_PREFIX
+        ))),
+        kind: input.kind,
+        source: engine::ContextEntrySource::ContextEdit,
+        content_ref: input.content_ref,
+        media_type: input.media_type,
+        preview: input.preview,
+        provider_kind: input.provider_kind,
+        provider_item_id: input.provider_item_id,
+        token_estimate: input.token_estimate,
+    };
+    let mut state = engine::CoreAgentState::new();
+    state.context.entries = vec![entry];
+
+    let active_entries = active_prompt_context_entries(&state);
+
+    assert_eq!(active_entries.len(), 1);
+    assert_eq!(
+        prompt_report_ref(active_entries[0]).expect("prompt report ref"),
+        Some(report_ref)
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]

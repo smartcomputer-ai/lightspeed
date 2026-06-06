@@ -39,6 +39,13 @@ pub enum Event {
         base_revision: u64,
         keys: Vec<ContextEntryKey>,
     },
+    /// Atomically replaces every active keyed entry whose key starts with
+    /// `key_prefix` with the supplied entries.
+    KeyPrefixReplaced {
+        base_revision: u64,
+        key_prefix: ContextEntryKey,
+        entries: Vec<ContextEntry>,
+    },
     /// Replaces the full active context state for explicit prune or policy
     /// rewrites. Replacement entries must be active entries from the current
     /// state; new materialization uses `EntriesApplied`.
@@ -451,6 +458,43 @@ pub(crate) fn validate_external_context_edit(
     entry: &ContextEntryInput,
 ) -> Result<(), DomainError> {
     validate_external_context_edit_entry(key, entry)
+}
+
+pub(crate) fn validate_external_context_prefix_replacement(
+    key_prefix: &ContextEntryKey,
+    entries: &std::collections::BTreeMap<ContextEntryKey, ContextEntryInput>,
+) -> Result<(), DomainError> {
+    for (key, entry) in entries {
+        if !context_key_starts_with(key, key_prefix) {
+            return Err(DomainError::InvariantViolation(format!(
+                "context replacement entry key {} is outside prefix {}",
+                key, key_prefix
+            )));
+        }
+        validate_external_context_edit_entry(key, entry)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn context_prefix_replacement_is_noop(
+    state: &CoreAgentState,
+    key_prefix: &ContextEntryKey,
+    entries: &std::collections::BTreeMap<ContextEntryKey, ContextEntryInput>,
+) -> bool {
+    let active = state
+        .context
+        .entries
+        .iter()
+        .filter_map(|entry| {
+            let key = entry.key.as_ref()?;
+            if context_key_starts_with(key, key_prefix) {
+                Some((key.clone(), context_entry_input_from_active(entry)))
+            } else {
+                None
+            }
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    active == *entries
 }
 
 pub(crate) fn validate_context_key_exists(
@@ -948,6 +992,16 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
             bump_context_revision(state)?;
             Ok(())
         }
+        Event::KeyPrefixReplaced {
+            base_revision,
+            key_prefix,
+            entries,
+        } => {
+            validate_base_revision(state, *base_revision)?;
+            apply_key_prefix_replaced(state, key_prefix, entries)?;
+            bump_context_revision(state)?;
+            Ok(())
+        }
         Event::StateReplaced {
             base_revision,
             entries,
@@ -1086,6 +1140,57 @@ fn validate_no_duplicate_entry_keys(entries: &[ContextEntry]) -> Result<(), Doma
     Ok(())
 }
 
+fn apply_key_prefix_replaced(
+    state: &mut CoreAgentState,
+    key_prefix: &ContextEntryKey,
+    entries: &[ContextEntry],
+) -> Result<(), DomainError> {
+    validate_key_prefix_replacement_entries(state, key_prefix, entries)?;
+    validate_prefix_entries_removable(state, key_prefix)?;
+    remove_context_entries_by_key_prefix(state, key_prefix);
+    if !entries.is_empty() {
+        apply_entries_applied(state, entries)?;
+    }
+    Ok(())
+}
+
+fn validate_key_prefix_replacement_entries(
+    state: &CoreAgentState,
+    key_prefix: &ContextEntryKey,
+    entries: &[ContextEntry],
+) -> Result<(), DomainError> {
+    if entries.is_empty() && !has_active_key_with_prefix(state, key_prefix) {
+        return Err(DomainError::InvariantViolation(format!(
+            "context key prefix replacement {} has no active entries and no replacement entries",
+            key_prefix
+        )));
+    }
+    validate_no_duplicate_entry_keys(entries)?;
+    for entry in entries {
+        let Some(key) = entry.key.as_ref() else {
+            return Err(DomainError::InvariantViolation(format!(
+                "context key prefix replacement entry {} must have a key",
+                entry.entry_id
+            )));
+        };
+        if !context_key_starts_with(key, key_prefix) {
+            return Err(DomainError::InvariantViolation(format!(
+                "context key prefix replacement entry {} has key {} outside prefix {}",
+                entry.entry_id, key, key_prefix
+            )));
+        }
+        if !matches!(entry.source, ContextEntrySource::ContextEdit) {
+            return Err(DomainError::InvariantViolation(format!(
+                "context key prefix replacement entry {} must use context edit source",
+                entry.entry_id
+            )));
+        }
+        let input = context_entry_input_from_active(entry);
+        validate_external_context_edit_entry(key, &input)?;
+    }
+    Ok(())
+}
+
 fn record_entry_materialization(
     state: &mut CoreAgentState,
     entry: &ContextEntry,
@@ -1218,6 +1323,22 @@ fn validate_keys_removable(
     Ok(())
 }
 
+fn validate_prefix_entries_removable(
+    state: &CoreAgentState,
+    key_prefix: &ContextEntryKey,
+) -> Result<(), DomainError> {
+    for entry in &state.context.entries {
+        if entry
+            .key
+            .as_ref()
+            .is_some_and(|key| context_key_starts_with(key, key_prefix))
+        {
+            validate_entry_is_not_unconsumed_active_run_input(state, entry.entry_id)?;
+        }
+    }
+    Ok(())
+}
+
 fn validate_entry_is_not_unconsumed_active_run_input(
     state: &CoreAgentState,
     entry_id: ContextEntryId,
@@ -1285,6 +1406,44 @@ fn remove_context_entry_by_key(state: &mut CoreAgentState, key: &ContextEntryKey
         .context
         .entries
         .retain(|entry| entry.key.as_ref() != Some(key));
+}
+
+fn remove_context_entries_by_key_prefix(state: &mut CoreAgentState, key_prefix: &ContextEntryKey) {
+    state.context.entries.retain(|entry| {
+        !entry
+            .key
+            .as_ref()
+            .is_some_and(|key| context_key_starts_with(key, key_prefix))
+    });
+}
+
+fn has_active_key_with_prefix(state: &CoreAgentState, key_prefix: &ContextEntryKey) -> bool {
+    state.context.entries.iter().any(|entry| {
+        entry
+            .key
+            .as_ref()
+            .is_some_and(|key| context_key_starts_with(key, key_prefix))
+    })
+}
+
+fn context_key_starts_with(key: &ContextEntryKey, key_prefix: &ContextEntryKey) -> bool {
+    key.as_str() == key_prefix.as_str()
+        || key
+            .as_str()
+            .strip_prefix(key_prefix.as_str())
+            .is_some_and(|suffix| suffix.starts_with('.'))
+}
+
+fn context_entry_input_from_active(entry: &ContextEntry) -> ContextEntryInput {
+    ContextEntryInput {
+        kind: entry.kind.clone(),
+        content_ref: entry.content_ref.clone(),
+        media_type: entry.media_type.clone(),
+        preview: entry.preview.clone(),
+        provider_kind: entry.provider_kind.clone(),
+        provider_item_id: entry.provider_item_id.clone(),
+        token_estimate: entry.token_estimate.clone(),
+    }
 }
 
 fn replace_context_state(

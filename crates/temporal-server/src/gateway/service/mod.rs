@@ -5,6 +5,7 @@ mod blobs;
 mod errors;
 mod input;
 mod parse;
+mod prompts;
 mod skills;
 mod vfs_api;
 mod workflow;
@@ -36,13 +37,14 @@ use api::{
     BlobPutManyResponse, BlobPutParams, BlobPutResponse, ClientCapabilities, CompactionPolicyInput,
     ContextCompactParams, ContextCompactResponse, ContextConfigInput as ApiContextConfigInput,
     ContextConfigPatchInput, FieldPatch, GenerationConfig, GenerationConfigPatch, InitializeParams,
-    InitializeResponse, InputItem, ModelConfig, ReasoningEffort, RunCancelParams,
-    RunCancelResponse, RunDefaultsConfig, RunDefaultsPatch, RunLimitsConfig, RunStartConfig,
-    RunStartParams, RunStartResponse, RunView, ServerCapabilities, ServerInfo, SessionCloseParams,
-    SessionCloseResponse, SessionConfigInput, SessionConfigPatchInput, SessionEventsReadParams,
-    SessionEventsReadResponse, SessionReadParams, SessionReadResponse, SessionStartParams,
-    SessionStartResponse, SessionUpdateParams, SessionUpdateResponse, SessionView,
-    SkillActivateParams, SkillActivateResponse, SkillActivationScope as ApiSkillActivationScope,
+    InitializeResponse, InputItem, ModelConfig, PromptInstructionView, PromptsActiveParams,
+    PromptsActiveResponse, ReasoningEffort, RunCancelParams, RunCancelResponse, RunDefaultsConfig,
+    RunDefaultsPatch, RunLimitsConfig, RunStartConfig, RunStartParams, RunStartResponse, RunView,
+    ServerCapabilities, ServerInfo, SessionCloseParams, SessionCloseResponse, SessionConfigInput,
+    SessionConfigPatchInput, SessionEventsReadParams, SessionEventsReadResponse, SessionReadParams,
+    SessionReadResponse, SessionStartParams, SessionStartResponse, SessionUpdateParams,
+    SessionUpdateResponse, SessionView, SkillActivateParams, SkillActivateResponse,
+    SkillActivationScope as ApiSkillActivationScope,
     SkillActivationSource as ApiSkillActivationSource, SkillActivationView, SkillActiveParams,
     SkillActiveResponse, SkillDeactivateParams, SkillDeactivateResponse, SkillListItem,
     SkillListParams, SkillListResponse, VfsMountAccess as ApiVfsMountAccess, VfsMountDeleteParams,
@@ -613,6 +615,8 @@ impl AgentApiService for GatewayAgentApi {
         let session_id = SessionId::try_new(params.session_id).map_err(|error| {
             AgentApiError::invalid_request(format!("invalid session id: {error}"))
         })?;
+        self.load_session_state_with_current_run_context(&session_id)
+            .await?;
         let submission_id = self.allocate_submission_id();
         let run_config = self
             .run_config_for_start(&session_id, params.config)
@@ -691,6 +695,19 @@ impl AgentApiService for GatewayAgentApi {
             .wait_for_cancelled_run(&session_id, requested_run_id)
             .await?;
         Ok(AgentApiOutcome::new(RunCancelResponse { run }))
+    }
+
+    async fn active_prompts(
+        &self,
+        params: PromptsActiveParams,
+    ) -> Result<AgentApiOutcome<PromptsActiveResponse>, AgentApiError> {
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let loaded = self.load_session_state(&session_id).await?;
+        Ok(AgentApiOutcome::new(
+            self.project_active_prompts(&loaded).await?,
+        ))
     }
 
     async fn list_skills(

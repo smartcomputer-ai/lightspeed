@@ -172,6 +172,7 @@ fn is_core_agent_event_envelope_kind(kind: &str) -> bool {
             | "forge.core.context.entries_applied"
             | "forge.core.context.entries_removed"
             | "forge.core.context.keys_removed"
+            | "forge.core.context.key_prefix_replaced"
             | "forge.core.context.state_replaced"
             | "forge.core.context.compaction_requested"
             | "forge.core.context.compaction_finished"
@@ -213,6 +214,7 @@ fn core_agent_event_envelope_kind(event: &CoreAgentEvent) -> &'static str {
             ContextEvent::EntriesApplied { .. } => "forge.core.context.entries_applied",
             ContextEvent::EntriesRemoved { .. } => "forge.core.context.entries_removed",
             ContextEvent::KeysRemoved { .. } => "forge.core.context.keys_removed",
+            ContextEvent::KeyPrefixReplaced { .. } => "forge.core.context.key_prefix_replaced",
             ContextEvent::StateReplaced { .. } => "forge.core.context.state_replaced",
             ContextEvent::CompactionRequested { .. } => "forge.core.context.compaction_requested",
             ContextEvent::CompactionFinished { .. } => "forge.core.context.compaction_finished",
