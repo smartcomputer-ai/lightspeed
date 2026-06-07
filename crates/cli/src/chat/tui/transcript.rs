@@ -232,10 +232,15 @@ impl TranscriptState {
                 self.cells.clear();
                 self.pending_history_cell_indices.clear();
                 self.pending_user_messages.clear();
+                let mut latest_assistant = None;
 
                 for (index, item) in reconstructed.iter().enumerate() {
                     match item {
                         ReconstructedItem::Message { id, role, content } => {
+                            if role == "assistant" {
+                                latest_assistant =
+                                    Some((id.clone(), role.clone(), content.clone()));
+                            }
                             self.push_committed_cell_if_changed(Box::new(MessageCell::new(
                                 id.clone(),
                                 role.clone(),
@@ -266,9 +271,25 @@ impl TranscriptState {
                         }
                     }
                 }
+                if let Some((id, role, content)) = latest_assistant {
+                    self.active_cell = Some(Box::new(MessageCell::new(
+                        format!("latest:{id}"),
+                        role,
+                        content,
+                    )));
+                    self.active_cell_revision = self.active_cell_revision.wrapping_add(1);
+                }
             }
             ChatDelta::AppendMessage { message, .. } => {
                 if message.role == "user_pending" {
+                    if self
+                        .active_cell
+                        .as_ref()
+                        .is_some_and(|cell| cell.kind() == ChatCellKind::Message)
+                    {
+                        self.active_cell = None;
+                        self.active_cell_revision = self.active_cell_revision.wrapping_add(1);
+                    }
                     self.pending_user_messages.push(PendingUserMessage {
                         id: message.id.clone(),
                         content: message.content.clone(),
@@ -811,7 +832,20 @@ mod tests {
             .position(|line| line.contains("done"))
             .expect("assistant history");
         assert!(tool < assistant);
-        assert!(state.active_cell.is_none());
+        let active = state
+            .active_cell
+            .as_ref()
+            .expect("latest assistant preview");
+        assert_eq!(active.kind(), ChatCellKind::Message);
+        assert!(
+            active
+                .display_lines(80, &CellRenderState)
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("\n")
+                .contains("done")
+        );
     }
 
     #[test]
@@ -1017,6 +1051,55 @@ mod tests {
             .position(|line| line.contains("done"))
             .expect("assistant line");
         assert!(reasoning < assistant);
+    }
+
+    #[test]
+    fn completed_assistant_remains_visible_in_idle_viewport() {
+        let mut state = TranscriptState::default();
+        state.apply_chat_event(ChatEvent::TranscriptDelta(ChatDelta::ReplaceTurns {
+            session_id: "s-1".into(),
+            turns: vec![ChatTurn {
+                turn_id: "turn-1".into(),
+                user: Some(ChatMessageView {
+                    id: "user-1".into(),
+                    role: "user".into(),
+                    content: "news?".into(),
+                    ref_: None,
+                }),
+                assistant_reasoning: None,
+                assistant: Some(ChatMessageView {
+                    id: "assistant-1".into(),
+                    role: "assistant".into(),
+                    content: "headline summary".into(),
+                    ref_: None,
+                }),
+                run: None,
+                tool_chains: Vec::new(),
+            }],
+        }));
+        let history = state
+            .drain_pending_history_lines(80)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(history.contains("headline summary"));
+
+        let active = state
+            .active_cell
+            .as_ref()
+            .expect("latest assistant preview");
+        let active_text = active
+            .display_lines(80, &CellRenderState)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(active_text.contains("headline summary"));
+        assert_eq!(
+            state.desired_height(80),
+            active.desired_height(80, &CellRenderState)
+        );
     }
 
     #[test]
