@@ -12,6 +12,7 @@ pub const DEFAULT_TEMPORAL_TARGET: &str = "http://localhost:7233";
 pub const DEFAULT_TEMPORAL_NAMESPACE: &str = "default";
 pub const DEFAULT_MODEL: &str = "gpt-5.5";
 pub const DEFAULT_CONTINUE_AS_NEW_HISTORY_THRESHOLD: u32 = 10_000;
+pub const DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT: Duration = Duration::from_secs(360);
 
 pub const FAKE_TOOL_NAME: &str = "agent_echo";
 
@@ -58,5 +59,19 @@ pub fn default_instructions() -> &'static str {
 }
 
 pub fn activity_options() -> ActivityOptions {
-    ActivityOptions::start_to_close_timeout(Duration::from_secs(300))
+    ActivityOptions::start_to_close_timeout(DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use temporalio_sdk::ActivityCloseTimeouts;
+
+    #[test]
+    fn activity_options_use_extended_start_to_close_timeout() {
+        assert_eq!(
+            activity_options().close_timeouts,
+            ActivityCloseTimeouts::StartToClose(DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT)
+        );
+    }
 }

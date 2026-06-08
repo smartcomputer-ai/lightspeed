@@ -18,9 +18,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, VecDeque};
 use std::pin::Pin;
+use std::time::Duration;
 
 pub const API_KIND: &str = "openai:responses";
 const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
+pub const DEFAULT_RESPONSES_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Config {
@@ -33,12 +35,14 @@ pub struct Config {
 
 impl Config {
     pub fn new(api_key: impl Into<String>) -> Self {
+        let mut http = HttpClientConfig::default();
+        http.request_timeout = DEFAULT_RESPONSES_REQUEST_TIMEOUT;
         Self {
             api_key: api_key.into(),
             base_url: DEFAULT_BASE_URL.to_string(),
             organization: None,
             project: None,
-            http: HttpClientConfig::default(),
+            http,
         }
     }
 
@@ -122,11 +126,14 @@ impl Client {
             .json(&request)
             .send()
             .await
-            .map_err(map_reqwest_error)?;
+            .map_err(|err| self.map_reqwest_error(err))?;
 
         let status = response.status();
         let headers = HeaderSnapshot::from_headermap(response.headers());
-        let body = response.text().await.map_err(map_reqwest_error)?;
+        let body = response
+            .text()
+            .await
+            .map_err(|err| self.map_reqwest_error(err))?;
         parse_json_response(status, headers, body, "OpenAI response")
     }
 
@@ -142,11 +149,14 @@ impl Client {
             .query(&request)
             .send()
             .await
-            .map_err(map_reqwest_error)?;
+            .map_err(|err| self.map_reqwest_error(err))?;
 
         let status = response.status();
         let headers = HeaderSnapshot::from_headermap(response.headers());
-        let body = response.text().await.map_err(map_reqwest_error)?;
+        let body = response
+            .text()
+            .await
+            .map_err(|err| self.map_reqwest_error(err))?;
         parse_json_response(status, headers, body, "OpenAI retrieved response")
     }
 
@@ -162,12 +172,15 @@ impl Client {
             .query(&request)
             .send()
             .await
-            .map_err(map_reqwest_error)?;
+            .map_err(|err| self.map_reqwest_error(err))?;
 
         let status = response.status();
         let headers = HeaderSnapshot::from_headermap(response.headers());
         if !status.is_success() {
-            let body = response.text().await.map_err(map_reqwest_error)?;
+            let body = response
+                .text()
+                .await
+                .map_err(|err| self.map_reqwest_error(err))?;
             return Err(parse_provider_http_error(status, headers, body).into());
         }
 
@@ -183,11 +196,14 @@ impl Client {
             .request(Method::DELETE, self.response_url(response_id)?)
             .send()
             .await
-            .map_err(map_reqwest_error)?;
+            .map_err(|err| self.map_reqwest_error(err))?;
 
         let status = response.status();
         let headers = HeaderSnapshot::from_headermap(response.headers());
-        let body = response.text().await.map_err(map_reqwest_error)?;
+        let body = response
+            .text()
+            .await
+            .map_err(|err| self.map_reqwest_error(err))?;
         parse_json_response(status, headers, body, "OpenAI deleted response")
     }
 
@@ -200,11 +216,14 @@ impl Client {
             )
             .send()
             .await
-            .map_err(map_reqwest_error)?;
+            .map_err(|err| self.map_reqwest_error(err))?;
 
         let status = response.status();
         let headers = HeaderSnapshot::from_headermap(response.headers());
-        let body = response.text().await.map_err(map_reqwest_error)?;
+        let body = response
+            .text()
+            .await
+            .map_err(|err| self.map_reqwest_error(err))?;
         parse_json_response(status, headers, body, "OpenAI cancelled response")
     }
 
@@ -218,11 +237,14 @@ impl Client {
             .json(&request)
             .send()
             .await
-            .map_err(map_reqwest_error)?;
+            .map_err(|err| self.map_reqwest_error(err))?;
 
         let status = response.status();
         let headers = HeaderSnapshot::from_headermap(response.headers());
-        let body = response.text().await.map_err(map_reqwest_error)?;
+        let body = response
+            .text()
+            .await
+            .map_err(|err| self.map_reqwest_error(err))?;
         parse_json_response(status, headers, body, "OpenAI compact response")
     }
 
@@ -240,11 +262,14 @@ impl Client {
             .query(&request)
             .send()
             .await
-            .map_err(map_reqwest_error)?;
+            .map_err(|err| self.map_reqwest_error(err))?;
 
         let status = response.status();
         let headers = HeaderSnapshot::from_headermap(response.headers());
-        let body = response.text().await.map_err(map_reqwest_error)?;
+        let body = response
+            .text()
+            .await
+            .map_err(|err| self.map_reqwest_error(err))?;
         parse_json_response(status, headers, body, "OpenAI response input items")
     }
 
@@ -258,11 +283,14 @@ impl Client {
             .json(&request)
             .send()
             .await
-            .map_err(map_reqwest_error)?;
+            .map_err(|err| self.map_reqwest_error(err))?;
 
         let status = response.status();
         let headers = HeaderSnapshot::from_headermap(response.headers());
-        let body = response.text().await.map_err(map_reqwest_error)?;
+        let body = response
+            .text()
+            .await
+            .map_err(|err| self.map_reqwest_error(err))?;
         parse_json_response(status, headers, body, "OpenAI response input tokens")
     }
 
@@ -277,12 +305,15 @@ impl Client {
             .json(&request)
             .send()
             .await
-            .map_err(map_reqwest_error)?;
+            .map_err(|err| self.map_reqwest_error(err))?;
 
         let status = response.status();
         let headers = HeaderSnapshot::from_headermap(response.headers());
         if !status.is_success() {
-            let body = response.text().await.map_err(map_reqwest_error)?;
+            let body = response
+                .text()
+                .await
+                .map_err(|err| self.map_reqwest_error(err))?;
             return Err(parse_provider_http_error(status, headers, body).into());
         }
 
@@ -314,6 +345,10 @@ impl Client {
             }
         }
         Ok(url)
+    }
+
+    fn map_reqwest_error(&self, err: reqwest::Error) -> LlmApiError {
+        map_reqwest_error(err, self.http.config().request_timeout)
     }
 }
 
@@ -937,8 +972,25 @@ pub fn parse_sse_event(sse: SseEvent) -> Result<Option<ApiStreamEvent<StreamEven
     Ok(Some(ApiStreamEvent::new(parsed, sse, Some(raw_json))))
 }
 
-fn map_reqwest_error(err: reqwest::Error) -> LlmApiError {
-    TransportError::new(err.to_string(), err.is_connect() || err.is_request()).into()
+fn map_reqwest_error(err: reqwest::Error, request_timeout: Duration) -> LlmApiError {
+    let retryable = err.is_timeout() || err.is_connect() || err.is_request();
+    let message = if err.is_timeout() {
+        format!(
+            "request timed out after {}: {err}",
+            format_duration(request_timeout)
+        )
+    } else {
+        err.to_string()
+    };
+    TransportError::new(message, retryable).into()
+}
+
+fn format_duration(duration: Duration) -> String {
+    if duration.subsec_nanos() == 0 {
+        format!("{}s", duration.as_secs())
+    } else {
+        format!("{duration:?}")
+    }
 }
 
 fn parse_json_response<T: DeserializeOwned>(
@@ -996,6 +1048,25 @@ fn parse_provider_http_error(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn config_new_uses_extended_responses_timeout() {
+        let config = Config::new("test-key");
+
+        assert_eq!(
+            config.http.request_timeout,
+            DEFAULT_RESPONSES_REQUEST_TIMEOUT
+        );
+        assert_eq!(
+            config.http.connect_timeout,
+            HttpClientConfig::default().connect_timeout
+        );
+    }
+
+    #[test]
+    fn timeout_duration_formats_as_seconds() {
+        assert_eq!(format_duration(Duration::from_secs(300)), "300s");
+    }
 
     #[test]
     fn response_helpers_extract_output_text_usage_and_function_calls() {

@@ -24,6 +24,7 @@ use crate::chat::tui::theme::composer_band_style;
 pub(crate) struct BottomPaneState {
     composer: ComposerState,
     status: String,
+    sticky_error: Option<String>,
     run_control_active: bool,
     current_session_id: Option<String>,
     settings: Option<ChatSettingsView>,
@@ -52,6 +53,7 @@ impl Default for BottomPaneState {
         Self {
             composer: ComposerState::default(),
             status: "ready".into(),
+            sticky_error: None,
             run_control_active: false,
             current_session_id: None,
             settings: None,
@@ -185,6 +187,7 @@ impl BottomPaneState {
         match event {
             ChatEvent::Connected(info) => {
                 self.status = "connected".into();
+                self.sticky_error = None;
                 self.current_session_id = Some(info.session_id.clone());
                 self.settings = Some(info.settings.clone());
             }
@@ -194,6 +197,7 @@ impl BottomPaneState {
             ChatEvent::HistoryReset { session_id } => {
                 self.current_session_id = Some(session_id.clone());
                 self.run_control_active = false;
+                self.sticky_error = None;
             }
             ChatEvent::RunChanged(run) => {
                 self.run_control_active = matches!(
@@ -201,6 +205,7 @@ impl BottomPaneState {
                     ChatProgressStatus::Queued | ChatProgressStatus::Running
                 );
                 if self.run_control_active {
+                    self.sticky_error = None;
                     self.status = format!("run {} running", run.run_seq);
                 }
             }
@@ -210,7 +215,15 @@ impl BottomPaneState {
                 settings,
                 ..
             }) => {
-                self.status = status.clone();
+                if status != "idle" {
+                    self.sticky_error = None;
+                }
+                self.status = self
+                    .sticky_error
+                    .as_ref()
+                    .filter(|_| status == "idle")
+                    .cloned()
+                    .unwrap_or_else(|| status.clone());
                 self.run_control_active = status_allows_run_control(status);
                 self.current_session_id = Some(session_id.clone());
                 self.settings = Some(settings.clone());
@@ -222,7 +235,9 @@ impl BottomPaneState {
                 self.status = format!("reconnecting journal #{from}");
             }
             ChatEvent::Error(error) => {
-                self.status = error.message.clone();
+                let status = compact_error_status(&error.message);
+                self.status = status.clone();
+                self.sticky_error = Some(status);
             }
             _ => {}
         }
@@ -395,6 +410,24 @@ fn status_allows_run_control(status: &str) -> bool {
     matches!(status, "running" | "cancelling" | "paused")
 }
 
+fn compact_error_status(message: &str) -> String {
+    let detail = message
+        .lines()
+        .rev()
+        .find_map(|line| {
+            let line = line.trim();
+            (!line.is_empty()).then_some(line)
+        })
+        .unwrap_or(message.trim());
+    let detail = detail.strip_prefix("error=").unwrap_or(detail);
+    let max_chars = 120usize;
+    let mut compact = detail.chars().take(max_chars).collect::<String>();
+    if detail.chars().count() > max_chars {
+        compact.push_str("...");
+    }
+    format!("error: {compact}")
+}
+
 enum BottomPaneViewAction {
     None,
     Changed,
@@ -448,7 +481,7 @@ fn slash_popup_owns_key(key: &KeyEvent) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chat::protocol::{ChatRunView, run_status};
+    use crate::chat::protocol::{ChatErrorView, ChatRunView, run_status};
     use api::RunStatus;
     use crossterm::event::{KeyCode, KeyModifiers};
     use ratatui::Terminal;
@@ -556,5 +589,59 @@ mod tests {
         let rendered = pane.status_line().to_string();
         assert!(rendered.contains("run 7 running"));
         assert!(rendered.contains("Ctrl-C interrupt"));
+    }
+
+    #[test]
+    fn error_status_survives_following_idle_status() {
+        let mut pane = BottomPaneState::default();
+
+        pane.apply_chat_event(&ChatEvent::Error(ChatErrorView {
+            message: "core agent LLM generation failed\nrun_id=1\nturn_id=1\nerror=provider call failed: transport timeout\n".into(),
+            action: None,
+        }));
+        pane.apply_chat_event(&ChatEvent::StatusChanged(ChatStatus {
+            session_id: "session-1".into(),
+            status: "idle".into(),
+            detail: None,
+            settings: test_settings(),
+        }));
+
+        let rendered = pane.status_line().to_string();
+        assert!(rendered.contains("error: provider call failed: transport timeout"));
+        assert!(!rendered.contains("idle"));
+    }
+
+    #[test]
+    fn new_work_clears_sticky_error_status() {
+        let mut pane = BottomPaneState::default();
+
+        pane.apply_chat_event(&ChatEvent::Error(ChatErrorView {
+            message: "error=provider call failed".into(),
+            action: None,
+        }));
+        pane.apply_chat_event(&ChatEvent::StatusChanged(ChatStatus {
+            session_id: "session-1".into(),
+            status: "working".into(),
+            detail: None,
+            settings: test_settings(),
+        }));
+
+        let rendered = pane.status_line().to_string();
+        assert!(rendered.contains("working"));
+        assert!(!rendered.contains("provider call failed"));
+    }
+
+    fn test_settings() -> ChatSettingsView {
+        ChatSettingsView {
+            provider: "openai".into(),
+            api_kind: "openai:responses".into(),
+            model: "gpt-5.5".into(),
+            reasoning_effort: None,
+            max_tokens: None,
+            provider_editable: true,
+            model_editable: true,
+            effort_editable: true,
+            max_tokens_editable: true,
+        }
     }
 }
