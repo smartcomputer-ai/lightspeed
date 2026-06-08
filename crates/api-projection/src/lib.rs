@@ -249,6 +249,7 @@ impl<'a> CoreAgentProjector<'a> {
             },
             tools: ToolConfigView {
                 web_search: effective_web_search_enabled(config),
+                web_fetch: effective_web_fetch_enabled(config),
                 host: host_tool_mode_to_api(effective_host_tool_mode(config)),
             },
         })
@@ -985,6 +986,10 @@ fn effective_web_search_enabled(config: &SessionConfig) -> bool {
         && config.tools.web_search.unwrap_or(true)
 }
 
+fn effective_web_fetch_enabled(config: &SessionConfig) -> bool {
+    config.tools.web_fetch.unwrap_or(true)
+}
+
 fn effective_host_tool_mode(config: &SessionConfig) -> engine::HostToolMode {
     config.tools.host.unwrap_or(engine::HostToolMode::Edit)
 }
@@ -1251,6 +1256,12 @@ fn tool_call_display(tool_name: &str, arguments: &str) -> Option<ToolCallDisplay
                 .as_ref()
                 .and_then(|json| first_string(json, &["path"]))
                 .map(|target| format!("in {target}")),
+        },
+        "web_fetch" => ToolCallDisplayView {
+            group: ToolCallDisplayGroup::Explore,
+            verb: "Fetch".to_owned(),
+            target: json.as_ref().and_then(|json| first_string(json, &["url"])),
+            detail: None,
         },
         "write_file" | "write" => ToolCallDisplayView {
             group: ToolCallDisplayGroup::Edit,

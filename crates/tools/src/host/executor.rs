@@ -1,35 +1,60 @@
 //! Host tool invocation runtime for CoreAgent tool calls.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use engine::{
     CoreAgentIoError, CoreAgentTools, ToolCallStatus, ToolInvocationBatchRequest,
     ToolInvocationBatchResult, ToolInvocationRequest, ToolInvocationResult, ToolName,
+    storage::BlobStore,
 };
 use serde_json::Value;
 
 use crate::{
     error::{ToolError, ToolResult},
     host::{
-        context::HostToolContext,
+        context::{HostToolContext, HostToolLimits},
         targets::{HostToolTargets, LOCAL_HOST_TARGET_ID},
         tools::HostTool,
     },
-    runtime::{ToolCatalog, ToolExecutionMode, ToolInvocationOutput, ToolRuntime},
+    runtime::{ToolBinding, ToolCatalog, ToolExecutionMode, ToolInvocationOutput, ToolRuntime},
+    web::fetch::{WEB_FETCH_LOGICAL_ID, invoke_web_fetch},
 };
 
 #[derive(Clone)]
 pub struct InlineHostToolRuntime {
     targets: HostToolTargets,
     catalog: ToolCatalog,
+    blobs: Arc<dyn BlobStore>,
+    limits: HostToolLimits,
 }
 
 impl InlineHostToolRuntime {
     pub fn new(ctx: HostToolContext, catalog: ToolCatalog) -> Self {
-        Self::with_targets(HostToolTargets::local(ctx), catalog)
+        let blobs = ctx.blobs.clone();
+        let limits = ctx.limits;
+        Self::with_targets_and_blob_store(HostToolTargets::local(ctx), blobs, limits, catalog)
     }
 
     pub fn with_targets(targets: HostToolTargets, catalog: ToolCatalog) -> Self {
-        Self { targets, catalog }
+        let ctx = targets
+            .error_context()
+            .expect("InlineHostToolRuntime::with_targets requires at least one target");
+        Self::with_targets_and_blob_store(targets.clone(), ctx.blobs.clone(), ctx.limits, catalog)
+    }
+
+    pub fn with_targets_and_blob_store(
+        targets: HostToolTargets,
+        blobs: Arc<dyn BlobStore>,
+        limits: HostToolLimits,
+        catalog: ToolCatalog,
+    ) -> Self {
+        Self {
+            targets,
+            catalog,
+            blobs,
+            limits,
+        }
     }
 
     pub fn local_context(&self) -> Option<&HostToolContext> {
@@ -48,6 +73,24 @@ impl InlineHostToolRuntime {
         &self,
         call: &ToolInvocationRequest,
     ) -> Result<ToolInvocationResult, CoreAgentIoError> {
+        let binding = match self.resolve_binding(call) {
+            Ok(binding) => binding,
+            Err(error) => return self.failed_result_without_context(call, error).await,
+        };
+        if binding.logical_id == WEB_FETCH_LOGICAL_ID {
+            let arguments = match self.read_arguments_from_blobs(call).await {
+                Ok(arguments) => arguments,
+                Err(error) => return self.failed_result_without_context(call, error).await,
+            };
+            return match self
+                .invoke_json_with_binding(None, &binding, &call.tool_name, arguments)
+                .await
+            {
+                Ok(output) => self.succeeded_result_without_context(call, output).await,
+                Err(error) => self.failed_result_without_context(call, error).await,
+            };
+        }
+
         let ctx = match self.resolve_call_context(call) {
             Ok(ctx) => ctx,
             Err(error) => return self.target_error_result(call, error).await,
@@ -59,12 +102,21 @@ impl InlineHostToolRuntime {
         };
 
         match self
-            .invoke_json_with_context(ctx, &call.tool_name, arguments)
+            .invoke_json_with_binding(Some(ctx), &binding, &call.tool_name, arguments)
             .await
         {
             Ok(output) => self.succeeded_result(ctx, call, output).await,
             Err(error) => self.failed_result(ctx, call, error).await,
         }
+    }
+
+    fn resolve_binding(&self, call: &ToolInvocationRequest) -> ToolResult<ToolBinding> {
+        self.catalog
+            .get(&call.tool_name)
+            .cloned()
+            .ok_or_else(|| ToolError::UnsupportedCapability {
+                message: format!("unknown tool: {}", call.tool_name),
+            })
     }
 
     fn resolve_call_context(&self, call: &ToolInvocationRequest) -> ToolResult<&HostToolContext> {
@@ -82,6 +134,13 @@ impl InlineHostToolRuntime {
         call: &ToolInvocationRequest,
     ) -> ToolResult<Value> {
         let bytes = ctx.blobs.read_bytes(&call.arguments_ref).await?;
+        serde_json::from_slice(&bytes).map_err(|error| ToolError::InvalidRequest {
+            message: format!("invalid JSON tool arguments: {error}"),
+        })
+    }
+
+    async fn read_arguments_from_blobs(&self, call: &ToolInvocationRequest) -> ToolResult<Value> {
+        let bytes = self.blobs.read_bytes(&call.arguments_ref).await?;
         serde_json::from_slice(&bytes).map_err(|error| ToolError::InvalidRequest {
             message: format!("invalid JSON tool arguments: {error}"),
         })
@@ -146,6 +205,53 @@ impl InlineHostToolRuntime {
         })
     }
 
+    async fn succeeded_result_without_context(
+        &self,
+        call: &ToolInvocationRequest,
+        output: ToolInvocationOutput,
+    ) -> Result<ToolInvocationResult, CoreAgentIoError> {
+        let output_bytes = serde_json::to_vec(&output.output_json)
+            .map_err(|error| io_error(format!("failed to encode tool output: {error}")))?;
+        let output_ref = self.put_blob_bytes(output_bytes).await?;
+        let model_visible_output_ref = self
+            .put_blob_bytes(truncate_bytes(
+                output.model_visible_text.into_bytes(),
+                self.limits.max_model_visible_output_bytes,
+            ))
+            .await?;
+
+        Ok(ToolInvocationResult {
+            call_id: call.call_id.clone(),
+            status: ToolCallStatus::Succeeded,
+            output_ref: Some(output_ref),
+            model_visible_output_ref: Some(model_visible_output_ref),
+            error_ref: None,
+            effects: output.effects,
+        })
+    }
+
+    async fn failed_result_without_context(
+        &self,
+        call: &ToolInvocationRequest,
+        error: ToolError,
+    ) -> Result<ToolInvocationResult, CoreAgentIoError> {
+        let error_ref = self
+            .put_blob_bytes(truncate_bytes(
+                error.to_string().into_bytes(),
+                self.limits.max_model_visible_output_bytes,
+            ))
+            .await?;
+
+        Ok(ToolInvocationResult {
+            call_id: call.call_id.clone(),
+            status: ToolCallStatus::Failed,
+            output_ref: None,
+            model_visible_output_ref: Some(error_ref.clone()),
+            error_ref: Some(error_ref),
+            effects: Vec::new(),
+        })
+    }
+
     async fn target_error_result(
         &self,
         call: &ToolInvocationRequest,
@@ -168,30 +274,38 @@ impl InlineHostToolRuntime {
             .map_err(|error| io_error(format!("failed to write tool blob: {error}")))
     }
 
-    async fn invoke_json_with_context(
+    async fn put_blob_bytes(&self, bytes: Vec<u8>) -> Result<engine::BlobRef, CoreAgentIoError> {
+        self.blobs
+            .put_bytes(bytes)
+            .await
+            .map_err(|error| io_error(format!("failed to write tool blob: {error}")))
+    }
+
+    async fn invoke_json_with_binding(
         &self,
-        ctx: &HostToolContext,
+        ctx: Option<&HostToolContext>,
+        binding: &ToolBinding,
         tool_name: &ToolName,
         arguments: Value,
     ) -> ToolResult<ToolInvocationOutput> {
-        let binding =
-            self.catalog
-                .get(tool_name)
-                .ok_or_else(|| ToolError::UnsupportedCapability {
-                    message: format!("unknown host tool: {tool_name}"),
-                })?;
         if binding.execution != ToolExecutionMode::Inline {
             return Err(ToolError::UnsupportedCapability {
                 message: format!(
-                    "host tool {} is configured for {} and cannot be invoked inline",
+                    "tool {} is configured for {} and cannot be invoked inline",
                     tool_name, binding.activity_type
                 ),
             });
         }
+        if binding.logical_id == WEB_FETCH_LOGICAL_ID {
+            return invoke_web_fetch(arguments).await;
+        }
         let host_tool = HostTool::from_logical_id(&binding.logical_id).ok_or_else(|| {
             ToolError::UnsupportedCapability {
-                message: format!("unsupported host tool binding: {}", binding.logical_id),
+                message: format!("unsupported tool binding: {}", binding.logical_id),
             }
+        })?;
+        let ctx = ctx.ok_or_else(|| ToolError::InvalidRequest {
+            message: format!("host tool {tool_name} requires an execution target"),
         })?;
         host_tool.invoke_json(ctx, arguments).await
     }
@@ -204,6 +318,17 @@ impl ToolRuntime for InlineHostToolRuntime {
         tool_name: &ToolName,
         arguments: Value,
     ) -> ToolResult<ToolInvocationOutput> {
+        let binding =
+            self.catalog
+                .get(tool_name)
+                .ok_or_else(|| ToolError::UnsupportedCapability {
+                    message: format!("unknown tool: {tool_name}"),
+                })?;
+        if binding.logical_id == WEB_FETCH_LOGICAL_ID {
+            return self
+                .invoke_json_with_binding(None, binding, tool_name, arguments)
+                .await;
+        }
         let ctx = self
             .targets
             .get(LOCAL_HOST_TARGET_ID)
@@ -214,7 +339,7 @@ impl ToolRuntime for InlineHostToolRuntime {
             })?;
         ctx.fs.drain_tool_effects();
         let mut output = self
-            .invoke_json_with_context(ctx, tool_name, arguments)
+            .invoke_json_with_binding(Some(ctx), binding, tool_name, arguments)
             .await?;
         output.effects.extend(ctx.fs.drain_tool_effects());
         Ok(output)
@@ -276,6 +401,7 @@ mod tests {
     use crate::toolset::{
         HostToolPresentation, ToolsetConfig, ToolsetEnvironment, resolve_toolset,
     };
+    use crate::web::fetch::WebFetchToolConfig;
 
     fn call(arguments_ref: BlobRef, tool_name: &str) -> ToolInvocationRequest {
         call_with_target(
@@ -327,6 +453,15 @@ mod tests {
         let mut config = ToolsetConfig::empty();
         config.host = crate::toolset::HostToolsetConfig::from_operations(operations);
         config.host.presentation = presentation;
+        resolve_toolset(ToolsetEnvironment { target: &target }, &config)
+            .expect("toolset")
+            .catalog
+    }
+
+    fn web_fetch_catalog() -> ToolCatalog {
+        let target = ToolTarget::api_kind(engine::ProviderApiKind::OpenAiResponses);
+        let mut config = ToolsetConfig::empty();
+        config.web_fetch = WebFetchToolConfig::enabled();
         resolve_toolset(ToolsetEnvironment { target: &target }, &config)
             .expect("toolset")
             .catalog
@@ -451,6 +586,33 @@ mod tests {
             .expect("visible ref");
         let visible = blobs.read_text(&visible_ref).await.expect("visible text");
         assert!(visible.contains("hello"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn targetless_web_fetch_does_not_require_host_target() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let runtime = InlineHostToolRuntime::with_targets_and_blob_store(
+            HostToolTargets::new(),
+            blobs.clone(),
+            HostToolLimits::default(),
+            web_fetch_catalog(),
+        );
+        let args_ref = blobs
+            .put_bytes(br#"{"url":"http://127.0.0.1:1/","max_chars":1000}"#.to_vec())
+            .await
+            .expect("write args");
+
+        let result = runtime
+            .invoke_batch(batch_request(call_with_target(args_ref, "web_fetch", None)))
+            .await
+            .expect("invoke batch")
+            .single_result()
+            .expect("single result");
+
+        assert_eq!(result.status, ToolCallStatus::Failed);
+        let error_ref = result.error_ref.expect("error ref");
+        let error = blobs.read_text(&error_ref).await.expect("error text");
+        assert!(error.contains("non-public"));
     }
 
     #[tokio::test(flavor = "current_thread")]

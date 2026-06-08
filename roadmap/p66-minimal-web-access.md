@@ -1,7 +1,7 @@
 # P66: Minimal Web Access
 
 **Status**
-- In progress.
+- First cut implemented.
 - First cut is deliberately two pieces:
   1. OpenAI Responses provider-native `web_search`.
   2. A Forge-owned, guarded, recorded `web_fetch` function tool.
@@ -25,7 +25,11 @@
 - VFS mounts and sandbox backing are now independent of tool selection. Mount
   changes update VFS state only; configured tools remain a static session
   toolset and execution fails clearly if the required backing is absent.
-- G2 `web_fetch` remains pending.
+- As of 2026-06-08, G2 is implemented as a standard targetless `web_fetch`
+  function tool in `tools::web::fetch`, with Forge-owned URL/DNS guardrails,
+  bounded GET-only fetching, redirect checks, text extraction, untrusted
+  wrapping, and normal recorded tool-result output. Sessions default `web_fetch`
+  on and can disable it independently from hosted `web_search`.
 
 ## Goal
 
@@ -36,7 +40,7 @@ The minimum useful cut is:
 
 - let OpenAI Responses models use their hosted `web_search` tool;
 - preserve OpenAI web-search output items and sources for auditability;
-- add a narrow `web_fetch(url)` tool later for fetching a specific page through
+- add a narrow `web_fetch(url)` tool for fetching a specific page through
   Forge-owned network guardrails.
 
 The engine remains deterministic. It plans tool/request data and records
@@ -270,8 +274,7 @@ Add focused tests:
 
 ## G2: Guarded Recorded Web Fetch
 
-After G1 lands, add a narrow `web_fetch` function tool in the standard tools
-crate.
+G2 adds a narrow `web_fetch` function tool in the standard tools crate.
 
 The first fetch tool should do one thing:
 
@@ -346,9 +349,10 @@ G1 is done when:
 
 G2 is done when:
 
-- `web_fetch(url)` exists as a standard function tool;
-- fetch has strict URL/network guardrails and bounded output;
-- fetched content is marked untrusted;
-- no arbitrary HTTP method/header/body surface exists;
-- replay uses the recorded tool result and does not refetch;
-- tests cover SSRF rejects, redirects, limits, extraction, and successful fetch.
+- [x] `web_fetch(url)` exists as a standard function tool;
+- [x] fetch has strict URL/network guardrails and bounded output;
+- [x] fetched content is marked untrusted;
+- [x] no arbitrary HTTP method/header/body surface exists;
+- [x] replay uses the recorded tool result and does not refetch;
+- [x] tests cover SSRF rejects, redirects, limits, extraction, and successful
+  fetch.

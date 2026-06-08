@@ -14,17 +14,18 @@ use tools::{
     },
     runtime::{ToolCatalog, ToolTarget},
     toolset::{ToolsetConfig, ToolsetEnvironment, resolve_toolset},
+    web::fetch::WebFetchToolConfig,
 };
 use vfs::{VfsCatalogError, VfsMountRecord, VfsMountStore, VfsWorkspaceStore};
 
 #[derive(Clone)]
-pub struct SessionMountedVfsTools {
+pub struct SessionTools {
     blobs: Arc<dyn BlobStore>,
     workspace_store: Arc<dyn VfsWorkspaceStore>,
     mount_store: Arc<dyn VfsMountStore>,
 }
 
-impl SessionMountedVfsTools {
+impl SessionTools {
     pub fn new(
         blobs: Arc<dyn BlobStore>,
         workspace_store: Arc<dyn VfsWorkspaceStore>,
@@ -56,6 +57,16 @@ impl SessionMountedVfsTools {
         let catalog = workspace_catalog()?;
         Ok(InlineHostToolRuntime::new(ctx, catalog))
     }
+
+    fn targetless_runtime(&self) -> Result<InlineHostToolRuntime, CoreAgentIoError> {
+        let catalog = workspace_catalog()?;
+        Ok(InlineHostToolRuntime::with_targets_and_blob_store(
+            tools::host::HostToolTargets::new(),
+            self.blobs.clone(),
+            tools::host::context::HostToolLimits::default(),
+            catalog,
+        ))
+    }
 }
 
 fn workspace_catalog() -> Result<ToolCatalog, CoreAgentIoError> {
@@ -66,11 +77,10 @@ fn workspace_catalog() -> Result<ToolCatalog, CoreAgentIoError> {
         ProviderApiKind::OpenAiCompletions,
     ] {
         let target = ToolTarget::api_kind(api_kind);
-        let toolset = resolve_toolset(
-            ToolsetEnvironment { target: &target },
-            &ToolsetConfig::workspace(),
-        )
-        .map_err(|error| io_error(format!("build mounted vfs tool profile: {error}")))?;
+        let mut config = ToolsetConfig::workspace();
+        config.web_fetch = WebFetchToolConfig::enabled();
+        let toolset = resolve_toolset(ToolsetEnvironment { target: &target }, &config)
+            .map_err(|error| io_error(format!("build mounted vfs tool profile: {error}")))?;
         for binding in toolset.catalog.bindings() {
             catalog.insert(binding.clone());
         }
@@ -79,7 +89,7 @@ fn workspace_catalog() -> Result<ToolCatalog, CoreAgentIoError> {
 }
 
 #[async_trait]
-impl CoreAgentTools for SessionMountedVfsTools {
+impl CoreAgentTools for SessionTools {
     async fn invoke_batch(
         &self,
         request: ToolInvocationBatchRequest,
@@ -90,12 +100,8 @@ impl CoreAgentTools for SessionMountedVfsTools {
             .await
             .map_err(map_catalog_error)?;
         if mounts.is_empty() {
-            return failed_batch(
-                self.blobs.as_ref(),
-                request,
-                "session has no VFS mounts configured",
-            )
-            .await;
+            let runtime = self.targetless_runtime()?;
+            return invoke_without_mounts(self.blobs.as_ref(), runtime, request).await;
         }
         let runtime = self.runtime_for_mounts(mounts)?;
         runtime.invoke_batch(request).await
@@ -114,32 +120,45 @@ fn mounted_vfs_cwd(mounts: &[VfsMountRecord]) -> Result<FsPath, CoreAgentIoError
     FsPath::new(cwd).map_err(io_error)
 }
 
-async fn failed_batch(
+async fn invoke_without_mounts(
     blobs: &dyn BlobStore,
+    runtime: InlineHostToolRuntime,
     request: ToolInvocationBatchRequest,
-    message: impl Into<String>,
 ) -> Result<ToolInvocationBatchResult, CoreAgentIoError> {
-    let message = message.into();
     let mut results = Vec::with_capacity(request.calls.len());
     for call in request.calls {
-        let error_ref = blobs
-            .put_bytes(message.clone().into_bytes())
-            .await
-            .map_err(map_blob_error)?;
-        results.push(ToolInvocationResult {
-            call_id: call.call_id,
-            status: ToolCallStatus::Failed,
-            output_ref: None,
-            model_visible_output_ref: Some(error_ref.clone()),
-            error_ref: Some(error_ref),
-            effects: Vec::new(),
-        });
+        if call.execution_target.is_none() {
+            results.push(runtime.invoke_call(&call).await?);
+        } else {
+            results.push(
+                failed_result(blobs, call.call_id, "session has no VFS mounts configured").await?,
+            );
+        }
     }
     Ok(ToolInvocationBatchResult {
         run_id: request.run_id,
         turn_id: request.turn_id,
         batch_id: request.batch_id,
         results,
+    })
+}
+
+async fn failed_result(
+    blobs: &dyn BlobStore,
+    call_id: engine::ToolCallId,
+    message: impl Into<String>,
+) -> Result<ToolInvocationResult, CoreAgentIoError> {
+    let error_ref = blobs
+        .put_bytes(message.into().into_bytes())
+        .await
+        .map_err(map_blob_error)?;
+    Ok(ToolInvocationResult {
+        call_id,
+        status: ToolCallStatus::Failed,
+        output_ref: None,
+        model_visible_output_ref: Some(error_ref.clone()),
+        error_ref: Some(error_ref),
+        effects: Vec::new(),
     })
 }
 
@@ -290,7 +309,8 @@ mod tests {
         }
     }
 
-    async fn mounted_readme_tools() -> (Arc<InMemoryBlobStore>, SessionMountedVfsTools, SessionId) {
+    async fn session_tools_with_readme_mount() -> (Arc<InMemoryBlobStore>, SessionTools, SessionId)
+    {
         let blobs = Arc::new(InMemoryBlobStore::new());
         let catalog = Arc::new(TestCatalog::default());
         let session_id = SessionId::new("session_1");
@@ -321,13 +341,13 @@ mod tests {
             })
             .await
             .expect("mount");
-        let tools = SessionMountedVfsTools::new(blobs.clone(), catalog.clone(), catalog);
+        let tools = SessionTools::new(blobs.clone(), catalog.clone(), catalog);
         (blobs, tools, session_id)
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn mounted_vfs_tools_read_session_workspace_mount() {
-        let (blobs, tools, session_id) = mounted_readme_tools().await;
+    async fn session_tools_read_session_workspace_mount() {
+        let (blobs, tools, session_id) = session_tools_with_readme_mount().await;
         let arguments_ref = blobs
             .put_bytes(br#"{"path":"README.md","offset":1,"limit":10}"#.to_vec())
             .await
@@ -358,8 +378,8 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn mounted_vfs_tools_accept_claude_style_read_tool() {
-        let (blobs, tools, session_id) = mounted_readme_tools().await;
+    async fn session_tools_accept_claude_style_read_tool() {
+        let (blobs, tools, session_id) = session_tools_with_readme_mount().await;
         let arguments_ref = blobs
             .put_bytes(br#"{"file_path":"README.md","offset":1,"limit":10}"#.to_vec())
             .await
@@ -390,10 +410,10 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn mounted_vfs_tools_fail_clearly_without_mounts() {
+    async fn session_tools_fail_host_tool_without_mounts() {
         let blobs = Arc::new(InMemoryBlobStore::new());
         let catalog = Arc::new(TestCatalog::default());
-        let tools = SessionMountedVfsTools::new(blobs.clone(), catalog.clone(), catalog);
+        let tools = SessionTools::new(blobs.clone(), catalog.clone(), catalog);
         let arguments_ref = BlobRef::from_bytes(b"{}");
 
         let result = tools
@@ -418,5 +438,40 @@ mod tests {
             .await
             .expect("error");
         assert!(error.contains("no VFS mounts"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn targetless_web_fetch_runs_without_mounts() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let catalog = Arc::new(TestCatalog::default());
+        let tools = SessionTools::new(blobs.clone(), catalog.clone(), catalog);
+        let arguments_ref = blobs
+            .put_bytes(br#"{"url":"http://127.0.0.1:1/","max_chars":1000}"#.to_vec())
+            .await
+            .expect("arguments");
+
+        let result = tools
+            .invoke_batch(ToolInvocationBatchRequest {
+                session_id: SessionId::new("session_1"),
+                run_id: RunId::new(1),
+                turn_id: TurnId::new(1),
+                batch_id: ToolBatchId::new(1),
+                calls: vec![engine::ToolInvocationRequest {
+                    call_id: ToolCallId::new("call_1"),
+                    tool_name: ToolName::new("web_fetch"),
+                    arguments_ref,
+                    execution_target: None,
+                }],
+            })
+            .await
+            .expect("invoke");
+
+        assert_eq!(result.results[0].status, ToolCallStatus::Failed);
+        let error = blobs
+            .read_text(result.results[0].error_ref.as_ref().expect("error ref"))
+            .await
+            .expect("error");
+        assert!(error.contains("non-public"));
+        assert!(!error.contains("no VFS mounts"));
     }
 }

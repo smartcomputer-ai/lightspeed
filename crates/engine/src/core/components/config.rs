@@ -169,17 +169,20 @@ pub struct ToolConfigPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub web_search: Option<OptionalConfigPatch<bool>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_fetch: Option<OptionalConfigPatch<bool>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<OptionalConfigPatch<HostToolMode>>,
 }
 
 impl ToolConfigPatch {
     pub fn apply_to(&self, config: &mut ToolConfig) {
         apply_optional_config_patch(&mut config.web_search, &self.web_search);
+        apply_optional_config_patch(&mut config.web_fetch, &self.web_fetch);
         apply_optional_config_patch(&mut config.host, &self.host);
     }
 
     pub fn is_empty(&self) -> bool {
-        self.web_search.is_none() && self.host.is_none()
+        self.web_search.is_none() && self.web_fetch.is_none() && self.host.is_none()
     }
 }
 
@@ -255,6 +258,8 @@ pub struct ContextConfig {
 pub struct ToolConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub web_search: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_fetch: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<HostToolMode>,
 }

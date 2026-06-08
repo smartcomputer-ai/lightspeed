@@ -9,7 +9,7 @@ use llm_runtime::{LlmAdapterRegistry, LlmRuntime, OpenAiResponsesLlmAdapter};
 use store_pg::PgStore;
 use vfs::{VfsMountStore, VfsWorkspaceStore};
 
-use crate::{config::pg_store_from_env, worker::SessionMountedVfsTools};
+use crate::{config::pg_store_from_env, worker::SessionTools};
 
 #[derive(Clone)]
 pub struct StorageActivityDeps {
@@ -93,7 +93,7 @@ impl ActivityState {
     pub fn from_pg_store_with_default_runtime(store: Arc<PgStore>) -> anyhow::Result<Self> {
         let blobs: Arc<dyn BlobStore> = store.clone();
         let llm = openai_responses_llm(blobs)?;
-        let tools = session_mounted_vfs_tools(store.clone());
+        let tools = session_tools(store.clone());
         Ok(Self::from_pg_store(store, llm, tools))
     }
 
@@ -119,8 +119,8 @@ impl ActivityState {
     }
 }
 
-fn session_mounted_vfs_tools(store: Arc<PgStore>) -> Arc<dyn CoreAgentTools> {
-    Arc::new(SessionMountedVfsTools::from_pg_store(store))
+fn session_tools(store: Arc<PgStore>) -> Arc<dyn CoreAgentTools> {
+    Arc::new(SessionTools::from_pg_store(store))
 }
 
 fn openai_responses_llm(blobs: Arc<dyn BlobStore>) -> anyhow::Result<Arc<dyn CoreAgentLlm>> {

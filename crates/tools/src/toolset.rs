@@ -11,6 +11,7 @@ use crate::{
     error::{ToolError, ToolResult},
     host::tools::{HostTool, HostToolOperation, HostToolSurface},
     runtime::{ToolCatalog, ToolDocument, ToolExecutionMode, ToolSpecBundle, ToolTarget},
+    web::fetch::{WebFetchToolConfig, web_fetch_tool_binding, web_fetch_tool_bundle},
     web::search::{
         OpenAiResponsesWebSearchConfig, apply_openai_responses_web_search_defaults,
         openai_responses_web_search_tool_bundle,
@@ -24,6 +25,7 @@ pub struct ToolsetConfig {
     pub profile_id: ToolProfileId,
     pub host: HostToolsetConfig,
     pub openai_web_search: OpenAiResponsesWebSearchConfig,
+    pub web_fetch: WebFetchToolConfig,
     pub tool_choice: Option<ToolChoice>,
 }
 
@@ -33,6 +35,7 @@ impl ToolsetConfig {
             profile_id: ToolProfileId::new(DEFAULT_TOOLSET_PROFILE_ID),
             host: HostToolsetConfig::disabled(),
             openai_web_search: OpenAiResponsesWebSearchConfig::default(),
+            web_fetch: WebFetchToolConfig::default(),
             tool_choice: None,
         }
     }
@@ -342,6 +345,14 @@ pub fn resolve_toolset(
             .add_openai_web_search(&config.openai_web_search);
     }
 
+    if config.web_fetch.enabled {
+        let bundle =
+            web_fetch_tool_bundle(&config.web_fetch)?.ok_or_else(|| ToolError::InvalidRequest {
+                message: "web.fetch was enabled but did not produce a function tool".to_owned(),
+            })?;
+        builder.add_web_fetch(bundle);
+    }
+
     Ok(builder.finish())
 }
 
@@ -400,6 +411,12 @@ impl ToolsetBuilder {
         self.add_bundle(bundle);
     }
 
+    fn add_web_fetch(&mut self, bundle: ToolSpecBundle) {
+        self.add_bundle(bundle);
+        self.catalog
+            .insert(web_fetch_tool_binding(ToolExecutionMode::Inline));
+    }
+
     fn add_bundle(&mut self, bundle: ToolSpecBundle) {
         let tool_name = bundle.spec.name.clone();
         if !self.seen_tools.insert(tool_name.clone()) {
@@ -437,10 +454,11 @@ const STATIC_SCOPED_HOST_PATHS: bool = true;
 
 #[cfg(test)]
 mod tests {
-    use engine::ProviderRequestDefaults;
+    use engine::{ProviderRequestDefaults, ToolTargetRequirement};
     use serde_json::{Value, json};
 
     use super::*;
+    use crate::web::fetch::WEB_FETCH_TOOL_NAME;
     use crate::web::search::{WebSearchContextSize, WebSearchMode};
 
     fn target(api_kind: ProviderApiKind) -> ToolTarget {
@@ -582,5 +600,29 @@ mod tests {
             .expect_err("web search should reject Anthropic target");
 
         assert!(matches!(error, ToolError::UnsupportedCapability { .. }));
+    }
+
+    #[test]
+    fn web_fetch_adds_standard_function_tool_and_catalog_binding() {
+        let target = target(ProviderApiKind::OpenAiResponses);
+        let mut config = ToolsetConfig::empty();
+        config.web_fetch = WebFetchToolConfig::enabled();
+
+        let toolset =
+            resolve_toolset(ToolsetEnvironment { target: &target }, &config).expect("toolset");
+
+        assert_eq!(visible_names(&toolset), vec![WEB_FETCH_TOOL_NAME]);
+        assert!(
+            toolset
+                .catalog
+                .get(&ToolName::new(WEB_FETCH_TOOL_NAME))
+                .is_some()
+        );
+        let spec = toolset
+            .registry
+            .tools
+            .get(&ToolName::new(WEB_FETCH_TOOL_NAME))
+            .expect("web_fetch spec");
+        assert_eq!(spec.target_requirement, ToolTargetRequirement::None);
     }
 }

@@ -3837,10 +3837,12 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "engine",
+ "futures-util",
  "glob",
  "host-client",
  "host-protocol",
  "regex",
+ "reqwest",
  "serde",
  "serde_json",
  "tempfile",

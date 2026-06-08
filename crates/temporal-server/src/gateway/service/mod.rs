@@ -91,6 +91,7 @@ use tools::{
         skill_catalog_context_input,
     },
     toolset::{ResolvedToolset, ToolsetConfig, ToolsetEnvironment, resolve_toolset},
+    web::fetch::WebFetchToolConfig,
     web::search::OpenAiResponsesWebSearchConfig,
 };
 use vfs::{
@@ -297,6 +298,9 @@ impl GatewayAgentApi {
         if effective_web_search_enabled(session_config) {
             config.openai_web_search = OpenAiResponsesWebSearchConfig::cached();
         }
+        if effective_web_fetch_enabled(session_config) {
+            config.web_fetch = WebFetchToolConfig::enabled();
+        }
         config
     }
 
@@ -387,6 +391,10 @@ impl GatewayAgentApi {
 fn effective_web_search_enabled(session_config: &SessionConfig) -> bool {
     session_config.model.api_kind == ProviderApiKind::OpenAiResponses
         && session_config.tools.web_search.unwrap_or(true)
+}
+
+fn effective_web_fetch_enabled(session_config: &SessionConfig) -> bool {
+    session_config.tools.web_fetch.unwrap_or(true)
 }
 
 fn effective_host_tool_mode(session_config: &SessionConfig) -> HostToolMode {

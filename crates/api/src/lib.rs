@@ -375,6 +375,8 @@ pub struct ToolConfigInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub web_search: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_fetch: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<HostToolMode>,
 }
 
@@ -454,6 +456,8 @@ pub struct RunDefaultsPatch {
 pub struct ToolConfigPatchInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub web_search: Option<FieldPatch<bool>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_fetch: Option<FieldPatch<bool>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<FieldPatch<HostToolMode>>,
 }
@@ -1215,6 +1219,7 @@ pub struct SessionConfigView {
 #[serde(rename_all = "camelCase")]
 pub struct ToolConfigView {
     pub web_search: bool,
+    pub web_fetch: bool,
     pub host: HostToolMode,
 }
 

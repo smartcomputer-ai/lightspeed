@@ -16,6 +16,7 @@ pub(crate) struct ChatDraftSettings {
     pub reasoning_effort: Option<ReasoningEffort>,
     pub max_tokens: Option<u32>,
     pub web_search: Option<bool>,
+    pub web_fetch: Option<bool>,
     pub host_tools: Option<HostToolMode>,
 }
 
@@ -40,6 +41,7 @@ impl Default for ChatDraftSettings {
                 .ok()
                 .and_then(|value| value.parse::<u32>().ok()),
             web_search: None,
+            web_fetch: None,
             host_tools: None,
         }
     }

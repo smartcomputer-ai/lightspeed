@@ -65,6 +65,9 @@ pub(crate) struct ChatArgs {
     /// Disable OpenAI Responses hosted web search for this session.
     #[arg(long = "no-web-search")]
     no_web_search: bool,
+    /// Disable guarded web fetch for this session.
+    #[arg(long = "no-web-fetch")]
+    no_web_fetch: bool,
     /// Host tool mode for this session: edit, read-only, or none.
     #[arg(long = "host-tools")]
     host_tools: Option<String>,
@@ -1280,6 +1283,7 @@ fn draft_settings(args: &ChatArgs) -> Result<ChatDraftSettings> {
         reasoning_effort,
         max_tokens: args.max_tokens,
         web_search: args.no_web_search.then_some(false),
+        web_fetch: args.no_web_fetch.then_some(false),
         host_tools: args
             .host_tools
             .as_deref()
@@ -1308,9 +1312,13 @@ fn model_config(settings: &ChatDraftSettings) -> ModelConfig {
 }
 
 fn session_start_config(settings: &ChatDraftSettings) -> SessionConfigInput {
-    let tools = if settings.web_search.is_some() || settings.host_tools.is_some() {
+    let tools = if settings.web_search.is_some()
+        || settings.web_fetch.is_some()
+        || settings.host_tools.is_some()
+    {
         Some(ToolConfigInput {
             web_search: settings.web_search,
+            web_fetch: settings.web_fetch,
             host: settings.host_tools,
         })
     } else {
@@ -1674,6 +1682,7 @@ mod tests {
             reasoning_effort: None,
             max_tokens: None,
             web_search: None,
+            web_fetch: None,
             host_tools: None,
         };
 
@@ -1768,6 +1777,7 @@ mod tests {
             reasoning_effort: None,
             max_tokens: None,
             web_search: None,
+            web_fetch: None,
             host_tools: None,
         };
 
@@ -1812,6 +1822,7 @@ mod tests {
             reasoning_effort: None,
             max_tokens: None,
             web_search: None,
+            web_fetch: None,
             host_tools: None,
         };
 
@@ -1891,6 +1902,17 @@ mod tests {
     }
 
     #[test]
+    fn session_start_config_can_disable_web_fetch() {
+        let mut args = chat_args_with_effort(None);
+        args.no_web_fetch = true;
+        let settings = draft_settings(&args).expect("draft settings");
+
+        let config = session_start_config(&settings);
+
+        assert_eq!(config.tools.expect("tools").web_fetch, Some(false));
+    }
+
+    #[test]
     fn session_start_config_can_select_read_only_host_tools() {
         let mut args = chat_args_with_effort(None);
         args.host_tools = Some("read-only".to_owned());
@@ -1928,6 +1950,7 @@ mod tests {
             effort: effort.map(str::to_string),
             max_tokens: None,
             no_web_search: false,
+            no_web_fetch: false,
             host_tools: None,
             workdir: None,
             mount: None,
