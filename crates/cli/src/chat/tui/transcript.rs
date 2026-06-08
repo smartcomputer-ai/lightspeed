@@ -153,6 +153,7 @@ impl TranscriptState {
     pub(crate) fn drain_pending_history_lines(&mut self, width: u16) -> Vec<Line<'static>> {
         let render_state = CellRenderState;
         let mut lines = Vec::new();
+        let mut emitted = Vec::new();
         let pending_indices = std::mem::take(&mut self.pending_history_cell_indices);
         for index in pending_indices {
             let Some(cell) = self.cells.get(index) else {
@@ -167,8 +168,10 @@ impl TranscriptState {
                 continue;
             }
             lines.extend(cell_lines);
+            emitted.push(fingerprint.clone());
             self.emitted_history_cells.push(fingerprint);
         }
+        self.clear_active_history_preview_if_emitted(&emitted);
         lines
     }
 
@@ -177,15 +180,18 @@ impl TranscriptState {
         let mut lines = Vec::new();
         self.pending_history_cell_indices.clear();
         self.emitted_history_cells.clear();
+        let mut emitted = Vec::new();
         for cell in &self.cells {
             let cell_lines = cell.display_lines(width, &render_state);
             if cell_lines.is_empty() {
                 continue;
             }
-            self.emitted_history_cells
-                .push((cell.id().to_string(), cell_fingerprint(cell.as_ref())));
+            let fingerprint = (cell.id().to_string(), cell_fingerprint(cell.as_ref()));
+            emitted.push(fingerprint.clone());
+            self.emitted_history_cells.push(fingerprint);
             lines.extend(cell_lines);
         }
+        self.clear_active_history_preview_if_emitted(&emitted);
         lines
     }
 
@@ -371,6 +377,26 @@ impl TranscriptState {
         self.emitted_history_cells
             .iter()
             .any(|emitted| emitted == fingerprint)
+    }
+
+    fn clear_active_history_preview_if_emitted(&mut self, emitted: &[(String, String)]) {
+        let Some(active) = self.active_cell.as_ref() else {
+            return;
+        };
+        if active.kind() != ChatCellKind::Message {
+            return;
+        }
+        let Some(history_id) = active.id().strip_prefix("latest:") else {
+            return;
+        };
+        let active_fingerprint = cell_fingerprint(active.as_ref());
+        if emitted
+            .iter()
+            .any(|(id, fingerprint)| id == history_id && fingerprint == &active_fingerprint)
+        {
+            self.active_cell = None;
+            self.active_cell_revision = self.active_cell_revision.wrapping_add(1);
+        }
     }
 
     fn flush_terminal_active_tool_chains(&mut self) -> bool {
@@ -832,20 +858,7 @@ mod tests {
             .position(|line| line.contains("done"))
             .expect("assistant history");
         assert!(tool < assistant);
-        let active = state
-            .active_cell
-            .as_ref()
-            .expect("latest assistant preview");
-        assert_eq!(active.kind(), ChatCellKind::Message);
-        assert!(
-            active
-                .display_lines(80, &CellRenderState)
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join("\n")
-                .contains("done")
-        );
+        assert!(state.active_cell.is_none());
     }
 
     #[test]
@@ -1054,7 +1067,7 @@ mod tests {
     }
 
     #[test]
-    fn completed_assistant_remains_visible_in_idle_viewport() {
+    fn completed_assistant_preview_clears_after_history_drain() {
         let mut state = TranscriptState::default();
         state.apply_chat_event(ChatEvent::TranscriptDelta(ChatDelta::ReplaceTurns {
             session_id: "s-1".into(),
@@ -1077,18 +1090,10 @@ mod tests {
                 tool_chains: Vec::new(),
             }],
         }));
-        let history = state
-            .drain_pending_history_lines(80)
-            .into_iter()
-            .map(|line| line.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(history.contains("headline summary"));
-
         let active = state
             .active_cell
             .as_ref()
-            .expect("latest assistant preview");
+            .expect("latest assistant preview before history drain");
         let active_text = active
             .display_lines(80, &CellRenderState)
             .into_iter()
@@ -1096,10 +1101,16 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         assert!(active_text.contains("headline summary"));
-        assert_eq!(
-            state.desired_height(80),
-            active.desired_height(80, &CellRenderState)
-        );
+
+        let history = state
+            .drain_pending_history_lines(80)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(history.contains("headline summary"));
+        assert!(state.active_cell.is_none());
+        assert_eq!(state.desired_height(80), 0);
     }
 
     #[test]

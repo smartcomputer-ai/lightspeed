@@ -585,7 +585,7 @@ mod tests {
         terminal.draw(|frame| app.render(frame)).unwrap();
         let rendered = format!("{}", terminal.backend());
         let expected = snapshot_lines([
-            pad("• Simulated assistant response. Live engine wiring comes next."),
+            pad(""),
             pad(""),
             pad(""),
             pad(""),
