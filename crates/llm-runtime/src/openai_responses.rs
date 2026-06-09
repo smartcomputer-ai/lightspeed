@@ -411,6 +411,12 @@ async fn materialize_tool(blobs: &dyn BlobStore, tool: &ToolSpec) -> LlmAdapterR
                 )),
             }
         }
+        ToolKind::RemoteMcp(_) => Err(LlmAdapterError::InvalidProviderRequest {
+            message: format!(
+                "remote MCP tool {} is planned by engine but OpenAI Responses MCP lowering is not implemented yet",
+                tool.name
+            ),
+        }),
     }
 }
 

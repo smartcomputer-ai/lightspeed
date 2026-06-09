@@ -41,10 +41,10 @@ pub use run::{
 pub use state::*;
 pub use tooling::{
     ActiveToolBatch, CompletedToolBatch, FunctionToolSpec, ObservedToolCall,
-    ProviderNativeToolExecution, ProviderNativeToolSpec, ToolCallResult, ToolCallState,
-    ToolCallStatus, ToolChoice, ToolChoiceMode, ToolConfigEvent, ToolEvent, ToolExecutionTarget,
-    ToolKind, ToolParallelism, ToolProfile, ToolRegistry, ToolRoutingState, ToolSpec,
-    ToolTargetRequirement, ToolingState,
+    ProviderNativeToolExecution, ProviderNativeToolSpec, RemoteMcpApprovalPolicy,
+    RemoteMcpToolSpec, SecretRef, ToolCallResult, ToolCallState, ToolCallStatus, ToolChoice,
+    ToolChoiceMode, ToolConfigEvent, ToolEvent, ToolExecutionTarget, ToolKind, ToolParallelism,
+    ToolProfile, ToolRegistry, ToolRoutingState, ToolSpec, ToolTargetRequirement, ToolingState,
 };
 pub use turn::{
     LlmFinish, LlmGenerationFacts, LlmGenerationStatus, LlmUsage, TurnEvent, TurnOutcome,

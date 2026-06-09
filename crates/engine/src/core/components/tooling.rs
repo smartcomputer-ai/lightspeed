@@ -176,6 +176,7 @@ impl ToolRegistry {
                     )));
                 }
             }
+            validate_unique_remote_mcp_server_labels(profile_id, profile, self)?;
             if let Some(ToolChoice {
                 mode: ToolChoiceMode::Specific { tool_name },
                 ..
@@ -191,11 +192,35 @@ impl ToolRegistry {
         }
 
         for tool in self.tools.values() {
-            tool.target_requirement.validate()?;
+            tool.validate()?;
         }
 
         Ok(())
     }
+}
+
+fn validate_unique_remote_mcp_server_labels(
+    profile_id: &ToolProfileId,
+    profile: &ToolProfile,
+    registry: &ToolRegistry,
+) -> Result<(), DomainError> {
+    let mut labels = BTreeMap::<&str, &ToolName>::new();
+    for tool_name in &profile.visible_tools {
+        let Some(tool) = registry.tools.get(tool_name) else {
+            continue;
+        };
+        let ToolKind::RemoteMcp(remote_mcp) = &tool.kind else {
+            continue;
+        };
+        if let Some(existing_tool_name) = labels.insert(remote_mcp.server_label.as_str(), tool_name)
+        {
+            return Err(DomainError::InvariantViolation(format!(
+                "tool profile {} has duplicate remote MCP server label {} for tools {} and {}",
+                profile_id, remote_mcp.server_label, existing_tool_name, tool_name
+            )));
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_registry_keeps_active_profile(
@@ -239,12 +264,29 @@ pub struct ToolSpec {
 }
 
 impl ToolSpec {
+    pub fn validate(&self) -> Result<(), DomainError> {
+        self.target_requirement.validate()?;
+        match &self.kind {
+            ToolKind::Function(_) | ToolKind::ProviderNative(_) => Ok(()),
+            ToolKind::RemoteMcp(remote_mcp) => {
+                if self.target_requirement != ToolTargetRequirement::None {
+                    return Err(DomainError::InvariantViolation(format!(
+                        "remote MCP tool {} must not declare an execution target requirement",
+                        self.name
+                    )));
+                }
+                remote_mcp.validate()
+            }
+        }
+    }
+
     pub fn invokes_client_effect(&self) -> bool {
         match &self.kind {
             ToolKind::Function(_) => true,
             ToolKind::ProviderNative(native) => {
                 native.execution == ProviderNativeToolExecution::ClientEffect
             }
+            ToolKind::RemoteMcp(_) => false,
         }
     }
 }
@@ -454,6 +496,7 @@ fn validate_target_component(
 pub enum ToolKind {
     Function(FunctionToolSpec),
     ProviderNative(ProviderNativeToolSpec),
+    RemoteMcp(RemoteMcpToolSpec),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -471,6 +514,183 @@ pub struct ProviderNativeToolSpec {
     pub api_kind: ProviderApiKind,
     pub native_tool_ref: BlobRef,
     pub execution: ProviderNativeToolExecution,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteMcpToolSpec {
+    pub server_label: String,
+    pub server_url: String,
+    pub description_ref: Option<BlobRef>,
+    pub allowed_tools: Option<Vec<String>>,
+    pub approval: RemoteMcpApprovalPolicy,
+    pub defer_loading: Option<bool>,
+    pub auth_ref: Option<SecretRef>,
+}
+
+impl RemoteMcpToolSpec {
+    pub fn validate(&self) -> Result<(), DomainError> {
+        validate_remote_mcp_server_label(&self.server_label)?;
+        validate_remote_mcp_server_url(&self.server_url)?;
+        if let Some(allowed_tools) = &self.allowed_tools {
+            if allowed_tools.is_empty() {
+                return Err(DomainError::InvariantViolation(
+                    "remote MCP allowed_tools must not be empty when present".to_owned(),
+                ));
+            }
+            let mut seen = BTreeSet::new();
+            for tool_name in allowed_tools {
+                validate_remote_mcp_allowed_tool_name(tool_name)?;
+                if !seen.insert(tool_name.as_str()) {
+                    return Err(DomainError::InvariantViolation(format!(
+                        "remote MCP allowed_tools contains duplicate tool name {}",
+                        tool_name
+                    )));
+                }
+            }
+        }
+        if let Some(auth_ref) = &self.auth_ref {
+            auth_ref.validate()?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoteMcpApprovalPolicy {
+    ProviderDefault,
+    Always,
+    Never,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecretRef {
+    pub namespace: String,
+    pub id: String,
+}
+
+impl SecretRef {
+    pub fn validate(&self) -> Result<(), DomainError> {
+        validate_secret_ref_component("secret ref namespace", &self.namespace)?;
+        validate_secret_ref_component("secret ref id", &self.id)
+    }
+}
+
+const REMOTE_MCP_URL_MAX_LEN: usize = 2048;
+const REMOTE_MCP_ALLOWED_TOOL_MAX_LEN: usize = 128;
+
+fn validate_remote_mcp_server_label(value: &str) -> Result<(), DomainError> {
+    validate_target_component(
+        "remote MCP server label",
+        value,
+        "ASCII letters, digits, '_', '-'",
+        |ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-'),
+    )
+}
+
+fn validate_remote_mcp_server_url(value: &str) -> Result<(), DomainError> {
+    if value.is_empty() {
+        return Err(DomainError::InvariantViolation(
+            "remote MCP server URL must not be empty".to_owned(),
+        ));
+    }
+    if value.len() > REMOTE_MCP_URL_MAX_LEN {
+        return Err(DomainError::InvariantViolation(format!(
+            "remote MCP server URL is too long: {} bytes, max {}",
+            value.len(),
+            REMOTE_MCP_URL_MAX_LEN
+        )));
+    }
+    if value.chars().any(char::is_whitespace) || value.chars().any(|ch| ch.is_control()) {
+        return Err(DomainError::InvariantViolation(
+            "remote MCP server URL must not contain whitespace or control characters".to_owned(),
+        ));
+    }
+    if value.contains('#') {
+        return Err(DomainError::InvariantViolation(
+            "remote MCP server URL must not contain a fragment".to_owned(),
+        ));
+    }
+
+    let Some((scheme, rest)) = value.split_once("://") else {
+        return Err(DomainError::InvariantViolation(
+            "remote MCP server URL must include http:// or https:// scheme".to_owned(),
+        ));
+    };
+    let scheme = scheme.to_ascii_lowercase();
+    if scheme != "http" && scheme != "https" {
+        return Err(DomainError::InvariantViolation(format!(
+            "remote MCP server URL scheme {scheme:?} is not supported"
+        )));
+    }
+
+    let authority_end = rest
+        .find(|ch| matches!(ch, '/' | '?' | '#'))
+        .unwrap_or(rest.len());
+    let authority = &rest[..authority_end];
+    if authority.is_empty() {
+        return Err(DomainError::InvariantViolation(
+            "remote MCP server URL host must not be empty".to_owned(),
+        ));
+    }
+    if authority.contains('@') {
+        return Err(DomainError::InvariantViolation(
+            "remote MCP server URL must not include credentials".to_owned(),
+        ));
+    }
+
+    if let Some(stripped) = authority.strip_prefix('[') {
+        let Some(end) = stripped.find(']') else {
+            return Err(DomainError::InvariantViolation(
+                "remote MCP server URL IPv6 host is missing closing ']'".to_owned(),
+            ));
+        };
+        if end == 0 {
+            return Err(DomainError::InvariantViolation(
+                "remote MCP server URL host must not be empty".to_owned(),
+            ));
+        }
+    } else {
+        let host = authority.split(':').next().unwrap_or(authority);
+        if host.is_empty() {
+            return Err(DomainError::InvariantViolation(
+                "remote MCP server URL host must not be empty".to_owned(),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_remote_mcp_allowed_tool_name(value: &str) -> Result<(), DomainError> {
+    if value.is_empty() {
+        return Err(DomainError::InvariantViolation(
+            "remote MCP allowed tool name must not be empty".to_owned(),
+        ));
+    }
+    if value.len() > REMOTE_MCP_ALLOWED_TOOL_MAX_LEN {
+        return Err(DomainError::InvariantViolation(format!(
+            "remote MCP allowed tool name is too long: {} bytes, max {}",
+            value.len(),
+            REMOTE_MCP_ALLOWED_TOOL_MAX_LEN
+        )));
+    }
+    if value.trim() != value || value.chars().any(char::is_whitespace) {
+        return Err(DomainError::InvariantViolation(
+            "remote MCP allowed tool name must not contain whitespace".to_owned(),
+        ));
+    }
+    if value.chars().any(|ch| ch.is_control()) {
+        return Err(DomainError::InvariantViolation(
+            "remote MCP allowed tool name must not contain control characters".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_secret_ref_component(kind: &'static str, value: &str) -> Result<(), DomainError> {
+    crate::validate_general_string_id(kind, value)
+        .map_err(|error| DomainError::InvariantViolation(error.to_string()))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1250,4 +1470,112 @@ fn complete_tool_call(
     call_state.status = result.status;
     call_state.result = Some(result.clone());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn remote_mcp_spec(server_label: &str, server_url: &str) -> RemoteMcpToolSpec {
+        RemoteMcpToolSpec {
+            server_label: server_label.to_owned(),
+            server_url: server_url.to_owned(),
+            description_ref: None,
+            allowed_tools: Some(vec!["hello".to_owned()]),
+            approval: RemoteMcpApprovalPolicy::Never,
+            defer_loading: Some(true),
+            auth_ref: Some(SecretRef {
+                namespace: "mcp_grant".to_owned(),
+                id: "mcpgrant_123".to_owned(),
+            }),
+        }
+    }
+
+    fn remote_mcp_tool(name: &str, server_label: &str) -> ToolSpec {
+        ToolSpec {
+            name: ToolName::new(name),
+            kind: ToolKind::RemoteMcp(remote_mcp_spec(
+                server_label,
+                "https://echo.example.com/mcp",
+            )),
+            parallelism: ToolParallelism::ParallelSafe,
+            target_requirement: ToolTargetRequirement::None,
+        }
+    }
+
+    #[test]
+    fn remote_mcp_tool_is_not_a_client_effect() {
+        let tool = remote_mcp_tool("mcp_echo", "echo");
+
+        tool.validate().expect("valid remote MCP tool");
+        assert!(!tool.invokes_client_effect());
+    }
+
+    #[test]
+    fn remote_mcp_tool_rejects_execution_target_requirement() {
+        let mut tool = remote_mcp_tool("mcp_echo", "echo");
+        tool.target_requirement = ToolTargetRequirement::required("host");
+
+        let error = tool
+            .validate()
+            .expect_err("remote MCP must not declare an execution target");
+
+        assert!(matches!(error, DomainError::InvariantViolation(_)));
+    }
+
+    #[test]
+    fn remote_mcp_validation_rejects_url_credentials() {
+        let mut spec = remote_mcp_spec("echo", "https://echo.example.com/mcp");
+        spec.server_url = "https://user:secret@echo.example.com/mcp".to_owned();
+
+        let error = spec
+            .validate()
+            .expect_err("remote MCP URL credentials must be rejected");
+
+        let DomainError::InvariantViolation(message) = error else {
+            panic!("expected invariant violation, got {error:?}");
+        };
+        assert!(message.contains("credentials"));
+    }
+
+    #[test]
+    fn remote_mcp_validation_rejects_duplicate_allowed_tools() {
+        let mut spec = remote_mcp_spec("echo", "https://echo.example.com/mcp");
+        spec.allowed_tools = Some(vec!["hello".to_owned(), "hello".to_owned()]);
+
+        let error = spec
+            .validate()
+            .expect_err("duplicate allowed_tools entries must be rejected");
+
+        assert!(matches!(error, DomainError::InvariantViolation(_)));
+    }
+
+    #[test]
+    fn registry_rejects_duplicate_remote_mcp_labels_within_profile() {
+        let first = remote_mcp_tool("mcp_echo_one", "echo");
+        let second = remote_mcp_tool("mcp_echo_two", "echo");
+        let first_name = first.name.clone();
+        let second_name = second.name.clone();
+        let profile_id = ToolProfileId::new("default");
+        let registry = ToolRegistry {
+            tools: BTreeMap::from([(first_name.clone(), first), (second_name.clone(), second)]),
+            profiles: BTreeMap::from([(
+                profile_id.clone(),
+                ToolProfile {
+                    profile_id,
+                    visible_tools: vec![first_name, second_name],
+                    tool_choice: None,
+                },
+            )]),
+        };
+
+        let error = registry
+            .validate()
+            .expect_err("duplicate remote MCP labels in one profile must be rejected");
+
+        let DomainError::InvariantViolation(message) = error else {
+            panic!("expected invariant violation, got {error:?}");
+        };
+        assert!(message.contains("duplicate remote MCP server label echo"));
+    }
 }

@@ -424,19 +424,38 @@ fn selected_tools_and_choice(
             ))
             .into());
         };
-        if let ToolKind::ProviderNative(native) = &tool.kind {
-            if native.api_kind != *api_kind {
-                return Err(DomainError::ProviderCompatibility(format!(
-                    "provider-native tool {} api kind {:?} does not match request api kind {:?}",
-                    tool.name, native.api_kind, api_kind
-                ))
-                .into());
+        match &tool.kind {
+            ToolKind::ProviderNative(native) => {
+                if native.api_kind != *api_kind {
+                    return Err(DomainError::ProviderCompatibility(format!(
+                        "provider-native tool {} api kind {:?} does not match request api kind {:?}",
+                        tool.name, native.api_kind, api_kind
+                    ))
+                    .into());
+                }
             }
+            ToolKind::RemoteMcp(_) => {
+                if !remote_mcp_supported_by_provider(api_kind) {
+                    return Err(DomainError::ProviderCompatibility(format!(
+                        "remote MCP tool {} is not supported by request api kind {:?}",
+                        tool.name, api_kind
+                    ))
+                    .into());
+                }
+            }
+            ToolKind::Function(_) => {}
         }
         tools.push(tool.clone());
     }
 
     Ok((tools, profile.tool_choice.clone()))
+}
+
+fn remote_mcp_supported_by_provider(api_kind: &ProviderApiKind) -> bool {
+    matches!(
+        api_kind,
+        ProviderApiKind::OpenAiResponses | ProviderApiKind::AnthropicMessages
+    )
 }
 
 fn openai_responses_request(
@@ -832,6 +851,128 @@ mod tests {
         assert!(message.contains("provider-native tool web_search"));
         assert!(message.contains("OpenAiResponses"));
         assert!(message.contains("AnthropicMessages"));
+    }
+
+    fn remote_mcp_tool(auth_ref_id: &str) -> ToolSpec {
+        ToolSpec {
+            name: ToolName::new("mcp_echo"),
+            kind: ToolKind::RemoteMcp(crate::RemoteMcpToolSpec {
+                server_label: "echo".to_owned(),
+                server_url: "https://echo.example.com/mcp".to_owned(),
+                description_ref: None,
+                allowed_tools: Some(vec!["hello".to_owned()]),
+                approval: crate::RemoteMcpApprovalPolicy::Never,
+                defer_loading: Some(true),
+                auth_ref: Some(crate::SecretRef {
+                    namespace: "mcp_grant".to_owned(),
+                    id: auth_ref_id.to_owned(),
+                }),
+            }),
+            parallelism: crate::ToolParallelism::ParallelSafe,
+            target_requirement: crate::ToolTargetRequirement::None,
+        }
+    }
+
+    fn state_with_remote_mcp_tool() -> CoreAgentState {
+        let mut state = CoreAgentState::new();
+        let profile_id = crate::ToolProfileId::new("mcp");
+        let tool = remote_mcp_tool("mcpgrant_123");
+        let tool_name = tool.name.clone();
+        state.tooling.registry.tools.insert(tool_name.clone(), tool);
+        state.tooling.registry.profiles.insert(
+            profile_id.clone(),
+            crate::ToolProfile {
+                profile_id: profile_id.clone(),
+                visible_tools: vec![tool_name],
+                tool_choice: None,
+            },
+        );
+        state.tooling.selected_profile_id = Some(profile_id);
+        state
+    }
+
+    #[test]
+    fn remote_mcp_tool_selection_accepts_supported_provider_api_kinds() {
+        let state = state_with_remote_mcp_tool();
+
+        for api_kind in [
+            ProviderApiKind::OpenAiResponses,
+            ProviderApiKind::AnthropicMessages,
+        ] {
+            let (tools, tool_choice) = selected_tools_and_choice(&state, &api_kind)
+                .expect("remote MCP should be selectable for supported providers");
+
+            assert_eq!(tools.len(), 1);
+            assert!(matches!(tools[0].kind, ToolKind::RemoteMcp(_)));
+            assert_eq!(tool_choice, None);
+        }
+    }
+
+    #[test]
+    fn remote_mcp_tool_selection_rejects_openai_completions() {
+        let state = state_with_remote_mcp_tool();
+
+        let error = selected_tools_and_choice(&state, &ProviderApiKind::OpenAiCompletions)
+            .expect_err("remote MCP is not supported by OpenAI Completions");
+
+        let PlanningError::Domain(DomainError::ProviderCompatibility(message)) = error else {
+            panic!("expected provider compatibility error, got {error:?}");
+        };
+        assert!(message.contains("remote MCP tool mcp_echo"));
+        assert!(message.contains("OpenAiCompletions"));
+    }
+
+    #[test]
+    fn remote_mcp_sanitized_auth_ref_participates_in_request_fingerprint() {
+        let config = SessionConfig {
+            model: ModelSelection {
+                api_kind: ProviderApiKind::OpenAiResponses,
+                provider_id: "openai".to_owned(),
+                model: "gpt-test".to_owned(),
+                options: ModelProviderOptions::None,
+            },
+            run: RunConfig::default(),
+            turn: crate::TurnConfig {
+                max_output_tokens: None,
+                provider_request_defaults: ProviderRequestDefaults::None,
+            },
+            context: crate::ContextConfig { compaction: None },
+            tools: Default::default(),
+        };
+        let context = ContextSnapshot {
+            api_kind: ProviderApiKind::OpenAiResponses,
+            context_revision: 7,
+            entries: Vec::new(),
+            token_estimate: None,
+        };
+        let first = LlmRequestKind::OpenAiResponses(openai_responses_request(
+            &config,
+            context.clone(),
+            vec![remote_mcp_tool("mcpgrant_123")],
+            None,
+            &OpenAiResponsesRequestDefaults::default(),
+        ));
+        let second = LlmRequestKind::OpenAiResponses(openai_responses_request(
+            &config,
+            context,
+            vec![remote_mcp_tool("mcpgrant_456")],
+            None,
+            &OpenAiResponsesRequestDefaults::default(),
+        ));
+
+        let encoded = serde_json::to_string(&first).expect("serialize request");
+        assert!(encoded.contains("mcp_grant"));
+        assert!(encoded.contains("mcpgrant_123"));
+        assert!(!encoded.contains("runtime-token"));
+
+        let first_fingerprint =
+            request_fingerprint(&config.model, &first, RunId::new(1), TurnId::new(1))
+                .expect("fingerprint first request");
+        let second_fingerprint =
+            request_fingerprint(&config.model, &second, RunId::new(1), TurnId::new(1))
+                .expect("fingerprint second request");
+
+        assert_ne!(first_fingerprint, second_fingerprint);
     }
 
     #[test]
