@@ -6,7 +6,9 @@ edition = "2024"
 [dependencies]
 engine = { path = "../engine" }
 async-trait = "0.1"
+mcp-registry = { path = "../mcp-registry" }
 object_store = { version = "0.13.1", features = ["aws"] }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "uuid", "json"] }
 thiserror = "1"

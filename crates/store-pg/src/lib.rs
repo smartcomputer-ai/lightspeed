@@ -4,6 +4,7 @@
 //! CAS catalog; across universes, both metadata and object keys are isolated.
 
 mod blob;
+mod mcp;
 mod object;
 mod session;
 mod shared;
@@ -18,6 +19,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 pub const INITIAL_SCHEMA_SQL: &str = include_str!("../migrations/001_initial.sql");
+pub const MCP_REGISTRY_SCHEMA_SQL: &str = include_str!("../migrations/002_mcp_registry.sql");
 
 pub const DEFAULT_INLINE_THRESHOLD_BYTES: usize = 64 * 1024;
 
@@ -192,6 +194,7 @@ impl PgStore {
 
     pub async fn migrate(pool: &PgPool) -> Result<(), PgStoreError> {
         pool.execute(INITIAL_SCHEMA_SQL).await?;
+        pool.execute(MCP_REGISTRY_SCHEMA_SQL).await?;
         Ok(())
     }
 

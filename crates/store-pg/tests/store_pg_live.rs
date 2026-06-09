@@ -11,6 +11,10 @@ use engine::{
         SessionBlobRoot, SessionStore,
     },
 };
+use mcp_registry::{
+    CreateMcpServerRecord, ListMcpServers, McpApprovalPolicy, McpRegistryError, McpRegistryStore,
+    McpServerAuthPolicy, McpServerId, McpServerStatus, RemoteMcpTransport,
+};
 use object_store::{ObjectStore, aws::AmazonS3Builder};
 use sqlx::{PgPool, Row, postgres::PgPoolOptions};
 use store_pg::{PgStore, PgStoreConfig};
@@ -361,6 +365,65 @@ async fn pg_live_vfs_catalog_tracks_workspace_heads_and_mounts() {
     );
 }
 
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires dev/local/up.sh or compatible Postgres + MinIO env"]
+async fn pg_live_mcp_registry_crud_and_universe_isolation() {
+    let left = live_store("mcp-registry-left", 1024).await;
+    let right = live_store("mcp-registry-right", 1024).await;
+    let server_id = McpServerId::new("crm");
+
+    let created = left
+        .create_server(create_mcp_server("crm", McpServerStatus::Active))
+        .await
+        .expect("create MCP server");
+    assert_eq!(created.server_id, server_id);
+
+    assert!(matches!(
+        left.create_server(create_mcp_server("crm", McpServerStatus::Active))
+            .await,
+        Err(McpRegistryError::AlreadyExists { server_id }) if server_id.as_str() == "crm"
+    ));
+
+    assert_eq!(
+        left.read_server(&server_id).await.expect("read MCP server"),
+        created
+    );
+    assert!(matches!(
+        right.read_server(&server_id).await,
+        Err(McpRegistryError::NotFound { server_id }) if server_id.as_str() == "crm"
+    ));
+
+    let oauth = left
+        .create_server(create_oauth_mcp_server(
+            "docs",
+            McpServerStatus::NeedsAuthConfig,
+        ))
+        .await
+        .expect("create OAuth MCP server");
+    assert!(matches!(
+        oauth.auth_policy,
+        McpServerAuthPolicy::RequiredOAuth { .. }
+    ));
+
+    let active = left
+        .list_servers(ListMcpServers {
+            status: Some(McpServerStatus::Active),
+        })
+        .await
+        .expect("list active MCP servers");
+    assert_eq!(active, vec![created.clone()]);
+
+    let deleted = left
+        .delete_server(&server_id)
+        .await
+        .expect("delete MCP server");
+    assert_eq!(deleted, created);
+    assert!(matches!(
+        left.read_server(&server_id).await,
+        Err(McpRegistryError::NotFound { server_id }) if server_id.as_str() == "crm"
+    ));
+}
+
 async fn live_store(test_name: &str, inline_threshold_bytes: usize) -> PgStore {
     let database_url = env_or_dotenv_var("FORGE_TEST_POSTGRES_URL").expect(
         "FORGE_TEST_POSTGRES_URL must be set in env or root .env to run store-pg live tests; run dev/local/up.sh and source dev/local/env.sh",
@@ -432,6 +495,36 @@ fn open_event(at_ms: u64) -> DynamicUncommittedSessionEvent {
             serde_json::Value::Object(Default::default()),
         ),
     }
+}
+
+fn create_mcp_server(server_id: &str, status: McpServerStatus) -> CreateMcpServerRecord {
+    CreateMcpServerRecord {
+        server_id: McpServerId::new(server_id),
+        display_name: Some(format!("{server_id} MCP")),
+        server_url: format!("https://{server_id}.example.com/mcp"),
+        transport: RemoteMcpTransport::Auto,
+        default_server_label: server_id.to_owned(),
+        description: Some(format!("{server_id} remote MCP server")),
+        allowed_tools: Some(vec!["lookup_customer".to_owned()]),
+        approval_default: McpApprovalPolicy::Never,
+        defer_loading_default: Some(true),
+        auth_policy: McpServerAuthPolicy::None,
+        status,
+        created_at_ms: 10,
+    }
+}
+
+fn create_oauth_mcp_server(server_id: &str, status: McpServerStatus) -> CreateMcpServerRecord {
+    let mut record = create_mcp_server(server_id, status);
+    record.auth_policy = McpServerAuthPolicy::RequiredOAuth {
+        resource: format!("https://{server_id}.example.com"),
+        scopes_default: Vec::new(),
+        protected_resource_metadata_url: Some(format!(
+            "https://{server_id}.example.com/.well-known/oauth-protected-resource"
+        )),
+        authorization_server: Some("https://login.example.com".to_owned()),
+    };
+    record
 }
 
 struct BlobLayoutRow {

@@ -1,13 +1,21 @@
 # P68: Remote MCP Registry And Session Linking
 
 **Status**
-- Proposed.
+- In progress.
 - Split from the original P68 registry/auth plan.
 - Companion to P67 direct remote MCP and P69 generic auth/token broker.
 - Owns the MCP-specific control plane for registering remote MCP servers and
   linking configured servers into sessions.
 - Does not implement generic OAuth, encrypted secret storage, refresh, token
   brokering, GitHub auth, provider request lowering, or MCP tool execution.
+
+**Implementation Notes**
+- First cut implemented: `mcp-registry` owns provider-independent registry
+  DTOs, validation, store trait, and in-memory test adapter.
+- First cut implemented: `store-pg` owns the universe-scoped `mcp_servers`
+  table, migration wiring, and `PgStore` implementation of the registry trait.
+- Still pending: API/CLI registry methods, session link materialization, and
+  P67 provider request lowering for no-auth remote MCP servers.
 
 ## Goal
 
