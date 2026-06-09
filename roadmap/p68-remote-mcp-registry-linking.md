@@ -18,7 +18,7 @@
 - Implemented: session MCP link/list/unlink materializes catalog snapshots into
   `ToolKind::RemoteMcp` entries in the active engine tool set.
 - Implemented: link/unlink uses `PatchTools` from `p67-tooling-refactor.md`;
-  selected tool profiles are removed.
+  profile selection has been removed.
 - Still pending: P67 provider request lowering for no-auth remote MCP servers
   and P69-backed auth grant validation.
 
@@ -242,7 +242,7 @@ Candidate session config input:
 
 The gateway resolves `serverId` and optional `grantId`, validates that both
 belong to the same universe, checks that the grant is compatible with the MCP
-server, and commits a `ToolRegistry` update containing:
+server, and commits a `PatchTools` upsert containing:
 
 ```rust
 ToolKind::RemoteMcp(RemoteMcpToolSpec {

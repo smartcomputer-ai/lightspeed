@@ -547,7 +547,7 @@ pub struct SessionToolsUpdateParams {
     pub session_id: SessionId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_tools_revision: Option<u64>,
-    pub update: ToolSetUpdateInput,
+    pub update: SessionToolsUpdateInput,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -556,7 +556,7 @@ pub struct SessionToolsUpdateParams {
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
-pub enum ToolSetUpdateInput {
+pub enum SessionToolsUpdateInput {
     Replace {
         #[serde(default)]
         tools: Vec<ToolView>,
@@ -577,7 +577,7 @@ pub struct SessionToolsUpdateResponse {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ToolSetView {
+pub struct ActiveToolsView {
     pub revision: u64,
     #[serde(default)]
     pub tools: Vec<ToolView>,
@@ -1624,7 +1624,7 @@ pub struct SessionView {
     pub runs: Vec<RunView>,
     pub active_context: ContextView,
     #[serde(default)]
-    pub active_tools: ToolSetView,
+    pub active_tools: ActiveToolsView,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub vfs_mounts: Vec<VfsMountView>,
 }
@@ -3570,7 +3570,7 @@ mod tests {
             updated_at_ms: 2,
             runs: Vec::new(),
             active_context: ContextView::default(),
-            active_tools: ToolSetView::default(),
+            active_tools: ActiveToolsView::default(),
             vfs_mounts: Vec::new(),
         }
     }

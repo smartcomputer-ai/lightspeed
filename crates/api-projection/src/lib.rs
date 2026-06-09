@@ -7,15 +7,15 @@
 use std::collections::BTreeMap;
 
 use api::{
-    AgentApiError, CompactionPolicyInput, ContextConfigInput, ContextEntryInputView,
-    ContextEntryKindView, ContextMessageRoleView, ContextView, EventCursor, EventJoinsView,
-    GenerationConfig, HostToolMode as ApiHostToolMode, InputItem, ModelConfig,
+    ActiveToolsView, AgentApiError, CompactionPolicyInput, ContextConfigInput,
+    ContextEntryInputView, ContextEntryKindView, ContextMessageRoleView, ContextView, EventCursor,
+    EventJoinsView, GenerationConfig, HostToolMode as ApiHostToolMode, InputItem, ModelConfig,
     ProviderNativeToolExecutionView, ReasoningEffort, RunDefaultsConfig, RunStatus as ApiRunStatus,
     RunView, SessionConfigView, SessionEventKindView, SessionEventView, SessionItemView,
     SessionStatus as ApiSessionStatus, SessionView, TokenEstimateQualityView, TokenEstimateView,
     ToolBatchView, ToolCallDisplayGroup, ToolCallDisplayView, ToolCallEventView, ToolCallView,
     ToolChoiceConfig, ToolChoiceModeConfig, ToolConfigView, ToolEffectView,
-    ToolExecutionTargetView, ToolItemStatus, ToolKindView, ToolParallelismView, ToolSetView,
+    ToolExecutionTargetView, ToolItemStatus, ToolKindView, ToolParallelismView,
     ToolTargetRequirementView, ToolView,
 };
 use engine::{ApplyEvent, ToolExecutionTarget};
@@ -92,7 +92,7 @@ impl<'a> CoreAgentProjector<'a> {
             active_context: self
                 .project_context_state(params.state.context.revision, &params.state.context.entries)
                 .await?,
-            active_tools: tool_set_to_api(
+            active_tools: active_tools_to_api(
                 params.state.tooling.revision,
                 &params.state.tooling.tools,
             ),
@@ -1045,8 +1045,11 @@ fn host_tool_mode_to_api(mode: engine::HostToolMode) -> ApiHostToolMode {
     }
 }
 
-fn tool_set_to_api(revision: u64, tools: &BTreeMap<engine::ToolName, ToolSpec>) -> ToolSetView {
-    ToolSetView {
+fn active_tools_to_api(
+    revision: u64,
+    tools: &BTreeMap<engine::ToolName, ToolSpec>,
+) -> ActiveToolsView {
+    ActiveToolsView {
         revision,
         tools: tools.values().map(tool_to_api).collect(),
     }

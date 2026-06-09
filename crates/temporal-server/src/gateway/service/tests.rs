@@ -209,7 +209,7 @@ fn standard_toolset_patch_preserves_remote_mcp_links() {
 
 #[test]
 fn session_tools_update_patch_accepts_remote_mcp_tool() {
-    let update = api::ToolSetUpdateInput::Patch {
+    let update = api::SessionToolsUpdateInput::Patch {
         upsert: vec![api_remote_mcp_tool("mcp_crm", "crm")],
         remove: Vec::new(),
     };
@@ -233,7 +233,7 @@ fn session_tools_update_patch_accepts_remote_mcp_tool() {
 
 #[test]
 fn session_tools_update_replace_rejects_duplicate_tool_ids() {
-    let update = api::ToolSetUpdateInput::Replace {
+    let update = api::SessionToolsUpdateInput::Replace {
         tools: vec![
             api_remote_mcp_tool("mcp_crm", "crm"),
             api_remote_mcp_tool("mcp_crm", "crm_alt"),

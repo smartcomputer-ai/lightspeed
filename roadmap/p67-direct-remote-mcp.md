@@ -8,7 +8,7 @@
 - Provider MCP request lowering, runtime auth injection, redacted provider
   request persistence, and provider MCP output recording remain pending.
 - Tool visibility now uses the active session tool map from
-  `p67-tooling-refactor.md`; selected tool profiles are removed.
+  `p67-tooling-refactor.md`; profile selection has been removed.
 - Direct provider-hosted MCP only: the model provider connects to public remote
   MCP servers during the model call.
 - No Forge MCP bridge, no local/on-prem tunnel support, no Forge-hosted MCP
@@ -51,8 +51,8 @@ such as OpenAI `mcp_list_tools` / `mcp_call` and Anthropic MCP tool use/result
 blocks are **context observations**. Do not model provider-discovered MCP tools
 as Forge `ToolSpec`s in the first cut.
 
-Use a small `ToolRegistry` extension, not a standalone MCP subsystem in
-`engine`:
+Use a `ToolKind::RemoteMcp` variant in the active session tool map, not a
+standalone MCP subsystem in `engine`:
 
 ```rust
 pub enum ToolKind {
@@ -88,7 +88,7 @@ P69.
 
 ## Core Model
 
-Add a declarative, non-secret MCP server spec to `engine`:
+`engine` has a declarative, non-secret MCP server spec:
 
 ```rust
 pub struct RemoteMcpToolSpec {
@@ -121,24 +121,20 @@ Names may be adjusted during implementation, but the important split is:
 - actual secret values are resolved only by `llm-runtime` immediately before
   sending the provider request.
 
-`RemoteMcp` specs live in the existing tool registry and are selected by the
-existing tool profile mechanism:
+`RemoteMcp` specs live in the active session tool map:
 
 ```text
-ToolRegistry
-  tools:
-    mcp_echo -> ToolKind::RemoteMcp(...)
-    read_file -> ToolKind::Function(...)
-  profiles:
-    default.visible_tools = ["mcp_echo", "read_file"]
+ToolingState.tools:
+  mcp_echo -> ToolKind::RemoteMcp(...)
+  read_file -> ToolKind::Function(...)
 ```
 
-The registry should validate:
+The active tool map validates:
 
 - stable, non-empty server labels;
 - HTTP or HTTPS server URLs;
 - no credentials embedded in URLs;
-- unique provider-facing server labels within a selected profile;
+- unique provider-facing server labels across active remote MCP entries;
 - valid `allowed_tools` names for provider API constraints;
 - `auth_ref` syntax only, not secret existence or value.
 
@@ -148,8 +144,8 @@ emit `ToolEvent::CallStarted` for direct MCP.
 
 ## Request Planning
 
-The turn planner should select `RemoteMcp` specs through the same
-`selected_tools_and_choice` path as function and provider-native tools.
+The turn planner reads `RemoteMcp` specs from the same active tool map as
+function and provider-native tools.
 
 `engine` should preserve provider compatibility without knowing provider wire
 details. A `RemoteMcp` spec is compatible with provider API kinds that have a
@@ -164,10 +160,10 @@ exists.
 Provider-specific request structs should carry enough sanitized MCP data for
 replay and fingerprinting:
 
-- OpenAI may keep MCP as `ToolKind::RemoteMcp` in the `tools` list and lower it
-  in `llm-runtime`.
+- OpenAI may keep MCP as `ToolKind::RemoteMcp` in the planned `tools` list and
+  lower it in `llm-runtime`.
 - Anthropic should not make `mcp_servers` the source of truth. It should derive
-  `mcp_servers` and `tools` from the same selected `RemoteMcp` specs during
+  `mcp_servers` and `tools` from the same planned `RemoteMcp` specs during
   materialization.
 
 The planned request fingerprint should include the sanitized `RemoteMcp` spec,
@@ -180,7 +176,7 @@ wire shapes.
 
 ### OpenAI Responses
 
-For each selected `ToolKind::RemoteMcp`, lower to one OpenAI tool entry:
+For each planned `ToolKind::RemoteMcp`, lower to one OpenAI tool entry:
 
 ```json
 {
@@ -340,10 +336,10 @@ Candidate public config:
 }
 ```
 
-The gateway/toolset layer should translate this into:
+The gateway/tooling layer should translate this into:
 
-- `ToolRegistry.tools["mcp_echo"] = ToolKind::RemoteMcp(...)`;
-- selected `ToolProfile.visible_tools` entry `mcp_echo`;
+- `PatchTools { upsert: [ToolKind::RemoteMcp(...)], remove: [] }`;
+- an active `ToolingState.tools["mcp_echo"]` entry after the event applies;
 - optional provider request default patches only when a provider requires them.
 
 Do not expose provider-generated `mcp_list_tools` as the configured tool list.

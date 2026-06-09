@@ -1673,7 +1673,7 @@ mod tests {
                 ],
             }],
             active_context: api::ContextView::default(),
-            active_tools: api::ToolSetView::default(),
+            active_tools: api::ActiveToolsView::default(),
             vfs_mounts: Vec::new(),
         };
 
@@ -1770,7 +1770,7 @@ mod tests {
                 tool_batches: Vec::new(),
             }],
             active_context: api::ContextView::default(),
-            active_tools: api::ToolSetView::default(),
+            active_tools: api::ActiveToolsView::default(),
             vfs_mounts: Vec::new(),
         };
         let settings = ChatDraftSettings {
@@ -1816,7 +1816,7 @@ mod tests {
                 tool_batches: Vec::new(),
             }],
             active_context: api::ContextView::default(),
-            active_tools: api::ToolSetView::default(),
+            active_tools: api::ActiveToolsView::default(),
             vfs_mounts: Vec::new(),
         };
         let settings = ChatDraftSettings {

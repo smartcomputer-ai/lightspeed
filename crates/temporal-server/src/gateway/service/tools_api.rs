@@ -39,13 +39,13 @@ impl CoreToolUpdate {
 }
 
 pub(super) fn core_tool_update_from_api(
-    update: api::ToolSetUpdateInput,
+    update: api::SessionToolsUpdateInput,
 ) -> Result<CoreToolUpdate, AgentApiError> {
     match update {
-        api::ToolSetUpdateInput::Replace { tools } => {
+        api::SessionToolsUpdateInput::Replace { tools } => {
             Ok(CoreToolUpdate::Replace(core_tool_set_from_api(tools)?))
         }
-        api::ToolSetUpdateInput::Patch { upsert, remove } => {
+        api::SessionToolsUpdateInput::Patch { upsert, remove } => {
             let upsert = upsert
                 .into_iter()
                 .map(core_tool_from_api)

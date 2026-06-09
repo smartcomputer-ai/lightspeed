@@ -80,7 +80,7 @@ fn workspace_catalog() -> Result<ToolCatalog, CoreAgentIoError> {
         let mut config = ToolsetConfig::workspace();
         config.web_fetch = WebFetchToolConfig::enabled();
         let toolset = resolve_toolset(ToolsetEnvironment { target: &target }, &config)
-            .map_err(|error| io_error(format!("build mounted vfs tool profile: {error}")))?;
+            .map_err(|error| io_error(format!("build mounted vfs tool catalog: {error}")))?;
         for binding in toolset.catalog.bindings() {
             catalog.insert(binding.clone());
         }
