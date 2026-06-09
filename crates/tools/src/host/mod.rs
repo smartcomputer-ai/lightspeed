@@ -5,7 +5,6 @@ pub mod context;
 pub mod executor;
 pub mod fs;
 pub mod process;
-pub mod profiles;
 pub mod remote;
 pub mod targets;
 pub mod tools;

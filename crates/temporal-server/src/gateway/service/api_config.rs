@@ -33,6 +33,7 @@ impl GatewayAgentApi {
         apply_generation_config(config, api_config.generation)?;
         apply_context_config(&mut config.context, api_config.context);
         apply_run_defaults_config(&mut config.run, api_config.run_defaults);
+        apply_tool_config(&mut config.tools, api_config.tools);
         Ok(())
     }
 
@@ -48,6 +49,7 @@ impl GatewayAgentApi {
             run: run_config_patch_from_api(patch.run_defaults),
             turn,
             context: context_config_patch_from_api(patch.context),
+            tools: tool_config_patch_from_api(patch.tools),
         })
     }
 
@@ -110,6 +112,21 @@ pub(super) fn apply_run_defaults_config(
     }
     if let Some(max_tool_rounds) = run_defaults.max_tool_rounds {
         config.max_tool_rounds = Some(max_tool_rounds);
+    }
+}
+
+pub(super) fn apply_tool_config(config: &mut engine::ToolConfig, tools: Option<ToolConfigInput>) {
+    let Some(tools) = tools else {
+        return;
+    };
+    if let Some(web_search) = tools.web_search {
+        config.web_search = Some(web_search);
+    }
+    if let Some(web_fetch) = tools.web_fetch {
+        config.web_fetch = Some(web_fetch);
+    }
+    if let Some(host) = tools.host {
+        config.host = Some(host_tool_mode_from_api(host));
     }
 }
 
@@ -202,6 +219,29 @@ pub(super) fn context_config_patch_from_api(
         compaction: patch
             .compaction
             .map(|patch| optional_patch_from_api_map(patch, compaction_policy_from_api)),
+    }
+}
+
+pub(super) fn tool_config_patch_from_api(
+    patch: Option<ToolConfigPatchInput>,
+) -> engine::ToolConfigPatch {
+    let Some(patch) = patch else {
+        return engine::ToolConfigPatch::default();
+    };
+    engine::ToolConfigPatch {
+        web_search: patch.web_search.map(optional_patch_from_api),
+        web_fetch: patch.web_fetch.map(optional_patch_from_api),
+        host: patch
+            .host
+            .map(|patch| optional_patch_from_api_map(patch, host_tool_mode_from_api)),
+    }
+}
+
+fn host_tool_mode_from_api(mode: api::HostToolMode) -> engine::HostToolMode {
+    match mode {
+        api::HostToolMode::None => engine::HostToolMode::None,
+        api::HostToolMode::ReadOnly => engine::HostToolMode::ReadOnly,
+        api::HostToolMode::Edit => engine::HostToolMode::Edit,
     }
 }
 

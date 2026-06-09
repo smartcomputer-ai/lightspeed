@@ -9,10 +9,18 @@ use serde_json::json;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+mod support;
+
+use support::{
+    openai_responses_cancel, openai_responses_compact, openai_responses_count_input_tokens,
+    openai_responses_create, openai_responses_delete, openai_responses_list_input_items,
+    openai_responses_retrieve, openai_responses_stream,
+};
+
 fn live_model() -> String {
     env_or_dotenv_var("OPENAI_RESPONSES_MODEL")
         .or_else(|_| env_or_dotenv_var("OPENAI_LIVE_MODEL"))
-        .unwrap_or_else(|_| "gpt-5-mini".to_string())
+        .unwrap_or_else(|_| "gpt-5.5".to_string())
 }
 
 fn live_client() -> Client {
@@ -97,7 +105,9 @@ async fn openai_responses_live_create_text() {
         "Reply with exactly these two words: forge transport",
     );
 
-    let response = client.create(request).await.expect("create response");
+    let response = openai_responses_create(&client, request)
+        .await
+        .expect("create response");
 
     assert_eq!(response.status, 200);
     assert!(!response.parsed.id.is_empty());
@@ -128,7 +138,9 @@ async fn openai_responses_live_create_text() {
 async fn openai_responses_live_stream_text() {
     let client = live_client();
     let request = CreateResponseRequest::text(live_model(), "Reply with exactly: streaming ok");
-    let mut stream = client.stream(request).await.expect("stream response");
+    let mut stream = openai_responses_stream(&client, request)
+        .await
+        .expect("stream response");
 
     let mut saw_delta = false;
     let mut saw_terminal = false;
@@ -152,12 +164,17 @@ async fn openai_responses_live_retrieve_response() {
     let client = live_client();
     let mut request = CreateResponseRequest::text(live_model(), "Reply with exactly: retrieve ok");
     request.store = Some(true);
-    let created = client.create(request).await.expect("create response");
-
-    let retrieved = client
-        .retrieve(&created.parsed.id, RetrieveResponseRequest::default())
+    let created = openai_responses_create(&client, request)
         .await
-        .expect("retrieve response");
+        .expect("create response");
+
+    let retrieved = openai_responses_retrieve(
+        &client,
+        &created.parsed.id,
+        RetrieveResponseRequest::default(),
+    )
+    .await
+    .expect("retrieve response");
 
     assert_eq!(retrieved.status, 200);
     assert_eq!(retrieved.parsed.id, created.parsed.id);
@@ -179,12 +196,17 @@ async fn openai_responses_live_list_input_items() {
     let client = live_client();
     let mut request = CreateResponseRequest::text(live_model(), "Reply with exactly: inputs ok");
     request.store = Some(true);
-    let created = client.create(request).await.expect("create response");
-
-    let items = client
-        .list_input_items(&created.parsed.id, ListInputItemsRequest::default())
+    let created = openai_responses_create(&client, request)
         .await
-        .expect("list input items");
+        .expect("create response");
+
+    let items = openai_responses_list_input_items(
+        &client,
+        &created.parsed.id,
+        ListInputItemsRequest::default(),
+    )
+    .await
+    .expect("list input items");
 
     assert_eq!(items.status, 200);
     assert!(
@@ -214,8 +236,7 @@ async fn openai_responses_live_manual_history_input_items() {
         ..CreateResponseRequest::default()
     };
 
-    let response = client
-        .create(request)
+    let response = openai_responses_create(&client, request)
         .await
         .expect("create response with manual history");
 
@@ -241,8 +262,7 @@ async fn openai_responses_live_previous_response_id_history() {
     );
     first.store = Some(true);
 
-    let created = client
-        .create(first)
+    let created = openai_responses_create(&client, first)
         .await
         .expect("create stored response for continuation");
     assert_eq!(created.status, 200);
@@ -255,8 +275,7 @@ async fn openai_responses_live_previous_response_id_history() {
     );
     follow_up.previous_response_id = Some(created.parsed.id);
 
-    let response = client
-        .create(follow_up)
+    let response = openai_responses_create(&client, follow_up)
         .await
         .expect("create response with previous_response_id");
 
@@ -275,8 +294,7 @@ async fn openai_responses_live_count_input_tokens() {
     let client = live_client();
     let request = CountInputTokensRequest::text(live_model(), "Count these input tokens.");
 
-    let tokens = client
-        .count_input_tokens(request)
+    let tokens = openai_responses_count_input_tokens(&client, request)
         .await
         .expect("count input tokens");
 
@@ -294,10 +312,11 @@ async fn openai_responses_live_delete_response() {
     let client = live_client();
     let mut request = CreateResponseRequest::text(live_model(), "Reply with exactly: delete ok");
     request.store = Some(true);
-    let created = client.create(request).await.expect("create response");
+    let created = openai_responses_create(&client, request)
+        .await
+        .expect("create response");
 
-    let deleted = client
-        .delete(&created.parsed.id)
+    let deleted = openai_responses_delete(&client, &created.parsed.id)
         .await
         .expect("delete response");
 
@@ -317,13 +336,11 @@ async fn openai_responses_live_cancel_background_response() {
     request.store = Some(true);
     request.max_output_tokens = Some(10_000);
     request.extra.insert("background".to_string(), json!(true));
-    let created = client
-        .create(request)
+    let created = openai_responses_create(&client, request)
         .await
         .expect("create background response");
 
-    let cancelled = client
-        .cancel(&created.parsed.id)
+    let cancelled = openai_responses_cancel(&client, &created.parsed.id)
         .await
         .expect("cancel background response");
 
@@ -341,7 +358,9 @@ async fn openai_responses_live_compact_response() {
         "Summarize this short context for future continuation: Forge is rewriting llm-clients as provider-native API wrappers.",
     );
 
-    let compacted = client.compact(request).await.expect("compact response");
+    let compacted = openai_responses_compact(&client, request)
+        .await
+        .expect("compact response");
 
     assert_eq!(compacted.status, 200);
     assert!(!compacted.parsed.id.is_empty());
@@ -389,8 +408,7 @@ async fn openai_responses_live_forced_function_call() {
         name: "get_weather".to_string(),
     });
 
-    let response = client
-        .create(request)
+    let response = openai_responses_create(&client, request)
         .await
         .expect("function call response");
     let calls = response.parsed.function_calls().collect::<Vec<_>>();

@@ -207,9 +207,7 @@ impl GatewayAgentApi {
             .put_mount(record.clone())
             .await
             .map_err(map_vfs_catalog_error)?;
-        let session = self
-            .configure_vfs_host_tools(&session_id, &loaded, candidate_mounts)
-            .await?;
+        let session = self.project_session_by_id(&session_id).await?;
         Ok((record, session))
     }
 
@@ -254,9 +252,7 @@ impl GatewayAgentApi {
             .remove_mount(&session_id, &mount_path)
             .await
             .map_err(map_vfs_catalog_error)?;
-        let session = self
-            .configure_vfs_host_tools(&session_id, &loaded, candidate_mounts)
-            .await?;
+        let session = self.project_session_by_id(&session_id).await?;
         Ok((mount_path.as_str().to_owned(), session))
     }
 
@@ -312,33 +308,25 @@ impl GatewayAgentApi {
             .map_err(map_fs_error)
     }
 
-    pub(super) async fn configure_vfs_host_tools(
+    pub(super) async fn configure_session_toolset(
         &self,
         session_id: &SessionId,
         loaded: &LoadedSession,
-        mounts: Vec<VfsMountRecord>,
     ) -> Result<SessionView, AgentApiError> {
         let session_config = loaded.state.lifecycle.config.as_ref().ok_or_else(|| {
             AgentApiError::invalid_request(format!("session is missing config: {session_id}"))
         })?;
+        let target = ToolTarget::from(&session_config.model);
+        let config = self.session_toolset_config(session_config);
+        let host_tools_enabled = config.host.enabled();
+        let toolset = resolve_toolset(ToolsetEnvironment { target: &target }, &config)
+            .map_err(|error| AgentApiError::internal(format!("build session tools: {error}")))?;
         let blobs: Arc<dyn BlobStore> = self.store.clone();
-        let workspace_store: Arc<dyn VfsWorkspaceStore> = self.store.clone();
-        let fs = MountedVfsFileSystem::new(blobs.clone(), workspace_store, mounts)
-            .map_err(map_fs_error)?;
-        let cwd = mounted_vfs_cwd(fs.mounts())?;
-        let ctx = HostToolContext::new(Arc::new(fs), None, blobs.clone()).with_cwd(cwd);
-        let target = tools::runtime::ToolTarget::from(&session_config.model);
-        let profile = resolve_host_profile(&ctx, &target, HostToolPreset::DirectFs)
-            .map_err(|error| AgentApiError::internal(format!("build vfs host tools: {error}")))?;
-        store_tool_documents(blobs.as_ref(), &profile.documents).await?;
+        store_tool_documents(blobs.as_ref(), &toolset.documents).await?;
 
         let mut registry = loaded.state.tooling.registry.clone();
-        for (tool_name, spec) in profile.registry.tools {
-            registry.tools.insert(tool_name, spec);
-        }
-        for (profile_id, tool_profile) in profile.registry.profiles {
-            registry.profiles.insert(profile_id, tool_profile);
-        }
+        let profile_id = toolset.profile_id.clone();
+        merge_toolset_registry(&mut registry, toolset);
 
         let baseline_failures = self
             .query_status_optional(session_id)
@@ -347,35 +335,51 @@ impl GatewayAgentApi {
             .unwrap_or(0);
         self.submit_core_command(session_id, CoreAgentCommand::SetToolRegistry { registry })
             .await?;
-        self.submit_core_command(
-            session_id,
-            CoreAgentCommand::SetDefaultToolTarget {
-                target: HostToolTargets::local_execution_target(),
-            },
-        )
-        .await?;
+        if host_tools_enabled {
+            self.submit_core_command(
+                session_id,
+                CoreAgentCommand::SetDefaultToolTarget {
+                    target: HostToolTargets::local_execution_target(),
+                },
+            )
+            .await?;
+        } else {
+            self.submit_core_command(
+                session_id,
+                CoreAgentCommand::ClearDefaultToolTarget {
+                    namespace: tools::host::HOST_TARGET_NAMESPACE.to_owned(),
+                },
+            )
+            .await?;
+        }
         self.submit_core_command(
             session_id,
             CoreAgentCommand::SelectToolProfile {
-                profile_id: profile.profile_id.clone(),
+                profile_id: profile_id.clone(),
             },
         )
         .await?;
-        self.wait_for_vfs_tooling(session_id, &profile.profile_id, baseline_failures)
-            .await
+        self.wait_for_session_toolset(
+            session_id,
+            &profile_id,
+            host_tools_enabled,
+            baseline_failures,
+        )
+        .await
     }
 
-    pub(super) async fn wait_for_vfs_tooling(
+    pub(super) async fn wait_for_session_toolset(
         &self,
         session_id: &SessionId,
         profile_id: &engine::ToolProfileId,
+        expect_host_target: bool,
         baseline_failures: usize,
     ) -> Result<SessionView, AgentApiError> {
         let started = Instant::now();
         loop {
             if started.elapsed() > self.operation_timeout {
                 return Err(AgentApiError::internal(format!(
-                    "timed out waiting for vfs host tools to configure: {session_id}"
+                    "timed out waiting for session tools to configure: {session_id}"
                 )));
             }
             if let Some(status) = self.query_status_optional(session_id).await? {
@@ -398,11 +402,38 @@ impl GatewayAgentApi {
                 .routing
                 .default_targets
                 .get(tools::host::HOST_TARGET_NAMESPACE);
-            if selected && target == Some(&HostToolTargets::local_execution_target()) {
+            let target_ready = if expect_host_target {
+                target == Some(&HostToolTargets::local_execution_target())
+            } else {
+                target.is_none()
+            };
+            if selected && target_ready {
                 return self.project_session_by_id(session_id).await;
             }
             tokio::time::sleep(self.poll_interval).await;
         }
+    }
+}
+
+fn merge_toolset_registry(registry: &mut engine::ToolRegistry, toolset: ResolvedToolset) {
+    if let Some(previous) = registry.profiles.remove(&toolset.profile_id) {
+        for tool_name in previous.visible_tools {
+            let still_referenced = registry.profiles.values().any(|profile| {
+                profile
+                    .visible_tools
+                    .iter()
+                    .any(|visible| visible == &tool_name)
+            });
+            if !still_referenced {
+                registry.tools.remove(&tool_name);
+            }
+        }
+    }
+    for (tool_name, spec) in toolset.registry.tools {
+        registry.tools.insert(tool_name, spec);
+    }
+    for (profile_id, tool_profile) in toolset.registry.profiles {
+        registry.profiles.insert(profile_id, tool_profile);
     }
 }
 
@@ -472,17 +503,6 @@ pub(super) fn core_vfs_mount_access(access: ApiVfsMountAccess) -> VfsMountAccess
     }
 }
 
-pub(super) fn mounted_vfs_cwd(mounts: &[VfsMountRecord]) -> Result<FsPath, AgentApiError> {
-    let cwd = if mounts
-        .iter()
-        .any(|mount| mount.mount_path.as_str() == "/workspace")
-    {
-        "/workspace"
-    } else {
-        "/"
-    };
-    FsPath::new(cwd).map_err(|error| AgentApiError::internal(error.to_string()))
-}
 pub(super) async fn store_tool_documents(
     blobs: &dyn BlobStore,
     documents: &[ToolDocument],

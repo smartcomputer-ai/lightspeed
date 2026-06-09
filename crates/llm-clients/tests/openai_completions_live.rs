@@ -6,10 +6,14 @@ use llm_clients::openai::completions::{
 use serde_json::json;
 use std::path::PathBuf;
 
+mod support;
+
+use support::{openai_completions_create, openai_completions_stream};
+
 fn live_model() -> String {
     env_or_dotenv_var("OPENAI_COMPLETIONS_MODEL")
         .or_else(|_| env_or_dotenv_var("OPENAI_LIVE_MODEL"))
-        .unwrap_or_else(|_| "gpt-4o-mini".to_string())
+        .unwrap_or_else(|_| "gpt-5.5".to_string())
 }
 
 fn live_client() -> Client {
@@ -90,7 +94,9 @@ async fn openai_completions_live_create_text() {
         "Reply with exactly these two words: completion transport",
     );
 
-    let response = client.create(request).await.expect("create completion");
+    let response = openai_completions_create(&client, request)
+        .await
+        .expect("create completion");
 
     assert_eq!(response.status, 200);
     assert!(!response.parsed.id.is_empty());
@@ -121,7 +127,9 @@ async fn openai_completions_live_stream_text() {
     let client = live_client();
     let request =
         CreateCompletionRequest::user_text(live_model(), "Reply with exactly: completion stream");
-    let mut stream = client.stream(request).await.expect("stream completion");
+    let mut stream = openai_completions_stream(&client, request)
+        .await
+        .expect("stream completion");
 
     let mut saw_delta = false;
     let mut saw_terminal = false;
@@ -169,8 +177,7 @@ async fn openai_completions_live_forced_function_call() {
         },
     });
 
-    let response = client
-        .create(request)
+    let response = openai_completions_create(&client, request)
         .await
         .expect("function call completion");
     let calls = response.parsed.tool_calls().collect::<Vec<_>>();

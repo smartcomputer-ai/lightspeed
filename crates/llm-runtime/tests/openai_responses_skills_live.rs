@@ -19,10 +19,9 @@ use tools::{
     host::{
         HostToolContext, InlineHostToolRuntime,
         fs::{FsPath, MountedVfsFileSystem},
-        profiles::{HostToolPreset, resolve_host_profile},
         tools::ReadFileResult,
     },
-    runtime::ToolTarget,
+    toolset::{ToolsetConfig, ToolsetEnvironment, resolve_toolset},
 };
 use vfs::{
     CompareAndSetVfsWorkspaceHead, CreateInlineSnapshotRequest, CreateVfsWorkspaceRecord,
@@ -30,12 +29,16 @@ use vfs::{
     VfsPath, VfsWorkspaceId, VfsWorkspaceRecord, VfsWorkspaceStore, create_inline_snapshot,
 };
 
+mod support;
+
+use support::retrying_openai_responses_client;
+
 const LIVE_MARKER: &str = "LIVE-SKILL-MATRIX-7392";
 
 fn live_model() -> String {
     env_or_dotenv_var("OPENAI_RESPONSES_MODEL")
         .or_else(|_| env_or_dotenv_var("OPENAI_LIVE_MODEL"))
-        .unwrap_or_else(|_| "gpt-5-mini".to_string())
+        .unwrap_or_else(|_| "gpt-5.5".to_string())
 }
 
 fn live_client() -> Client {
@@ -295,23 +298,23 @@ async fn openai_responses_live_selects_and_activates_the_matching_skill() {
         model: live_model(),
         options: ModelProviderOptions::None,
     };
-    let profile = resolve_host_profile(
-        &host_ctx,
-        &ToolTarget::from(&model),
-        HostToolPreset::DirectFs,
+    let target = tools::runtime::ToolTarget::from(&model);
+    let toolset = resolve_toolset(
+        ToolsetEnvironment { target: &target },
+        &ToolsetConfig::workspace(),
     )
-    .expect("host profile");
-    store_tool_documents(blobs.as_ref(), &profile.documents).await;
+    .expect("toolset");
+    store_tool_documents(blobs.as_ref(), &toolset.documents).await;
     let tools = Arc::new(InlineHostToolRuntime::new(
         host_ctx,
-        profile.catalog.clone(),
+        toolset.catalog.clone(),
     ));
 
     let llm = Arc::new(LlmRuntime::new(
         LlmAdapterRegistry::new().with_generation_adapter(
             ProviderApiKind::OpenAiResponses,
             Arc::new(OpenAiResponsesLlmAdapter::new(
-                Arc::new(live_client()),
+                retrying_openai_responses_client(live_client()),
                 blobs.clone(),
             )),
         ),
@@ -336,7 +339,7 @@ async fn openai_responses_live_selects_and_activates_the_matching_skill() {
             session_id: session_id.clone(),
             observed_at_ms: 11,
             command: CoreAgentCommand::SetToolRegistry {
-                registry: profile.registry,
+                registry: toolset.registry,
             },
             max_steps: None,
         })
@@ -347,7 +350,7 @@ async fn openai_responses_live_selects_and_activates_the_matching_skill() {
             session_id: session_id.clone(),
             observed_at_ms: 12,
             command: CoreAgentCommand::SelectToolProfile {
-                profile_id: profile.profile_id,
+                profile_id: toolset.profile_id,
             },
             max_steps: None,
         })
@@ -440,7 +443,7 @@ fn session_config(model: ModelSelection) -> SessionConfig {
         model,
         run: run_config(),
         turn: engine::TurnConfig {
-            max_output_tokens: Some(512),
+            max_output_tokens: Some(1024),
             provider_request_defaults: ProviderRequestDefaults::OpenAiResponses(
                 OpenAiResponsesRequestDefaults {
                     store: Some(false),
@@ -449,6 +452,7 @@ fn session_config(model: ModelSelection) -> SessionConfig {
             ),
         },
         context: ContextConfig { compaction: None },
+        tools: Default::default(),
     }
 }
 

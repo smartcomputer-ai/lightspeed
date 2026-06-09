@@ -324,6 +324,8 @@ pub struct SessionConfigInput {
     pub context: Option<ContextConfigInput>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_defaults: Option<RunDefaultsConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools: Option<ToolConfigInput>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -367,6 +369,25 @@ pub struct RunDefaultsConfig {
     pub max_tool_rounds: Option<u32>,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolConfigInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_search: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_fetch: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<HostToolMode>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum HostToolMode {
+    None,
+    ReadOnly,
+    Edit,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionStartResponse {
@@ -394,6 +415,8 @@ pub struct SessionConfigPatchInput {
     pub context: Option<ContextConfigPatchInput>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_defaults: Option<RunDefaultsPatch>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools: Option<ToolConfigPatchInput>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -426,6 +449,17 @@ pub struct RunDefaultsPatch {
     pub max_turns: Option<FieldPatch<u32>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_tool_rounds: Option<FieldPatch<u32>>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolConfigPatchInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_search: Option<FieldPatch<bool>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_fetch: Option<FieldPatch<bool>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<FieldPatch<HostToolMode>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1178,6 +1212,15 @@ pub struct SessionConfigView {
     pub generation: GenerationConfig,
     pub context: ContextConfigInput,
     pub run_defaults: RunDefaultsConfig,
+    pub tools: ToolConfigView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolConfigView {
+    pub web_search: bool,
+    pub web_fetch: bool,
+    pub host: HostToolMode,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

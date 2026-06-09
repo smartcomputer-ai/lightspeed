@@ -6,16 +6,18 @@ edition = "2024"
 [dependencies]
 async-trait = "0.1"
 engine = { path = "../engine" }
+futures-util = "0.3"
 glob = "0.3"
 host-client = { path = "../host-client" }
 host-protocol = { path = "../host-protocol" }
 regex = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "1"
-tokio = { version = "1", features = ["fs", "sync"] }
+tokio = { version = "1", features = ["fs", "net", "sync"] }
 vfs = { path = "../vfs" }
 
 [dev-dependencies]
 tempfile = "3"
-tokio = { version = "1", features = ["fs", "macros", "rt"] }
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt"] }

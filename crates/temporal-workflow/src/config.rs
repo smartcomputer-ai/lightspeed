@@ -1,11 +1,9 @@
-use std::{collections::BTreeMap, time::Duration};
+use std::time::Duration;
 
 use engine::{
-    AnthropicMessagesRequestDefaults, BlobRef, ContextConfig, FunctionToolSpec, ModelSelection,
+    AnthropicMessagesRequestDefaults, ContextConfig, ModelSelection,
     OpenAiCompletionsRequestDefaults, OpenAiResponsesRequestDefaults, ProviderApiKind,
-    ProviderRequestDefaults, RunConfig, SessionConfig, ToolChoice, ToolChoiceMode, ToolKind,
-    ToolName, ToolParallelism, ToolProfile, ToolProfileId, ToolRegistry, ToolSpec,
-    ToolTargetRequirement, TurnConfig,
+    ProviderRequestDefaults, RunConfig, SessionConfig, TurnConfig,
 };
 use temporalio_sdk::ActivityOptions;
 
@@ -14,8 +12,8 @@ pub const DEFAULT_TEMPORAL_TARGET: &str = "http://localhost:7233";
 pub const DEFAULT_TEMPORAL_NAMESPACE: &str = "default";
 pub const DEFAULT_MODEL: &str = "gpt-5.5";
 pub const DEFAULT_CONTINUE_AS_NEW_HISTORY_THRESHOLD: u32 = 10_000;
+pub const DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT: Duration = Duration::from_secs(360);
 
-pub const FAKE_TOOL_PROFILE_ID: &str = "agent_fake_tools";
 pub const FAKE_TOOL_NAME: &str = "agent_echo";
 
 pub fn default_run_config() -> RunConfig {
@@ -38,6 +36,7 @@ pub fn default_session_config(model: ModelSelection) -> SessionConfig {
             provider_request_defaults,
         },
         context: ContextConfig { compaction: None },
+        tools: engine::ToolConfig::default(),
     }
 }
 
@@ -59,44 +58,20 @@ pub fn default_instructions() -> &'static str {
     "You are Forge, a concise personal assistant. Use available tools when useful, then answer plainly."
 }
 
-pub fn fake_tool_input_schema() -> Vec<u8> {
-    br#"{"type":"object","additionalProperties":false,"properties":{"text":{"type":"string"}},"required":["text"]}"#.to_vec()
-}
-
-pub fn fake_tool_registry(input_schema_ref: BlobRef) -> ToolRegistry {
-    let tool_name = ToolName::new(FAKE_TOOL_NAME);
-    let profile_id = ToolProfileId::new(FAKE_TOOL_PROFILE_ID);
-    ToolRegistry {
-        tools: BTreeMap::from([(
-            tool_name.clone(),
-            ToolSpec {
-                name: tool_name.clone(),
-                kind: ToolKind::Function(FunctionToolSpec {
-                    model_name: None,
-                    description_ref: None,
-                    input_schema_ref,
-                    output_schema_ref: None,
-                    strict: Some(true),
-                    provider_options_ref: None,
-                }),
-                parallelism: ToolParallelism::ParallelSafe,
-                target_requirement: ToolTargetRequirement::None,
-            },
-        )]),
-        profiles: BTreeMap::from([(
-            profile_id.clone(),
-            ToolProfile {
-                profile_id,
-                visible_tools: vec![tool_name.clone()],
-                tool_choice: Some(ToolChoice {
-                    mode: ToolChoiceMode::Auto,
-                    disable_parallel_tool_use: Some(true),
-                }),
-            },
-        )]),
-    }
-}
-
 pub fn activity_options() -> ActivityOptions {
-    ActivityOptions::start_to_close_timeout(Duration::from_secs(300))
+    ActivityOptions::start_to_close_timeout(DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use temporalio_sdk::ActivityCloseTimeouts;
+
+    #[test]
+    fn activity_options_use_extended_start_to_close_timeout() {
+        assert_eq!(
+            activity_options().close_timeouts,
+            ActivityCloseTimeouts::StartToClose(DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT)
+        );
+    }
 }

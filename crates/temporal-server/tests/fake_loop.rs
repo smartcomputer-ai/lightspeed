@@ -1,16 +1,19 @@
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use engine::{
     AgentHandle, BlobRef, ContextEntryInput, ContextEntryKind, ContextMessageRole,
-    CoreAdmitCommand, CoreAgentCodec, CoreAgentCommand, ModelProviderOptions, ModelSelection,
-    ProviderApiKind, SessionId, SubmissionId, ToolProfileId,
+    CoreAdmitCommand, CoreAgentCodec, CoreAgentCommand, FunctionToolSpec, ModelProviderOptions,
+    ModelSelection, ProviderApiKind, SessionId, SubmissionId, ToolChoice, ToolChoiceMode, ToolKind,
+    ToolName, ToolParallelism, ToolProfile, ToolProfileId, ToolRegistry, ToolSpec,
+    ToolTargetRequirement,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
 };
 use temporal_server::worker::{
-    FAKE_TOOL_PROFILE_ID, FakeLlm, FakeTools, default_run_config, default_session_config,
-    fake_tool_input_schema, fake_tool_registry,
+    FAKE_TOOL_NAME, FakeLlm, FakeTools, default_run_config, default_session_config,
 };
 use test_support::{DriveCommand, RunnerQuiescence, RunnerStores, SessionRunner};
+
+const FAKE_TOOL_PROFILE_ID: &str = "agent_fake_tools";
 
 fn model() -> ModelSelection {
     ModelSelection {
@@ -110,6 +113,44 @@ async fn fake_llm_tool_loop_completes_a_run() {
     let output_ref = completed.output_ref.as_ref().expect("output ref");
     let output = blobs.read_text(output_ref).await.expect("read output");
     assert!(output.contains("Fake agent completed run"));
+}
+
+fn fake_tool_input_schema() -> Vec<u8> {
+    br#"{"type":"object","additionalProperties":false,"properties":{"text":{"type":"string"}},"required":["text"]}"#.to_vec()
+}
+
+fn fake_tool_registry(input_schema_ref: BlobRef) -> ToolRegistry {
+    let tool_name = ToolName::new(FAKE_TOOL_NAME);
+    let profile_id = ToolProfileId::new(FAKE_TOOL_PROFILE_ID);
+    ToolRegistry {
+        tools: BTreeMap::from([(
+            tool_name.clone(),
+            ToolSpec {
+                name: tool_name.clone(),
+                kind: ToolKind::Function(FunctionToolSpec {
+                    model_name: None,
+                    description_ref: None,
+                    input_schema_ref,
+                    output_schema_ref: None,
+                    strict: Some(true),
+                    provider_options_ref: None,
+                }),
+                parallelism: ToolParallelism::ParallelSafe,
+                target_requirement: ToolTargetRequirement::None,
+            },
+        )]),
+        profiles: BTreeMap::from([(
+            profile_id.clone(),
+            ToolProfile {
+                profile_id,
+                visible_tools: vec![tool_name],
+                tool_choice: Some(ToolChoice {
+                    mode: ToolChoiceMode::Auto,
+                    disable_parallel_tool_use: Some(true),
+                }),
+            },
+        )]),
+    }
 }
 
 #[test]

@@ -343,6 +343,106 @@ fn run_start_config_maps_model_and_generation_overrides() {
     );
 }
 
+#[test]
+fn web_search_defaults_on_for_openai_responses_sessions() {
+    let config = default_session_config(openai_model());
+
+    assert!(effective_web_search_enabled(&config));
+}
+
+#[test]
+fn web_search_can_be_disabled_in_session_tools_config() {
+    let mut config = default_session_config(openai_model());
+    apply_tool_config(
+        &mut config.tools,
+        Some(ToolConfigInput {
+            web_search: Some(false),
+            web_fetch: None,
+            host: None,
+        }),
+    );
+
+    assert!(!effective_web_search_enabled(&config));
+}
+
+#[test]
+fn web_fetch_defaults_on_and_can_be_disabled() {
+    let mut config = default_session_config(openai_model());
+
+    assert!(effective_web_fetch_enabled(&config));
+
+    apply_tool_config(
+        &mut config.tools,
+        Some(ToolConfigInput {
+            web_search: None,
+            web_fetch: Some(false),
+            host: None,
+        }),
+    );
+
+    assert!(!effective_web_fetch_enabled(&config));
+}
+
+#[test]
+fn web_search_rejects_explicit_enable_for_non_openai_responses() {
+    let mut config = default_session_config(ModelSelection {
+        api_kind: ProviderApiKind::AnthropicMessages,
+        provider_id: "anthropic".to_owned(),
+        model: "claude-test".to_owned(),
+        options: ModelProviderOptions::None,
+    });
+    apply_tool_config(
+        &mut config.tools,
+        Some(ToolConfigInput {
+            web_search: Some(true),
+            web_fetch: None,
+            host: None,
+        }),
+    );
+
+    let error = config
+        .validate_provider_compatibility()
+        .expect_err("web search enable should reject Anthropic");
+
+    assert!(matches!(
+        error,
+        engine::DomainError::ProviderCompatibility(_)
+    ));
+}
+
+#[test]
+fn host_tools_default_to_edit_for_sessions() {
+    let config = default_session_config(openai_model());
+
+    assert_eq!(effective_host_tool_mode(&config), HostToolMode::Edit);
+}
+
+#[test]
+fn host_tools_can_be_configured_read_only_or_none() {
+    let mut config = default_session_config(openai_model());
+    apply_tool_config(
+        &mut config.tools,
+        Some(ToolConfigInput {
+            web_search: None,
+            web_fetch: None,
+            host: Some(api::HostToolMode::ReadOnly),
+        }),
+    );
+
+    assert_eq!(effective_host_tool_mode(&config), HostToolMode::ReadOnly);
+
+    apply_tool_config(
+        &mut config.tools,
+        Some(ToolConfigInput {
+            web_search: None,
+            web_fetch: None,
+            host: Some(api::HostToolMode::None),
+        }),
+    );
+
+    assert_eq!(effective_host_tool_mode(&config), HostToolMode::None);
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn run_input_from_api_preserves_single_text_ref() {
     let store = engine::storage::InMemoryBlobStore::new();

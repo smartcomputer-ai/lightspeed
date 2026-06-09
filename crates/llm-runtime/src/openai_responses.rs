@@ -5,7 +5,8 @@ use engine::{
     BlobRef, ContextCompactionRequest, ContextCompactionRequestKind, ContextCompactionResult,
     ContextCompactionStatus, ContextEntry, ContextEntryInput, ContextEntryKind, ContextMessageRole,
     LlmFinish, LlmGenerationFacts, LlmGenerationRequest, LlmGenerationResult, LlmGenerationStatus,
-    LlmRequestKind, LlmUsage, OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, ObservedToolCall,
+    LlmRequestKind, LlmUsage, OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND,
+    OPENAI_RESPONSES_WEB_SEARCH_CALL_PROVIDER_KIND, ObservedToolCall,
     OpenAiResponsesCompactionRequest, OpenAiResponsesRequest, OpenAiResponsesToolChoice,
     ProviderApiKind, ProviderNativeToolExecution, SkillId, TokenEstimate, TokenEstimateQuality,
     ToolCallId, ToolKind, ToolName, ToolSpec, storage::BlobStore,
@@ -500,6 +501,9 @@ pub async fn result_from_response(
             "compaction" | "compaction_summary" | "context_compaction" => {
                 context_entries.push(compaction_context_entry(blobs, item, raw_item).await?);
             }
+            "web_search_call" => {
+                context_entries.push(web_search_call_context_entry(blobs, item, raw_item).await?);
+            }
             _ => {}
         }
     }
@@ -753,6 +757,23 @@ async fn compaction_context_entry(
     })
 }
 
+async fn web_search_call_context_entry(
+    blobs: &dyn BlobStore,
+    item: &oai::ResponseOutputItem,
+    raw_item: Value,
+) -> LlmAdapterResult<ContextEntryInput> {
+    let content_ref = put_json(blobs, &raw_item).await?;
+    Ok(ContextEntryInput {
+        kind: ContextEntryKind::ProviderOpaque,
+        content_ref,
+        media_type: Some(MEDIA_TYPE_JSON.to_string()),
+        preview: Some("OpenAI Responses web search call".to_string()),
+        provider_kind: Some(OPENAI_RESPONSES_WEB_SEARCH_CALL_PROVIDER_KIND.to_string()),
+        provider_item_id: item.id.clone(),
+        token_estimate: None,
+    })
+}
+
 fn generation_status(status: Option<oai::ResponseStatus>) -> LlmGenerationStatus {
     match status {
         Some(oai::ResponseStatus::Failed) => LlmGenerationStatus::Failed,
@@ -811,6 +832,10 @@ mod tests {
     use serde_json::json;
     use tools::skills::{
         SKILL_CATALOG_SCHEMA_VERSION, SkillDependencies, SkillScope, SkillSource, SkillTrustLevel,
+    };
+    use tools::web::search::{
+        OpenAiResponsesWebSearchConfig, WebSearchContextSize, WebSearchMode,
+        openai_responses_web_search_tool_bundle,
     };
 
     use super::*;
@@ -1012,6 +1037,74 @@ mod tests {
                 "context_management": { "strategy": "none" },
                 "max_tool_calls": 4
             })
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn materialize_create_request_passes_provider_native_web_search_tool() {
+        let blobs = InMemoryBlobStore::new();
+        let bundle = openai_responses_web_search_tool_bundle(&OpenAiResponsesWebSearchConfig {
+            mode: WebSearchMode::Cached,
+            search_context_size: Some(WebSearchContextSize::Low),
+            allowed_domains: vec!["docs.rs".to_string()],
+            blocked_domains: Vec::new(),
+            user_location: None,
+            include_sources: true,
+        })
+        .expect("web search bundle")
+        .expect("enabled web search");
+        for document in &bundle.documents {
+            let stored_ref = crate::blob_io::put_bytes(&blobs, document.blob_bytes())
+                .await
+                .expect("store native tool");
+            assert_eq!(stored_ref, document.blob_ref);
+        }
+        let request = OpenAiResponsesRequest {
+            input_context: ContextSnapshot {
+                api_kind: ProviderApiKind::OpenAiResponses,
+                context_revision: 0,
+                entries: Vec::new(),
+                token_estimate: None,
+            },
+            previous_response_id: None,
+            tools: vec![bundle.spec],
+            tool_choice: Some(OpenAiResponsesToolChoice::Auto),
+            reasoning: None,
+            text: None,
+            include: vec![engine::OPENAI_RESPONSES_WEB_SEARCH_SOURCES_INCLUDE.to_string()],
+            max_output_tokens: Some(1024),
+            max_tool_calls: None,
+            temperature: None,
+            top_p: None,
+            metadata: BTreeMap::new(),
+            parallel_tool_calls: None,
+            store: Some(false),
+            stream: None,
+            truncation: None,
+            context_management: None,
+            extra: BTreeMap::new(),
+        };
+
+        let materialized = materialize_create_request(&blobs, &request, "gpt-5.1")
+            .await
+            .expect("materialize");
+        let value = serde_json::to_value(materialized).expect("json");
+
+        assert_eq!(
+            value["tools"],
+            json!([{
+                "type": "web_search",
+                "external_web_access": false,
+                "search_context_size": "low",
+                "filters": {
+                    "allowed_domains": ["docs.rs"]
+                }
+            }])
+        );
+        assert_eq!(value["tool_choice"], json!("auto"));
+        assert_eq!(
+            value["include"],
+            json!([engine::OPENAI_RESPONSES_WEB_SEARCH_SOURCES_INCLUDE])
         );
     }
 
@@ -1623,6 +1716,87 @@ mod tests {
             Some(OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND)
         );
         assert_eq!(entry.provider_item_id.as_deref(), Some("cmp_1"));
+        let retained: Value = read_json(&blobs, &entry.content_ref)
+            .await
+            .expect("raw item");
+        assert_eq!(retained, raw_item);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn result_captures_web_search_call_as_provider_opaque_context() {
+        let blobs = InMemoryBlobStore::new();
+        let raw_item = json!({
+            "id": "ws_1",
+            "type": "web_search_call",
+            "status": "completed",
+            "action": {
+                "type": "search",
+                "query": "Forge P66 web search",
+                "sources": [{
+                    "url": "https://example.com/source",
+                    "title": "Example"
+                }]
+            }
+        });
+        let raw_json = json!({
+            "id": "resp_1",
+            "status": "completed",
+            "output": [raw_item.clone()]
+        });
+        let response = ApiResponse {
+            parsed: serde_json::from_value(raw_json.clone()).expect("response"),
+            raw_json,
+            status: 200,
+            headers: HeaderSnapshot::default(),
+        };
+        let request = LlmGenerationRequest {
+            session_id: SessionId::new("session-a"),
+            run_id: RunId::new(1),
+            turn_id: TurnId::new(1),
+            request: LlmRequest {
+                model: model(),
+                request_fingerprint: "sha256:test".to_string(),
+                kind: LlmRequestKind::OpenAiResponses(OpenAiResponsesRequest {
+                    input_context: ContextSnapshot {
+                        api_kind: ProviderApiKind::OpenAiResponses,
+                        context_revision: 0,
+                        entries: Vec::new(),
+                        token_estimate: None,
+                    },
+                    previous_response_id: None,
+                    tools: Vec::new(),
+                    tool_choice: None,
+                    reasoning: None,
+                    text: None,
+                    include: Vec::new(),
+                    max_output_tokens: None,
+                    max_tool_calls: None,
+                    temperature: None,
+                    top_p: None,
+                    metadata: BTreeMap::new(),
+                    parallel_tool_calls: None,
+                    store: None,
+                    stream: None,
+                    truncation: None,
+                    context_management: None,
+                    extra: BTreeMap::new(),
+                }),
+            },
+        };
+
+        let result = result_from_response(&blobs, &request, &response)
+            .await
+            .expect("result");
+
+        assert_eq!(result.context_entries.len(), 1);
+        let entry = &result.context_entries[0];
+        assert!(matches!(entry.kind, ContextEntryKind::ProviderOpaque));
+        assert_eq!(entry.media_type.as_deref(), Some(MEDIA_TYPE_JSON));
+        assert_eq!(
+            entry.provider_kind.as_deref(),
+            Some(OPENAI_RESPONSES_WEB_SEARCH_CALL_PROVIDER_KIND)
+        );
+        assert_eq!(entry.provider_item_id.as_deref(), Some("ws_1"));
         let retained: Value = read_json(&blobs, &entry.content_ref)
             .await
             .expect("raw item");

@@ -577,6 +577,7 @@ mod tests {
                 provider_request_defaults: ProviderRequestDefaults::None,
             },
             context: ContextConfig { compaction: None },
+            tools: Default::default(),
         }
     }
 
