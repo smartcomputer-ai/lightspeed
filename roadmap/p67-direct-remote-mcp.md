@@ -1,7 +1,12 @@
 # P67: Direct Remote MCP
 
 **Status**
-- Proposed.
+- Proposed; core foundation partially implemented on 2026-06-09.
+- Implemented foundation: `RemoteMcpToolSpec`, `RemoteMcpApprovalPolicy`,
+  `SecretRef`, `ToolKind::RemoteMcp`, engine validation, provider compatibility
+  checks, request fingerprint participation, and client-effect exclusion.
+- Provider MCP request lowering, runtime auth injection, redacted provider
+  request persistence, and provider MCP output recording remain pending.
 - Direct provider-hosted MCP only: the model provider connects to public remote
   MCP servers during the model call.
 - No Forge MCP bridge, no local/on-prem tunnel support, no Forge-hosted MCP
@@ -59,9 +64,10 @@ pub enum ToolKind {
 client." Forge owns configuration and audit state. The model provider owns
 discovery and execution for direct MCP calls.
 
-P68 owns the universe-scoped registry, OAuth grants, and encrypted credential
-store. P67 consumes the sanitized `RemoteMcpToolSpec` snapshots and runtime
-auth handles produced by that control plane.
+P68 owns the universe-scoped MCP registry and session linking. P69 owns
+encrypted secrets, OAuth grants, and runtime token brokering. P67 consumes the
+sanitized `RemoteMcpToolSpec` snapshots from P68 and runtime auth handles from
+P69.
 
 ## Non-Goals
 
@@ -91,14 +97,12 @@ pub struct RemoteMcpToolSpec {
     pub approval: RemoteMcpApprovalPolicy,
     pub defer_loading: Option<bool>,
     pub auth_ref: Option<SecretRef>,
-    pub provider_options_ref: Option<BlobRef>,
 }
 
 pub enum RemoteMcpApprovalPolicy {
     ProviderDefault,
     Always,
     Never,
-    Raw(BlobRef),
 }
 
 pub struct SecretRef {
@@ -114,8 +118,6 @@ Names may be adjusted during implementation, but the important split is:
 - `auth_ref` is only a pointer to a runtime secret.
 - actual secret values are resolved only by `llm-runtime` immediately before
   sending the provider request.
-- `provider_options_ref` is for provider-specific non-secret fields that Forge
-  does not understand yet.
 
 `RemoteMcp` specs live in the existing tool registry and are selected by the
 existing tool profile mechanism:
@@ -123,10 +125,10 @@ existing tool profile mechanism:
 ```text
 ToolRegistry
   tools:
-    mcp.echo -> ToolKind::RemoteMcp(...)
+    mcp_echo -> ToolKind::RemoteMcp(...)
     read_file -> ToolKind::Function(...)
   profiles:
-    default.visible_tools = ["mcp.echo", "read_file"]
+    default.visible_tools = ["mcp_echo", "read_file"]
 ```
 
 The registry should validate:
@@ -235,20 +237,6 @@ for example:
 Anthropic MCP may require a provider beta header. That belongs in provider
 client/runtime configuration, not in `engine`.
 
-### Provider Options
-
-Provider-specific MCP options that are stable and non-secret can be merged from
-`provider_options_ref`. The merge should reject attempts to override:
-
-- `type`;
-- `server_label` / `name`;
-- `server_url` / `url`;
-- `authorization` / `authorization_token`;
-- other fields owned by Forge's typed spec.
-
-This keeps raw provider escape hatches from bypassing validation or leaking
-secrets.
-
 ## Secret Injection And Redaction
 
 Introduce an `llm-runtime` secret resolver, not an engine dependency:
@@ -333,7 +321,7 @@ Candidate public config:
   "tools": {
     "remoteMcp": [
       {
-        "id": "mcp.echo",
+        "id": "mcp_echo",
         "serverLabel": "echo",
         "serverUrl": "https://echo.example.com/mcp",
         "description": "Echo test tools",
@@ -352,8 +340,8 @@ Candidate public config:
 
 The gateway/toolset layer should translate this into:
 
-- `ToolRegistry.tools["mcp.echo"] = ToolKind::RemoteMcp(...)`;
-- selected `ToolProfile.visible_tools` entry `mcp.echo`;
+- `ToolRegistry.tools["mcp_echo"] = ToolKind::RemoteMcp(...)`;
+- selected `ToolProfile.visible_tools` entry `mcp_echo`;
 - optional provider request default patches only when a provider requires them.
 
 Do not expose provider-generated `mcp_list_tools` as the configured tool list.
@@ -390,9 +378,9 @@ crates/llm-runtime/src/secrets.rs
   SecretResolver trait and no-op/env-backed first implementation
 ```
 
-Do not add a production MCP transport/client crate in P67. That belongs to P68
-for auth/preflight needs or to a later Forge-hosted bridge milestone for actual
-Forge-executed MCP calls.
+Do not add a production MCP transport/client crate in P67. Non-secret MCP
+metadata/preflight checks belong outside engine in P68; OAuth/token work belongs
+to P69; actual Forge-executed MCP calls belong to a later bridge milestone.
 
 ## G1: OpenAI Responses Direct Remote MCP
 
