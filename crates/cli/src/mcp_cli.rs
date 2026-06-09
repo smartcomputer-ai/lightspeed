@@ -66,7 +66,7 @@ struct McpServerAddArgs {
     #[arg(long = "allowed-tool")]
     allowed_tools: Vec<String>,
     /// Default remote MCP approval behavior.
-    #[arg(long, default_value_t = RemoteMcpApprovalArg::ProviderDefault)]
+    #[arg(long, default_value_t = RemoteMcpApprovalArg::Never)]
     approval: RemoteMcpApprovalArg,
     /// Enable provider-side deferred MCP tool loading by default.
     #[arg(long = "defer-loading", conflicts_with = "no_defer_loading")]

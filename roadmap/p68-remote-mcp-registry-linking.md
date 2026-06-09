@@ -21,6 +21,8 @@
   profile selection has been removed.
 - Implemented in P67: OpenAI Responses provider request lowering for no-auth
   remote MCP servers and provider-opaque recording of OpenAI MCP output items.
+- Implemented: MCP server create defaults `approvalDefault` to `never` so
+  no-auth/public OpenAI MCP links work without provider approval continuation.
 - Still pending: Anthropic provider lowering and P69-backed auth grant
   validation/token brokering.
 

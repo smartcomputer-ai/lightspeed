@@ -1402,9 +1402,9 @@ pub enum RemoteMcpTransport {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum RemoteMcpApprovalPolicy {
-    #[default]
     ProviderDefault,
     Always,
+    #[default]
     Never,
 }
 
@@ -2618,6 +2618,18 @@ mod tests {
             response.result.expect("result")["result"]["server"]["serverId"],
             json!("echo")
         );
+    }
+
+    #[test]
+    fn mcp_server_create_params_default_approval_is_never() {
+        let params: McpServerCreateParams = serde_json::from_value(json!({
+            "serverId": "echo",
+            "serverUrl": "https://echo.example.com/mcp",
+            "defaultServerLabel": "echo"
+        }))
+        .expect("params");
+
+        assert_eq!(params.approval_default, RemoteMcpApprovalPolicy::Never);
     }
 
     #[tokio::test(flavor = "current_thread")]
