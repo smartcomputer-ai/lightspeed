@@ -4,6 +4,7 @@ mod api_config;
 mod blobs;
 mod errors;
 mod input;
+mod mcp_api;
 mod parse;
 mod prompts;
 mod skills;
@@ -15,6 +16,11 @@ use api_config::*;
 use blobs::{get_blob, has_blobs, put_blob, put_blobs};
 use errors::*;
 use input::run_input_from_api;
+use mcp_api::{
+    apply_session_mcp_link, create_mcp_server_record, linked_session_mcp, map_mcp_registry_error,
+    mcp_server_view, parse_mcp_server_id, parse_mcp_tool_name, remove_session_mcp_link,
+    session_mcp_link_from_record,
+};
 use parse::*;
 use skills::{
     active_skill_catalog_ref, active_skill_ids, active_skill_ids_after_remove,
@@ -22,7 +28,7 @@ use skills::{
 };
 #[cfg(test)]
 use skills::{read_skill_doc_for_activation_from_vfs, skill_active_response, skill_list_response};
-use vfs_api::{commit_vfs_snapshot, read_vfs_snapshot, vfs_workspace_view};
+use vfs_api::{commit_vfs_snapshot, now_ms, read_vfs_snapshot, vfs_workspace_view};
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -37,11 +43,15 @@ use api::{
     BlobPutManyResponse, BlobPutParams, BlobPutResponse, ClientCapabilities, CompactionPolicyInput,
     ContextCompactParams, ContextCompactResponse, ContextConfigInput as ApiContextConfigInput,
     ContextConfigPatchInput, FieldPatch, GenerationConfig, GenerationConfigPatch, InitializeParams,
-    InitializeResponse, InputItem, ModelConfig, PromptInstructionView, PromptsActiveParams,
-    PromptsActiveResponse, ReasoningEffort, RunCancelParams, RunCancelResponse, RunDefaultsConfig,
-    RunDefaultsPatch, RunLimitsConfig, RunStartConfig, RunStartParams, RunStartResponse, RunView,
-    ServerCapabilities, ServerInfo, SessionCloseParams, SessionCloseResponse, SessionConfigInput,
-    SessionConfigPatchInput, SessionEventsReadParams, SessionEventsReadResponse, SessionReadParams,
+    InitializeResponse, InputItem, McpServerCreateParams, McpServerCreateResponse,
+    McpServerDeleteParams, McpServerDeleteResponse, McpServerListParams, McpServerListResponse,
+    McpServerReadParams, McpServerReadResponse, ModelConfig, PromptInstructionView,
+    PromptsActiveParams, PromptsActiveResponse, ReasoningEffort, RunCancelParams,
+    RunCancelResponse, RunDefaultsConfig, RunDefaultsPatch, RunLimitsConfig, RunStartConfig,
+    RunStartParams, RunStartResponse, RunView, ServerCapabilities, ServerInfo, SessionCloseParams,
+    SessionCloseResponse, SessionConfigInput, SessionConfigPatchInput, SessionEventsReadParams,
+    SessionEventsReadResponse, SessionMcpLinkParams, SessionMcpLinkResponse, SessionMcpListParams,
+    SessionMcpListResponse, SessionMcpUnlinkParams, SessionMcpUnlinkResponse, SessionReadParams,
     SessionReadResponse, SessionStartParams, SessionStartResponse, SessionUpdateParams,
     SessionUpdateResponse, SessionView, SkillActivateParams, SkillActivateResponse,
     SkillActivationScope as ApiSkillActivationScope,
@@ -71,9 +81,10 @@ use engine::{
     OptionalConfigPatch, ProviderApiKind, ProviderRequestDefaults, RunConfig, RunConfigPatch,
     RunId, RunStatus, SKILL_ACTIVATION_PROVIDER_KIND_RUN, SKILL_ACTIVATION_PROVIDER_KIND_SESSION,
     SKILL_CATALOG_CONTEXT_KEY, SessionConfig, SessionConfigPatch, SessionId, SkillId, SubmissionId,
-    TurnConfigPatch, skill_activation_context_key,
+    ToolName, ToolProfileId, TurnConfigPatch, skill_activation_context_key,
     storage::{BlobStore, BlobStoreError, ReadSessionEvents, SessionStore},
 };
+use mcp_registry::McpRegistryStore;
 use store_pg::PgStore;
 use temporalio_client::{
     Client, WorkflowHandle, WorkflowQueryOptions, WorkflowSignalOptions, WorkflowStartOptions,
@@ -1044,6 +1055,179 @@ impl AgentApiService for GatewayAgentApi {
             .ok_or_else(|| AgentApiError::not_found(format!("session not found: {session_id}")))?;
         Ok(AgentApiOutcome::new(VfsMountListResponse {
             mounts: self.project_vfs_mounts(&session_id).await?,
+        }))
+    }
+
+    async fn create_mcp_server(
+        &self,
+        params: McpServerCreateParams,
+    ) -> Result<AgentApiOutcome<McpServerCreateResponse>, AgentApiError> {
+        let record = create_mcp_server_record(params, now_ms()?)?;
+        let server = self
+            .store
+            .create_server(record)
+            .await
+            .map_err(map_mcp_registry_error)?;
+        Ok(AgentApiOutcome::new(McpServerCreateResponse {
+            server: mcp_server_view(server),
+        }))
+    }
+
+    async fn list_mcp_servers(
+        &self,
+        params: McpServerListParams,
+    ) -> Result<AgentApiOutcome<McpServerListResponse>, AgentApiError> {
+        let servers = self
+            .store
+            .list_servers(mcp_registry::ListMcpServers {
+                status: params.status.map(mcp_api::registry_status_for_filter),
+            })
+            .await
+            .map_err(map_mcp_registry_error)?
+            .into_iter()
+            .map(mcp_server_view)
+            .collect();
+        Ok(AgentApiOutcome::new(McpServerListResponse { servers }))
+    }
+
+    async fn read_mcp_server(
+        &self,
+        params: McpServerReadParams,
+    ) -> Result<AgentApiOutcome<McpServerReadResponse>, AgentApiError> {
+        let server_id = parse_mcp_server_id(params.server_id)?;
+        let server = self
+            .store
+            .read_server(&server_id)
+            .await
+            .map_err(map_mcp_registry_error)?;
+        Ok(AgentApiOutcome::new(McpServerReadResponse {
+            server: mcp_server_view(server),
+        }))
+    }
+
+    async fn delete_mcp_server(
+        &self,
+        params: McpServerDeleteParams,
+    ) -> Result<AgentApiOutcome<McpServerDeleteResponse>, AgentApiError> {
+        let server_id = parse_mcp_server_id(params.server_id)?;
+        let server = self
+            .store
+            .delete_server(&server_id)
+            .await
+            .map_err(map_mcp_registry_error)?;
+        Ok(AgentApiOutcome::new(McpServerDeleteResponse {
+            server: mcp_server_view(server),
+        }))
+    }
+
+    async fn link_session_mcp(
+        &self,
+        params: SessionMcpLinkParams,
+    ) -> Result<AgentApiOutcome<SessionMcpLinkResponse>, AgentApiError> {
+        let session_id = SessionId::try_new(params.session_id.clone()).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let server_id = parse_mcp_server_id(params.server_id.clone())?;
+        let server = self
+            .store
+            .read_server(&server_id)
+            .await
+            .map_err(map_mcp_registry_error)?;
+        let loaded = self.load_session_state(&session_id).await?;
+        self.require_open_idle_session(&session_id, &loaded, "MCP link")?;
+
+        let draft = session_mcp_link_from_record(params, &server)?;
+        let link_tool_name = draft.tool_name.clone();
+        let mut registry = loaded.state.tooling.registry.clone();
+        let profile_id = apply_session_mcp_link(
+            &mut registry,
+            loaded.state.tooling.selected_profile_id.as_ref(),
+            draft,
+        )?;
+        let expected_tool_ids = mcp_api::linked_session_mcp_tool_ids(&registry);
+        let baseline_failures = self
+            .query_status_optional(&session_id)
+            .await?
+            .map(|status| status.admission_failures.len())
+            .unwrap_or(0);
+        self.submit_core_command(&session_id, CoreAgentCommand::SetToolRegistry { registry })
+            .await?;
+        self.submit_core_command(
+            &session_id,
+            CoreAgentCommand::SelectToolProfile {
+                profile_id: profile_id.clone(),
+            },
+        )
+        .await?;
+        let (session, links) = self
+            .wait_for_session_mcp_links(
+                &session_id,
+                expected_tool_ids,
+                Some(profile_id),
+                baseline_failures,
+            )
+            .await?;
+        let link = links
+            .iter()
+            .find(|link| link.tool_id == link_tool_name.as_str())
+            .cloned()
+            .ok_or_else(|| {
+                AgentApiError::internal(format!("linked MCP tool not visible: {link_tool_name}"))
+            })?;
+        Ok(AgentApiOutcome::new(SessionMcpLinkResponse {
+            link,
+            links,
+            session,
+        }))
+    }
+
+    async fn unlink_session_mcp(
+        &self,
+        params: SessionMcpUnlinkParams,
+    ) -> Result<AgentApiOutcome<SessionMcpUnlinkResponse>, AgentApiError> {
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let tool_name = parse_mcp_tool_name(params.tool_id)?;
+        let loaded = self.load_session_state(&session_id).await?;
+        self.require_open_idle_session(&session_id, &loaded, "MCP unlink")?;
+
+        let mut registry = loaded.state.tooling.registry.clone();
+        remove_session_mcp_link(&mut registry, &tool_name)?;
+        let expected_tool_ids = mcp_api::linked_session_mcp_tool_ids(&registry);
+        let profile_id = loaded.state.tooling.selected_profile_id.clone();
+        let baseline_failures = self
+            .query_status_optional(&session_id)
+            .await?
+            .map(|status| status.admission_failures.len())
+            .unwrap_or(0);
+        self.submit_core_command(&session_id, CoreAgentCommand::SetToolRegistry { registry })
+            .await?;
+        let (session, links) = self
+            .wait_for_session_mcp_links(
+                &session_id,
+                expected_tool_ids,
+                profile_id,
+                baseline_failures,
+            )
+            .await?;
+        Ok(AgentApiOutcome::new(SessionMcpUnlinkResponse {
+            tool_id: tool_name.as_str().to_owned(),
+            links,
+            session,
+        }))
+    }
+
+    async fn list_session_mcp(
+        &self,
+        params: SessionMcpListParams,
+    ) -> Result<AgentApiOutcome<SessionMcpListResponse>, AgentApiError> {
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let loaded = self.load_session_state(&session_id).await?;
+        Ok(AgentApiOutcome::new(SessionMcpListResponse {
+            links: linked_session_mcp(&loaded.state.tooling.registry),
         }))
     }
 }

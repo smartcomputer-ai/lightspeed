@@ -14,8 +14,11 @@
   DTOs, validation, store trait, and in-memory test adapter.
 - First cut implemented: `store-pg` owns the universe-scoped `mcp_servers`
   table, migration wiring, and `PgStore` implementation of the registry trait.
-- Still pending: API/CLI registry methods, session link materialization, and
-  P67 provider request lowering for no-auth remote MCP servers.
+- Implemented: API/gateway/CLI registry create/list/read/delete.
+- Implemented: session MCP link/list/unlink materializes catalog snapshots into
+  `ToolKind::RemoteMcp` entries in the selected engine tool profile.
+- Still pending: P67 provider request lowering for no-auth remote MCP servers
+  and P69-backed auth grant validation.
 
 ## Goal
 

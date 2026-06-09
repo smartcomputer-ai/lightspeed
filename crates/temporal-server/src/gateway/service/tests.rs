@@ -142,6 +142,113 @@ fn active_skill_ids_after_remove_drops_selected_skill() {
 }
 
 #[test]
+fn mcp_link_materializes_remote_tool_in_selected_profile() {
+    let profile_id = ToolProfileId::new(tools::toolset::DEFAULT_TOOLSET_PROFILE_ID);
+    let tool_name = ToolName::new("mcp_crm");
+    let mut registry = engine::ToolRegistry {
+        profiles: BTreeMap::from([(
+            profile_id.clone(),
+            engine::ToolProfile {
+                profile_id: profile_id.clone(),
+                visible_tools: Vec::new(),
+                tool_choice: None,
+            },
+        )]),
+        ..engine::ToolRegistry::default()
+    };
+    let record = test_mcp_server_record("crm", mcp_registry::McpServerStatus::Active);
+    let draft = session_mcp_link_from_record(
+        api::SessionMcpLinkParams {
+            session_id: "session_1".to_owned(),
+            server_id: "crm".to_owned(),
+            tool_id: Some(tool_name.as_str().to_owned()),
+            server_label: None,
+            allowed_tools: Some(vec!["lookup_customer".to_owned()]),
+            approval: Some(api::RemoteMcpApprovalPolicy::Never),
+            defer_loading: Some(true),
+            auth_grant_id: None,
+        },
+        &record,
+    )
+    .expect("materialize MCP link draft");
+
+    let selected_profile =
+        apply_session_mcp_link(&mut registry, Some(&profile_id), draft).expect("apply MCP link");
+
+    assert_eq!(selected_profile, profile_id);
+    let tool = registry.tools.get(&tool_name).expect("MCP tool");
+    let engine::ToolKind::RemoteMcp(spec) = &tool.kind else {
+        panic!("expected remote MCP tool");
+    };
+    assert_eq!(spec.server_label, "crm");
+    assert_eq!(spec.allowed_tools, Some(vec!["lookup_customer".to_owned()]));
+    assert_eq!(spec.approval, engine::RemoteMcpApprovalPolicy::Never);
+    assert_eq!(
+        registry.profiles[&profile_id].visible_tools,
+        vec![tool_name.clone()]
+    );
+    assert_eq!(linked_session_mcp(&registry)[0].tool_id, tool_name.as_str());
+}
+
+#[test]
+fn toolset_merge_preserves_visible_remote_mcp_links() {
+    let profile_id = ToolProfileId::new(tools::toolset::DEFAULT_TOOLSET_PROFILE_ID);
+    let remote_tool_name = ToolName::new("mcp_crm");
+    let old_tool_name = ToolName::new("old_tool");
+    let new_tool_name = ToolName::new("new_tool");
+    let mut registry = engine::ToolRegistry {
+        tools: BTreeMap::from([
+            (
+                remote_tool_name.clone(),
+                test_remote_mcp_tool(remote_tool_name.clone()),
+            ),
+            (
+                old_tool_name.clone(),
+                test_function_tool(old_tool_name.clone()),
+            ),
+        ]),
+        profiles: BTreeMap::from([(
+            profile_id.clone(),
+            engine::ToolProfile {
+                profile_id: profile_id.clone(),
+                visible_tools: vec![old_tool_name.clone(), remote_tool_name.clone()],
+                tool_choice: None,
+            },
+        )]),
+    };
+    let toolset = ResolvedToolset {
+        profile_id: profile_id.clone(),
+        registry: engine::ToolRegistry {
+            tools: BTreeMap::from([(
+                new_tool_name.clone(),
+                test_function_tool(new_tool_name.clone()),
+            )]),
+            profiles: BTreeMap::from([(
+                profile_id.clone(),
+                engine::ToolProfile {
+                    profile_id: profile_id.clone(),
+                    visible_tools: vec![new_tool_name.clone()],
+                    tool_choice: None,
+                },
+            )]),
+        },
+        documents: Vec::new(),
+        catalog: tools::runtime::ToolCatalog::new(),
+        provider_request_defaults_patch: tools::toolset::ProviderRequestDefaultsPatch::default(),
+    };
+
+    super::vfs_api::merge_toolset_registry(&mut registry, toolset);
+
+    assert!(registry.tools.contains_key(&remote_tool_name));
+    assert!(!registry.tools.contains_key(&old_tool_name));
+    assert!(registry.tools.contains_key(&new_tool_name));
+    assert_eq!(
+        registry.profiles[&profile_id].visible_tools,
+        vec![new_tool_name, remote_tool_name]
+    );
+}
+
+#[test]
 fn prompt_report_ref_reads_prompt_provider_metadata() {
     let prompt_ref = BlobRef::from_bytes(b"prompt");
     let report_ref = BlobRef::from_bytes(b"prompt-report");
@@ -696,6 +803,60 @@ fn direct_activation(
         provider_kind: input.provider_kind,
         provider_item_id: input.provider_item_id,
         token_estimate: input.token_estimate,
+    }
+}
+
+fn test_mcp_server_record(
+    server_id: &str,
+    status: mcp_registry::McpServerStatus,
+) -> mcp_registry::McpServerRecord {
+    mcp_registry::CreateMcpServerRecord {
+        server_id: mcp_registry::McpServerId::new(server_id),
+        display_name: Some(format!("{server_id} MCP")),
+        server_url: format!("https://{server_id}.example.com/mcp"),
+        transport: mcp_registry::RemoteMcpTransport::Auto,
+        default_server_label: server_id.to_owned(),
+        description: None,
+        allowed_tools: None,
+        approval_default: mcp_registry::McpApprovalPolicy::ProviderDefault,
+        defer_loading_default: None,
+        auth_policy: mcp_registry::McpServerAuthPolicy::None,
+        status,
+        created_at_ms: 1,
+    }
+    .into_record()
+}
+
+fn test_remote_mcp_tool(tool_name: ToolName) -> engine::ToolSpec {
+    engine::ToolSpec {
+        name: tool_name,
+        kind: engine::ToolKind::RemoteMcp(engine::RemoteMcpToolSpec {
+            server_label: "crm".to_owned(),
+            server_url: "https://crm.example.com/mcp".to_owned(),
+            description_ref: None,
+            allowed_tools: None,
+            approval: engine::RemoteMcpApprovalPolicy::ProviderDefault,
+            defer_loading: None,
+            auth_ref: None,
+        }),
+        parallelism: engine::ToolParallelism::ParallelSafe,
+        target_requirement: engine::ToolTargetRequirement::None,
+    }
+}
+
+fn test_function_tool(tool_name: ToolName) -> engine::ToolSpec {
+    engine::ToolSpec {
+        name: tool_name,
+        kind: engine::ToolKind::Function(engine::FunctionToolSpec {
+            model_name: None,
+            description_ref: None,
+            input_schema_ref: BlobRef::from_bytes(b"schema"),
+            output_schema_ref: None,
+            strict: Some(true),
+            provider_options_ref: None,
+        }),
+        parallelism: engine::ToolParallelism::Exclusive,
+        target_requirement: engine::ToolTargetRequirement::None,
     }
 }
 

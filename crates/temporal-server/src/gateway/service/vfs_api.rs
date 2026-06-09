@@ -415,9 +415,33 @@ impl GatewayAgentApi {
     }
 }
 
-fn merge_toolset_registry(registry: &mut engine::ToolRegistry, toolset: ResolvedToolset) {
+pub(super) fn merge_toolset_registry(
+    registry: &mut engine::ToolRegistry,
+    toolset: ResolvedToolset,
+) {
+    let preserved_remote_mcp_tools = registry
+        .profiles
+        .get(&toolset.profile_id)
+        .map(|profile| {
+            profile
+                .visible_tools
+                .iter()
+                .filter(|tool_name| {
+                    registry
+                        .tools
+                        .get(*tool_name)
+                        .is_some_and(|tool| matches!(tool.kind, engine::ToolKind::RemoteMcp(_)))
+                })
+                .cloned()
+                .collect::<BTreeSet<_>>()
+        })
+        .unwrap_or_default();
+
     if let Some(previous) = registry.profiles.remove(&toolset.profile_id) {
         for tool_name in previous.visible_tools {
+            if preserved_remote_mcp_tools.contains(&tool_name) {
+                continue;
+            }
             let still_referenced = registry.profiles.values().any(|profile| {
                 profile
                     .visible_tools
@@ -434,6 +458,17 @@ fn merge_toolset_registry(registry: &mut engine::ToolRegistry, toolset: Resolved
     }
     for (profile_id, tool_profile) in toolset.registry.profiles {
         registry.profiles.insert(profile_id, tool_profile);
+    }
+    if let Some(profile) = registry.profiles.get_mut(&toolset.profile_id) {
+        for tool_name in preserved_remote_mcp_tools {
+            if !profile
+                .visible_tools
+                .iter()
+                .any(|visible| visible == &tool_name)
+            {
+                profile.visible_tools.push(tool_name);
+            }
+        }
     }
 }
 

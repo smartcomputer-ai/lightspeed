@@ -42,6 +42,13 @@ pub const METHOD_VFS_WORKSPACE_DELETE: &str = "vfs/workspace/delete";
 pub const METHOD_VFS_MOUNT_PUT: &str = "vfs/mount/put";
 pub const METHOD_VFS_MOUNT_LIST: &str = "vfs/mount/list";
 pub const METHOD_VFS_MOUNT_DELETE: &str = "vfs/mount/delete";
+pub const METHOD_MCP_SERVERS_CREATE: &str = "mcp/servers/create";
+pub const METHOD_MCP_SERVERS_LIST: &str = "mcp/servers/list";
+pub const METHOD_MCP_SERVERS_READ: &str = "mcp/servers/read";
+pub const METHOD_MCP_SERVERS_DELETE: &str = "mcp/servers/delete";
+pub const METHOD_SESSION_MCP_LINK: &str = "session/mcp/link";
+pub const METHOD_SESSION_MCP_UNLINK: &str = "session/mcp/unlink";
+pub const METHOD_SESSION_MCP_LIST: &str = "session/mcp/list";
 
 pub const NOTIFY_SESSION_STARTED: &str = "session/started";
 pub const NOTIFY_SESSION_STATUS_CHANGED: &str = "session/status/changed";
@@ -232,6 +239,41 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: VfsMountListParams,
     ) -> Result<AgentApiOutcome<VfsMountListResponse>, AgentApiError>;
+
+    async fn create_mcp_server(
+        &self,
+        params: McpServerCreateParams,
+    ) -> Result<AgentApiOutcome<McpServerCreateResponse>, AgentApiError>;
+
+    async fn list_mcp_servers(
+        &self,
+        params: McpServerListParams,
+    ) -> Result<AgentApiOutcome<McpServerListResponse>, AgentApiError>;
+
+    async fn read_mcp_server(
+        &self,
+        params: McpServerReadParams,
+    ) -> Result<AgentApiOutcome<McpServerReadResponse>, AgentApiError>;
+
+    async fn delete_mcp_server(
+        &self,
+        params: McpServerDeleteParams,
+    ) -> Result<AgentApiOutcome<McpServerDeleteResponse>, AgentApiError>;
+
+    async fn link_session_mcp(
+        &self,
+        params: SessionMcpLinkParams,
+    ) -> Result<AgentApiOutcome<SessionMcpLinkResponse>, AgentApiError>;
+
+    async fn unlink_session_mcp(
+        &self,
+        params: SessionMcpUnlinkParams,
+    ) -> Result<AgentApiOutcome<SessionMcpUnlinkResponse>, AgentApiError>;
+
+    async fn list_session_mcp(
+        &self,
+        params: SessionMcpListParams,
+    ) -> Result<AgentApiOutcome<SessionMcpListResponse>, AgentApiError>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1164,6 +1206,230 @@ pub struct VfsMountListResponse {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct McpServerView {
+    pub server_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    pub server_url: String,
+    pub transport: RemoteMcpTransport,
+    pub default_server_label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_tools: Option<Vec<String>>,
+    pub approval_default: RemoteMcpApprovalPolicy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub defer_loading_default: Option<bool>,
+    pub auth_policy: McpServerAuthPolicy,
+    pub status: McpServerStatus,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RemoteMcpTransport {
+    StreamableHttp,
+    Sse,
+    #[default]
+    Auto,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RemoteMcpApprovalPolicy {
+    #[default]
+    ProviderDefault,
+    Always,
+    Never,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum McpServerAuthPolicy {
+    #[default]
+    None,
+    OptionalBearer,
+    RequiredBearer,
+    OptionalOAuth {
+        resource: String,
+        #[serde(default)]
+        scopes_default: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        protected_resource_metadata_url: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        authorization_server: Option<String>,
+    },
+    RequiredOAuth {
+        resource: String,
+        #[serde(default)]
+        scopes_default: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        protected_resource_metadata_url: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        authorization_server: Option<String>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum McpServerStatus {
+    #[default]
+    Active,
+    NeedsAuthConfig,
+    Unverified,
+    Disabled,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerCreateParams {
+    pub server_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    pub server_url: String,
+    #[serde(default)]
+    pub transport: RemoteMcpTransport,
+    pub default_server_label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_tools: Option<Vec<String>>,
+    #[serde(default)]
+    pub approval_default: RemoteMcpApprovalPolicy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub defer_loading_default: Option<bool>,
+    #[serde(default)]
+    pub auth_policy: McpServerAuthPolicy,
+    #[serde(default)]
+    pub status: McpServerStatus,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerCreateResponse {
+    pub server: McpServerView,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerListParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<McpServerStatus>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerListResponse {
+    #[serde(default)]
+    pub servers: Vec<McpServerView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerReadParams {
+    pub server_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerReadResponse {
+    pub server: McpServerView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerDeleteParams {
+    pub server_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerDeleteResponse {
+    pub server: McpServerView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionMcpLinkView {
+    pub tool_id: String,
+    pub server_label: String,
+    pub server_url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_tools: Option<Vec<String>>,
+    pub approval: RemoteMcpApprovalPolicy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub defer_loading: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_ref: Option<SecretRefView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SecretRefView {
+    pub namespace: String,
+    pub id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionMcpLinkParams {
+    pub session_id: SessionId,
+    pub server_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_tools: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval: Option<RemoteMcpApprovalPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub defer_loading: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_grant_id: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionMcpLinkResponse {
+    pub link: SessionMcpLinkView,
+    #[serde(default)]
+    pub links: Vec<SessionMcpLinkView>,
+    pub session: SessionView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionMcpUnlinkParams {
+    pub session_id: SessionId,
+    pub tool_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionMcpUnlinkResponse {
+    pub tool_id: String,
+    #[serde(default)]
+    pub links: Vec<SessionMcpLinkView>,
+    pub session: SessionView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionMcpListParams {
+    pub session_id: SessionId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionMcpListResponse {
+    #[serde(default)]
+    pub links: Vec<SessionMcpLinkView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ModelConfig {
     pub provider_id: String,
     pub api_kind: String,
@@ -1788,6 +2054,40 @@ pub async fn dispatch_json_rpc(
             Ok(params) => json_rpc_outcome(id, service.list_vfs_mounts(params).await),
             Err(error) => JsonRpcResponse::failure(id, error),
         },
+        METHOD_MCP_SERVERS_CREATE => {
+            match json_rpc_params::<McpServerCreateParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.create_mcp_server(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
+        METHOD_MCP_SERVERS_LIST => match json_rpc_params::<McpServerListParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.list_mcp_servers(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
+        METHOD_MCP_SERVERS_READ => match json_rpc_params::<McpServerReadParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.read_mcp_server(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
+        METHOD_MCP_SERVERS_DELETE => {
+            match json_rpc_params::<McpServerDeleteParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.delete_mcp_server(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
+        METHOD_SESSION_MCP_LINK => match json_rpc_params::<SessionMcpLinkParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.link_session_mcp(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
+        METHOD_SESSION_MCP_UNLINK => {
+            match json_rpc_params::<SessionMcpUnlinkParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.unlink_session_mcp(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
+        METHOD_SESSION_MCP_LIST => match json_rpc_params::<SessionMcpListParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.list_session_mcp(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
         other => JsonRpcResponse::failure(id, JsonRpcError::method_not_found(other)),
     }
 }
@@ -2095,6 +2395,74 @@ mod tests {
         assert_eq!(
             response.result.expect("result")["result"]["skillId"],
             json!("skill:one")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_mcp_server_create() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_MCP_SERVERS_CREATE.to_owned(),
+                params: Some(json!({
+                    "serverId": "echo",
+                    "serverUrl": "https://echo.example.com/mcp",
+                    "defaultServerLabel": "echo"
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["server"]["serverId"],
+            json!("echo")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_session_mcp_link() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_SESSION_MCP_LINK.to_owned(),
+                params: Some(json!({
+                    "sessionId": "session_1",
+                    "serverId": "echo",
+                    "toolId": "mcp_echo"
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["link"]["toolId"],
+            json!("mcp_echo")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_session_mcp_unlink() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_SESSION_MCP_UNLINK.to_owned(),
+                params: Some(json!({
+                    "sessionId": "session_1",
+                    "toolId": "mcp_echo"
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["toolId"],
+            json!("mcp_echo")
         );
     }
 
@@ -2913,6 +3281,74 @@ mod tests {
                 }],
             }))
         }
+
+        async fn create_mcp_server(
+            &self,
+            params: McpServerCreateParams,
+        ) -> Result<AgentApiOutcome<McpServerCreateResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(McpServerCreateResponse {
+                server: test_mcp_server(params.server_id),
+            }))
+        }
+
+        async fn list_mcp_servers(
+            &self,
+            _params: McpServerListParams,
+        ) -> Result<AgentApiOutcome<McpServerListResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(McpServerListResponse {
+                servers: vec![test_mcp_server("echo".to_owned())],
+            }))
+        }
+
+        async fn read_mcp_server(
+            &self,
+            params: McpServerReadParams,
+        ) -> Result<AgentApiOutcome<McpServerReadResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(McpServerReadResponse {
+                server: test_mcp_server(params.server_id),
+            }))
+        }
+
+        async fn delete_mcp_server(
+            &self,
+            params: McpServerDeleteParams,
+        ) -> Result<AgentApiOutcome<McpServerDeleteResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(McpServerDeleteResponse {
+                server: test_mcp_server(params.server_id),
+            }))
+        }
+
+        async fn link_session_mcp(
+            &self,
+            params: SessionMcpLinkParams,
+        ) -> Result<AgentApiOutcome<SessionMcpLinkResponse>, AgentApiError> {
+            let link = test_mcp_link(params.tool_id.unwrap_or_else(|| "mcp_echo".to_owned()));
+            Ok(AgentApiOutcome::new(SessionMcpLinkResponse {
+                link: link.clone(),
+                links: vec![link],
+                session: test_session(params.session_id, SessionStatus::Idle),
+            }))
+        }
+
+        async fn unlink_session_mcp(
+            &self,
+            params: SessionMcpUnlinkParams,
+        ) -> Result<AgentApiOutcome<SessionMcpUnlinkResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(SessionMcpUnlinkResponse {
+                tool_id: params.tool_id,
+                links: Vec::new(),
+                session: test_session(params.session_id, SessionStatus::Idle),
+            }))
+        }
+
+        async fn list_session_mcp(
+            &self,
+            _params: SessionMcpListParams,
+        ) -> Result<AgentApiOutcome<SessionMcpListResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(SessionMcpListResponse {
+                links: vec![test_mcp_link("mcp_echo".to_owned())],
+            }))
+        }
     }
 
     fn test_session(id: SessionId, status: SessionStatus) -> SessionView {
@@ -2951,6 +3387,36 @@ mod tests {
             source: SkillActivationSource::DirectContext {
                 context_ref: format!("sha256:{}", "6".repeat(64)),
             },
+        }
+    }
+
+    fn test_mcp_server(server_id: String) -> McpServerView {
+        McpServerView {
+            default_server_label: server_id.clone(),
+            server_url: format!("https://{server_id}.example.com/mcp"),
+            server_id,
+            display_name: None,
+            transport: RemoteMcpTransport::Auto,
+            description: None,
+            allowed_tools: None,
+            approval_default: RemoteMcpApprovalPolicy::ProviderDefault,
+            defer_loading_default: None,
+            auth_policy: McpServerAuthPolicy::None,
+            status: McpServerStatus::Active,
+            created_at_ms: 1,
+            updated_at_ms: 1,
+        }
+    }
+
+    fn test_mcp_link(tool_id: String) -> SessionMcpLinkView {
+        SessionMcpLinkView {
+            tool_id,
+            server_label: "echo".to_owned(),
+            server_url: "https://echo.example.com/mcp".to_owned(),
+            allowed_tools: None,
+            approval: RemoteMcpApprovalPolicy::ProviderDefault,
+            defer_loading: None,
+            auth_ref: None,
         }
     }
 }

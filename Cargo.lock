@@ -3374,6 +3374,7 @@ dependencies = [
  "futures",
  "llm-clients",
  "llm-runtime",
+ "mcp-registry",
  "serde_json",
  "store-pg",
  "temporal-workflow",

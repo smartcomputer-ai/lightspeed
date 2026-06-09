@@ -3,13 +3,19 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use api::{
     AgentApiError, AgentApiErrorKind, AgentApiOutcome, BlobGetParams, BlobGetResponse,
     BlobHasManyParams, BlobHasManyResponse, BlobPutManyParams, BlobPutManyResponse, JsonRpcRequest,
-    JsonRpcResponse, METHOD_BLOB_GET, METHOD_BLOB_HAS_MANY, METHOD_BLOB_PUT_MANY, METHOD_RUN_START,
-    METHOD_SESSION_EVENTS_READ, METHOD_SESSION_READ, METHOD_SESSION_START, METHOD_SKILLS_ACTIVATE,
-    METHOD_SKILLS_ACTIVE, METHOD_SKILLS_DEACTIVATE, METHOD_SKILLS_LIST, METHOD_VFS_MOUNT_DELETE,
-    METHOD_VFS_MOUNT_LIST, METHOD_VFS_MOUNT_PUT, METHOD_VFS_SNAPSHOT_COMMIT,
-    METHOD_VFS_SNAPSHOT_READ, METHOD_VFS_WORKSPACE_CREATE, METHOD_VFS_WORKSPACE_DELETE,
-    METHOD_VFS_WORKSPACE_READ, METHOD_VFS_WORKSPACE_UPDATE, RequestId, RunStartParams,
-    RunStartResponse, SessionEventsReadParams, SessionEventsReadResponse, SessionReadParams,
+    JsonRpcResponse, METHOD_BLOB_GET, METHOD_BLOB_HAS_MANY, METHOD_BLOB_PUT_MANY,
+    METHOD_MCP_SERVERS_CREATE, METHOD_MCP_SERVERS_DELETE, METHOD_MCP_SERVERS_LIST,
+    METHOD_MCP_SERVERS_READ, METHOD_RUN_START, METHOD_SESSION_EVENTS_READ, METHOD_SESSION_MCP_LINK,
+    METHOD_SESSION_MCP_LIST, METHOD_SESSION_MCP_UNLINK, METHOD_SESSION_READ, METHOD_SESSION_START,
+    METHOD_SKILLS_ACTIVATE, METHOD_SKILLS_ACTIVE, METHOD_SKILLS_DEACTIVATE, METHOD_SKILLS_LIST,
+    METHOD_VFS_MOUNT_DELETE, METHOD_VFS_MOUNT_LIST, METHOD_VFS_MOUNT_PUT,
+    METHOD_VFS_SNAPSHOT_COMMIT, METHOD_VFS_SNAPSHOT_READ, METHOD_VFS_WORKSPACE_CREATE,
+    METHOD_VFS_WORKSPACE_DELETE, METHOD_VFS_WORKSPACE_READ, METHOD_VFS_WORKSPACE_UPDATE,
+    McpServerCreateParams, McpServerCreateResponse, McpServerDeleteParams, McpServerDeleteResponse,
+    McpServerListParams, McpServerListResponse, McpServerReadParams, McpServerReadResponse,
+    RequestId, RunStartParams, RunStartResponse, SessionEventsReadParams,
+    SessionEventsReadResponse, SessionMcpLinkParams, SessionMcpLinkResponse, SessionMcpListParams,
+    SessionMcpListResponse, SessionMcpUnlinkParams, SessionMcpUnlinkResponse, SessionReadParams,
     SessionReadResponse, SessionStartParams, SessionStartResponse, SkillActivateParams,
     SkillActivateResponse, SkillActiveParams, SkillActiveResponse, SkillDeactivateParams,
     SkillDeactivateResponse, SkillListParams, SkillListResponse, VfsMountDeleteParams,
@@ -201,6 +207,55 @@ impl HttpAgentApi {
         params: VfsMountListParams,
     ) -> Result<AgentApiOutcome<VfsMountListResponse>, AgentApiError> {
         self.request(METHOD_VFS_MOUNT_LIST, params).await
+    }
+
+    pub(crate) async fn create_mcp_server(
+        &self,
+        params: McpServerCreateParams,
+    ) -> Result<AgentApiOutcome<McpServerCreateResponse>, AgentApiError> {
+        self.request(METHOD_MCP_SERVERS_CREATE, params).await
+    }
+
+    pub(crate) async fn list_mcp_servers(
+        &self,
+        params: McpServerListParams,
+    ) -> Result<AgentApiOutcome<McpServerListResponse>, AgentApiError> {
+        self.request(METHOD_MCP_SERVERS_LIST, params).await
+    }
+
+    pub(crate) async fn read_mcp_server(
+        &self,
+        params: McpServerReadParams,
+    ) -> Result<AgentApiOutcome<McpServerReadResponse>, AgentApiError> {
+        self.request(METHOD_MCP_SERVERS_READ, params).await
+    }
+
+    pub(crate) async fn delete_mcp_server(
+        &self,
+        params: McpServerDeleteParams,
+    ) -> Result<AgentApiOutcome<McpServerDeleteResponse>, AgentApiError> {
+        self.request(METHOD_MCP_SERVERS_DELETE, params).await
+    }
+
+    pub(crate) async fn link_session_mcp(
+        &self,
+        params: SessionMcpLinkParams,
+    ) -> Result<AgentApiOutcome<SessionMcpLinkResponse>, AgentApiError> {
+        self.request(METHOD_SESSION_MCP_LINK, params).await
+    }
+
+    pub(crate) async fn unlink_session_mcp(
+        &self,
+        params: SessionMcpUnlinkParams,
+    ) -> Result<AgentApiOutcome<SessionMcpUnlinkResponse>, AgentApiError> {
+        self.request(METHOD_SESSION_MCP_UNLINK, params).await
+    }
+
+    pub(crate) async fn list_session_mcp(
+        &self,
+        params: SessionMcpListParams,
+    ) -> Result<AgentApiOutcome<SessionMcpListResponse>, AgentApiError> {
+        self.request(METHOD_SESSION_MCP_LIST, params).await
     }
 
     async fn request<P, R>(

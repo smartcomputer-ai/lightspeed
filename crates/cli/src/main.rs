@@ -1,5 +1,6 @@
 mod api_client;
 mod chat;
+mod mcp_cli;
 mod skills_cli;
 mod vfs_cli;
 mod vfs_transfer;
@@ -22,6 +23,8 @@ enum Command {
     Vfs(vfs_cli::VfsArgs),
     /// List and manage session skills.
     Skills(skills_cli::SkillsArgs),
+    /// Manage remote MCP servers and session links.
+    Mcp(mcp_cli::McpArgs),
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -32,6 +35,7 @@ async fn main() -> Result<()> {
         Command::Chat(args) => chat::handle(args).await,
         Command::Vfs(args) => vfs_cli::handle(args).await,
         Command::Skills(args) => skills_cli::handle(args).await,
+        Command::Mcp(args) => mcp_cli::handle(args).await,
     }
 }
 
@@ -307,5 +311,46 @@ mod tests {
         ])
         .expect("parse skills deactivate");
         assert!(matches!(cli.command, Command::Skills(_)));
+    }
+
+    #[test]
+    fn mcp_server_add_parse_accepts_registry_options() {
+        let cli = Cli::try_parse_from([
+            "forge",
+            "mcp",
+            "server",
+            "add",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
+            "--id",
+            "echo",
+            "--label",
+            "echo",
+            "--allowed-tool",
+            "hello",
+            "--approval",
+            "never",
+            "https://echo.example.com/mcp",
+        ])
+        .expect("parse mcp server add");
+        assert!(matches!(cli.command, Command::Mcp(_)));
+    }
+
+    #[test]
+    fn mcp_link_parse_accepts_session_and_server() {
+        let cli = Cli::try_parse_from([
+            "forge",
+            "mcp",
+            "link",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
+            "--session",
+            "session_1",
+            "--tool-id",
+            "mcp_echo",
+            "echo",
+        ])
+        .expect("parse mcp link");
+        assert!(matches!(cli.command, Command::Mcp(_)));
     }
 }
