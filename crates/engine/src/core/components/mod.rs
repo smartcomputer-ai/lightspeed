@@ -23,10 +23,12 @@ pub use context::{
     ContextCompactionStatus, ContextCompactionTrigger, ContextEntry, ContextEntryId,
     ContextEntryInput, ContextEntryKind, ContextEntrySource, ContextEvent, ContextMessageRole,
     ContextRemovalReason, ContextRewriteReason, ContextSnapshot, ContextState,
-    OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, OPENAI_RESPONSES_WEB_SEARCH_CALL_PROVIDER_KIND,
-    SKILL_ACTIVATION_CONTEXT_KEY_PREFIX, SKILL_ACTIVATION_PROVIDER_KIND_RUN,
-    SKILL_ACTIVATION_PROVIDER_KIND_SESSION, SKILL_CATALOG_CONTEXT_KEY, TokenEstimate,
-    TokenEstimateQuality, is_run_scoped_skill_activation_entry, skill_activation_context_key,
+    OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, OPENAI_RESPONSES_MCP_APPROVAL_REQUEST_PROVIDER_KIND,
+    OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND, OPENAI_RESPONSES_MCP_LIST_TOOLS_PROVIDER_KIND,
+    OPENAI_RESPONSES_WEB_SEARCH_CALL_PROVIDER_KIND, SKILL_ACTIVATION_CONTEXT_KEY_PREFIX,
+    SKILL_ACTIVATION_PROVIDER_KIND_RUN, SKILL_ACTIVATION_PROVIDER_KIND_SESSION,
+    SKILL_CATALOG_CONTEXT_KEY, TokenEstimate, TokenEstimateQuality,
+    is_run_scoped_skill_activation_entry, skill_activation_context_key,
 };
 pub use error::*;
 pub use event::*;

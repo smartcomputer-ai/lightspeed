@@ -19,8 +19,10 @@
   `ToolKind::RemoteMcp` entries in the active engine tool set.
 - Implemented: link/unlink uses `PatchTools` from `p67-tooling-refactor.md`;
   profile selection has been removed.
-- Still pending: P67 provider request lowering for no-auth remote MCP servers
-  and P69-backed auth grant validation.
+- Implemented in P67: OpenAI Responses provider request lowering for no-auth
+  remote MCP servers and provider-opaque recording of OpenAI MCP output items.
+- Still pending: Anthropic provider lowering and P69-backed auth grant
+  validation/token brokering.
 
 ## Goal
 
@@ -357,11 +359,14 @@ or no-auth MCP servers.
 
 Acceptance criteria:
 
-- server records are scoped by `universe_id`;
-- CLI/API can add, list, read, and delete server records;
-- sessions can link a catalog server into `ToolKind::RemoteMcp`;
-- linked session state contains a sanitized snapshot, not a live catalog pointer;
-- P67 can lower linked no-auth servers to provider requests.
+- [x] server records are scoped by `universe_id`;
+- [x] CLI/API can add, list, read, and delete server records;
+- [x] sessions can link a catalog server into `ToolKind::RemoteMcp`;
+- [x] linked session state contains a sanitized snapshot, not a live catalog pointer;
+- [x] P67 can lower linked no-auth servers to OpenAI Responses provider
+  requests.
+- [ ] P67 can lower linked no-auth servers to Anthropic Messages provider
+  requests.
 
 ## G2: Auth-Handle Linking
 

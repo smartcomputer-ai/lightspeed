@@ -1,12 +1,19 @@
 # P67: Direct Remote MCP
 
 **Status**
-- Proposed; core foundation partially implemented on 2026-06-09.
+- In progress; core foundation and OpenAI no-auth direct MCP implemented on
+  2026-06-09.
 - Implemented foundation: `RemoteMcpToolSpec`, `RemoteMcpApprovalPolicy`,
   `SecretRef`, `ToolKind::RemoteMcp`, engine validation, provider compatibility
   checks, request fingerprint participation, and client-effect exclusion.
-- Provider MCP request lowering, runtime auth injection, redacted provider
-  request persistence, and provider MCP output recording remain pending.
+- Implemented for OpenAI Responses no-auth/public MCP: `ToolKind::RemoteMcp`
+  lowers to provider `tools[]` entries with `type: "mcp"`, `auth_ref` is
+  rejected clearly until token brokering exists, and OpenAI `mcp_list_tools`,
+  `mcp_call`, and `mcp_approval_request` output items are preserved as
+  provider-opaque context entries without creating Forge tool batches.
+- Still pending: OpenAI runtime auth injection and redacted authenticated
+  provider request persistence, Anthropic MCP lowering/output recording, and
+  provider approval continuation UX.
 - Tool visibility now uses the active session tool map from
   `p67-tooling-refactor.md`; profile selection has been removed.
 - Direct provider-hosted MCP only: the model provider connects to public remote
@@ -176,7 +183,8 @@ wire shapes.
 
 ### OpenAI Responses
 
-For each planned `ToolKind::RemoteMcp`, lower to one OpenAI tool entry:
+Implemented for no-auth/public MCP. For each planned `ToolKind::RemoteMcp`,
+lower to one OpenAI tool entry:
 
 ```json
 {
@@ -190,7 +198,9 @@ For each planned `ToolKind::RemoteMcp`, lower to one OpenAI tool entry:
 }
 ```
 
-If `auth_ref` resolves to a token at runtime, inject:
+If `auth_ref` is present today, the OpenAI materializer rejects the request
+before provider I/O. Once P69 token brokering exists, `auth_ref` should resolve
+to a token at runtime and inject:
 
 ```json
 {
@@ -363,9 +373,9 @@ crates/tools/src/mcp/
   builder.rs
 
 crates/llm-runtime/src/openai_responses.rs
-  lower RemoteMcp to OpenAI Responses mcp tools
-  inject/redact authorization
-  preserve mcp_list_tools and mcp_call output items
+  lower no-auth RemoteMcp to OpenAI Responses mcp tools
+  reject auth_ref until P69-backed auth injection exists
+  preserve mcp_list_tools, mcp_call, and mcp_approval_request output items
 
 crates/llm-runtime/src/anthropic_messages.rs
   lower RemoteMcp to mcp_servers + mcp_toolset
@@ -386,22 +396,23 @@ Implement `RemoteMcp` registry support and OpenAI Responses lowering first.
 
 Acceptance criteria:
 
-- A selected `RemoteMcp` spec appears in the planned request fingerprint without
+- [x] A selected `RemoteMcp` spec appears in the planned request fingerprint without
   secret values.
-- OpenAI request materialization emits `tools[]` entries with `type: "mcp"`.
-- `auth_ref` values are resolved only in `llm-runtime`.
-- persisted provider request blobs redact auth fields.
-- OpenAI `mcp_list_tools` and `mcp_call` output items are preserved as
+- [x] OpenAI request materialization emits `tools[]` entries with `type: "mcp"`
+  for no-auth/public MCP servers.
+- [ ] `auth_ref` values are resolved only in `llm-runtime`.
+- [ ] persisted provider request blobs redact auth fields.
+- [x] OpenAI `mcp_list_tools` and `mcp_call` output items are preserved as
   provider-opaque context.
-- No Forge tool batch is scheduled for provider-executed MCP calls.
+- [x] No Forge tool batch is scheduled for provider-executed MCP calls.
 
 Tests:
 
-- unit test for `RemoteMcp` validation and client-effect behavior;
-- request materialization test for OpenAI MCP lowering;
-- redaction test proving send request has auth while stored request does not;
-- result parsing fixture for `mcp_list_tools` and `mcp_call`;
-- ignored live test against a harmless public MCP server.
+- [x] unit test for `RemoteMcp` validation and client-effect behavior;
+- [x] request materialization test for OpenAI MCP lowering;
+- [ ] redaction test proving send request has auth while stored request does not;
+- [x] result parsing fixture for `mcp_list_tools` and `mcp_call`;
+- [x] ignored live test against a harmless public MCP server.
 
 ## G2: Anthropic Messages Direct Remote MCP
 
