@@ -11,6 +11,9 @@
   rejected clearly until token brokering exists, and OpenAI `mcp_list_tools`,
   `mcp_call`, and `mcp_approval_request` output items are preserved as
   provider-opaque context entries without creating Forge tool batches.
+- Implemented OpenAI `mcp_call` display projection: API provider-context items
+  now expose a compact MCP tool-call summary, and the CLI/TUI renders those as
+  MCP tool-call rows without scheduling Forge tool batches.
 - Still pending: OpenAI runtime auth injection and redacted authenticated
   provider request persistence, Anthropic MCP lowering/output recording, and
   provider approval continuation UX.
@@ -304,6 +307,10 @@ OpenAI Responses MCP tool call: echo.hello
 Anthropic MCP tool result: echo.hello
 ```
 
+Projection may expose client display summaries for provider-hosted MCP
+observations. These summaries are UI metadata only; the raw provider item
+remains the source of truth in CAS.
+
 Do not synthesize `ObservedToolCall` for direct MCP unless a provider requires
 client-side continuation. Direct MCP is already executed by the provider.
 
@@ -404,6 +411,8 @@ Acceptance criteria:
 - [ ] persisted provider request blobs redact auth fields.
 - [x] OpenAI `mcp_list_tools` and `mcp_call` output items are preserved as
   provider-opaque context.
+- [x] OpenAI `mcp_call` provider context items expose display summaries for
+  client rendering.
 - [x] No Forge tool batch is scheduled for provider-executed MCP calls.
 
 Tests:
@@ -447,6 +456,7 @@ Tests:
 - MCP server health checks and preflight list-tools validation outside engine.
 - Approval UI for provider-hosted MCP calls where provider APIs surface
   approval requests.
-- Rich API projection of provider MCP observations for clients.
+- Broader rich API projection of provider MCP observations for clients,
+  including Anthropic MCP blocks and OpenAI approval/list-tools displays.
 - Policy controls for allowed MCP domains, server allowlists, and data egress
   review.

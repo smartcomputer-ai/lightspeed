@@ -10,13 +10,13 @@ use api::{
     ActiveToolsView, AgentApiError, CompactionPolicyInput, ContextConfigInput,
     ContextEntryInputView, ContextEntryKindView, ContextMessageRoleView, ContextView, EventCursor,
     EventJoinsView, GenerationConfig, HostToolMode as ApiHostToolMode, InputItem, ModelConfig,
-    ProviderNativeToolExecutionView, ReasoningEffort, RunDefaultsConfig, RunStatus as ApiRunStatus,
-    RunView, SessionConfigView, SessionEventKindView, SessionEventView, SessionItemView,
-    SessionStatus as ApiSessionStatus, SessionView, TokenEstimateQualityView, TokenEstimateView,
-    ToolBatchView, ToolCallDisplayGroup, ToolCallDisplayView, ToolCallEventView, ToolCallView,
-    ToolChoiceConfig, ToolChoiceModeConfig, ToolConfigView, ToolEffectView,
-    ToolExecutionTargetView, ToolItemStatus, ToolKindView, ToolParallelismView,
-    ToolTargetRequirementView, ToolView,
+    ProviderContextDisplayView, ProviderNativeToolExecutionView, ReasoningEffort,
+    RunDefaultsConfig, RunStatus as ApiRunStatus, RunView, SessionConfigView, SessionEventKindView,
+    SessionEventView, SessionItemView, SessionStatus as ApiSessionStatus, SessionView,
+    TokenEstimateQualityView, TokenEstimateView, ToolBatchView, ToolCallDisplayGroup,
+    ToolCallDisplayView, ToolCallEventView, ToolCallView, ToolChoiceConfig, ToolChoiceModeConfig,
+    ToolConfigView, ToolEffectView, ToolExecutionTargetView, ToolItemStatus, ToolKindView,
+    ToolParallelismView, ToolTargetRequirementView, ToolView,
 };
 use engine::{ApplyEvent, ToolExecutionTarget};
 use engine::{
@@ -25,10 +25,10 @@ use engine::{
     ContextMessageRole, ContextRemovalReason, ContextRewriteReason, CoreAgentCodec, CoreAgentEntry,
     CoreAgentEventKind, CoreAgentJoins, CoreAgentLifecycleEvent, CoreAgentState, CoreAgentStatus,
     CoreApplyEvent, EventSeq, LlmGenerationStatus, ModelProviderOptions, ModelSelection,
-    ObservedToolCall, ProviderApiKind, ProviderRequestDefaults, RunEvent, RunFailure, RunId,
-    RunStatus, SessionConfig, SessionId, SteeringId, ToolBatchId, ToolCallStatus, ToolChoice,
-    ToolChoiceMode, ToolConfigEvent, ToolEvent, ToolKind, ToolParallelism, ToolSpec,
-    ToolTargetRequirement, TurnEvent, TurnId,
+    OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND, ObservedToolCall, ProviderApiKind,
+    ProviderRequestDefaults, RunEvent, RunFailure, RunId, RunStatus, SessionConfig, SessionId,
+    SteeringId, ToolBatchId, ToolCallStatus, ToolChoice, ToolChoiceMode, ToolConfigEvent,
+    ToolEvent, ToolKind, ToolParallelism, ToolSpec, ToolTargetRequirement, TurnEvent, TurnId,
     storage::{
         BlobStore, BlobStoreError, DynamicSessionEntry, ReadSessionEvents, SessionRecord,
         SessionStore, SessionStoreError,
@@ -209,6 +209,7 @@ impl<'a> CoreAgentProjector<'a> {
                 provider_kind: item.provider_kind.clone(),
                 provider_item_id: item.provider_item_id.clone(),
                 token_estimate: item.token_estimate.as_ref().map(token_estimate_to_api),
+                display: self.provider_context_display(item).await,
             }),
         }
     }
@@ -664,6 +665,18 @@ impl<'a> CoreAgentProjector<'a> {
             );
         }
         Ok(result_by_call)
+    }
+
+    async fn provider_context_display(
+        &self,
+        item: &ContextEntry,
+    ) -> Option<ProviderContextDisplayView> {
+        if item.provider_kind.as_deref() != Some(OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND) {
+            return None;
+        }
+        let text = self.read_blob_text(&item.content_ref).await.ok()?;
+        let value = serde_json::from_str::<Value>(&text).ok()?;
+        openai_mcp_call_display(&value)
     }
 
     async fn read_blob_text(&self, blob_ref: &engine::BlobRef) -> Result<String, AgentApiError> {
@@ -1358,6 +1371,57 @@ fn tool_effects_to_api(effects: &[engine::ToolEffect]) -> Vec<ToolEffectView> {
         .collect()
 }
 
+fn openai_mcp_call_display(value: &Value) -> Option<ProviderContextDisplayView> {
+    if value.get("type").and_then(Value::as_str) != Some("mcp_call") {
+        return None;
+    }
+
+    let name = json_field_text(value, "name")?;
+    let server_label = json_field_text(value, "server_label");
+    let tool_name = match server_label.as_deref() {
+        Some(server_label) if !server_label.is_empty() => format!("{server_label}.{name}"),
+        _ => name,
+    };
+    let raw_status = value.get("status").and_then(Value::as_str);
+    let error = json_field_text(value, "error");
+    let is_error = error.is_some() || matches!(raw_status, Some("failed" | "incomplete"));
+    let status = match raw_status {
+        Some("in_progress" | "running" | "queued") => ToolItemStatus::Running,
+        Some("failed" | "incomplete") => ToolItemStatus::Failed,
+        _ if is_error => ToolItemStatus::Failed,
+        _ => ToolItemStatus::Succeeded,
+    };
+    let detail = match raw_status {
+        Some("completed") | None if !is_error => None,
+        Some(status) => Some(status.to_owned()),
+        None => Some("failed".to_owned()),
+    };
+
+    Some(ProviderContextDisplayView {
+        summary: ToolCallDisplayView {
+            group: ToolCallDisplayGroup::Other,
+            verb: "MCP".to_owned(),
+            target: Some(tool_name.clone()),
+            detail,
+        },
+        tool_name,
+        status,
+        is_error,
+        arguments: json_field_text(value, "arguments"),
+        output: json_field_text(value, "output"),
+        error,
+    })
+}
+
+fn json_field_text(value: &Value, field: &str) -> Option<String> {
+    let text = match value.get(field)? {
+        Value::Null => return None,
+        Value::String(text) => text.clone(),
+        other => serde_json::to_string(other).ok()?,
+    };
+    (!text.is_empty()).then_some(text)
+}
+
 fn tool_call_display(tool_name: &str, arguments: &str) -> Option<ToolCallDisplayView> {
     let json = serde_json::from_str::<Value>(arguments).ok();
     let normalized = tool_name.to_ascii_lowercase();
@@ -1496,7 +1560,8 @@ fn patch_target(patch: &str) -> Option<String> {
 mod tests {
     use engine::{
         BlobRef, ContextEntryId, CoreAgentJoins, EventSeq, SessionPosition, TokenEstimate,
-        TokenEstimateQuality, storage::InMemoryBlobStore,
+        TokenEstimateQuality,
+        storage::{BlobStore, InMemoryBlobStore},
     };
 
     use super::*;
@@ -1635,6 +1700,67 @@ mod tests {
                 token_estimate: Some(TokenEstimateView {
                     tokens: 123,
                     quality: TokenEstimateQualityView::ProviderCounted,
+                }),
+                display: None,
+            }
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn provider_context_item_projects_mcp_call_display() {
+        let blobs = InMemoryBlobStore::new();
+        let content_ref = blobs
+            .put_bytes(
+                br#"{"type":"mcp_call","server_label":"echo","name":"echo","arguments":"{\"data\":\"simba\"}","output":"Echoing your input: simba","error":null,"status":"completed"}"#
+                    .to_vec(),
+            )
+            .await
+            .expect("store mcp call");
+        let projector = CoreAgentProjector::new(&blobs);
+        let item = ContextEntry {
+            entry_id: ContextEntryId::new(43),
+            key: None,
+            kind: ContextEntryKind::ProviderOpaque,
+            source: ContextEntrySource::AssistantOutput {
+                run_id: RunId::new(7),
+                turn_id: TurnId::new(8),
+            },
+            content_ref: content_ref.clone(),
+            media_type: Some("application/json".to_owned()),
+            preview: Some("OpenAI Responses MCP tool call: echo.echo".to_owned()),
+            provider_kind: Some(OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND.to_owned()),
+            provider_item_id: Some("mcp_1".to_owned()),
+            token_estimate: None,
+        };
+
+        let projected = projector
+            .project_item(&item)
+            .await
+            .expect("project mcp provider context item");
+
+        assert_eq!(
+            projected,
+            SessionItemView::ProviderContext {
+                id: "item_43".to_owned(),
+                content_ref: content_ref.as_str().to_owned(),
+                media_type: Some("application/json".to_owned()),
+                preview: Some("OpenAI Responses MCP tool call: echo.echo".to_owned()),
+                provider_kind: Some(OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND.to_owned()),
+                provider_item_id: Some("mcp_1".to_owned()),
+                token_estimate: None,
+                display: Some(ProviderContextDisplayView {
+                    summary: ToolCallDisplayView {
+                        group: ToolCallDisplayGroup::Other,
+                        verb: "MCP".to_owned(),
+                        target: Some("echo.echo".to_owned()),
+                        detail: None,
+                    },
+                    tool_name: "echo.echo".to_owned(),
+                    status: ToolItemStatus::Succeeded,
+                    is_error: false,
+                    arguments: Some(r#"{"data":"simba"}"#.to_owned()),
+                    output: Some("Echoing your input: simba".to_owned()),
+                    error: None,
                 }),
             }
         );

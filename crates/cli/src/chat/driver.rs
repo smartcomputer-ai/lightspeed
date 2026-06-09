@@ -1042,10 +1042,13 @@ fn project_active_tool_chains(
 }
 
 fn project_tool_chains(run: &api::RunView) -> Vec<ChatToolChainView> {
-    run.tool_batches
+    let mut chains = run
+        .tool_batches
         .iter()
         .map(|batch| project_tool_batch(&run.id, batch))
-        .collect()
+        .collect::<Vec<_>>();
+    chains.extend(project_provider_tool_chains(&run.id, &run.items));
+    chains
 }
 
 fn project_tool_batch(run_id: &str, batch: &ToolBatchView) -> ChatToolChainView {
@@ -1062,6 +1065,59 @@ fn project_tool_batch(run_id: &str, batch: &ToolBatchView) -> ChatToolChainView 
         reasoning: None,
         summary: tool_activity_summary(&calls).or_else(|| Some("tools".into())),
         calls,
+    }
+}
+
+fn project_provider_tool_chains(run_id: &str, items: &[SessionItemView]) -> Vec<ChatToolChainView> {
+    items
+        .iter()
+        .filter_map(|item| match item {
+            SessionItemView::ProviderContext {
+                id,
+                provider_item_id,
+                display: Some(display),
+                ..
+            } => Some(project_provider_tool_chain(
+                run_id,
+                id,
+                provider_item_id,
+                display,
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+fn project_provider_tool_chain(
+    run_id: &str,
+    item_id: &str,
+    provider_item_id: &Option<String>,
+    display: &api::ProviderContextDisplayView,
+) -> ChatToolChainView {
+    let status = tool_status(display.status);
+    let call_id = provider_item_id.as_deref().unwrap_or(item_id).to_owned();
+    ChatToolChainView {
+        id: format!("{run_id}:provider:{item_id}"),
+        title: "mcp 1 call".to_owned(),
+        status,
+        reasoning: None,
+        summary: Some("mcp".to_owned()),
+        calls: vec![ChatToolCallView {
+            id: call_id,
+            tool_id: None,
+            tool_name: display.tool_name.clone(),
+            status,
+            group_index: Some(1),
+            parallel_safe: None,
+            resource_key: None,
+            arguments_preview: display.arguments.as_ref().map(|value| preview(value)),
+            result_preview: display.output.as_ref().map(|value| preview(value)),
+            error: display
+                .error
+                .clone()
+                .or_else(|| display.is_error.then(|| display.output.clone()).flatten()),
+            display: Some(tool_display_from_api(&display.summary)),
+        }],
     }
 }
 
@@ -1625,6 +1681,64 @@ mod tests {
                 .as_ref()
                 .and_then(|display| display.target.as_deref()),
             Some("README.md")
+        );
+    }
+
+    #[test]
+    fn project_tool_chains_renders_projected_mcp_calls() {
+        let run = api::RunView {
+            id: "run_7".into(),
+            status: api::RunStatus::Completed,
+            input: Vec::new(),
+            items: vec![SessionItemView::ProviderContext {
+                id: "item_43".into(),
+                content_ref: "sha256:mcp".into(),
+                media_type: Some("application/json".into()),
+                preview: Some("OpenAI Responses MCP tool call: echo.echo".into()),
+                provider_kind: Some("openai.responses.mcp_call".into()),
+                provider_item_id: Some("mcp_1".into()),
+                token_estimate: None,
+                display: Some(api::ProviderContextDisplayView {
+                    summary: api::ToolCallDisplayView {
+                        group: api::ToolCallDisplayGroup::Other,
+                        verb: "MCP".into(),
+                        target: Some("echo.echo".into()),
+                        detail: None,
+                    },
+                    tool_name: "echo.echo".into(),
+                    status: ToolItemStatus::Succeeded,
+                    is_error: false,
+                    arguments: Some(r#"{"data":"simba"}"#.into()),
+                    output: Some("Echoing your input: simba".into()),
+                    error: None,
+                }),
+            }],
+            tool_batches: Vec::new(),
+        };
+
+        let chains = project_tool_chains(&run);
+
+        assert_eq!(chains.len(), 1);
+        assert_eq!(chains[0].id, "run_7:provider:item_43");
+        assert_eq!(chains[0].title, "mcp 1 call");
+        assert_eq!(chains[0].summary.as_deref(), Some("mcp"));
+        assert_eq!(chains[0].status, ChatProgressStatus::Succeeded);
+        assert_eq!(chains[0].calls[0].id, "mcp_1");
+        assert_eq!(chains[0].calls[0].tool_name, "echo.echo");
+        assert_eq!(
+            chains[0].calls[0].arguments_preview.as_deref(),
+            Some(r#"{"data":"simba"}"#)
+        );
+        assert_eq!(
+            chains[0].calls[0].result_preview.as_deref(),
+            Some("Echoing your input: simba")
+        );
+        assert_eq!(
+            chains[0].calls[0]
+                .display
+                .as_ref()
+                .map(|display| (display.verb.as_str(), display.target.as_deref())),
+            Some(("MCP", Some("echo.echo")))
         );
     }
 

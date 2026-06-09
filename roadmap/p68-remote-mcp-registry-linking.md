@@ -405,6 +405,7 @@ Acceptance criteria:
 - MCP-specific convenience wrappers over P69 auth login/status/revoke commands.
 - Approval UI for provider-hosted MCP calls where provider APIs surface
   approval requests.
-- Rich API projection of provider MCP observations for clients.
+- Broader rich API projection of provider MCP observations for clients,
+  beyond the OpenAI `mcp_call` display summaries implemented in P67.
 - Policy controls for allowed MCP domains, server allowlists, and data egress
   review.

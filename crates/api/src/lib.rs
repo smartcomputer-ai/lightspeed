@@ -1734,6 +1734,22 @@ pub enum ToolCallDisplayGroup {
     Other,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderContextDisplayView {
+    pub summary: ToolCallDisplayView,
+    pub tool_name: String,
+    pub status: ToolItemStatus,
+    #[serde(default)]
+    pub is_error: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arguments: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum RunStatus {
@@ -1858,6 +1874,8 @@ pub enum SessionItemView {
         provider_item_id: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         token_estimate: Option<TokenEstimateView>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        display: Option<ProviderContextDisplayView>,
     },
 }
 
@@ -3014,6 +3032,7 @@ mod tests {
                 tokens: 123,
                 quality: TokenEstimateQualityView::ProviderCounted,
             }),
+            display: None,
         };
 
         let value = serde_json::to_value(item).expect("serialize provider context item");
@@ -3031,6 +3050,60 @@ mod tests {
                 "tokenEstimate": {
                     "tokens": 123,
                     "quality": "providerCounted"
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn provider_context_item_serializes_mcp_display() {
+        let item = SessionItemView::ProviderContext {
+            id: "item_43".to_owned(),
+            content_ref: "sha256:mcp".to_owned(),
+            media_type: Some("application/json".to_owned()),
+            preview: Some("OpenAI Responses MCP tool call: echo.echo".to_owned()),
+            provider_kind: Some("openai.responses.mcp_call".to_owned()),
+            provider_item_id: Some("mcp_1".to_owned()),
+            token_estimate: None,
+            display: Some(ProviderContextDisplayView {
+                summary: ToolCallDisplayView {
+                    group: ToolCallDisplayGroup::Other,
+                    verb: "MCP".to_owned(),
+                    target: Some("echo.echo".to_owned()),
+                    detail: None,
+                },
+                tool_name: "echo.echo".to_owned(),
+                status: ToolItemStatus::Succeeded,
+                is_error: false,
+                arguments: Some(r#"{"data":"simba"}"#.to_owned()),
+                output: Some("Echoing your input: simba".to_owned()),
+                error: None,
+            }),
+        };
+
+        let value = serde_json::to_value(item).expect("serialize mcp provider context item");
+
+        assert_eq!(
+            value,
+            json!({
+                "type": "providerContext",
+                "id": "item_43",
+                "contentRef": "sha256:mcp",
+                "mediaType": "application/json",
+                "preview": "OpenAI Responses MCP tool call: echo.echo",
+                "providerKind": "openai.responses.mcp_call",
+                "providerItemId": "mcp_1",
+                "display": {
+                    "summary": {
+                        "group": "other",
+                        "verb": "MCP",
+                        "target": "echo.echo"
+                    },
+                    "toolName": "echo.echo",
+                    "status": "succeeded",
+                    "isError": false,
+                    "arguments": "{\"data\":\"simba\"}",
+                    "output": "Echoing your input: simba"
                 }
             })
         );
