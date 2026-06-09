@@ -23,6 +23,7 @@ pub fn default_run_config() -> RunConfig {
         model_override: None,
         max_output_tokens: None,
         provider_request_defaults: None,
+        tool_choice: None,
     }
 }
 
@@ -33,6 +34,7 @@ pub fn default_session_config(model: ModelSelection) -> SessionConfig {
         run: default_run_config(),
         turn: TurnConfig {
             max_output_tokens: None,
+            tool_choice: None,
             provider_request_defaults,
         },
         context: ContextConfig { compaction: None },

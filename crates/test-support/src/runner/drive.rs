@@ -627,8 +627,7 @@ mod tests {
         FunctionToolSpec, LlmFinish, LlmRequestKind, ModelProviderOptions, ModelSelection,
         ObservedToolCall, ProviderApiKind, ProviderRequestDefaults, RunConfig, RunStatus,
         SessionConfig, SessionId, ToolCallResult, ToolExecutionTarget, ToolKind, ToolName,
-        ToolParallelism, ToolProfile, ToolProfileId, ToolRegistry, ToolSpec, ToolTargetRequirement,
-        TurnConfig, TurnEvent,
+        ToolParallelism, ToolSpec, ToolTargetRequirement, TurnConfig, TurnEvent,
         storage::{
             BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore,
         },
@@ -999,6 +998,7 @@ mod tests {
             run: run_config(),
             turn: TurnConfig {
                 max_output_tokens: None,
+                tool_choice: None,
                 provider_request_defaults: ProviderRequestDefaults::None,
             },
             context: ContextConfig { compaction: None },
@@ -1022,6 +1022,7 @@ mod tests {
             model_override: None,
             max_output_tokens: None,
             provider_request_defaults: None,
+            tool_choice: None,
         }
     }
 
@@ -1040,35 +1041,24 @@ mod tests {
         (SessionRunner::new(stores, llm), session_id)
     }
 
-    fn tool_registry() -> ToolRegistry {
+    fn tool_set() -> BTreeMap<ToolName, ToolSpec> {
         let tool_name = ToolName::new("test_tool");
-        let profile_id = ToolProfileId::new("test_profile");
-        ToolRegistry {
-            tools: BTreeMap::from([(
-                tool_name.clone(),
-                ToolSpec {
-                    name: tool_name.clone(),
-                    kind: ToolKind::Function(FunctionToolSpec {
-                        model_name: None,
-                        description_ref: None,
-                        input_schema_ref: BlobRef::from_bytes(br#"{}"#),
-                        output_schema_ref: None,
-                        strict: None,
-                        provider_options_ref: None,
-                    }),
-                    parallelism: ToolParallelism::ParallelSafe,
-                    target_requirement: ToolTargetRequirement::None,
-                },
-            )]),
-            profiles: BTreeMap::from([(
-                profile_id.clone(),
-                ToolProfile {
-                    profile_id,
-                    visible_tools: vec![tool_name],
-                    tool_choice: None,
-                },
-            )]),
-        }
+        BTreeMap::from([(
+            tool_name.clone(),
+            ToolSpec {
+                name: tool_name.clone(),
+                kind: ToolKind::Function(FunctionToolSpec {
+                    model_name: None,
+                    description_ref: None,
+                    input_schema_ref: BlobRef::from_bytes(br#"{}"#),
+                    output_schema_ref: None,
+                    strict: None,
+                    provider_options_ref: None,
+                }),
+                parallelism: ToolParallelism::ParallelSafe,
+                target_requirement: ToolTargetRequirement::None,
+            },
+        )])
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1484,8 +1474,7 @@ mod tests {
             &ToolsetConfig::workspace(),
         )
         .expect("toolset");
-        let registry = toolset.registry.clone();
-        let profile_id = toolset.profile_id.clone();
+        let tool_set = toolset.tools.clone();
         let tools = InlineHostToolRuntime::new(ctx, toolset.catalog);
         let runner = SessionRunner::new(
             stores,
@@ -1513,20 +1502,14 @@ mod tests {
             .drive_command(DriveCommand {
                 session_id: session_id.clone(),
                 observed_at_ms: 11,
-                command: CoreAgentCommand::SetToolRegistry { registry },
+                command: CoreAgentCommand::ReplaceTools {
+                    expected_revision: Some(0),
+                    tools: tool_set,
+                },
                 max_steps: None,
             })
             .await
-            .expect("set registry");
-        runner
-            .drive_command(DriveCommand {
-                session_id: session_id.clone(),
-                observed_at_ms: 12,
-                command: CoreAgentCommand::SelectToolProfile { profile_id },
-                max_steps: None,
-            })
-            .await
-            .expect("select profile");
+            .expect("replace tools");
         runner
             .drive_command(DriveCommand {
                 session_id: session_id.clone(),
@@ -1638,8 +1621,7 @@ mod tests {
             &ToolsetConfig::workspace(),
         )
         .expect("toolset");
-        let registry = toolset.registry.clone();
-        let profile_id = toolset.profile_id.clone();
+        let tool_set = toolset.tools.clone();
         let tools = InlineHostToolRuntime::new(ctx, toolset.catalog);
         let runner = SessionRunner::new(
             stores,
@@ -1667,20 +1649,14 @@ mod tests {
             .drive_command(DriveCommand {
                 session_id: session_id.clone(),
                 observed_at_ms: 11,
-                command: CoreAgentCommand::SetToolRegistry { registry },
+                command: CoreAgentCommand::ReplaceTools {
+                    expected_revision: Some(0),
+                    tools: tool_set,
+                },
                 max_steps: None,
             })
             .await
-            .expect("set registry");
-        runner
-            .drive_command(DriveCommand {
-                session_id: session_id.clone(),
-                observed_at_ms: 12,
-                command: CoreAgentCommand::SelectToolProfile { profile_id },
-                max_steps: None,
-            })
-            .await
-            .expect("select profile");
+            .expect("replace tools");
         runner
             .drive_command(DriveCommand {
                 session_id: session_id.clone(),
@@ -1959,24 +1935,14 @@ mod tests {
             .drive_command(DriveCommand {
                 session_id: session_id.clone(),
                 observed_at_ms: 11,
-                command: CoreAgentCommand::SetToolRegistry {
-                    registry: tool_registry(),
+                command: CoreAgentCommand::ReplaceTools {
+                    expected_revision: Some(0),
+                    tools: tool_set(),
                 },
                 max_steps: None,
             })
             .await
-            .expect("set registry");
-        runner
-            .drive_command(DriveCommand {
-                session_id: session_id.clone(),
-                observed_at_ms: 12,
-                command: CoreAgentCommand::SelectToolProfile {
-                    profile_id: ToolProfileId::new("test_profile"),
-                },
-                max_steps: None,
-            })
-            .await
-            .expect("select profile");
+            .expect("replace tools");
 
         let outcome = runner
             .drive_command(DriveCommand {

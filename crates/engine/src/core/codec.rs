@@ -176,8 +176,8 @@ fn is_core_agent_event_envelope_kind(kind: &str) -> bool {
             | "forge.core.context.state_replaced"
             | "forge.core.context.compaction_requested"
             | "forge.core.context.compaction_finished"
-            | "forge.core.tool_config.registry_changed"
-            | "forge.core.tool_config.profile_selected"
+            | "forge.core.tool_config.tools_replaced"
+            | "forge.core.tool_config.tools_patched"
             | "forge.core.tool_config.default_target_set"
             | "forge.core.tool_config.default_target_cleared"
             | "forge.core.tool.batch_started"
@@ -220,8 +220,8 @@ fn core_agent_event_envelope_kind(event: &CoreAgentEvent) -> &'static str {
             ContextEvent::CompactionFinished { .. } => "forge.core.context.compaction_finished",
         },
         CoreAgentEventKind::ToolConfig(event) => match event {
-            ToolConfigEvent::RegistryChanged { .. } => "forge.core.tool_config.registry_changed",
-            ToolConfigEvent::ProfileSelected { .. } => "forge.core.tool_config.profile_selected",
+            ToolConfigEvent::ToolsReplaced { .. } => "forge.core.tool_config.tools_replaced",
+            ToolConfigEvent::ToolsPatched { .. } => "forge.core.tool_config.tools_patched",
             ToolConfigEvent::DefaultTargetSet { .. } => "forge.core.tool_config.default_target_set",
             ToolConfigEvent::DefaultTargetCleared { .. } => {
                 "forge.core.tool_config.default_target_cleared"

@@ -4,16 +4,13 @@ use engine::{
     AgentHandle, BlobRef, ContextEntryInput, ContextEntryKind, ContextMessageRole,
     CoreAdmitCommand, CoreAgentCodec, CoreAgentCommand, FunctionToolSpec, ModelProviderOptions,
     ModelSelection, ProviderApiKind, SessionId, SubmissionId, ToolChoice, ToolChoiceMode, ToolKind,
-    ToolName, ToolParallelism, ToolProfile, ToolProfileId, ToolRegistry, ToolSpec,
-    ToolTargetRequirement,
+    ToolName, ToolParallelism, ToolSpec, ToolTargetRequirement,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
 };
 use temporal_server::worker::{
     FAKE_TOOL_NAME, FakeLlm, FakeTools, default_run_config, default_session_config,
 };
 use test_support::{DriveCommand, RunnerQuiescence, RunnerStores, SessionRunner};
-
-const FAKE_TOOL_PROFILE_ID: &str = "agent_fake_tools";
 
 fn model() -> ModelSelection {
     ModelSelection {
@@ -54,7 +51,11 @@ async fn fake_llm_tool_loop_completes_a_run() {
         .put_bytes(fake_tool_input_schema())
         .await
         .expect("store schema");
-    let config = default_session_config(model());
+    let mut config = default_session_config(model());
+    config.turn.tool_choice = Some(ToolChoice {
+        mode: ToolChoiceMode::Auto,
+        disable_parallel_tool_use: Some(true),
+    });
 
     let opened = runner
         .drive_command(DriveCommand {
@@ -71,24 +72,14 @@ async fn fake_llm_tool_loop_completes_a_run() {
         .drive_command(DriveCommand {
             session_id: session_id.clone(),
             observed_at_ms: 11,
-            command: CoreAgentCommand::SetToolRegistry {
-                registry: fake_tool_registry(schema_ref),
+            command: CoreAgentCommand::ReplaceTools {
+                expected_revision: Some(0),
+                tools: fake_tool_set(schema_ref),
             },
             max_steps: Some(64),
         })
         .await
-        .expect("set registry");
-    runner
-        .drive_command(DriveCommand {
-            session_id: session_id.clone(),
-            observed_at_ms: 12,
-            command: CoreAgentCommand::SelectToolProfile {
-                profile_id: ToolProfileId::new(FAKE_TOOL_PROFILE_ID),
-            },
-            max_steps: Some(64),
-        })
-        .await
-        .expect("select profile");
+        .expect("replace tools");
 
     let input_ref = blobs
         .put_bytes(b"hello".to_vec())
@@ -119,38 +110,24 @@ fn fake_tool_input_schema() -> Vec<u8> {
     br#"{"type":"object","additionalProperties":false,"properties":{"text":{"type":"string"}},"required":["text"]}"#.to_vec()
 }
 
-fn fake_tool_registry(input_schema_ref: BlobRef) -> ToolRegistry {
+fn fake_tool_set(input_schema_ref: BlobRef) -> BTreeMap<ToolName, ToolSpec> {
     let tool_name = ToolName::new(FAKE_TOOL_NAME);
-    let profile_id = ToolProfileId::new(FAKE_TOOL_PROFILE_ID);
-    ToolRegistry {
-        tools: BTreeMap::from([(
-            tool_name.clone(),
-            ToolSpec {
-                name: tool_name.clone(),
-                kind: ToolKind::Function(FunctionToolSpec {
-                    model_name: None,
-                    description_ref: None,
-                    input_schema_ref,
-                    output_schema_ref: None,
-                    strict: Some(true),
-                    provider_options_ref: None,
-                }),
-                parallelism: ToolParallelism::ParallelSafe,
-                target_requirement: ToolTargetRequirement::None,
-            },
-        )]),
-        profiles: BTreeMap::from([(
-            profile_id.clone(),
-            ToolProfile {
-                profile_id,
-                visible_tools: vec![tool_name],
-                tool_choice: Some(ToolChoice {
-                    mode: ToolChoiceMode::Auto,
-                    disable_parallel_tool_use: Some(true),
-                }),
-            },
-        )]),
-    }
+    BTreeMap::from([(
+        tool_name.clone(),
+        ToolSpec {
+            name: tool_name.clone(),
+            kind: ToolKind::Function(FunctionToolSpec {
+                model_name: None,
+                description_ref: None,
+                input_schema_ref,
+                output_schema_ref: None,
+                strict: Some(true),
+                provider_options_ref: None,
+            }),
+            parallelism: ToolParallelism::ParallelSafe,
+            target_requirement: ToolTargetRequirement::None,
+        },
+    )])
 }
 
 #[test]

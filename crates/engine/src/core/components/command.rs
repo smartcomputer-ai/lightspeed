@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ContextEntryInput, ContextEntryKey, RunConfig, SessionConfig, SessionConfigPatch, SubmissionId,
-    ToolExecutionTarget, ToolProfileId, ToolRegistry,
+    ToolExecutionTarget, ToolName, ToolPatch, ToolSpec,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -17,11 +17,13 @@ pub enum CoreAgentCommand {
         expected_revision: Option<u64>,
         patch: SessionConfigPatch,
     },
-    SetToolRegistry {
-        registry: ToolRegistry,
+    ReplaceTools {
+        expected_revision: Option<u64>,
+        tools: BTreeMap<ToolName, ToolSpec>,
     },
-    SelectToolProfile {
-        profile_id: ToolProfileId,
+    PatchTools {
+        expected_revision: Option<u64>,
+        patch: ToolPatch,
     },
     SetDefaultToolTarget {
         target: ToolExecutionTarget,

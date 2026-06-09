@@ -44,7 +44,7 @@ pub use tooling::{
     ProviderNativeToolExecution, ProviderNativeToolSpec, RemoteMcpApprovalPolicy,
     RemoteMcpToolSpec, SecretRef, ToolCallResult, ToolCallState, ToolCallStatus, ToolChoice,
     ToolChoiceMode, ToolConfigEvent, ToolEvent, ToolExecutionTarget, ToolKind, ToolParallelism,
-    ToolProfile, ToolRegistry, ToolRoutingState, ToolSpec, ToolTargetRequirement, ToolingState,
+    ToolPatch, ToolRoutingState, ToolSpec, ToolTargetRequirement, ToolingState, validate_tool_map,
 };
 pub use turn::{
     LlmFinish, LlmGenerationFacts, LlmGenerationStatus, LlmUsage, TurnEvent, TurnOutcome,

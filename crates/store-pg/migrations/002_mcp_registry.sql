@@ -4,7 +4,7 @@
 -- - This migration intentionally creates only the MCP catalog table.
 -- - Generic secrets, OAuth clients, grants, refresh state, and token leases
 --   belong to P69 and must not be stored here.
--- - Session links are materialized into the event-sourced engine ToolRegistry;
+-- - Session links are materialized into the event-sourced engine tool set;
 --   there is no separate session_mcp_links table in this migration.
 -- - The catalog stores non-secret MCP server configuration and auth policy
 --   hints only. Runtime auth is referenced later through generic auth handles.
@@ -93,7 +93,7 @@ CREATE INDEX IF NOT EXISTS mcp_servers_auth_policy_idx
     ON mcp_servers (universe_id, auth_policy, server_id);
 
 COMMENT ON TABLE mcp_servers IS
-    'Universe-scoped remote MCP server catalog; session-visible links are materialized into engine ToolRegistry events.';
+    'Universe-scoped remote MCP server catalog; session-visible links are materialized into engine tool-set events.';
 COMMENT ON COLUMN mcp_servers.server_id IS
     'Stable universe-scoped MCP server id used by API/CLI control-plane operations.';
 COMMENT ON COLUMN mcp_servers.server_url IS

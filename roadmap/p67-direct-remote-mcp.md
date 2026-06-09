@@ -7,6 +7,8 @@
   checks, request fingerprint participation, and client-effect exclusion.
 - Provider MCP request lowering, runtime auth injection, redacted provider
   request persistence, and provider MCP output recording remain pending.
+- Tool visibility now uses the active session tool map from
+  `p67-tooling-refactor.md`; selected tool profiles are removed.
 - Direct provider-hosted MCP only: the model provider connects to public remote
   MCP servers during the model call.
 - No Forge MCP bridge, no local/on-prem tunnel support, no Forge-hosted MCP

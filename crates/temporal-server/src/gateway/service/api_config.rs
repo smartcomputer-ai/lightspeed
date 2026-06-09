@@ -85,6 +85,9 @@ pub(super) fn apply_generation_config(
             effort,
         )?;
     }
+    if let Some(tool_choice) = generation.tool_choice {
+        config.turn.tool_choice = Some(tool_choice_from_api(tool_choice)?);
+    }
     Ok(())
 }
 
@@ -157,6 +160,9 @@ pub(super) fn apply_run_start_config(
                 effort,
             )?);
         }
+        if let Some(tool_choice) = generation.tool_choice {
+            run_config.tool_choice = Some(tool_choice_from_api(tool_choice)?);
+        }
     }
     if let Some(limits) = api_config.limits {
         apply_run_limits_config(run_config, limits);
@@ -206,6 +212,10 @@ pub(super) fn turn_config_patch_from_api(
     Ok(TurnConfigPatch {
         max_output_tokens: patch.max_output_tokens.map(optional_patch_from_api),
         provider_request_defaults,
+        tool_choice: patch
+            .tool_choice
+            .map(tool_choice_patch_from_api)
+            .transpose()?,
     })
 }
 
@@ -242,6 +252,31 @@ fn host_tool_mode_from_api(mode: api::HostToolMode) -> engine::HostToolMode {
         api::HostToolMode::None => engine::HostToolMode::None,
         api::HostToolMode::ReadOnly => engine::HostToolMode::ReadOnly,
         api::HostToolMode::Edit => engine::HostToolMode::Edit,
+    }
+}
+
+fn tool_choice_from_api(choice: ToolChoiceConfig) -> Result<ToolChoice, AgentApiError> {
+    Ok(ToolChoice {
+        mode: match choice.mode {
+            ToolChoiceModeConfig::Auto => ToolChoiceMode::Auto,
+            ToolChoiceModeConfig::None => ToolChoiceMode::None,
+            ToolChoiceModeConfig::RequiredAny => ToolChoiceMode::RequiredAny,
+            ToolChoiceModeConfig::Specific { tool_id } => ToolChoiceMode::Specific {
+                tool_name: ToolName::try_new(tool_id).map_err(|error| {
+                    AgentApiError::invalid_request(format!("invalid tool choice tool id: {error}"))
+                })?,
+            },
+        },
+        disable_parallel_tool_use: choice.disable_parallel_tool_use,
+    })
+}
+
+fn tool_choice_patch_from_api(
+    patch: FieldPatch<ToolChoiceConfig>,
+) -> Result<OptionalConfigPatch<ToolChoice>, AgentApiError> {
+    match patch {
+        FieldPatch::Set(choice) => Ok(OptionalConfigPatch::Set(tool_choice_from_api(choice)?)),
+        FieldPatch::Clear => Ok(OptionalConfigPatch::Clear),
     }
 }
 

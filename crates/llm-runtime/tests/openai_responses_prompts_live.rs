@@ -382,6 +382,7 @@ fn session_config(model: ModelSelection) -> SessionConfig {
         run: run_config(),
         turn: engine::TurnConfig {
             max_output_tokens: Some(1024),
+            tool_choice: None,
             provider_request_defaults: ProviderRequestDefaults::OpenAiResponses(
                 OpenAiResponsesRequestDefaults {
                     store: Some(false),
@@ -401,6 +402,7 @@ fn run_config() -> RunConfig {
         model_override: None,
         max_output_tokens: None,
         provider_request_defaults: None,
+        tool_choice: None,
     }
 }
 

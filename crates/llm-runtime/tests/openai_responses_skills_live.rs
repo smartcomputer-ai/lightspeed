@@ -338,24 +338,14 @@ async fn openai_responses_live_selects_and_activates_the_matching_skill() {
         .drive_command(DriveCommand {
             session_id: session_id.clone(),
             observed_at_ms: 11,
-            command: CoreAgentCommand::SetToolRegistry {
-                registry: toolset.registry,
+            command: CoreAgentCommand::ReplaceTools {
+                expected_revision: Some(0),
+                tools: toolset.tools,
             },
             max_steps: None,
         })
         .await
-        .expect("set registry");
-    runner
-        .drive_command(DriveCommand {
-            session_id: session_id.clone(),
-            observed_at_ms: 12,
-            command: CoreAgentCommand::SelectToolProfile {
-                profile_id: toolset.profile_id,
-            },
-            max_steps: None,
-        })
-        .await
-        .expect("select profile");
+        .expect("replace tools");
     runner
         .drive_command(DriveCommand {
             session_id: session_id.clone(),
@@ -444,6 +434,7 @@ fn session_config(model: ModelSelection) -> SessionConfig {
         run: run_config(),
         turn: engine::TurnConfig {
             max_output_tokens: Some(1024),
+            tool_choice: None,
             provider_request_defaults: ProviderRequestDefaults::OpenAiResponses(
                 OpenAiResponsesRequestDefaults {
                     store: Some(false),
@@ -463,6 +454,7 @@ fn run_config() -> RunConfig {
         model_override: None,
         max_output_tokens: None,
         provider_request_defaults: None,
+        tool_choice: None,
     }
 }
 

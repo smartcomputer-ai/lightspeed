@@ -9,12 +9,14 @@ use std::collections::BTreeMap;
 use api::{
     AgentApiError, CompactionPolicyInput, ContextConfigInput, ContextEntryInputView,
     ContextEntryKindView, ContextMessageRoleView, ContextView, EventCursor, EventJoinsView,
-    GenerationConfig, HostToolMode as ApiHostToolMode, InputItem, ModelConfig, ReasoningEffort,
-    RunDefaultsConfig, RunStatus as ApiRunStatus, RunView, SessionConfigView, SessionEventKindView,
-    SessionEventView, SessionItemView, SessionStatus as ApiSessionStatus, SessionView,
-    TokenEstimateQualityView, TokenEstimateView, ToolBatchView, ToolCallDisplayGroup,
-    ToolCallDisplayView, ToolCallEventView, ToolCallView, ToolConfigView, ToolEffectView,
-    ToolExecutionTargetView, ToolItemStatus,
+    GenerationConfig, HostToolMode as ApiHostToolMode, InputItem, ModelConfig,
+    ProviderNativeToolExecutionView, ReasoningEffort, RunDefaultsConfig, RunStatus as ApiRunStatus,
+    RunView, SessionConfigView, SessionEventKindView, SessionEventView, SessionItemView,
+    SessionStatus as ApiSessionStatus, SessionView, TokenEstimateQualityView, TokenEstimateView,
+    ToolBatchView, ToolCallDisplayGroup, ToolCallDisplayView, ToolCallEventView, ToolCallView,
+    ToolChoiceConfig, ToolChoiceModeConfig, ToolConfigView, ToolEffectView,
+    ToolExecutionTargetView, ToolItemStatus, ToolKindView, ToolParallelismView, ToolSetView,
+    ToolTargetRequirementView, ToolView,
 };
 use engine::{ApplyEvent, ToolExecutionTarget};
 use engine::{
@@ -24,8 +26,9 @@ use engine::{
     CoreAgentEventKind, CoreAgentJoins, CoreAgentLifecycleEvent, CoreAgentState, CoreAgentStatus,
     CoreApplyEvent, EventSeq, LlmGenerationStatus, ModelProviderOptions, ModelSelection,
     ObservedToolCall, ProviderApiKind, ProviderRequestDefaults, RunEvent, RunFailure, RunId,
-    RunStatus, SessionConfig, SessionId, SteeringId, ToolBatchId, ToolCallStatus, ToolConfigEvent,
-    ToolEvent, TurnEvent, TurnId,
+    RunStatus, SessionConfig, SessionId, SteeringId, ToolBatchId, ToolCallStatus, ToolChoice,
+    ToolChoiceMode, ToolConfigEvent, ToolEvent, ToolKind, ToolParallelism, ToolSpec,
+    ToolTargetRequirement, TurnEvent, TurnId,
     storage::{
         BlobStore, BlobStoreError, DynamicSessionEntry, ReadSessionEvents, SessionRecord,
         SessionStore, SessionStoreError,
@@ -89,6 +92,10 @@ impl<'a> CoreAgentProjector<'a> {
             active_context: self
                 .project_context_state(params.state.context.revision, &params.state.context.entries)
                 .await?,
+            active_tools: tool_set_to_api(
+                params.state.tooling.revision,
+                &params.state.tooling.tools,
+            ),
             vfs_mounts: Vec::new(),
         })
     }
@@ -235,6 +242,7 @@ impl<'a> CoreAgentProjector<'a> {
             generation: GenerationConfig {
                 max_output_tokens: config.turn.max_output_tokens,
                 reasoning_effort: reasoning_effort_to_api(&config.turn.provider_request_defaults),
+                tool_choice: config.turn.tool_choice.as_ref().map(tool_choice_to_api),
             },
             context: ContextConfigInput {
                 compaction: config
@@ -451,14 +459,29 @@ impl<'a> CoreAgentProjector<'a> {
                 }),
             },
             CoreAgentEventKind::ToolConfig(event) => match event {
-                ToolConfigEvent::RegistryChanged { .. } => {
-                    Ok(SessionEventKindView::ToolRegistryChanged)
-                }
-                ToolConfigEvent::ProfileSelected { profile_id } => {
-                    Ok(SessionEventKindView::ToolProfileSelected {
-                        profile_id: profile_id.as_str().to_owned(),
+                ToolConfigEvent::ToolsReplaced { base_revision, .. } => {
+                    Ok(SessionEventKindView::ToolsReplaced {
+                        base_revision: *base_revision,
+                        revision: tool_event_revision(*base_revision)?,
                     })
                 }
+                ToolConfigEvent::ToolsPatched {
+                    base_revision,
+                    patch,
+                } => Ok(SessionEventKindView::ToolsPatched {
+                    base_revision: *base_revision,
+                    revision: tool_event_revision(*base_revision)?,
+                    upserted: patch
+                        .upsert
+                        .iter()
+                        .map(|tool| tool.name.as_str().to_owned())
+                        .collect(),
+                    removed: patch
+                        .remove
+                        .iter()
+                        .map(|tool_name| tool_name.as_str().to_owned())
+                        .collect(),
+                }),
                 ToolConfigEvent::DefaultTargetSet { target } => {
                     Ok(SessionEventKindView::ToolDefaultTargetChanged {
                         namespace: target.namespace.clone(),
@@ -859,6 +882,12 @@ fn context_event_revision(base_revision: u64) -> Result<u64, AgentApiError> {
         .ok_or_else(|| AgentApiError::internal("context event revision overflow"))
 }
 
+fn tool_event_revision(base_revision: u64) -> Result<u64, AgentApiError> {
+    base_revision
+        .checked_add(1)
+        .ok_or_else(|| AgentApiError::internal("tool event revision overflow"))
+}
+
 fn context_removal_reason_to_api(reason: &ContextRemovalReason) -> &'static str {
     match reason {
         ContextRemovalReason::Pruned => "pruned",
@@ -981,6 +1010,20 @@ fn reasoning_effort_to_api(defaults: &ProviderRequestDefaults) -> Option<Reasoni
     }
 }
 
+fn tool_choice_to_api(choice: &ToolChoice) -> ToolChoiceConfig {
+    ToolChoiceConfig {
+        mode: match &choice.mode {
+            ToolChoiceMode::Auto => ToolChoiceModeConfig::Auto,
+            ToolChoiceMode::None => ToolChoiceModeConfig::None,
+            ToolChoiceMode::RequiredAny => ToolChoiceModeConfig::RequiredAny,
+            ToolChoiceMode::Specific { tool_name } => ToolChoiceModeConfig::Specific {
+                tool_id: tool_name.as_str().to_owned(),
+            },
+        },
+        disable_parallel_tool_use: choice.disable_parallel_tool_use,
+    }
+}
+
 fn effective_web_search_enabled(config: &SessionConfig) -> bool {
     config.model.api_kind == ProviderApiKind::OpenAiResponses
         && config.tools.web_search.unwrap_or(true)
@@ -999,6 +1042,104 @@ fn host_tool_mode_to_api(mode: engine::HostToolMode) -> ApiHostToolMode {
         engine::HostToolMode::None => ApiHostToolMode::None,
         engine::HostToolMode::ReadOnly => ApiHostToolMode::ReadOnly,
         engine::HostToolMode::Edit => ApiHostToolMode::Edit,
+    }
+}
+
+fn tool_set_to_api(revision: u64, tools: &BTreeMap<engine::ToolName, ToolSpec>) -> ToolSetView {
+    ToolSetView {
+        revision,
+        tools: tools.values().map(tool_to_api).collect(),
+    }
+}
+
+fn tool_to_api(tool: &ToolSpec) -> ToolView {
+    ToolView {
+        tool_id: tool.name.as_str().to_owned(),
+        kind: tool_kind_to_api(&tool.kind),
+        parallelism: tool_parallelism_to_api(tool.parallelism),
+        target_requirement: tool_target_requirement_to_api(&tool.target_requirement),
+    }
+}
+
+fn tool_kind_to_api(kind: &ToolKind) -> ToolKindView {
+    match kind {
+        ToolKind::Function(function) => ToolKindView::Function {
+            model_name: function
+                .model_name
+                .as_ref()
+                .map(|name| name.as_str().to_owned()),
+            description_ref: function
+                .description_ref
+                .as_ref()
+                .map(|blob_ref| blob_ref.as_str().to_owned()),
+            input_schema_ref: function.input_schema_ref.as_str().to_owned(),
+            output_schema_ref: function
+                .output_schema_ref
+                .as_ref()
+                .map(|blob_ref| blob_ref.as_str().to_owned()),
+            strict: function.strict,
+            provider_options_ref: function
+                .provider_options_ref
+                .as_ref()
+                .map(|blob_ref| blob_ref.as_str().to_owned()),
+        },
+        ToolKind::ProviderNative(native) => ToolKindView::ProviderNative {
+            api_kind: api_kind_to_str(&native.api_kind).to_owned(),
+            native_tool_ref: native.native_tool_ref.as_str().to_owned(),
+            execution: match native.execution {
+                engine::ProviderNativeToolExecution::ProviderHosted => {
+                    ProviderNativeToolExecutionView::ProviderHosted
+                }
+                engine::ProviderNativeToolExecution::ClientEffect => {
+                    ProviderNativeToolExecutionView::ClientEffect
+                }
+            },
+        },
+        ToolKind::RemoteMcp(remote_mcp) => ToolKindView::RemoteMcp {
+            server_label: remote_mcp.server_label.clone(),
+            server_url: remote_mcp.server_url.clone(),
+            description_ref: remote_mcp
+                .description_ref
+                .as_ref()
+                .map(|blob_ref| blob_ref.as_str().to_owned()),
+            allowed_tools: remote_mcp.allowed_tools.clone(),
+            approval: match &remote_mcp.approval {
+                engine::RemoteMcpApprovalPolicy::ProviderDefault => {
+                    api::RemoteMcpApprovalPolicy::ProviderDefault
+                }
+                engine::RemoteMcpApprovalPolicy::Always => api::RemoteMcpApprovalPolicy::Always,
+                engine::RemoteMcpApprovalPolicy::Never => api::RemoteMcpApprovalPolicy::Never,
+            },
+            defer_loading: remote_mcp.defer_loading,
+            auth_ref: remote_mcp
+                .auth_ref
+                .as_ref()
+                .map(|auth_ref| api::SecretRefView {
+                    namespace: auth_ref.namespace.clone(),
+                    id: auth_ref.id.clone(),
+                }),
+        },
+    }
+}
+
+fn tool_parallelism_to_api(parallelism: ToolParallelism) -> ToolParallelismView {
+    match parallelism {
+        ToolParallelism::Exclusive => ToolParallelismView::Exclusive,
+        ToolParallelism::ParallelSafe => ToolParallelismView::ParallelSafe,
+    }
+}
+
+fn tool_target_requirement_to_api(
+    requirement: &ToolTargetRequirement,
+) -> ToolTargetRequirementView {
+    match requirement {
+        ToolTargetRequirement::None => ToolTargetRequirementView::None,
+        ToolTargetRequirement::Optional { namespace } => ToolTargetRequirementView::Optional {
+            namespace: namespace.clone(),
+        },
+        ToolTargetRequirement::Required { namespace } => ToolTargetRequirementView::Required {
+            namespace: namespace.clone(),
+        },
     }
 }
 

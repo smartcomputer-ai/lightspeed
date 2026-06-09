@@ -3,8 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use engine::{
-    OpenAiResponsesRequestDefaults, ProviderApiKind, ProviderRequestDefaults, ToolChoice, ToolName,
-    ToolProfile, ToolProfileId, ToolRegistry,
+    OpenAiResponsesRequestDefaults, ProviderApiKind, ProviderRequestDefaults, ToolName, ToolSpec,
 };
 
 use crate::{
@@ -18,25 +17,19 @@ use crate::{
     },
 };
 
-pub const DEFAULT_TOOLSET_PROFILE_ID: &str = "default_tools";
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ToolsetConfig {
-    pub profile_id: ToolProfileId,
     pub host: HostToolsetConfig,
     pub openai_web_search: OpenAiResponsesWebSearchConfig,
     pub web_fetch: WebFetchToolConfig,
-    pub tool_choice: Option<ToolChoice>,
 }
 
 impl ToolsetConfig {
     pub fn empty() -> Self {
         Self {
-            profile_id: ToolProfileId::new(DEFAULT_TOOLSET_PROFILE_ID),
             host: HostToolsetConfig::disabled(),
             openai_web_search: OpenAiResponsesWebSearchConfig::default(),
             web_fetch: WebFetchToolConfig::default(),
-            tool_choice: None,
         }
     }
 
@@ -308,8 +301,7 @@ impl ProviderRequestDefaultsPatch {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResolvedToolset {
-    pub profile_id: ToolProfileId,
-    pub registry: ToolRegistry,
+    pub tools: BTreeMap<ToolName, ToolSpec>,
     pub documents: Vec<ToolDocument>,
     pub catalog: ToolCatalog,
     pub provider_request_defaults_patch: ProviderRequestDefaultsPatch,
@@ -319,7 +311,7 @@ pub fn resolve_toolset(
     env: ToolsetEnvironment<'_>,
     config: &ToolsetConfig,
 ) -> ToolResult<ResolvedToolset> {
-    let mut builder = ToolsetBuilder::new(config.profile_id.clone(), config.tool_choice.clone());
+    let mut builder = ToolsetBuilder::new();
 
     if config.host.enabled() {
         builder.add_host_tools(env.target, &config.host)?;
@@ -357,9 +349,7 @@ pub fn resolve_toolset(
 }
 
 struct ToolsetBuilder {
-    profile_id: ToolProfileId,
-    tool_choice: Option<ToolChoice>,
-    registry: ToolRegistry,
+    tools: BTreeMap<ToolName, ToolSpec>,
     catalog: ToolCatalog,
     documents_by_ref: BTreeMap<engine::BlobRef, ToolDocument>,
     visible_tools: Vec<ToolName>,
@@ -368,11 +358,9 @@ struct ToolsetBuilder {
 }
 
 impl ToolsetBuilder {
-    fn new(profile_id: ToolProfileId, tool_choice: Option<ToolChoice>) -> Self {
+    fn new() -> Self {
         Self {
-            profile_id,
-            tool_choice,
-            registry: ToolRegistry::default(),
+            tools: BTreeMap::new(),
             catalog: ToolCatalog::new(),
             documents_by_ref: BTreeMap::new(),
             visible_tools: Vec::new(),
@@ -427,22 +415,13 @@ impl ToolsetBuilder {
                 .entry(document.blob_ref.clone())
                 .or_insert(document);
         }
-        self.registry.tools.insert(tool_name.clone(), bundle.spec);
+        self.tools.insert(tool_name.clone(), bundle.spec);
         self.visible_tools.push(tool_name);
     }
 
-    fn finish(mut self) -> ResolvedToolset {
-        self.registry.profiles.insert(
-            self.profile_id.clone(),
-            ToolProfile {
-                profile_id: self.profile_id.clone(),
-                visible_tools: self.visible_tools,
-                tool_choice: self.tool_choice,
-            },
-        );
+    fn finish(self) -> ResolvedToolset {
         ResolvedToolset {
-            profile_id: self.profile_id,
-            registry: self.registry,
+            tools: self.tools,
             documents: self.documents_by_ref.into_values().collect(),
             catalog: self.catalog,
             provider_request_defaults_patch: self.provider_request_defaults_patch,
@@ -467,12 +446,8 @@ mod tests {
 
     fn visible_names(toolset: &ResolvedToolset) -> Vec<String> {
         toolset
-            .registry
-            .profiles
-            .get(&toolset.profile_id)
-            .expect("profile")
-            .visible_tools
-            .iter()
+            .tools
+            .keys()
             .map(|name| name.as_str().to_owned())
             .collect()
     }
@@ -490,13 +465,13 @@ mod tests {
         assert_eq!(
             visible_names(&toolset),
             vec![
-                "read_file",
-                "write_file",
-                "edit_file",
                 "apply_patch",
-                "grep",
+                "edit_file",
                 "glob",
-                "list_dir"
+                "grep",
+                "list_dir",
+                "read_file",
+                "write_file"
             ]
         );
         assert!(toolset.catalog.get(&ToolName::new("read_file")).is_some());
@@ -539,7 +514,7 @@ mod tests {
 
         assert_eq!(
             visible_names(&toolset),
-            vec!["Read", "Write", "Edit", "Grep", "Glob"]
+            vec!["Edit", "Glob", "Grep", "Read", "Write"]
         );
     }
 
@@ -619,7 +594,6 @@ mod tests {
                 .is_some()
         );
         let spec = toolset
-            .registry
             .tools
             .get(&ToolName::new(WEB_FETCH_TOOL_NAME))
             .expect("web_fetch spec");

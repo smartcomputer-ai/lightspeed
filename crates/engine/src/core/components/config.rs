@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     CoreAgentState, DomainError, ModelProviderOptions, ModelSelection, ProviderApiKind,
-    ProviderRequestDefaults,
+    ProviderRequestDefaults, ToolChoice, ToolChoiceMode,
 };
 
 const MIN_OPENAI_RESPONSES_COMPACT_THRESHOLD: u32 = 1000;
@@ -37,6 +37,8 @@ pub(crate) fn validate_config_update_for_state(
     config.validate_provider_compatibility()?;
     validate_session_api_kind_is_pinned(&current.model.api_kind, &config.model.api_kind)?;
     validate_active_context_api_kind(state, &config.model.api_kind)?;
+    validate_tool_choice_for_active_tools(state, config.turn.tool_choice.as_ref())?;
+    validate_tool_choice_for_active_tools(state, config.run.tool_choice.as_ref())?;
     Ok(())
 }
 
@@ -104,6 +106,8 @@ pub struct RunConfigPatch {
     pub max_output_tokens: Option<OptionalConfigPatch<u32>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_request_defaults: Option<OptionalConfigPatch<ProviderRequestDefaults>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<OptionalConfigPatch<ToolChoice>>,
 }
 
 impl RunConfigPatch {
@@ -116,6 +120,7 @@ impl RunConfigPatch {
             &mut config.provider_request_defaults,
             &self.provider_request_defaults,
         );
+        apply_optional_config_patch(&mut config.tool_choice, &self.tool_choice);
     }
 
     pub fn is_empty(&self) -> bool {
@@ -124,6 +129,7 @@ impl RunConfigPatch {
             && self.model_override.is_none()
             && self.max_output_tokens.is_none()
             && self.provider_request_defaults.is_none()
+            && self.tool_choice.is_none()
     }
 }
 
@@ -133,6 +139,8 @@ pub struct TurnConfigPatch {
     pub max_output_tokens: Option<OptionalConfigPatch<u32>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_request_defaults: Option<ProviderRequestDefaults>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<OptionalConfigPatch<ToolChoice>>,
 }
 
 impl TurnConfigPatch {
@@ -141,10 +149,13 @@ impl TurnConfigPatch {
         if let Some(defaults) = self.provider_request_defaults.clone() {
             config.provider_request_defaults = defaults;
         }
+        apply_optional_config_patch(&mut config.tool_choice, &self.tool_choice);
     }
 
     pub fn is_empty(&self) -> bool {
-        self.max_output_tokens.is_none() && self.provider_request_defaults.is_none()
+        self.max_output_tokens.is_none()
+            && self.provider_request_defaults.is_none()
+            && self.tool_choice.is_none()
     }
 }
 
@@ -207,6 +218,8 @@ pub struct RunConfig {
     pub max_output_tokens: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_request_defaults: Option<ProviderRequestDefaults>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoice>,
 }
 
 impl RunConfig {
@@ -240,12 +253,35 @@ pub(crate) fn validate_run_config_for_state(
     let config = current_config(state)?;
     run_config.validate_provider_compatibility(&config.model.api_kind)?;
     validate_active_context_api_kind(state, &config.model.api_kind)?;
+    validate_tool_choice_for_active_tools(state, run_config.tool_choice.as_ref())?;
     Ok(())
+}
+
+fn validate_tool_choice_for_active_tools(
+    state: &CoreAgentState,
+    tool_choice: Option<&ToolChoice>,
+) -> Result<(), DomainError> {
+    let Some(ToolChoice {
+        mode: ToolChoiceMode::Specific { tool_name },
+        ..
+    }) = tool_choice
+    else {
+        return Ok(());
+    };
+    if state.tooling.tools.contains_key(tool_name) {
+        Ok(())
+    } else {
+        Err(DomainError::InvariantViolation(format!(
+            "tool_choice references missing active tool {}",
+            tool_name
+        )))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TurnConfig {
     pub max_output_tokens: Option<u32>,
+    pub tool_choice: Option<ToolChoice>,
     pub provider_request_defaults: ProviderRequestDefaults,
 }
 
@@ -453,6 +489,7 @@ mod tests {
             run: RunConfig::default(),
             turn: TurnConfig {
                 max_output_tokens: None,
+                tool_choice: None,
                 provider_request_defaults: ProviderRequestDefaults::None,
             },
             context: ContextConfig { compaction },

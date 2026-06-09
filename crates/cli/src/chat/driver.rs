@@ -736,8 +736,8 @@ impl ChatSessionDriver {
             | SessionEventKindView::SkillCatalogSet { .. }
             | SessionEventKindView::SkillActivationsSet { .. }
             | SessionEventKindView::TurnCompleted { .. }
-            | SessionEventKindView::ToolRegistryChanged
-            | SessionEventKindView::ToolProfileSelected { .. }
+            | SessionEventKindView::ToolsReplaced { .. }
+            | SessionEventKindView::ToolsPatched { .. }
             | SessionEventKindView::ToolDefaultTargetChanged { .. } => {}
         }
         events
@@ -1345,6 +1345,7 @@ fn generation_config(settings: &ChatDraftSettings) -> GenerationConfig {
     GenerationConfig {
         max_output_tokens: settings.max_tokens,
         reasoning_effort: api_reasoning_effort(settings),
+        tool_choice: None,
     }
 }
 
@@ -1672,6 +1673,7 @@ mod tests {
                 ],
             }],
             active_context: api::ContextView::default(),
+            active_tools: api::ToolSetView::default(),
             vfs_mounts: Vec::new(),
         };
 
@@ -1768,6 +1770,7 @@ mod tests {
                 tool_batches: Vec::new(),
             }],
             active_context: api::ContextView::default(),
+            active_tools: api::ToolSetView::default(),
             vfs_mounts: Vec::new(),
         };
         let settings = ChatDraftSettings {
@@ -1813,6 +1816,7 @@ mod tests {
                 tool_batches: Vec::new(),
             }],
             active_context: api::ContextView::default(),
+            active_tools: api::ToolSetView::default(),
             vfs_mounts: Vec::new(),
         };
         let settings = ChatDraftSettings {

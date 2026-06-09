@@ -9,7 +9,6 @@ impl GatewayAgentApi {
         &self,
         session_id: &SessionId,
         expected_tool_ids: BTreeSet<ToolName>,
-        expected_profile_id: Option<ToolProfileId>,
         baseline_failures: usize,
     ) -> Result<(SessionView, Vec<api::SessionMcpLinkView>), AgentApiError> {
         let started = Instant::now();
@@ -33,13 +32,10 @@ impl GatewayAgentApi {
             }
 
             let loaded = self.load_session_state(session_id).await?;
-            let actual_tool_ids = linked_session_mcp_tool_ids(&loaded.state.tooling.registry);
-            let profile_ready = expected_profile_id.as_ref().is_none_or(|profile_id| {
-                loaded.state.tooling.selected_profile_id.as_ref() == Some(profile_id)
-            });
-            if actual_tool_ids == expected_tool_ids && profile_ready {
+            let actual_tool_ids = linked_session_mcp_tool_ids(&loaded.state.tooling.tools);
+            if actual_tool_ids == expected_tool_ids {
                 let session = self.project_session_by_id(session_id).await?;
-                let links = linked_session_mcp(&loaded.state.tooling.registry);
+                let links = linked_session_mcp(&loaded.state.tooling.tools);
                 return Ok((session, links));
             }
             tokio::time::sleep(self.poll_interval).await;
@@ -137,11 +133,10 @@ pub(super) struct SessionMcpLinkDraft {
 }
 
 pub(super) fn apply_session_mcp_link(
-    registry: &mut engine::ToolRegistry,
-    selected_profile_id: Option<&ToolProfileId>,
+    tools: &BTreeMap<ToolName, engine::ToolSpec>,
     draft: SessionMcpLinkDraft,
-) -> Result<ToolProfileId, AgentApiError> {
-    if let Some(existing) = registry.tools.get(&draft.tool_name) {
+) -> Result<engine::ToolPatch, AgentApiError> {
+    if let Some(existing) = tools.get(&draft.tool_name) {
         if !matches!(existing.kind, engine::ToolKind::RemoteMcp(_)) {
             return Err(AgentApiError::conflict(format!(
                 "tool id already exists and is not a remote MCP link: {}",
@@ -150,44 +145,24 @@ pub(super) fn apply_session_mcp_link(
         }
     }
 
-    let profile_id = selected_profile_id
-        .filter(|profile_id| registry.profiles.contains_key(*profile_id))
-        .cloned()
-        .unwrap_or_else(|| ToolProfileId::new(tools::toolset::DEFAULT_TOOLSET_PROFILE_ID));
-
-    registry.tools.insert(
-        draft.tool_name.clone(),
-        engine::ToolSpec {
+    let patch = engine::ToolPatch {
+        upsert: vec![engine::ToolSpec {
             name: draft.tool_name.clone(),
             kind: engine::ToolKind::RemoteMcp(draft.spec),
             parallelism: engine::ToolParallelism::ParallelSafe,
             target_requirement: engine::ToolTargetRequirement::None,
-        },
-    );
-    let profile = registry
-        .profiles
-        .entry(profile_id.clone())
-        .or_insert_with(|| engine::ToolProfile {
-            profile_id: profile_id.clone(),
-            visible_tools: Vec::new(),
-            tool_choice: None,
-        });
-    if !profile
-        .visible_tools
-        .iter()
-        .any(|tool_name| tool_name == &draft.tool_name)
-    {
-        profile.visible_tools.push(draft.tool_name);
-    }
-    validate_mcp_registry(registry)?;
-    Ok(profile_id)
+        }],
+        remove: Vec::new(),
+    };
+    validate_mcp_patch(tools, &patch)?;
+    Ok(patch)
 }
 
 pub(super) fn remove_session_mcp_link(
-    registry: &mut engine::ToolRegistry,
+    tools: &BTreeMap<ToolName, engine::ToolSpec>,
     tool_name: &ToolName,
-) -> Result<(), AgentApiError> {
-    let tool = registry.tools.get(tool_name).ok_or_else(|| {
+) -> Result<engine::ToolPatch, AgentApiError> {
+    let tool = tools.get(tool_name).ok_or_else(|| {
         AgentApiError::not_found(format!("session MCP link not found: {tool_name}"))
     })?;
     if !matches!(tool.kind, engine::ToolKind::RemoteMcp(_)) {
@@ -196,16 +171,18 @@ pub(super) fn remove_session_mcp_link(
         )));
     }
 
-    registry.tools.remove(tool_name);
-    for profile in registry.profiles.values_mut() {
-        profile.visible_tools.retain(|visible| visible != tool_name);
-    }
-    validate_mcp_registry(registry)
+    let patch = engine::ToolPatch {
+        upsert: Vec::new(),
+        remove: vec![tool_name.clone()],
+    };
+    validate_mcp_patch(tools, &patch)?;
+    Ok(patch)
 }
 
-pub(super) fn linked_session_mcp(registry: &engine::ToolRegistry) -> Vec<api::SessionMcpLinkView> {
-    registry
-        .tools
+pub(super) fn linked_session_mcp(
+    tools: &BTreeMap<ToolName, engine::ToolSpec>,
+) -> Vec<api::SessionMcpLinkView> {
+    tools
         .iter()
         .filter_map(|(tool_name, tool)| {
             let engine::ToolKind::RemoteMcp(spec) = &tool.kind else {
@@ -227,9 +204,10 @@ pub(super) fn linked_session_mcp(registry: &engine::ToolRegistry) -> Vec<api::Se
         .collect()
 }
 
-pub(super) fn linked_session_mcp_tool_ids(registry: &engine::ToolRegistry) -> BTreeSet<ToolName> {
-    registry
-        .tools
+pub(super) fn linked_session_mcp_tool_ids(
+    tools: &BTreeMap<ToolName, engine::ToolSpec>,
+) -> BTreeSet<ToolName> {
+    tools
         .iter()
         .filter_map(|(tool_name, tool)| match &tool.kind {
             engine::ToolKind::RemoteMcp(_) => Some(tool_name.clone()),
@@ -303,9 +281,13 @@ fn auth_ref_for_link(
     }
 }
 
-fn validate_mcp_registry(registry: &engine::ToolRegistry) -> Result<(), AgentApiError> {
-    registry
-        .validate()
+fn validate_mcp_patch(
+    tools: &BTreeMap<ToolName, engine::ToolSpec>,
+    patch: &engine::ToolPatch,
+) -> Result<(), AgentApiError> {
+    patch
+        .apply_to(tools)
+        .map(|_| ())
         .map_err(|error| AgentApiError::invalid_request(error.to_string()))
 }
 

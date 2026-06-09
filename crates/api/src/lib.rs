@@ -18,6 +18,7 @@ pub const PROTOCOL_VERSION: &str = "forge.agent.api.v1";
 pub const METHOD_INITIALIZE: &str = "initialize";
 pub const METHOD_SESSION_START: &str = "session/start";
 pub const METHOD_SESSION_UPDATE: &str = "session/update";
+pub const METHOD_SESSION_TOOLS_UPDATE: &str = "session/tools/update";
 pub const METHOD_SESSION_READ: &str = "session/read";
 pub const METHOD_SESSION_EVENTS_READ: &str = "session/events/read";
 pub const METHOD_SESSION_CLOSE: &str = "session/close";
@@ -119,6 +120,11 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: SessionUpdateParams,
     ) -> Result<AgentApiOutcome<SessionUpdateResponse>, AgentApiError>;
+
+    async fn update_session_tools(
+        &self,
+        params: SessionToolsUpdateParams,
+    ) -> Result<AgentApiOutcome<SessionToolsUpdateResponse>, AgentApiError>;
 
     async fn read_session(
         &self,
@@ -377,6 +383,29 @@ pub struct GenerationConfig {
     pub max_output_tokens: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<ReasoningEffort>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoiceConfig>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolChoiceConfig {
+    pub mode: ToolChoiceModeConfig,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disable_parallel_tool_use: Option<bool>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ToolChoiceModeConfig {
+    Auto,
+    None,
+    RequiredAny,
+    Specific { tool_id: String },
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -475,6 +504,8 @@ pub struct GenerationConfigPatch {
     pub max_output_tokens: Option<FieldPatch<u32>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<ReasoningEffort>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<FieldPatch<ToolChoiceConfig>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -508,6 +539,133 @@ pub struct ToolConfigPatchInput {
 #[serde(rename_all = "camelCase")]
 pub struct SessionUpdateResponse {
     pub session: SessionView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionToolsUpdateParams {
+    pub session_id: SessionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_tools_revision: Option<u64>,
+    pub update: ToolSetUpdateInput,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ToolSetUpdateInput {
+    Replace {
+        #[serde(default)]
+        tools: Vec<ToolView>,
+    },
+    Patch {
+        #[serde(default)]
+        upsert: Vec<ToolView>,
+        #[serde(default)]
+        remove: Vec<String>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionToolsUpdateResponse {
+    pub session: SessionView,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolSetView {
+    pub revision: u64,
+    #[serde(default)]
+    pub tools: Vec<ToolView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolView {
+    pub tool_id: String,
+    pub kind: ToolKindView,
+    #[serde(default)]
+    pub parallelism: ToolParallelismView,
+    #[serde(default)]
+    pub target_requirement: ToolTargetRequirementView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ToolKindView {
+    Function {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model_name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        description_ref: Option<String>,
+        input_schema_ref: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output_schema_ref: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        strict: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider_options_ref: Option<String>,
+    },
+    ProviderNative {
+        api_kind: String,
+        native_tool_ref: String,
+        execution: ProviderNativeToolExecutionView,
+    },
+    RemoteMcp {
+        server_label: String,
+        server_url: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        description_ref: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        allowed_tools: Option<Vec<String>>,
+        #[serde(default)]
+        approval: RemoteMcpApprovalPolicy,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        defer_loading: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        auth_ref: Option<SecretRefView>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProviderNativeToolExecutionView {
+    #[default]
+    ProviderHosted,
+    ClientEffect,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ToolParallelismView {
+    Exclusive,
+    #[default]
+    ParallelSafe,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ToolTargetRequirementView {
+    #[default]
+    None,
+    Optional {
+        namespace: String,
+    },
+    Required {
+        namespace: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -719,9 +877,15 @@ pub enum SessionEventKindView {
     SkillActivationsSet {
         skill_ids: Vec<String>,
     },
-    ToolRegistryChanged,
-    ToolProfileSelected {
-        profile_id: String,
+    ToolsReplaced {
+        base_revision: u64,
+        revision: u64,
+    },
+    ToolsPatched {
+        base_revision: u64,
+        revision: u64,
+        upserted: Vec<String>,
+        removed: Vec<String>,
     },
     ToolDefaultTargetChanged {
         namespace: String,
@@ -1459,6 +1623,8 @@ pub struct SessionView {
     #[serde(default)]
     pub runs: Vec<RunView>,
     pub active_context: ContextView,
+    #[serde(default)]
+    pub active_tools: ToolSetView,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub vfs_mounts: Vec<VfsMountView>,
 }
@@ -1942,6 +2108,12 @@ pub async fn dispatch_json_rpc(
             Ok(params) => json_rpc_outcome(id, service.update_session(params).await),
             Err(error) => JsonRpcResponse::failure(id, error),
         },
+        METHOD_SESSION_TOOLS_UPDATE => {
+            match json_rpc_params::<SessionToolsUpdateParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.update_session_tools(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
         METHOD_SESSION_READ => match json_rpc_params::<SessionReadParams>(request.params) {
             Ok(params) => json_rpc_outcome(id, service.read_session(params).await),
             Err(error) => JsonRpcResponse::failure(id, error),
@@ -2252,6 +2424,33 @@ mod tests {
         assert_eq!(
             response.result.expect("result")["result"]["session"]["id"],
             json!("session_1")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_session_tools_update() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_SESSION_TOOLS_UPDATE.to_owned(),
+                params: Some(json!({
+                    "sessionId": "session_1",
+                    "expectedToolsRevision": 4,
+                    "update": {
+                        "type": "patch",
+                        "upsert": [],
+                        "remove": []
+                    }
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["session"]["activeTools"]["revision"],
+            json!(5)
         );
     }
 
@@ -2963,6 +3162,15 @@ mod tests {
             }))
         }
 
+        async fn update_session_tools(
+            &self,
+            params: SessionToolsUpdateParams,
+        ) -> Result<AgentApiOutcome<SessionToolsUpdateResponse>, AgentApiError> {
+            let mut session = test_session(params.session_id, SessionStatus::Idle);
+            session.active_tools.revision = params.expected_tools_revision.unwrap_or(0) + 1;
+            Ok(AgentApiOutcome::new(SessionToolsUpdateResponse { session }))
+        }
+
         async fn read_session(
             &self,
             _params: SessionReadParams,
@@ -3362,6 +3570,7 @@ mod tests {
             updated_at_ms: 2,
             runs: Vec::new(),
             active_context: ContextView::default(),
+            active_tools: ToolSetView::default(),
             vfs_mounts: Vec::new(),
         }
     }

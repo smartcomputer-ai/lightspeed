@@ -18,7 +18,7 @@ use engine::{
     AgentHandle, ContextConfig, ContextEntryInput, ContextEntryKey, ContextEntryKind,
     ContextMessageRole, CoreAgentCommand, ModelProviderOptions, ModelSelection,
     OpenAiResponsesRequestDefaults, ProviderApiKind, ProviderRequestDefaults, RunConfig,
-    SessionConfig, SessionId, ToolExecutionTarget, ToolProfileId, ToolRegistry, TurnConfig,
+    SessionConfig, SessionId, ToolExecutionTarget, ToolName, ToolSpec, TurnConfig,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
 };
 use llm_clients::ApiResponse;
@@ -443,8 +443,7 @@ struct EvalRuntime {
     blobs: Arc<InMemoryBlobStore>,
     config: SessionConfig,
     instructions_ref: engine::BlobRef,
-    tool_registry: ToolRegistry,
-    tool_profile_id: ToolProfileId,
+    tool_set: BTreeMap<ToolName, ToolSpec>,
     default_tool_target: ToolExecutionTarget,
     tool_id_by_name: BTreeMap<String, String>,
     diagnostics: Arc<LlmDiagnostics>,
@@ -479,8 +478,9 @@ impl EvalRuntime {
         .await?;
         self.drive(
             session_id.clone(),
-            CoreAgentCommand::SetToolRegistry {
-                registry: self.tool_registry.clone(),
+            CoreAgentCommand::ReplaceTools {
+                expected_revision: Some(0),
+                tools: self.tool_set.clone(),
             },
             12,
         )
@@ -491,14 +491,6 @@ impl EvalRuntime {
                 target: self.default_tool_target.clone(),
             },
             13,
-        )
-        .await?;
-        self.drive(
-            session_id.clone(),
-            CoreAgentCommand::SelectToolProfile {
-                profile_id: self.tool_profile_id.clone(),
-            },
-            14,
         )
         .await?;
         Ok(())
@@ -703,8 +695,7 @@ async fn build_runtime(
         blobs,
         config: default_config,
         instructions_ref,
-        tool_registry: host_profile.registry,
-        tool_profile_id: host_profile.profile_id,
+        tool_set: host_profile.tools,
         default_tool_target: HostToolTargets::local_execution_target(),
         tool_id_by_name,
         diagnostics,
@@ -724,7 +715,6 @@ fn resolve_eval_toolset(model: &ModelSelection, case: &EvalCase) -> Result<Resol
                     .ok_or_else(|| anyhow!("case '{}' references unknown tool '{id}'", case.id))
             })
             .collect::<Result<Vec<_>>>()?;
-        config.profile_id = ToolProfileId::new("forge_eval_case");
         config.host = HostToolsetConfig::from_operations(operations);
     }
     resolve_toolset(
@@ -745,9 +735,11 @@ fn session_config(case: &EvalCase, model: ModelSelection) -> SessionConfig {
             model_override: None,
             max_output_tokens: None,
             provider_request_defaults: None,
+            tool_choice: None,
         },
         turn: TurnConfig {
             max_output_tokens: case.run.max_tokens,
+            tool_choice: None,
             provider_request_defaults: ProviderRequestDefaults::OpenAiResponses(
                 OpenAiResponsesRequestDefaults::default(),
             ),

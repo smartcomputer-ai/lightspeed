@@ -8,6 +8,7 @@ mod mcp_api;
 mod parse;
 mod prompts;
 mod skills;
+mod tools_api;
 mod vfs_api;
 mod workflow;
 
@@ -52,19 +53,20 @@ use api::{
     SessionCloseResponse, SessionConfigInput, SessionConfigPatchInput, SessionEventsReadParams,
     SessionEventsReadResponse, SessionMcpLinkParams, SessionMcpLinkResponse, SessionMcpListParams,
     SessionMcpListResponse, SessionMcpUnlinkParams, SessionMcpUnlinkResponse, SessionReadParams,
-    SessionReadResponse, SessionStartParams, SessionStartResponse, SessionUpdateParams,
-    SessionUpdateResponse, SessionView, SkillActivateParams, SkillActivateResponse,
-    SkillActivationScope as ApiSkillActivationScope,
+    SessionReadResponse, SessionStartParams, SessionStartResponse, SessionToolsUpdateParams,
+    SessionToolsUpdateResponse, SessionUpdateParams, SessionUpdateResponse, SessionView,
+    SkillActivateParams, SkillActivateResponse, SkillActivationScope as ApiSkillActivationScope,
     SkillActivationSource as ApiSkillActivationSource, SkillActivationView, SkillActiveParams,
     SkillActiveResponse, SkillDeactivateParams, SkillDeactivateResponse, SkillListItem,
-    SkillListParams, SkillListResponse, ToolConfigInput, ToolConfigPatchInput,
-    VfsMountAccess as ApiVfsMountAccess, VfsMountDeleteParams, VfsMountDeleteResponse,
-    VfsMountListParams, VfsMountListResponse, VfsMountPutParams, VfsMountPutResponse,
-    VfsMountSourceInput, VfsMountSourceView, VfsMountView, VfsSnapshotCommitParams,
-    VfsSnapshotCommitResponse, VfsSnapshotReadParams, VfsSnapshotReadResponse,
-    VfsWorkspaceCreateParams, VfsWorkspaceCreateResponse, VfsWorkspaceDeleteParams,
-    VfsWorkspaceDeleteResponse, VfsWorkspaceReadParams, VfsWorkspaceReadResponse,
-    VfsWorkspaceUpdateParams, VfsWorkspaceUpdateResponse, VfsWorkspaceView,
+    SkillListParams, SkillListResponse, ToolChoiceConfig, ToolChoiceModeConfig, ToolConfigInput,
+    ToolConfigPatchInput, VfsMountAccess as ApiVfsMountAccess, VfsMountDeleteParams,
+    VfsMountDeleteResponse, VfsMountListParams, VfsMountListResponse, VfsMountPutParams,
+    VfsMountPutResponse, VfsMountSourceInput, VfsMountSourceView, VfsMountView,
+    VfsSnapshotCommitParams, VfsSnapshotCommitResponse, VfsSnapshotReadParams,
+    VfsSnapshotReadResponse, VfsWorkspaceCreateParams, VfsWorkspaceCreateResponse,
+    VfsWorkspaceDeleteParams, VfsWorkspaceDeleteResponse, VfsWorkspaceReadParams,
+    VfsWorkspaceReadResponse, VfsWorkspaceUpdateParams, VfsWorkspaceUpdateResponse,
+    VfsWorkspaceView,
 };
 use api_projection::{
     CoreAgentProjector, MAX_EVENT_PAGE_LIMIT, ProjectSession, api_kind_from_str, api_run_id,
@@ -81,7 +83,7 @@ use engine::{
     OptionalConfigPatch, ProviderApiKind, ProviderRequestDefaults, RunConfig, RunConfigPatch,
     RunId, RunStatus, SKILL_ACTIVATION_PROVIDER_KIND_RUN, SKILL_ACTIVATION_PROVIDER_KIND_SESSION,
     SKILL_CATALOG_CONTEXT_KEY, SessionConfig, SessionConfigPatch, SessionId, SkillId, SubmissionId,
-    ToolName, ToolProfileId, TurnConfigPatch, skill_activation_context_key,
+    ToolChoice, ToolChoiceMode, ToolName, TurnConfigPatch, skill_activation_context_key,
     storage::{BlobStore, BlobStoreError, ReadSessionEvents, SessionStore},
 };
 use mcp_registry::McpRegistryStore;
@@ -540,6 +542,54 @@ impl AgentApiService for GatewayAgentApi {
         let loaded = self.load_session_state(&session_id).await?;
         let session = self.configure_session_toolset(&session_id, &loaded).await?;
         Ok(AgentApiOutcome::new(SessionUpdateResponse { session }))
+    }
+
+    async fn update_session_tools(
+        &self,
+        params: SessionToolsUpdateParams,
+    ) -> Result<AgentApiOutcome<SessionToolsUpdateResponse>, AgentApiError> {
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let loaded = self.load_session_state(&session_id).await?;
+        self.require_open_idle_session(&session_id, &loaded, "tool update")?;
+        if let Some(expected) = params.expected_tools_revision {
+            let actual = loaded.state.tooling.revision;
+            if expected != actual {
+                return Err(AgentApiError::conflict(format!(
+                    "expected tools revision {expected}, got {actual}"
+                )));
+            }
+        }
+
+        let update = tools_api::core_tool_update_from_api(params.update)?;
+        update.validate_for(&loaded.state.tooling.tools)?;
+        if update.is_empty() {
+            return Ok(AgentApiOutcome::new(SessionToolsUpdateResponse {
+                session: self.project_session_by_id(&session_id).await?,
+            }));
+        }
+
+        let target_revision = loaded
+            .state
+            .tooling
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| AgentApiError::internal("tools revision exhausted"))?;
+        let baseline_failures = self
+            .query_status_optional(&session_id)
+            .await?
+            .map(|status| status.admission_failures.len())
+            .unwrap_or(0);
+        self.submit_core_command(
+            &session_id,
+            update.into_command(params.expected_tools_revision),
+        )
+        .await?;
+        let session = self
+            .wait_for_tool_revision(&session_id, target_revision, baseline_failures)
+            .await?;
+        Ok(AgentApiOutcome::new(SessionToolsUpdateResponse { session }))
     }
 
     async fn read_session(
@@ -1138,34 +1188,28 @@ impl AgentApiService for GatewayAgentApi {
 
         let draft = session_mcp_link_from_record(params, &server)?;
         let link_tool_name = draft.tool_name.clone();
-        let mut registry = loaded.state.tooling.registry.clone();
-        let profile_id = apply_session_mcp_link(
-            &mut registry,
-            loaded.state.tooling.selected_profile_id.as_ref(),
-            draft,
-        )?;
-        let expected_tool_ids = mcp_api::linked_session_mcp_tool_ids(&registry);
+        let patch = apply_session_mcp_link(&loaded.state.tooling.tools, draft)?;
+        let expected_tools = patch
+            .apply_to(&loaded.state.tooling.tools)
+            .map_err(|error| {
+                AgentApiError::invalid_request(format!("invalid MCP tool patch: {error}"))
+            })?;
+        let expected_tool_ids = mcp_api::linked_session_mcp_tool_ids(&expected_tools);
         let baseline_failures = self
             .query_status_optional(&session_id)
             .await?
             .map(|status| status.admission_failures.len())
             .unwrap_or(0);
-        self.submit_core_command(&session_id, CoreAgentCommand::SetToolRegistry { registry })
-            .await?;
         self.submit_core_command(
             &session_id,
-            CoreAgentCommand::SelectToolProfile {
-                profile_id: profile_id.clone(),
+            CoreAgentCommand::PatchTools {
+                expected_revision: Some(loaded.state.tooling.revision),
+                patch,
             },
         )
         .await?;
         let (session, links) = self
-            .wait_for_session_mcp_links(
-                &session_id,
-                expected_tool_ids,
-                Some(profile_id),
-                baseline_failures,
-            )
+            .wait_for_session_mcp_links(&session_id, expected_tool_ids, baseline_failures)
             .await?;
         let link = links
             .iter()
@@ -1192,24 +1236,28 @@ impl AgentApiService for GatewayAgentApi {
         let loaded = self.load_session_state(&session_id).await?;
         self.require_open_idle_session(&session_id, &loaded, "MCP unlink")?;
 
-        let mut registry = loaded.state.tooling.registry.clone();
-        remove_session_mcp_link(&mut registry, &tool_name)?;
-        let expected_tool_ids = mcp_api::linked_session_mcp_tool_ids(&registry);
-        let profile_id = loaded.state.tooling.selected_profile_id.clone();
+        let patch = remove_session_mcp_link(&loaded.state.tooling.tools, &tool_name)?;
+        let expected_tools = patch
+            .apply_to(&loaded.state.tooling.tools)
+            .map_err(|error| {
+                AgentApiError::invalid_request(format!("invalid MCP tool patch: {error}"))
+            })?;
+        let expected_tool_ids = mcp_api::linked_session_mcp_tool_ids(&expected_tools);
         let baseline_failures = self
             .query_status_optional(&session_id)
             .await?
             .map(|status| status.admission_failures.len())
             .unwrap_or(0);
-        self.submit_core_command(&session_id, CoreAgentCommand::SetToolRegistry { registry })
-            .await?;
+        self.submit_core_command(
+            &session_id,
+            CoreAgentCommand::PatchTools {
+                expected_revision: Some(loaded.state.tooling.revision),
+                patch,
+            },
+        )
+        .await?;
         let (session, links) = self
-            .wait_for_session_mcp_links(
-                &session_id,
-                expected_tool_ids,
-                profile_id,
-                baseline_failures,
-            )
+            .wait_for_session_mcp_links(&session_id, expected_tool_ids, baseline_failures)
             .await?;
         Ok(AgentApiOutcome::new(SessionMcpUnlinkResponse {
             tool_id: tool_name.as_str().to_owned(),
@@ -1227,7 +1275,7 @@ impl AgentApiService for GatewayAgentApi {
         })?;
         let loaded = self.load_session_state(&session_id).await?;
         Ok(AgentApiOutcome::new(SessionMcpListResponse {
-            links: linked_session_mcp(&loaded.state.tooling.registry),
+            links: linked_session_mcp(&loaded.state.tooling.tools),
         }))
     }
 }

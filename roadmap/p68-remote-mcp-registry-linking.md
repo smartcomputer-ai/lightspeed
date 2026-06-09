@@ -16,7 +16,9 @@
   table, migration wiring, and `PgStore` implementation of the registry trait.
 - Implemented: API/gateway/CLI registry create/list/read/delete.
 - Implemented: session MCP link/list/unlink materializes catalog snapshots into
-  `ToolKind::RemoteMcp` entries in the selected engine tool profile.
+  `ToolKind::RemoteMcp` entries in the active engine tool set.
+- Implemented: link/unlink uses `PatchTools` from `p67-tooling-refactor.md`;
+  selected tool profiles are removed.
 - Still pending: P67 provider request lowering for no-auth remote MCP servers
   and P69-backed auth grant validation.
 
@@ -30,9 +32,9 @@ The first product flow is no-auth/public MCP:
 ```text
 forge mcp server add https://echo.example.com/mcp --id echo --label echo
   -> Forge stores a sanitized MCP server catalog record in the universe
-  -> user links MCP server "echo" to a session/tool profile
+  -> user links MCP server "echo" to a session tool set
   -> gateway materializes ToolKind::RemoteMcp(RemoteMcpToolSpec)
-  -> P67 lowers that selected tool to provider-native MCP request fields
+  -> P67 lowers that active tool to provider-native MCP request fields
 ```
 
 For authenticated servers, P68 records MCP-specific auth requirements and uses

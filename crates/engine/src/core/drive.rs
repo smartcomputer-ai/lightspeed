@@ -553,8 +553,9 @@ mod tests {
         OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, OptionalConfigPatch, ProviderApiKind,
         ProviderRequestDefaults, RunConfig, RunFailureKind, RunStatus,
         SKILL_ACTIVATION_PROVIDER_KIND_RUN, SKILL_CATALOG_CONTEXT_KEY, SessionConfig,
-        SessionConfigPatch, SkillId, TokenEstimate, TokenEstimateQuality, TurnConfig,
-        TurnConfigPatch, TurnStatus, skill_activation_context_key,
+        SessionConfigPatch, SkillId, TokenEstimate, TokenEstimateQuality, ToolChoice,
+        ToolChoiceMode, ToolName, TurnConfig, TurnConfigPatch, TurnStatus,
+        skill_activation_context_key,
     };
 
     fn config() -> SessionConfig {
@@ -571,9 +572,11 @@ mod tests {
                 model_override: None,
                 max_output_tokens: None,
                 provider_request_defaults: None,
+                tool_choice: None,
             },
             turn: TurnConfig {
                 max_output_tokens: None,
+                tool_choice: None,
                 provider_request_defaults: ProviderRequestDefaults::None,
             },
             context: ContextConfig { compaction: None },
@@ -588,6 +591,7 @@ mod tests {
             model_override: None,
             max_output_tokens: None,
             provider_request_defaults: None,
+            tool_choice: None,
         }
     }
 
@@ -1858,6 +1862,77 @@ mod tests {
             .expect("session config");
         assert_eq!(drive.state().lifecycle.config_revision, 1);
         assert_eq!(config.turn.max_output_tokens, Some(2048));
+    }
+
+    #[test]
+    fn patch_session_config_rejects_specific_tool_choice_for_missing_tool() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let open = drive
+            .admit_command(CoreAgentCommand::OpenSession { config: config() }, 10)
+            .expect("open");
+        commit_action(&mut drive, open);
+
+        let patch = SessionConfigPatch {
+            turn: TurnConfigPatch {
+                tool_choice: Some(OptionalConfigPatch::Set(ToolChoice {
+                    mode: ToolChoiceMode::Specific {
+                        tool_name: ToolName::new("missing_tool"),
+                    },
+                    disable_parallel_tool_use: None,
+                })),
+                ..TurnConfigPatch::default()
+            },
+            ..SessionConfigPatch::default()
+        };
+
+        let error = drive
+            .admit_command(
+                CoreAgentCommand::PatchSessionConfig {
+                    expected_revision: Some(0),
+                    patch,
+                },
+                20,
+            )
+            .expect_err("patch must reject missing specific tool choice");
+
+        let CoreAgentDriveError::Command(crate::CommandError::Rejected(rejection)) = error else {
+            panic!("expected rejected command");
+        };
+        assert_eq!(rejection.kind, CommandRejectionKind::InvariantViolation);
+    }
+
+    #[test]
+    fn request_run_rejects_specific_tool_choice_for_missing_tool() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let open = drive
+            .admit_command(CoreAgentCommand::OpenSession { config: config() }, 10)
+            .expect("open");
+        commit_action(&mut drive, open);
+        let mut run_config = run_config();
+        run_config.tool_choice = Some(ToolChoice {
+            mode: ToolChoiceMode::Specific {
+                tool_name: ToolName::new("missing_tool"),
+            },
+            disable_parallel_tool_use: None,
+        });
+
+        let error = drive
+            .admit_command(
+                CoreAgentCommand::RequestRun {
+                    submission_id: None,
+                    input: user_input(BlobRef::from_bytes(b"input")),
+                    run_config,
+                },
+                20,
+            )
+            .expect_err("run must reject missing specific tool choice");
+
+        let CoreAgentDriveError::Command(crate::CommandError::Rejected(rejection)) = error else {
+            panic!("expected rejected command");
+        };
+        assert_eq!(rejection.kind, CommandRejectionKind::InvariantViolation);
     }
 
     #[test]

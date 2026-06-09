@@ -245,7 +245,9 @@ pub(crate) fn build_llm_request(
     let request_config = session_config_for_run(config, &active_run.run_config);
     let context =
         crate::core::components::context::planned_context_snapshot(state, model.api_kind.clone())?;
-    let (tools, tool_choice) = selected_tools_and_choice(state, &model.api_kind)?;
+    let tools = active_tools(state, &model.api_kind)?;
+    let tool_choice = request_config.turn.tool_choice.as_ref();
+    validate_tool_choice(&tools, tool_choice)?;
     let kind = match (
         &model.api_kind,
         &request_config.turn.provider_request_defaults,
@@ -255,7 +257,7 @@ pub(crate) fn build_llm_request(
                 &request_config,
                 context.clone(),
                 tools,
-                tool_choice.as_ref(),
+                tool_choice,
                 &OpenAiResponsesRequestDefaults::default(),
             ))
         }
@@ -264,7 +266,7 @@ pub(crate) fn build_llm_request(
                 &request_config,
                 context.clone(),
                 tools,
-                tool_choice.as_ref(),
+                tool_choice,
                 &defaults,
             ))
         }
@@ -273,7 +275,7 @@ pub(crate) fn build_llm_request(
                 &request_config,
                 context.clone(),
                 tools,
-                tool_choice.as_ref(),
+                tool_choice,
                 &AnthropicMessagesRequestDefaults::default(),
             )?)
         }
@@ -284,7 +286,7 @@ pub(crate) fn build_llm_request(
             &request_config,
             context.clone(),
             tools,
-            tool_choice.as_ref(),
+            tool_choice,
             &defaults,
         )?),
         (ProviderApiKind::OpenAiCompletions, ProviderRequestDefaults::None) => {
@@ -292,7 +294,7 @@ pub(crate) fn build_llm_request(
                 &request_config,
                 context.clone(),
                 tools,
-                tool_choice.as_ref(),
+                tool_choice,
                 &OpenAiCompletionsRequestDefaults::default(),
             ))
         }
@@ -303,7 +305,7 @@ pub(crate) fn build_llm_request(
             &request_config,
             context,
             tools,
-            tool_choice.as_ref(),
+            tool_choice,
             &defaults,
         )),
         (_, defaults) => {
@@ -397,33 +399,18 @@ fn session_config_for_run(config: &SessionConfig, run_config: &RunConfig) -> Ses
     if let Some(defaults) = run_config.provider_request_defaults.clone() {
         config.turn.provider_request_defaults = defaults;
     }
+    if let Some(tool_choice) = run_config.tool_choice.clone() {
+        config.turn.tool_choice = Some(tool_choice);
+    }
     config
 }
 
-fn selected_tools_and_choice(
+fn active_tools(
     state: &CoreAgentState,
     api_kind: &ProviderApiKind,
-) -> Result<(Vec<ToolSpec>, Option<ToolChoice>), PlanningError> {
-    let Some(profile_id) = state.tooling.selected_profile_id.as_ref() else {
-        return Ok((Vec::new(), None));
-    };
-    let Some(profile) = state.tooling.registry.profiles.get(profile_id) else {
-        return Err(DomainError::InvariantViolation(format!(
-            "selected tool profile {} does not exist",
-            profile_id
-        ))
-        .into());
-    };
-
-    let mut tools = Vec::with_capacity(profile.visible_tools.len());
-    for tool_name in &profile.visible_tools {
-        let Some(tool) = state.tooling.registry.tools.get(tool_name) else {
-            return Err(DomainError::InvariantViolation(format!(
-                "tool profile {} references missing tool {}",
-                profile_id, tool_name
-            ))
-            .into());
-        };
+) -> Result<Vec<ToolSpec>, PlanningError> {
+    let mut tools = Vec::with_capacity(state.tooling.tools.len());
+    for tool in state.tooling.tools.values() {
         match &tool.kind {
             ToolKind::ProviderNative(native) => {
                 if native.api_kind != *api_kind {
@@ -448,7 +435,29 @@ fn selected_tools_and_choice(
         tools.push(tool.clone());
     }
 
-    Ok((tools, profile.tool_choice.clone()))
+    Ok(tools)
+}
+
+fn validate_tool_choice(
+    tools: &[ToolSpec],
+    tool_choice: Option<&ToolChoice>,
+) -> Result<(), PlanningError> {
+    let Some(ToolChoice {
+        mode: ToolChoiceMode::Specific { tool_name },
+        ..
+    }) = tool_choice
+    else {
+        return Ok(());
+    };
+    if tools.iter().any(|tool| &tool.name == tool_name) {
+        Ok(())
+    } else {
+        Err(DomainError::InvariantViolation(format!(
+            "tool_choice references missing active tool {}",
+            tool_name
+        ))
+        .into())
+    }
 }
 
 fn remote_mcp_supported_by_provider(api_kind: &ProviderApiKind) -> bool {
@@ -790,6 +799,7 @@ mod tests {
             run: RunConfig::default(),
             turn: crate::TurnConfig {
                 max_output_tokens: None,
+                tool_choice: None,
                 provider_request_defaults: ProviderRequestDefaults::None,
             },
             context: crate::ContextConfig { compaction: None },
@@ -815,9 +825,8 @@ mod tests {
     #[test]
     fn provider_native_tool_rejects_mismatched_request_api_kind() {
         let mut state = CoreAgentState::new();
-        let profile_id = crate::ToolProfileId::new("web");
         let tool_name = ToolName::new("web_search");
-        state.tooling.registry.tools.insert(
+        state.tooling.tools.insert(
             tool_name.clone(),
             ToolSpec {
                 name: tool_name.clone(),
@@ -832,17 +841,8 @@ mod tests {
                 target_requirement: crate::ToolTargetRequirement::None,
             },
         );
-        state.tooling.registry.profiles.insert(
-            profile_id.clone(),
-            crate::ToolProfile {
-                profile_id: profile_id.clone(),
-                visible_tools: vec![tool_name],
-                tool_choice: None,
-            },
-        );
-        state.tooling.selected_profile_id = Some(profile_id);
 
-        let error = selected_tools_and_choice(&state, &ProviderApiKind::AnthropicMessages)
+        let error = active_tools(&state, &ProviderApiKind::AnthropicMessages)
             .expect_err("provider-native tool must reject mismatched api kind");
 
         let PlanningError::Domain(DomainError::ProviderCompatibility(message)) = error else {
@@ -875,19 +875,9 @@ mod tests {
 
     fn state_with_remote_mcp_tool() -> CoreAgentState {
         let mut state = CoreAgentState::new();
-        let profile_id = crate::ToolProfileId::new("mcp");
         let tool = remote_mcp_tool("mcpgrant_123");
         let tool_name = tool.name.clone();
-        state.tooling.registry.tools.insert(tool_name.clone(), tool);
-        state.tooling.registry.profiles.insert(
-            profile_id.clone(),
-            crate::ToolProfile {
-                profile_id: profile_id.clone(),
-                visible_tools: vec![tool_name],
-                tool_choice: None,
-            },
-        );
-        state.tooling.selected_profile_id = Some(profile_id);
+        state.tooling.tools.insert(tool_name, tool);
         state
     }
 
@@ -899,12 +889,11 @@ mod tests {
             ProviderApiKind::OpenAiResponses,
             ProviderApiKind::AnthropicMessages,
         ] {
-            let (tools, tool_choice) = selected_tools_and_choice(&state, &api_kind)
+            let tools = active_tools(&state, &api_kind)
                 .expect("remote MCP should be selectable for supported providers");
 
             assert_eq!(tools.len(), 1);
             assert!(matches!(tools[0].kind, ToolKind::RemoteMcp(_)));
-            assert_eq!(tool_choice, None);
         }
     }
 
@@ -912,7 +901,7 @@ mod tests {
     fn remote_mcp_tool_selection_rejects_openai_completions() {
         let state = state_with_remote_mcp_tool();
 
-        let error = selected_tools_and_choice(&state, &ProviderApiKind::OpenAiCompletions)
+        let error = active_tools(&state, &ProviderApiKind::OpenAiCompletions)
             .expect_err("remote MCP is not supported by OpenAI Completions");
 
         let PlanningError::Domain(DomainError::ProviderCompatibility(message)) = error else {
@@ -934,6 +923,7 @@ mod tests {
             run: RunConfig::default(),
             turn: crate::TurnConfig {
                 max_output_tokens: None,
+                tool_choice: None,
                 provider_request_defaults: ProviderRequestDefaults::None,
             },
             context: crate::ContextConfig { compaction: None },
@@ -987,6 +977,7 @@ mod tests {
             run: RunConfig::default(),
             turn: crate::TurnConfig {
                 max_output_tokens: None,
+                tool_choice: None,
                 provider_request_defaults: ProviderRequestDefaults::None,
             },
             context: crate::ContextConfig {
@@ -1033,6 +1024,7 @@ mod tests {
             run: RunConfig::default(),
             turn: crate::TurnConfig {
                 max_output_tokens: None,
+                tool_choice: None,
                 provider_request_defaults: ProviderRequestDefaults::None,
             },
             context: crate::ContextConfig {

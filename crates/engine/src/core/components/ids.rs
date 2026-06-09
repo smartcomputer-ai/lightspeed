@@ -122,7 +122,6 @@ string_id!(SubmissionId, validate_general_string_id);
 string_id!(ContextEntryKey, validate_general_string_id);
 string_id!(SkillId, validate_general_string_id);
 string_id!(ToolCallId, validate_general_string_id);
-string_id!(ToolProfileId, validate_general_string_id);
 string_id!(ToolName, validate_tool_name);
 
 numeric_id!(RunId);

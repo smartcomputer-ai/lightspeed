@@ -142,20 +142,9 @@ fn active_skill_ids_after_remove_drops_selected_skill() {
 }
 
 #[test]
-fn mcp_link_materializes_remote_tool_in_selected_profile() {
-    let profile_id = ToolProfileId::new(tools::toolset::DEFAULT_TOOLSET_PROFILE_ID);
+fn mcp_link_materializes_remote_tool_patch() {
     let tool_name = ToolName::new("mcp_crm");
-    let mut registry = engine::ToolRegistry {
-        profiles: BTreeMap::from([(
-            profile_id.clone(),
-            engine::ToolProfile {
-                profile_id: profile_id.clone(),
-                visible_tools: Vec::new(),
-                tool_choice: None,
-            },
-        )]),
-        ..engine::ToolRegistry::default()
-    };
+    let tools = BTreeMap::new();
     let record = test_mcp_server_record("crm", mcp_registry::McpServerStatus::Active);
     let draft = session_mcp_link_from_record(
         api::SessionMcpLinkParams {
@@ -172,80 +161,88 @@ fn mcp_link_materializes_remote_tool_in_selected_profile() {
     )
     .expect("materialize MCP link draft");
 
-    let selected_profile =
-        apply_session_mcp_link(&mut registry, Some(&profile_id), draft).expect("apply MCP link");
+    let patch = apply_session_mcp_link(&tools, draft).expect("apply MCP link");
+    let tools = patch.apply_to(&tools).expect("apply MCP patch");
 
-    assert_eq!(selected_profile, profile_id);
-    let tool = registry.tools.get(&tool_name).expect("MCP tool");
+    let tool = tools.get(&tool_name).expect("MCP tool");
     let engine::ToolKind::RemoteMcp(spec) = &tool.kind else {
         panic!("expected remote MCP tool");
     };
     assert_eq!(spec.server_label, "crm");
     assert_eq!(spec.allowed_tools, Some(vec!["lookup_customer".to_owned()]));
     assert_eq!(spec.approval, engine::RemoteMcpApprovalPolicy::Never);
-    assert_eq!(
-        registry.profiles[&profile_id].visible_tools,
-        vec![tool_name.clone()]
-    );
-    assert_eq!(linked_session_mcp(&registry)[0].tool_id, tool_name.as_str());
+    assert_eq!(linked_session_mcp(&tools)[0].tool_id, tool_name.as_str());
 }
 
 #[test]
-fn toolset_merge_preserves_visible_remote_mcp_links() {
-    let profile_id = ToolProfileId::new(tools::toolset::DEFAULT_TOOLSET_PROFILE_ID);
+fn standard_toolset_patch_preserves_remote_mcp_links() {
     let remote_tool_name = ToolName::new("mcp_crm");
     let old_tool_name = ToolName::new("old_tool");
     let new_tool_name = ToolName::new("new_tool");
-    let mut registry = engine::ToolRegistry {
-        tools: BTreeMap::from([
-            (
-                remote_tool_name.clone(),
-                test_remote_mcp_tool(remote_tool_name.clone()),
-            ),
-            (
-                old_tool_name.clone(),
-                test_function_tool(old_tool_name.clone()),
-            ),
-        ]),
-        profiles: BTreeMap::from([(
-            profile_id.clone(),
-            engine::ToolProfile {
-                profile_id: profile_id.clone(),
-                visible_tools: vec![old_tool_name.clone(), remote_tool_name.clone()],
-                tool_choice: None,
-            },
-        )]),
-    };
+    let active = BTreeMap::from([
+        (
+            remote_tool_name.clone(),
+            test_remote_mcp_tool(remote_tool_name.clone()),
+        ),
+        (
+            old_tool_name.clone(),
+            test_function_tool(old_tool_name.clone()),
+        ),
+    ]);
     let toolset = ResolvedToolset {
-        profile_id: profile_id.clone(),
-        registry: engine::ToolRegistry {
-            tools: BTreeMap::from([(
-                new_tool_name.clone(),
-                test_function_tool(new_tool_name.clone()),
-            )]),
-            profiles: BTreeMap::from([(
-                profile_id.clone(),
-                engine::ToolProfile {
-                    profile_id: profile_id.clone(),
-                    visible_tools: vec![new_tool_name.clone()],
-                    tool_choice: None,
-                },
-            )]),
-        },
+        tools: BTreeMap::from([(
+            new_tool_name.clone(),
+            test_function_tool(new_tool_name.clone()),
+        )]),
         documents: Vec::new(),
         catalog: tools::runtime::ToolCatalog::new(),
         provider_request_defaults_patch: tools::toolset::ProviderRequestDefaultsPatch::default(),
     };
 
-    super::vfs_api::merge_toolset_registry(&mut registry, toolset);
+    let patch = super::vfs_api::standard_toolset_patch(&active, toolset);
+    let tools = patch.apply_to(&active).expect("apply standard tool patch");
 
-    assert!(registry.tools.contains_key(&remote_tool_name));
-    assert!(!registry.tools.contains_key(&old_tool_name));
-    assert!(registry.tools.contains_key(&new_tool_name));
-    assert_eq!(
-        registry.profiles[&profile_id].visible_tools,
-        vec![new_tool_name, remote_tool_name]
-    );
+    assert!(tools.contains_key(&remote_tool_name));
+    assert!(!tools.contains_key(&old_tool_name));
+    assert!(tools.contains_key(&new_tool_name));
+}
+
+#[test]
+fn session_tools_update_patch_accepts_remote_mcp_tool() {
+    let update = api::ToolSetUpdateInput::Patch {
+        upsert: vec![api_remote_mcp_tool("mcp_crm", "crm")],
+        remove: Vec::new(),
+    };
+
+    let tools_api::CoreToolUpdate::Patch(patch) =
+        tools_api::core_tool_update_from_api(update).expect("convert tool update")
+    else {
+        panic!("expected tool patch");
+    };
+    patch
+        .validate_for(&BTreeMap::new())
+        .expect("validate tool patch");
+
+    assert_eq!(patch.upsert.len(), 1);
+    assert_eq!(patch.upsert[0].name, ToolName::new("mcp_crm"));
+    let engine::ToolKind::RemoteMcp(remote_mcp) = &patch.upsert[0].kind else {
+        panic!("expected remote MCP tool");
+    };
+    assert_eq!(remote_mcp.server_label, "crm");
+}
+
+#[test]
+fn session_tools_update_replace_rejects_duplicate_tool_ids() {
+    let update = api::ToolSetUpdateInput::Replace {
+        tools: vec![
+            api_remote_mcp_tool("mcp_crm", "crm"),
+            api_remote_mcp_tool("mcp_crm", "crm_alt"),
+        ],
+    };
+
+    let error = tools_api::core_tool_update_from_api(update).expect_err("duplicate tool id");
+
+    assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
 }
 
 #[test]
@@ -347,6 +344,7 @@ fn session_start_config_maps_reasoning_and_max_output_tokens() {
         Some(GenerationConfig {
             max_output_tokens: Some(2048),
             reasoning_effort: Some(ReasoningEffort::High),
+            tool_choice: None,
         }),
     )
     .expect("apply config");
@@ -359,6 +357,35 @@ fn session_start_config_maps_reasoning_and_max_output_tokens() {
     let reasoning = defaults.reasoning.expect("reasoning");
     assert_eq!(reasoning.effort.as_deref(), Some("high"));
     assert_eq!(reasoning.summary.as_deref(), Some("auto"));
+}
+
+#[test]
+fn session_start_config_maps_tool_choice() {
+    let mut config = default_session_config(openai_model());
+
+    apply_generation_config(
+        &mut config,
+        Some(GenerationConfig {
+            max_output_tokens: None,
+            reasoning_effort: None,
+            tool_choice: Some(ToolChoiceConfig {
+                mode: ToolChoiceModeConfig::Specific {
+                    tool_id: "web_fetch".to_owned(),
+                },
+                disable_parallel_tool_use: Some(true),
+            }),
+        }),
+    )
+    .expect("apply config");
+
+    let tool_choice = config.turn.tool_choice.expect("tool choice");
+    assert_eq!(tool_choice.disable_parallel_tool_use, Some(true));
+    assert_eq!(
+        tool_choice.mode,
+        engine::ToolChoiceMode::Specific {
+            tool_name: ToolName::new("web_fetch")
+        }
+    );
 }
 
 #[test]
@@ -424,6 +451,7 @@ fn run_start_config_maps_model_and_generation_overrides() {
             generation: Some(GenerationConfig {
                 max_output_tokens: Some(1024),
                 reasoning_effort: Some(ReasoningEffort::Medium),
+                tool_choice: None,
             }),
             limits: None,
         }),
@@ -447,6 +475,36 @@ fn run_start_config_maps_model_and_generation_overrides() {
     assert_eq!(
         defaults.reasoning.expect("reasoning").effort.as_deref(),
         Some("medium")
+    );
+    assert!(run_config.tool_choice.is_none());
+}
+
+#[test]
+fn run_start_config_maps_tool_choice() {
+    let session_config = default_session_config(openai_model());
+    let mut run_config = session_config.run.clone();
+
+    apply_run_start_config(
+        &mut run_config,
+        &session_config,
+        Some(RunStartConfig {
+            model: None,
+            generation: Some(GenerationConfig {
+                max_output_tokens: None,
+                reasoning_effort: None,
+                tool_choice: Some(ToolChoiceConfig {
+                    mode: ToolChoiceModeConfig::RequiredAny,
+                    disable_parallel_tool_use: None,
+                }),
+            }),
+            limits: None,
+        }),
+    )
+    .expect("apply run config");
+
+    assert_eq!(
+        run_config.tool_choice.expect("tool choice").mode,
+        engine::ToolChoiceMode::RequiredAny
     );
 }
 
@@ -825,6 +883,23 @@ fn test_mcp_server_record(
         created_at_ms: 1,
     }
     .into_record()
+}
+
+fn api_remote_mcp_tool(tool_id: &str, server_label: &str) -> api::ToolView {
+    api::ToolView {
+        tool_id: tool_id.to_owned(),
+        kind: api::ToolKindView::RemoteMcp {
+            server_label: server_label.to_owned(),
+            server_url: format!("https://{server_label}.example.com/mcp"),
+            description_ref: None,
+            allowed_tools: None,
+            approval: api::RemoteMcpApprovalPolicy::ProviderDefault,
+            defer_loading: None,
+            auth_ref: None,
+        },
+        parallelism: api::ToolParallelismView::ParallelSafe,
+        target_requirement: api::ToolTargetRequirementView::None,
+    }
 }
 
 fn test_remote_mcp_tool(tool_name: ToolName) -> engine::ToolSpec {
