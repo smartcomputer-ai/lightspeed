@@ -116,6 +116,7 @@ mod tests {
                 oauth_client: None,
                 expires_at_ms: None,
                 status: AuthGrantStatus::Active,
+                metadata: serde_json::Value::Object(Default::default()),
                 created_at_ms: 10,
             })
             .await

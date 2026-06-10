@@ -34,10 +34,19 @@
   client identification, lazy `mcp:<server_id>` client upsert triggered by
   `auth/flows/start` (`forge auth login mcp:<server>`), and the
   gateway-served CIMD document at `/auth/client-metadata.json`.
+- G5 mint slice implemented on 2026-06-10: generic `auth_providers` table
+  (typed `AuthProviderConfig` enum over `config_json`, credential secret FK
+  into `secret_records`), `auth_grants.metadata_json`, GitHub App driver
+  (app JWT signing, on-demand installation token minting with in-process
+  caching, live installation listing/verification),
+  `auth/providers/*` + `auth/github/installations/*` API, and
+  `forge auth github` CLI. Token leases remain deferred until a VM/sandbox
+  consumer exists.
 - G1 deliberately deferred `AuthProviderRecord`, `AuthFlowRecord`, and token
-  leases; G2 landed `AuthFlowRecord` and OAuth client records, while
-  `AuthProviderRecord` and token leases remain deferred (G5+). Static bearer
-  grants carry `provider_kind` + `provider_id` inline.
+  leases; G2 landed `AuthFlowRecord` and OAuth client records; G5 landed
+  provider records as the generic `auth_providers` table. Static bearer and
+  OAuth grants still carry `provider_kind` + `provider_id` inline without a
+  provider row.
 - Split out of the original P68 remote MCP registry/auth plan.
 - Provides generic auth and credential infrastructure for MCP, GitHub, future
   hosted tools, VMs, sandboxes, and provider runtimes.
@@ -807,12 +816,39 @@ Add GitHub App installation access support.
 
 Acceptance criteria:
 
-- GitHub App private key is stored in the secret store;
-- installation records can be represented as grants;
-- installation access tokens are minted on demand;
-- repository permissions and installation repository selection are visible as
-  non-secret grant metadata;
-- token leases can be issued to VMs/sandboxes for Git-over-HTTPS or API access.
+- [x] GitHub App private key is stored in the secret store
+  (`auth.github_app.private_key`; the PEM is validated at registration, and
+  `auth_providers.credential_secret_id` carries a foreign key into
+  `secret_records` with ON DELETE RESTRICT);
+- [x] installation records can be represented as grants (kind `github_app`,
+  no stored tokens, audience = the API base URL, installation facts in the
+  new `auth_grants.metadata_json`);
+- [x] installation access tokens are minted on demand (broker mint path:
+  RS256 app JWT -> `POST /app/installations/{id}/access_tokens`, process-local
+  cache with the expiry margin behind the per-grant lock, nothing persisted;
+  401 -> grant `Failed`, 404 -> `NeedsReauth`, transient errors do not poison
+  the grant);
+- [x] repository permissions and installation repository selection are
+  visible as non-secret grant metadata (captured live at
+  `auth/github/installations/grant` time and shown on grant views);
+- [ ] token leases can be issued to VMs/sandboxes for Git-over-HTTPS or API
+  access — DEFERRED until a VM/sandbox consumer exists; the lease layer is a
+  thin wrapper over the mint path once the consuming boundary is concrete.
+
+Implemented 2026-06-10 (mint slice): generic `auth_providers` table in
+migration 004 (one table for all provider kinds — typed `AuthProviderConfig`
+enum decoded from `config_json` at the store boundary, GitHub Apps first),
+`auth-registry::github` (JWT signing via `jsonwebtoken`, `GitHubApiClient`
+trait + reqwest impl, typed `GitHubAppError` kinds, RFC 3339 parsing),
+`TokenAudience::GitHubApi`, broker `GitHubAppRuntime`,
+`auth/providers/create|list|read|delete` +
+`auth/github/installations/list|grant` JSON-RPC (the private key is the third
+deliberate inbound-plaintext path), and `forge auth github app
+add|list|read|remove` + `forge auth github installation list|grant` CLI.
+Installation listing/verification calls GitHub live with the app JWT, so
+grants are created against verified installations. No Forge consumer spends
+GitHub tokens yet (no repo tools); the broker path is unit-tested against a
+mocked GitHub API.
 
 ## Future Work
 

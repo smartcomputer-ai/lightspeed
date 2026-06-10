@@ -222,6 +222,7 @@ const GRANT_COLUMNS: &str = r#"
     oauth_client_id,
     expires_at_ms,
     status,
+    metadata_json,
     created_at_ms,
     updated_at_ms
 "#;
@@ -255,10 +256,11 @@ impl AuthGrantStore for PgStore {
                 oauth_client_id,
                 expires_at_ms,
                 status,
+                metadata_json,
                 created_at_ms,
                 updated_at_ms
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $16)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $17)
             ON CONFLICT (universe_id, grant_id) DO NOTHING
             RETURNING {GRANT_COLUMNS}
             "#
@@ -279,6 +281,7 @@ impl AuthGrantStore for PgStore {
             .bind(record.oauth_client.as_ref().map(OAuthClientId::as_str))
             .bind(record.expires_at_ms)
             .bind(grant_status_to_str(record.status))
+            .bind(&record.metadata)
             .bind(record.created_at_ms)
             .fetch_optional(&self.pool)
             .await
@@ -543,6 +546,9 @@ fn grant_record_from_row(row: &sqlx::postgres::PgRow) -> Result<AuthGrantRecord,
             .try_get("expires_at_ms")
             .map_err(|error| auth_sql_error("decode grant expires_at_ms", error))?,
         status: grant_status_from_str(&status)?,
+        metadata: row
+            .try_get("metadata_json")
+            .map_err(|error| auth_sql_error("decode grant metadata", error))?,
         created_at_ms: row
             .try_get("created_at_ms")
             .map_err(|error| auth_sql_error("decode grant created_at_ms", error))?,

@@ -19,6 +19,170 @@ enum AuthCommand {
     Client(AuthClientArgs),
     /// Run an OAuth authorization flow and store the resulting grant.
     Login(AuthLoginArgs),
+    /// Manage GitHub App providers and installation grants.
+    Github(AuthGithubArgs),
+}
+
+#[derive(Args, Debug, Clone)]
+struct AuthGithubArgs {
+    #[command(subcommand)]
+    command: AuthGithubCommand,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum AuthGithubCommand {
+    /// Manage GitHub App provider configurations.
+    App(AuthGithubAppArgs),
+    /// Manage GitHub App installations and their grants.
+    Installation(AuthGithubInstallationArgs),
+}
+
+#[derive(Args, Debug, Clone)]
+struct AuthGithubAppArgs {
+    #[command(subcommand)]
+    command: AuthGithubAppCommand,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum AuthGithubAppCommand {
+    /// Register a GitHub App: stores the private key encrypted and the app
+    /// config as an auth provider.
+    Add(AuthGithubAppAddArgs),
+    /// List auth providers (GitHub Apps and future kinds).
+    List(AuthGithubAppListArgs),
+    /// Read an auth provider.
+    Read(AuthGithubAppReadArgs),
+    /// Remove an auth provider and its stored credential.
+    Remove(AuthGithubAppRemoveArgs),
+}
+
+#[derive(Args, Clone)]
+#[command(group(ArgGroup::new("private_key_source").required(true)))]
+struct AuthGithubAppAddArgs {
+    /// JSON-RPC agent API URL.
+    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    api_url: String,
+    /// Emit the created provider as JSON.
+    #[arg(long)]
+    json: bool,
+    /// Optional stable provider id. Generated when omitted.
+    #[arg(long = "id")]
+    provider_id: Option<String>,
+    /// GitHub's numeric app id (from the app settings page).
+    #[arg(long = "app-id")]
+    app_id: String,
+    /// Read the private key PEM from this file.
+    #[arg(long = "private-key-file", group = "private_key_source")]
+    private_key_file: Option<std::path::PathBuf>,
+    /// Read the private key PEM from this environment variable.
+    #[arg(long = "private-key-env", group = "private_key_source")]
+    private_key_env: Option<String>,
+    /// Read the private key PEM from stdin.
+    #[arg(long = "private-key-stdin", group = "private_key_source")]
+    private_key_stdin: bool,
+    /// REST API base URL; override for GitHub Enterprise Server.
+    #[arg(long = "api-base-url")]
+    api_base_url: Option<String>,
+    /// Optional display name.
+    #[arg(long = "display-name")]
+    display_name: Option<String>,
+}
+
+impl std::fmt::Debug for AuthGithubAppAddArgs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthGithubAppAddArgs")
+            .field("api_url", &self.api_url)
+            .field("provider_id", &self.provider_id)
+            .field("app_id", &self.app_id)
+            .field("private_key_file", &self.private_key_file)
+            .field("private_key_env", &self.private_key_env)
+            .field("private_key_stdin", &self.private_key_stdin)
+            .field("api_base_url", &self.api_base_url)
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Args, Debug, Clone)]
+struct AuthGithubAppListArgs {
+    /// JSON-RPC agent API URL.
+    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    api_url: String,
+    /// Emit providers as JSON.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Args, Debug, Clone)]
+struct AuthGithubAppReadArgs {
+    /// JSON-RPC agent API URL.
+    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    api_url: String,
+    /// Emit the provider as JSON.
+    #[arg(long)]
+    json: bool,
+    /// Provider id to read.
+    provider_id: String,
+}
+
+#[derive(Args, Debug, Clone)]
+struct AuthGithubAppRemoveArgs {
+    /// JSON-RPC agent API URL.
+    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    api_url: String,
+    /// Emit the removed provider as JSON.
+    #[arg(long)]
+    json: bool,
+    /// Provider id to remove.
+    provider_id: String,
+}
+
+#[derive(Args, Debug, Clone)]
+struct AuthGithubInstallationArgs {
+    #[command(subcommand)]
+    command: AuthGithubInstallationCommand,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum AuthGithubInstallationCommand {
+    /// List the app's installations, live from GitHub.
+    List(AuthGithubInstallationListArgs),
+    /// Record an installation as a grant; tokens are minted on demand.
+    Grant(AuthGithubInstallationGrantArgs),
+}
+
+#[derive(Args, Debug, Clone)]
+struct AuthGithubInstallationListArgs {
+    /// JSON-RPC agent API URL.
+    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    api_url: String,
+    /// Emit installations as JSON.
+    #[arg(long)]
+    json: bool,
+    /// GitHub App provider id.
+    #[arg(long = "app")]
+    provider_id: String,
+}
+
+#[derive(Args, Debug, Clone)]
+struct AuthGithubInstallationGrantArgs {
+    /// JSON-RPC agent API URL.
+    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    api_url: String,
+    /// Emit the grant as JSON.
+    #[arg(long)]
+    json: bool,
+    /// GitHub App provider id.
+    #[arg(long = "app")]
+    provider_id: String,
+    /// Installation id (from `installation list`).
+    #[arg(long = "installation-id")]
+    installation_id: i64,
+    /// Optional stable grant id. Generated when omitted.
+    #[arg(long = "grant-id")]
+    grant_id: Option<String>,
+    /// Optional display name.
+    #[arg(long = "display-name")]
+    display_name: Option<String>,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -337,6 +501,22 @@ pub(crate) async fn handle(args: AuthArgs) -> Result<()> {
         AuthCommand::Grant(args) => grant(args).await,
         AuthCommand::Client(args) => client(args).await,
         AuthCommand::Login(args) => login(args).await,
+        AuthCommand::Github(args) => github(args).await,
+    }
+}
+
+async fn github(args: AuthGithubArgs) -> Result<()> {
+    match args.command {
+        AuthGithubCommand::App(args) => match args.command {
+            AuthGithubAppCommand::Add(args) => github_app_add(args).await,
+            AuthGithubAppCommand::List(args) => github_app_list(args).await,
+            AuthGithubAppCommand::Read(args) => github_app_read(args).await,
+            AuthGithubAppCommand::Remove(args) => github_app_remove(args).await,
+        },
+        AuthGithubCommand::Installation(args) => match args.command {
+            AuthGithubInstallationCommand::List(args) => github_installation_list(args).await,
+            AuthGithubInstallationCommand::Grant(args) => github_installation_grant(args).await,
+        },
     }
 }
 
@@ -641,6 +821,184 @@ async fn login(args: AuthLoginArgs) -> Result<()> {
     }
 }
 
+fn resolve_private_key(args: &AuthGithubAppAddArgs) -> Result<String> {
+    if let Some(path) = &args.private_key_file {
+        let key = std::fs::read_to_string(path)
+            .with_context(|| format!("read private key from {}", path.display()))?;
+        if key.trim().is_empty() {
+            anyhow::bail!("private key file {} is empty", path.display());
+        }
+        return Ok(key);
+    }
+    if let Some(name) = &args.private_key_env {
+        let key = std::env::var(name)
+            .with_context(|| format!("environment variable {name} is not set"))?;
+        if key.is_empty() {
+            anyhow::bail!("environment variable {name} is empty");
+        }
+        return Ok(key);
+    }
+    let mut key = String::new();
+    std::io::stdin()
+        .read_to_string(&mut key)
+        .context("read private key from stdin")?;
+    if key.trim().is_empty() {
+        anyhow::bail!("no private key provided on stdin");
+    }
+    Ok(key)
+}
+
+async fn github_app_add(args: AuthGithubAppAddArgs) -> Result<()> {
+    let private_key = resolve_private_key(&args)?;
+    let api = HttpAgentApi::new(args.api_url.clone());
+    let response = api
+        .create_auth_provider(api::AuthProviderCreateParams {
+            provider_id: args.provider_id.clone(),
+            display_name: args.display_name.clone(),
+            config: api::AuthProviderConfigInput::GitHubApp {
+                app_id: args.app_id.clone(),
+                api_base_url: args.api_base_url.clone(),
+            },
+            credential: Some(private_key),
+        })
+        .await
+        .map_err(crate::api_client::api_error)?
+        .result;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&response)?);
+        return Ok(());
+    }
+    print_provider(&response.provider);
+    Ok(())
+}
+
+async fn github_app_list(args: AuthGithubAppListArgs) -> Result<()> {
+    let api = HttpAgentApi::new(args.api_url);
+    let response = api
+        .list_auth_providers(api::AuthProviderListParams {})
+        .await
+        .map_err(crate::api_client::api_error)?
+        .result;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&response)?);
+        return Ok(());
+    }
+    if response.providers.is_empty() {
+        println!("providers 0");
+        return Ok(());
+    }
+    for provider in &response.providers {
+        println!(
+            "{} {:?} {:?}",
+            provider.provider_id, provider.provider_kind, provider.status
+        );
+    }
+    Ok(())
+}
+
+async fn github_app_read(args: AuthGithubAppReadArgs) -> Result<()> {
+    let api = HttpAgentApi::new(args.api_url);
+    let response = api
+        .read_auth_provider(api::AuthProviderReadParams {
+            provider_id: args.provider_id,
+        })
+        .await
+        .map_err(crate::api_client::api_error)?
+        .result;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&response)?);
+        return Ok(());
+    }
+    print_provider(&response.provider);
+    Ok(())
+}
+
+async fn github_app_remove(args: AuthGithubAppRemoveArgs) -> Result<()> {
+    let api = HttpAgentApi::new(args.api_url);
+    let response = api
+        .delete_auth_provider(api::AuthProviderDeleteParams {
+            provider_id: args.provider_id,
+        })
+        .await
+        .map_err(crate::api_client::api_error)?
+        .result;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&response)?);
+        return Ok(());
+    }
+    print_provider(&response.provider);
+    Ok(())
+}
+
+async fn github_installation_list(args: AuthGithubInstallationListArgs) -> Result<()> {
+    let api = HttpAgentApi::new(args.api_url);
+    let response = api
+        .list_github_installations(api::AuthGitHubInstallationListParams {
+            provider_id: args.provider_id,
+        })
+        .await
+        .map_err(crate::api_client::api_error)?
+        .result;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&response)?);
+        return Ok(());
+    }
+    if response.installations.is_empty() {
+        println!("installations 0");
+        return Ok(());
+    }
+    for installation in &response.installations {
+        println!(
+            "{} {} {}",
+            installation.installation_id,
+            installation.account_login.as_deref().unwrap_or("-"),
+            installation.repository_selection.as_deref().unwrap_or("-"),
+        );
+    }
+    Ok(())
+}
+
+async fn github_installation_grant(args: AuthGithubInstallationGrantArgs) -> Result<()> {
+    let api = HttpAgentApi::new(args.api_url);
+    let response = api
+        .grant_github_installation(api::AuthGitHubInstallationGrantParams {
+            provider_id: args.provider_id,
+            installation_id: args.installation_id,
+            grant_id: args.grant_id,
+            display_name: args.display_name,
+        })
+        .await
+        .map_err(crate::api_client::api_error)?
+        .result;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&response)?);
+        return Ok(());
+    }
+    print_grant(&response.grant);
+    Ok(())
+}
+
+fn print_provider(provider: &api::AuthProviderView) {
+    println!("providerId {}", provider.provider_id);
+    println!("providerKind {:?}", provider.provider_kind);
+    println!("status {:?}", provider.status);
+    if let Some(display_name) = &provider.display_name {
+        println!("displayName {display_name}");
+    }
+    match &provider.config {
+        api::AuthProviderConfigView::GitHubApp {
+            app_id,
+            api_base_url,
+        } => {
+            println!("appId {app_id}");
+            println!("apiBaseUrl {api_base_url}");
+        }
+    }
+    println!("hasCredential {}", provider.has_credential);
+    println!("createdAtMs {}", provider.created_at_ms);
+    println!("updatedAtMs {}", provider.updated_at_ms);
+}
+
 fn print_client(client: &api::OAuthClientView) {
     println!("clientId {}", client.client_id);
     println!("providerId {}", client.provider_id);
@@ -693,6 +1051,13 @@ fn print_grant(grant: &api::AuthGrantView) {
     }
     if let Some(expires_at_ms) = grant.expires_at_ms {
         println!("expiresAtMs {expires_at_ms}");
+    }
+    if grant
+        .metadata
+        .as_object()
+        .is_some_and(|metadata| !metadata.is_empty())
+    {
+        println!("metadata {}", grant.metadata);
     }
     println!("createdAtMs {}", grant.created_at_ms);
     println!("updatedAtMs {}", grant.updated_at_ms);

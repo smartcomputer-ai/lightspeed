@@ -97,8 +97,17 @@ pub struct AuthGrantRecord {
     /// hard expiry.
     pub expires_at_ms: Option<i64>,
     pub status: AuthGrantStatus,
+    /// Non-secret, provider-specific metadata. For GitHub App installation
+    /// grants this carries the installation id, account, permissions, and
+    /// repository selection. Must be a JSON object; never secret values.
+    #[serde(default = "empty_metadata")]
+    pub metadata: serde_json::Value,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
+}
+
+pub(crate) fn empty_metadata() -> serde_json::Value {
+    serde_json::Value::Object(serde_json::Map::new())
 }
 
 impl AuthGrantRecord {
@@ -113,6 +122,11 @@ impl AuthGrantRecord {
         }
         if let Some(expires_at_ms) = self.expires_at_ms {
             validate_nonnegative_i64(expires_at_ms, "expires_at_ms")?;
+        }
+        if !self.metadata.is_object() {
+            return Err(AuthRegistryError::InvalidInput {
+                message: "grant metadata must be a JSON object".to_owned(),
+            });
         }
         validate_nonnegative_i64(self.created_at_ms, "created_at_ms")?;
         validate_nonnegative_i64(self.updated_at_ms, "updated_at_ms")?;
@@ -143,6 +157,8 @@ pub struct CreateAuthGrantRecord {
     pub oauth_client: Option<OAuthClientId>,
     pub expires_at_ms: Option<i64>,
     pub status: AuthGrantStatus,
+    #[serde(default = "empty_metadata")]
+    pub metadata: serde_json::Value,
     pub created_at_ms: i64,
 }
 
@@ -162,6 +178,7 @@ impl CreateAuthGrantRecord {
             oauth_client: self.oauth_client,
             expires_at_ms: self.expires_at_ms,
             status: self.status,
+            metadata: self.metadata,
             created_at_ms: self.created_at_ms,
             updated_at_ms: self.created_at_ms,
         }
@@ -241,6 +258,7 @@ mod tests {
             oauth_client: None,
             expires_at_ms: None,
             status: AuthGrantStatus::Active,
+            metadata: serde_json::Value::Object(Default::default()),
             created_at_ms: 10,
         }
     }

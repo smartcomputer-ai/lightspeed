@@ -316,6 +316,7 @@ impl OAuthFlowService {
                 .expires_in_secs
                 .map(|secs| now_ms.saturating_add(secs.saturating_mul(1000))),
             status: AuthGrantStatus::Active,
+            metadata: serde_json::Value::Object(Default::default()),
             created_at_ms: now_ms,
         };
         if let Err(error) = self.grants.create_grant(create_grant).await {

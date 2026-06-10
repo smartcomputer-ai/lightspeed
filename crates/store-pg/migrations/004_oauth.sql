@@ -151,6 +151,66 @@ CREATE INDEX IF NOT EXISTS auth_flows_expiry_idx
 ALTER TABLE auth_grants
     ADD COLUMN IF NOT EXISTS oauth_client_id text;
 
+-- Generic auth provider configurations (P69 G5). One table serves all
+-- provider kinds: GitHub Apps first, future providers add a config variant,
+-- not a table. Non-secret provider config lives in config_json and is
+-- decoded into a typed enum at the store boundary; the load-bearing
+-- credential reference (for GitHub: the app private key) is a typed column
+-- with real referential integrity into secret_records.
+CREATE TABLE IF NOT EXISTS auth_providers (
+    universe_id uuid NOT NULL
+        REFERENCES universes (universe_id) ON DELETE CASCADE,
+    provider_id text NOT NULL,
+    provider_kind text NOT NULL,
+    display_name text,
+    config_json jsonb NOT NULL DEFAULT '{}',
+    credential_secret_id text,
+    status text NOT NULL DEFAULT 'active',
+    created_at_ms bigint NOT NULL,
+    updated_at_ms bigint NOT NULL,
+    inserted_at timestamptz NOT NULL DEFAULT now(),
+    modified_at timestamptz NOT NULL DEFAULT now(),
+
+    PRIMARY KEY (universe_id, provider_id),
+
+    -- The provider's credential secret cannot be deleted while the provider
+    -- references it.
+    CONSTRAINT auth_providers_credential_secret_fk
+        FOREIGN KEY (universe_id, credential_secret_id)
+        REFERENCES secret_records (universe_id, secret_id)
+        ON DELETE RESTRICT,
+
+    CONSTRAINT auth_providers_provider_id_format
+        CHECK (provider_id ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$'),
+    CONSTRAINT auth_providers_provider_kind_known
+        CHECK (
+            provider_kind IN (
+                'static_bearer',
+                'mcp_oauth',
+                'github_app',
+                'github_app_user',
+                'github_oauth_app',
+                'custom_oauth'
+            )
+        ),
+    CONSTRAINT auth_providers_display_name_not_empty
+        CHECK (display_name IS NULL OR display_name <> ''),
+    CONSTRAINT auth_providers_status_known
+        CHECK (status IN ('active', 'needs_configuration', 'disabled')),
+    CONSTRAINT auth_providers_created_at_ms_nonnegative
+        CHECK (created_at_ms >= 0),
+    CONSTRAINT auth_providers_updated_at_ms_nonnegative
+        CHECK (updated_at_ms >= 0),
+    CONSTRAINT auth_providers_updated_after_created
+        CHECK (updated_at_ms >= created_at_ms)
+);
+
+-- Non-secret, provider-specific grant metadata (P69 G5): for GitHub App
+-- installation grants this carries the installation id, account login,
+-- permissions, and repository selection. Never secret values.
+ALTER TABLE auth_grants
+    ADD COLUMN IF NOT EXISTS metadata_json jsonb NOT NULL DEFAULT '{}';
+
 COMMENT ON TABLE oauth_clients IS
     'Universe-scoped OAuth client configurations; secrets live in secret_records.';
 COMMENT ON TABLE auth_flows IS

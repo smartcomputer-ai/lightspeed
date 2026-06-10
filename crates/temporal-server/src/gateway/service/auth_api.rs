@@ -46,6 +46,7 @@ pub(super) fn auth_grant_import_draft(
         access_token_secret: Some(secret_id),
         refresh_token_secret: None,
         oauth_client: None,
+        metadata: serde_json::Value::Object(Default::default()),
         expires_at_ms: params.expires_at_ms,
         status: auth_registry::AuthGrantStatus::Active,
         created_at_ms: now_ms,
@@ -76,6 +77,7 @@ pub(super) fn auth_grant_view(record: auth_registry::AuthGrantRecord) -> api::Au
         has_refresh_token: record.refresh_token_secret.is_some(),
         expires_at_ms: record.expires_at_ms,
         status: api_auth_grant_status(record.status),
+        metadata: record.metadata,
         created_at_ms: record.created_at_ms,
         updated_at_ms: record.updated_at_ms,
     }
@@ -100,6 +102,12 @@ pub(super) fn map_auth_registry_error(error: auth_registry::AuthRegistryError) -
         }
         auth_registry::AuthRegistryError::ClientNotFound { client_id } => {
             AgentApiError::not_found(format!("oauth client not found: {client_id}"))
+        }
+        auth_registry::AuthRegistryError::ProviderAlreadyExists { provider_id } => {
+            AgentApiError::conflict(format!("auth provider already exists: {provider_id}"))
+        }
+        auth_registry::AuthRegistryError::ProviderNotFound { provider_id } => {
+            AgentApiError::not_found(format!("auth provider not found: {provider_id}"))
         }
         auth_registry::AuthRegistryError::FlowAlreadyExists { flow_id } => {
             AgentApiError::conflict(format!("auth flow already exists: {flow_id}"))

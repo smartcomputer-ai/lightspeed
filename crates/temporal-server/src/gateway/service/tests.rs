@@ -195,6 +195,7 @@ fn test_auth_grant_record(
         oauth_client: None,
         expires_at_ms: None,
         status,
+        metadata: serde_json::Value::Object(Default::default()),
         created_at_ms: 1,
     }
     .into_record()

@@ -8,6 +8,7 @@ mod blob;
 mod mcp;
 mod oauth;
 mod object;
+mod providers;
 mod session;
 mod shared;
 mod vfs;

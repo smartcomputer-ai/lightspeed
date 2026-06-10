@@ -523,6 +523,7 @@ async fn pg_live_auth_grants_crud_and_status_updates() {
             oauth_client: None,
             expires_at_ms: None,
             status: AuthGrantStatus::Active,
+            metadata: serde_json::Value::Object(Default::default()),
             created_at_ms: 10,
         })
         .await
@@ -547,6 +548,7 @@ async fn pg_live_auth_grants_crud_and_status_updates() {
                     oauth_client: None,
                     expires_at_ms: None,
                     status: AuthGrantStatus::Active,
+                    metadata: serde_json::Value::Object(Default::default()),
                     created_at_ms: 11,
                 }
             })
@@ -756,6 +758,7 @@ async fn pg_live_grant_refresh_updates_token_refs_and_lock_serializes() {
             oauth_client: Some(OAuthClientId::new("crm")),
             expires_at_ms: Some(1_000),
             status: AuthGrantStatus::Active,
+            metadata: serde_json::Value::Object(Default::default()),
             created_at_ms: 10,
         })
         .await
@@ -812,6 +815,134 @@ async fn pg_live_grant_refresh_updates_token_refs_and_lock_serializes() {
         .await
         .expect("join contender")
         .expect("second lock after release");
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires dev/local/up.sh or compatible Postgres + MinIO env"]
+async fn pg_live_auth_providers_crud_and_credential_fk() {
+    use auth_registry::{
+        AuthProviderConfig, AuthProviderId, AuthProviderStatus, AuthProviderStore,
+        CreateAuthProviderRecord, GitHubAppConfig, SECRET_KIND_GITHUB_APP_PRIVATE_KEY,
+    };
+
+    let store = live_store("auth-providers", 1024).await;
+    let provider_id = AuthProviderId::new("forge-github");
+    let key_secret = SecretId::new("authsec_github_key_live");
+    store
+        .put_secret(PutSecretRecord {
+            secret_id: key_secret.clone(),
+            secret_kind: SECRET_KIND_GITHUB_APP_PRIVATE_KEY.to_owned(),
+            value: SecretValue::new("-----BEGIN RSA PRIVATE KEY-----\ntest\n-----END RSA PRIVATE KEY-----"),
+            created_at_ms: 10,
+        })
+        .await
+        .expect("put app key secret");
+
+    let created = store
+        .create_auth_provider(CreateAuthProviderRecord {
+            provider_id: provider_id.clone(),
+            display_name: Some("Forge GitHub App".to_owned()),
+            config: AuthProviderConfig::GitHubApp(GitHubAppConfig {
+                app_id: "12345".to_owned(),
+                api_base_url: "https://api.github.com".to_owned(),
+            }),
+            credential_secret: Some(key_secret.clone()),
+            status: AuthProviderStatus::Active,
+            created_at_ms: 10,
+        })
+        .await
+        .expect("create provider");
+    assert_eq!(created.provider_kind, AuthProviderKind::GitHubApp);
+
+    assert!(matches!(
+        store
+            .create_auth_provider(CreateAuthProviderRecord {
+                provider_id: provider_id.clone(),
+                display_name: None,
+                config: AuthProviderConfig::GitHubApp(GitHubAppConfig {
+                    app_id: "12345".to_owned(),
+                    api_base_url: "https://api.github.com".to_owned(),
+                }),
+                credential_secret: Some(key_secret.clone()),
+                status: AuthProviderStatus::Active,
+                created_at_ms: 11,
+            })
+            .await,
+        Err(AuthRegistryError::ProviderAlreadyExists { .. })
+    ));
+
+    assert_eq!(
+        store
+            .read_auth_provider(&provider_id)
+            .await
+            .expect("read provider"),
+        created
+    );
+    assert_eq!(
+        store
+            .list_auth_providers()
+            .await
+            .expect("list providers"),
+        vec![created.clone()]
+    );
+
+    // Referential integrity: the credential secret cannot be deleted while
+    // the provider references it.
+    assert!(matches!(
+        store.delete_secret(&key_secret).await,
+        Err(AuthRegistryError::Store { .. })
+    ));
+
+    let deleted = store
+        .delete_auth_provider(&provider_id)
+        .await
+        .expect("delete provider");
+    assert_eq!(deleted.provider_id, provider_id);
+    // After the provider is gone the secret is deletable.
+    store
+        .delete_secret(&key_secret)
+        .await
+        .expect("delete app key secret after provider");
+    assert!(matches!(
+        store.read_auth_provider(&provider_id).await,
+        Err(AuthRegistryError::ProviderNotFound { .. })
+    ));
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires dev/local/up.sh or compatible Postgres + MinIO env"]
+async fn pg_live_grant_metadata_round_trips() {
+    let store = live_store("grant-metadata", 1024).await;
+    let grant_id = AuthGrantId::new("authgrant_install_live");
+
+    let created = store
+        .create_grant(CreateAuthGrantRecord {
+            grant_id: grant_id.clone(),
+            provider_id: "forge-github".to_owned(),
+            provider_kind: AuthProviderKind::GitHubApp,
+            principal: PrincipalRef::universe_default(),
+            display_name: None,
+            subject_hint: Some("acme".to_owned()),
+            scopes: Vec::new(),
+            audience: Some("https://api.github.com".to_owned()),
+            access_token_secret: None,
+            refresh_token_secret: None,
+            oauth_client: None,
+            expires_at_ms: None,
+            status: AuthGrantStatus::Active,
+            metadata: serde_json::json!({
+                "installation_id": 678,
+                "account_login": "acme",
+                "permissions": {"contents": "read"},
+            }),
+            created_at_ms: 10,
+        })
+        .await
+        .expect("create installation grant");
+
+    assert_eq!(created.metadata["installation_id"], 678);
+    let read = store.read_grant(&grant_id).await.expect("read grant");
+    assert_eq!(read.metadata, created.metadata);
 }
 
 fn create_oauth_client_record(client_id: &OAuthClientId) -> CreateOAuthClientRecord {

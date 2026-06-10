@@ -41,7 +41,17 @@ execution — never in the engine or the session log.
   `mcp:<server_id>` client record. Existing records are reused without
   network traffic; manual `forge auth client add --id mcp:<server_id>` always
   wins.
-- `memory` — in-memory grant/secret/client/flow stores for tests.
+- `providers` — the generic `AuthProviderRecord`: one record shape for every
+  provider kind, with non-secret config decoded into the typed
+  `AuthProviderConfig` enum (GitHub Apps first) and the credential reference
+  as a typed field (`store-pg` backs it with a foreign key into
+  `secret_records`).
+- `github` — the GitHub App driver (P69 G5): RS256 app JWT signing,
+  installation listing, and on-demand installation token minting via the
+  `GitHubApiClient` trait. Installation grants store no tokens; the broker
+  mints a ~1h token per call with a process-local cache, and `401`/`404`
+  from GitHub mark the grant `failed`/`needs_reauth` respectively.
+- `memory` — in-memory grant/secret/client/flow/provider stores for tests.
 
 ## How it works
 
@@ -50,10 +60,10 @@ Sessions and the engine only ever record `SecretRef { namespace:
 broker for the token for a specific resource URL; the token is injected into
 the outgoing provider request at the last moment, while the persisted request
 blob keeps `"authorization": "<redacted>"`. Plaintext tokens never enter
-engine events, CAS blobs, Temporal history, API responses, or logs. The two
-deliberate inbound-plaintext paths are `auth/grants/import` (bearer token)
-and `auth/clients/create` (client secret); both encrypt on receipt and
-redact `Debug` output.
+engine events, CAS blobs, Temporal history, API responses, or logs. The
+three deliberate inbound-plaintext paths are `auth/grants/import` (bearer
+token), `auth/clients/create` (client secret), and `auth/providers/create`
+(GitHub App private key); all encrypt on receipt and redact `Debug` output.
 
 ## Build & test
 
@@ -222,3 +232,34 @@ status is `active`, and its audience (`https://api.githubcopilot.com/mcp/`)
 covers the server URL. The broker refreshes the grant's access token
 automatically when it expires, as long as the authorization server issued a
 refresh token.
+
+## GitHub App installation access (G5)
+
+Unlike OAuth there is no flow and no stored access token: Forge holds the
+app's private key encrypted and the broker mints ~1 hour installation tokens
+on demand (app JWT -> token exchange), caching them only in process memory.
+A grant with kind `github_app` represents the installation itself.
+
+```bash
+# 1. register the app: key validated (must parse as RSA PEM), stored encrypted
+cargo run -q -p cli -- auth github app add --id forge-github \
+  --app-id 12345 --private-key-file forge-github.pem
+
+# 2. see where the app is installed (live, signed with the app JWT)
+cargo run -q -p cli -- auth github installation list --app forge-github
+
+# 3. record an installation as a grant (verified live; captures account,
+#    permissions, and repository selection as non-secret grant metadata)
+cargo run -q -p cli -- auth github installation grant \
+  --app forge-github --installation-id 678
+
+# 4. inspect: no token values, metadata shows the installation facts
+cargo run -q -p cli -- auth grant list
+```
+
+Runtime consumers resolve the grant through the broker
+(`TokenAudience::GitHubApi`), which signs the JWT and mints per call. If
+GitHub rejects the app credentials (key revoked) the grant turns `failed`;
+if the app was uninstalled it turns `needs_reauth`. There is no Forge
+consumer of GitHub tokens yet (repo tools arrive later); token leases for
+VMs/sandboxes are deferred until that boundary exists.

@@ -450,6 +450,59 @@ mod tests {
     }
 
     #[test]
+    fn auth_github_app_add_parse_requires_a_key_source() {
+        let parsed = Cli::try_parse_from([
+            "forge",
+            "auth",
+            "github",
+            "app",
+            "add",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
+            "--id",
+            "forge-github",
+            "--app-id",
+            "12345",
+            "--private-key-env",
+            "GH_APP_KEY",
+        ])
+        .expect("parse github app add");
+        assert!(matches!(parsed.command, Command::Auth(_)));
+
+        let missing_key = Cli::try_parse_from([
+            "forge",
+            "auth",
+            "github",
+            "app",
+            "add",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
+            "--app-id",
+            "12345",
+        ]);
+        assert!(missing_key.is_err(), "a private key source is required");
+    }
+
+    #[test]
+    fn auth_github_installation_grant_parse_accepts_app_and_id() {
+        let parsed = Cli::try_parse_from([
+            "forge",
+            "auth",
+            "github",
+            "installation",
+            "grant",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
+            "--app",
+            "forge-github",
+            "--installation-id",
+            "678",
+        ])
+        .expect("parse installation grant");
+        assert!(matches!(parsed.command, Command::Auth(_)));
+    }
+
+    #[test]
     fn auth_login_parse_accepts_mcp_server_client_ids() {
         let cli = Cli::try_parse_from([
             "forge",

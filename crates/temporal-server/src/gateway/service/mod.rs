@@ -4,6 +4,7 @@ mod api_config;
 mod auth_api;
 mod blobs;
 mod errors;
+mod github_api;
 mod input;
 mod mcp_api;
 mod oauth_api;
@@ -19,6 +20,10 @@ use api_config::*;
 use auth_api::{
     api_auth_provider_kind, auth_grant_import_draft, auth_grant_view, map_auth_registry_error,
     parse_auth_grant_id, registry_auth_grant_status_for_filter,
+};
+use github_api::{
+    auth_provider_create_draft, auth_provider_view, github_installation_grant_draft,
+    github_installation_view, map_github_app_error, parse_auth_provider_id,
 };
 use oauth_api::{
     auth_client_create_draft, auth_flow_view, cimd_config, map_mcp_oauth_error,
@@ -54,6 +59,11 @@ use api::{
     AuthClientCreateResponse, AuthClientDeleteParams, AuthClientDeleteResponse,
     AuthClientListParams, AuthClientListResponse, AuthClientReadParams, AuthClientReadResponse,
     AuthFlowStartParams, AuthFlowStartResponse, AuthFlowStatusParams, AuthFlowStatusResponse,
+    AuthGitHubInstallationGrantParams, AuthGitHubInstallationGrantResponse,
+    AuthGitHubInstallationListParams, AuthGitHubInstallationListResponse,
+    AuthProviderCreateParams, AuthProviderCreateResponse, AuthProviderDeleteParams,
+    AuthProviderDeleteResponse, AuthProviderListParams, AuthProviderListResponse,
+    AuthProviderReadParams, AuthProviderReadResponse,
     AuthGrantImportParams,
     AuthGrantImportResponse, AuthGrantListParams, AuthGrantListResponse, AuthGrantReadParams,
     AuthGrantReadResponse, AuthGrantRevokeParams, AuthGrantRevokeResponse, BlobGetParams,
@@ -103,9 +113,9 @@ use engine::{
     storage::{BlobStore, BlobStoreError, ReadSessionEvents, SessionStore},
 };
 use auth_registry::{
-    AuthFlowStore, AuthGrantStore, HttpOAuthMetadataClient, HttpOAuthTokenClient, McpOAuthDriver,
-    OAuthClientStore, OAuthFlowService, OAuthMetadataClient, OAuthTokenClient, SecretStore,
-    StartAuthFlow,
+    AuthFlowStore, AuthGrantStore, AuthProviderStore, GitHubApiClient, HttpGitHubApiClient,
+    HttpOAuthMetadataClient, HttpOAuthTokenClient, McpOAuthDriver, OAuthClientStore,
+    OAuthFlowService, OAuthMetadataClient, OAuthTokenClient, SecretStore, StartAuthFlow,
 };
 use mcp_registry::McpRegistryStore;
 use store_pg::PgStore;
@@ -161,6 +171,7 @@ pub struct GatewayAgentApiBuilder {
     public_base_url: String,
     oauth_token_client: Option<Arc<dyn OAuthTokenClient>>,
     oauth_metadata_client: Option<Arc<dyn OAuthMetadataClient>>,
+    github_api_client: Option<Arc<dyn GitHubApiClient>>,
 }
 
 impl GatewayAgentApiBuilder {
@@ -188,6 +199,12 @@ impl GatewayAgentApiBuilder {
         metadata_client: Arc<dyn OAuthMetadataClient>,
     ) -> Self {
         self.oauth_metadata_client = Some(metadata_client);
+        self
+    }
+
+    /// Override the GitHub REST client (tests).
+    pub fn with_github_api_client(mut self, github_api_client: Arc<dyn GitHubApiClient>) -> Self {
+        self.github_api_client = Some(github_api_client);
         self
     }
 
@@ -246,6 +263,9 @@ impl GatewayAgentApiBuilder {
             self.store.clone() as Arc<dyn SecretStore>,
             metadata_client,
         );
+        let github_api = self.github_api_client.unwrap_or_else(|| {
+            Arc::new(HttpGitHubApiClient::new().expect("construct GitHub REST HTTP client"))
+        });
         GatewayAgentApi {
             client: self.client,
             store: self.store,
@@ -259,6 +279,7 @@ impl GatewayAgentApiBuilder {
             public_base_url: self.public_base_url,
             oauth_flows,
             mcp_oauth,
+            github_api,
             metadata: RwLock::new(BTreeMap::new()),
         }
     }
@@ -282,6 +303,7 @@ pub struct GatewayAgentApi {
     public_base_url: String,
     oauth_flows: OAuthFlowService,
     mcp_oauth: McpOAuthDriver,
+    github_api: Arc<dyn GitHubApiClient>,
     metadata: RwLock<BTreeMap<SessionId, GatewaySessionMetadata>>,
 }
 
@@ -300,6 +322,7 @@ impl GatewayAgentApi {
             public_base_url: DEFAULT_PUBLIC_BASE_URL.to_owned(),
             oauth_token_client: None,
             oauth_metadata_client: None,
+            github_api_client: None,
         }
     }
 
@@ -1558,6 +1581,139 @@ impl AgentApiService for GatewayAgentApi {
             flow: auth_flow_view(record, self.oauth_flows.now_ms()),
         }))
     }
+
+    async fn create_auth_provider(
+        &self,
+        params: AuthProviderCreateParams,
+    ) -> Result<AgentApiOutcome<AuthProviderCreateResponse>, AgentApiError> {
+        let draft = auth_provider_create_draft(params, now_ms()?)?;
+        // The secret must exist before the provider row: auth_providers
+        // carries a foreign key into secret_records.
+        if let Some(secret) = &draft.secret {
+            self.store
+                .put_secret(secret.clone())
+                .await
+                .map_err(map_auth_registry_error)?;
+        }
+        match self.store.create_auth_provider(draft.provider).await {
+            Ok(record) => Ok(AgentApiOutcome::new(AuthProviderCreateResponse {
+                provider: auth_provider_view(record),
+            })),
+            Err(error) => {
+                if let Some(secret) = &draft.secret {
+                    let _ = self.store.delete_secret(&secret.secret_id).await;
+                }
+                Err(map_auth_registry_error(error))
+            }
+        }
+    }
+
+    async fn list_auth_providers(
+        &self,
+        _params: AuthProviderListParams,
+    ) -> Result<AgentApiOutcome<AuthProviderListResponse>, AgentApiError> {
+        let providers = self
+            .store
+            .list_auth_providers()
+            .await
+            .map_err(map_auth_registry_error)?;
+        Ok(AgentApiOutcome::new(AuthProviderListResponse {
+            providers: providers.into_iter().map(auth_provider_view).collect(),
+        }))
+    }
+
+    async fn read_auth_provider(
+        &self,
+        params: AuthProviderReadParams,
+    ) -> Result<AgentApiOutcome<AuthProviderReadResponse>, AgentApiError> {
+        let provider_id = parse_auth_provider_id(params.provider_id)?;
+        let record = self
+            .store
+            .read_auth_provider(&provider_id)
+            .await
+            .map_err(map_auth_registry_error)?;
+        Ok(AgentApiOutcome::new(AuthProviderReadResponse {
+            provider: auth_provider_view(record),
+        }))
+    }
+
+    async fn delete_auth_provider(
+        &self,
+        params: AuthProviderDeleteParams,
+    ) -> Result<AgentApiOutcome<AuthProviderDeleteResponse>, AgentApiError> {
+        let provider_id = parse_auth_provider_id(params.provider_id)?;
+        // The provider row must go first: its foreign key prevents deleting
+        // the credential secret while the provider references it.
+        let record = self
+            .store
+            .delete_auth_provider(&provider_id)
+            .await
+            .map_err(map_auth_registry_error)?;
+        if let Some(secret_id) = &record.credential_secret {
+            let _ = self.store.delete_secret(secret_id).await;
+        }
+        Ok(AgentApiOutcome::new(AuthProviderDeleteResponse {
+            provider: auth_provider_view(record),
+        }))
+    }
+
+    async fn list_github_installations(
+        &self,
+        params: AuthGitHubInstallationListParams,
+    ) -> Result<AgentApiOutcome<AuthGitHubInstallationListResponse>, AgentApiError> {
+        let (provider, app_jwt) = self.github_provider_jwt(params.provider_id).await?;
+        let auth_registry::AuthProviderConfig::GitHubApp(config) = &provider.config;
+        let installations = self
+            .github_api
+            .list_installations(&config.api_base_url, &app_jwt)
+            .await
+            .map_err(map_github_app_error)?;
+        Ok(AgentApiOutcome::new(AuthGitHubInstallationListResponse {
+            installations: installations
+                .iter()
+                .map(github_installation_view)
+                .collect(),
+        }))
+    }
+
+    async fn grant_github_installation(
+        &self,
+        params: AuthGitHubInstallationGrantParams,
+    ) -> Result<AgentApiOutcome<AuthGitHubInstallationGrantResponse>, AgentApiError> {
+        let (provider, app_jwt) = self.github_provider_jwt(params.provider_id).await?;
+        let auth_registry::AuthProviderConfig::GitHubApp(config) = &provider.config;
+        // Verify the installation exists live before recording the grant;
+        // this also captures its account/permission metadata.
+        let installations = self
+            .github_api
+            .list_installations(&config.api_base_url, &app_jwt)
+            .await
+            .map_err(map_github_app_error)?;
+        let Some(installation) = installations
+            .iter()
+            .find(|installation| installation.installation_id == params.installation_id)
+        else {
+            return Err(AgentApiError::not_found(format!(
+                "github app installation {} not found for provider {}",
+                params.installation_id, provider.provider_id
+            )));
+        };
+        let draft = github_installation_grant_draft(
+            &provider,
+            installation,
+            params.grant_id,
+            params.display_name,
+            now_ms()?,
+        )?;
+        let record = self
+            .store
+            .create_grant(draft)
+            .await
+            .map_err(map_auth_registry_error)?;
+        Ok(AgentApiOutcome::new(AuthGitHubInstallationGrantResponse {
+            grant: auth_grant_view(record),
+        }))
+    }
 }
 
 /// Result of an authorization callback, consumed by the HTTP handler to
@@ -1615,6 +1771,36 @@ impl GatewayAgentApi {
     /// CIMD client ids.
     pub fn cimd_document(&self) -> serde_json::Value {
         oauth_api::cimd_document(&self.public_base_url)
+    }
+
+    /// Load a GitHub App provider and sign its app JWT for control-plane
+    /// calls (installation listing/verification). The JWT and the key only
+    /// exist in memory inside [`auth_registry::SecretValue`] wrappers.
+    async fn github_provider_jwt(
+        &self,
+        provider_id: String,
+    ) -> Result<(auth_registry::AuthProviderRecord, auth_registry::SecretValue), AgentApiError>
+    {
+        let provider_id = parse_auth_provider_id(provider_id)?;
+        let provider = self
+            .store
+            .read_auth_provider(&provider_id)
+            .await
+            .map_err(map_auth_registry_error)?;
+        let auth_registry::AuthProviderConfig::GitHubApp(config) = &provider.config;
+        let Some(credential_secret) = &provider.credential_secret else {
+            return Err(AgentApiError::rejected(format!(
+                "auth provider {provider_id} has no private key credential"
+            )));
+        };
+        let (_, private_key) = self
+            .store
+            .read_secret(credential_secret)
+            .await
+            .map_err(map_auth_registry_error)?;
+        let app_jwt = auth_registry::sign_github_app_jwt(&config.app_id, &private_key, now_ms()?)
+            .map_err(map_github_app_error)?;
+        Ok((provider, app_jwt))
     }
 
     /// Handle the OAuth redirect: consume the flow, exchange the code, and

@@ -84,9 +84,10 @@ cargo run -p cli -- chat --api-url http://127.0.0.1:18080/rpc --session session_
   catalog, and AEAD-encrypted auth grant/secret storage.
 - `crates/mcp-registry/` — provider-independent remote MCP server catalog DTOs,
   validation, and store traits.
-- `crates/auth-registry/` — generic auth grant/secret records, OAuth client
-  and authorization-flow records, PKCE helpers, store traits, typed broker
-  errors, and the runtime token broker with single-flight refresh (P69).
+- `crates/auth-registry/` — generic auth grant/secret/provider records,
+  OAuth client and authorization-flow records, PKCE helpers, the MCP OAuth
+  and GitHub App drivers, store traits, typed broker errors, and the runtime
+  token broker with single-flight refresh and on-demand minting (P69).
 - `crates/eval/` — eval harness for agent/tool workflows.
 - `crates/llm-runtime/` — CoreAgent LLM runtime from planned requests to
   provider-native client calls.

@@ -5,10 +5,10 @@ use async_trait::async_trait;
 
 use crate::{
     AuthFlowId, AuthFlowRecord, AuthFlowStore, AuthGrantId, AuthGrantRecord, AuthGrantStatus,
-    AuthGrantStore, AuthGrantTokenRefresh, AuthRegistryError, CreateAuthFlowRecord,
-    CreateAuthGrantRecord, CreateOAuthClientRecord, FinishAuthFlow, ListAuthGrants, OAuthClientId,
-    OAuthClientRecord, OAuthClientStore, PutSecretRecord, SecretId, SecretRecordMeta, SecretStore,
-    SecretValue,
+    AuthGrantStore, AuthGrantTokenRefresh, AuthProviderId, AuthProviderRecord, AuthProviderStore,
+    AuthRegistryError, CreateAuthFlowRecord, CreateAuthGrantRecord, CreateAuthProviderRecord,
+    CreateOAuthClientRecord, FinishAuthFlow, ListAuthGrants, OAuthClientId, OAuthClientRecord,
+    OAuthClientStore, PutSecretRecord, SecretId, SecretRecordMeta, SecretStore, SecretValue,
 };
 
 #[derive(Clone, Default)]
@@ -179,6 +179,66 @@ impl OAuthClientStore for InMemoryOAuthClientStore {
             .remove(client_id)
             .ok_or_else(|| AuthRegistryError::ClientNotFound {
                 client_id: client_id.clone(),
+            })
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct InMemoryAuthProviderStore {
+    inner: Arc<RwLock<BTreeMap<AuthProviderId, AuthProviderRecord>>>,
+}
+
+impl InMemoryAuthProviderStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[async_trait]
+impl AuthProviderStore for InMemoryAuthProviderStore {
+    async fn create_auth_provider(
+        &self,
+        record: CreateAuthProviderRecord,
+    ) -> Result<AuthProviderRecord, AuthRegistryError> {
+        let record = record.into_record();
+        record.validate()?;
+        let mut inner = self.inner.write().map_err(|_| lock_poisoned())?;
+        if inner.contains_key(&record.provider_id) {
+            return Err(AuthRegistryError::ProviderAlreadyExists {
+                provider_id: record.provider_id,
+            });
+        }
+        inner.insert(record.provider_id.clone(), record.clone());
+        Ok(record)
+    }
+
+    async fn read_auth_provider(
+        &self,
+        provider_id: &AuthProviderId,
+    ) -> Result<AuthProviderRecord, AuthRegistryError> {
+        let inner = self.inner.read().map_err(|_| lock_poisoned())?;
+        inner
+            .get(provider_id)
+            .cloned()
+            .ok_or_else(|| AuthRegistryError::ProviderNotFound {
+                provider_id: provider_id.clone(),
+            })
+    }
+
+    async fn list_auth_providers(&self) -> Result<Vec<AuthProviderRecord>, AuthRegistryError> {
+        let inner = self.inner.read().map_err(|_| lock_poisoned())?;
+        Ok(inner.values().cloned().collect())
+    }
+
+    async fn delete_auth_provider(
+        &self,
+        provider_id: &AuthProviderId,
+    ) -> Result<AuthProviderRecord, AuthRegistryError> {
+        let mut inner = self.inner.write().map_err(|_| lock_poisoned())?;
+        inner
+            .remove(provider_id)
+            .ok_or_else(|| AuthRegistryError::ProviderNotFound {
+                provider_id: provider_id.clone(),
             })
     }
 }
@@ -373,6 +433,7 @@ mod tests {
             oauth_client: None,
             expires_at_ms: None,
             status: AuthGrantStatus::Active,
+            metadata: serde_json::Value::Object(Default::default()),
             created_at_ms: 10,
         }
     }

@@ -5,13 +5,21 @@ use api::{
     AuthClientCreateResponse, AuthClientDeleteParams, AuthClientDeleteResponse,
     AuthClientListParams, AuthClientListResponse, AuthClientReadParams, AuthClientReadResponse,
     AuthFlowStartParams, AuthFlowStartResponse, AuthFlowStatusParams, AuthFlowStatusResponse,
+    AuthGitHubInstallationGrantParams, AuthGitHubInstallationGrantResponse,
+    AuthGitHubInstallationListParams, AuthGitHubInstallationListResponse,
+    AuthProviderCreateParams, AuthProviderCreateResponse, AuthProviderDeleteParams,
+    AuthProviderDeleteResponse, AuthProviderListParams, AuthProviderListResponse,
+    AuthProviderReadParams, AuthProviderReadResponse,
     AuthGrantImportParams,
     AuthGrantImportResponse, AuthGrantListParams, AuthGrantListResponse, AuthGrantReadParams,
     AuthGrantReadResponse, AuthGrantRevokeParams, AuthGrantRevokeResponse, BlobGetParams,
     BlobGetResponse, BlobHasManyParams, BlobHasManyResponse, BlobPutManyParams,
     BlobPutManyResponse, JsonRpcRequest, JsonRpcResponse, METHOD_AUTH_CLIENTS_CREATE,
     METHOD_AUTH_CLIENTS_DELETE, METHOD_AUTH_CLIENTS_LIST, METHOD_AUTH_CLIENTS_READ,
-    METHOD_AUTH_FLOWS_START, METHOD_AUTH_FLOWS_STATUS, METHOD_AUTH_GRANTS_IMPORT,
+    METHOD_AUTH_FLOWS_START, METHOD_AUTH_FLOWS_STATUS, METHOD_AUTH_GITHUB_INSTALLATIONS_GRANT,
+    METHOD_AUTH_GITHUB_INSTALLATIONS_LIST, METHOD_AUTH_PROVIDERS_CREATE,
+    METHOD_AUTH_PROVIDERS_DELETE, METHOD_AUTH_PROVIDERS_LIST, METHOD_AUTH_PROVIDERS_READ,
+    METHOD_AUTH_GRANTS_IMPORT,
     METHOD_AUTH_GRANTS_LIST, METHOD_AUTH_GRANTS_READ, METHOD_AUTH_GRANTS_REVOKE, METHOD_BLOB_GET,
     METHOD_BLOB_HAS_MANY, METHOD_BLOB_PUT_MANY,
     METHOD_MCP_SERVERS_CREATE, METHOD_MCP_SERVERS_DELETE, METHOD_MCP_SERVERS_LIST,
@@ -315,6 +323,50 @@ impl HttpAgentApi {
         params: AuthFlowStatusParams,
     ) -> Result<AgentApiOutcome<AuthFlowStatusResponse>, AgentApiError> {
         self.request(METHOD_AUTH_FLOWS_STATUS, params).await
+    }
+
+    pub(crate) async fn create_auth_provider(
+        &self,
+        params: AuthProviderCreateParams,
+    ) -> Result<AgentApiOutcome<AuthProviderCreateResponse>, AgentApiError> {
+        self.request(METHOD_AUTH_PROVIDERS_CREATE, params).await
+    }
+
+    pub(crate) async fn list_auth_providers(
+        &self,
+        params: AuthProviderListParams,
+    ) -> Result<AgentApiOutcome<AuthProviderListResponse>, AgentApiError> {
+        self.request(METHOD_AUTH_PROVIDERS_LIST, params).await
+    }
+
+    pub(crate) async fn read_auth_provider(
+        &self,
+        params: AuthProviderReadParams,
+    ) -> Result<AgentApiOutcome<AuthProviderReadResponse>, AgentApiError> {
+        self.request(METHOD_AUTH_PROVIDERS_READ, params).await
+    }
+
+    pub(crate) async fn delete_auth_provider(
+        &self,
+        params: AuthProviderDeleteParams,
+    ) -> Result<AgentApiOutcome<AuthProviderDeleteResponse>, AgentApiError> {
+        self.request(METHOD_AUTH_PROVIDERS_DELETE, params).await
+    }
+
+    pub(crate) async fn list_github_installations(
+        &self,
+        params: AuthGitHubInstallationListParams,
+    ) -> Result<AgentApiOutcome<AuthGitHubInstallationListResponse>, AgentApiError> {
+        self.request(METHOD_AUTH_GITHUB_INSTALLATIONS_LIST, params)
+            .await
+    }
+
+    pub(crate) async fn grant_github_installation(
+        &self,
+        params: AuthGitHubInstallationGrantParams,
+    ) -> Result<AgentApiOutcome<AuthGitHubInstallationGrantResponse>, AgentApiError> {
+        self.request(METHOD_AUTH_GITHUB_INSTALLATIONS_GRANT, params)
+            .await
     }
 
     pub(crate) async fn link_session_mcp(

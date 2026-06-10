@@ -94,19 +94,31 @@ auth_string_id!(AuthGrantId);
 auth_string_id!(SecretId);
 auth_string_id!(OAuthClientId);
 auth_string_id!(AuthFlowId);
+auth_string_id!(AuthProviderId);
 
 mod broker;
 mod flow;
+mod github;
 mod grants;
 mod locks;
 mod mcp_oauth;
 mod memory;
 mod oauth;
+mod providers;
 mod secrets;
 
 pub use broker::{
-    AuthBrokerError, AuthTokenBroker, DEFAULT_REFRESH_EXPIRY_MARGIN_MS, OAuthRefreshRuntime,
-    RegistryTokenBroker, TokenAudience, audience_covers,
+    AuthBrokerError, AuthTokenBroker, DEFAULT_REFRESH_EXPIRY_MARGIN_MS, GitHubAppRuntime,
+    OAuthRefreshRuntime, RegistryTokenBroker, TokenAudience, audience_covers,
+};
+pub use github::{
+    GitHubApiClient, GitHubAppError, GitHubInstallation, GitHubInstallationGrantMetadata,
+    GitHubInstallationToken, HttpGitHubApiClient, SECRET_KIND_GITHUB_APP_PRIVATE_KEY,
+    sign_github_app_jwt, validate_github_app_private_key,
+};
+pub use providers::{
+    AuthProviderConfig, AuthProviderRecord, AuthProviderStatus, AuthProviderStore,
+    CreateAuthProviderRecord, DEFAULT_GITHUB_API_BASE_URL, GitHubAppConfig,
 };
 pub use flow::{
     AuthCallback, DEFAULT_AUTH_FLOW_TTL_MS, OAuthFlowService, StartAuthFlow, StartedAuthFlow,
@@ -123,7 +135,8 @@ pub use mcp_oauth::{
     select_authorization_server,
 };
 pub use memory::{
-    InMemoryAuthFlowStore, InMemoryAuthGrantStore, InMemoryOAuthClientStore, InMemorySecretStore,
+    InMemoryAuthFlowStore, InMemoryAuthGrantStore, InMemoryAuthProviderStore,
+    InMemoryOAuthClientStore, InMemorySecretStore,
 };
 pub use oauth::{
     AuthFlowRecord, AuthFlowStatus, AuthFlowStore, CreateAuthFlowRecord, CreateOAuthClientRecord,
@@ -157,6 +170,12 @@ pub enum AuthRegistryError {
 
     #[error("oauth client not found: {client_id}")]
     ClientNotFound { client_id: OAuthClientId },
+
+    #[error("auth provider already exists: {provider_id}")]
+    ProviderAlreadyExists { provider_id: AuthProviderId },
+
+    #[error("auth provider not found: {provider_id}")]
+    ProviderNotFound { provider_id: AuthProviderId },
 
     #[error("auth flow already exists: {flow_id}")]
     FlowAlreadyExists { flow_id: AuthFlowId },

@@ -60,6 +60,12 @@ pub const METHOD_AUTH_CLIENTS_READ: &str = "auth/clients/read";
 pub const METHOD_AUTH_CLIENTS_DELETE: &str = "auth/clients/delete";
 pub const METHOD_AUTH_FLOWS_START: &str = "auth/flows/start";
 pub const METHOD_AUTH_FLOWS_STATUS: &str = "auth/flows/status";
+pub const METHOD_AUTH_PROVIDERS_CREATE: &str = "auth/providers/create";
+pub const METHOD_AUTH_PROVIDERS_LIST: &str = "auth/providers/list";
+pub const METHOD_AUTH_PROVIDERS_READ: &str = "auth/providers/read";
+pub const METHOD_AUTH_PROVIDERS_DELETE: &str = "auth/providers/delete";
+pub const METHOD_AUTH_GITHUB_INSTALLATIONS_LIST: &str = "auth/github/installations/list";
+pub const METHOD_AUTH_GITHUB_INSTALLATIONS_GRANT: &str = "auth/github/installations/grant";
 
 pub const NOTIFY_SESSION_STARTED: &str = "session/started";
 pub const NOTIFY_SESSION_STATUS_CHANGED: &str = "session/status/changed";
@@ -340,6 +346,36 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: AuthFlowStatusParams,
     ) -> Result<AgentApiOutcome<AuthFlowStatusResponse>, AgentApiError>;
+
+    async fn create_auth_provider(
+        &self,
+        params: AuthProviderCreateParams,
+    ) -> Result<AgentApiOutcome<AuthProviderCreateResponse>, AgentApiError>;
+
+    async fn list_auth_providers(
+        &self,
+        params: AuthProviderListParams,
+    ) -> Result<AgentApiOutcome<AuthProviderListResponse>, AgentApiError>;
+
+    async fn read_auth_provider(
+        &self,
+        params: AuthProviderReadParams,
+    ) -> Result<AgentApiOutcome<AuthProviderReadResponse>, AgentApiError>;
+
+    async fn delete_auth_provider(
+        &self,
+        params: AuthProviderDeleteParams,
+    ) -> Result<AgentApiOutcome<AuthProviderDeleteResponse>, AgentApiError>;
+
+    async fn list_github_installations(
+        &self,
+        params: AuthGitHubInstallationListParams,
+    ) -> Result<AgentApiOutcome<AuthGitHubInstallationListResponse>, AgentApiError>;
+
+    async fn grant_github_installation(
+        &self,
+        params: AuthGitHubInstallationGrantParams,
+    ) -> Result<AgentApiOutcome<AuthGitHubInstallationGrantResponse>, AgentApiError>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1654,8 +1690,20 @@ pub struct AuthGrantView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at_ms: Option<i64>,
     pub status: AuthGrantStatus,
+    /// Non-secret provider-specific metadata (for GitHub App installation
+    /// grants: installation id, account, permissions, repository selection).
+    #[serde(default, skip_serializing_if = "metadata_is_empty")]
+    pub metadata: serde_json::Value,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
+}
+
+fn metadata_is_empty(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Null => true,
+        serde_json::Value::Object(map) => map.is_empty(),
+        _ => false,
+    }
 }
 
 /// Import a static bearer credential as an auth grant. This is the one
@@ -1918,6 +1966,163 @@ pub struct AuthFlowView {
 #[serde(rename_all = "camelCase")]
 pub struct AuthFlowStatusResponse {
     pub flow: AuthFlowView,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AuthProviderStatus {
+    #[default]
+    Active,
+    NeedsConfiguration,
+    Disabled,
+}
+
+/// Non-secret, provider-specific configuration. New providers add a
+/// variant, not a table.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum AuthProviderConfigView {
+    #[serde(rename = "githubApp", rename_all = "camelCase")]
+    GitHubApp {
+        app_id: String,
+        api_base_url: String,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum AuthProviderConfigInput {
+    #[serde(rename = "githubApp", rename_all = "camelCase")]
+    GitHubApp {
+        app_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        api_base_url: Option<String>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthProviderView {
+    pub provider_id: String,
+    pub provider_kind: AuthProviderKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    pub config: AuthProviderConfigView,
+    pub has_credential: bool,
+    pub status: AuthProviderStatus,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+/// Register an auth provider. `credential` (for GitHub Apps: the private
+/// key PEM) is the third deliberate inbound-plaintext path: it is encrypted
+/// on receipt and never returned by any method. `Debug` output redacts it;
+/// request logging must never echo these params.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthProviderCreateParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    pub config: AuthProviderConfigInput,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential: Option<String>,
+}
+
+impl std::fmt::Debug for AuthProviderCreateParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthProviderCreateParams")
+            .field("provider_id", &self.provider_id)
+            .field("display_name", &self.display_name)
+            .field("config", &self.config)
+            .field("credential", &self.credential.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthProviderCreateResponse {
+    pub provider: AuthProviderView,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthProviderListParams {}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthProviderListResponse {
+    #[serde(default)]
+    pub providers: Vec<AuthProviderView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthProviderReadParams {
+    pub provider_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthProviderReadResponse {
+    pub provider: AuthProviderView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthProviderDeleteParams {
+    pub provider_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthProviderDeleteResponse {
+    pub provider: AuthProviderView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubInstallationView {
+    pub installation_id: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_login: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository_selection: Option<String>,
+    /// Fine-grained permission map as GitHub reports it.
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    pub permissions: serde_json::Value,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthGitHubInstallationListParams {
+    pub provider_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthGitHubInstallationListResponse {
+    #[serde(default)]
+    pub installations: Vec<GitHubInstallationView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthGitHubInstallationGrantParams {
+    pub provider_id: String,
+    pub installation_id: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthGitHubInstallationGrantResponse {
+    pub grant: AuthGrantView,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -2711,6 +2916,46 @@ pub async fn dispatch_json_rpc(
             Ok(params) => json_rpc_outcome(id, service.read_auth_flow_status(params).await),
             Err(error) => JsonRpcResponse::failure(id, error),
         },
+        METHOD_AUTH_PROVIDERS_CREATE => {
+            match json_rpc_params::<AuthProviderCreateParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.create_auth_provider(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
+        METHOD_AUTH_PROVIDERS_LIST => {
+            match json_rpc_params::<AuthProviderListParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.list_auth_providers(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
+        METHOD_AUTH_PROVIDERS_READ => {
+            match json_rpc_params::<AuthProviderReadParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.read_auth_provider(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
+        METHOD_AUTH_PROVIDERS_DELETE => {
+            match json_rpc_params::<AuthProviderDeleteParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.delete_auth_provider(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
+        METHOD_AUTH_GITHUB_INSTALLATIONS_LIST => {
+            match json_rpc_params::<AuthGitHubInstallationListParams>(request.params) {
+                Ok(params) => {
+                    json_rpc_outcome(id, service.list_github_installations(params).await)
+                }
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
+        METHOD_AUTH_GITHUB_INSTALLATIONS_GRANT => {
+            match json_rpc_params::<AuthGitHubInstallationGrantParams>(request.params) {
+                Ok(params) => {
+                    json_rpc_outcome(id, service.grant_github_installation(params).await)
+                }
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
         other => JsonRpcResponse::failure(id, JsonRpcError::method_not_found(other)),
     }
 }
@@ -2812,6 +3057,22 @@ mod tests {
             params.client_secret.as_deref(),
             Some("super-secret-client-secret")
         );
+    }
+
+    #[test]
+    fn auth_provider_create_params_redact_credential_in_debug_output() {
+        let params: AuthProviderCreateParams = serde_json::from_value(json!({
+            "providerId": "forge-github",
+            "config": {"type": "githubApp", "appId": "12345"},
+            "credential": "-----BEGIN RSA PRIVATE KEY-----\nsuper-secret-key"
+        }))
+        .expect("deserialize provider create params");
+
+        let debug = format!("{params:?}");
+
+        assert!(!debug.contains("super-secret-key"), "{debug}");
+        assert!(debug.contains("<redacted>"));
+        assert!(params.credential.as_deref().unwrap().contains("super-secret-key"));
     }
 
     #[test]
@@ -4221,6 +4482,83 @@ mod tests {
                 },
             }))
         }
+
+        async fn create_auth_provider(
+            &self,
+            params: AuthProviderCreateParams,
+        ) -> Result<AgentApiOutcome<AuthProviderCreateResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(AuthProviderCreateResponse {
+                provider: test_auth_provider(
+                    params.provider_id.unwrap_or_else(|| "forge-github".to_owned()),
+                ),
+            }))
+        }
+
+        async fn list_auth_providers(
+            &self,
+            _params: AuthProviderListParams,
+        ) -> Result<AgentApiOutcome<AuthProviderListResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(AuthProviderListResponse {
+                providers: vec![test_auth_provider("forge-github".to_owned())],
+            }))
+        }
+
+        async fn read_auth_provider(
+            &self,
+            params: AuthProviderReadParams,
+        ) -> Result<AgentApiOutcome<AuthProviderReadResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(AuthProviderReadResponse {
+                provider: test_auth_provider(params.provider_id),
+            }))
+        }
+
+        async fn delete_auth_provider(
+            &self,
+            params: AuthProviderDeleteParams,
+        ) -> Result<AgentApiOutcome<AuthProviderDeleteResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(AuthProviderDeleteResponse {
+                provider: test_auth_provider(params.provider_id),
+            }))
+        }
+
+        async fn list_github_installations(
+            &self,
+            _params: AuthGitHubInstallationListParams,
+        ) -> Result<AgentApiOutcome<AuthGitHubInstallationListResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(AuthGitHubInstallationListResponse {
+                installations: vec![GitHubInstallationView {
+                    installation_id: 678,
+                    account_login: Some("acme".to_owned()),
+                    repository_selection: Some("selected".to_owned()),
+                    permissions: serde_json::json!({"contents": "read"}),
+                }],
+            }))
+        }
+
+        async fn grant_github_installation(
+            &self,
+            _params: AuthGitHubInstallationGrantParams,
+        ) -> Result<AgentApiOutcome<AuthGitHubInstallationGrantResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(AuthGitHubInstallationGrantResponse {
+                grant: test_auth_grant("authgrant_install".to_owned(), AuthGrantStatus::Active),
+            }))
+        }
+    }
+
+    fn test_auth_provider(provider_id: String) -> AuthProviderView {
+        AuthProviderView {
+            provider_id,
+            provider_kind: AuthProviderKind::GitHubApp,
+            display_name: None,
+            config: AuthProviderConfigView::GitHubApp {
+                app_id: "12345".to_owned(),
+                api_base_url: "https://api.github.com".to_owned(),
+            },
+            has_credential: true,
+            status: AuthProviderStatus::Active,
+            created_at_ms: 1,
+            updated_at_ms: 2,
+        }
     }
 
     fn test_auth_client(client_id: String) -> OAuthClientView {
@@ -4255,6 +4593,7 @@ mod tests {
             has_refresh_token: false,
             expires_at_ms: None,
             status,
+            metadata: serde_json::Value::Object(Default::default()),
             created_at_ms: 1,
             updated_at_ms: 2,
         }

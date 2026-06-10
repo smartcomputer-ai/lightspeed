@@ -53,7 +53,7 @@ We belive running and coordination agents at scale are best managed by durable w
 | `store-fs` | `crates/store-fs` | Filesystem-backed session log and content-addressed blob store adapters |
 | `store-pg` | `crates/store-pg` | PostgreSQL-backed session store, CAS catalog, MCP server catalog, and encrypted auth storage |
 | `mcp-registry` | `crates/mcp-registry` | Provider-independent remote MCP server catalog DTOs, validation, and store traits |
-| `auth-registry` | `crates/auth-registry` | Generic auth grants/secrets, OAuth clients + authorization flows, and the refreshing token broker |
+| `auth-registry` | `crates/auth-registry` | Generic auth grants/secrets/providers, OAuth + GitHub App drivers, and the refreshing/minting token broker |
 | `eval` | `crates/eval` | Eval harness for agent/tool workflows |
 | `llm-runtime` | `crates/llm-runtime` | CoreAgent LLM runtime over provider-native clients |
 | `llm-clients` | `crates/llm-clients` | Provider-native OpenAI and Anthropic API clients |
