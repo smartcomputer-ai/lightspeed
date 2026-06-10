@@ -2,8 +2,9 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AuthGrantId, AuthRegistryError, SecretId, validate_audience_url, validate_nonempty_optional,
-    validate_nonnegative_i64, validate_scopes, validate_token_component,
+    AuthGrantId, AuthRegistryError, OAuthClientId, SecretId, validate_audience_url,
+    validate_nonempty_optional, validate_nonnegative_i64, validate_scopes,
+    validate_token_component,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -87,6 +88,13 @@ pub struct AuthGrantRecord {
     pub audience: Option<String>,
     pub access_token_secret: Option<SecretId>,
     pub refresh_token_secret: Option<SecretId>,
+    /// The OAuth client configuration this grant was minted through, when it
+    /// came from an authorization flow. The broker uses it to resolve token
+    /// endpoint and client credentials for refresh.
+    pub oauth_client: Option<OAuthClientId>,
+    /// For OAuth grants this is the access-token expiry; the broker refreshes
+    /// past the margin when a refresh token exists. For static grants it is a
+    /// hard expiry.
     pub expires_at_ms: Option<i64>,
     pub status: AuthGrantStatus,
     pub created_at_ms: i64,
@@ -132,6 +140,7 @@ pub struct CreateAuthGrantRecord {
     pub audience: Option<String>,
     pub access_token_secret: Option<SecretId>,
     pub refresh_token_secret: Option<SecretId>,
+    pub oauth_client: Option<OAuthClientId>,
     pub expires_at_ms: Option<i64>,
     pub status: AuthGrantStatus,
     pub created_at_ms: i64,
@@ -150,12 +159,25 @@ impl CreateAuthGrantRecord {
             audience: self.audience,
             access_token_secret: self.access_token_secret,
             refresh_token_secret: self.refresh_token_secret,
+            oauth_client: self.oauth_client,
             expires_at_ms: self.expires_at_ms,
             status: self.status,
             created_at_ms: self.created_at_ms,
             updated_at_ms: self.created_at_ms,
         }
     }
+}
+
+/// Atomic pointer swap recorded after a successful token refresh. New secret
+/// values are written under fresh ids first; this update then swaps the
+/// grant's references in one step. `refresh_token_secret = None` keeps the
+/// existing refresh token (no rotation).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AuthGrantTokenRefresh {
+    pub access_token_secret: SecretId,
+    pub refresh_token_secret: Option<SecretId>,
+    pub expires_at_ms: Option<i64>,
+    pub updated_at_ms: i64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -187,6 +209,13 @@ pub trait AuthGrantStore: Send + Sync {
         updated_at_ms: i64,
     ) -> Result<AuthGrantRecord, AuthRegistryError>;
 
+    /// Swap the grant's token secret references and expiry after a refresh.
+    async fn record_grant_refresh(
+        &self,
+        grant_id: &AuthGrantId,
+        refresh: AuthGrantTokenRefresh,
+    ) -> Result<AuthGrantRecord, AuthRegistryError>;
+
     async fn delete_grant(
         &self,
         grant_id: &AuthGrantId,
@@ -209,6 +238,7 @@ mod tests {
             audience: Some("https://crm.example.com/mcp".to_owned()),
             access_token_secret: Some(SecretId::new("authsec_1")),
             refresh_token_secret: None,
+            oauth_client: None,
             expires_at_ms: None,
             status: AuthGrantStatus::Active,
             created_at_ms: 10,

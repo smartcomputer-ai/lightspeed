@@ -374,6 +374,76 @@ mod tests {
     }
 
     #[test]
+    fn auth_client_add_parse_accepts_endpoints_and_secret_env() {
+        let cli = Cli::try_parse_from([
+            "forge",
+            "auth",
+            "client",
+            "add",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
+            "--id",
+            "crm",
+            "--kind",
+            "mcp-oauth",
+            "--authorization-endpoint",
+            "https://as.example.com/authorize",
+            "--token-endpoint",
+            "https://as.example.com/token",
+            "--client-id",
+            "client-1",
+            "--client-secret-env",
+            "CRM_OAUTH_CLIENT_SECRET",
+            "--audience",
+            "https://crm.example.com/mcp",
+        ])
+        .expect("parse auth client add");
+        assert!(matches!(cli.command, Command::Auth(_)));
+    }
+
+    #[test]
+    fn auth_client_add_rejects_multiple_secret_sources() {
+        let result = Cli::try_parse_from([
+            "forge",
+            "auth",
+            "client",
+            "add",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
+            "--authorization-endpoint",
+            "https://as.example.com/authorize",
+            "--token-endpoint",
+            "https://as.example.com/token",
+            "--client-id",
+            "client-1",
+            "--client-secret",
+            "s1",
+            "--client-secret-env",
+            "S2",
+        ]);
+        assert!(result.is_err(), "secret sources are mutually exclusive");
+    }
+
+    #[test]
+    fn auth_login_parse_accepts_client_and_overrides() {
+        let cli = Cli::try_parse_from([
+            "forge",
+            "auth",
+            "login",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
+            "crm",
+            "--scope",
+            "contacts.read",
+            "--audience",
+            "https://crm.example.com/mcp",
+            "--no-wait",
+        ])
+        .expect("parse auth login");
+        assert!(matches!(cli.command, Command::Auth(_)));
+    }
+
+    #[test]
     fn mcp_link_parse_accepts_session_and_server() {
         let cli = Cli::try_parse_from([
             "forge",

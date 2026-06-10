@@ -12,9 +12,27 @@
   injection and redacted persisted request blobs; worker
   `BrokerSecretResolver` wiring; and P68 link-time grant validation
   (status/kind/audience).
-- G1 deliberately defers `AuthProviderRecord`, `AuthFlowRecord`, and token
-  leases to G2+; static bearer grants carry `provider_kind` + `provider_id`
-  inline.
+- G2 + G3 implemented in one cut on 2026-06-10: `auth-registry` gained
+  `OAuthClientRecord`/`AuthFlowRecord` + store traits, PKCE/state helpers
+  (RFC 7636 S256, state stored only as SHA-256 hash), the `OAuthTokenClient`
+  trait with a reqwest implementation shared by code exchange and refresh,
+  the `OAuthFlowService` (start/callback/status with atomic one-time-use
+  consume semantics), and broker refresh: single-flight per grant via the
+  `GrantRefreshLock` trait (Postgres transaction-scoped advisory lock in
+  `store-pg`, in-memory locks for tests), 60s expiry margin, refresh-token
+  rotation persisted under new secret ids before the grant row swap,
+  `invalid_grant` -> `NeedsReauth`, and fallback to a still-valid stored
+  token on transient refresh failures. `store-pg` migration 004 adds
+  `oauth_clients`, `auth_flows`, and `auth_grants.oauth_client_id`. The
+  gateway hosts `GET /auth/callback` (public base URL via
+  `FORGE_PUBLIC_BASE_URL`, default `http://{bind}`) plus
+  `auth/clients/create|list|read|delete` and `auth/flows/start|status`;
+  the CLI gained `forge auth client add|list|read|remove` and
+  `forge auth login <client>` with status polling.
+- G1 deliberately deferred `AuthProviderRecord`, `AuthFlowRecord`, and token
+  leases; G2 landed `AuthFlowRecord` and OAuth client records, while
+  `AuthProviderRecord` and token leases remain deferred (G5+). Static bearer
+  grants carry `provider_kind` + `provider_id` inline.
 - Split out of the original P68 remote MCP registry/auth plan.
 - Provides generic auth and credential infrastructure for MCP, GitHub, future
   hosted tools, VMs, sandboxes, and provider runtimes.
@@ -527,11 +545,18 @@ auth/token/lease
 auth/token/revoke_lease
 ```
 
-`auth/grants/import` is the one deliberate inbound-plaintext path: it accepts a
-static bearer token value, encrypts it on receipt, and returns a grant view
-without the value. Its params are a concrete redaction surface — any gateway
-request logging or error reporting must never echo the `token` param. No other
-method accepts or returns secret values.
+Implemented so far (G2): `auth/clients/create|list|read|delete` covers the
+manual-configuration slice of `auth/providers/*` (full provider records stay
+deferred), and `auth/flows/start` + `auth/flows/status` are live. There is no
+`auth/flows/complete` RPC: authorization-code flows complete via the
+gateway-hosted HTTP callback `GET /auth/callback`; a complete RPC appears with
+device flow if needed.
+
+`auth/grants/import` and the `client_secret` param of `auth/clients/create`
+are the two deliberate inbound-plaintext paths: values are encrypted on
+receipt and never returned by any method. Their params are concrete redaction
+surfaces — any gateway request logging or error reporting must never echo
+them. No other method accepts or returns secret values.
 
 Internal runtime APIs may expose token resolution, but public APIs should not
 return plaintext token values except when explicitly issuing a short-lived lease
@@ -675,12 +700,22 @@ token storage.
 
 Acceptance criteria:
 
-- provider drivers can supply authorization/token endpoint metadata;
-- CLI/API can start an authorization flow;
-- callback completes the flow and stores encrypted token material;
-- grants expose status, scopes, expiry, and subject hints without plaintext
-  tokens;
-- refresh tokens are optional and stored only when issued.
+- [x] provider drivers can supply authorization/token endpoint metadata
+  (manually configured `OAuthClientRecord`s; discovery arrives with G4);
+- [x] CLI/API can start an authorization flow (`auth/flows/start`,
+  `forge auth login`);
+- [x] callback completes the flow and stores encrypted token material
+  (gateway `GET /auth/callback`; flows are one-time-use, a second callback
+  with the same state fails, expired flows cannot complete);
+- [x] grants expose status, scopes, expiry, and subject hints without
+  plaintext tokens;
+- [x] refresh tokens are optional and stored only when issued.
+
+Notes beyond the original sketch: the OAuth `state` is never persisted (only
+its SHA-256 hash, which is also the callback lookup key); the PKCE verifier is
+an encrypted secret deleted after use; `auth/clients/create` is the second
+deliberate inbound-plaintext path (client secret, `Debug`-redacted params);
+device flow and loopback redirects remain future work.
 
 ## G3: Refresh And Runtime Token Broker
 
@@ -688,12 +723,18 @@ Add refresh handling and runtime token resolution.
 
 Acceptance criteria:
 
-- `AuthTokenBroker` returns current access tokens to runtime consumers;
-- expiring OAuth tokens refresh before provider calls when a refresh token
-  exists;
-- refresh-token rotation updates encrypted stored secrets atomically;
-- failed refresh marks the grant `NeedsReauth`;
-- provider calls fail clearly before I/O when no valid token can be resolved.
+- [x] `AuthTokenBroker` returns current access tokens to runtime consumers;
+- [x] expiring OAuth tokens refresh before provider calls when a refresh token
+  exists (60s margin; transient refresh failures fall back to the stored
+  token while it is still valid);
+- [x] refresh-token rotation updates encrypted stored secrets atomically (new
+  secret ids written first, single-row grant pointer swap, old secrets
+  deleted best-effort; refresh is single-flight per grant via a Postgres
+  advisory lock);
+- [x] failed refresh marks the grant `NeedsReauth` (`invalid_grant` only;
+  network errors do not poison the grant);
+- [x] provider calls fail clearly before I/O when no valid token can be
+  resolved (typed `GrantExpired`/`RefreshFailed`/`GrantNotActive` kinds).
 
 ## G4: MCP OAuth Driver
 

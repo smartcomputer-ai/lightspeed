@@ -20,4 +20,4 @@ uuid = { version = "1", features = ["v4"] }
 vfs = { path = "../vfs" }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt", "sync"] }
+tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }

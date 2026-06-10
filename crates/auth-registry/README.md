@@ -20,8 +20,19 @@ execution — never in the engine or the session log.
 - `broker` — the `AuthTokenBroker` trait and `RegistryTokenBroker`: resolves
   a grant id plus a `TokenAudience` to a bearer `SecretValue`, enforcing
   status, expiry, and `audience_covers` (exact match or path-boundary prefix),
-  with typed `AuthBrokerError` kinds instead of `Option`.
-- `memory` — in-memory grant/secret stores for tests.
+  with typed `AuthBrokerError` kinds instead of `Option`. OAuth grants
+  refresh automatically: single-flight per grant (`GrantRefreshLock`; a
+  Postgres advisory lock in `store-pg`), a 60s expiry margin, rotation-safe
+  secret swaps, `invalid_grant` → `needs_reauth`, and fallback to the stored
+  token when a refresh fails transiently but the token is still valid.
+- `oauth` — `OAuthClientRecord` (manually configured authorization/token
+  endpoints + AS-issued client id), `AuthFlowRecord` (one-time
+  authorization-code flows storing only the SHA-256 of `state`), PKCE S256
+  helpers, and the `OAuthTokenClient` trait with a reqwest implementation.
+- `flow` — `OAuthFlowService`: start builds the authorization URL and
+  persists the encrypted PKCE verifier; the callback atomically consumes the
+  flow, exchanges the code, stores encrypted tokens, and mints the grant.
+- `memory` — in-memory grant/secret/client/flow stores for tests.
 
 ## How it works
 
@@ -30,8 +41,10 @@ Sessions and the engine only ever record `SecretRef { namespace:
 broker for the token for a specific resource URL; the token is injected into
 the outgoing provider request at the last moment, while the persisted request
 blob keeps `"authorization": "<redacted>"`. Plaintext tokens never enter
-engine events, CAS blobs, Temporal history, API responses, or logs. The one
-deliberate inbound-plaintext path is `auth/grants/import`.
+engine events, CAS blobs, Temporal history, API responses, or logs. The two
+deliberate inbound-plaintext paths are `auth/grants/import` (bearer token)
+and `auth/clients/create` (client secret); both encrypt on receipt and
+redact `Debug` output.
 
 ## Build & test
 
@@ -82,3 +95,39 @@ tools — linking patches the live session's tool set.
 Verify redaction afterwards: the `cas_blobs` request blobs must contain
 `"authorization": "<redacted>"` and never the token, and `secret_records`
 holds only ciphertext.
+
+## Testing an OAuth login end to end
+
+Works against any standard authorization server with a manually configured
+client (a GitHub OAuth app is the cheapest real one; set its callback URL to
+`http://127.0.0.1:18080/auth/callback` for local dev). MCP-server discovery
+(`forge auth login mcp:<server>`) arrives with P69 G4.
+
+```bash
+# 0. infra + env + gateway as above (env.sh sourced everywhere)
+
+# 1. register the OAuth client (secret read from env, encrypted at rest)
+export MY_OAUTH_CLIENT_SECRET=<client secret>
+cargo run -q -p cli -- auth client add --id github \
+  --kind github-oauth-app \
+  --authorization-endpoint https://github.com/login/oauth/authorize \
+  --token-endpoint https://github.com/login/oauth/access_token \
+  --client-id <AS-issued client id> \
+  --client-secret-env MY_OAUTH_CLIENT_SECRET \
+  --scope read:user
+
+# 2. run the flow: prints the authorization URL, then polls until the
+#    browser hits the gateway callback and the grant is stored
+cargo run -q -p cli -- auth login github
+# -> open the URL, approve, see "login complete" + the grant id
+
+# 3. inspect the grant (no token values, only hasAccessToken/hasRefreshToken)
+cargo run -q -p cli -- auth grant list
+```
+
+For an OAuth-protected MCP server, register the client with
+`--kind mcp-oauth --audience <server URL>`; the resulting grant is
+audience-bound and linkable via `forge mcp link --auth-grant-id ...` against
+servers with an OAuth auth policy. The broker refreshes the grant's access
+token automatically when it expires, as long as the authorization server
+issued a refresh token.

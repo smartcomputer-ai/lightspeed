@@ -6,6 +6,7 @@
 mod auth;
 mod blob;
 mod mcp;
+mod oauth;
 mod object;
 mod session;
 mod shared;
@@ -24,6 +25,7 @@ use uuid::Uuid;
 pub const INITIAL_SCHEMA_SQL: &str = include_str!("../migrations/001_initial.sql");
 pub const MCP_REGISTRY_SCHEMA_SQL: &str = include_str!("../migrations/002_mcp_registry.sql");
 pub const AUTH_SCHEMA_SQL: &str = include_str!("../migrations/003_auth.sql");
+pub const OAUTH_SCHEMA_SQL: &str = include_str!("../migrations/004_oauth.sql");
 
 pub const DEFAULT_INLINE_THRESHOLD_BYTES: usize = 64 * 1024;
 
@@ -245,6 +247,7 @@ impl PgStore {
         pool.execute(INITIAL_SCHEMA_SQL).await?;
         pool.execute(MCP_REGISTRY_SCHEMA_SQL).await?;
         pool.execute(AUTH_SCHEMA_SQL).await?;
+        pool.execute(OAUTH_SCHEMA_SQL).await?;
         Ok(())
     }
 

@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use auth_registry::{AuthGrantStore, RegistryTokenBroker, SecretStore};
+use auth_registry::{
+    AuthGrantStore, GrantRefreshLock, HttpOAuthTokenClient, OAuthClientStore, OAuthRefreshRuntime,
+    RegistryTokenBroker, SecretStore,
+};
 use engine::{
     CoreAgentLlm, CoreAgentTools, ProviderApiKind,
     storage::{BlobStore, SessionStore},
@@ -98,7 +101,7 @@ impl ActivityState {
 
     pub fn from_pg_store_with_default_runtime(store: Arc<PgStore>) -> anyhow::Result<Self> {
         let blobs: Arc<dyn BlobStore> = store.clone();
-        let secrets = broker_secret_resolver(store.clone());
+        let secrets = broker_secret_resolver(store.clone())?;
         let llm = openai_responses_llm(blobs, Some(secrets))?;
         let tools = session_tools(store.clone());
         Ok(Self::from_pg_store(store, llm, tools))
@@ -130,12 +133,17 @@ fn session_tools(store: Arc<PgStore>) -> Arc<dyn CoreAgentTools> {
     Arc::new(SessionTools::from_pg_store(store))
 }
 
-fn broker_secret_resolver(store: Arc<PgStore>) -> Arc<dyn SecretResolver> {
+fn broker_secret_resolver(store: Arc<PgStore>) -> anyhow::Result<Arc<dyn SecretResolver>> {
     let grants: Arc<dyn AuthGrantStore> = store.clone();
-    let secrets: Arc<dyn SecretStore> = store;
-    Arc::new(BrokerSecretResolver::new(Arc::new(
-        RegistryTokenBroker::new(grants, secrets),
-    )))
+    let secrets: Arc<dyn SecretStore> = store.clone();
+    let clients: Arc<dyn OAuthClientStore> = store.clone();
+    let locks: Arc<dyn GrantRefreshLock> = store;
+    let token_client = HttpOAuthTokenClient::new()
+        .map_err(|error| anyhow::anyhow!("construct oauth token client: {error}"))?;
+    let broker = RegistryTokenBroker::new(grants, secrets).with_oauth_refresh(
+        OAuthRefreshRuntime::new(clients, Arc::new(token_client), locks),
+    );
+    Ok(Arc::new(BrokerSecretResolver::new(Arc::new(broker))))
 }
 
 fn openai_responses_llm(

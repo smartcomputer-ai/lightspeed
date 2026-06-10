@@ -45,6 +45,7 @@ pub(super) fn auth_grant_import_draft(
         audience: params.audience,
         access_token_secret: Some(secret_id),
         refresh_token_secret: None,
+        oauth_client: None,
         expires_at_ms: params.expires_at_ms,
         status: auth_registry::AuthGrantStatus::Active,
         created_at_ms: now_ms,
@@ -93,6 +94,30 @@ pub(super) fn map_auth_registry_error(error: auth_registry::AuthRegistryError) -
         }
         auth_registry::AuthRegistryError::SecretNotFound { secret_id } => {
             AgentApiError::not_found(format!("secret not found: {secret_id}"))
+        }
+        auth_registry::AuthRegistryError::ClientAlreadyExists { client_id } => {
+            AgentApiError::conflict(format!("oauth client already exists: {client_id}"))
+        }
+        auth_registry::AuthRegistryError::ClientNotFound { client_id } => {
+            AgentApiError::not_found(format!("oauth client not found: {client_id}"))
+        }
+        auth_registry::AuthRegistryError::FlowAlreadyExists { flow_id } => {
+            AgentApiError::conflict(format!("auth flow already exists: {flow_id}"))
+        }
+        auth_registry::AuthRegistryError::FlowNotFound { flow_id } => {
+            AgentApiError::not_found(format!("auth flow not found: {flow_id}"))
+        }
+        auth_registry::AuthRegistryError::FlowAlreadyConsumed { flow_id } => {
+            AgentApiError::conflict(format!("auth flow was already consumed: {flow_id}"))
+        }
+        auth_registry::AuthRegistryError::FlowAlreadyCompleted { flow_id } => {
+            AgentApiError::conflict(format!("auth flow was already completed: {flow_id}"))
+        }
+        auth_registry::AuthRegistryError::FlowExpired { flow_id } => {
+            AgentApiError::rejected(format!("auth flow is expired: {flow_id}"))
+        }
+        auth_registry::AuthRegistryError::UnknownCallbackState => {
+            AgentApiError::rejected("authorization callback state is unknown or no longer valid")
         }
         auth_registry::AuthRegistryError::InvalidInput { message } => {
             AgentApiError::invalid_request(message)
@@ -146,7 +171,9 @@ pub(super) fn validate_mcp_grant_for_link(
     Ok(())
 }
 
-fn api_auth_provider_kind(value: auth_registry::AuthProviderKind) -> api::AuthProviderKind {
+pub(super) fn api_auth_provider_kind(
+    value: auth_registry::AuthProviderKind,
+) -> api::AuthProviderKind {
     match value {
         auth_registry::AuthProviderKind::StaticBearer => api::AuthProviderKind::StaticBearer,
         auth_registry::AuthProviderKind::McpOAuth => api::AuthProviderKind::McpOAuth,

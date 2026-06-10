@@ -9,9 +9,10 @@ use aes_gcm::aead::{Aead, Payload};
 use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
 use async_trait::async_trait;
 use auth_registry::{
-    AuthGrantId, AuthGrantRecord, AuthGrantStatus, AuthGrantStore, AuthProviderKind,
-    AuthRegistryError, CreateAuthGrantRecord, ListAuthGrants, PrincipalKind, PrincipalRef,
-    PutSecretRecord, SecretId, SecretRecordMeta, SecretStore, SecretValue,
+    AuthGrantId, AuthGrantRecord, AuthGrantStatus, AuthGrantStore, AuthGrantTokenRefresh,
+    AuthProviderKind, AuthRegistryError, CreateAuthGrantRecord, ListAuthGrants, OAuthClientId,
+    PrincipalKind, PrincipalRef, PutSecretRecord, SecretId, SecretRecordMeta, SecretStore,
+    SecretValue,
 };
 use rand::RngCore;
 use sqlx::Row;
@@ -218,6 +219,7 @@ const GRANT_COLUMNS: &str = r#"
     audience,
     access_token_secret_id,
     refresh_token_secret_id,
+    oauth_client_id,
     expires_at_ms,
     status,
     created_at_ms,
@@ -250,12 +252,13 @@ impl AuthGrantStore for PgStore {
                 audience,
                 access_token_secret_id,
                 refresh_token_secret_id,
+                oauth_client_id,
                 expires_at_ms,
                 status,
                 created_at_ms,
                 updated_at_ms
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $15)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $16)
             ON CONFLICT (universe_id, grant_id) DO NOTHING
             RETURNING {GRANT_COLUMNS}
             "#
@@ -273,6 +276,7 @@ impl AuthGrantStore for PgStore {
             .bind(record.audience.as_deref())
             .bind(record.access_token_secret.as_ref().map(SecretId::as_str))
             .bind(record.refresh_token_secret.as_ref().map(SecretId::as_str))
+            .bind(record.oauth_client.as_ref().map(OAuthClientId::as_str))
             .bind(record.expires_at_ms)
             .bind(grant_status_to_str(record.status))
             .bind(record.created_at_ms)
@@ -385,6 +389,42 @@ impl AuthGrantStore for PgStore {
         grant_record_from_row(&row)
     }
 
+    async fn record_grant_refresh(
+        &self,
+        grant_id: &AuthGrantId,
+        refresh: AuthGrantTokenRefresh,
+    ) -> Result<AuthGrantRecord, AuthRegistryError> {
+        let query = format!(
+            r#"
+            UPDATE auth_grants
+            SET access_token_secret_id = $3,
+                refresh_token_secret_id = COALESCE($4, refresh_token_secret_id),
+                expires_at_ms = $5,
+                updated_at_ms = $6,
+                modified_at = now()
+            WHERE universe_id = $1 AND grant_id = $2
+            RETURNING {GRANT_COLUMNS}
+            "#
+        );
+        let row = sqlx::query(&query)
+            .bind(self.config.universe_id)
+            .bind(grant_id.as_str())
+            .bind(refresh.access_token_secret.as_str())
+            .bind(refresh.refresh_token_secret.as_ref().map(SecretId::as_str))
+            .bind(refresh.expires_at_ms)
+            .bind(refresh.updated_at_ms)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|error| auth_sql_error("record auth grant refresh", error))?;
+
+        let Some(row) = row else {
+            return Err(AuthRegistryError::GrantNotFound {
+                grant_id: grant_id.clone(),
+            });
+        };
+        grant_record_from_row(&row)
+    }
+
     async fn delete_grant(
         &self,
         grant_id: &AuthGrantId,
@@ -451,6 +491,9 @@ fn grant_record_from_row(row: &sqlx::postgres::PgRow) -> Result<AuthGrantRecord,
     let refresh_token_secret_id: Option<String> = row
         .try_get("refresh_token_secret_id")
         .map_err(|error| auth_sql_error("decode grant refresh token secret id", error))?;
+    let oauth_client_id: Option<String> = row
+        .try_get("oauth_client_id")
+        .map_err(|error| auth_sql_error("decode grant oauth client id", error))?;
 
     let record = AuthGrantRecord {
         grant_id: AuthGrantId::try_new(grant_id).map_err(|error| AuthRegistryError::Store {
@@ -490,6 +533,12 @@ fn grant_record_from_row(row: &sqlx::postgres::PgRow) -> Result<AuthGrantRecord,
             .map_err(|error| AuthRegistryError::Store {
                 message: format!("decode grant refresh token secret id: {error}"),
             })?,
+        oauth_client: oauth_client_id
+            .map(OAuthClientId::try_new)
+            .transpose()
+            .map_err(|error| AuthRegistryError::Store {
+                message: format!("decode grant oauth client id: {error}"),
+            })?,
         expires_at_ms: row
             .try_get("expires_at_ms")
             .map_err(|error| auth_sql_error("decode grant expires_at_ms", error))?,
@@ -505,7 +554,7 @@ fn grant_record_from_row(row: &sqlx::postgres::PgRow) -> Result<AuthGrantRecord,
     Ok(record)
 }
 
-fn provider_kind_to_str(value: AuthProviderKind) -> &'static str {
+pub(crate) fn provider_kind_to_str(value: AuthProviderKind) -> &'static str {
     match value {
         AuthProviderKind::StaticBearer => "static_bearer",
         AuthProviderKind::McpOAuth => "mcp_oauth",
@@ -516,7 +565,7 @@ fn provider_kind_to_str(value: AuthProviderKind) -> &'static str {
     }
 }
 
-fn provider_kind_from_str(value: &str) -> Result<AuthProviderKind, AuthRegistryError> {
+pub(crate) fn provider_kind_from_str(value: &str) -> Result<AuthProviderKind, AuthRegistryError> {
     match value {
         "static_bearer" => Ok(AuthProviderKind::StaticBearer),
         "mcp_oauth" => Ok(AuthProviderKind::McpOAuth),
@@ -530,7 +579,7 @@ fn provider_kind_from_str(value: &str) -> Result<AuthProviderKind, AuthRegistryE
     }
 }
 
-fn principal_kind_to_str(value: PrincipalKind) -> &'static str {
+pub(crate) fn principal_kind_to_str(value: PrincipalKind) -> &'static str {
     match value {
         PrincipalKind::User => "user",
         PrincipalKind::ServiceAccount => "service_account",
@@ -538,7 +587,7 @@ fn principal_kind_to_str(value: PrincipalKind) -> &'static str {
     }
 }
 
-fn principal_kind_from_str(value: &str) -> Result<PrincipalKind, AuthRegistryError> {
+pub(crate) fn principal_kind_from_str(value: &str) -> Result<PrincipalKind, AuthRegistryError> {
     match value {
         "user" => Ok(PrincipalKind::User),
         "service_account" => Ok(PrincipalKind::ServiceAccount),
@@ -570,13 +619,13 @@ fn grant_status_from_str(value: &str) -> Result<AuthGrantStatus, AuthRegistryErr
     }
 }
 
-fn auth_store_error(action: &str, error: crate::PgStoreError) -> AuthRegistryError {
+pub(crate) fn auth_store_error(action: &str, error: crate::PgStoreError) -> AuthRegistryError {
     AuthRegistryError::Store {
         message: format!("{action}: {error}"),
     }
 }
 
-fn auth_sql_error(action: &str, error: sqlx::Error) -> AuthRegistryError {
+pub(crate) fn auth_sql_error(action: &str, error: sqlx::Error) -> AuthRegistryError {
     AuthRegistryError::Store {
         message: format!("{action}: {error}"),
     }

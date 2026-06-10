@@ -6,6 +6,7 @@ mod blobs;
 mod errors;
 mod input;
 mod mcp_api;
+mod oauth_api;
 mod parse;
 mod prompts;
 mod skills;
@@ -16,8 +17,12 @@ mod workflow;
 #[cfg(test)]
 use api_config::*;
 use auth_api::{
-    auth_grant_import_draft, auth_grant_view, map_auth_registry_error, parse_auth_grant_id,
-    registry_auth_grant_status_for_filter,
+    api_auth_provider_kind, auth_grant_import_draft, auth_grant_view, map_auth_registry_error,
+    parse_auth_grant_id, registry_auth_grant_status_for_filter,
+};
+use oauth_api::{
+    auth_client_create_draft, auth_flow_view, oauth_client_view, oauth_redirect_uri,
+    parse_auth_flow_id, parse_oauth_client_id,
 };
 use blobs::{get_blob, has_blobs, put_blob, put_blobs};
 use errors::*;
@@ -44,7 +49,11 @@ use std::{
 };
 
 use api::{
-    AgentApiError, AgentApiErrorKind, AgentApiOutcome, AgentApiService, AuthGrantImportParams,
+    AgentApiError, AgentApiErrorKind, AgentApiOutcome, AgentApiService, AuthClientCreateParams,
+    AuthClientCreateResponse, AuthClientDeleteParams, AuthClientDeleteResponse,
+    AuthClientListParams, AuthClientListResponse, AuthClientReadParams, AuthClientReadResponse,
+    AuthFlowStartParams, AuthFlowStartResponse, AuthFlowStatusParams, AuthFlowStatusResponse,
+    AuthGrantImportParams,
     AuthGrantImportResponse, AuthGrantListParams, AuthGrantListResponse, AuthGrantReadParams,
     AuthGrantReadResponse, AuthGrantRevokeParams, AuthGrantRevokeResponse, BlobGetParams,
     BlobGetResponse, BlobHasItem, BlobHasManyParams, BlobHasManyResponse, BlobPutManyParams,
@@ -92,7 +101,10 @@ use engine::{
     ToolChoice, ToolChoiceMode, ToolName, TurnConfigPatch, skill_activation_context_key,
     storage::{BlobStore, BlobStoreError, ReadSessionEvents, SessionStore},
 };
-use auth_registry::{AuthGrantStore, SecretStore};
+use auth_registry::{
+    AuthFlowStore, AuthGrantStore, HttpOAuthTokenClient, OAuthClientStore, OAuthFlowService,
+    OAuthTokenClient, SecretStore, StartAuthFlow,
+};
 use mcp_registry::McpRegistryStore;
 use store_pg::PgStore;
 use temporalio_client::{
@@ -130,6 +142,10 @@ use super::{
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const DEFAULT_OPERATION_TIMEOUT: Duration = Duration::from_secs(90);
 
+/// Default public base URL for the gateway-hosted OAuth callback; matches
+/// `DEFAULT_GATEWAY_BIND`. Hosted deployments must set the real public URL.
+pub const DEFAULT_PUBLIC_BASE_URL: &str = "http://127.0.0.1:18080";
+
 pub struct GatewayAgentApiBuilder {
     client: Client,
     store: Arc<PgStore>,
@@ -140,11 +156,26 @@ pub struct GatewayAgentApiBuilder {
     continue_as_new_history_threshold: Option<u32>,
     poll_interval: Duration,
     operation_timeout: Duration,
+    public_base_url: String,
+    oauth_token_client: Option<Arc<dyn OAuthTokenClient>>,
 }
 
 impl GatewayAgentApiBuilder {
     pub fn with_task_queue(mut self, task_queue: impl Into<String>) -> Self {
         self.task_queue = task_queue.into();
+        self
+    }
+
+    /// Externally reachable base URL of this gateway, used to build the OAuth
+    /// redirect URI (`{base}/auth/callback`).
+    pub fn with_public_base_url(mut self, public_base_url: impl Into<String>) -> Self {
+        self.public_base_url = public_base_url.into();
+        self
+    }
+
+    /// Override the OAuth token-endpoint client (tests).
+    pub fn with_oauth_token_client(mut self, token_client: Arc<dyn OAuthTokenClient>) -> Self {
+        self.oauth_token_client = Some(token_client);
         self
     }
 
@@ -179,6 +210,19 @@ impl GatewayAgentApiBuilder {
     }
 
     pub fn build(self) -> GatewayAgentApi {
+        let token_client = self.oauth_token_client.unwrap_or_else(|| {
+            Arc::new(
+                HttpOAuthTokenClient::new()
+                    .expect("construct OAuth token endpoint HTTP client"),
+            )
+        });
+        let oauth_flows = OAuthFlowService::new(
+            self.store.clone() as Arc<dyn OAuthClientStore>,
+            self.store.clone() as Arc<dyn AuthFlowStore>,
+            self.store.clone() as Arc<dyn AuthGrantStore>,
+            self.store.clone() as Arc<dyn SecretStore>,
+            token_client,
+        );
         GatewayAgentApi {
             client: self.client,
             store: self.store,
@@ -189,6 +233,8 @@ impl GatewayAgentApiBuilder {
             continue_as_new_history_threshold: self.continue_as_new_history_threshold,
             poll_interval: self.poll_interval,
             operation_timeout: self.operation_timeout,
+            public_base_url: self.public_base_url,
+            oauth_flows,
             metadata: RwLock::new(BTreeMap::new()),
         }
     }
@@ -209,6 +255,8 @@ pub struct GatewayAgentApi {
     continue_as_new_history_threshold: Option<u32>,
     poll_interval: Duration,
     operation_timeout: Duration,
+    public_base_url: String,
+    oauth_flows: OAuthFlowService,
     metadata: RwLock<BTreeMap<SessionId, GatewaySessionMetadata>>,
 }
 
@@ -224,6 +272,8 @@ impl GatewayAgentApi {
             continue_as_new_history_threshold: None,
             poll_interval: DEFAULT_POLL_INTERVAL,
             operation_timeout: DEFAULT_OPERATION_TIMEOUT,
+            public_base_url: DEFAULT_PUBLIC_BASE_URL.to_owned(),
+            oauth_token_client: None,
         }
     }
 
@@ -1364,6 +1414,158 @@ impl AgentApiService for GatewayAgentApi {
         Ok(AgentApiOutcome::new(AuthGrantRevokeResponse {
             grant: auth_grant_view(record),
         }))
+    }
+
+    async fn create_auth_client(
+        &self,
+        params: AuthClientCreateParams,
+    ) -> Result<AgentApiOutcome<AuthClientCreateResponse>, AgentApiError> {
+        let draft = auth_client_create_draft(params, now_ms()?)?;
+        if let Some(secret) = &draft.secret {
+            self.store
+                .put_secret(secret.clone())
+                .await
+                .map_err(map_auth_registry_error)?;
+        }
+        match self.store.create_oauth_client(draft.client).await {
+            Ok(record) => Ok(AgentApiOutcome::new(AuthClientCreateResponse {
+                client: oauth_client_view(record),
+            })),
+            Err(error) => {
+                // The secret is orphaned without its client; clean up
+                // best-effort and surface the original failure.
+                if let Some(secret) = &draft.secret {
+                    let _ = self.store.delete_secret(&secret.secret_id).await;
+                }
+                Err(map_auth_registry_error(error))
+            }
+        }
+    }
+
+    async fn list_auth_clients(
+        &self,
+        _params: AuthClientListParams,
+    ) -> Result<AgentApiOutcome<AuthClientListResponse>, AgentApiError> {
+        let clients = self
+            .store
+            .list_oauth_clients()
+            .await
+            .map_err(map_auth_registry_error)?;
+        Ok(AgentApiOutcome::new(AuthClientListResponse {
+            clients: clients.into_iter().map(oauth_client_view).collect(),
+        }))
+    }
+
+    async fn read_auth_client(
+        &self,
+        params: AuthClientReadParams,
+    ) -> Result<AgentApiOutcome<AuthClientReadResponse>, AgentApiError> {
+        let client_id = parse_oauth_client_id(params.client_id)?;
+        let record = self
+            .store
+            .read_oauth_client(&client_id)
+            .await
+            .map_err(map_auth_registry_error)?;
+        Ok(AgentApiOutcome::new(AuthClientReadResponse {
+            client: oauth_client_view(record),
+        }))
+    }
+
+    async fn delete_auth_client(
+        &self,
+        params: AuthClientDeleteParams,
+    ) -> Result<AgentApiOutcome<AuthClientDeleteResponse>, AgentApiError> {
+        let client_id = parse_oauth_client_id(params.client_id)?;
+        let record = self
+            .store
+            .delete_oauth_client(&client_id)
+            .await
+            .map_err(map_auth_registry_error)?;
+        // The stored client secret is unreachable without its client.
+        if let Some(secret_id) = &record.client_secret {
+            let _ = self.store.delete_secret(secret_id).await;
+        }
+        Ok(AgentApiOutcome::new(AuthClientDeleteResponse {
+            client: oauth_client_view(record),
+        }))
+    }
+
+    async fn start_auth_flow(
+        &self,
+        params: AuthFlowStartParams,
+    ) -> Result<AgentApiOutcome<AuthFlowStartResponse>, AgentApiError> {
+        let client_id = parse_oauth_client_id(params.client_id)?;
+        let started = self
+            .oauth_flows
+            .start_flow(StartAuthFlow {
+                client_id,
+                redirect_uri: oauth_redirect_uri(&self.public_base_url),
+                scopes: params.scopes,
+                audience: params.audience,
+                principal: auth_registry::PrincipalRef::universe_default(),
+            })
+            .await
+            .map_err(map_auth_registry_error)?;
+        Ok(AgentApiOutcome::new(AuthFlowStartResponse {
+            flow_id: started.flow.flow_id.as_str().to_owned(),
+            authorize_url: started.authorize_url,
+            expires_at_ms: started.flow.expires_at_ms,
+        }))
+    }
+
+    async fn read_auth_flow_status(
+        &self,
+        params: AuthFlowStatusParams,
+    ) -> Result<AgentApiOutcome<AuthFlowStatusResponse>, AgentApiError> {
+        let flow_id = parse_auth_flow_id(params.flow_id)?;
+        let record = self
+            .oauth_flows
+            .read_flow(&flow_id)
+            .await
+            .map_err(map_auth_registry_error)?;
+        Ok(AgentApiOutcome::new(AuthFlowStatusResponse {
+            flow: auth_flow_view(record, self.oauth_flows.now_ms()),
+        }))
+    }
+}
+
+/// Result of an authorization callback, consumed by the HTTP handler to
+/// render a user-facing page. Never carries token material.
+#[derive(Debug)]
+pub enum OAuthCallbackOutcome {
+    /// The flow completed and minted a grant.
+    Completed { grant_id: String },
+    /// The flow terminated without a grant (denial or failed exchange).
+    Failed { message: String },
+    /// The callback could not be matched to a live flow (unknown state,
+    /// replay, or expiry).
+    Rejected { message: String },
+}
+
+impl GatewayAgentApi {
+    /// Handle the OAuth redirect: consume the flow, exchange the code, and
+    /// store the resulting grant. Called by the gateway's HTTP callback
+    /// route, not via JSON-RPC.
+    pub async fn complete_oauth_callback(
+        &self,
+        callback: auth_registry::AuthCallback,
+    ) -> OAuthCallbackOutcome {
+        match self.oauth_flows.complete_callback(callback).await {
+            Ok(record) => match (&record.grant_id, &record.error) {
+                (Some(grant_id), _) => OAuthCallbackOutcome::Completed {
+                    grant_id: grant_id.as_str().to_owned(),
+                },
+                (None, Some(error)) => OAuthCallbackOutcome::Failed {
+                    message: error.clone(),
+                },
+                (None, None) => OAuthCallbackOutcome::Failed {
+                    message: "authorization flow ended without an outcome".to_owned(),
+                },
+            },
+            Err(error) => OAuthCallbackOutcome::Rejected {
+                message: map_auth_registry_error(error).message,
+            },
+        }
     }
 }
 #[cfg(test)]

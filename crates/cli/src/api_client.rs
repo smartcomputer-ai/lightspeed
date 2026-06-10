@@ -1,11 +1,17 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use api::{
-    AgentApiError, AgentApiErrorKind, AgentApiOutcome, AuthGrantImportParams,
+    AgentApiError, AgentApiErrorKind, AgentApiOutcome, AuthClientCreateParams,
+    AuthClientCreateResponse, AuthClientDeleteParams, AuthClientDeleteResponse,
+    AuthClientListParams, AuthClientListResponse, AuthClientReadParams, AuthClientReadResponse,
+    AuthFlowStartParams, AuthFlowStartResponse, AuthFlowStatusParams, AuthFlowStatusResponse,
+    AuthGrantImportParams,
     AuthGrantImportResponse, AuthGrantListParams, AuthGrantListResponse, AuthGrantReadParams,
     AuthGrantReadResponse, AuthGrantRevokeParams, AuthGrantRevokeResponse, BlobGetParams,
     BlobGetResponse, BlobHasManyParams, BlobHasManyResponse, BlobPutManyParams,
-    BlobPutManyResponse, JsonRpcRequest, JsonRpcResponse, METHOD_AUTH_GRANTS_IMPORT,
+    BlobPutManyResponse, JsonRpcRequest, JsonRpcResponse, METHOD_AUTH_CLIENTS_CREATE,
+    METHOD_AUTH_CLIENTS_DELETE, METHOD_AUTH_CLIENTS_LIST, METHOD_AUTH_CLIENTS_READ,
+    METHOD_AUTH_FLOWS_START, METHOD_AUTH_FLOWS_STATUS, METHOD_AUTH_GRANTS_IMPORT,
     METHOD_AUTH_GRANTS_LIST, METHOD_AUTH_GRANTS_READ, METHOD_AUTH_GRANTS_REVOKE, METHOD_BLOB_GET,
     METHOD_BLOB_HAS_MANY, METHOD_BLOB_PUT_MANY,
     METHOD_MCP_SERVERS_CREATE, METHOD_MCP_SERVERS_DELETE, METHOD_MCP_SERVERS_LIST,
@@ -267,6 +273,48 @@ impl HttpAgentApi {
         params: AuthGrantRevokeParams,
     ) -> Result<AgentApiOutcome<AuthGrantRevokeResponse>, AgentApiError> {
         self.request(METHOD_AUTH_GRANTS_REVOKE, params).await
+    }
+
+    pub(crate) async fn create_auth_client(
+        &self,
+        params: AuthClientCreateParams,
+    ) -> Result<AgentApiOutcome<AuthClientCreateResponse>, AgentApiError> {
+        self.request(METHOD_AUTH_CLIENTS_CREATE, params).await
+    }
+
+    pub(crate) async fn list_auth_clients(
+        &self,
+        params: AuthClientListParams,
+    ) -> Result<AgentApiOutcome<AuthClientListResponse>, AgentApiError> {
+        self.request(METHOD_AUTH_CLIENTS_LIST, params).await
+    }
+
+    pub(crate) async fn read_auth_client(
+        &self,
+        params: AuthClientReadParams,
+    ) -> Result<AgentApiOutcome<AuthClientReadResponse>, AgentApiError> {
+        self.request(METHOD_AUTH_CLIENTS_READ, params).await
+    }
+
+    pub(crate) async fn delete_auth_client(
+        &self,
+        params: AuthClientDeleteParams,
+    ) -> Result<AgentApiOutcome<AuthClientDeleteResponse>, AgentApiError> {
+        self.request(METHOD_AUTH_CLIENTS_DELETE, params).await
+    }
+
+    pub(crate) async fn start_auth_flow(
+        &self,
+        params: AuthFlowStartParams,
+    ) -> Result<AgentApiOutcome<AuthFlowStartResponse>, AgentApiError> {
+        self.request(METHOD_AUTH_FLOWS_START, params).await
+    }
+
+    pub(crate) async fn read_auth_flow_status(
+        &self,
+        params: AuthFlowStatusParams,
+    ) -> Result<AgentApiOutcome<AuthFlowStatusResponse>, AgentApiError> {
+        self.request(METHOD_AUTH_FLOWS_STATUS, params).await
     }
 
     pub(crate) async fn link_session_mcp(

@@ -84,8 +84,9 @@ cargo run -p cli -- chat --api-url http://127.0.0.1:18080/rpc --session session_
   catalog, and AEAD-encrypted auth grant/secret storage.
 - `crates/mcp-registry/` — provider-independent remote MCP server catalog DTOs,
   validation, and store traits.
-- `crates/auth-registry/` — generic auth grant/secret records, store traits,
-  typed broker errors, and the runtime token broker (P69).
+- `crates/auth-registry/` — generic auth grant/secret records, OAuth client
+  and authorization-flow records, PKCE helpers, store traits, typed broker
+  errors, and the runtime token broker with single-flight refresh (P69).
 - `crates/eval/` — eval harness for agent/tool workflows.
 - `crates/llm-runtime/` — CoreAgent LLM runtime from planned requests to
   provider-native client calls.
@@ -130,6 +131,8 @@ Local commands load a root `.env` file when present. The `.env` file usually exi
 | `ANTHROPIC_BASE_URL` | Override Anthropic API endpoint |
 | `FORGE_CHAT_PROVIDER` | Default chat provider ID |
 | `FORGE_CHAT_MODEL` | Default chat model |
+| `FORGE_SECRETS_MASTER_KEY` | Base64 32-byte AES key for the encrypted secret store |
+| `FORGE_PUBLIC_BASE_URL` | Externally reachable gateway base URL for the OAuth callback (defaults to `http://{bind}`) |
 
 ## Test Rules
 

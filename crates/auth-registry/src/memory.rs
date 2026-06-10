@@ -4,9 +4,11 @@ use std::sync::{Arc, RwLock};
 use async_trait::async_trait;
 
 use crate::{
-    AuthGrantId, AuthGrantRecord, AuthGrantStatus, AuthGrantStore, AuthRegistryError,
-    CreateAuthGrantRecord, ListAuthGrants, PutSecretRecord, SecretId, SecretRecordMeta,
-    SecretStore, SecretValue,
+    AuthFlowId, AuthFlowRecord, AuthFlowStore, AuthGrantId, AuthGrantRecord, AuthGrantStatus,
+    AuthGrantStore, AuthGrantTokenRefresh, AuthRegistryError, CreateAuthFlowRecord,
+    CreateAuthGrantRecord, CreateOAuthClientRecord, FinishAuthFlow, ListAuthGrants, OAuthClientId,
+    OAuthClientRecord, OAuthClientStore, PutSecretRecord, SecretId, SecretRecordMeta, SecretStore,
+    SecretValue,
 };
 
 #[derive(Clone, Default)]
@@ -87,6 +89,27 @@ impl AuthGrantStore for InMemoryAuthGrantStore {
         Ok(record.clone())
     }
 
+    async fn record_grant_refresh(
+        &self,
+        grant_id: &AuthGrantId,
+        refresh: AuthGrantTokenRefresh,
+    ) -> Result<AuthGrantRecord, AuthRegistryError> {
+        let mut inner = self.inner.write().map_err(|_| lock_poisoned())?;
+        let record = inner
+            .get_mut(grant_id)
+            .ok_or_else(|| AuthRegistryError::GrantNotFound {
+                grant_id: grant_id.clone(),
+            })?;
+        record.access_token_secret = Some(refresh.access_token_secret);
+        if let Some(refresh_token_secret) = refresh.refresh_token_secret {
+            record.refresh_token_secret = Some(refresh_token_secret);
+        }
+        record.expires_at_ms = refresh.expires_at_ms;
+        record.updated_at_ms = refresh.updated_at_ms;
+        record.validate()?;
+        Ok(record.clone())
+    }
+
     async fn delete_grant(
         &self,
         grant_id: &AuthGrantId,
@@ -97,6 +120,176 @@ impl AuthGrantStore for InMemoryAuthGrantStore {
             .ok_or_else(|| AuthRegistryError::GrantNotFound {
                 grant_id: grant_id.clone(),
             })
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct InMemoryOAuthClientStore {
+    inner: Arc<RwLock<BTreeMap<OAuthClientId, OAuthClientRecord>>>,
+}
+
+impl InMemoryOAuthClientStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[async_trait]
+impl OAuthClientStore for InMemoryOAuthClientStore {
+    async fn create_oauth_client(
+        &self,
+        record: CreateOAuthClientRecord,
+    ) -> Result<OAuthClientRecord, AuthRegistryError> {
+        let record = record.into_record();
+        record.validate()?;
+        let mut inner = self.inner.write().map_err(|_| lock_poisoned())?;
+        if inner.contains_key(&record.client_id) {
+            return Err(AuthRegistryError::ClientAlreadyExists {
+                client_id: record.client_id,
+            });
+        }
+        inner.insert(record.client_id.clone(), record.clone());
+        Ok(record)
+    }
+
+    async fn read_oauth_client(
+        &self,
+        client_id: &OAuthClientId,
+    ) -> Result<OAuthClientRecord, AuthRegistryError> {
+        let inner = self.inner.read().map_err(|_| lock_poisoned())?;
+        inner
+            .get(client_id)
+            .cloned()
+            .ok_or_else(|| AuthRegistryError::ClientNotFound {
+                client_id: client_id.clone(),
+            })
+    }
+
+    async fn list_oauth_clients(&self) -> Result<Vec<OAuthClientRecord>, AuthRegistryError> {
+        let inner = self.inner.read().map_err(|_| lock_poisoned())?;
+        Ok(inner.values().cloned().collect())
+    }
+
+    async fn delete_oauth_client(
+        &self,
+        client_id: &OAuthClientId,
+    ) -> Result<OAuthClientRecord, AuthRegistryError> {
+        let mut inner = self.inner.write().map_err(|_| lock_poisoned())?;
+        inner
+            .remove(client_id)
+            .ok_or_else(|| AuthRegistryError::ClientNotFound {
+                client_id: client_id.clone(),
+            })
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct InMemoryAuthFlowStore {
+    inner: Arc<RwLock<BTreeMap<AuthFlowId, AuthFlowRecord>>>,
+}
+
+impl InMemoryAuthFlowStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[async_trait]
+impl AuthFlowStore for InMemoryAuthFlowStore {
+    async fn create_flow(
+        &self,
+        record: CreateAuthFlowRecord,
+    ) -> Result<AuthFlowRecord, AuthRegistryError> {
+        let record = record.into_record();
+        record.validate()?;
+        let mut inner = self.inner.write().map_err(|_| lock_poisoned())?;
+        if inner.contains_key(&record.flow_id) {
+            return Err(AuthRegistryError::FlowAlreadyExists {
+                flow_id: record.flow_id,
+            });
+        }
+        if inner
+            .values()
+            .any(|existing| existing.state_hash == record.state_hash)
+        {
+            return Err(AuthRegistryError::Store {
+                message: "auth flow state hash collision".to_owned(),
+            });
+        }
+        inner.insert(record.flow_id.clone(), record.clone());
+        Ok(record)
+    }
+
+    async fn read_flow(&self, flow_id: &AuthFlowId) -> Result<AuthFlowRecord, AuthRegistryError> {
+        let inner = self.inner.read().map_err(|_| lock_poisoned())?;
+        inner
+            .get(flow_id)
+            .cloned()
+            .ok_or_else(|| AuthRegistryError::FlowNotFound {
+                flow_id: flow_id.clone(),
+            })
+    }
+
+    async fn read_flow_by_state_hash(
+        &self,
+        state_hash: &str,
+    ) -> Result<Option<AuthFlowRecord>, AuthRegistryError> {
+        let inner = self.inner.read().map_err(|_| lock_poisoned())?;
+        Ok(inner
+            .values()
+            .find(|record| record.state_hash == state_hash)
+            .cloned())
+    }
+
+    async fn consume_flow(
+        &self,
+        flow_id: &AuthFlowId,
+        now_ms: i64,
+    ) -> Result<AuthFlowRecord, AuthRegistryError> {
+        let mut inner = self.inner.write().map_err(|_| lock_poisoned())?;
+        let record = inner
+            .get_mut(flow_id)
+            .ok_or_else(|| AuthRegistryError::FlowNotFound {
+                flow_id: flow_id.clone(),
+            })?;
+        if record.consumed_at_ms.is_some() {
+            return Err(AuthRegistryError::FlowAlreadyConsumed {
+                flow_id: flow_id.clone(),
+            });
+        }
+        if now_ms >= record.expires_at_ms {
+            return Err(AuthRegistryError::FlowExpired {
+                flow_id: flow_id.clone(),
+            });
+        }
+        record.consumed_at_ms = Some(now_ms);
+        record.updated_at_ms = now_ms;
+        Ok(record.clone())
+    }
+
+    async fn finish_flow(
+        &self,
+        flow_id: &AuthFlowId,
+        outcome: FinishAuthFlow,
+    ) -> Result<AuthFlowRecord, AuthRegistryError> {
+        outcome.validate()?;
+        let mut inner = self.inner.write().map_err(|_| lock_poisoned())?;
+        let record = inner
+            .get_mut(flow_id)
+            .ok_or_else(|| AuthRegistryError::FlowNotFound {
+                flow_id: flow_id.clone(),
+            })?;
+        if record.completed_at_ms.is_some() {
+            return Err(AuthRegistryError::FlowAlreadyCompleted {
+                flow_id: flow_id.clone(),
+            });
+        }
+        record.grant_id = outcome.grant_id;
+        record.error = outcome.error;
+        record.completed_at_ms = Some(outcome.completed_at_ms);
+        record.updated_at_ms = outcome.completed_at_ms;
+        record.validate()?;
+        Ok(record.clone())
     }
 }
 
@@ -177,6 +370,7 @@ mod tests {
             audience: None,
             access_token_secret: Some(SecretId::new("authsec_1")),
             refresh_token_secret: None,
+            oauth_client: None,
             expires_at_ms: None,
             status: AuthGrantStatus::Active,
             created_at_ms: 10,

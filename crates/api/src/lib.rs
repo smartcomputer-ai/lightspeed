@@ -54,6 +54,12 @@ pub const METHOD_AUTH_GRANTS_IMPORT: &str = "auth/grants/import";
 pub const METHOD_AUTH_GRANTS_LIST: &str = "auth/grants/list";
 pub const METHOD_AUTH_GRANTS_READ: &str = "auth/grants/read";
 pub const METHOD_AUTH_GRANTS_REVOKE: &str = "auth/grants/revoke";
+pub const METHOD_AUTH_CLIENTS_CREATE: &str = "auth/clients/create";
+pub const METHOD_AUTH_CLIENTS_LIST: &str = "auth/clients/list";
+pub const METHOD_AUTH_CLIENTS_READ: &str = "auth/clients/read";
+pub const METHOD_AUTH_CLIENTS_DELETE: &str = "auth/clients/delete";
+pub const METHOD_AUTH_FLOWS_START: &str = "auth/flows/start";
+pub const METHOD_AUTH_FLOWS_STATUS: &str = "auth/flows/status";
 
 pub const NOTIFY_SESSION_STARTED: &str = "session/started";
 pub const NOTIFY_SESSION_STATUS_CHANGED: &str = "session/status/changed";
@@ -304,6 +310,36 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: AuthGrantRevokeParams,
     ) -> Result<AgentApiOutcome<AuthGrantRevokeResponse>, AgentApiError>;
+
+    async fn create_auth_client(
+        &self,
+        params: AuthClientCreateParams,
+    ) -> Result<AgentApiOutcome<AuthClientCreateResponse>, AgentApiError>;
+
+    async fn list_auth_clients(
+        &self,
+        params: AuthClientListParams,
+    ) -> Result<AgentApiOutcome<AuthClientListResponse>, AgentApiError>;
+
+    async fn read_auth_client(
+        &self,
+        params: AuthClientReadParams,
+    ) -> Result<AgentApiOutcome<AuthClientReadResponse>, AgentApiError>;
+
+    async fn delete_auth_client(
+        &self,
+        params: AuthClientDeleteParams,
+    ) -> Result<AgentApiOutcome<AuthClientDeleteResponse>, AgentApiError>;
+
+    async fn start_auth_flow(
+        &self,
+        params: AuthFlowStartParams,
+    ) -> Result<AgentApiOutcome<AuthFlowStartResponse>, AgentApiError>;
+
+    async fn read_auth_flow_status(
+        &self,
+        params: AuthFlowStatusParams,
+    ) -> Result<AgentApiOutcome<AuthFlowStatusResponse>, AgentApiError>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1705,6 +1741,185 @@ pub struct AuthGrantRevokeResponse {
     pub grant: AuthGrantView,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TokenEndpointAuthMethod {
+    #[default]
+    ClientSecretBasic,
+    ClientSecretPost,
+    None,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OAuthClientView {
+    pub client_id: String,
+    pub provider_id: String,
+    pub provider_kind: AuthProviderKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    pub authorization_endpoint: String,
+    pub token_endpoint: String,
+    pub remote_client_id: String,
+    pub has_client_secret: bool,
+    pub token_endpoint_auth_method: TokenEndpointAuthMethod,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes_default: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<String>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+/// Register an OAuth client configuration. `client_secret` is the second
+/// deliberate inbound-plaintext path after `auth/grants/import`: it is
+/// encrypted on receipt and never returned by any method. `Debug` output
+/// redacts it; request logging must never echo these params.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthClientCreateParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    pub provider_kind: AuthProviderKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    pub authorization_endpoint: String,
+    pub token_endpoint: String,
+    pub remote_client_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_secret: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_endpoint_auth_method: Option<TokenEndpointAuthMethod>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes_default: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<String>,
+}
+
+impl std::fmt::Debug for AuthClientCreateParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthClientCreateParams")
+            .field("client_id", &self.client_id)
+            .field("provider_id", &self.provider_id)
+            .field("provider_kind", &self.provider_kind)
+            .field("display_name", &self.display_name)
+            .field("authorization_endpoint", &self.authorization_endpoint)
+            .field("token_endpoint", &self.token_endpoint)
+            .field("remote_client_id", &self.remote_client_id)
+            .field(
+                "client_secret",
+                &self.client_secret.as_ref().map(|_| "<redacted>"),
+            )
+            .field(
+                "token_endpoint_auth_method",
+                &self.token_endpoint_auth_method,
+            )
+            .field("scopes_default", &self.scopes_default)
+            .field("audience", &self.audience)
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthClientCreateResponse {
+    pub client: OAuthClientView,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthClientListParams {}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthClientListResponse {
+    #[serde(default)]
+    pub clients: Vec<OAuthClientView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthClientReadParams {
+    pub client_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthClientReadResponse {
+    pub client: OAuthClientView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthClientDeleteParams {
+    pub client_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthClientDeleteResponse {
+    pub client: OAuthClientView,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AuthFlowStatus {
+    Pending,
+    Completed,
+    Failed,
+    Expired,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthFlowStartParams {
+    pub client_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scopes: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthFlowStartResponse {
+    pub flow_id: String,
+    /// Authorization URL the user must open. It embeds the one-time `state`;
+    /// treat it as sensitive and do not log it server-side.
+    pub authorize_url: String,
+    pub expires_at_ms: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthFlowStatusParams {
+    pub flow_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthFlowView {
+    pub flow_id: String,
+    pub client_id: String,
+    pub provider_id: String,
+    pub status: AuthFlowStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub expires_at_ms: i64,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthFlowStatusResponse {
+    pub flow: AuthFlowView,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionMcpLinkParams {
@@ -2468,6 +2683,34 @@ pub async fn dispatch_json_rpc(
                 Err(error) => JsonRpcResponse::failure(id, error),
             }
         }
+        METHOD_AUTH_CLIENTS_CREATE => {
+            match json_rpc_params::<AuthClientCreateParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.create_auth_client(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
+        METHOD_AUTH_CLIENTS_LIST => match json_rpc_params::<AuthClientListParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.list_auth_clients(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
+        METHOD_AUTH_CLIENTS_READ => match json_rpc_params::<AuthClientReadParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.read_auth_client(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
+        METHOD_AUTH_CLIENTS_DELETE => {
+            match json_rpc_params::<AuthClientDeleteParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.delete_auth_client(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
+        METHOD_AUTH_FLOWS_START => match json_rpc_params::<AuthFlowStartParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.start_auth_flow(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
+        METHOD_AUTH_FLOWS_STATUS => match json_rpc_params::<AuthFlowStatusParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.read_auth_flow_status(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
         other => JsonRpcResponse::failure(id, JsonRpcError::method_not_found(other)),
     }
 }
@@ -2548,6 +2791,27 @@ mod tests {
         assert!(!debug.contains("super-secret-token"), "{debug}");
         assert!(debug.contains("<redacted>"));
         assert_eq!(params.token, "super-secret-token");
+    }
+
+    #[test]
+    fn auth_client_create_params_redact_client_secret_in_debug_output() {
+        let params: AuthClientCreateParams = serde_json::from_value(json!({
+            "providerKind": "customOAuth",
+            "authorizationEndpoint": "https://as.example.com/authorize",
+            "tokenEndpoint": "https://as.example.com/token",
+            "remoteClientId": "client-1",
+            "clientSecret": "super-secret-client-secret"
+        }))
+        .expect("deserialize client create params");
+
+        let debug = format!("{params:?}");
+
+        assert!(!debug.contains("super-secret-client-secret"), "{debug}");
+        assert!(debug.contains("<redacted>"));
+        assert_eq!(
+            params.client_secret.as_deref(),
+            Some("super-secret-client-secret")
+        );
     }
 
     #[test]
@@ -3889,6 +4153,91 @@ mod tests {
             Ok(AgentApiOutcome::new(AuthGrantRevokeResponse {
                 grant: test_auth_grant(params.grant_id, AuthGrantStatus::Revoked),
             }))
+        }
+
+        async fn create_auth_client(
+            &self,
+            params: AuthClientCreateParams,
+        ) -> Result<AgentApiOutcome<AuthClientCreateResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(AuthClientCreateResponse {
+                client: test_auth_client(params.client_id.unwrap_or_else(|| "crm".to_owned())),
+            }))
+        }
+
+        async fn list_auth_clients(
+            &self,
+            _params: AuthClientListParams,
+        ) -> Result<AgentApiOutcome<AuthClientListResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(AuthClientListResponse {
+                clients: vec![test_auth_client("crm".to_owned())],
+            }))
+        }
+
+        async fn read_auth_client(
+            &self,
+            params: AuthClientReadParams,
+        ) -> Result<AgentApiOutcome<AuthClientReadResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(AuthClientReadResponse {
+                client: test_auth_client(params.client_id),
+            }))
+        }
+
+        async fn delete_auth_client(
+            &self,
+            params: AuthClientDeleteParams,
+        ) -> Result<AgentApiOutcome<AuthClientDeleteResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(AuthClientDeleteResponse {
+                client: test_auth_client(params.client_id),
+            }))
+        }
+
+        async fn start_auth_flow(
+            &self,
+            params: AuthFlowStartParams,
+        ) -> Result<AgentApiOutcome<AuthFlowStartResponse>, AgentApiError> {
+            let _ = params;
+            Ok(AgentApiOutcome::new(AuthFlowStartResponse {
+                flow_id: "authflow_1".to_owned(),
+                authorize_url: "https://as.example.com/authorize?state=test".to_owned(),
+                expires_at_ms: 600_000,
+            }))
+        }
+
+        async fn read_auth_flow_status(
+            &self,
+            params: AuthFlowStatusParams,
+        ) -> Result<AgentApiOutcome<AuthFlowStatusResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(AuthFlowStatusResponse {
+                flow: AuthFlowView {
+                    flow_id: params.flow_id,
+                    client_id: "crm".to_owned(),
+                    provider_id: "crm".to_owned(),
+                    status: AuthFlowStatus::Pending,
+                    grant_id: None,
+                    error: None,
+                    expires_at_ms: 600_000,
+                    created_at_ms: 1,
+                    updated_at_ms: 2,
+                },
+            }))
+        }
+    }
+
+    fn test_auth_client(client_id: String) -> OAuthClientView {
+        OAuthClientView {
+            client_id,
+            provider_id: "crm".to_owned(),
+            provider_kind: AuthProviderKind::McpOAuth,
+            display_name: None,
+            authorization_endpoint: "https://as.example.com/authorize".to_owned(),
+            token_endpoint: "https://as.example.com/token".to_owned(),
+            remote_client_id: "client-1".to_owned(),
+            has_client_secret: false,
+            token_endpoint_auth_method: TokenEndpointAuthMethod::None,
+            scopes_default: Vec::new(),
+            audience: Some("https://crm.example.com/mcp".to_owned()),
+            created_at_ms: 1,
+            updated_at_ms: 2,
         }
     }
 

@@ -169,8 +169,14 @@ name = "auth-registry"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64",
  "engine",
+ "hex",
+ "rand 0.8.6",
+ "reqwest",
  "serde",
+ "serde_json",
+ "sha2",
  "thiserror 1.0.69",
  "tokio",
 ]
@@ -3483,6 +3489,7 @@ dependencies = [
  "llm-clients",
  "llm-runtime",
  "mcp-registry",
+ "serde",
  "serde_json",
  "store-pg",
  "temporal-workflow",

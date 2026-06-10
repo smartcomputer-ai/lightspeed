@@ -113,6 +113,7 @@ mod tests {
                 audience: audience.map(str::to_owned),
                 access_token_secret: Some(SecretId::new("authsec_1")),
                 refresh_token_secret: None,
+                oauth_client: None,
                 expires_at_ms: None,
                 status: AuthGrantStatus::Active,
                 created_at_ms: 10,

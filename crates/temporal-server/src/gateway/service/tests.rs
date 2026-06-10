@@ -192,6 +192,7 @@ fn test_auth_grant_record(
         audience: audience.map(str::to_owned),
         access_token_secret: Some(auth_registry::SecretId::new("authsec_1")),
         refresh_token_secret: None,
+        oauth_client: None,
         expires_at_ms: None,
         status,
         created_at_ms: 1,
@@ -1112,4 +1113,111 @@ fn workspace_not_found(id: &str) -> vfs::VfsCatalogError {
         kind: "workspace",
         id: id.to_owned(),
     }
+}
+
+fn client_create_params() -> AuthClientCreateParams {
+    serde_json::from_value(serde_json::json!({
+        "clientId": "crm",
+        "providerKind": "mcpOAuth",
+        "authorizationEndpoint": "https://as.example.com/authorize",
+        "tokenEndpoint": "https://as.example.com/token",
+        "remoteClientId": "client-1",
+        "clientSecret": "shh-secret",
+        "audience": "https://crm.example.com/mcp"
+    }))
+    .expect("client create params")
+}
+
+#[test]
+fn auth_client_drafts_encrypt_secret_and_default_to_basic_auth() {
+    let draft = oauth_api::auth_client_create_draft(client_create_params(), 10)
+        .expect("draft oauth client");
+
+    let secret = draft.secret.expect("client secret drafted");
+    assert_eq!(
+        secret.secret_kind,
+        auth_registry::SECRET_KIND_OAUTH_CLIENT_SECRET
+    );
+    assert_eq!(secret.value.expose(), "shh-secret");
+    assert_eq!(draft.client.client_secret, Some(secret.secret_id.clone()));
+    assert_eq!(
+        draft.client.token_endpoint_auth_method,
+        auth_registry::TokenEndpointAuthMethod::ClientSecretBasic
+    );
+    // Provider id defaults to the client id.
+    assert_eq!(draft.client.provider_id, "crm");
+}
+
+#[test]
+fn auth_client_drafts_without_secret_default_to_public_client() {
+    let mut params = client_create_params();
+    params.client_secret = None;
+
+    let draft = oauth_api::auth_client_create_draft(params, 10).expect("draft oauth client");
+
+    assert!(draft.secret.is_none());
+    assert_eq!(
+        draft.client.token_endpoint_auth_method,
+        auth_registry::TokenEndpointAuthMethod::None
+    );
+}
+
+#[test]
+fn auth_client_drafts_reject_non_oauth_kinds() {
+    let mut params = client_create_params();
+    params.provider_kind = api::AuthProviderKind::StaticBearer;
+
+    let error = oauth_api::auth_client_create_draft(params, 10)
+        .expect_err("static bearer kind must be rejected");
+
+    assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
+}
+
+#[test]
+fn mcp_oauth_client_drafts_require_an_audience() {
+    let mut params = client_create_params();
+    params.audience = None;
+
+    let error = oauth_api::auth_client_create_draft(params, 10)
+        .expect_err("mcp oauth without audience must be rejected");
+
+    assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
+}
+
+#[test]
+fn oauth_redirect_uris_normalize_trailing_slashes() {
+    assert_eq!(
+        oauth_api::oauth_redirect_uri("http://127.0.0.1:18080"),
+        "http://127.0.0.1:18080/auth/callback"
+    );
+    assert_eq!(
+        oauth_api::oauth_redirect_uri("https://forge.example.com/"),
+        "https://forge.example.com/auth/callback"
+    );
+}
+
+#[test]
+fn auth_flow_views_carry_derived_status() {
+    let record = auth_registry::CreateAuthFlowRecord {
+        flow_id: auth_registry::AuthFlowId::new("authflow_1"),
+        client_id: auth_registry::OAuthClientId::new("crm"),
+        provider_id: "crm".to_owned(),
+        provider_kind: auth_registry::AuthProviderKind::McpOAuth,
+        principal: auth_registry::PrincipalRef::universe_default(),
+        state_hash: auth_registry::state_hash("state-1"),
+        pkce_verifier_secret: auth_registry::SecretId::new("authsec_pkce"),
+        redirect_uri: "http://127.0.0.1:18080/auth/callback".to_owned(),
+        scopes: Vec::new(),
+        audience: Some("https://crm.example.com/mcp".to_owned()),
+        expires_at_ms: 100,
+        created_at_ms: 10,
+    }
+    .into_record();
+
+    let pending = oauth_api::auth_flow_view(record.clone(), 50);
+    assert_eq!(pending.status, api::AuthFlowStatus::Pending);
+    assert!(pending.grant_id.is_none());
+
+    let expired = oauth_api::auth_flow_view(record, 200);
+    assert_eq!(expired.status, api::AuthFlowStatus::Expired);
 }

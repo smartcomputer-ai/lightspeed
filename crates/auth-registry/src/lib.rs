@@ -92,20 +92,41 @@ macro_rules! auth_string_id {
 
 auth_string_id!(AuthGrantId);
 auth_string_id!(SecretId);
+auth_string_id!(OAuthClientId);
+auth_string_id!(AuthFlowId);
 
 mod broker;
+mod flow;
 mod grants;
+mod locks;
 mod memory;
+mod oauth;
 mod secrets;
 
 pub use broker::{
-    AuthBrokerError, AuthTokenBroker, RegistryTokenBroker, TokenAudience, audience_covers,
+    AuthBrokerError, AuthTokenBroker, DEFAULT_REFRESH_EXPIRY_MARGIN_MS, OAuthRefreshRuntime,
+    RegistryTokenBroker, TokenAudience, audience_covers,
+};
+pub use flow::{
+    AuthCallback, DEFAULT_AUTH_FLOW_TTL_MS, OAuthFlowService, StartAuthFlow, StartedAuthFlow,
 };
 pub use grants::{
-    AuthGrantRecord, AuthGrantStatus, AuthGrantStore, AuthProviderKind, CreateAuthGrantRecord,
-    ListAuthGrants, PrincipalKind, PrincipalRef,
+    AuthGrantRecord, AuthGrantStatus, AuthGrantStore, AuthGrantTokenRefresh, AuthProviderKind,
+    CreateAuthGrantRecord, ListAuthGrants, PrincipalKind, PrincipalRef,
 };
-pub use memory::{InMemoryAuthGrantStore, InMemorySecretStore};
+pub use locks::{GrantLockGuard, GrantRefreshLock, InMemoryGrantLocks};
+pub use memory::{
+    InMemoryAuthFlowStore, InMemoryAuthGrantStore, InMemoryOAuthClientStore, InMemorySecretStore,
+};
+pub use oauth::{
+    AuthFlowRecord, AuthFlowStatus, AuthFlowStore, CreateAuthFlowRecord, CreateOAuthClientRecord,
+    FinishAuthFlow, HttpOAuthTokenClient, OAuthClientRecord, OAuthClientStore, OAuthTokenClient,
+    OAuthTokenError, OAuthTokenGrant, OAuthTokenRequest, OAuthTokenResponse,
+    SECRET_KIND_OAUTH_ACCESS_TOKEN, SECRET_KIND_OAUTH_CLIENT_SECRET,
+    SECRET_KIND_OAUTH_PKCE_VERIFIER, SECRET_KIND_OAUTH_REFRESH_TOKEN, TokenEndpointAuthMethod,
+    build_authorization_url, generate_pkce_verifier, generate_state, pkce_challenge_s256,
+    state_hash,
+};
 pub use secrets::{
     PutSecretRecord, SECRET_KIND_STATIC_BEARER, SecretRecordMeta, SecretStore, SecretValue,
 };
@@ -124,11 +145,45 @@ pub enum AuthRegistryError {
     #[error("secret not found: {secret_id}")]
     SecretNotFound { secret_id: SecretId },
 
+    #[error("oauth client already exists: {client_id}")]
+    ClientAlreadyExists { client_id: OAuthClientId },
+
+    #[error("oauth client not found: {client_id}")]
+    ClientNotFound { client_id: OAuthClientId },
+
+    #[error("auth flow already exists: {flow_id}")]
+    FlowAlreadyExists { flow_id: AuthFlowId },
+
+    #[error("auth flow not found: {flow_id}")]
+    FlowNotFound { flow_id: AuthFlowId },
+
+    #[error("auth flow was already consumed: {flow_id}")]
+    FlowAlreadyConsumed { flow_id: AuthFlowId },
+
+    #[error("auth flow was already completed: {flow_id}")]
+    FlowAlreadyCompleted { flow_id: AuthFlowId },
+
+    #[error("auth flow is expired: {flow_id}")]
+    FlowExpired { flow_id: AuthFlowId },
+
+    #[error("authorization callback state is unknown or no longer valid")]
+    UnknownCallbackState,
+
     #[error("invalid auth registry request: {message}")]
     InvalidInput { message: String },
 
     #[error("auth registry store failure: {message}")]
     Store { message: String },
+}
+
+/// Generate a random id with the given prefix: `prefix` + 32 lowercase hex
+/// characters from the OS RNG (128 bits).
+pub fn random_auth_id(prefix: &str) -> String {
+    use rand::RngCore;
+
+    let mut bytes = [0u8; 16];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    format!("{prefix}{}", hex::encode(bytes))
 }
 
 const AUTH_URL_MAX_LEN: usize = 2048;
@@ -243,6 +298,50 @@ pub(crate) fn validate_audience_url(value: &str) -> Result<(), AuthRegistryError
         });
     }
     Ok(())
+}
+
+/// Validate an OAuth authorization/token endpoint URL: an absolute URL that
+/// passes [`validate_audience_url`] and uses `https`, except for loopback
+/// hosts where plain `http` is allowed for local development and tests.
+pub(crate) fn validate_oauth_endpoint_url(
+    name: &'static str,
+    value: &str,
+) -> Result<(), AuthRegistryError> {
+    validate_audience_url(value).map_err(|error| match error {
+        AuthRegistryError::InvalidInput { message } => AuthRegistryError::InvalidInput {
+            message: format!("{name}: {message}"),
+        },
+        other => other,
+    })?;
+    let Some((scheme, rest)) = value.split_once("://") else {
+        return Err(AuthRegistryError::InvalidInput {
+            message: format!("{name} must include a scheme"),
+        });
+    };
+    if scheme.eq_ignore_ascii_case("https") {
+        return Ok(());
+    }
+    let authority_end = rest
+        .find(|ch| matches!(ch, '/' | '?' | '#'))
+        .unwrap_or(rest.len());
+    let host = rest[..authority_end]
+        .rsplit_once(':')
+        .map_or(&rest[..authority_end], |(host, port)| {
+            if port.chars().all(|ch| ch.is_ascii_digit()) {
+                host
+            } else {
+                &rest[..authority_end]
+            }
+        });
+    let loopback = host.eq_ignore_ascii_case("localhost")
+        || host.starts_with("127.")
+        || host == "[::1]";
+    if loopback {
+        return Ok(());
+    }
+    Err(AuthRegistryError::InvalidInput {
+        message: format!("{name} must use https (http is allowed only for loopback hosts)"),
+    })
 }
 
 pub(crate) fn validate_scopes(values: &[String]) -> Result<(), AuthRegistryError> {
