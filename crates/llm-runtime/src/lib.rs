@@ -12,8 +12,10 @@ pub mod openai_completions;
 pub mod openai_responses;
 pub mod params;
 pub mod result;
+mod skill_prompts;
 pub mod testing;
 
+pub use anthropic_messages::{AnthropicMessagesApi, AnthropicMessagesLlmAdapter};
 pub use error::{LlmAdapterError, LlmAdapterResult};
 pub use executor::{LlmAdapterRegistry, LlmCompactionAdapter, LlmGenerationAdapter, LlmRuntime};
 pub use openai_responses::{OpenAiResponsesApi, OpenAiResponsesLlmAdapter};

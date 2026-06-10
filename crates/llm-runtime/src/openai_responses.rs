@@ -9,13 +9,12 @@ use engine::{
     OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, OPENAI_RESPONSES_MCP_APPROVAL_REQUEST_PROVIDER_KIND,
     OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND, OPENAI_RESPONSES_MCP_LIST_TOOLS_PROVIDER_KIND,
     OPENAI_RESPONSES_WEB_SEARCH_CALL_PROVIDER_KIND, ObservedToolCall, ProviderApiKind,
-    ProviderNativeToolExecution, RemoteMcpApprovalPolicy, RemoteMcpToolSpec, SkillId, TokenEstimate,
+    ProviderNativeToolExecution, RemoteMcpApprovalPolicy, RemoteMcpToolSpec, TokenEstimate,
     TokenEstimateQuality, ToolCallId, ToolChoice, ToolChoiceMode, ToolKind, ToolName, ToolSpec,
     storage::BlobStore,
 };
 use llm_clients::{ApiResponse, openai::responses as oai};
 use serde_json::{Value, json};
-use tools::skills::{SkillCatalogSnapshot, SkillLocation, SkillMetadata};
 
 use crate::{
     blob_io::{put_json, put_text, read_json, read_text},
@@ -284,10 +283,12 @@ async fn materialize_input_item(
                 .to_owned(),
         }),
         ContextEntryKind::SkillCatalog => {
-            let catalog = read_skill_catalog(blobs, &item.content_ref).await?;
+            let catalog = crate::skill_prompts::read_skill_catalog(blobs, &item.content_ref).await?;
             Ok(oai::ResponseInputItem::Message(oai::InputMessage {
                 role: oai::MessageRole::Developer,
-                content: oai::InputMessageContent::Text(openai_skill_catalog_text(&catalog)),
+                content: oai::InputMessageContent::Text(crate::skill_prompts::skill_catalog_text(
+                    &catalog,
+                )),
                 extra: Default::default(),
             }))
         }
@@ -295,9 +296,9 @@ async fn materialize_input_item(
             let text = read_text(blobs, &item.content_ref).await?;
             Ok(oai::ResponseInputItem::Message(oai::InputMessage {
                 role: oai::MessageRole::Developer,
-                content: oai::InputMessageContent::Text(openai_skill_activation_text(
-                    skill_id, text,
-                )),
+                content: oai::InputMessageContent::Text(
+                    crate::skill_prompts::skill_activation_text(skill_id, text),
+                ),
                 extra: Default::default(),
             }))
         }
@@ -316,63 +317,6 @@ fn is_openai_raw_item(item: &ContextEntry) -> bool {
             | ContextEntryKind::ReasoningState
             | ContextEntryKind::ProviderOpaque
     ) && item.media_type.as_deref() == Some(MEDIA_TYPE_JSON)
-}
-
-async fn read_skill_catalog(
-    blobs: &dyn BlobStore,
-    blob_ref: &BlobRef,
-) -> LlmAdapterResult<SkillCatalogSnapshot> {
-    let bytes = blobs.read_bytes(blob_ref).await?;
-    serde_json::from_slice(&bytes).map_err(|error| LlmAdapterError::InvalidJson {
-        blob_ref: blob_ref.clone(),
-        message: error.to_string(),
-    })
-}
-
-fn openai_skill_catalog_text(catalog: &SkillCatalogSnapshot) -> String {
-    let mut text = String::from("Forge skill catalog:\n\n");
-    if catalog.skills.is_empty() {
-        text.push_str("No Forge skills are currently available.");
-        return text;
-    }
-
-    text.push_str(
-        "When a skill is relevant, read its SKILL.md through the available file tool before following it.\n\n",
-    );
-    for skill in &catalog.skills {
-        text.push_str(&openai_skill_catalog_entry(skill));
-    }
-    text
-}
-
-fn openai_skill_catalog_entry(skill: &SkillMetadata) -> String {
-    let mut entry = format!(
-        "- {} ({})\n  description: {}\n  skill_doc_path: {}",
-        skill.name,
-        skill.skill_id,
-        skill.description,
-        skill_doc_path(&skill.location)
-    );
-    if let Some(target) = &skill.target {
-        entry.push_str(&format!("\n  target: {}:{}", target.namespace, target.id));
-    }
-    if let Some(short_description) = &skill.short_description {
-        entry.push_str(&format!("\n  short_description: {short_description}"));
-    }
-    entry.push('\n');
-    entry
-}
-
-fn skill_doc_path(location: &SkillLocation) -> &str {
-    match location {
-        SkillLocation::MountedSnapshot { skill_doc_path, .. }
-        | SkillLocation::MountedWorkspace { skill_doc_path, .. } => skill_doc_path.as_str(),
-        SkillLocation::HostFilesystem { skill_doc_path, .. } => skill_doc_path,
-    }
-}
-
-fn openai_skill_activation_text(skill_id: &SkillId, text: String) -> String {
-    format!("Forge loaded skill ({skill_id}):\n\n{text}")
 }
 
 async fn materialize_tools(
@@ -962,8 +906,10 @@ mod tests {
     };
     use llm_clients::HeaderSnapshot;
     use serde_json::json;
+    use engine::SkillId;
     use tools::skills::{
-        SKILL_CATALOG_SCHEMA_VERSION, SkillDependencies, SkillScope, SkillSource, SkillTrustLevel,
+        SKILL_CATALOG_SCHEMA_VERSION, SkillCatalogSnapshot, SkillDependencies, SkillLocation,
+        SkillMetadata, SkillScope, SkillSource, SkillTrustLevel,
     };
     use tools::web::search::{
         OpenAiResponsesWebSearchConfig, WebSearchContextSize, WebSearchMode,

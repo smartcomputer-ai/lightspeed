@@ -88,6 +88,10 @@ pub struct OpenAiReasoningConfig {
 pub struct AnthropicMessagesParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thinking: Option<AnthropicThinkingConfig>,
+    /// Output/effort configuration used with adaptive thinking models
+    /// (e.g. `{"effort": "high"}`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_config: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Value>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -178,6 +182,33 @@ pub fn openai_responses_params(
         return Err(LlmAdapterError::RequestKindMismatch {
             message: format!(
                 "expected OpenAiResponses provider params, got {:?}",
+                params.api_kind
+            ),
+        });
+    }
+    if params.version != PROVIDER_PARAMS_VERSION {
+        return Err(LlmAdapterError::InvalidProviderRequest {
+            message: format!(
+                "unsupported provider params version {}, expected {}",
+                params.version, PROVIDER_PARAMS_VERSION
+            ),
+        });
+    }
+    parse_params_body(&params.body)
+}
+
+/// Parse Anthropic Messages params from optional opaque params, defaulting
+/// when absent and rejecting params tagged for a different API kind.
+pub fn anthropic_messages_params(
+    params: Option<&ProviderParams>,
+) -> LlmAdapterResult<AnthropicMessagesParams> {
+    let Some(params) = params else {
+        return Ok(AnthropicMessagesParams::default());
+    };
+    if params.api_kind != ProviderApiKind::AnthropicMessages {
+        return Err(LlmAdapterError::RequestKindMismatch {
+            message: format!(
+                "expected AnthropicMessages provider params, got {:?}",
                 params.api_kind
             ),
         });

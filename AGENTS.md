@@ -47,6 +47,7 @@ cargo test -p llm-clients --test openai_responses_live -- --ignored
 cargo test -p llm-clients --test openai_completions_live -- --ignored
 cargo test -p llm-clients --test anthropic_messages_live -- --ignored
 cargo test -p llm-runtime --test openai_responses_live -- --ignored
+cargo test -p llm-runtime --test anthropic_messages_live -- --ignored
 ```
 
 CLI usage:
