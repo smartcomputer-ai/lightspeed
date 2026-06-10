@@ -354,7 +354,7 @@ fn validate_context_config(
                 compact_threshold_tokens,
                 target_tokens,
             }),
-            ProviderApiKind::OpenAiResponses,
+            ProviderApiKind::OpenAiResponses | ProviderApiKind::AnthropicMessages,
         ) => validate_provider_standalone_compaction(*compact_threshold_tokens, *target_tokens),
         (Some(CompactionPolicy::ProviderTriggered { .. }), api_kind) => {
             Err(DomainError::ProviderCompatibility(format!(
@@ -364,7 +364,7 @@ fn validate_context_config(
         }
         (Some(CompactionPolicy::ProviderStandalone { .. }), api_kind) => {
             Err(DomainError::ProviderCompatibility(format!(
-                "provider-standalone compaction requires OpenAI Responses api kind, got {:?}",
+                "provider-standalone compaction requires OpenAI Responses or Anthropic Messages api kind, got {:?}",
                 api_kind
             )))
         }
@@ -567,7 +567,7 @@ mod tests {
     }
 
     #[test]
-    fn provider_standalone_compaction_rejects_non_openai_responses_api_kind() {
+    fn provider_standalone_compaction_accepts_anthropic_messages_api_kind() {
         let config = config(
             ProviderApiKind::AnthropicMessages,
             Some(CompactionPolicy::ProviderStandalone {
@@ -576,9 +576,24 @@ mod tests {
             }),
         );
 
+        config
+            .validate_provider_compatibility()
+            .expect("provider-standalone compaction supports Anthropic Messages");
+    }
+
+    #[test]
+    fn provider_standalone_compaction_rejects_unsupported_api_kind() {
+        let config = config(
+            ProviderApiKind::OpenAiCompletions,
+            Some(CompactionPolicy::ProviderStandalone {
+                compact_threshold_tokens: None,
+                target_tokens: None,
+            }),
+        );
+
         let error = config
             .validate_provider_compatibility()
-            .expect_err("provider-standalone compaction is OpenAI Responses only");
+            .expect_err("provider-standalone compaction has no OpenAI Completions adapter");
 
         assert!(matches!(error, DomainError::ProviderCompatibility(_)));
     }

@@ -39,6 +39,11 @@ const PROVIDER_KIND_TEXT: &str = "anthropic.messages.text";
 const PROVIDER_KIND_TOOL_USE: &str = "anthropic.messages.tool_use";
 const PROVIDER_KIND_THINKING: &str = "anthropic.messages.thinking";
 const PROVIDER_KIND_BLOCK: &str = "anthropic.messages.block";
+/// Client-seeded raw input message: a `ProviderOpaque` entry tagged with this
+/// provider kind carries a complete Anthropic `{role, content}` message JSON
+/// and lowers as that message instead of an assistant content block.
+pub const ANTHROPIC_MESSAGES_INPUT_MESSAGE_PROVIDER_KIND: &str =
+    "anthropic.messages.input_message";
 const MEDIA_TYPE_JSON: &str = "application/json";
 const MEDIA_TYPE_TEXT: &str = "text/plain";
 
@@ -297,27 +302,67 @@ async fn materialize_messages(
 ) -> LlmAdapterResult<Vec<am::MessageParam>> {
     let mut messages: Vec<am::MessageParam> = Vec::new();
     for entry in entries {
-        let (role, block) = materialize_block(blobs, entry).await?;
-        match messages.last_mut() {
-            Some(message) if message.role == role => match &mut message.content {
-                am::MessageParamContent::Blocks(blocks) => blocks.push(block),
-                am::MessageParamContent::Text(_) => {
-                    return Err(LlmAdapterError::InvalidProviderRequest {
-                        message: "Anthropic message lowering produced unexpected text content"
-                            .to_owned(),
-                    });
-                }
-            },
-            _ => {
-                messages.push(am::MessageParam {
-                    role,
-                    content: am::MessageParamContent::Blocks(vec![block]),
-                    extra: Default::default(),
-                });
+        if is_raw_input_message(entry) {
+            let (role, blocks) = materialize_input_message(blobs, entry).await?;
+            for block in blocks {
+                push_block(&mut messages, role, block)?;
             }
+            continue;
         }
+        let (role, block) = materialize_block(blobs, entry).await?;
+        push_block(&mut messages, role, block)?;
     }
     Ok(messages)
+}
+
+fn push_block(
+    messages: &mut Vec<am::MessageParam>,
+    role: am::MessageRole,
+    block: am::ContentBlockParam,
+) -> LlmAdapterResult<()> {
+    match messages.last_mut() {
+        Some(message) if message.role == role => match &mut message.content {
+            am::MessageParamContent::Blocks(blocks) => blocks.push(block),
+            am::MessageParamContent::Text(_) => {
+                return Err(LlmAdapterError::InvalidProviderRequest {
+                    message: "Anthropic message lowering produced unexpected text content"
+                        .to_owned(),
+                });
+            }
+        },
+        _ => {
+            messages.push(am::MessageParam {
+                role,
+                content: am::MessageParamContent::Blocks(vec![block]),
+                extra: Default::default(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn is_raw_input_message(entry: &ContextEntry) -> bool {
+    matches!(entry.kind, ContextEntryKind::ProviderOpaque)
+        && entry.provider_kind.as_deref() == Some(ANTHROPIC_MESSAGES_INPUT_MESSAGE_PROVIDER_KIND)
+}
+
+async fn materialize_input_message(
+    blobs: &dyn BlobStore,
+    entry: &ContextEntry,
+) -> LlmAdapterResult<(am::MessageRole, Vec<am::ContentBlockParam>)> {
+    let raw = read_json(blobs, &entry.content_ref).await?;
+    let message: am::MessageParam =
+        serde_json::from_value(raw).map_err(|error| LlmAdapterError::InvalidProviderRequest {
+            message: format!(
+                "Anthropic raw input message entry {} is not a valid message: {error}",
+                entry.entry_id
+            ),
+        })?;
+    let blocks = match message.content {
+        am::MessageParamContent::Text(text) => vec![am::ContentBlockParam::text(text)],
+        am::MessageParamContent::Blocks(blocks) => blocks,
+    };
+    Ok((message.role, blocks))
 }
 
 async fn materialize_block(
@@ -1180,6 +1225,47 @@ mod tests {
             ])
         );
         assert_eq!(value["max_tokens"], json!(DEFAULT_MAX_OUTPUT_TOKENS));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn materialize_create_request_lowers_raw_input_messages() {
+        let blobs = InMemoryBlobStore::new();
+        let raw_message_ref = crate::blob_io::put_json(
+            &blobs,
+            &json!({ "role": "user", "content": "Remember the marker ZEPHYR-42." }),
+        )
+        .await
+        .expect("raw message blob");
+        let followup_ref = text_blob(&blobs, "What marker?").await;
+        let raw_entry = ContextEntry {
+            key: Some(engine::ContextEntryKey::new("client.anthropic.raw.note")),
+            entry_id: ContextEntryId::new(1),
+            kind: ContextEntryKind::ProviderOpaque,
+            source: ContextEntrySource::ContextEdit,
+            content_ref: raw_message_ref,
+            media_type: Some(MEDIA_TYPE_JSON.to_owned()),
+            preview: None,
+            provider_kind: Some(ANTHROPIC_MESSAGES_INPUT_MESSAGE_PROVIDER_KIND.to_owned()),
+            provider_item_id: None,
+            token_estimate: None,
+        };
+        let request = intent_request(vec![raw_entry, user_entry(2, followup_ref)]);
+
+        let materialized = materialize_create_request(&blobs, &request)
+            .await
+            .expect("materialize");
+        let value = serde_json::to_value(materialized).expect("json");
+
+        assert_eq!(
+            value["messages"],
+            json!([{
+                "role": "user",
+                "content": [
+                    { "type": "text", "text": "Remember the marker ZEPHYR-42." },
+                    { "type": "text", "text": "What marker?" }
+                ]
+            }])
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

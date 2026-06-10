@@ -50,6 +50,10 @@ cargo test -p llm-runtime --test openai_responses_live -- --ignored
 cargo test -p llm-runtime --test anthropic_messages_live -- --ignored
 ```
 
+Additional per-capability live suites exist for both providers under
+`crates/llm-runtime/tests/` (`*_compaction_live`, `*_mcp_live`,
+`*_prompts_live`, `*_skills_live`).
+
 CLI usage:
 
 ```bash

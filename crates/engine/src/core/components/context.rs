@@ -870,8 +870,18 @@ fn latest_provider_compaction_entry(state: &CoreAgentState) -> Option<&ContextEn
 }
 
 fn is_provider_compaction_entry(entry: &ContextEntry) -> bool {
-    matches!(entry.kind, ContextEntryKind::ProviderOpaque)
-        && entry.provider_kind.as_deref() == Some(OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND)
+    match entry.provider_kind.as_deref() {
+        // OpenAI Responses returns an opaque encrypted compaction item.
+        Some(OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND) => {
+            matches!(entry.kind, ContextEntryKind::ProviderOpaque)
+        }
+        // The Anthropic adapter compacts by summarization and returns the
+        // summary as a user-visible replacement message.
+        Some(ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND) => {
+            matches!(entry.kind, ContextEntryKind::Message { .. })
+        }
+        _ => false,
+    }
 }
 
 fn is_provider_compaction_prunable_entry(state: &CoreAgentState, entry: &ContextEntry) -> bool {
