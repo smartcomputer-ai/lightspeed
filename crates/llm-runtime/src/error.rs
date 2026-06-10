@@ -26,6 +26,9 @@ pub enum LlmAdapterError {
     #[error("invalid provider request: {message}")]
     InvalidProviderRequest { message: String },
 
+    #[error("failed to resolve auth secret for tool {tool}: {message}")]
+    SecretResolution { tool: String, message: String },
+
     #[error("provider call failed: {message}")]
     Provider { message: String },
 }

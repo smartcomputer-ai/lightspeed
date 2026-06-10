@@ -15,9 +15,14 @@ use mcp_registry::{
     CreateMcpServerRecord, ListMcpServers, McpApprovalPolicy, McpRegistryError, McpRegistryStore,
     McpServerAuthPolicy, McpServerId, McpServerStatus, RemoteMcpTransport,
 };
+use auth_registry::{
+    AuthGrantId, AuthGrantStatus, AuthGrantStore, AuthProviderKind, AuthRegistryError,
+    CreateAuthGrantRecord, ListAuthGrants, PrincipalRef, PutSecretRecord,
+    SECRET_KIND_STATIC_BEARER, SecretId, SecretStore, SecretValue,
+};
 use object_store::{ObjectStore, aws::AmazonS3Builder};
 use sqlx::{PgPool, Row, postgres::PgPoolOptions};
-use store_pg::{PgStore, PgStoreConfig};
+use store_pg::{PgStore, PgStoreConfig, SecretsMasterKey};
 use tokio::sync::OnceCell;
 use uuid::Uuid;
 use vfs::{
@@ -424,6 +429,164 @@ async fn pg_live_mcp_registry_crud_and_universe_isolation() {
     ));
 }
 
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires dev/local/up.sh or compatible Postgres + MinIO env"]
+async fn pg_live_auth_secrets_are_encrypted_and_universe_scoped() {
+    let left = live_store("auth-left", 1024).await;
+    let right = live_store("auth-right", 1024).await;
+    let secret_id = SecretId::new("authsec_crm");
+    let token = "live-test-bearer-token-12345";
+
+    left.put_secret(PutSecretRecord {
+        secret_id: secret_id.clone(),
+        secret_kind: SECRET_KIND_STATIC_BEARER.to_owned(),
+        value: SecretValue::new(token),
+        created_at_ms: 10,
+    })
+    .await
+    .expect("put secret");
+
+    assert!(matches!(
+        left.put_secret(PutSecretRecord {
+            secret_id: secret_id.clone(),
+            secret_kind: SECRET_KIND_STATIC_BEARER.to_owned(),
+            value: SecretValue::new(token),
+            created_at_ms: 11,
+        })
+        .await,
+        Err(AuthRegistryError::SecretAlreadyExists { .. })
+    ));
+
+    let (meta, value) = left.read_secret(&secret_id).await.expect("read secret");
+    assert_eq!(meta.secret_kind, SECRET_KIND_STATIC_BEARER);
+    assert_eq!(value.expose(), token);
+
+    let row = sqlx::query(
+        "SELECT ciphertext FROM secret_records WHERE universe_id = $1 AND secret_id = $2",
+    )
+    .bind(left.config().universe_id)
+    .bind(secret_id.as_str())
+    .fetch_one(left.pool())
+    .await
+    .expect("read raw secret row");
+    let ciphertext: Vec<u8> = row.try_get("ciphertext").expect("decode ciphertext");
+    assert!(
+        !ciphertext
+            .windows(token.len())
+            .any(|window| window == token.as_bytes()),
+        "ciphertext must not contain the plaintext token"
+    );
+
+    assert!(matches!(
+        right.read_secret(&secret_id).await,
+        Err(AuthRegistryError::SecretNotFound { .. })
+    ));
+
+    let wrong_key_store = PgStore::with_object_store(
+        left.pool().clone(),
+        live_object_store(),
+        left.config().clone().with_secrets_master_key(random_master_key()),
+    );
+    assert!(matches!(
+        wrong_key_store.read_secret(&secret_id).await,
+        Err(AuthRegistryError::Store { .. })
+    ));
+
+    left.delete_secret(&secret_id).await.expect("delete secret");
+    assert!(matches!(
+        left.read_secret(&secret_id).await,
+        Err(AuthRegistryError::SecretNotFound { .. })
+    ));
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires dev/local/up.sh or compatible Postgres + MinIO env"]
+async fn pg_live_auth_grants_crud_and_status_updates() {
+    let store = live_store("auth-grants", 1024).await;
+    let grant_id = AuthGrantId::new("authgrant_crm");
+
+    let created = store
+        .create_grant(CreateAuthGrantRecord {
+            grant_id: grant_id.clone(),
+            provider_id: "static".to_owned(),
+            provider_kind: AuthProviderKind::StaticBearer,
+            principal: PrincipalRef::universe_default(),
+            display_name: Some("CRM token".to_owned()),
+            subject_hint: None,
+            scopes: vec!["contacts.read".to_owned()],
+            audience: Some("https://crm.example.com/mcp".to_owned()),
+            access_token_secret: Some(SecretId::new("authsec_crm")),
+            refresh_token_secret: None,
+            expires_at_ms: None,
+            status: AuthGrantStatus::Active,
+            created_at_ms: 10,
+        })
+        .await
+        .expect("create grant");
+    assert_eq!(created.updated_at_ms, created.created_at_ms);
+
+    assert!(matches!(
+        store
+            .create_grant(CreateAuthGrantRecord {
+                created_at_ms: 11,
+                ..CreateAuthGrantRecord {
+                    grant_id: grant_id.clone(),
+                    provider_id: "static".to_owned(),
+                    provider_kind: AuthProviderKind::StaticBearer,
+                    principal: PrincipalRef::universe_default(),
+                    display_name: None,
+                    subject_hint: None,
+                    scopes: Vec::new(),
+                    audience: None,
+                    access_token_secret: None,
+                    refresh_token_secret: None,
+                    expires_at_ms: None,
+                    status: AuthGrantStatus::Active,
+                    created_at_ms: 11,
+                }
+            })
+            .await,
+        Err(AuthRegistryError::GrantAlreadyExists { .. })
+    ));
+
+    assert_eq!(
+        store.read_grant(&grant_id).await.expect("read grant"),
+        created
+    );
+    assert_eq!(
+        store
+            .list_grants(ListAuthGrants {
+                status: Some(AuthGrantStatus::Active),
+            })
+            .await
+            .expect("list active grants"),
+        vec![created.clone()]
+    );
+
+    let revoked = store
+        .update_grant_status(&grant_id, AuthGrantStatus::Revoked, 20)
+        .await
+        .expect("revoke grant");
+    assert_eq!(revoked.status, AuthGrantStatus::Revoked);
+    assert_eq!(revoked.updated_at_ms, 20);
+    assert!(
+        store
+            .list_grants(ListAuthGrants {
+                status: Some(AuthGrantStatus::Active),
+            })
+            .await
+            .expect("list active grants after revoke")
+            .is_empty()
+    );
+
+    let deleted = store.delete_grant(&grant_id).await.expect("delete grant");
+    assert_eq!(deleted.grant_id, grant_id);
+    assert!(matches!(
+        store.read_grant(&grant_id).await,
+        Err(AuthRegistryError::GrantNotFound { .. })
+    ));
+}
+
 async fn live_store(test_name: &str, inline_threshold_bytes: usize) -> PgStore {
     let database_url = env_or_dotenv_var("FORGE_TEST_POSTGRES_URL").expect(
         "FORGE_TEST_POSTGRES_URL must be set in env or root .env to run store-pg live tests; run dev/local/up.sh and source dev/local/env.sh",
@@ -439,10 +602,17 @@ async fn live_store(test_name: &str, inline_threshold_bytes: usize) -> PgStore {
         env_or_dotenv_var("FORGE_OBJECT_STORE_PREFIX").unwrap_or_else(|_| "forge".to_string());
     let config = PgStoreConfig::new(Uuid::new_v4())
         .with_inline_threshold_bytes(inline_threshold_bytes)
-        .with_object_prefix(format!("{}/tests/{}", prefix.trim_matches('/'), test_name));
+        .with_object_prefix(format!("{}/tests/{}", prefix.trim_matches('/'), test_name))
+        .with_secrets_master_key(random_master_key());
     let store = PgStore::with_object_store(pool, live_object_store(), config);
     store.ensure_universe().await.expect("ensure test universe");
     store
+}
+
+fn random_master_key() -> SecretsMasterKey {
+    let mut bytes = [0u8; 32];
+    rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut bytes);
+    SecretsMasterKey::from_bytes(bytes)
 }
 
 async fn migrate_once(pool: &PgPool) {

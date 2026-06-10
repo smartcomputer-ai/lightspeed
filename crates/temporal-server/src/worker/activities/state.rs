@@ -1,15 +1,21 @@
 use std::sync::Arc;
 
+use auth_registry::{AuthGrantStore, RegistryTokenBroker, SecretStore};
 use engine::{
     CoreAgentLlm, CoreAgentTools, ProviderApiKind,
     storage::{BlobStore, SessionStore},
 };
 use llm_clients::openai::responses as oai;
-use llm_runtime::{LlmAdapterRegistry, LlmRuntime, OpenAiResponsesLlmAdapter};
+use llm_runtime::{
+    LlmAdapterRegistry, LlmRuntime, OpenAiResponsesLlmAdapter, secrets::SecretResolver,
+};
 use store_pg::PgStore;
 use vfs::{VfsMountStore, VfsWorkspaceStore};
 
-use crate::{config::pg_store_from_env, worker::SessionTools};
+use crate::{
+    config::pg_store_from_env,
+    worker::{BrokerSecretResolver, SessionTools},
+};
 
 #[derive(Clone)]
 pub struct StorageActivityDeps {
@@ -92,7 +98,8 @@ impl ActivityState {
 
     pub fn from_pg_store_with_default_runtime(store: Arc<PgStore>) -> anyhow::Result<Self> {
         let blobs: Arc<dyn BlobStore> = store.clone();
-        let llm = openai_responses_llm(blobs)?;
+        let secrets = broker_secret_resolver(store.clone());
+        let llm = openai_responses_llm(blobs, Some(secrets))?;
         let tools = session_tools(store.clone());
         Ok(Self::from_pg_store(store, llm, tools))
     }
@@ -123,9 +130,24 @@ fn session_tools(store: Arc<PgStore>) -> Arc<dyn CoreAgentTools> {
     Arc::new(SessionTools::from_pg_store(store))
 }
 
-fn openai_responses_llm(blobs: Arc<dyn BlobStore>) -> anyhow::Result<Arc<dyn CoreAgentLlm>> {
+fn broker_secret_resolver(store: Arc<PgStore>) -> Arc<dyn SecretResolver> {
+    let grants: Arc<dyn AuthGrantStore> = store.clone();
+    let secrets: Arc<dyn SecretStore> = store;
+    Arc::new(BrokerSecretResolver::new(Arc::new(
+        RegistryTokenBroker::new(grants, secrets),
+    )))
+}
+
+fn openai_responses_llm(
+    blobs: Arc<dyn BlobStore>,
+    secrets: Option<Arc<dyn SecretResolver>>,
+) -> anyhow::Result<Arc<dyn CoreAgentLlm>> {
     let openai = oai::Client::new(oai::Config::from_env()?)?;
-    let adapter = Arc::new(OpenAiResponsesLlmAdapter::new(Arc::new(openai), blobs));
+    let mut adapter = OpenAiResponsesLlmAdapter::new(Arc::new(openai), blobs);
+    if let Some(secrets) = secrets {
+        adapter = adapter.with_secret_resolver(secrets);
+    }
+    let adapter = Arc::new(adapter);
     let runtime = LlmRuntime::new(
         LlmAdapterRegistry::new()
             .with_generation_adapter(ProviderApiKind::OpenAiResponses, adapter.clone())

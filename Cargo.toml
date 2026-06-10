@@ -4,6 +4,7 @@ members = [
     "crates/host-protocol",
     "crates/llm-clients",
     "crates/api",
+    "crates/auth-registry",
     "crates/engine",
     "crates/mcp-registry",
     "crates/vfs",

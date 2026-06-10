@@ -1,9 +1,13 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use api::{
-    AgentApiError, AgentApiErrorKind, AgentApiOutcome, BlobGetParams, BlobGetResponse,
-    BlobHasManyParams, BlobHasManyResponse, BlobPutManyParams, BlobPutManyResponse, JsonRpcRequest,
-    JsonRpcResponse, METHOD_BLOB_GET, METHOD_BLOB_HAS_MANY, METHOD_BLOB_PUT_MANY,
+    AgentApiError, AgentApiErrorKind, AgentApiOutcome, AuthGrantImportParams,
+    AuthGrantImportResponse, AuthGrantListParams, AuthGrantListResponse, AuthGrantReadParams,
+    AuthGrantReadResponse, AuthGrantRevokeParams, AuthGrantRevokeResponse, BlobGetParams,
+    BlobGetResponse, BlobHasManyParams, BlobHasManyResponse, BlobPutManyParams,
+    BlobPutManyResponse, JsonRpcRequest, JsonRpcResponse, METHOD_AUTH_GRANTS_IMPORT,
+    METHOD_AUTH_GRANTS_LIST, METHOD_AUTH_GRANTS_READ, METHOD_AUTH_GRANTS_REVOKE, METHOD_BLOB_GET,
+    METHOD_BLOB_HAS_MANY, METHOD_BLOB_PUT_MANY,
     METHOD_MCP_SERVERS_CREATE, METHOD_MCP_SERVERS_DELETE, METHOD_MCP_SERVERS_LIST,
     METHOD_MCP_SERVERS_READ, METHOD_RUN_START, METHOD_SESSION_EVENTS_READ, METHOD_SESSION_MCP_LINK,
     METHOD_SESSION_MCP_LIST, METHOD_SESSION_MCP_UNLINK, METHOD_SESSION_READ, METHOD_SESSION_START,
@@ -235,6 +239,34 @@ impl HttpAgentApi {
         params: McpServerDeleteParams,
     ) -> Result<AgentApiOutcome<McpServerDeleteResponse>, AgentApiError> {
         self.request(METHOD_MCP_SERVERS_DELETE, params).await
+    }
+
+    pub(crate) async fn import_auth_grant(
+        &self,
+        params: AuthGrantImportParams,
+    ) -> Result<AgentApiOutcome<AuthGrantImportResponse>, AgentApiError> {
+        self.request(METHOD_AUTH_GRANTS_IMPORT, params).await
+    }
+
+    pub(crate) async fn list_auth_grants(
+        &self,
+        params: AuthGrantListParams,
+    ) -> Result<AgentApiOutcome<AuthGrantListResponse>, AgentApiError> {
+        self.request(METHOD_AUTH_GRANTS_LIST, params).await
+    }
+
+    pub(crate) async fn read_auth_grant(
+        &self,
+        params: AuthGrantReadParams,
+    ) -> Result<AgentApiOutcome<AuthGrantReadResponse>, AgentApiError> {
+        self.request(METHOD_AUTH_GRANTS_READ, params).await
+    }
+
+    pub(crate) async fn revoke_auth_grant(
+        &self,
+        params: AuthGrantRevokeParams,
+    ) -> Result<AgentApiOutcome<AuthGrantRevokeResponse>, AgentApiError> {
+        self.request(METHOD_AUTH_GRANTS_REVOKE, params).await
     }
 
     pub(crate) async fn link_session_mcp(

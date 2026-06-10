@@ -77,8 +77,39 @@ struct McpServerAddArgs {
     /// Server status to record.
     #[arg(long, default_value_t = McpServerStatusArg::Active)]
     status: McpServerStatusArg,
+    /// Auth requirement for this server. OAuth policies carry metadata and are
+    /// configured through the API until discovery (P68 G3) lands.
+    #[arg(long = "auth-policy", default_value_t = McpAuthPolicyArg::None)]
+    auth_policy: McpAuthPolicyArg,
     /// Remote MCP endpoint URL.
     server_url: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum McpAuthPolicyArg {
+    None,
+    OptionalBearer,
+    RequiredBearer,
+}
+
+impl std::fmt::Display for McpAuthPolicyArg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::None => "none",
+            Self::OptionalBearer => "optional-bearer",
+            Self::RequiredBearer => "required-bearer",
+        })
+    }
+}
+
+impl From<McpAuthPolicyArg> for api::McpServerAuthPolicy {
+    fn from(value: McpAuthPolicyArg) -> Self {
+        match value {
+            McpAuthPolicyArg::None => Self::None,
+            McpAuthPolicyArg::OptionalBearer => Self::OptionalBearer,
+            McpAuthPolicyArg::RequiredBearer => Self::RequiredBearer,
+        }
+    }
 }
 
 #[derive(Args, Debug, Clone)]
@@ -297,7 +328,7 @@ async fn server_add(args: McpServerAddArgs) -> Result<()> {
             allowed_tools: nonempty_vec(args.allowed_tools),
             approval_default: args.approval.into(),
             defer_loading_default: defer_loading_arg(args.defer_loading, args.no_defer_loading),
-            auth_policy: api::McpServerAuthPolicy::None,
+            auth_policy: args.auth_policy.into(),
             status: args.status.into(),
         })
         .await

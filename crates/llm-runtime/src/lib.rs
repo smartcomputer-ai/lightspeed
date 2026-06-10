@@ -12,11 +12,17 @@ pub mod openai_completions;
 pub mod openai_responses;
 pub mod params;
 pub mod result;
+pub mod secrets;
 pub mod testing;
 
 pub use error::{LlmAdapterError, LlmAdapterResult};
 pub use executor::{LlmAdapterRegistry, LlmCompactionAdapter, LlmGenerationAdapter, LlmRuntime};
 pub use openai_responses::{OpenAiResponsesApi, OpenAiResponsesLlmAdapter};
+pub use secrets::{
+    EnvSecretResolver, REDACTED_SECRET_PLACEHOLDER, ResolvedSecretValue, SECRET_NAMESPACE_AUTH_GRANT,
+    SECRET_NAMESPACE_ENV, SecretResolveError, SecretResolver, StaticSecretResolver,
+    UnconfiguredSecretResolver,
+};
 pub use params::{
     AnthropicMessagesParams, AnthropicThinkingConfig, OpenAiCompletionsParams,
     OpenAiReasoningConfig, OpenAiResponsesParams, PROVIDER_PARAMS_VERSION,

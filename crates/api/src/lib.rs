@@ -50,6 +50,10 @@ pub const METHOD_MCP_SERVERS_DELETE: &str = "mcp/servers/delete";
 pub const METHOD_SESSION_MCP_LINK: &str = "session/mcp/link";
 pub const METHOD_SESSION_MCP_UNLINK: &str = "session/mcp/unlink";
 pub const METHOD_SESSION_MCP_LIST: &str = "session/mcp/list";
+pub const METHOD_AUTH_GRANTS_IMPORT: &str = "auth/grants/import";
+pub const METHOD_AUTH_GRANTS_LIST: &str = "auth/grants/list";
+pub const METHOD_AUTH_GRANTS_READ: &str = "auth/grants/read";
+pub const METHOD_AUTH_GRANTS_REVOKE: &str = "auth/grants/revoke";
 
 pub const NOTIFY_SESSION_STARTED: &str = "session/started";
 pub const NOTIFY_SESSION_STATUS_CHANGED: &str = "session/status/changed";
@@ -280,6 +284,26 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: SessionMcpListParams,
     ) -> Result<AgentApiOutcome<SessionMcpListResponse>, AgentApiError>;
+
+    async fn import_auth_grant(
+        &self,
+        params: AuthGrantImportParams,
+    ) -> Result<AgentApiOutcome<AuthGrantImportResponse>, AgentApiError>;
+
+    async fn list_auth_grants(
+        &self,
+        params: AuthGrantListParams,
+    ) -> Result<AgentApiOutcome<AuthGrantListResponse>, AgentApiError>;
+
+    async fn read_auth_grant(
+        &self,
+        params: AuthGrantReadParams,
+    ) -> Result<AgentApiOutcome<AuthGrantReadResponse>, AgentApiError>;
+
+    async fn revoke_auth_grant(
+        &self,
+        params: AuthGrantRevokeParams,
+    ) -> Result<AgentApiOutcome<AuthGrantRevokeResponse>, AgentApiError>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1535,6 +1559,152 @@ pub struct SecretRefView {
     pub id: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AuthProviderKind {
+    StaticBearer,
+    McpOAuth,
+    GitHubApp,
+    GitHubAppUser,
+    GitHubOAuthApp,
+    CustomOAuth,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AuthGrantStatus {
+    #[default]
+    Active,
+    NeedsReauth,
+    Revoked,
+    Failed,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PrincipalKind {
+    User,
+    ServiceAccount,
+    #[default]
+    UniverseDefault,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrincipalRefView {
+    #[serde(default)]
+    pub kind: PrincipalKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthGrantView {
+    pub grant_id: String,
+    pub provider_id: String,
+    pub provider_kind: AuthProviderKind,
+    pub principal: PrincipalRefView,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_hint: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<String>,
+    pub has_access_token: bool,
+    pub has_refresh_token: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at_ms: Option<i64>,
+    pub status: AuthGrantStatus,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+/// Import a static bearer credential as an auth grant. This is the one
+/// deliberate inbound-plaintext path: `token` is encrypted on receipt and is
+/// never returned by any method. `Debug` output redacts the token; request
+/// logging must never echo these params.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthGrantImportParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    pub token: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_hint: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at_ms: Option<i64>,
+}
+
+impl std::fmt::Debug for AuthGrantImportParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthGrantImportParams")
+            .field("grant_id", &self.grant_id)
+            .field("provider_id", &self.provider_id)
+            .field("token", &"<redacted>")
+            .field("display_name", &self.display_name)
+            .field("subject_hint", &self.subject_hint)
+            .field("scopes", &self.scopes)
+            .field("audience", &self.audience)
+            .field("expires_at_ms", &self.expires_at_ms)
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthGrantImportResponse {
+    pub grant: AuthGrantView,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthGrantListParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<AuthGrantStatus>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthGrantListResponse {
+    #[serde(default)]
+    pub grants: Vec<AuthGrantView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthGrantReadParams {
+    pub grant_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthGrantReadResponse {
+    pub grant: AuthGrantView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthGrantRevokeParams {
+    pub grant_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthGrantRevokeResponse {
+    pub grant: AuthGrantView,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionMcpLinkParams {
@@ -2278,6 +2448,26 @@ pub async fn dispatch_json_rpc(
             Ok(params) => json_rpc_outcome(id, service.list_session_mcp(params).await),
             Err(error) => JsonRpcResponse::failure(id, error),
         },
+        METHOD_AUTH_GRANTS_IMPORT => {
+            match json_rpc_params::<AuthGrantImportParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.import_auth_grant(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
+        METHOD_AUTH_GRANTS_LIST => match json_rpc_params::<AuthGrantListParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.list_auth_grants(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
+        METHOD_AUTH_GRANTS_READ => match json_rpc_params::<AuthGrantReadParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.read_auth_grant(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
+        METHOD_AUTH_GRANTS_REVOKE => {
+            match json_rpc_params::<AuthGrantRevokeParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.revoke_auth_grant(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
         other => JsonRpcResponse::failure(id, JsonRpcError::method_not_found(other)),
     }
 }
@@ -2342,6 +2532,22 @@ mod tests {
                 }
             })
         );
+    }
+
+    #[test]
+    fn auth_grant_import_params_redact_token_in_debug_output() {
+        let params: AuthGrantImportParams = serde_json::from_value(json!({
+            "grantId": "authgrant_1",
+            "token": "super-secret-token",
+            "audience": "https://crm.example.com/mcp"
+        }))
+        .expect("deserialize import params");
+
+        let debug = format!("{params:?}");
+
+        assert!(!debug.contains("super-secret-token"), "{debug}");
+        assert!(debug.contains("<redacted>"));
+        assert_eq!(params.token, "super-secret-token");
     }
 
     #[test]
@@ -3641,6 +3847,67 @@ mod tests {
             Ok(AgentApiOutcome::new(SessionMcpListResponse {
                 links: vec![test_mcp_link("mcp_echo".to_owned())],
             }))
+        }
+
+        async fn import_auth_grant(
+            &self,
+            params: AuthGrantImportParams,
+        ) -> Result<AgentApiOutcome<AuthGrantImportResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(AuthGrantImportResponse {
+                grant: test_auth_grant(
+                    params.grant_id.unwrap_or_else(|| "authgrant_1".to_owned()),
+                    AuthGrantStatus::Active,
+                ),
+            }))
+        }
+
+        async fn list_auth_grants(
+            &self,
+            _params: AuthGrantListParams,
+        ) -> Result<AgentApiOutcome<AuthGrantListResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(AuthGrantListResponse {
+                grants: vec![test_auth_grant(
+                    "authgrant_1".to_owned(),
+                    AuthGrantStatus::Active,
+                )],
+            }))
+        }
+
+        async fn read_auth_grant(
+            &self,
+            params: AuthGrantReadParams,
+        ) -> Result<AgentApiOutcome<AuthGrantReadResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(AuthGrantReadResponse {
+                grant: test_auth_grant(params.grant_id, AuthGrantStatus::Active),
+            }))
+        }
+
+        async fn revoke_auth_grant(
+            &self,
+            params: AuthGrantRevokeParams,
+        ) -> Result<AgentApiOutcome<AuthGrantRevokeResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(AuthGrantRevokeResponse {
+                grant: test_auth_grant(params.grant_id, AuthGrantStatus::Revoked),
+            }))
+        }
+    }
+
+    fn test_auth_grant(grant_id: String, status: AuthGrantStatus) -> AuthGrantView {
+        AuthGrantView {
+            grant_id,
+            provider_id: "static".to_owned(),
+            provider_kind: AuthProviderKind::StaticBearer,
+            principal: PrincipalRefView::default(),
+            display_name: None,
+            subject_hint: None,
+            scopes: Vec::new(),
+            audience: None,
+            has_access_token: true,
+            has_refresh_token: false,
+            expires_at_ms: None,
+            status,
+            created_at_ms: 1,
+            updated_at_ms: 2,
         }
     }
 

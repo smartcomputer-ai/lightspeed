@@ -3,6 +3,7 @@
 //! `PgStore` is scoped to one universe. Within that universe, sessions share a
 //! CAS catalog; across universes, both metadata and object keys are isolated.
 
+mod auth;
 mod blob;
 mod mcp;
 mod object;
@@ -10,8 +11,10 @@ mod session;
 mod shared;
 mod vfs;
 
+use std::fmt;
 use std::sync::Arc;
 
+use base64::Engine as _;
 use object_store::ObjectStore;
 use object_store::aws::AmazonS3Builder;
 use sqlx::{Executor, PgPool, postgres::PgPoolOptions};
@@ -20,8 +23,47 @@ use uuid::Uuid;
 
 pub const INITIAL_SCHEMA_SQL: &str = include_str!("../migrations/001_initial.sql");
 pub const MCP_REGISTRY_SCHEMA_SQL: &str = include_str!("../migrations/002_mcp_registry.sql");
+pub const AUTH_SCHEMA_SQL: &str = include_str!("../migrations/003_auth.sql");
 
 pub const DEFAULT_INLINE_THRESHOLD_BYTES: usize = 64 * 1024;
+
+/// 32-byte AES-256-GCM master key for the secret store. `Debug` output is
+/// redacted; construct from base64 deployment config.
+#[derive(Clone, PartialEq, Eq)]
+pub struct SecretsMasterKey([u8; 32]);
+
+impl SecretsMasterKey {
+    pub fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    pub fn from_base64(value: &str) -> Result<Self, PgStoreError> {
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(value.trim())
+            .map_err(|error| PgStoreError::Store {
+                message: format!("secrets master key is not valid base64: {error}"),
+            })?;
+        let bytes: [u8; 32] = decoded.try_into().map_err(|decoded: Vec<u8>| {
+            PgStoreError::Store {
+                message: format!(
+                    "secrets master key must decode to 32 bytes, got {}",
+                    decoded.len()
+                ),
+            }
+        })?;
+        Ok(Self(bytes))
+    }
+
+    pub(crate) fn bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+impl fmt::Debug for SecretsMasterKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("SecretsMasterKey(<redacted>)")
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PgStoreConfig {
@@ -29,6 +71,7 @@ pub struct PgStoreConfig {
     pub universe_slug: Option<String>,
     pub inline_threshold_bytes: usize,
     pub object_prefix: String,
+    pub secrets_master_key: Option<SecretsMasterKey>,
 }
 
 impl PgStoreConfig {
@@ -38,6 +81,7 @@ impl PgStoreConfig {
             universe_slug: None,
             inline_threshold_bytes: DEFAULT_INLINE_THRESHOLD_BYTES,
             object_prefix: String::new(),
+            secrets_master_key: None,
         }
     }
 
@@ -53,6 +97,11 @@ impl PgStoreConfig {
 
     pub fn with_object_prefix(mut self, prefix: impl Into<String>) -> Self {
         self.object_prefix = prefix.into();
+        self
+    }
+
+    pub fn with_secrets_master_key(mut self, key: SecretsMasterKey) -> Self {
+        self.secrets_master_key = Some(key);
         self
     }
 }
@@ -195,6 +244,7 @@ impl PgStore {
     pub async fn migrate(pool: &PgPool) -> Result<(), PgStoreError> {
         pool.execute(INITIAL_SCHEMA_SQL).await?;
         pool.execute(MCP_REGISTRY_SCHEMA_SQL).await?;
+        pool.execute(AUTH_SCHEMA_SQL).await?;
         Ok(())
     }
 

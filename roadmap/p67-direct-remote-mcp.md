@@ -14,9 +14,12 @@
 - Implemented OpenAI `mcp_call` display projection: API provider-context items
   now expose a compact MCP tool-call summary, and the CLI/TUI renders those as
   MCP tool-call rows without scheduling Forge tool batches.
-- Still pending: OpenAI runtime auth injection and redacted authenticated
-  provider request persistence, Anthropic MCP lowering/output recording, and
-  provider approval continuation UX.
+- Implemented 2026-06-10 (with P69 G1): OpenAI runtime auth injection via the
+  `llm-runtime` `SecretResolver` boundary and redacted persisted provider
+  request blobs (`authorization: "<redacted>"`); generation fails clearly
+  before provider I/O when an `auth_ref` cannot be resolved.
+- Still pending: Anthropic MCP lowering/output recording and provider approval
+  continuation UX.
 - Tool visibility now uses the active session tool map from
   `p67-tooling-refactor.md`; profile selection has been removed.
 - Direct provider-hosted MCP only: the model provider connects to public remote
@@ -255,9 +258,26 @@ Introduce an `llm-runtime` secret resolver, not an engine dependency:
 ```rust
 #[async_trait]
 pub trait SecretResolver: Send + Sync {
-    async fn resolve(&self, secret_ref: &SecretRef) -> Result<Option<String>, SecretError>;
+    async fn resolve(
+        &self,
+        secret_ref: &SecretRef,
+        audience: Option<&str>,
+    ) -> Result<ResolvedSecretValue, SecretResolveError>;
 }
 ```
+
+`audience` carries the resource the resolved value is about to be sent to (for
+remote MCP, the server URL) so audience-enforcing resolvers such as the P69
+broker can refuse mismatched targets at send time.
+
+The resolver does not return `Option`: if a spec carries `auth_ref`, auth is
+required for that spec and resolution either succeeds or fails the generation
+with a typed error before provider I/O. Optional auth is expressed by
+`auth_ref: None`, decided at link/config time. `ResolvedSecretValue` is a
+wrapper whose `Debug` output is redacted. `llm-runtime` owns this trait and
+stays free of auth-store dependencies; `temporal-server` adapts the P69 broker
+to it and dispatches on `SecretRef.namespace` (`auth_grant` -> broker, `env` ->
+environment lookup for development).
 
 The resolver is used only during provider request send. Materialization should
 produce two request values:
@@ -407,8 +427,10 @@ Acceptance criteria:
   secret values.
 - [x] OpenAI request materialization emits `tools[]` entries with `type: "mcp"`
   for no-auth/public MCP servers.
-- [ ] `auth_ref` values are resolved only in `llm-runtime`.
-- [ ] persisted provider request blobs redact auth fields.
+- [x] `auth_ref` values are resolved only in `llm-runtime` (P69 G1
+  `SecretResolver`; resolution happens at send time, materialized requests
+  never carry auth values).
+- [x] persisted provider request blobs redact auth fields.
 - [x] OpenAI `mcp_list_tools` and `mcp_call` output items are preserved as
   provider-opaque context.
 - [x] OpenAI `mcp_call` provider context items expose display summaries for
@@ -419,7 +441,7 @@ Tests:
 
 - [x] unit test for `RemoteMcp` validation and client-effect behavior;
 - [x] request materialization test for OpenAI MCP lowering;
-- [ ] redaction test proving send request has auth while stored request does not;
+- [x] redaction test proving send request has auth while stored request does not;
 - [x] result parsing fixture for `mcp_list_tools` and `mcp_call`;
 - [x] ignored live test against a harmless public MCP server.
 

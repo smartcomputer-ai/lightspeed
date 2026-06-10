@@ -1,6 +1,7 @@
 //! `api` gateway for the Temporal-backed agent workflow.
 
 mod api_config;
+mod auth_api;
 mod blobs;
 mod errors;
 mod input;
@@ -14,6 +15,10 @@ mod workflow;
 
 #[cfg(test)]
 use api_config::*;
+use auth_api::{
+    auth_grant_import_draft, auth_grant_view, map_auth_registry_error, parse_auth_grant_id,
+    registry_auth_grant_status_for_filter,
+};
 use blobs::{get_blob, has_blobs, put_blob, put_blobs};
 use errors::*;
 use input::run_input_from_api;
@@ -39,7 +44,9 @@ use std::{
 };
 
 use api::{
-    AgentApiError, AgentApiErrorKind, AgentApiOutcome, AgentApiService, BlobGetParams,
+    AgentApiError, AgentApiErrorKind, AgentApiOutcome, AgentApiService, AuthGrantImportParams,
+    AuthGrantImportResponse, AuthGrantListParams, AuthGrantListResponse, AuthGrantReadParams,
+    AuthGrantReadResponse, AuthGrantRevokeParams, AuthGrantRevokeResponse, BlobGetParams,
     BlobGetResponse, BlobHasItem, BlobHasManyParams, BlobHasManyResponse, BlobPutManyParams,
     BlobPutManyResponse, BlobPutParams, BlobPutResponse, ClientCapabilities, CompactionPolicyInput,
     ContextCompactParams, ContextCompactResponse, ContextConfigInput as ApiContextConfigInput,
@@ -85,6 +92,7 @@ use engine::{
     ToolChoice, ToolChoiceMode, ToolName, TurnConfigPatch, skill_activation_context_key,
     storage::{BlobStore, BlobStoreError, ReadSessionEvents, SessionStore},
 };
+use auth_registry::{AuthGrantStore, SecretStore};
 use mcp_registry::McpRegistryStore;
 use store_pg::PgStore;
 use temporalio_client::{
@@ -1182,10 +1190,22 @@ impl AgentApiService for GatewayAgentApi {
             .read_server(&server_id)
             .await
             .map_err(map_mcp_registry_error)?;
+        let grant = match params.auth_grant_id.clone() {
+            Some(grant_id) => {
+                let grant_id = parse_auth_grant_id(grant_id)?;
+                Some(
+                    self.store
+                        .read_grant(&grant_id)
+                        .await
+                        .map_err(map_auth_registry_error)?,
+                )
+            }
+            None => None,
+        };
         let loaded = self.load_session_state(&session_id).await?;
         self.require_open_idle_session(&session_id, &loaded, "MCP link")?;
 
-        let draft = session_mcp_link_from_record(params, &server)?;
+        let draft = session_mcp_link_from_record(params, &server, grant.as_ref())?;
         let link_tool_name = draft.tool_name.clone();
         let patch = apply_session_mcp_link(&loaded.state.tooling.tools, draft)?;
         let expected_tools = patch
@@ -1275,6 +1295,74 @@ impl AgentApiService for GatewayAgentApi {
         let loaded = self.load_session_state(&session_id).await?;
         Ok(AgentApiOutcome::new(SessionMcpListResponse {
             links: linked_session_mcp(&loaded.state.tooling.tools),
+        }))
+    }
+
+    async fn import_auth_grant(
+        &self,
+        params: AuthGrantImportParams,
+    ) -> Result<AgentApiOutcome<AuthGrantImportResponse>, AgentApiError> {
+        let draft = auth_grant_import_draft(params, now_ms()?)?;
+        self.store
+            .put_secret(draft.secret.clone())
+            .await
+            .map_err(map_auth_registry_error)?;
+        match self.store.create_grant(draft.grant).await {
+            Ok(record) => Ok(AgentApiOutcome::new(AuthGrantImportResponse {
+                grant: auth_grant_view(record),
+            })),
+            Err(error) => {
+                // The secret is orphaned without its grant; clean up best-effort
+                // so a failed import does not leave sealed values behind.
+                let _ = self.store.delete_secret(&draft.secret.secret_id).await;
+                Err(map_auth_registry_error(error))
+            }
+        }
+    }
+
+    async fn list_auth_grants(
+        &self,
+        params: AuthGrantListParams,
+    ) -> Result<AgentApiOutcome<AuthGrantListResponse>, AgentApiError> {
+        let grants = self
+            .store
+            .list_grants(auth_registry::ListAuthGrants {
+                status: params.status.map(registry_auth_grant_status_for_filter),
+            })
+            .await
+            .map_err(map_auth_registry_error)?;
+        Ok(AgentApiOutcome::new(AuthGrantListResponse {
+            grants: grants.into_iter().map(auth_grant_view).collect(),
+        }))
+    }
+
+    async fn read_auth_grant(
+        &self,
+        params: AuthGrantReadParams,
+    ) -> Result<AgentApiOutcome<AuthGrantReadResponse>, AgentApiError> {
+        let grant_id = parse_auth_grant_id(params.grant_id)?;
+        let record = self
+            .store
+            .read_grant(&grant_id)
+            .await
+            .map_err(map_auth_registry_error)?;
+        Ok(AgentApiOutcome::new(AuthGrantReadResponse {
+            grant: auth_grant_view(record),
+        }))
+    }
+
+    async fn revoke_auth_grant(
+        &self,
+        params: AuthGrantRevokeParams,
+    ) -> Result<AgentApiOutcome<AuthGrantRevokeResponse>, AgentApiError> {
+        let grant_id = parse_auth_grant_id(params.grant_id)?;
+        let record = self
+            .store
+            .update_grant_status(&grant_id, auth_registry::AuthGrantStatus::Revoked, now_ms()?)
+            .await
+            .map_err(map_auth_registry_error)?;
+        Ok(AgentApiOutcome::new(AuthGrantRevokeResponse {
+            grant: auth_grant_view(record),
         }))
     }
 }

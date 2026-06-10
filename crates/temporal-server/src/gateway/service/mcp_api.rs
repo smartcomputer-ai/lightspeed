@@ -84,6 +84,7 @@ pub(super) fn mcp_server_view(record: mcp_registry::McpServerRecord) -> api::Mcp
 pub(super) fn session_mcp_link_from_record(
     params: SessionMcpLinkParams,
     record: &mcp_registry::McpServerRecord,
+    grant: Option<&auth_registry::AuthGrantRecord>,
 ) -> Result<SessionMcpLinkDraft, AgentApiError> {
     match record.status {
         mcp_registry::McpServerStatus::Disabled => {
@@ -105,7 +106,7 @@ pub(super) fn session_mcp_link_from_record(
         Some(tool_id) => parse_mcp_tool_name(tool_id)?,
         None => default_mcp_tool_name(&record.server_id)?,
     };
-    let auth_ref = auth_ref_for_link(record, params.auth_grant_id)?;
+    let auth_ref = auth_ref_for_link(record, grant)?;
     Ok(SessionMcpLinkDraft {
         tool_name,
         spec: engine::RemoteMcpToolSpec {
@@ -127,6 +128,7 @@ pub(super) fn session_mcp_link_from_record(
     })
 }
 
+#[derive(Debug)]
 pub(super) struct SessionMcpLinkDraft {
     pub(super) tool_name: ToolName,
     pub(super) spec: engine::RemoteMcpToolSpec,
@@ -260,9 +262,9 @@ fn default_mcp_tool_name(server_id: &mcp_registry::McpServerId) -> Result<ToolNa
 
 fn auth_ref_for_link(
     record: &mcp_registry::McpServerRecord,
-    auth_grant_id: Option<String>,
+    grant: Option<&auth_registry::AuthGrantRecord>,
 ) -> Result<Option<engine::SecretRef>, AgentApiError> {
-    match (&record.auth_policy, auth_grant_id) {
+    match (&record.auth_policy, grant) {
         (mcp_registry::McpServerAuthPolicy::None, Some(_)) => Err(AgentApiError::invalid_request(
             "authGrantId is only valid for MCP servers with an auth policy",
         )),
@@ -273,10 +275,13 @@ fn auth_ref_for_link(
                 record.server_id
             )))
         }
-        (_, Some(id)) => Ok(Some(engine::SecretRef {
-            namespace: AUTH_GRANT_SECRET_NAMESPACE.to_owned(),
-            id,
-        })),
+        (_, Some(grant)) => {
+            auth_api::validate_mcp_grant_for_link(record, grant)?;
+            Ok(Some(engine::SecretRef {
+                namespace: AUTH_GRANT_SECRET_NAMESPACE.to_owned(),
+                id: grant.grant_id.as_str().to_owned(),
+            }))
+        }
         (_, None) => Ok(None),
     }
 }

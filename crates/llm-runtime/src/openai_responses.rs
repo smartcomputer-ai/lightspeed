@@ -23,6 +23,7 @@ use crate::{
     executor::{LlmCompactionAdapter, LlmGenerationAdapter},
     params::openai_responses_params,
     result::LlmGenerationExecution,
+    secrets::{REDACTED_SECRET_PLACEHOLDER, SecretResolver, UnconfiguredSecretResolver},
 };
 
 const PROVIDER_KIND_MESSAGE: &str = "openai.responses.message";
@@ -64,11 +65,21 @@ impl OpenAiResponsesApi for oai::Client {
 pub struct OpenAiResponsesLlmAdapter {
     client: Arc<dyn OpenAiResponsesApi>,
     blobs: Arc<dyn BlobStore>,
+    secrets: Arc<dyn SecretResolver>,
 }
 
 impl OpenAiResponsesLlmAdapter {
     pub fn new(client: Arc<dyn OpenAiResponsesApi>, blobs: Arc<dyn BlobStore>) -> Self {
-        Self { client, blobs }
+        Self {
+            client,
+            blobs,
+            secrets: Arc::new(UnconfiguredSecretResolver),
+        }
+    }
+
+    pub fn with_secret_resolver(mut self, secrets: Arc<dyn SecretResolver>) -> Self {
+        self.secrets = secrets;
+        self
     }
 
     pub async fn materialize_create_request(
@@ -102,8 +113,11 @@ impl LlmGenerationAdapter for OpenAiResponsesLlmAdapter {
         }
 
         let provider_request = self.materialize_create_request(&request.request).await?;
-        let provider_request_ref = put_json(self.blobs.as_ref(), &provider_request).await?;
-        let response = self.client.create(provider_request).await?;
+        let (send_request, redacted_request) =
+            inject_remote_mcp_auth(self.secrets.as_ref(), &request.request, provider_request)
+                .await?;
+        let provider_request_ref = put_json(self.blobs.as_ref(), &redacted_request).await?;
+        let response = self.client.create(send_request).await?;
         let raw_response_ref = put_json(self.blobs.as_ref(), &response.raw_json).await?;
         let result = result_from_response(self.blobs.as_ref(), &request, &response).await?;
 
@@ -430,26 +444,16 @@ async fn materialize_tool(blobs: &dyn BlobStore, tool: &ToolSpec) -> LlmAdapterR
                 )),
             }
         }
-        ToolKind::RemoteMcp(remote_mcp) => {
-            materialize_remote_mcp_tool(blobs, tool, remote_mcp).await
-        }
+        ToolKind::RemoteMcp(remote_mcp) => materialize_remote_mcp_tool(blobs, remote_mcp).await,
     }
 }
 
 async fn materialize_remote_mcp_tool(
     blobs: &dyn BlobStore,
-    tool: &ToolSpec,
     remote_mcp: &RemoteMcpToolSpec,
 ) -> LlmAdapterResult<oai::Tool> {
-    if remote_mcp.auth_ref.is_some() {
-        return Err(LlmAdapterError::InvalidProviderRequest {
-            message: format!(
-                "remote MCP tool {} requires auth, but OpenAI Responses MCP auth injection is not implemented yet",
-                tool.name
-            ),
-        });
-    }
-
+    // Materialized requests never contain auth values; `inject_remote_mcp_auth`
+    // adds `authorization` to the send request immediately before provider I/O.
     let mut value = json!({
         "type": "mcp",
         "server_label": remote_mcp.server_label,
@@ -486,6 +490,88 @@ async fn materialize_remote_mcp_tool(
     }
 
     Ok(oai::Tool::Raw(value))
+}
+
+/// Produce the request pair `generate` actually uses: the send request with
+/// `authorization` resolved at the last moment, and the redacted request that
+/// is persisted to blobs, preserving only the fact that auth was configured.
+async fn inject_remote_mcp_auth(
+    secrets: &dyn SecretResolver,
+    request: &LlmRequest,
+    materialized: oai::CreateResponseRequest,
+) -> LlmAdapterResult<(oai::CreateResponseRequest, oai::CreateResponseRequest)> {
+    let auth_specs: Vec<(&ToolSpec, &RemoteMcpToolSpec)> = request
+        .tools
+        .iter()
+        .filter_map(|tool| match &tool.kind {
+            ToolKind::RemoteMcp(remote_mcp) if remote_mcp.auth_ref.is_some() => {
+                Some((tool, remote_mcp))
+            }
+            _ => None,
+        })
+        .collect();
+    if auth_specs.is_empty() {
+        let redacted = materialized.clone();
+        return Ok((materialized, redacted));
+    }
+
+    let mut send_request = materialized.clone();
+    let mut redacted_request = materialized;
+    for (tool, remote_mcp) in auth_specs {
+        let auth_ref = remote_mcp.auth_ref.as_ref().expect("auth_ref present");
+        let token = secrets
+            .resolve(auth_ref, Some(remote_mcp.server_url.as_str()))
+            .await
+            .map_err(|error| LlmAdapterError::SecretResolution {
+                tool: tool.name.to_string(),
+                message: error.to_string(),
+            })?;
+        set_remote_mcp_authorization(
+            &mut send_request,
+            &remote_mcp.server_label,
+            token.expose(),
+            tool,
+        )?;
+        set_remote_mcp_authorization(
+            &mut redacted_request,
+            &remote_mcp.server_label,
+            REDACTED_SECRET_PLACEHOLDER,
+            tool,
+        )?;
+    }
+    Ok((send_request, redacted_request))
+}
+
+fn set_remote_mcp_authorization(
+    request: &mut oai::CreateResponseRequest,
+    server_label: &str,
+    value: &str,
+    tool: &ToolSpec,
+) -> LlmAdapterResult<()> {
+    let entry = request
+        .tools
+        .as_mut()
+        .into_iter()
+        .flatten()
+        .find_map(|materialized| match materialized {
+            oai::Tool::Raw(raw)
+                if raw.get("type").and_then(Value::as_str) == Some("mcp")
+                    && raw.get("server_label").and_then(Value::as_str) == Some(server_label) =>
+            {
+                raw.as_object_mut()
+            }
+            _ => None,
+        });
+    let Some(entry) = entry else {
+        return Err(LlmAdapterError::InvalidProviderRequest {
+            message: format!(
+                "materialized request is missing MCP tool entry for {} (server label {server_label})",
+                tool.name
+            ),
+        });
+    };
+    entry.insert("authorization".to_string(), Value::String(value.to_owned()));
+    Ok(())
 }
 
 fn openai_tool_choice(choice: &ToolChoice) -> oai::ToolChoice {
@@ -1300,11 +1386,8 @@ mod tests {
         assert_eq!(value["tool_choice"], json!("auto"));
     }
 
-    #[tokio::test(flavor = "current_thread")]
-    async fn materialize_create_request_rejects_remote_mcp_auth_ref_until_broker_exists() {
-        let blobs = InMemoryBlobStore::new();
-        let mut request = intent_request(Vec::new());
-        request.tools = vec![ToolSpec {
+    fn auth_remote_mcp_tool() -> ToolSpec {
+        ToolSpec {
             name: ToolName::new("mcp_echo"),
             kind: ToolKind::RemoteMcp(RemoteMcpToolSpec {
                 server_label: "echo".to_string(),
@@ -1320,22 +1403,126 @@ mod tests {
             }),
             parallelism: ToolParallelism::ParallelSafe,
             target_requirement: Default::default(),
-        }];
+        }
+    }
+
+    fn completed_message_response() -> ApiResponse<oai::Response> {
+        let raw_json = json!({
+            "id": "resp_mcp_auth",
+            "status": "completed",
+            "output": [
+                {
+                    "id": "msg_1",
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{ "type": "output_text", "text": "Done." }]
+                }
+            ],
+            "usage": { "input_tokens": 1, "output_tokens": 1, "total_tokens": 2 }
+        });
+        ApiResponse {
+            parsed: serde_json::from_value(raw_json.clone()).expect("response"),
+            raw_json,
+            status: 200,
+            headers: HeaderSnapshot::default(),
+        }
+    }
+
+    fn fake_api_with(response: ApiResponse<oai::Response>) -> Arc<FakeOpenAiResponsesApi> {
+        Arc::new(FakeOpenAiResponsesApi {
+            response,
+            compact_response: ApiResponse {
+                parsed: oai::CompactResponse::default(),
+                raw_json: json!({ "id": "compact_empty", "output": [] }),
+                status: 200,
+                headers: HeaderSnapshot::default(),
+            },
+            seen: Mutex::new(Vec::new()),
+            seen_compact: Mutex::new(Vec::new()),
+        })
+    }
+
+    fn mcp_auth_generation_request() -> LlmGenerationRequest {
+        LlmGenerationRequest {
+            session_id: SessionId::new("session-a"),
+            run_id: RunId::new(1),
+            turn_id: TurnId::new(1),
+            request: {
+                let mut request = intent_request(Vec::new());
+                request.tools = vec![auth_remote_mcp_tool()];
+                request.output_limit = Some(256);
+                request
+            },
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn materialize_create_request_omits_authorization_for_remote_mcp_auth_ref() {
+        let blobs = InMemoryBlobStore::new();
+        let mut request = intent_request(Vec::new());
+        request.tools = vec![auth_remote_mcp_tool()];
         request.output_limit = Some(1024);
 
-        let error = materialize_create_request(&blobs, &request)
+        let materialized = materialize_create_request(&blobs, &request)
             .await
-            .expect_err("auth ref should be rejected");
+            .expect("materialize");
+        let value = serde_json::to_value(materialized).expect("json");
 
-        assert!(matches!(
-            error,
-            LlmAdapterError::InvalidProviderRequest { .. }
-        ));
+        assert_eq!(value["tools"][0]["type"], json!("mcp"));
         assert!(
-            error
-                .to_string()
-                .contains("OpenAI Responses MCP auth injection is not implemented yet"),
-            "{error}"
+            value["tools"][0].get("authorization").is_none(),
+            "materialized requests must not carry auth values: {value}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn generate_injects_remote_mcp_authorization_and_redacts_persisted_request() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let api = fake_api_with(completed_message_response());
+        let adapter = OpenAiResponsesLlmAdapter::new(api.clone(), blobs.clone())
+            .with_secret_resolver(Arc::new(
+                crate::secrets::StaticSecretResolver::new().with_secret(
+                    "auth_grant",
+                    "grant_123",
+                    "token-xyz",
+                ),
+            ));
+
+        let execution = LlmGenerationAdapter::generate(&adapter, mcp_auth_generation_request())
+            .await
+            .expect("generate");
+
+        let sent = api.seen.lock().expect("lock").clone();
+        assert_eq!(sent.len(), 1);
+        let sent_json = serde_json::to_value(&sent[0]).expect("sent json");
+        assert_eq!(sent_json["tools"][0]["authorization"], json!("token-xyz"));
+
+        let stored = crate::blob_io::read_json(blobs.as_ref(), &execution.provider_request_ref)
+            .await
+            .expect("stored provider request");
+        assert_eq!(stored["tools"][0]["authorization"], json!("<redacted>"));
+        assert!(
+            !serde_json::to_string(&stored)
+                .expect("stored string")
+                .contains("token-xyz"),
+            "persisted provider request must not contain the resolved token"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn generate_fails_before_provider_io_when_auth_ref_cannot_be_resolved() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let api = fake_api_with(completed_message_response());
+        let adapter = OpenAiResponsesLlmAdapter::new(api.clone(), blobs.clone());
+
+        let error = LlmGenerationAdapter::generate(&adapter, mcp_auth_generation_request())
+            .await
+            .expect_err("unresolvable auth ref must fail generation");
+
+        assert!(matches!(error, LlmAdapterError::SecretResolution { .. }));
+        assert!(
+            api.seen.lock().expect("lock").is_empty(),
+            "no provider call may happen when auth resolution fails"
         );
     }
 

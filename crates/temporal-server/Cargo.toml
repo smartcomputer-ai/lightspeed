@@ -11,6 +11,7 @@ engine = { path = "../engine" }
 vfs = { path = "../vfs" }
 anyhow = "1"
 async-trait = "0.1"
+auth-registry = { path = "../auth-registry" }
 axum = "0.7"
 base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }

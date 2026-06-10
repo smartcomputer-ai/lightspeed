@@ -1,7 +1,9 @@
 use std::{env, sync::Arc};
 
 use engine::{ModelSelection, ProviderApiKind};
-use store_pg::{PgStore, PgStoreConfig, S3ObjectStoreConfig, build_s3_object_store};
+use store_pg::{
+    PgStore, PgStoreConfig, S3ObjectStoreConfig, SecretsMasterKey, build_s3_object_store,
+};
 use temporal_workflow::DEFAULT_MODEL;
 use uuid::Uuid;
 
@@ -23,7 +25,7 @@ pub async fn pg_store_from_env() -> anyhow::Result<Arc<PgStore>> {
         .map_err(|_| anyhow::anyhow!("FORGE_PG_UNIVERSE_ID must be set"))?;
     let universe_id = Uuid::parse_str(&universe_id)
         .map_err(|error| anyhow::anyhow!("invalid FORGE_PG_UNIVERSE_ID: {error}"))?;
-    let config = pg_store_config_from_env(universe_id);
+    let config = pg_store_config_from_env(universe_id)?;
     let store = match object_store_config_from_env()? {
         Some(object_config) => {
             let object_store = build_s3_object_store(object_config)?;
@@ -34,12 +36,17 @@ pub async fn pg_store_from_env() -> anyhow::Result<Arc<PgStore>> {
     Ok(Arc::new(store))
 }
 
-fn pg_store_config_from_env(universe_id: Uuid) -> PgStoreConfig {
+fn pg_store_config_from_env(universe_id: Uuid) -> anyhow::Result<PgStoreConfig> {
     let mut config = PgStoreConfig::new(universe_id);
     if let Ok(prefix) = env::var("FORGE_OBJECT_STORE_PREFIX") {
         config = config.with_object_prefix(prefix);
     }
-    config
+    if let Some(master_key) = optional_env("FORGE_SECRETS_MASTER_KEY") {
+        let master_key = SecretsMasterKey::from_base64(&master_key)
+            .map_err(|error| anyhow::anyhow!("invalid FORGE_SECRETS_MASTER_KEY: {error}"))?;
+        config = config.with_secrets_master_key(master_key);
+    }
+    Ok(config)
 }
 
 fn object_store_config_from_env() -> anyhow::Result<Option<S3ObjectStoreConfig>> {

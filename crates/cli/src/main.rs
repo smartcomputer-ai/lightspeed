@@ -1,4 +1,5 @@
 mod api_client;
+mod auth_cli;
 mod chat;
 mod mcp_cli;
 mod skills_cli;
@@ -25,6 +26,8 @@ enum Command {
     Skills(skills_cli::SkillsArgs),
     /// Manage remote MCP servers and session links.
     Mcp(mcp_cli::McpArgs),
+    /// Manage auth grants and credentials.
+    Auth(auth_cli::AuthArgs),
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -36,6 +39,7 @@ async fn main() -> Result<()> {
         Command::Vfs(args) => vfs_cli::handle(args).await,
         Command::Skills(args) => skills_cli::handle(args).await,
         Command::Mcp(args) => mcp_cli::handle(args).await,
+        Command::Auth(args) => auth_cli::handle(args).await,
     }
 }
 
@@ -334,6 +338,39 @@ mod tests {
         ])
         .expect("parse mcp server add");
         assert!(matches!(cli.command, Command::Mcp(_)));
+    }
+
+    #[test]
+    fn auth_grant_import_parse_accepts_token_env() {
+        let cli = Cli::try_parse_from([
+            "forge",
+            "auth",
+            "grant",
+            "import",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
+            "--id",
+            "authgrant_crm",
+            "--token-env",
+            "CRM_MCP_TOKEN",
+            "--audience",
+            "https://crm.example.com/mcp",
+        ])
+        .expect("parse auth grant import");
+        assert!(matches!(cli.command, Command::Auth(_)));
+    }
+
+    #[test]
+    fn auth_grant_import_requires_a_token_source() {
+        let result = Cli::try_parse_from([
+            "forge",
+            "auth",
+            "grant",
+            "import",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
+        ]);
+        assert!(result.is_err(), "token source must be required");
     }
 
     #[test]

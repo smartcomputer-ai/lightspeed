@@ -158,6 +158,7 @@ fn mcp_link_materializes_remote_tool_patch() {
             auth_grant_id: None,
         },
         &record,
+        None,
     )
     .expect("materialize MCP link draft");
 
@@ -172,6 +173,156 @@ fn mcp_link_materializes_remote_tool_patch() {
     assert_eq!(spec.allowed_tools, Some(vec!["lookup_customer".to_owned()]));
     assert_eq!(spec.approval, engine::RemoteMcpApprovalPolicy::Never);
     assert_eq!(linked_session_mcp(&tools)[0].tool_id, tool_name.as_str());
+}
+
+fn test_auth_grant_record(
+    grant_id: &str,
+    provider_kind: auth_registry::AuthProviderKind,
+    status: auth_registry::AuthGrantStatus,
+    audience: Option<&str>,
+) -> auth_registry::AuthGrantRecord {
+    auth_registry::CreateAuthGrantRecord {
+        grant_id: auth_registry::AuthGrantId::new(grant_id),
+        provider_id: "static".to_owned(),
+        provider_kind,
+        principal: auth_registry::PrincipalRef::universe_default(),
+        display_name: None,
+        subject_hint: None,
+        scopes: Vec::new(),
+        audience: audience.map(str::to_owned),
+        access_token_secret: Some(auth_registry::SecretId::new("authsec_1")),
+        refresh_token_secret: None,
+        expires_at_ms: None,
+        status,
+        created_at_ms: 1,
+    }
+    .into_record()
+}
+
+fn mcp_link_params_with_grant(grant_id: &str) -> api::SessionMcpLinkParams {
+    api::SessionMcpLinkParams {
+        session_id: "session_1".to_owned(),
+        server_id: "crm".to_owned(),
+        tool_id: Some("mcp_crm".to_owned()),
+        server_label: None,
+        allowed_tools: None,
+        approval: None,
+        defer_loading: None,
+        auth_grant_id: Some(grant_id.to_owned()),
+    }
+}
+
+#[test]
+fn mcp_link_with_grant_materializes_auth_ref_for_bearer_server() {
+    let mut record = test_mcp_server_record("crm", mcp_registry::McpServerStatus::Active);
+    record.auth_policy = mcp_registry::McpServerAuthPolicy::RequiredBearer;
+    let grant = test_auth_grant_record(
+        "authgrant_1",
+        auth_registry::AuthProviderKind::StaticBearer,
+        auth_registry::AuthGrantStatus::Active,
+        Some("https://crm.example.com"),
+    );
+
+    let draft =
+        session_mcp_link_from_record(mcp_link_params_with_grant("authgrant_1"), &record, Some(&grant))
+            .expect("materialize MCP link draft with grant");
+
+    assert_eq!(
+        draft.spec.auth_ref,
+        Some(engine::SecretRef {
+            namespace: "auth_grant".to_owned(),
+            id: "authgrant_1".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn mcp_link_rejects_revoked_grant() {
+    let mut record = test_mcp_server_record("crm", mcp_registry::McpServerStatus::Active);
+    record.auth_policy = mcp_registry::McpServerAuthPolicy::RequiredBearer;
+    let grant = test_auth_grant_record(
+        "authgrant_1",
+        auth_registry::AuthProviderKind::StaticBearer,
+        auth_registry::AuthGrantStatus::Revoked,
+        None,
+    );
+
+    let error =
+        session_mcp_link_from_record(mcp_link_params_with_grant("authgrant_1"), &record, Some(&grant))
+            .expect_err("revoked grant must be rejected");
+
+    assert_eq!(error.kind, api::AgentApiErrorKind::Rejected);
+}
+
+#[test]
+fn mcp_link_rejects_grant_kind_incompatible_with_auth_policy() {
+    let mut record = test_mcp_server_record("crm", mcp_registry::McpServerStatus::Active);
+    record.auth_policy = mcp_registry::McpServerAuthPolicy::RequiredOAuth {
+        resource: "https://crm.example.com".to_owned(),
+        scopes_default: Vec::new(),
+        protected_resource_metadata_url: None,
+        authorization_server: None,
+    };
+    let grant = test_auth_grant_record(
+        "authgrant_1",
+        auth_registry::AuthProviderKind::StaticBearer,
+        auth_registry::AuthGrantStatus::Active,
+        None,
+    );
+
+    let error =
+        session_mcp_link_from_record(mcp_link_params_with_grant("authgrant_1"), &record, Some(&grant))
+            .expect_err("bearer grant must not satisfy OAuth policy");
+
+    assert_eq!(error.kind, api::AgentApiErrorKind::Rejected);
+}
+
+#[test]
+fn mcp_link_rejects_grant_audience_that_does_not_cover_server() {
+    let mut record = test_mcp_server_record("crm", mcp_registry::McpServerStatus::Active);
+    record.auth_policy = mcp_registry::McpServerAuthPolicy::OptionalBearer;
+    let grant = test_auth_grant_record(
+        "authgrant_1",
+        auth_registry::AuthProviderKind::StaticBearer,
+        auth_registry::AuthGrantStatus::Active,
+        Some("https://other.example.com"),
+    );
+
+    let error =
+        session_mcp_link_from_record(mcp_link_params_with_grant("authgrant_1"), &record, Some(&grant))
+            .expect_err("audience mismatch must be rejected");
+
+    assert_eq!(error.kind, api::AgentApiErrorKind::Rejected);
+}
+
+#[test]
+fn mcp_link_rejects_grant_for_no_auth_server() {
+    let record = test_mcp_server_record("crm", mcp_registry::McpServerStatus::Active);
+    let grant = test_auth_grant_record(
+        "authgrant_1",
+        auth_registry::AuthProviderKind::StaticBearer,
+        auth_registry::AuthGrantStatus::Active,
+        None,
+    );
+
+    let error =
+        session_mcp_link_from_record(mcp_link_params_with_grant("authgrant_1"), &record, Some(&grant))
+            .expect_err("grant on no-auth server must be rejected");
+
+    assert_eq!(error.kind, api::AgentApiErrorKind::InvalidRequest);
+}
+
+#[test]
+fn mcp_link_requires_grant_for_required_auth_server() {
+    let mut record = test_mcp_server_record("crm", mcp_registry::McpServerStatus::Active);
+    record.auth_policy = mcp_registry::McpServerAuthPolicy::RequiredBearer;
+    let mut params = mcp_link_params_with_grant("authgrant_1");
+    params.auth_grant_id = None;
+
+    let error = session_mcp_link_from_record(params, &record, None)
+        .expect_err("missing grant must be rejected for required auth");
+
+    assert_eq!(error.kind, api::AgentApiErrorKind::Rejected);
 }
 
 #[test]

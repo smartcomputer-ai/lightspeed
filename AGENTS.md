@@ -32,6 +32,8 @@ cargo test -p test-support
 cargo test -p tools
 cargo test -p store-fs
 cargo test -p store-pg
+cargo test -p mcp-registry
+cargo test -p auth-registry
 cargo test -p llm-runtime
 cargo test -p llm-clients
 cargo test -p eval
@@ -78,7 +80,12 @@ cargo run -p cli -- chat --api-url http://127.0.0.1:18080/rpc --session session_
 - `crates/tools/` — optional host filesystem/process tool package.
 - `crates/store-fs/` — filesystem-backed session log and content-addressed blob
   store adapters.
-- `crates/store-pg/` — PostgreSQL-backed session store and CAS catalog schema.
+- `crates/store-pg/` — PostgreSQL-backed session store, CAS catalog, MCP server
+  catalog, and AEAD-encrypted auth grant/secret storage.
+- `crates/mcp-registry/` — provider-independent remote MCP server catalog DTOs,
+  validation, and store traits.
+- `crates/auth-registry/` — generic auth grant/secret records, store traits,
+  typed broker errors, and the runtime token broker (P69).
 - `crates/eval/` — eval harness for agent/tool workflows.
 - `crates/llm-runtime/` — CoreAgent LLM runtime from planned requests to
   provider-native client calls.

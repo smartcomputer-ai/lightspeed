@@ -23,8 +23,26 @@
   remote MCP servers and provider-opaque recording of OpenAI MCP output items.
 - Implemented: MCP server create defaults `approvalDefault` to `never` so
   no-auth/public OpenAI MCP links work without provider approval continuation.
-- Still pending: Anthropic provider lowering and P69-backed auth grant
-  validation/token brokering.
+- Implemented 2026-06-10 (with P69 G1): link-time auth grant validation
+  against the P69 grant store — grant existence, `Active` status,
+  provider-kind/auth-policy compatibility, and audience coverage of the
+  server URL; universe equality holds by construction. Static bearer grants
+  work end to end (`forge auth grant import` -> `forge mcp link
+  --auth-grant-id` -> runtime injection).
+- Still pending: Anthropic provider lowering, OAuth grants (P69 G2+), and
+  principal-policy checks (deferred until Forge has user identity).
+- Still pending: `mcp/servers/update` (listed in the API surface but not
+  implemented). G3 metadata discovery needs it for auth-policy writes and
+  status transitions such as `unverified -> active`; until then catalog edits
+  are delete + recreate.
+- Note for G3: RFC 9728 protected resource metadata lists
+  `authorization_servers` as an array; the single `authorization_server`
+  field in `McpServerAuthPolicy` will need to become a list when discovery
+  lands.
+- Grant compatibility rules for G2 are defined in P69 (G4 section): provider
+  kind class matches the server auth policy, grant audience covers the server
+  resource, grant status is `Active`; universe equality holds by construction
+  because gateway stores are universe-bound.
 
 ## Goal
 
@@ -376,14 +394,20 @@ Add MCP-specific validation for linking a P69 auth grant to an MCP server.
 
 Acceptance criteria:
 
-- MCP server records can declare optional/required bearer or OAuth auth policy;
-- session linking accepts an explicit P69 auth grant handle;
-- the gateway validates universe, principal policy, server compatibility, and
-  auth requirement before committing session state;
-- linked session state contains `auth_ref: SecretRef { namespace: "auth_grant",
-  id: ... }`;
-- no secret values or OAuth protocol records are stored in P68 tables or engine
-  events.
+- [x] MCP server records can declare optional/required bearer or OAuth auth
+  policy;
+- [x] session linking accepts an explicit P69 auth grant handle;
+- [x] the gateway validates universe (by construction), server compatibility
+  (grant kind vs auth policy, audience coverage), grant status, and auth
+  requirement before committing session state; principal policy is deferred
+  until Forge has user identity;
+- [x] linked session state contains `auth_ref: SecretRef { namespace:
+  "auth_grant", id: ... }`;
+- [x] no secret values or OAuth protocol records are stored in P68 tables or
+  engine events.
+
+Static bearer grants are fully linkable; OAuth grants validate the same way
+once P69 G2/G4 produce them.
 
 ## G3: MCP Metadata Discovery
 
