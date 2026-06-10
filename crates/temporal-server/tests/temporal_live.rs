@@ -15,7 +15,7 @@ use api::{
 use api_projection::model_to_api;
 use engine::{
     CommandCodec, CoreAgentCodec, CoreAgentCommand, CoreAgentLlm, CoreAgentTools, DynamicCommand,
-    ModelProviderOptions, ModelSelection, ProviderApiKind, SessionId, storage::BlobStore,
+    ModelSelection, ProviderApiKind, SessionId, storage::BlobStore,
 };
 use temporal_server::{
     default_model_from_env,
@@ -741,6 +741,5 @@ fn openai_live_model() -> ModelSelection {
             .or_else(|_| env::var("OPENAI_LIVE_MODEL"))
             .or_else(|_| env::var("FORGE_CHAT_MODEL"))
             .unwrap_or_else(|_| "gpt-5.5".to_owned()),
-        options: ModelProviderOptions::None,
     }
 }

@@ -18,6 +18,9 @@ pub(super) async fn create_or_load_session(
     deps: &StorageActivityDeps,
     request: CreateOrLoadSessionRequest,
 ) -> Result<CreateOrLoadSessionResult, ActivityError> {
+    engine::storage::ensure_engine_blobs(deps.blobs.as_ref())
+        .await
+        .map_err(activity_error)?;
     let record = match deps
         .sessions
         .create_session(CreateSession {

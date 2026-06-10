@@ -96,6 +96,13 @@ cargo run -p cli -- chat --api-url http://127.0.0.1:18080/rpc --session session_
   Do not rebuild a fake universal LLM message model.
 - Parse only reducer facts needed for deterministic branching; keep other
   provider-native data opaque/blob-backed.
+- Keep provider request vocabulary out of `engine`. The core plans a
+  provider-neutral `LlmRequest` intent with opaque `ProviderParams`
+  (`api_kind` + versioned JSON body); typed param schemas and wire-request
+  materialization live in `llm-runtime` adapters, and admission boundaries
+  validate params before they enter the session log. Transport config
+  (base URLs, credentials, headers) stays in runtime deployment config, not
+  in `ModelSelection` or the session log.
 - Keep clients on `api`. CLIs, TUIs, editors, hosted gateways, and future
   Temporal frontends should not consume reducer internals directly.
 - Treat hosted `run/start` as an acceptance/start boundary, not a final-output

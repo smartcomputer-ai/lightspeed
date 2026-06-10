@@ -1289,22 +1289,29 @@ fn planned_tool_for_turn(
 ) -> Option<ToolSpec> {
     let turn = active_run.turns.get(&turn_id)?;
     let request = turn.request.as_ref()?;
-    let tools = match &request.kind {
-        crate::LlmRequestKind::OpenAiResponses(request) => &request.tools,
-        crate::LlmRequestKind::AnthropicMessages(request) => &request.tools,
-        crate::LlmRequestKind::OpenAiCompletions(request) => &request.tools,
-    };
-    tools.iter().find(|tool| &tool.name == tool_name).cloned()
+    request
+        .tools
+        .iter()
+        .find(|tool| &tool.name == tool_name)
+        .cloned()
+}
+
+/// Model-visible content for tool calls the engine marks unavailable.
+///
+/// The deterministic core cannot write blobs, so unavailable results reference
+/// this well-known constant content by hash. Every runtime that fulfills core
+/// actions must guarantee the matching blob exists (see
+/// [`crate::storage::ensure_engine_blobs`]); content-addressed puts make that
+/// idempotent.
+pub const UNAVAILABLE_TOOL_RESULT_CONTENT: &str =
+    "tool unavailable: this tool cannot be invoked in this session\n";
+
+pub fn unavailable_tool_result_ref() -> BlobRef {
+    BlobRef::from_bytes(UNAVAILABLE_TOOL_RESULT_CONTENT.as_bytes())
 }
 
 fn unavailable_tool_result(call: &ObservedToolCall) -> ToolCallResult {
-    let error_ref = BlobRef::from_bytes(
-        format!(
-            "engine tool unavailable\ncall_id={}\ntool_name={}\n",
-            call.call_id, call.tool_name
-        )
-        .as_bytes(),
-    );
+    let error_ref = unavailable_tool_result_ref();
     ToolCallResult {
         call_id: call.call_id.clone(),
         status: ToolCallStatus::Unavailable,
@@ -1614,5 +1621,23 @@ mod tests {
             panic!("expected invariant violation, got {error:?}");
         };
         assert!(message.contains("duplicate remote MCP server label echo"));
+    }
+
+    #[test]
+    fn unavailable_tool_results_reference_the_well_known_constant_blob() {
+        let call = ObservedToolCall {
+            call_id: crate::ToolCallId::new("call_1"),
+            tool_name: ToolName::new("missing_tool"),
+            provider_kind: None,
+            arguments_ref: BlobRef::from_bytes(b"{}"),
+            native_call_ref: None,
+        };
+
+        let result = unavailable_tool_result(&call);
+
+        let expected = BlobRef::from_bytes(UNAVAILABLE_TOOL_RESULT_CONTENT.as_bytes());
+        assert_eq!(result.model_visible_output_ref, Some(expected.clone()));
+        assert_eq!(result.error_ref, Some(expected));
+        assert_eq!(result.status, ToolCallStatus::Unavailable);
     }
 }

@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    CoreAgentState, DomainError, ModelProviderOptions, ModelSelection, ProviderApiKind,
-    ProviderRequestDefaults, ToolChoice, ToolChoiceMode,
+    CoreAgentState, DomainError, ModelSelection, ProviderApiKind, ProviderParams, ToolChoice,
+    ToolChoiceMode,
 };
 
 const MIN_OPENAI_RESPONSES_COMPACT_THRESHOLD: u32 = 1000;
@@ -19,8 +19,7 @@ pub struct SessionConfig {
 
 impl SessionConfig {
     pub fn validate_provider_compatibility(&self) -> Result<(), DomainError> {
-        validate_model_selection(&self.model)?;
-        validate_request_defaults(&self.turn.provider_request_defaults, &self.model.api_kind)?;
+        validate_provider_params(self.turn.provider_params.as_ref(), &self.model.api_kind)?;
         validate_context_config(&self.context, &self.model.api_kind)?;
         validate_tool_config(&self.tools, &self.model.api_kind)?;
         self.run
@@ -105,7 +104,7 @@ pub struct RunConfigPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_output_tokens: Option<OptionalConfigPatch<u32>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider_request_defaults: Option<OptionalConfigPatch<ProviderRequestDefaults>>,
+    pub provider_params: Option<OptionalConfigPatch<ProviderParams>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<OptionalConfigPatch<ToolChoice>>,
 }
@@ -116,10 +115,7 @@ impl RunConfigPatch {
         apply_optional_config_patch(&mut config.max_tool_rounds, &self.max_tool_rounds);
         apply_optional_config_patch(&mut config.model_override, &self.model_override);
         apply_optional_config_patch(&mut config.max_output_tokens, &self.max_output_tokens);
-        apply_optional_config_patch(
-            &mut config.provider_request_defaults,
-            &self.provider_request_defaults,
-        );
+        apply_optional_config_patch(&mut config.provider_params, &self.provider_params);
         apply_optional_config_patch(&mut config.tool_choice, &self.tool_choice);
     }
 
@@ -128,7 +124,7 @@ impl RunConfigPatch {
             && self.max_tool_rounds.is_none()
             && self.model_override.is_none()
             && self.max_output_tokens.is_none()
-            && self.provider_request_defaults.is_none()
+            && self.provider_params.is_none()
             && self.tool_choice.is_none()
     }
 }
@@ -138,7 +134,7 @@ pub struct TurnConfigPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_output_tokens: Option<OptionalConfigPatch<u32>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider_request_defaults: Option<ProviderRequestDefaults>,
+    pub provider_params: Option<OptionalConfigPatch<ProviderParams>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<OptionalConfigPatch<ToolChoice>>,
 }
@@ -146,15 +142,13 @@ pub struct TurnConfigPatch {
 impl TurnConfigPatch {
     pub fn apply_to(&self, config: &mut TurnConfig) {
         apply_optional_config_patch(&mut config.max_output_tokens, &self.max_output_tokens);
-        if let Some(defaults) = self.provider_request_defaults.clone() {
-            config.provider_request_defaults = defaults;
-        }
+        apply_optional_config_patch(&mut config.provider_params, &self.provider_params);
         apply_optional_config_patch(&mut config.tool_choice, &self.tool_choice);
     }
 
     pub fn is_empty(&self) -> bool {
         self.max_output_tokens.is_none()
-            && self.provider_request_defaults.is_none()
+            && self.provider_params.is_none()
             && self.tool_choice.is_none()
     }
 }
@@ -217,7 +211,7 @@ pub struct RunConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_output_tokens: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider_request_defaults: Option<ProviderRequestDefaults>,
+    pub provider_params: Option<ProviderParams>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<ToolChoice>,
 }
@@ -228,7 +222,6 @@ impl RunConfig {
         session_api_kind: &ProviderApiKind,
     ) -> Result<(), DomainError> {
         let api_kind = if let Some(model) = self.model_override.as_ref() {
-            validate_model_selection(model)?;
             if &model.api_kind != session_api_kind {
                 return Err(DomainError::ProviderCompatibility(format!(
                     "run model override api kind {:?} does not match session api kind {:?}",
@@ -239,9 +232,7 @@ impl RunConfig {
         } else {
             session_api_kind
         };
-        if let Some(defaults) = self.provider_request_defaults.as_ref() {
-            validate_request_defaults(defaults, api_kind)?;
-        }
+        validate_provider_params(self.provider_params.as_ref(), api_kind)?;
         Ok(())
     }
 }
@@ -282,7 +273,8 @@ fn validate_tool_choice_for_active_tools(
 pub struct TurnConfig {
     pub max_output_tokens: Option<u32>,
     pub tool_choice: Option<ToolChoice>,
-    pub provider_request_defaults: ProviderRequestDefaults,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_params: Option<ProviderParams>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -324,37 +316,25 @@ pub enum CompactionPolicy {
     },
 }
 
-fn validate_model_selection(model: &ModelSelection) -> Result<(), DomainError> {
-    match (&model.api_kind, &model.options) {
-        (_, ModelProviderOptions::None)
-        | (ProviderApiKind::OpenAiResponses, ModelProviderOptions::OpenAiResponses(_))
-        | (ProviderApiKind::AnthropicMessages, ModelProviderOptions::AnthropicMessages(_))
-        | (ProviderApiKind::OpenAiCompletions, ModelProviderOptions::OpenAiCompletions(_)) => {
-            Ok(())
-        }
-        (api_kind, options) => Err(DomainError::ProviderCompatibility(format!(
-            "model options {:?} do not match provider api kind {:?}",
-            options, api_kind
-        ))),
-    }
-}
-
-fn validate_request_defaults(
-    defaults: &ProviderRequestDefaults,
+fn validate_provider_params(
+    params: Option<&ProviderParams>,
     api_kind: &ProviderApiKind,
 ) -> Result<(), DomainError> {
-    match (api_kind, defaults) {
-        (_, ProviderRequestDefaults::None)
-        | (ProviderApiKind::OpenAiResponses, ProviderRequestDefaults::OpenAiResponses(_))
-        | (ProviderApiKind::AnthropicMessages, ProviderRequestDefaults::AnthropicMessages(_))
-        | (ProviderApiKind::OpenAiCompletions, ProviderRequestDefaults::OpenAiCompletions(_)) => {
-            Ok(())
-        }
-        (api_kind, defaults) => Err(DomainError::ProviderCompatibility(format!(
-            "request defaults {:?} do not match provider api kind {:?}",
-            defaults, api_kind
-        ))),
+    let Some(params) = params else {
+        return Ok(());
+    };
+    if &params.api_kind != api_kind {
+        return Err(DomainError::ProviderCompatibility(format!(
+            "provider params api kind {:?} do not match provider api kind {:?}",
+            params.api_kind, api_kind
+        )));
     }
+    if !params.body.is_object() {
+        return Err(DomainError::ProviderCompatibility(
+            "provider params body must be a JSON object".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_context_config(
@@ -484,13 +464,12 @@ mod tests {
                 api_kind,
                 provider_id: "provider".to_owned(),
                 model: "model".to_owned(),
-                options: ModelProviderOptions::None,
             },
             run: RunConfig::default(),
             turn: TurnConfig {
                 max_output_tokens: None,
                 tool_choice: None,
-                provider_request_defaults: ProviderRequestDefaults::None,
+                provider_params: None,
             },
             context: ContextConfig { compaction },
             tools: Default::default(),

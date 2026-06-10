@@ -1,13 +1,11 @@
-use std::collections::BTreeMap;
-
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::{
     ActiveRun, CompactionPolicy, ContextSnapshot, CoreAgentState, DomainError, PlanningError,
-    RunConfig, RunId, SessionConfig, SessionId, ToolChoice, ToolChoiceMode, ToolKind, ToolName,
-    ToolSpec, TurnId,
+    RunConfig, RunId, SessionConfig, SessionId, ToolChoice, ToolChoiceMode, ToolKind, ToolSpec,
+    TurnId,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -18,114 +16,38 @@ pub enum ProviderApiKind {
     OpenAiCompletions,
 }
 
+/// Deterministic model route: which provider API to speak, which configured
+/// provider to use, and which model to request. Transport configuration
+/// (endpoints, credentials, headers) is runtime deployment config keyed by
+/// `provider_id` and never enters the session log.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelSelection {
     pub api_kind: ProviderApiKind,
     pub provider_id: String,
     pub model: String,
-    pub options: ModelProviderOptions,
 }
 
+/// Opaque provider request parameters.
+///
+/// The reducer and planners never read into `body`; it is carried through the
+/// session log verbatim and parsed only by the runtime adapter that
+/// materializes the wire request. Validation against the adapter's schema
+/// happens at the admission boundary, before the params enter the log.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ModelProviderOptions {
-    None,
-    OpenAiResponses(OpenAiModelOptions),
-    AnthropicMessages(AnthropicModelOptions),
-    OpenAiCompletions(OpenAiModelOptions),
+pub struct ProviderParams {
+    pub api_kind: ProviderApiKind,
+    pub version: u32,
+    pub body: Value,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OpenAiModelOptions {
-    pub organization: Option<String>,
-    pub project: Option<String>,
-    pub base_url: Option<String>,
-    pub extra: BTreeMap<String, Value>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AnthropicModelOptions {
-    pub base_url: Option<String>,
-    pub extra_headers: BTreeMap<String, String>,
-    pub extra: BTreeMap<String, Value>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProviderRequestDefaults {
-    None,
-    OpenAiResponses(OpenAiResponsesRequestDefaults),
-    AnthropicMessages(AnthropicMessagesRequestDefaults),
-    OpenAiCompletions(OpenAiCompletionsRequestDefaults),
-}
-
-pub const OPENAI_RESPONSES_REASONING_ENCRYPTED_CONTENT_INCLUDE: &str =
-    "reasoning.encrypted_content";
-pub const OPENAI_RESPONSES_WEB_SEARCH_SOURCES_INCLUDE: &str = "web_search_call.action.sources";
-
-fn default_openai_responses_include() -> Vec<String> {
-    vec![OPENAI_RESPONSES_REASONING_ENCRYPTED_CONTENT_INCLUDE.to_owned()]
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OpenAiResponsesRequestDefaults {
-    pub reasoning: Option<OpenAiReasoningConfig>,
-    pub text: Option<Value>,
-    #[serde(default = "default_openai_responses_include")]
-    pub include: Vec<String>,
-    pub temperature: Option<Value>,
-    pub top_p: Option<Value>,
-    pub metadata: BTreeMap<String, String>,
-    pub parallel_tool_calls: Option<bool>,
-    pub store: Option<bool>,
-    pub stream: Option<bool>,
-    pub truncation: Option<String>,
-    pub extra: BTreeMap<String, Value>,
-}
-
-impl Default for OpenAiResponsesRequestDefaults {
-    fn default() -> Self {
+impl ProviderParams {
+    pub fn new(api_kind: ProviderApiKind, body: Value) -> Self {
         Self {
-            reasoning: None,
-            text: None,
-            include: default_openai_responses_include(),
-            temperature: None,
-            top_p: None,
-            metadata: BTreeMap::new(),
-            parallel_tool_calls: None,
-            store: None,
-            stream: None,
-            truncation: None,
-            extra: BTreeMap::new(),
+            api_kind,
+            version: 1,
+            body,
         }
     }
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AnthropicMessagesRequestDefaults {
-    pub thinking: Option<AnthropicThinkingConfig>,
-    pub metadata: Option<Value>,
-    pub stop_sequences: Vec<String>,
-    pub stream: Option<bool>,
-    pub temperature: Option<Value>,
-    pub top_k: Option<u32>,
-    pub top_p: Option<Value>,
-    pub service_tier: Option<String>,
-    pub container: Option<String>,
-    pub extra: BTreeMap<String, Value>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OpenAiCompletionsRequestDefaults {
-    pub response_format: Option<Value>,
-    pub temperature: Option<Value>,
-    pub top_p: Option<Value>,
-    pub stop: Option<Value>,
-    pub parallel_tool_calls: Option<bool>,
-    pub store: Option<bool>,
-    pub stream: Option<bool>,
-    pub metadata: BTreeMap<String, String>,
-    pub extra: BTreeMap<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -135,11 +57,34 @@ pub struct ProviderCompatibility {
     pub native_context_family: String,
 }
 
+/// Deterministic generation intent planned by the core.
+///
+/// This carries everything the reducer and planners branch on: the model
+/// route, the exact context snapshot, the tool catalog, and product-level
+/// generation limits. Provider-specific request settings travel opaquely in
+/// `params`; runtime adapters materialize the provider-native wire request
+/// from this intent.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LlmRequest {
     pub model: ModelSelection,
     pub request_fingerprint: String,
-    pub kind: LlmRequestKind,
+    pub context: ContextSnapshot,
+    pub tools: Vec<ToolSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoice>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_limit: Option<u32>,
+    /// Provider continuity token (e.g. OpenAI Responses `previous_response_id`)
+    /// threaded from prior generation facts. Currently always `None`; adapters
+    /// must tolerate absence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_response_id: Option<String>,
+    /// Session compaction policy at planning time, so adapters can lower
+    /// provider-managed compaction (e.g. OpenAI `context_management`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction: Option<CompactionPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub params: Option<ProviderParams>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -148,25 +93,19 @@ pub struct ContextCompactionRequest {
     pub request: ContextCompactionTask,
 }
 
+/// Deterministic compaction intent planned by the core.
+///
+/// Like [`LlmRequest`], provider-specific settings stay opaque in `params`;
+/// adapters that do not support standalone compaction must fail the request.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextCompactionTask {
     pub model: ModelSelection,
     pub request_fingerprint: String,
-    pub kind: ContextCompactionRequestKind,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ContextCompactionRequestKind {
-    OpenAiResponses(OpenAiResponsesCompactionRequest),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OpenAiResponsesCompactionRequest {
-    pub input_context: ContextSnapshot,
+    pub context: ContextSnapshot,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_tokens: Option<u32>,
-    pub store: Option<bool>,
-    pub extra: BTreeMap<String, Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub params: Option<ProviderParams>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -179,52 +118,30 @@ pub struct ContextCompactionResult {
     pub context_entries: Vec<crate::ContextEntryInput>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LlmRequestKind {
-    OpenAiResponses(OpenAiResponsesRequest),
-    AnthropicMessages(AnthropicMessagesRequest),
-    OpenAiCompletions(OpenAiCompletionsRequest),
-}
-
 pub(crate) fn validate_request_matches_active_context(
     state: &CoreAgentState,
     request: &LlmRequest,
 ) -> Result<(), DomainError> {
-    let request_context = llm_request_context(request)?;
-    crate::core::components::context::validate_snapshot_matches_active_context(
-        state,
-        request_context,
-    )
+    let context = llm_request_context(request)?;
+    crate::core::components::context::validate_snapshot_matches_active_context(state, context)
 }
 
 pub(crate) fn llm_request_context(request: &LlmRequest) -> Result<&ContextSnapshot, DomainError> {
-    let (expected_api_kind, context) = match &request.kind {
-        LlmRequestKind::OpenAiResponses(request) => {
-            (ProviderApiKind::OpenAiResponses, &request.input_context)
-        }
-        LlmRequestKind::AnthropicMessages(request) => (
-            ProviderApiKind::AnthropicMessages,
-            &request.messages_context,
-        ),
-        LlmRequestKind::OpenAiCompletions(request) => (
-            ProviderApiKind::OpenAiCompletions,
-            &request.messages_context,
-        ),
-    };
-    if request.model.api_kind != expected_api_kind {
-        return Err(DomainError::ProviderCompatibility(format!(
-            "request kind {:?} does not match model api kind {:?}",
-            expected_api_kind, request.model.api_kind
-        )));
-    }
-    if context.api_kind != request.model.api_kind {
+    if request.context.api_kind != request.model.api_kind {
         return Err(DomainError::ProviderCompatibility(format!(
             "request context api kind {:?} does not match model api kind {:?}",
-            context.api_kind, request.model.api_kind
+            request.context.api_kind, request.model.api_kind
         )));
     }
-    Ok(context)
+    if let Some(params) = request.params.as_ref()
+        && params.api_kind != request.model.api_kind
+    {
+        return Err(DomainError::ProviderCompatibility(format!(
+            "request params api kind {:?} does not match model api kind {:?}",
+            params.api_kind, request.model.api_kind
+        )));
+    }
+    Ok(&request.context)
 }
 
 pub(crate) fn build_llm_request(
@@ -246,82 +163,40 @@ pub(crate) fn build_llm_request(
     let context =
         crate::core::components::context::planned_context_snapshot(state, model.api_kind.clone())?;
     let tools = active_tools(state, &model.api_kind)?;
-    let tool_choice = request_config.turn.tool_choice.as_ref();
-    validate_tool_choice(&tools, tool_choice)?;
-    let kind = match (
-        &model.api_kind,
-        &request_config.turn.provider_request_defaults,
-    ) {
-        (ProviderApiKind::OpenAiResponses, ProviderRequestDefaults::None) => {
-            LlmRequestKind::OpenAiResponses(openai_responses_request(
-                &request_config,
-                context.clone(),
-                tools,
-                tool_choice,
-                &OpenAiResponsesRequestDefaults::default(),
-            ))
-        }
-        (ProviderApiKind::OpenAiResponses, ProviderRequestDefaults::OpenAiResponses(defaults)) => {
-            LlmRequestKind::OpenAiResponses(openai_responses_request(
-                &request_config,
-                context.clone(),
-                tools,
-                tool_choice,
-                &defaults,
-            ))
-        }
-        (ProviderApiKind::AnthropicMessages, ProviderRequestDefaults::None) => {
-            LlmRequestKind::AnthropicMessages(anthropic_messages_request(
-                &request_config,
-                context.clone(),
-                tools,
-                tool_choice,
-                &AnthropicMessagesRequestDefaults::default(),
-            )?)
-        }
-        (
-            ProviderApiKind::AnthropicMessages,
-            ProviderRequestDefaults::AnthropicMessages(defaults),
-        ) => LlmRequestKind::AnthropicMessages(anthropic_messages_request(
-            &request_config,
-            context.clone(),
-            tools,
-            tool_choice,
-            &defaults,
-        )?),
-        (ProviderApiKind::OpenAiCompletions, ProviderRequestDefaults::None) => {
-            LlmRequestKind::OpenAiCompletions(openai_completions_request(
-                &request_config,
-                context.clone(),
-                tools,
-                tool_choice,
-                &OpenAiCompletionsRequestDefaults::default(),
-            ))
-        }
-        (
-            ProviderApiKind::OpenAiCompletions,
-            ProviderRequestDefaults::OpenAiCompletions(defaults),
-        ) => LlmRequestKind::OpenAiCompletions(openai_completions_request(
-            &request_config,
-            context,
-            tools,
-            tool_choice,
-            &defaults,
-        )),
-        (_, defaults) => {
-            return Err(DomainError::ProviderCompatibility(format!(
-                "request defaults {:?} do not match model api kind {:?}",
-                defaults, model.api_kind
-            ))
-            .into());
-        }
-    };
-    let request_fingerprint = request_fingerprint(&model, &kind, active_run.run_id, turn_id)?;
-
+    let tool_choice = request_config.turn.tool_choice.clone();
+    validate_tool_choice(&tools, tool_choice.as_ref())?;
+    let params = request_config.turn.provider_params.clone();
+    if let Some(params) = params.as_ref()
+        && params.api_kind != model.api_kind
+    {
+        return Err(DomainError::ProviderCompatibility(format!(
+            "provider params api kind {:?} do not match model api kind {:?}",
+            params.api_kind, model.api_kind
+        ))
+        .into());
+    }
+    let output_limit = request_config.turn.max_output_tokens;
+    let compaction = request_config.context.compaction.clone();
+    let request_fingerprint = request_fingerprint(
+        &model,
+        &context,
+        &tools,
+        tool_choice.as_ref(),
+        output_limit,
+        params.as_ref(),
+        active_run.run_id,
+        turn_id,
+    )?;
     Ok(LlmRequest {
         model,
         request_fingerprint,
-        kind,
+        context,
+        tools,
+        tool_choice,
+        output_limit,
+        provider_response_id: None,
+        compaction,
+        params,
     })
 }
 
@@ -355,39 +230,15 @@ pub(crate) fn build_context_compaction_task(
         state,
         config.model.api_kind.clone(),
     )?;
-    let kind = match (
-        &config.model.api_kind,
-        &config.turn.provider_request_defaults,
-    ) {
-        (ProviderApiKind::OpenAiResponses, ProviderRequestDefaults::None) => {
-            ContextCompactionRequestKind::OpenAiResponses(OpenAiResponsesCompactionRequest {
-                input_context: context,
-                target_tokens: *target_tokens,
-                store: None,
-                extra: BTreeMap::new(),
-            })
-        }
-        (ProviderApiKind::OpenAiResponses, ProviderRequestDefaults::OpenAiResponses(_)) => {
-            ContextCompactionRequestKind::OpenAiResponses(OpenAiResponsesCompactionRequest {
-                input_context: context,
-                target_tokens: *target_tokens,
-                store: None,
-                extra: BTreeMap::new(),
-            })
-        }
-        (api_kind, _) => {
-            return Err(DomainError::ProviderCompatibility(format!(
-                "provider-standalone compaction requires OpenAI Responses api kind, got {:?}",
-                api_kind
-            ))
-            .into());
-        }
-    };
-    let request_fingerprint = compaction_request_fingerprint(&config.model, &kind)?;
+    let params = config.turn.provider_params.clone();
+    let request_fingerprint =
+        compaction_request_fingerprint(&config.model, &context, *target_tokens, params.as_ref())?;
     Ok(ContextCompactionTask {
         model: config.model.clone(),
         request_fingerprint,
-        kind,
+        context,
+        target_tokens: *target_tokens,
+        params,
     })
 }
 
@@ -396,8 +247,8 @@ fn session_config_for_run(config: &SessionConfig, run_config: &RunConfig) -> Ses
     if let Some(max_output_tokens) = run_config.max_output_tokens {
         config.turn.max_output_tokens = Some(max_output_tokens);
     }
-    if let Some(defaults) = run_config.provider_request_defaults.clone() {
-        config.turn.provider_request_defaults = defaults;
+    if let Some(params) = run_config.provider_params.clone() {
+        config.turn.provider_params = Some(params);
     }
     if let Some(tool_choice) = run_config.tool_choice.clone() {
         config.turn.tool_choice = Some(tool_choice);
@@ -467,365 +318,90 @@ fn remote_mcp_supported_by_provider(api_kind: &ProviderApiKind) -> bool {
     )
 }
 
-fn openai_responses_request(
-    config: &SessionConfig,
-    input_context: ContextSnapshot,
-    tools: Vec<ToolSpec>,
-    tool_choice: Option<&ToolChoice>,
-    defaults: &OpenAiResponsesRequestDefaults,
-) -> OpenAiResponsesRequest {
-    OpenAiResponsesRequest {
-        input_context,
-        previous_response_id: None,
-        tools,
-        tool_choice: tool_choice.map(openai_responses_tool_choice),
-        reasoning: defaults.reasoning.clone(),
-        text: defaults.text.clone(),
-        include: defaults.include.clone(),
-        max_output_tokens: config.turn.max_output_tokens,
-        max_tool_calls: None,
-        temperature: defaults.temperature.clone(),
-        top_p: defaults.top_p.clone(),
-        metadata: defaults.metadata.clone(),
-        parallel_tool_calls: defaults.parallel_tool_calls,
-        store: defaults.store,
-        stream: defaults.stream,
-        truncation: defaults.truncation.clone(),
-        context_management: openai_responses_context_management(config),
-        extra: defaults.extra.clone(),
-    }
-}
-
-fn openai_responses_context_management(config: &SessionConfig) -> Option<Value> {
-    match &config.context.compaction {
-        Some(CompactionPolicy::ProviderTriggered {
-            compact_threshold_tokens,
-        }) => {
-            let mut compaction = json!({ "type": "compaction" });
-            if let Some(compact_threshold_tokens) = compact_threshold_tokens {
-                compaction["compact_threshold"] = json!(compact_threshold_tokens);
-            }
-            Some(json!([compaction]))
-        }
-        None | Some(CompactionPolicy::Disabled | CompactionPolicy::ProviderStandalone { .. }) => {
-            None
-        }
-    }
-}
-
-fn anthropic_messages_request(
-    config: &SessionConfig,
-    messages_context: ContextSnapshot,
-    tools: Vec<ToolSpec>,
-    tool_choice: Option<&ToolChoice>,
-    defaults: &AnthropicMessagesRequestDefaults,
-) -> Result<AnthropicMessagesRequest, PlanningError> {
-    let Some(max_tokens) = config.turn.max_output_tokens else {
-        return Err(DomainError::ProviderCompatibility(
-            "anthropic messages requests require TurnConfig::max_output_tokens".to_owned(),
-        )
-        .into());
-    };
-    Ok(AnthropicMessagesRequest {
-        messages_context,
-        tools,
-        tool_choice: tool_choice.map(anthropic_tool_choice),
-        thinking: defaults.thinking.clone(),
-        max_tokens,
-        metadata: defaults.metadata.clone(),
-        stop_sequences: defaults.stop_sequences.clone(),
-        stream: defaults.stream,
-        temperature: defaults.temperature.clone(),
-        top_k: defaults.top_k,
-        top_p: defaults.top_p.clone(),
-        service_tier: defaults.service_tier.clone(),
-        container: defaults.container.clone(),
-        mcp_servers: None,
-        context_management: None,
-        extra: defaults.extra.clone(),
-    })
-}
-
-fn openai_completions_request(
-    config: &SessionConfig,
-    messages_context: ContextSnapshot,
-    tools: Vec<ToolSpec>,
-    tool_choice: Option<&ToolChoice>,
-    defaults: &OpenAiCompletionsRequestDefaults,
-) -> OpenAiCompletionsRequest {
-    OpenAiCompletionsRequest {
-        messages_context,
-        tools,
-        tool_choice: tool_choice.map(openai_completions_tool_choice),
-        response_format: defaults.response_format.clone(),
-        temperature: defaults.temperature.clone(),
-        top_p: defaults.top_p.clone(),
-        max_tokens: config.turn.max_output_tokens,
-        max_completion_tokens: config.turn.max_output_tokens,
-        stop: defaults.stop.clone(),
-        parallel_tool_calls: defaults.parallel_tool_calls,
-        store: defaults.store,
-        stream: defaults.stream,
-        metadata: defaults.metadata.clone(),
-        extra: defaults.extra.clone(),
-    }
-}
-
-fn openai_responses_tool_choice(choice: &ToolChoice) -> OpenAiResponsesToolChoice {
-    match &choice.mode {
-        ToolChoiceMode::Auto => OpenAiResponsesToolChoice::Auto,
-        ToolChoiceMode::None => OpenAiResponsesToolChoice::None,
-        ToolChoiceMode::RequiredAny => OpenAiResponsesToolChoice::Required,
-        ToolChoiceMode::Specific { tool_name } => OpenAiResponsesToolChoice::Function {
-            name: tool_name.clone(),
-        },
-    }
-}
-
-fn anthropic_tool_choice(choice: &ToolChoice) -> AnthropicToolChoice {
-    match &choice.mode {
-        ToolChoiceMode::Auto => AnthropicToolChoice::Auto {
-            disable_parallel_tool_use: choice.disable_parallel_tool_use,
-        },
-        ToolChoiceMode::None => AnthropicToolChoice::None,
-        ToolChoiceMode::RequiredAny => AnthropicToolChoice::Any {
-            disable_parallel_tool_use: choice.disable_parallel_tool_use,
-        },
-        ToolChoiceMode::Specific { tool_name } => AnthropicToolChoice::Tool {
-            name: tool_name.clone(),
-            disable_parallel_tool_use: choice.disable_parallel_tool_use,
-        },
-    }
-}
-
-fn openai_completions_tool_choice(choice: &ToolChoice) -> OpenAiCompletionsToolChoice {
-    match &choice.mode {
-        ToolChoiceMode::Auto => OpenAiCompletionsToolChoice::Auto,
-        ToolChoiceMode::None => OpenAiCompletionsToolChoice::None,
-        ToolChoiceMode::RequiredAny => OpenAiCompletionsToolChoice::Required,
-        ToolChoiceMode::Specific { tool_name } => OpenAiCompletionsToolChoice::Function {
-            name: tool_name.clone(),
-        },
-    }
-}
-
+#[expect(clippy::too_many_arguments)]
 fn request_fingerprint(
     model: &ModelSelection,
-    kind: &LlmRequestKind,
+    context: &ContextSnapshot,
+    tools: &[ToolSpec],
+    tool_choice: Option<&ToolChoice>,
+    output_limit: Option<u32>,
+    params: Option<&ProviderParams>,
     run_id: RunId,
     turn_id: TurnId,
 ) -> Result<String, PlanningError> {
-    let encoded = serde_json::to_vec(&(model, kind, run_id, turn_id)).map_err(|error| {
-        PlanningError::Rejected(format!("failed to fingerprint request: {error}"))
-    })?;
+    let encoded = serde_json::to_vec(&(
+        model,
+        context,
+        tools,
+        tool_choice,
+        output_limit,
+        params,
+        run_id,
+        turn_id,
+    ))
+    .map_err(|error| PlanningError::Rejected(format!("failed to fingerprint request: {error}")))?;
     let digest = Sha256::digest(encoded);
     Ok(format!("sha256:{}", hex::encode(digest)))
 }
 
 fn compaction_request_fingerprint(
     model: &ModelSelection,
-    kind: &ContextCompactionRequestKind,
+    context: &ContextSnapshot,
+    target_tokens: Option<u32>,
+    params: Option<&ProviderParams>,
 ) -> Result<String, PlanningError> {
-    let encoded = serde_json::to_vec(&(model, kind)).map_err(|error| {
+    let encoded = serde_json::to_vec(&(model, context, target_tokens, params)).map_err(|error| {
         PlanningError::Rejected(format!("failed to fingerprint compaction request: {error}"))
     })?;
     let digest = Sha256::digest(encoded);
     Ok(format!("sha256:{}", hex::encode(digest)))
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OpenAiResponsesRequest {
-    pub input_context: ContextSnapshot,
-    pub previous_response_id: Option<String>,
-    pub tools: Vec<ToolSpec>,
-    pub tool_choice: Option<OpenAiResponsesToolChoice>,
-    pub reasoning: Option<OpenAiReasoningConfig>,
-    pub text: Option<Value>,
-    pub include: Vec<String>,
-    pub max_output_tokens: Option<u32>,
-    pub max_tool_calls: Option<u32>,
-    pub temperature: Option<Value>,
-    pub top_p: Option<Value>,
-    pub metadata: BTreeMap<String, String>,
-    pub parallel_tool_calls: Option<bool>,
-    pub store: Option<bool>,
-    pub stream: Option<bool>,
-    pub truncation: Option<String>,
-    pub context_management: Option<Value>,
-    pub extra: BTreeMap<String, Value>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OpenAiResponsesToolChoice {
-    Auto,
-    None,
-    Required,
-    Function { name: ToolName },
-    Raw(Value),
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OpenAiReasoningConfig {
-    pub effort: Option<String>,
-    pub summary: Option<String>,
-    pub extra: BTreeMap<String, Value>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AnthropicMessagesRequest {
-    pub messages_context: ContextSnapshot,
-    pub tools: Vec<ToolSpec>,
-    pub tool_choice: Option<AnthropicToolChoice>,
-    pub thinking: Option<AnthropicThinkingConfig>,
-    pub max_tokens: u32,
-    pub metadata: Option<Value>,
-    pub stop_sequences: Vec<String>,
-    pub stream: Option<bool>,
-    pub temperature: Option<Value>,
-    pub top_k: Option<u32>,
-    pub top_p: Option<Value>,
-    pub service_tier: Option<String>,
-    pub container: Option<String>,
-    pub mcp_servers: Option<Value>,
-    pub context_management: Option<Value>,
-    pub extra: BTreeMap<String, Value>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AnthropicToolChoice {
-    Auto {
-        disable_parallel_tool_use: Option<bool>,
-    },
-    Any {
-        disable_parallel_tool_use: Option<bool>,
-    },
-    None,
-    Tool {
-        name: ToolName,
-        disable_parallel_tool_use: Option<bool>,
-    },
-    Raw(Value),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AnthropicThinkingConfig {
-    pub r#type: String,
-    pub budget_tokens: Option<u32>,
-    pub display: Option<String>,
-    pub extra: BTreeMap<String, Value>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OpenAiCompletionsRequest {
-    pub messages_context: ContextSnapshot,
-    pub tools: Vec<ToolSpec>,
-    pub tool_choice: Option<OpenAiCompletionsToolChoice>,
-    pub response_format: Option<Value>,
-    pub temperature: Option<Value>,
-    pub top_p: Option<Value>,
-    pub max_tokens: Option<u32>,
-    pub max_completion_tokens: Option<u32>,
-    pub stop: Option<Value>,
-    pub parallel_tool_calls: Option<bool>,
-    pub store: Option<bool>,
-    pub stream: Option<bool>,
-    pub metadata: BTreeMap<String, String>,
-    pub extra: BTreeMap<String, Value>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OpenAiCompletionsToolChoice {
-    Auto,
-    None,
-    Required,
-    Function { name: ToolName },
-    Raw(Value),
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn openai_responses_defaults_include_reusable_reasoning() {
-        let defaults = OpenAiResponsesRequestDefaults::default();
-
-        assert_eq!(
-            defaults.include,
-            vec![OPENAI_RESPONSES_REASONING_ENCRYPTED_CONTENT_INCLUDE.to_owned()]
-        );
-    }
-
-    #[test]
-    fn openai_responses_defaults_deserialize_missing_include_with_reusable_reasoning() {
-        let defaults: OpenAiResponsesRequestDefaults = serde_json::from_value(serde_json::json!({
-            "reasoning": null,
-            "text": null,
-            "temperature": null,
-            "top_p": null,
-            "metadata": {},
-            "parallel_tool_calls": null,
-            "store": null,
-            "stream": null,
-            "truncation": null,
-            "extra": {}
-        }))
-        .expect("deserialize defaults");
-
-        assert_eq!(
-            defaults.include,
-            vec![OPENAI_RESPONSES_REASONING_ENCRYPTED_CONTENT_INCLUDE.to_owned()]
-        );
-    }
-
-    #[test]
-    fn session_config_for_run_applies_generation_overrides() {
-        let mut defaults = OpenAiResponsesRequestDefaults::default();
-        defaults.reasoning = Some(OpenAiReasoningConfig {
-            effort: Some("high".to_owned()),
-            summary: Some("auto".to_owned()),
-            extra: BTreeMap::new(),
-        });
-        let config = SessionConfig {
+    fn test_config() -> SessionConfig {
+        SessionConfig {
             model: ModelSelection {
                 api_kind: ProviderApiKind::OpenAiResponses,
                 provider_id: "openai".to_owned(),
                 model: "gpt-test".to_owned(),
-                options: ModelProviderOptions::None,
             },
             run: RunConfig::default(),
             turn: crate::TurnConfig {
                 max_output_tokens: None,
                 tool_choice: None,
-                provider_request_defaults: ProviderRequestDefaults::None,
+                provider_params: None,
             },
             context: crate::ContextConfig { compaction: None },
             tools: Default::default(),
-        };
+        }
+    }
+
+    #[test]
+    fn session_config_for_run_applies_generation_overrides() {
+        let config = test_config();
+        let params = ProviderParams::new(
+            ProviderApiKind::OpenAiResponses,
+            serde_json::json!({ "reasoning": { "effort": "high" } }),
+        );
         let run_config = RunConfig {
             max_output_tokens: Some(2048),
-            provider_request_defaults: Some(ProviderRequestDefaults::OpenAiResponses(
-                defaults.clone(),
-            )),
+            provider_params: Some(params.clone()),
             ..RunConfig::default()
         };
 
         let resolved = session_config_for_run(&config, &run_config);
 
         assert_eq!(resolved.turn.max_output_tokens, Some(2048));
-        assert_eq!(
-            resolved.turn.provider_request_defaults,
-            ProviderRequestDefaults::OpenAiResponses(defaults)
-        );
+        assert_eq!(resolved.turn.provider_params, Some(params));
     }
 
     #[test]
     fn provider_native_tool_rejects_mismatched_request_api_kind() {
         let mut state = CoreAgentState::new();
-        let tool_name = ToolName::new("web_search");
+        let tool_name = crate::ToolName::new("web_search");
         state.tooling.tools.insert(
             tool_name.clone(),
             ToolSpec {
@@ -855,7 +431,7 @@ mod tests {
 
     fn remote_mcp_tool(auth_ref_id: &str) -> ToolSpec {
         ToolSpec {
-            name: ToolName::new("mcp_echo"),
+            name: crate::ToolName::new("mcp_echo"),
             kind: ToolKind::RemoteMcp(crate::RemoteMcpToolSpec {
                 server_label: "echo".to_owned(),
                 server_url: "https://echo.example.com/mcp".to_owned(),
@@ -913,144 +489,72 @@ mod tests {
 
     #[test]
     fn remote_mcp_sanitized_auth_ref_participates_in_request_fingerprint() {
-        let config = SessionConfig {
-            model: ModelSelection {
-                api_kind: ProviderApiKind::OpenAiResponses,
-                provider_id: "openai".to_owned(),
-                model: "gpt-test".to_owned(),
-                options: ModelProviderOptions::None,
-            },
-            run: RunConfig::default(),
-            turn: crate::TurnConfig {
-                max_output_tokens: None,
-                tool_choice: None,
-                provider_request_defaults: ProviderRequestDefaults::None,
-            },
-            context: crate::ContextConfig { compaction: None },
-            tools: Default::default(),
-        };
+        let config = test_config();
         let context = ContextSnapshot {
             api_kind: ProviderApiKind::OpenAiResponses,
             context_revision: 7,
             entries: Vec::new(),
             token_estimate: None,
         };
-        let first = LlmRequestKind::OpenAiResponses(openai_responses_request(
-            &config,
-            context.clone(),
-            vec![remote_mcp_tool("mcpgrant_123")],
-            None,
-            &OpenAiResponsesRequestDefaults::default(),
-        ));
-        let second = LlmRequestKind::OpenAiResponses(openai_responses_request(
-            &config,
-            context,
-            vec![remote_mcp_tool("mcpgrant_456")],
-            None,
-            &OpenAiResponsesRequestDefaults::default(),
-        ));
 
-        let encoded = serde_json::to_string(&first).expect("serialize request");
+        let first_tools = vec![remote_mcp_tool("mcpgrant_123")];
+        let second_tools = vec![remote_mcp_tool("mcpgrant_456")];
+
+        let encoded = serde_json::to_string(&first_tools).expect("serialize tools");
         assert!(encoded.contains("mcp_grant"));
         assert!(encoded.contains("mcpgrant_123"));
         assert!(!encoded.contains("runtime-token"));
 
-        let first_fingerprint =
-            request_fingerprint(&config.model, &first, RunId::new(1), TurnId::new(1))
-                .expect("fingerprint first request");
-        let second_fingerprint =
-            request_fingerprint(&config.model, &second, RunId::new(1), TurnId::new(1))
-                .expect("fingerprint second request");
+        let first_fingerprint = request_fingerprint(
+            &config.model,
+            &context,
+            &first_tools,
+            None,
+            None,
+            None,
+            RunId::new(1),
+            TurnId::new(1),
+        )
+        .expect("fingerprint first request");
+        let second_fingerprint = request_fingerprint(
+            &config.model,
+            &context,
+            &second_tools,
+            None,
+            None,
+            None,
+            RunId::new(1),
+            TurnId::new(1),
+        )
+        .expect("fingerprint second request");
 
         assert_ne!(first_fingerprint, second_fingerprint);
     }
 
     #[test]
-    fn openai_responses_request_lowers_provider_triggered_compaction() {
-        let config = SessionConfig {
-            model: ModelSelection {
-                api_kind: ProviderApiKind::OpenAiResponses,
-                provider_id: "openai".to_owned(),
-                model: "gpt-test".to_owned(),
-                options: ModelProviderOptions::None,
-            },
-            run: RunConfig::default(),
-            turn: crate::TurnConfig {
-                max_output_tokens: None,
-                tool_choice: None,
-                provider_request_defaults: ProviderRequestDefaults::None,
-            },
-            context: crate::ContextConfig {
-                compaction: Some(CompactionPolicy::ProviderTriggered {
-                    compact_threshold_tokens: Some(120_000),
-                }),
-            },
-            tools: Default::default(),
-        };
-
-        let request = openai_responses_request(
-            &config,
-            ContextSnapshot {
+    fn llm_request_context_rejects_mismatched_params_api_kind() {
+        let request = LlmRequest {
+            model: test_config().model,
+            request_fingerprint: "sha256:test".to_owned(),
+            context: ContextSnapshot {
                 api_kind: ProviderApiKind::OpenAiResponses,
                 context_revision: 0,
                 entries: Vec::new(),
                 token_estimate: None,
             },
-            Vec::new(),
-            None,
-            &OpenAiResponsesRequestDefaults::default(),
-        );
-
-        assert_eq!(
-            request.context_management,
-            Some(json!([
-                {
-                    "type": "compaction",
-                    "compact_threshold": 120000
-                }
-            ]))
-        );
-    }
-
-    #[test]
-    fn openai_responses_request_omits_optional_compact_threshold() {
-        let config = SessionConfig {
-            model: ModelSelection {
-                api_kind: ProviderApiKind::OpenAiResponses,
-                provider_id: "openai".to_owned(),
-                model: "gpt-test".to_owned(),
-                options: ModelProviderOptions::None,
-            },
-            run: RunConfig::default(),
-            turn: crate::TurnConfig {
-                max_output_tokens: None,
-                tool_choice: None,
-                provider_request_defaults: ProviderRequestDefaults::None,
-            },
-            context: crate::ContextConfig {
-                compaction: Some(CompactionPolicy::ProviderTriggered {
-                    compact_threshold_tokens: None,
-                }),
-            },
-            tools: Default::default(),
+            tools: Vec::new(),
+            tool_choice: None,
+            output_limit: None,
+            provider_response_id: None,
+            compaction: None,
+            params: Some(ProviderParams::new(
+                ProviderApiKind::AnthropicMessages,
+                serde_json::json!({}),
+            )),
         };
 
-        let request = openai_responses_request(
-            &config,
-            ContextSnapshot {
-                api_kind: ProviderApiKind::OpenAiResponses,
-                context_revision: 0,
-                entries: Vec::new(),
-                token_estimate: None,
-            },
-            Vec::new(),
-            None,
-            &OpenAiResponsesRequestDefaults::default(),
-        );
-
-        assert_eq!(
-            request.context_management,
-            Some(json!([{ "type": "compaction" }]))
-        );
+        let error = llm_request_context(&request)
+            .expect_err("params api kind mismatch must be rejected");
+        assert!(matches!(error, DomainError::ProviderCompatibility(_)));
     }
 }

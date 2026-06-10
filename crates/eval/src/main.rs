@@ -16,9 +16,8 @@ use casefile::{EvalCase, FileExpectation, load_cases};
 use clap::{Parser, Subcommand};
 use engine::{
     AgentHandle, ContextConfig, ContextEntryInput, ContextEntryKey, ContextEntryKind,
-    ContextMessageRole, CoreAgentCommand, ModelProviderOptions, ModelSelection,
-    OpenAiResponsesRequestDefaults, ProviderApiKind, ProviderRequestDefaults, RunConfig,
-    SessionConfig, SessionId, ToolExecutionTarget, ToolName, ToolSpec, TurnConfig,
+    ContextMessageRole, CoreAgentCommand, ModelSelection, ProviderApiKind,
+    RunConfig, SessionConfig, SessionId, ToolExecutionTarget, ToolName, ToolSpec, TurnConfig,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
 };
 use llm_clients::ApiResponse;
@@ -648,7 +647,6 @@ async fn build_runtime(
         api_kind: ProviderApiKind::OpenAiResponses,
         provider_id: provider.provider_id.clone(),
         model: provider.model.clone(),
-        options: ModelProviderOptions::None,
     };
     let default_config = session_config(case, model.clone());
     let diagnostics = Arc::new(LlmDiagnostics::default());
@@ -734,15 +732,13 @@ fn session_config(case: &EvalCase, model: ModelSelection) -> SessionConfig {
             max_tool_rounds: Some(case.run.max_tool_rounds.unwrap_or(8)),
             model_override: None,
             max_output_tokens: None,
-            provider_request_defaults: None,
+            provider_params: None,
             tool_choice: None,
         },
         turn: TurnConfig {
             max_output_tokens: case.run.max_tokens,
             tool_choice: None,
-            provider_request_defaults: ProviderRequestDefaults::OpenAiResponses(
-                OpenAiResponsesRequestDefaults::default(),
-            ),
+            provider_params: None,
         },
         context: ContextConfig { compaction: None },
         tools: Default::default(),

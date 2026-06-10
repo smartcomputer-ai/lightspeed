@@ -2,16 +2,16 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use engine::{
-    BlobRef, ContextCompactionRequest, ContextCompactionRequestKind, ContextCompactionResult,
-    ContextCompactionStatus, ContextEntry, ContextEntryInput, ContextEntryKind, ContextMessageRole,
-    LlmFinish, LlmGenerationFacts, LlmGenerationRequest, LlmGenerationResult, LlmGenerationStatus,
-    LlmRequestKind, LlmUsage, OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND,
-    OPENAI_RESPONSES_MCP_APPROVAL_REQUEST_PROVIDER_KIND, OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND,
-    OPENAI_RESPONSES_MCP_LIST_TOOLS_PROVIDER_KIND, OPENAI_RESPONSES_WEB_SEARCH_CALL_PROVIDER_KIND,
-    ObservedToolCall, OpenAiResponsesCompactionRequest, OpenAiResponsesRequest,
-    OpenAiResponsesToolChoice, ProviderApiKind, ProviderNativeToolExecution,
-    RemoteMcpApprovalPolicy, RemoteMcpToolSpec, SkillId, TokenEstimate, TokenEstimateQuality,
-    ToolCallId, ToolKind, ToolName, ToolSpec, storage::BlobStore,
+    BlobRef, CompactionPolicy, ContextCompactionRequest, ContextCompactionResult,
+    ContextCompactionStatus, ContextCompactionTask, ContextEntry, ContextEntryInput,
+    ContextEntryKind, ContextMessageRole, LlmFinish, LlmGenerationFacts, LlmGenerationRequest,
+    LlmGenerationResult, LlmGenerationStatus, LlmRequest, LlmUsage,
+    OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, OPENAI_RESPONSES_MCP_APPROVAL_REQUEST_PROVIDER_KIND,
+    OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND, OPENAI_RESPONSES_MCP_LIST_TOOLS_PROVIDER_KIND,
+    OPENAI_RESPONSES_WEB_SEARCH_CALL_PROVIDER_KIND, ObservedToolCall, ProviderApiKind,
+    ProviderNativeToolExecution, RemoteMcpApprovalPolicy, RemoteMcpToolSpec, SkillId, TokenEstimate,
+    TokenEstimateQuality, ToolCallId, ToolChoice, ToolChoiceMode, ToolKind, ToolName, ToolSpec,
+    storage::BlobStore,
 };
 use llm_clients::{ApiResponse, openai::responses as oai};
 use serde_json::{Value, json};
@@ -21,6 +21,7 @@ use crate::{
     blob_io::{put_json, put_text, read_json, read_text},
     error::{LlmAdapterError, LlmAdapterResult},
     executor::{LlmCompactionAdapter, LlmGenerationAdapter},
+    params::openai_responses_params,
     result::LlmGenerationExecution,
 };
 
@@ -72,18 +73,16 @@ impl OpenAiResponsesLlmAdapter {
 
     pub async fn materialize_create_request(
         &self,
-        request: &OpenAiResponsesRequest,
-        model: &str,
+        request: &LlmRequest,
     ) -> LlmAdapterResult<oai::CreateResponseRequest> {
-        materialize_create_request(self.blobs.as_ref(), request, model).await
+        materialize_create_request(self.blobs.as_ref(), request).await
     }
 
     pub async fn materialize_compact_request(
         &self,
-        request: &OpenAiResponsesCompactionRequest,
-        model: &str,
+        task: &ContextCompactionTask,
     ) -> LlmAdapterResult<oai::CompactResponseRequest> {
-        materialize_compact_request(self.blobs.as_ref(), request, model).await
+        materialize_compact_request(self.blobs.as_ref(), task).await
     }
 }
 
@@ -93,18 +92,16 @@ impl LlmGenerationAdapter for OpenAiResponsesLlmAdapter {
         &self,
         request: LlmGenerationRequest,
     ) -> LlmAdapterResult<LlmGenerationExecution> {
-        let LlmRequestKind::OpenAiResponses(openai_request) = &request.request.kind else {
+        if request.request.model.api_kind != ProviderApiKind::OpenAiResponses {
             return Err(LlmAdapterError::RequestKindMismatch {
                 message: format!(
                     "expected OpenAiResponses request, got {:?}",
-                    request.request.kind
+                    request.request.model.api_kind
                 ),
             });
-        };
+        }
 
-        let provider_request = self
-            .materialize_create_request(openai_request, &request.request.model.model)
-            .await?;
+        let provider_request = self.materialize_create_request(&request.request).await?;
         let provider_request_ref = put_json(self.blobs.as_ref(), &provider_request).await?;
         let response = self.client.create(provider_request).await?;
         let raw_response_ref = put_json(self.blobs.as_ref(), &response.raw_json).await?;
@@ -124,25 +121,30 @@ impl LlmCompactionAdapter for OpenAiResponsesLlmAdapter {
         &self,
         request: ContextCompactionRequest,
     ) -> LlmAdapterResult<ContextCompactionResult> {
-        let ContextCompactionRequestKind::OpenAiResponses(openai_request) = &request.request.kind;
-        let provider_request = self
-            .materialize_compact_request(openai_request, &request.request.model.model)
-            .await?;
+        if request.request.model.api_kind != ProviderApiKind::OpenAiResponses {
+            return Err(LlmAdapterError::RequestKindMismatch {
+                message: format!(
+                    "expected OpenAiResponses compaction task, got {:?}",
+                    request.request.model.api_kind
+                ),
+            });
+        }
+        let provider_request = self.materialize_compact_request(&request.request).await?;
         let _provider_request_ref = put_json(self.blobs.as_ref(), &provider_request).await?;
         let response = self.client.compact(provider_request).await?;
         let _raw_response_ref = put_json(self.blobs.as_ref(), &response.raw_json).await?;
-        result_from_compact_response(self.blobs.as_ref(), &request, openai_request, &response).await
+        result_from_compact_response(self.blobs.as_ref(), &request, &response).await
     }
 }
 
 pub async fn materialize_create_request(
     blobs: &dyn BlobStore,
-    request: &OpenAiResponsesRequest,
-    model: &str,
+    request: &LlmRequest,
 ) -> LlmAdapterResult<oai::CreateResponseRequest> {
-    let instructions = materialize_instructions(blobs, &request.input_context.entries).await?;
+    let params = openai_responses_params(request.params.as_ref())?;
+    let instructions = materialize_instructions(blobs, &request.context.entries).await?;
     let input_entries = request
-        .input_context
+        .context
         .entries
         .iter()
         .filter(|entry| !matches!(entry.kind, ContextEntryKind::Instructions))
@@ -151,49 +153,64 @@ pub async fn materialize_create_request(
     let input_items = materialize_input_items(blobs, &input_entries).await?;
     let tools = materialize_tools(blobs, &request.tools).await?;
 
-    let mut extra = request.extra.clone();
-    insert_optional(&mut extra, "truncation", request.truncation.clone());
-    if let Some(max_tool_calls) = request.max_tool_calls {
+    let mut extra = params.extra.clone();
+    insert_optional(&mut extra, "truncation", params.truncation.clone());
+    if let Some(max_tool_calls) = params.max_tool_calls {
         extra.insert("max_tool_calls".to_string(), Value::from(max_tool_calls));
     }
 
     Ok(oai::CreateResponseRequest {
-        model: Some(model.to_string()),
+        model: Some(request.model.model.clone()),
         input: Some(oai::ResponseInput::Items(input_items)),
         instructions,
-        previous_response_id: request.previous_response_id.clone(),
+        previous_response_id: request.provider_response_id.clone(),
         tools: non_empty(tools),
         tool_choice: request.tool_choice.as_ref().map(openai_tool_choice),
-        reasoning: request.reasoning.as_ref().map(|reasoning| oai::Reasoning {
+        reasoning: params.reasoning.as_ref().map(|reasoning| oai::Reasoning {
             effort: reasoning.effort.clone(),
             summary: reasoning.summary.clone(),
             extra: reasoning.extra.clone(),
         }),
-        text: request.text.clone(),
-        include: non_empty(request.include.clone()),
-        max_output_tokens: request.max_output_tokens.map(u64::from),
-        temperature: optional_f64(request.temperature.as_ref(), "temperature")?,
-        top_p: optional_f64(request.top_p.as_ref(), "top_p")?,
-        metadata: non_empty_map(request.metadata.clone()),
-        parallel_tool_calls: request.parallel_tool_calls,
-        store: request.store,
-        stream: request.stream,
-        context_management: request.context_management.clone(),
+        text: params.text.clone(),
+        include: non_empty(params.include.clone()),
+        max_output_tokens: request.output_limit.map(u64::from),
+        temperature: optional_f64(params.temperature.as_ref(), "temperature")?,
+        top_p: optional_f64(params.top_p.as_ref(), "top_p")?,
+        metadata: non_empty_map(params.metadata.clone()),
+        parallel_tool_calls: params.parallel_tool_calls,
+        store: params.store,
+        stream: params.stream,
+        context_management: context_management_from_compaction(request.compaction.as_ref()),
         extra,
     })
 }
 
+fn context_management_from_compaction(compaction: Option<&CompactionPolicy>) -> Option<Value> {
+    match compaction {
+        Some(CompactionPolicy::ProviderTriggered {
+            compact_threshold_tokens,
+        }) => {
+            let mut compaction = json!({ "type": "compaction" });
+            if let Some(compact_threshold_tokens) = compact_threshold_tokens {
+                compaction["compact_threshold"] = json!(compact_threshold_tokens);
+            }
+            Some(json!([compaction]))
+        }
+        None | Some(CompactionPolicy::Disabled | CompactionPolicy::ProviderStandalone { .. }) => {
+            None
+        }
+    }
+}
+
 pub async fn materialize_compact_request(
     blobs: &dyn BlobStore,
-    request: &OpenAiResponsesCompactionRequest,
-    model: &str,
+    task: &ContextCompactionTask,
 ) -> LlmAdapterResult<oai::CompactResponseRequest> {
-    let input_items = materialize_input_items(blobs, &request.input_context.entries).await?;
-    let extra = request.extra.clone();
+    let input_items = materialize_input_items(blobs, &task.context.entries).await?;
     Ok(oai::CompactResponseRequest {
-        model: model.to_owned(),
+        model: task.model.model.clone(),
         input: Some(oai::ResponseInput::Items(input_items)),
-        extra,
+        extra: Default::default(),
     })
 }
 
@@ -471,16 +488,15 @@ async fn materialize_remote_mcp_tool(
     Ok(oai::Tool::Raw(value))
 }
 
-fn openai_tool_choice(choice: &OpenAiResponsesToolChoice) -> oai::ToolChoice {
-    match choice {
-        OpenAiResponsesToolChoice::Auto => oai::ToolChoice::Mode(oai::ToolChoiceMode::Auto),
-        OpenAiResponsesToolChoice::None => oai::ToolChoice::Mode(oai::ToolChoiceMode::None),
-        OpenAiResponsesToolChoice::Required => oai::ToolChoice::Mode(oai::ToolChoiceMode::Required),
-        OpenAiResponsesToolChoice::Function { name } => oai::ToolChoice::Function {
+fn openai_tool_choice(choice: &ToolChoice) -> oai::ToolChoice {
+    match &choice.mode {
+        ToolChoiceMode::Auto => oai::ToolChoice::Mode(oai::ToolChoiceMode::Auto),
+        ToolChoiceMode::None => oai::ToolChoice::Mode(oai::ToolChoiceMode::None),
+        ToolChoiceMode::RequiredAny => oai::ToolChoice::Mode(oai::ToolChoiceMode::Required),
+        ToolChoiceMode::Specific { tool_name } => oai::ToolChoice::Function {
             r#type: oai::FunctionToolType::Function,
-            name: name.as_str().to_string(),
+            name: tool_name.as_str().to_string(),
         },
-        OpenAiResponsesToolChoice::Raw(value) => oai::ToolChoice::Raw(value.clone()),
     }
 }
 
@@ -602,7 +618,6 @@ pub async fn result_from_response(
 pub async fn result_from_compact_response(
     blobs: &dyn BlobStore,
     request: &ContextCompactionRequest,
-    openai_request: &OpenAiResponsesCompactionRequest,
     response: &ApiResponse<oai::CompactResponse>,
 ) -> LlmAdapterResult<ContextCompactionResult> {
     let mut context_entries = Vec::new();
@@ -625,7 +640,7 @@ pub async fn result_from_compact_response(
     }
     Ok(ContextCompactionResult {
         session_id: request.session_id.clone(),
-        context_revision: openai_request.input_context.context_revision,
+        context_revision: request.request.context.context_revision,
         status: ContextCompactionStatus::Succeeded,
         failure_ref: None,
         context_entries,
@@ -941,8 +956,8 @@ mod tests {
 
     use engine::{
         ContextCompactionTask, ContextEntryId, ContextEntrySource, ContextSnapshot, CoreAgentLlm,
-        FunctionToolSpec, LlmGenerationRequest, LlmRequest, ModelProviderOptions, ModelSelection,
-        OpenAiReasoningConfig, RunId, SessionId, ToolExecutionTarget, ToolParallelism, TurnId,
+        FunctionToolSpec, LlmGenerationRequest, LlmRequest, ModelSelection,
+        ProviderParams, RunId, SessionId, ToolExecutionTarget, ToolParallelism, TurnId,
         storage::InMemoryBlobStore,
     };
     use llm_clients::HeaderSnapshot;
@@ -957,6 +972,7 @@ mod tests {
 
     use super::*;
     use crate::executor::{LlmAdapterRegistry, LlmRuntime};
+    use crate::params::{OpenAiReasoningConfig, OpenAiResponsesParams};
 
     struct FakeOpenAiResponsesApi {
         response: ApiResponse<oai::Response>,
@@ -1017,8 +1033,33 @@ mod tests {
             api_kind: ProviderApiKind::OpenAiResponses,
             provider_id: "openai".to_string(),
             model: "gpt-5.1".to_string(),
-            options: ModelProviderOptions::None,
         }
+    }
+
+    fn intent_request(entries: Vec<ContextEntry>) -> LlmRequest {
+        LlmRequest {
+            model: model(),
+            request_fingerprint: "sha256:test".to_string(),
+            context: ContextSnapshot {
+                api_kind: ProviderApiKind::OpenAiResponses,
+                context_revision: 0,
+                entries,
+                token_estimate: None,
+            },
+            tools: Vec::new(),
+            tool_choice: None,
+            output_limit: None,
+            provider_response_id: None,
+            compaction: None,
+            params: None,
+        }
+    }
+
+    fn openai_params(params: &OpenAiResponsesParams) -> ProviderParams {
+        ProviderParams::new(
+            ProviderApiKind::OpenAiResponses,
+            serde_json::to_value(params).expect("serialize params"),
+        )
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1070,30 +1111,32 @@ mod tests {
             provider_item_id: None,
             token_estimate: None,
         };
-        let request = OpenAiResponsesRequest {
-            input_context: ContextSnapshot {
-                api_kind: ProviderApiKind::OpenAiResponses,
-                context_revision: 0,
-                entries: vec![instructions_item, item],
-                token_estimate: None,
-            },
-            previous_response_id: Some("resp_prev".to_string()),
-            tools: vec![ToolSpec {
-                name: ToolName::new("read_file"),
-                kind: ToolKind::Function(FunctionToolSpec {
-                    model_name: None,
-                    description_ref: Some(description_ref),
-                    input_schema_ref: schema_ref,
-                    output_schema_ref: None,
-                    strict: Some(true),
-                    provider_options_ref: Some(provider_options_ref),
-                }),
-                parallelism: ToolParallelism::ParallelSafe,
-                target_requirement: Default::default(),
-            }],
-            tool_choice: Some(OpenAiResponsesToolChoice::Function {
-                name: ToolName::new("read_file"),
+        let mut request = intent_request(vec![instructions_item, item]);
+        request.tools = vec![ToolSpec {
+            name: ToolName::new("read_file"),
+            kind: ToolKind::Function(FunctionToolSpec {
+                model_name: None,
+                description_ref: Some(description_ref),
+                input_schema_ref: schema_ref,
+                output_schema_ref: None,
+                strict: Some(true),
+                provider_options_ref: Some(provider_options_ref),
             }),
+            parallelism: ToolParallelism::ParallelSafe,
+            target_requirement: Default::default(),
+        }];
+        request.tool_choice = Some(ToolChoice {
+            mode: ToolChoiceMode::Specific {
+                tool_name: ToolName::new("read_file"),
+            },
+            disable_parallel_tool_use: None,
+        });
+        request.output_limit = Some(2048);
+        request.provider_response_id = Some("resp_prev".to_string());
+        request.compaction = Some(CompactionPolicy::ProviderTriggered {
+            compact_threshold_tokens: Some(120_000),
+        });
+        request.params = Some(openai_params(&OpenAiResponsesParams {
             reasoning: Some(OpenAiReasoningConfig {
                 effort: Some("medium".to_string()),
                 summary: Some("auto".to_string()),
@@ -1101,8 +1144,6 @@ mod tests {
             }),
             text: Some(json!({ "format": { "type": "text" } })),
             include: vec!["reasoning.encrypted_content".to_string()],
-            max_output_tokens: Some(2048),
-            max_tool_calls: Some(4),
             temperature: Some(json!(0.2)),
             top_p: Some(json!(0.9)),
             metadata: BTreeMap::from([("run".to_string(), "1".to_string())]),
@@ -1110,11 +1151,11 @@ mod tests {
             store: Some(false),
             stream: Some(true),
             truncation: Some("auto".to_string()),
-            context_management: Some(json!({ "strategy": "none" })),
+            max_tool_calls: Some(4),
             extra: BTreeMap::from([("service_tier".to_string(), json!("flex"))]),
-        };
+        }));
 
-        let materialized = materialize_create_request(&blobs, &request, "gpt-5.1")
+        let materialized = materialize_create_request(&blobs, &request)
             .await
             .expect("materialize");
         let value = serde_json::to_value(materialized).expect("json");
@@ -1151,7 +1192,7 @@ mod tests {
                 "stream": true,
                 "service_tier": "flex",
                 "truncation": "auto",
-                "context_management": { "strategy": "none" },
+                "context_management": [{ "type": "compaction", "compact_threshold": 120000 }],
                 "max_tool_calls": 4
             })
         );
@@ -1176,33 +1217,22 @@ mod tests {
                 .expect("store native tool");
             assert_eq!(stored_ref, document.blob_ref);
         }
-        let request = OpenAiResponsesRequest {
-            input_context: ContextSnapshot {
-                api_kind: ProviderApiKind::OpenAiResponses,
-                context_revision: 0,
-                entries: Vec::new(),
-                token_estimate: None,
-            },
-            previous_response_id: None,
-            tools: vec![bundle.spec],
-            tool_choice: Some(OpenAiResponsesToolChoice::Auto),
-            reasoning: None,
-            text: None,
-            include: vec![engine::OPENAI_RESPONSES_WEB_SEARCH_SOURCES_INCLUDE.to_string()],
-            max_output_tokens: Some(1024),
-            max_tool_calls: None,
-            temperature: None,
-            top_p: None,
-            metadata: BTreeMap::new(),
-            parallel_tool_calls: None,
+        let mut request = intent_request(Vec::new());
+        request.tools = vec![bundle.spec];
+        request.tool_choice = Some(ToolChoice {
+            mode: ToolChoiceMode::Auto,
+            disable_parallel_tool_use: None,
+        });
+        request.output_limit = Some(1024);
+        request.params = Some(openai_params(&OpenAiResponsesParams {
+            include: vec![
+                crate::params::OPENAI_RESPONSES_WEB_SEARCH_SOURCES_INCLUDE.to_string(),
+            ],
             store: Some(false),
-            stream: None,
-            truncation: None,
-            context_management: None,
-            extra: BTreeMap::new(),
-        };
+            ..OpenAiResponsesParams::default()
+        }));
 
-        let materialized = materialize_create_request(&blobs, &request, "gpt-5.1")
+        let materialized = materialize_create_request(&blobs, &request)
             .await
             .expect("materialize");
         let value = serde_json::to_value(materialized).expect("json");
@@ -1221,7 +1251,7 @@ mod tests {
         assert_eq!(value["tool_choice"], json!("auto"));
         assert_eq!(
             value["include"],
-            json!([engine::OPENAI_RESPONSES_WEB_SEARCH_SOURCES_INCLUDE])
+            json!([crate::params::OPENAI_RESPONSES_WEB_SEARCH_SOURCES_INCLUDE])
         );
     }
 
@@ -1229,46 +1259,28 @@ mod tests {
     async fn materialize_create_request_lowers_no_auth_remote_mcp_tool() {
         let blobs = InMemoryBlobStore::new();
         let description_ref = text_blob(&blobs, "Echo test MCP server").await;
-        let request = OpenAiResponsesRequest {
-            input_context: ContextSnapshot {
-                api_kind: ProviderApiKind::OpenAiResponses,
-                context_revision: 0,
-                entries: Vec::new(),
-                token_estimate: None,
-            },
-            previous_response_id: None,
-            tools: vec![ToolSpec {
-                name: ToolName::new("mcp_echo"),
-                kind: ToolKind::RemoteMcp(RemoteMcpToolSpec {
-                    server_label: "echo".to_string(),
-                    server_url: "https://echo.example.com/mcp".to_string(),
-                    description_ref: Some(description_ref),
-                    allowed_tools: Some(vec!["echo".to_string()]),
-                    approval: RemoteMcpApprovalPolicy::Never,
-                    defer_loading: Some(true),
-                    auth_ref: None,
-                }),
-                parallelism: ToolParallelism::ParallelSafe,
-                target_requirement: Default::default(),
-            }],
-            tool_choice: Some(OpenAiResponsesToolChoice::Auto),
-            reasoning: None,
-            text: None,
-            include: Vec::new(),
-            max_output_tokens: Some(1024),
-            max_tool_calls: None,
-            temperature: None,
-            top_p: None,
-            metadata: BTreeMap::new(),
-            parallel_tool_calls: None,
-            store: Some(false),
-            stream: None,
-            truncation: None,
-            context_management: None,
-            extra: BTreeMap::new(),
-        };
+        let mut request = intent_request(Vec::new());
+        request.tools = vec![ToolSpec {
+            name: ToolName::new("mcp_echo"),
+            kind: ToolKind::RemoteMcp(RemoteMcpToolSpec {
+                server_label: "echo".to_string(),
+                server_url: "https://echo.example.com/mcp".to_string(),
+                description_ref: Some(description_ref),
+                allowed_tools: Some(vec!["echo".to_string()]),
+                approval: RemoteMcpApprovalPolicy::Never,
+                defer_loading: Some(true),
+                auth_ref: None,
+            }),
+            parallelism: ToolParallelism::ParallelSafe,
+            target_requirement: Default::default(),
+        }];
+        request.tool_choice = Some(ToolChoice {
+            mode: ToolChoiceMode::Auto,
+            disable_parallel_tool_use: None,
+        });
+        request.output_limit = Some(1024);
 
-        let materialized = materialize_create_request(&blobs, &request, "gpt-5.1")
+        let materialized = materialize_create_request(&blobs, &request)
             .await
             .expect("materialize");
         let value = serde_json::to_value(materialized).expect("json");
@@ -1291,49 +1303,27 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn materialize_create_request_rejects_remote_mcp_auth_ref_until_broker_exists() {
         let blobs = InMemoryBlobStore::new();
-        let request = OpenAiResponsesRequest {
-            input_context: ContextSnapshot {
-                api_kind: ProviderApiKind::OpenAiResponses,
-                context_revision: 0,
-                entries: Vec::new(),
-                token_estimate: None,
-            },
-            previous_response_id: None,
-            tools: vec![ToolSpec {
-                name: ToolName::new("mcp_echo"),
-                kind: ToolKind::RemoteMcp(RemoteMcpToolSpec {
-                    server_label: "echo".to_string(),
-                    server_url: "https://echo.example.com/mcp".to_string(),
-                    description_ref: None,
-                    allowed_tools: None,
-                    approval: RemoteMcpApprovalPolicy::Never,
-                    defer_loading: None,
-                    auth_ref: Some(engine::SecretRef {
-                        namespace: "auth_grant".to_string(),
-                        id: "grant_123".to_string(),
-                    }),
+        let mut request = intent_request(Vec::new());
+        request.tools = vec![ToolSpec {
+            name: ToolName::new("mcp_echo"),
+            kind: ToolKind::RemoteMcp(RemoteMcpToolSpec {
+                server_label: "echo".to_string(),
+                server_url: "https://echo.example.com/mcp".to_string(),
+                description_ref: None,
+                allowed_tools: None,
+                approval: RemoteMcpApprovalPolicy::Never,
+                defer_loading: None,
+                auth_ref: Some(engine::SecretRef {
+                    namespace: "auth_grant".to_string(),
+                    id: "grant_123".to_string(),
                 }),
-                parallelism: ToolParallelism::ParallelSafe,
-                target_requirement: Default::default(),
-            }],
-            tool_choice: None,
-            reasoning: None,
-            text: None,
-            include: Vec::new(),
-            max_output_tokens: Some(1024),
-            max_tool_calls: None,
-            temperature: None,
-            top_p: None,
-            metadata: BTreeMap::new(),
-            parallel_tool_calls: None,
-            store: Some(false),
-            stream: None,
-            truncation: None,
-            context_management: None,
-            extra: BTreeMap::new(),
-        };
+            }),
+            parallelism: ToolParallelism::ParallelSafe,
+            target_requirement: Default::default(),
+        }];
+        request.output_limit = Some(1024);
 
-        let error = materialize_create_request(&blobs, &request, "gpt-5.1")
+        let error = materialize_create_request(&blobs, &request)
             .await
             .expect_err("auth ref should be rejected");
 
@@ -1441,33 +1431,9 @@ mod tests {
             provider_item_id: None,
             token_estimate: None,
         };
-        let request = OpenAiResponsesRequest {
-            input_context: ContextSnapshot {
-                api_kind: ProviderApiKind::OpenAiResponses,
-                context_revision: 0,
-                entries: vec![catalog_item, user_item, activation_item],
-                token_estimate: None,
-            },
-            previous_response_id: None,
-            tools: Vec::new(),
-            tool_choice: None,
-            reasoning: None,
-            text: None,
-            include: Vec::new(),
-            max_output_tokens: None,
-            max_tool_calls: None,
-            temperature: None,
-            top_p: None,
-            metadata: BTreeMap::new(),
-            parallel_tool_calls: None,
-            store: None,
-            stream: None,
-            truncation: None,
-            context_management: None,
-            extra: BTreeMap::new(),
-        };
+        let request = intent_request(vec![catalog_item, user_item, activation_item]);
 
-        let materialized = materialize_create_request(&blobs, &request, "gpt-5.1")
+        let materialized = materialize_create_request(&blobs, &request)
             .await
             .expect("materialize");
         let value = serde_json::to_value(materialized).expect("json");
@@ -1559,34 +1525,10 @@ mod tests {
             session_id: SessionId::new("session-a"),
             run_id: RunId::new(1),
             turn_id: TurnId::new(1),
-            request: LlmRequest {
-                model: model(),
-                request_fingerprint: "sha256:test".to_string(),
-                kind: LlmRequestKind::OpenAiResponses(OpenAiResponsesRequest {
-                    input_context: ContextSnapshot {
-                        api_kind: ProviderApiKind::OpenAiResponses,
-                        context_revision: 0,
-                        entries: vec![context],
-                        token_estimate: None,
-                    },
-                    previous_response_id: None,
-                    tools: Vec::new(),
-                    tool_choice: None,
-                    reasoning: None,
-                    text: None,
-                    include: Vec::new(),
-                    max_output_tokens: Some(256),
-                    max_tool_calls: None,
-                    temperature: None,
-                    top_p: None,
-                    metadata: BTreeMap::new(),
-                    parallel_tool_calls: None,
-                    store: None,
-                    stream: None,
-                    truncation: None,
-                    context_management: None,
-                    extra: BTreeMap::new(),
-                }),
+            request: {
+                let mut request = intent_request(vec![context]);
+                request.output_limit = Some(256);
+                request
             },
         };
 
@@ -1631,32 +1573,9 @@ mod tests {
             .enumerate()
             .map(|(index, item)| retained_context_entry(index, item))
             .collect::<Vec<_>>();
-        let followup_request = OpenAiResponsesRequest {
-            input_context: ContextSnapshot {
-                api_kind: ProviderApiKind::OpenAiResponses,
-                context_revision: 0,
-                entries: retained_entries,
-                token_estimate: None,
-            },
-            previous_response_id: None,
-            tools: Vec::new(),
-            tool_choice: None,
-            reasoning: None,
-            text: None,
-            include: Vec::new(),
-            max_output_tokens: Some(256),
-            max_tool_calls: None,
-            temperature: None,
-            top_p: None,
-            metadata: BTreeMap::new(),
-            parallel_tool_calls: None,
-            store: None,
-            stream: None,
-            truncation: None,
-            context_management: None,
-            extra: BTreeMap::new(),
-        };
-        let followup = materialize_create_request(blobs.as_ref(), &followup_request, "gpt-5.1")
+        let mut followup_request = intent_request(retained_entries);
+        followup_request.output_limit = Some(256);
+        let followup = materialize_create_request(blobs.as_ref(), &followup_request)
             .await
             .expect("followup request");
         let followup_json = serde_json::to_value(followup).expect("followup json");
@@ -1730,19 +1649,14 @@ mod tests {
             request: ContextCompactionTask {
                 model: model(),
                 request_fingerprint: "sha256:compact".to_string(),
-                kind: ContextCompactionRequestKind::OpenAiResponses(
-                    OpenAiResponsesCompactionRequest {
-                        input_context: ContextSnapshot {
-                            api_kind: ProviderApiKind::OpenAiResponses,
-                            context_revision: 7,
-                            entries: vec![context],
-                            token_estimate: None,
-                        },
-                        target_tokens: Some(128),
-                        store: Some(false),
-                        extra: BTreeMap::from([("service_tier".to_string(), json!("flex"))]),
-                    },
-                ),
+                context: ContextSnapshot {
+                    api_kind: ProviderApiKind::OpenAiResponses,
+                    context_revision: 7,
+                    entries: vec![context],
+                    token_estimate: None,
+                },
+                target_tokens: Some(128),
+                params: None,
             },
         };
 
@@ -1772,8 +1686,7 @@ mod tests {
             serde_json::to_value(&seen[0]).expect("request json"),
             json!({
                 "model": "gpt-5.1",
-                "input": [{ "role": "user", "content": "Summarize the prior work." }],
-                "service_tier": "flex"
+                "input": [{ "role": "user", "content": "Summarize the prior work." }]
             })
         );
     }
@@ -1810,35 +1723,7 @@ mod tests {
             session_id: SessionId::new("session-a"),
             run_id: RunId::new(1),
             turn_id: TurnId::new(1),
-            request: LlmRequest {
-                model: model(),
-                request_fingerprint: "sha256:test".to_string(),
-                kind: LlmRequestKind::OpenAiResponses(OpenAiResponsesRequest {
-                    input_context: ContextSnapshot {
-                        api_kind: ProviderApiKind::OpenAiResponses,
-                        context_revision: 0,
-                        entries: Vec::new(),
-                        token_estimate: None,
-                    },
-                    previous_response_id: None,
-                    tools: Vec::new(),
-                    tool_choice: None,
-                    reasoning: None,
-                    text: None,
-                    include: Vec::new(),
-                    max_output_tokens: None,
-                    max_tool_calls: None,
-                    temperature: None,
-                    top_p: None,
-                    metadata: BTreeMap::new(),
-                    parallel_tool_calls: None,
-                    store: None,
-                    stream: None,
-                    truncation: None,
-                    context_management: None,
-                    extra: BTreeMap::new(),
-                }),
-            },
+            request: intent_request(Vec::new()),
         };
 
         let result = result_from_response(&blobs, &request, &response)
@@ -1856,32 +1741,8 @@ mod tests {
             .enumerate()
             .map(|(index, item)| retained_context_entry(index, item))
             .collect::<Vec<_>>();
-        let followup_request = OpenAiResponsesRequest {
-            input_context: ContextSnapshot {
-                api_kind: ProviderApiKind::OpenAiResponses,
-                context_revision: 0,
-                entries: retained_entries,
-                token_estimate: None,
-            },
-            previous_response_id: None,
-            tools: Vec::new(),
-            tool_choice: None,
-            reasoning: None,
-            text: None,
-            include: Vec::new(),
-            max_output_tokens: None,
-            max_tool_calls: None,
-            temperature: None,
-            top_p: None,
-            metadata: BTreeMap::new(),
-            parallel_tool_calls: None,
-            store: None,
-            stream: None,
-            truncation: None,
-            context_management: None,
-            extra: BTreeMap::new(),
-        };
-        let followup = materialize_create_request(&blobs, &followup_request, "gpt-5.1")
+        let followup_request = intent_request(retained_entries);
+        let followup = materialize_create_request(&blobs, &followup_request)
             .await
             .expect("followup request");
         let followup_json = serde_json::to_value(followup).expect("followup json");
@@ -1913,35 +1774,7 @@ mod tests {
             session_id: SessionId::new("session-a"),
             run_id: RunId::new(1),
             turn_id: TurnId::new(1),
-            request: LlmRequest {
-                model: model(),
-                request_fingerprint: "sha256:test".to_string(),
-                kind: LlmRequestKind::OpenAiResponses(OpenAiResponsesRequest {
-                    input_context: ContextSnapshot {
-                        api_kind: ProviderApiKind::OpenAiResponses,
-                        context_revision: 0,
-                        entries: Vec::new(),
-                        token_estimate: None,
-                    },
-                    previous_response_id: None,
-                    tools: Vec::new(),
-                    tool_choice: None,
-                    reasoning: None,
-                    text: None,
-                    include: Vec::new(),
-                    max_output_tokens: None,
-                    max_tool_calls: None,
-                    temperature: None,
-                    top_p: None,
-                    metadata: BTreeMap::new(),
-                    parallel_tool_calls: None,
-                    store: None,
-                    stream: None,
-                    truncation: None,
-                    context_management: None,
-                    extra: BTreeMap::new(),
-                }),
-            },
+            request: intent_request(Vec::new()),
         };
 
         let result = result_from_response(&blobs, &request, &response)
@@ -1994,35 +1827,7 @@ mod tests {
             session_id: SessionId::new("session-a"),
             run_id: RunId::new(1),
             turn_id: TurnId::new(1),
-            request: LlmRequest {
-                model: model(),
-                request_fingerprint: "sha256:test".to_string(),
-                kind: LlmRequestKind::OpenAiResponses(OpenAiResponsesRequest {
-                    input_context: ContextSnapshot {
-                        api_kind: ProviderApiKind::OpenAiResponses,
-                        context_revision: 0,
-                        entries: Vec::new(),
-                        token_estimate: None,
-                    },
-                    previous_response_id: None,
-                    tools: Vec::new(),
-                    tool_choice: None,
-                    reasoning: None,
-                    text: None,
-                    include: Vec::new(),
-                    max_output_tokens: None,
-                    max_tool_calls: None,
-                    temperature: None,
-                    top_p: None,
-                    metadata: BTreeMap::new(),
-                    parallel_tool_calls: None,
-                    store: None,
-                    stream: None,
-                    truncation: None,
-                    context_management: None,
-                    extra: BTreeMap::new(),
-                }),
-            },
+            request: intent_request(Vec::new()),
         };
 
         let result = result_from_response(&blobs, &request, &response)
@@ -2088,35 +1893,7 @@ mod tests {
             session_id: SessionId::new("session-a"),
             run_id: RunId::new(1),
             turn_id: TurnId::new(1),
-            request: LlmRequest {
-                model: model(),
-                request_fingerprint: "sha256:test".to_string(),
-                kind: LlmRequestKind::OpenAiResponses(OpenAiResponsesRequest {
-                    input_context: ContextSnapshot {
-                        api_kind: ProviderApiKind::OpenAiResponses,
-                        context_revision: 0,
-                        entries: Vec::new(),
-                        token_estimate: None,
-                    },
-                    previous_response_id: None,
-                    tools: Vec::new(),
-                    tool_choice: None,
-                    reasoning: None,
-                    text: None,
-                    include: Vec::new(),
-                    max_output_tokens: None,
-                    max_tool_calls: None,
-                    temperature: None,
-                    top_p: None,
-                    metadata: BTreeMap::new(),
-                    parallel_tool_calls: None,
-                    store: None,
-                    stream: None,
-                    truncation: None,
-                    context_management: None,
-                    extra: BTreeMap::new(),
-                }),
-            },
+            request: intent_request(Vec::new()),
         };
 
         let result = result_from_response(&blobs, &request, &response)
@@ -2174,35 +1951,7 @@ mod tests {
             session_id: SessionId::new("session-a"),
             run_id: RunId::new(1),
             turn_id: TurnId::new(1),
-            request: LlmRequest {
-                model: model(),
-                request_fingerprint: "sha256:test".to_string(),
-                kind: LlmRequestKind::OpenAiResponses(OpenAiResponsesRequest {
-                    input_context: ContextSnapshot {
-                        api_kind: ProviderApiKind::OpenAiResponses,
-                        context_revision: 0,
-                        entries: Vec::new(),
-                        token_estimate: None,
-                    },
-                    previous_response_id: None,
-                    tools: Vec::new(),
-                    tool_choice: None,
-                    reasoning: None,
-                    text: None,
-                    include: Vec::new(),
-                    max_output_tokens: None,
-                    max_tool_calls: None,
-                    temperature: None,
-                    top_p: None,
-                    metadata: BTreeMap::new(),
-                    parallel_tool_calls: None,
-                    store: None,
-                    stream: None,
-                    truncation: None,
-                    context_management: None,
-                    extra: BTreeMap::new(),
-                }),
-            },
+            request: intent_request(Vec::new()),
         };
 
         let result = result_from_response(&blobs, &request, &response)

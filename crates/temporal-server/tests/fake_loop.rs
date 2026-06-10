@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use engine::{
     AgentHandle, BlobRef, ContextEntryInput, ContextEntryKind, ContextMessageRole,
-    CoreAdmitCommand, CoreAgentCodec, CoreAgentCommand, FunctionToolSpec, ModelProviderOptions,
+    CoreAdmitCommand, CoreAgentCodec, CoreAgentCommand, FunctionToolSpec,
     ModelSelection, ProviderApiKind, SessionId, SubmissionId, ToolChoice, ToolChoiceMode, ToolKind,
     ToolName, ToolParallelism, ToolSpec, ToolTargetRequirement,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
@@ -17,7 +17,6 @@ fn model() -> ModelSelection {
         api_kind: ProviderApiKind::OpenAiResponses,
         provider_id: "openai".to_owned(),
         model: "gpt-test".to_owned(),
-        options: ModelProviderOptions::None,
     }
 }
 

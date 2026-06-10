@@ -24,9 +24,9 @@ use engine::{
     ContextEntryId, ContextEntryInput, ContextEntryKind, ContextEntrySource, ContextEvent,
     ContextMessageRole, ContextRemovalReason, ContextRewriteReason, CoreAgentCodec, CoreAgentEntry,
     CoreAgentEventKind, CoreAgentJoins, CoreAgentLifecycleEvent, CoreAgentState, CoreAgentStatus,
-    CoreApplyEvent, EventSeq, LlmGenerationStatus, ModelProviderOptions, ModelSelection,
-    OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND, ObservedToolCall, ProviderApiKind,
-    ProviderRequestDefaults, RunEvent, RunFailure, RunId, RunStatus, SessionConfig, SessionId,
+    CoreApplyEvent, EventSeq, LlmGenerationStatus, ModelSelection,
+    OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND, ObservedToolCall, ProviderApiKind, ProviderParams,
+    RunEvent, RunFailure, RunId, RunStatus, SessionConfig, SessionId,
     SteeringId, ToolBatchId, ToolCallStatus, ToolChoice, ToolChoiceMode, ToolConfigEvent,
     ToolEvent, ToolKind, ToolParallelism, ToolSpec, ToolTargetRequirement, TurnEvent, TurnId,
     storage::{
@@ -242,7 +242,7 @@ impl<'a> CoreAgentProjector<'a> {
             model: model_to_api(&config.model),
             generation: GenerationConfig {
                 max_output_tokens: config.turn.max_output_tokens,
-                reasoning_effort: reasoning_effort_to_api(&config.turn.provider_request_defaults),
+                reasoning_effort: reasoning_effort_to_api(config.turn.provider_params.as_ref()),
                 tool_choice: config.turn.tool_choice.as_ref().map(tool_choice_to_api),
             },
             context: ContextConfigInput {
@@ -1005,20 +1005,21 @@ pub fn model_to_api(model: &ModelSelection) -> ModelConfig {
     }
 }
 
-fn reasoning_effort_to_api(defaults: &ProviderRequestDefaults) -> Option<ReasoningEffort> {
-    match defaults {
-        ProviderRequestDefaults::OpenAiResponses(defaults) => {
-            match defaults
-                .reasoning
-                .as_ref()
-                .and_then(|reasoning| reasoning.effort.as_deref().map(str::to_ascii_lowercase))
-            {
-                Some(value) if value == "low" => Some(ReasoningEffort::Low),
-                Some(value) if value == "medium" => Some(ReasoningEffort::Medium),
-                Some(value) if value == "high" => Some(ReasoningEffort::High),
-                Some(_) | None => None,
-            }
-        }
+fn reasoning_effort_to_api(params: Option<&ProviderParams>) -> Option<ReasoningEffort> {
+    let params = params?;
+    if params.api_kind != ProviderApiKind::OpenAiResponses {
+        return None;
+    }
+    let effort = params
+        .body
+        .get("reasoning")?
+        .get("effort")?
+        .as_str()?
+        .to_ascii_lowercase();
+    match effort.as_str() {
+        "low" => Some(ReasoningEffort::Low),
+        "medium" => Some(ReasoningEffort::Medium),
+        "high" => Some(ReasoningEffort::High),
         _ => None,
     }
 }
@@ -1171,7 +1172,6 @@ pub fn session_config_for_api_model(
         api_kind: api_kind_from_str(&model.api_kind)?,
         provider_id: model.provider_id,
         model: model.model,
-        options: ModelProviderOptions::None,
     };
     config
         .validate_provider_compatibility()

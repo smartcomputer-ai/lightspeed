@@ -2,8 +2,8 @@ use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
 use engine::{
     AgentHandle, ContextConfig, ContextEntryInput, ContextEntryKind, ContextMessageRole,
-    CoreAgentCommand, CoreAgentEventKind, ModelProviderOptions, ModelSelection,
-    OpenAiResponsesRequestDefaults, ProviderApiKind, ProviderRequestDefaults,
+    CoreAgentCommand, CoreAgentEventKind, ModelSelection,
+    ProviderApiKind,
     RemoteMcpApprovalPolicy, RemoteMcpToolSpec, RunConfig, RunStatus, SessionConfig, SessionId,
     ToolKind, ToolName, ToolParallelism, ToolSpec, ToolTargetRequirement,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
@@ -110,7 +110,6 @@ async fn openai_responses_live_core_session_uses_no_auth_remote_mcp_echo() {
         api_kind: ProviderApiKind::OpenAiResponses,
         provider_id: "openai".to_string(),
         model: live_model(),
-        options: ModelProviderOptions::None,
     };
     let llm = Arc::new(LlmRuntime::new(
         LlmAdapterRegistry::new().with_generation_adapter(
@@ -237,12 +236,10 @@ fn session_config(model: ModelSelection) -> SessionConfig {
         turn: engine::TurnConfig {
             max_output_tokens: Some(1024),
             tool_choice: None,
-            provider_request_defaults: ProviderRequestDefaults::OpenAiResponses(
-                OpenAiResponsesRequestDefaults {
-                    store: Some(false),
-                    ..OpenAiResponsesRequestDefaults::default()
-                },
-            ),
+            provider_params: Some(support::openai_params(&llm_runtime::OpenAiResponsesParams {
+                store: Some(false),
+                ..llm_runtime::OpenAiResponsesParams::default()
+            })),
         },
         context: ContextConfig { compaction: None },
         tools: Default::default(),
@@ -255,7 +252,7 @@ fn run_config() -> RunConfig {
         max_tool_rounds: Some(1),
         model_override: None,
         max_output_tokens: None,
-        provider_request_defaults: None,
+        provider_params: None,
         tool_choice: None,
     }
 }

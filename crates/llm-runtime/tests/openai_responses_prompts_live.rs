@@ -7,8 +7,8 @@ use std::{
 use async_trait::async_trait;
 use engine::{
     AgentHandle, ContextConfig, ContextEntryInput, ContextEntryKind, ContextMessageRole,
-    CoreAgentCommand, CoreAgentEventKind, ModelProviderOptions, ModelSelection,
-    OpenAiResponsesRequestDefaults, ProviderApiKind, ProviderRequestDefaults, RunConfig, RunStatus,
+    CoreAgentCommand, CoreAgentEventKind, ModelSelection,
+    ProviderApiKind, RunConfig, RunStatus,
     SessionConfig, SessionId,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
 };
@@ -283,7 +283,6 @@ async fn openai_responses_live_uses_vfs_prompt_instructions() {
         api_kind: ProviderApiKind::OpenAiResponses,
         provider_id: "openai".to_string(),
         model: live_model(),
-        options: ModelProviderOptions::None,
     };
     let llm = Arc::new(LlmRuntime::new(
         LlmAdapterRegistry::new().with_generation_adapter(
@@ -383,12 +382,10 @@ fn session_config(model: ModelSelection) -> SessionConfig {
         turn: engine::TurnConfig {
             max_output_tokens: Some(1024),
             tool_choice: None,
-            provider_request_defaults: ProviderRequestDefaults::OpenAiResponses(
-                OpenAiResponsesRequestDefaults {
-                    store: Some(false),
-                    ..OpenAiResponsesRequestDefaults::default()
-                },
-            ),
+            provider_params: Some(support::openai_params(&llm_runtime::OpenAiResponsesParams {
+                store: Some(false),
+                ..llm_runtime::OpenAiResponsesParams::default()
+            })),
         },
         context: ContextConfig { compaction: None },
         tools: Default::default(),
@@ -401,7 +398,7 @@ fn run_config() -> RunConfig {
         max_tool_rounds: None,
         model_override: None,
         max_output_tokens: None,
-        provider_request_defaults: None,
+        provider_params: None,
         tool_choice: None,
     }
 }

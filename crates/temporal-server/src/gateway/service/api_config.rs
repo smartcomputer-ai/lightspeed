@@ -26,8 +26,7 @@ impl GatewayAgentApi {
             let previous_api_kind = config.model.api_kind.clone();
             config.model = model_selection_from_api(model)?;
             if config.model.api_kind != previous_api_kind {
-                config.turn.provider_request_defaults =
-                    default_provider_request_defaults(&config.model.api_kind);
+                config.turn.provider_params = None;
             }
         }
         apply_generation_config(config, api_config.generation)?;
@@ -79,11 +78,11 @@ pub(super) fn apply_generation_config(
         config.turn.max_output_tokens = Some(max_output_tokens);
     }
     if let Some(effort) = generation.reasoning_effort {
-        config.turn.provider_request_defaults = provider_defaults_with_reasoning(
+        config.turn.provider_params = Some(provider_params_with_reasoning(
             &config.model.api_kind,
-            &config.turn.provider_request_defaults,
+            config.turn.provider_params.as_ref(),
             effort,
-        )?;
+        )?);
     }
     if let Some(tool_choice) = generation.tool_choice {
         config.turn.tool_choice = Some(tool_choice_from_api(tool_choice)?);
@@ -154,9 +153,9 @@ pub(super) fn apply_run_start_config(
             run_config.max_output_tokens = Some(max_output_tokens);
         }
         if let Some(effort) = generation.reasoning_effort {
-            run_config.provider_request_defaults = Some(provider_defaults_with_reasoning(
+            run_config.provider_params = Some(provider_params_with_reasoning(
                 &effective_api_kind,
-                &session_config.turn.provider_request_defaults,
+                session_config.turn.provider_params.as_ref(),
                 effort,
             )?);
         }
@@ -199,19 +198,20 @@ pub(super) fn turn_config_patch_from_api(
     let Some(patch) = patch else {
         return Ok(TurnConfigPatch::default());
     };
-    let provider_request_defaults = patch
+    let provider_params = patch
         .reasoning_effort
         .map(|effort| {
-            provider_defaults_with_reasoning(
+            provider_params_with_reasoning(
                 &current.model.api_kind,
-                &current.turn.provider_request_defaults,
+                current.turn.provider_params.as_ref(),
                 effort,
             )
+            .map(OptionalConfigPatch::Set)
         })
         .transpose()?;
     Ok(TurnConfigPatch {
         max_output_tokens: patch.max_output_tokens.map(optional_patch_from_api),
-        provider_request_defaults,
+        provider_params,
         tool_choice: patch
             .tool_choice
             .map(tool_choice_patch_from_api)
@@ -322,56 +322,36 @@ pub(super) fn model_selection_from_api(
         api_kind: api_kind_from_str(&model.api_kind)?,
         provider_id: model.provider_id,
         model: model.model,
-        options: ModelProviderOptions::None,
     })
 }
 
-pub(super) fn default_provider_request_defaults(
+pub(super) fn provider_params_with_reasoning(
     api_kind: &ProviderApiKind,
-) -> ProviderRequestDefaults {
-    match api_kind {
-        ProviderApiKind::OpenAiResponses => {
-            ProviderRequestDefaults::OpenAiResponses(OpenAiResponsesRequestDefaults::default())
-        }
-        ProviderApiKind::AnthropicMessages => {
-            ProviderRequestDefaults::AnthropicMessages(AnthropicMessagesRequestDefaults::default())
-        }
-        ProviderApiKind::OpenAiCompletions => {
-            ProviderRequestDefaults::OpenAiCompletions(OpenAiCompletionsRequestDefaults::default())
-        }
-    }
-}
-
-pub(super) fn provider_defaults_with_reasoning(
-    api_kind: &ProviderApiKind,
-    base: &ProviderRequestDefaults,
+    base: Option<&ProviderParams>,
     effort: ReasoningEffort,
-) -> Result<ProviderRequestDefaults, AgentApiError> {
+) -> Result<ProviderParams, AgentApiError> {
     if api_kind != &ProviderApiKind::OpenAiResponses {
         return Err(AgentApiError::invalid_request(
             "reasoning effort is only supported for openai:responses",
         ));
     }
-    let mut defaults = match base {
-        ProviderRequestDefaults::OpenAiResponses(defaults) => defaults.clone(),
-        ProviderRequestDefaults::None => OpenAiResponsesRequestDefaults::default(),
-        other => {
-            return Err(AgentApiError::invalid_request(format!(
-                "request defaults {other:?} do not match openai:responses"
-            )));
-        }
-    };
-    defaults.reasoning = match effort {
+    let mut params = llm_runtime::params::openai_responses_params(base)
+        .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
+    params.reasoning = match effort {
         ReasoningEffort::None => None,
         ReasoningEffort::Low => Some(openai_reasoning("low")),
         ReasoningEffort::Medium => Some(openai_reasoning("medium")),
         ReasoningEffort::High => Some(openai_reasoning("high")),
     };
-    Ok(ProviderRequestDefaults::OpenAiResponses(defaults))
+    Ok(ProviderParams::new(
+        ProviderApiKind::OpenAiResponses,
+        serde_json::to_value(&params)
+            .map_err(|error| AgentApiError::invalid_request(error.to_string()))?,
+    ))
 }
 
-pub(super) fn openai_reasoning(effort: &str) -> OpenAiReasoningConfig {
-    OpenAiReasoningConfig {
+pub(super) fn openai_reasoning(effort: &str) -> llm_runtime::OpenAiReasoningConfig {
+    llm_runtime::OpenAiReasoningConfig {
         effort: Some(effort.to_owned()),
         summary: Some("auto".to_owned()),
         extra: BTreeMap::new(),

@@ -196,7 +196,7 @@ fn standard_toolset_patch_preserves_remote_mcp_links() {
         )]),
         documents: Vec::new(),
         catalog: tools::runtime::ToolCatalog::new(),
-        provider_request_defaults_patch: tools::toolset::ProviderRequestDefaultsPatch::default(),
+        provider_params_patch: tools::toolset::ProviderParamsPatch::default(),
     };
 
     let patch = super::vfs_api::standard_toolset_patch(&active, toolset);
@@ -350,13 +350,10 @@ fn session_start_config_maps_reasoning_and_max_output_tokens() {
     .expect("apply config");
 
     assert_eq!(config.turn.max_output_tokens, Some(2048));
-    let ProviderRequestDefaults::OpenAiResponses(defaults) = config.turn.provider_request_defaults
-    else {
-        panic!("expected OpenAI Responses defaults");
-    };
-    let reasoning = defaults.reasoning.expect("reasoning");
-    assert_eq!(reasoning.effort.as_deref(), Some("high"));
-    assert_eq!(reasoning.summary.as_deref(), Some("auto"));
+    let params = config.turn.provider_params.expect("provider params");
+    assert_eq!(params.api_kind, engine::ProviderApiKind::OpenAiResponses);
+    assert_eq!(params.body["reasoning"]["effort"], "high");
+    assert_eq!(params.body["reasoning"]["summary"], "auto");
 }
 
 #[test]
@@ -466,16 +463,9 @@ fn run_start_config_maps_model_and_generation_overrides() {
         Some("gpt-5.5-mini")
     );
     assert_eq!(run_config.max_output_tokens, Some(1024));
-    let ProviderRequestDefaults::OpenAiResponses(defaults) = run_config
-        .provider_request_defaults
-        .expect("request defaults")
-    else {
-        panic!("expected OpenAI Responses defaults");
-    };
-    assert_eq!(
-        defaults.reasoning.expect("reasoning").effort.as_deref(),
-        Some("medium")
-    );
+    let params = run_config.provider_params.expect("provider params");
+    assert_eq!(params.api_kind, engine::ProviderApiKind::OpenAiResponses);
+    assert_eq!(params.body["reasoning"]["effort"], "medium");
     assert!(run_config.tool_choice.is_none());
 }
 
@@ -554,7 +544,6 @@ fn web_search_rejects_explicit_enable_for_non_openai_responses() {
         api_kind: ProviderApiKind::AnthropicMessages,
         provider_id: "anthropic".to_owned(),
         model: "claude-test".to_owned(),
-        options: ModelProviderOptions::None,
     });
     apply_tool_config(
         &mut config.tools,
@@ -792,7 +781,6 @@ fn openai_model() -> ModelSelection {
         api_kind: ProviderApiKind::OpenAiResponses,
         provider_id: "openai".to_owned(),
         model: "gpt-5.5".to_owned(),
-        options: ModelProviderOptions::None,
     }
 }
 

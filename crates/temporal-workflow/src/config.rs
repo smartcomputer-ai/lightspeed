@@ -1,10 +1,6 @@
 use std::time::Duration;
 
-use engine::{
-    AnthropicMessagesRequestDefaults, ContextConfig, ModelSelection,
-    OpenAiCompletionsRequestDefaults, OpenAiResponsesRequestDefaults, ProviderApiKind,
-    ProviderRequestDefaults, RunConfig, SessionConfig, TurnConfig,
-};
+use engine::{ContextConfig, ModelSelection, RunConfig, SessionConfig, TurnConfig};
 use temporalio_sdk::ActivityOptions;
 
 pub const DEFAULT_TASK_QUEUE: &str = "forge-agent";
@@ -22,37 +18,22 @@ pub fn default_run_config() -> RunConfig {
         max_tool_rounds: None,
         model_override: None,
         max_output_tokens: None,
-        provider_request_defaults: None,
+        provider_params: None,
         tool_choice: None,
     }
 }
 
 pub fn default_session_config(model: ModelSelection) -> SessionConfig {
-    let provider_request_defaults = default_provider_request_defaults(&model.api_kind);
     SessionConfig {
         model,
         run: default_run_config(),
         turn: TurnConfig {
             max_output_tokens: None,
             tool_choice: None,
-            provider_request_defaults,
+            provider_params: None,
         },
         context: ContextConfig { compaction: None },
         tools: engine::ToolConfig::default(),
-    }
-}
-
-fn default_provider_request_defaults(api_kind: &ProviderApiKind) -> ProviderRequestDefaults {
-    match api_kind {
-        ProviderApiKind::OpenAiResponses => {
-            ProviderRequestDefaults::OpenAiResponses(OpenAiResponsesRequestDefaults::default())
-        }
-        ProviderApiKind::AnthropicMessages => {
-            ProviderRequestDefaults::AnthropicMessages(AnthropicMessagesRequestDefaults::default())
-        }
-        ProviderApiKind::OpenAiCompletions => {
-            ProviderRequestDefaults::OpenAiCompletions(OpenAiCompletionsRequestDefaults::default())
-        }
     }
 }
 

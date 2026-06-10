@@ -166,8 +166,8 @@ mod tests {
     use super::*;
     use crate::error::LlmAdapterError;
     use engine::{
-        ContextSnapshot, LlmRequest, LlmRequestKind, ModelProviderOptions, ModelSelection,
-        OpenAiResponsesRequest, RunId, SessionId, TurnId,
+        ContextSnapshot, LlmRequest, ModelSelection, RunId, SessionId,
+        TurnId,
     };
 
     struct FailingAdapter;
@@ -207,34 +207,20 @@ mod tests {
                     api_kind: ProviderApiKind::OpenAiResponses,
                     provider_id: "openai".to_owned(),
                     model: "gpt-test".to_owned(),
-                    options: ModelProviderOptions::None,
                 },
                 request_fingerprint: "sha256:test".to_owned(),
-                kind: LlmRequestKind::OpenAiResponses(OpenAiResponsesRequest {
-                    input_context: ContextSnapshot {
-                        api_kind: ProviderApiKind::OpenAiResponses,
-                        context_revision: 0,
-                        entries: Vec::new(),
-                        token_estimate: None,
-                    },
-                    previous_response_id: None,
-                    tools: Vec::new(),
-                    tool_choice: None,
-                    reasoning: None,
-                    text: None,
-                    include: Vec::new(),
-                    max_output_tokens: None,
-                    max_tool_calls: None,
-                    temperature: None,
-                    top_p: None,
-                    metadata: BTreeMap::new(),
-                    parallel_tool_calls: None,
-                    store: None,
-                    stream: None,
-                    truncation: None,
-                    context_management: None,
-                    extra: BTreeMap::new(),
-                }),
+                context: ContextSnapshot {
+                    api_kind: ProviderApiKind::OpenAiResponses,
+                    context_revision: 0,
+                    entries: Vec::new(),
+                    token_estimate: None,
+                },
+                tools: Vec::new(),
+                tool_choice: None,
+                output_limit: None,
+                provider_response_id: None,
+                compaction: None,
+                params: None,
             },
         }
     }

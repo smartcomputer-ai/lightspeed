@@ -1,6 +1,6 @@
 use std::{env, sync::Arc};
 
-use engine::{ModelProviderOptions, ModelSelection, ProviderApiKind};
+use engine::{ModelSelection, ProviderApiKind};
 use store_pg::{PgStore, PgStoreConfig, S3ObjectStoreConfig, build_s3_object_store};
 use temporal_workflow::DEFAULT_MODEL;
 use uuid::Uuid;
@@ -10,7 +10,6 @@ pub fn default_model_from_env() -> ModelSelection {
         api_kind: ProviderApiKind::OpenAiResponses,
         provider_id: env::var("FORGE_CHAT_PROVIDER").unwrap_or_else(|_| "openai".to_owned()),
         model: env::var("FORGE_CHAT_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_owned()),
-        options: ModelProviderOptions::None,
     }
 }
 

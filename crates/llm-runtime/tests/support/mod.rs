@@ -1,15 +1,24 @@
 use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
+use engine::{ProviderApiKind, ProviderParams};
 use llm_clients::{
     ApiResponse, LlmApiError,
     openai::responses::{
         Client, CompactResponse, CompactResponseRequest, CreateResponseRequest, Response,
     },
 };
-use llm_runtime::OpenAiResponsesApi;
+use llm_runtime::{OpenAiResponsesApi, OpenAiResponsesParams};
 
 const MAX_LIVE_ATTEMPTS: usize = 3;
+
+#[allow(dead_code)]
+pub fn openai_params(params: &OpenAiResponsesParams) -> ProviderParams {
+    ProviderParams::new(
+        ProviderApiKind::OpenAiResponses,
+        serde_json::to_value(params).expect("serialize params"),
+    )
+}
 
 pub fn retrying_openai_responses_client(client: Client) -> Arc<dyn OpenAiResponsesApi> {
     Arc::new(RetryingOpenAiResponsesClient { client })

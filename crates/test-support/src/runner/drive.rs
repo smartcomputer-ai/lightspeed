@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use engine::{
-    ApplyEvent, BlobRef, ContextCompactionRequest, ContextCompactionRequestKind,
-    ContextCompactionResult, ContextCompactionStatus, CoreAgentAction, CoreAgentCommand,
-    CoreAgentDrive, CoreAgentDriveError, CoreAgentIoError, CoreAgentLlm, CoreAgentState,
-    CoreAgentTools, CoreApplyEvent, EventSeq, LlmFinish, LlmGenerationFacts, LlmGenerationRequest,
+    ApplyEvent, BlobRef, ContextCompactionRequest, ContextCompactionResult,
+    ContextCompactionStatus, CoreAgentAction, CoreAgentCommand, CoreAgentDrive,
+    CoreAgentDriveError, CoreAgentIoError, CoreAgentLlm, CoreAgentState, CoreAgentTools,
+    CoreApplyEvent, EventSeq, LlmFinish, LlmGenerationFacts, LlmGenerationRequest,
     LlmGenerationResult, LlmGenerationStatus, SKILL_CATALOG_CONTEXT_KEY, SessionId, ToolCallStatus,
     ToolInvocationBatchRequest, ToolInvocationBatchResult, ToolInvocationResult,
     storage::{AppendSessionEvents, BlobStore, ReadSessionEvents},
@@ -159,6 +159,7 @@ impl SessionRunner {
 
     pub async fn drive_command(&self, request: DriveCommand) -> Result<DriveOutcome, RunnerError> {
         let max_steps = resolve_max_steps(request.max_steps)?;
+        engine::storage::ensure_engine_blobs(self.stores.blobs.as_ref()).await?;
         let mut drive = self.load_drive(&request.session_id).await?;
         let mut emitted_entries = Vec::new();
 
@@ -561,11 +562,7 @@ async fn failed_context_compaction_result_from_error(
 }
 
 fn compaction_request_context_revision(request: &ContextCompactionRequest) -> u64 {
-    match &request.request.kind {
-        ContextCompactionRequestKind::OpenAiResponses(openai_request) => {
-            openai_request.input_context.context_revision
-        }
-    }
+    request.request.context.context_revision
 }
 
 async fn failed_tool_batch_result(
@@ -624,8 +621,8 @@ mod tests {
         AgentHandle, CompactionPolicy, ContextCompactionRequest, ContextCompactionResult,
         ContextCompactionStatus, ContextConfig, ContextEntryInput, ContextEntryKey,
         ContextEntryKind, ContextMessageRole, CoreAgentCommand, CoreAgentEventKind,
-        FunctionToolSpec, LlmFinish, LlmRequestKind, ModelProviderOptions, ModelSelection,
-        ObservedToolCall, ProviderApiKind, ProviderRequestDefaults, RunConfig, RunStatus,
+        FunctionToolSpec, LlmFinish, ModelSelection, ObservedToolCall,
+        ProviderApiKind, RunConfig, RunStatus,
         SessionConfig, SessionId, ToolCallResult, ToolExecutionTarget, ToolKind, ToolName,
         ToolParallelism, ToolSpec, ToolTargetRequirement, TurnConfig, TurnEvent,
         storage::{
@@ -993,13 +990,12 @@ mod tests {
                 api_kind: ProviderApiKind::OpenAiResponses,
                 provider_id: "openai".to_owned(),
                 model: "gpt-test".to_owned(),
-                options: ModelProviderOptions::None,
             },
             run: run_config(),
             turn: TurnConfig {
                 max_output_tokens: None,
                 tool_choice: None,
-                provider_request_defaults: ProviderRequestDefaults::None,
+                provider_params: None,
             },
             context: ContextConfig { compaction: None },
             tools: Default::default(),
@@ -1021,7 +1017,7 @@ mod tests {
             max_tool_rounds: None,
             model_override: None,
             max_output_tokens: None,
-            provider_request_defaults: None,
+            provider_params: None,
             tool_choice: None,
         }
     }
@@ -1816,10 +1812,7 @@ mod tests {
     }
 
     fn request_context_entries(request: &LlmGenerationRequest) -> &[engine::ContextEntry] {
-        let LlmRequestKind::OpenAiResponses(openai) = &request.request.kind else {
-            panic!("expected OpenAI Responses request");
-        };
-        &openai.input_context.entries
+        &request.request.context.entries
     }
 
     fn is_prompt_instruction_entry(entry: &engine::ContextEntry) -> bool {

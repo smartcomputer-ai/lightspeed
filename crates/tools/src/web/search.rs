@@ -1,9 +1,8 @@
 //! OpenAI Responses hosted web search tool builder.
 
 use engine::{
-    OPENAI_RESPONSES_WEB_SEARCH_SOURCES_INCLUDE, OpenAiResponsesRequestDefaults, ProviderApiKind,
-    ProviderNativeToolExecution, ProviderNativeToolSpec, ToolKind, ToolName, ToolParallelism,
-    ToolSpec, ToolTargetRequirement,
+    ProviderApiKind, ProviderNativeToolExecution, ProviderNativeToolSpec, ToolKind, ToolName,
+    ToolParallelism, ToolSpec, ToolTargetRequirement,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -207,15 +206,14 @@ pub fn openai_responses_web_search_tool_bundle(
     }))
 }
 
-pub fn apply_openai_responses_web_search_defaults(
-    defaults: &mut OpenAiResponsesRequestDefaults,
+pub const OPENAI_RESPONSES_WEB_SEARCH_SOURCES_INCLUDE: &str = "web_search_call.action.sources";
+
+pub fn apply_openai_responses_web_search_includes(
+    include: &mut Vec<String>,
     config: &OpenAiResponsesWebSearchConfig,
 ) {
     if config.enabled() && config.include_sources {
-        ensure_include(
-            &mut defaults.include,
-            OPENAI_RESPONSES_WEB_SEARCH_SOURCES_INCLUDE,
-        );
+        ensure_include(include, OPENAI_RESPONSES_WEB_SEARCH_SOURCES_INCLUDE);
     }
 }
 
@@ -348,31 +346,26 @@ mod tests {
     }
 
     #[test]
-    fn include_sources_preserves_existing_defaults() {
-        let mut defaults = OpenAiResponsesRequestDefaults::default();
-        apply_openai_responses_web_search_defaults(
-            &mut defaults,
-            &OpenAiResponsesWebSearchConfig {
-                mode: WebSearchMode::Live,
-                include_sources: true,
-                ..OpenAiResponsesWebSearchConfig::default()
-            },
-        );
-        apply_openai_responses_web_search_defaults(
-            &mut defaults,
-            &OpenAiResponsesWebSearchConfig {
-                mode: WebSearchMode::Live,
-                include_sources: true,
-                ..OpenAiResponsesWebSearchConfig::default()
-            },
-        );
+    fn include_sources_appends_once_and_preserves_existing_includes() {
+        let mut include = vec!["reasoning.encrypted_content".to_owned()];
+        for _ in 0..2 {
+            apply_openai_responses_web_search_includes(
+                &mut include,
+                &OpenAiResponsesWebSearchConfig {
+                    mode: WebSearchMode::Live,
+                    include_sources: true,
+                    ..OpenAiResponsesWebSearchConfig::default()
+                },
+            );
+        }
 
-        assert!(defaults.include.iter().any(|value| {
-            value == engine::OPENAI_RESPONSES_REASONING_ENCRYPTED_CONTENT_INCLUDE
-        }));
+        assert!(
+            include
+                .iter()
+                .any(|value| value == "reasoning.encrypted_content")
+        );
         assert_eq!(
-            defaults
-                .include
+            include
                 .iter()
                 .filter(|value| *value == OPENAI_RESPONSES_WEB_SEARCH_SOURCES_INCLUDE)
                 .count(),

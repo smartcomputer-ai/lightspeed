@@ -2,9 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use engine::{
-    OpenAiResponsesRequestDefaults, ProviderApiKind, ProviderRequestDefaults, ToolName, ToolSpec,
-};
+use engine::{ProviderApiKind, ToolName, ToolSpec};
 
 use crate::{
     error::{ToolError, ToolResult},
@@ -12,7 +10,7 @@ use crate::{
     runtime::{ToolCatalog, ToolDocument, ToolExecutionMode, ToolSpecBundle, ToolTarget},
     web::fetch::{WebFetchToolConfig, web_fetch_tool_binding, web_fetch_tool_bundle},
     web::search::{
-        OpenAiResponsesWebSearchConfig, apply_openai_responses_web_search_defaults,
+        OpenAiResponsesWebSearchConfig, apply_openai_responses_web_search_includes,
         openai_responses_web_search_tool_bundle,
     },
 };
@@ -240,60 +238,37 @@ pub struct ToolsetEnvironment<'a> {
     pub target: &'a ToolTarget,
 }
 
+/// Provider request parameter additions required by the resolved toolset.
+///
+/// The toolset only reports the required values; applying them to a session's
+/// opaque provider params is owned by the runtime layer that knows the params
+/// schema.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct ProviderRequestDefaultsPatch {
+pub struct ProviderParamsPatch {
     openai_responses_include: Vec<String>,
 }
 
-impl ProviderRequestDefaultsPatch {
+impl ProviderParamsPatch {
     pub fn is_empty(&self) -> bool {
         self.openai_responses_include.is_empty()
     }
 
-    pub fn apply_to(&self, defaults: &mut ProviderRequestDefaults) -> ToolResult<()> {
-        if self.openai_responses_include.is_empty() {
-            return Ok(());
-        }
-
-        let defaults = match defaults {
-            ProviderRequestDefaults::OpenAiResponses(defaults) => defaults,
-            ProviderRequestDefaults::None => {
-                *defaults = ProviderRequestDefaults::OpenAiResponses(
-                    OpenAiResponsesRequestDefaults::default(),
-                );
-                let ProviderRequestDefaults::OpenAiResponses(defaults) = defaults else {
-                    unreachable!("just assigned OpenAI Responses defaults")
-                };
-                defaults
-            }
-            other => {
-                return Err(ToolError::InvalidRequest {
-                    message: format!(
-                        "OpenAI Responses tool defaults cannot apply to request defaults {other:?}"
-                    ),
-                });
-            }
-        };
-
-        for include in &self.openai_responses_include {
-            if !defaults.include.iter().any(|existing| existing == include) {
-                defaults.include.push(include.clone());
-            }
-        }
-        Ok(())
+    /// OpenAI Responses `include` values the toolset needs on generation
+    /// requests.
+    pub fn openai_responses_include(&self) -> &[String] {
+        &self.openai_responses_include
     }
 
     fn add_openai_web_search(&mut self, config: &OpenAiResponsesWebSearchConfig) {
-        let mut defaults = OpenAiResponsesRequestDefaults::default();
-        defaults.include.clear();
-        apply_openai_responses_web_search_defaults(&mut defaults, config);
-        for include in defaults.include {
+        let mut include = Vec::new();
+        apply_openai_responses_web_search_includes(&mut include, config);
+        for value in include {
             if !self
                 .openai_responses_include
                 .iter()
-                .any(|existing| existing == &include)
+                .any(|existing| existing == &value)
             {
-                self.openai_responses_include.push(include);
+                self.openai_responses_include.push(value);
             }
         }
     }
@@ -304,7 +279,7 @@ pub struct ResolvedToolset {
     pub tools: BTreeMap<ToolName, ToolSpec>,
     pub documents: Vec<ToolDocument>,
     pub catalog: ToolCatalog,
-    pub provider_request_defaults_patch: ProviderRequestDefaultsPatch,
+    pub provider_params_patch: ProviderParamsPatch,
 }
 
 pub fn resolve_toolset(
@@ -333,7 +308,7 @@ pub fn resolve_toolset(
             })?;
         builder.add_provider_tool_bundle(bundle);
         builder
-            .provider_request_defaults_patch
+            .provider_params_patch
             .add_openai_web_search(&config.openai_web_search);
     }
 
@@ -354,7 +329,7 @@ struct ToolsetBuilder {
     documents_by_ref: BTreeMap<engine::BlobRef, ToolDocument>,
     visible_tools: Vec<ToolName>,
     seen_tools: BTreeSet<ToolName>,
-    provider_request_defaults_patch: ProviderRequestDefaultsPatch,
+    provider_params_patch: ProviderParamsPatch,
 }
 
 impl ToolsetBuilder {
@@ -365,7 +340,7 @@ impl ToolsetBuilder {
             documents_by_ref: BTreeMap::new(),
             visible_tools: Vec::new(),
             seen_tools: BTreeSet::new(),
-            provider_request_defaults_patch: ProviderRequestDefaultsPatch::default(),
+            provider_params_patch: ProviderParamsPatch::default(),
         }
     }
 
@@ -424,7 +399,7 @@ impl ToolsetBuilder {
             tools: self.tools,
             documents: self.documents_by_ref.into_values().collect(),
             catalog: self.catalog,
-            provider_request_defaults_patch: self.provider_request_defaults_patch,
+            provider_params_patch: self.provider_params_patch,
         }
     }
 }
@@ -433,7 +408,7 @@ const STATIC_SCOPED_HOST_PATHS: bool = true;
 
 #[cfg(test)]
 mod tests {
-    use engine::{ProviderRequestDefaults, ToolTargetRequirement};
+    use engine::ToolTargetRequirement;
     use serde_json::{Value, json};
 
     use super::*;
@@ -475,7 +450,7 @@ mod tests {
             ]
         );
         assert!(toolset.catalog.get(&ToolName::new("read_file")).is_some());
-        assert!(toolset.provider_request_defaults_patch.is_empty());
+        assert!(toolset.provider_params_patch.is_empty());
     }
 
     #[test]
@@ -548,20 +523,9 @@ mod tests {
             })
         );
 
-        let mut defaults =
-            ProviderRequestDefaults::OpenAiResponses(OpenAiResponsesRequestDefaults::default());
-        toolset
-            .provider_request_defaults_patch
-            .apply_to(&mut defaults)
-            .expect("apply defaults");
-        let ProviderRequestDefaults::OpenAiResponses(defaults) = defaults else {
-            panic!("expected OpenAI Responses defaults")
-        };
-        assert!(
-            defaults
-                .include
-                .iter()
-                .any(|include| { include == engine::OPENAI_RESPONSES_WEB_SEARCH_SOURCES_INCLUDE })
+        assert_eq!(
+            toolset.provider_params_patch.openai_responses_include(),
+            [crate::web::search::OPENAI_RESPONSES_WEB_SEARCH_SOURCES_INCLUDE.to_owned()]
         );
     }
 

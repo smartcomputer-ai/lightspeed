@@ -76,12 +76,11 @@ use api_projection::{
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use engine::{
-    AnthropicMessagesRequestDefaults, BlobRef, CommandCodec, CompactionPolicy, ContextConfigPatch,
-    ContextEntry, ContextEntryInput, ContextEntryKey, ContextEntryKind, ContextMessageRole,
-    CoreAgentCommand, CoreAgentStatus, HostToolMode, ModelProviderOptions, ModelSelection,
-    OpenAiCompletionsRequestDefaults, OpenAiReasoningConfig, OpenAiResponsesRequestDefaults,
-    OptionalConfigPatch, ProviderApiKind, ProviderRequestDefaults, RunConfig, RunConfigPatch,
-    RunId, RunStatus, SKILL_ACTIVATION_PROVIDER_KIND_RUN, SKILL_ACTIVATION_PROVIDER_KIND_SESSION,
+    BlobRef, CommandCodec, CompactionPolicy, ContextConfigPatch, ContextEntry, ContextEntryInput,
+    ContextEntryKey, ContextEntryKind, ContextMessageRole, CoreAgentCommand, CoreAgentStatus,
+    HostToolMode, ModelSelection, OptionalConfigPatch, ProviderApiKind,
+    ProviderParams, RunConfig, RunConfigPatch, RunId, RunStatus,
+    SKILL_ACTIVATION_PROVIDER_KIND_RUN, SKILL_ACTIVATION_PROVIDER_KIND_SESSION,
     SKILL_CATALOG_CONTEXT_KEY, SessionConfig, SessionConfigPatch, SessionId, SkillId, SubmissionId,
     ToolChoice, ToolChoiceMode, ToolName, TurnConfigPatch, skill_activation_context_key,
     storage::{BlobStore, BlobStoreError, ReadSessionEvents, SessionStore},

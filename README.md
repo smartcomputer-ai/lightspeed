@@ -26,6 +26,14 @@ We belive running and coordination agents at scale are best managed by durable w
   different context rules, tool encodings, streaming events, cache behavior,
   continuation semantics, and error shapes.
 - Parse only required reducer facts for deterministic branching. Provider-native data that the reducer does not need to branch on should remain opaque and blob-backed.
+- Keep provider request vocabulary out of the deterministic core. The engine
+  plans a provider-neutral generation intent (model route, context snapshot,
+  tools, tool choice, output limit) plus opaque `ProviderParams`; `llm-runtime`
+  adapters own the typed param schemas and materialize provider-native wire
+  requests. Params are validated against the adapter schema at the admission
+  boundary, before they enter the session log. Transport configuration
+  (endpoints, credentials, headers) is runtime deployment config keyed by
+  `provider_id` and never enters the log.
 - Store the rest of the user inputs, context, files, and model respones in content addressed storage and only pass refs to that data, so that the objects traveling between deterministic workflow and effexts stays thin and minimal.
 - Treat context management as a first-class agent concern. The core plans context windows, records context items, and leaves room for compaction as an explicit future operation.
 - Keep the client boundary stable. CLIs, TUIs, editors, hosted gateways, and future Temporal frontends should consume `api`, not reducer internals.

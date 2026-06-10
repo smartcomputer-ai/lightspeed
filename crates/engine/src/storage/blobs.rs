@@ -24,6 +24,24 @@ pub struct BlobInfo {
     pub byte_len: u64,
 }
 
+/// Stores the well-known constant blobs the deterministic core references by
+/// hash without being able to write them itself (for example
+/// [`crate::UNAVAILABLE_TOOL_RESULT_CONTENT`]).
+///
+/// Runtimes that fulfill core actions must call this before driving sessions;
+/// content-addressed puts make repeated calls idempotent.
+pub async fn ensure_engine_blobs(blobs: &dyn BlobStore) -> Result<(), BlobStoreError> {
+    let blob_ref = blobs
+        .put_bytes(
+            crate::UNAVAILABLE_TOOL_RESULT_CONTENT
+                .as_bytes()
+                .to_vec(),
+        )
+        .await?;
+    debug_assert_eq!(blob_ref, crate::unavailable_tool_result_ref());
+    Ok(())
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SessionBlobRoot {
     pub session_id: SessionId,
