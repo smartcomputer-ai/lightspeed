@@ -29,8 +29,15 @@
   server URL; universe equality holds by construction. Static bearer grants
   work end to end (`forge auth grant import` -> `forge mcp link
   --auth-grant-id` -> runtime injection).
-- Still pending: Anthropic provider lowering, OAuth grants (P69 G2+), and
-  principal-policy checks (deferred until Forge has user identity).
+- OAuth grants landed with P69 G2-G4 (2026-06-10): `forge auth login
+  mcp:<server_id>` discovers the server's authorization setup from its
+  catalog OAuth policy (PRM/AS metadata, CIMD or DCR client registration)
+  and mints a linkable `mcp_oauth` grant; `forge mcp server add` now accepts
+  `--auth-policy optional-oauth|required-oauth` with `--oauth-resource`,
+  `--oauth-scope`, `--oauth-metadata-url`, and
+  `--oauth-authorization-server`.
+- Still pending: Anthropic provider lowering and principal-policy checks
+  (deferred until Forge has user identity).
 - Still pending: `mcp/servers/update` (listed in the API surface but not
   implemented). G3 metadata discovery needs it for auth-policy writes and
   status transitions such as `unverified -> active`; until then catalog edits

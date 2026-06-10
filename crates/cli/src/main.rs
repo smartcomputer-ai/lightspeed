@@ -425,6 +425,45 @@ mod tests {
     }
 
     #[test]
+    fn mcp_server_add_parse_accepts_oauth_policy_metadata() {
+        let cli = Cli::try_parse_from([
+            "forge",
+            "mcp",
+            "server",
+            "add",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
+            "--id",
+            "crm",
+            "--label",
+            "crm",
+            "--auth-policy",
+            "required-oauth",
+            "--oauth-scope",
+            "contacts.read",
+            "--oauth-authorization-server",
+            "https://as.example.com",
+            "https://crm.example.com/mcp",
+        ])
+        .expect("parse mcp server add with oauth policy");
+        assert!(matches!(cli.command, Command::Mcp(_)));
+    }
+
+    #[test]
+    fn auth_login_parse_accepts_mcp_server_client_ids() {
+        let cli = Cli::try_parse_from([
+            "forge",
+            "auth",
+            "login",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
+            "mcp:crm",
+        ])
+        .expect("parse auth login mcp:");
+        assert!(matches!(cli.command, Command::Auth(_)));
+    }
+
+    #[test]
     fn auth_login_parse_accepts_client_and_overrides() {
         let cli = Cli::try_parse_from([
             "forge",

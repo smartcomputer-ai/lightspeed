@@ -68,8 +68,15 @@ pub fn gateway_router(api: Arc<GatewayAgentApi>, max_request_body_bytes: usize) 
         .route("/health", get(|| async { "ok" }))
         .route("/rpc", post(rpc))
         .route("/auth/callback", get(oauth_callback))
+        .route("/auth/client-metadata.json", get(cimd_document))
         .layer(DefaultBodyLimit::max(max_request_body_bytes))
         .with_state(api)
+}
+
+/// Client ID Metadata Document (draft-ietf-oauth-client-id-metadata-document):
+/// authorization servers fetch this to resolve Forge's CIMD client id.
+async fn cimd_document(State(api): State<Arc<GatewayAgentApi>>) -> Json<serde_json::Value> {
+    Json(api.cimd_document())
 }
 
 async fn rpc(

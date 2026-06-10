@@ -77,10 +77,25 @@ struct McpServerAddArgs {
     /// Server status to record.
     #[arg(long, default_value_t = McpServerStatusArg::Active)]
     status: McpServerStatusArg,
-    /// Auth requirement for this server. OAuth policies carry metadata and are
-    /// configured through the API until discovery (P68 G3) lands.
+    /// Auth requirement for this server.
     #[arg(long = "auth-policy", default_value_t = McpAuthPolicyArg::None)]
     auth_policy: McpAuthPolicyArg,
+    /// Canonical OAuth resource URL (RFC 8707). Defaults to the server URL.
+    /// Only valid with an OAuth auth policy.
+    #[arg(long = "oauth-resource")]
+    oauth_resource: Option<String>,
+    /// Default OAuth scope entry. Repeat to record multiple. Only valid with
+    /// an OAuth auth policy.
+    #[arg(long = "oauth-scope")]
+    oauth_scopes: Vec<String>,
+    /// Explicit protected resource metadata URL (RFC 9728), tried before the
+    /// derived well-known locations. Only valid with an OAuth auth policy.
+    #[arg(long = "oauth-metadata-url")]
+    oauth_metadata_url: Option<String>,
+    /// Preferred authorization server when the resource metadata lists
+    /// several. Only valid with an OAuth auth policy.
+    #[arg(long = "oauth-authorization-server")]
+    oauth_authorization_server: Option<String>,
     /// Remote MCP endpoint URL.
     server_url: String,
 }
@@ -90,6 +105,8 @@ enum McpAuthPolicyArg {
     None,
     OptionalBearer,
     RequiredBearer,
+    OptionalOauth,
+    RequiredOauth,
 }
 
 impl std::fmt::Display for McpAuthPolicyArg {
@@ -98,16 +115,57 @@ impl std::fmt::Display for McpAuthPolicyArg {
             Self::None => "none",
             Self::OptionalBearer => "optional-bearer",
             Self::RequiredBearer => "required-bearer",
+            Self::OptionalOauth => "optional-oauth",
+            Self::RequiredOauth => "required-oauth",
         })
     }
 }
 
-impl From<McpAuthPolicyArg> for api::McpServerAuthPolicy {
-    fn from(value: McpAuthPolicyArg) -> Self {
-        match value {
-            McpAuthPolicyArg::None => Self::None,
-            McpAuthPolicyArg::OptionalBearer => Self::OptionalBearer,
-            McpAuthPolicyArg::RequiredBearer => Self::RequiredBearer,
+fn auth_policy_from_args(args: &McpServerAddArgs) -> Result<api::McpServerAuthPolicy> {
+    let oauth_flags_used = args.oauth_resource.is_some()
+        || !args.oauth_scopes.is_empty()
+        || args.oauth_metadata_url.is_some()
+        || args.oauth_authorization_server.is_some();
+    let oauth_fields = || {
+        (
+            args.oauth_resource
+                .clone()
+                .unwrap_or_else(|| args.server_url.clone()),
+            args.oauth_scopes.clone(),
+            args.oauth_metadata_url.clone(),
+            args.oauth_authorization_server.clone(),
+        )
+    };
+    match args.auth_policy {
+        McpAuthPolicyArg::None | McpAuthPolicyArg::OptionalBearer | McpAuthPolicyArg::RequiredBearer
+            if oauth_flags_used =>
+        {
+            anyhow::bail!(
+                "--oauth-* options require --auth-policy optional-oauth or required-oauth"
+            )
+        }
+        McpAuthPolicyArg::None => Ok(api::McpServerAuthPolicy::None),
+        McpAuthPolicyArg::OptionalBearer => Ok(api::McpServerAuthPolicy::OptionalBearer),
+        McpAuthPolicyArg::RequiredBearer => Ok(api::McpServerAuthPolicy::RequiredBearer),
+        McpAuthPolicyArg::OptionalOauth => {
+            let (resource, scopes_default, protected_resource_metadata_url, authorization_server) =
+                oauth_fields();
+            Ok(api::McpServerAuthPolicy::OptionalOAuth {
+                resource,
+                scopes_default,
+                protected_resource_metadata_url,
+                authorization_server,
+            })
+        }
+        McpAuthPolicyArg::RequiredOauth => {
+            let (resource, scopes_default, protected_resource_metadata_url, authorization_server) =
+                oauth_fields();
+            Ok(api::McpServerAuthPolicy::RequiredOAuth {
+                resource,
+                scopes_default,
+                protected_resource_metadata_url,
+                authorization_server,
+            })
         }
     }
 }
@@ -316,6 +374,7 @@ async fn server(args: McpServerArgs) -> Result<()> {
 }
 
 async fn server_add(args: McpServerAddArgs) -> Result<()> {
+    let auth_policy = auth_policy_from_args(&args)?;
     let api = HttpAgentApi::new(args.api_url);
     let response = api
         .create_mcp_server(api::McpServerCreateParams {
@@ -328,7 +387,7 @@ async fn server_add(args: McpServerAddArgs) -> Result<()> {
             allowed_tools: nonempty_vec(args.allowed_tools),
             approval_default: args.approval.into(),
             defer_loading_default: defer_loading_arg(args.defer_loading, args.no_defer_loading),
-            auth_policy: args.auth_policy.into(),
+            auth_policy,
             status: args.status.into(),
         })
         .await
@@ -503,6 +562,7 @@ fn print_server(server: &api::McpServerView) {
         approval_label(server.approval_default)
     );
     println!("status {}", status_label(server.status));
+    print_auth_policy(&server.auth_policy);
     if let Some(display_name) = &server.display_name {
         println!("displayName {}", display_name);
     }
@@ -514,6 +574,43 @@ fn print_server(server: &api::McpServerView) {
     }
     if let Some(defer_loading) = server.defer_loading_default {
         println!("deferLoading {}", defer_loading);
+    }
+}
+
+fn print_auth_policy(policy: &api::McpServerAuthPolicy) {
+    match policy {
+        api::McpServerAuthPolicy::None => println!("authPolicy none"),
+        api::McpServerAuthPolicy::OptionalBearer => println!("authPolicy optional-bearer"),
+        api::McpServerAuthPolicy::RequiredBearer => println!("authPolicy required-bearer"),
+        api::McpServerAuthPolicy::OptionalOAuth {
+            resource,
+            scopes_default,
+            protected_resource_metadata_url,
+            authorization_server,
+        }
+        | api::McpServerAuthPolicy::RequiredOAuth {
+            resource,
+            scopes_default,
+            protected_resource_metadata_url,
+            authorization_server,
+        } => {
+            let kind = if matches!(policy, api::McpServerAuthPolicy::OptionalOAuth { .. }) {
+                "optional-oauth"
+            } else {
+                "required-oauth"
+            };
+            println!("authPolicy {kind}");
+            println!("oauthResource {resource}");
+            if !scopes_default.is_empty() {
+                println!("oauthScopes {}", scopes_default.join(" "));
+            }
+            if let Some(url) = protected_resource_metadata_url {
+                println!("oauthMetadataUrl {url}");
+            }
+            if let Some(issuer) = authorization_server {
+                println!("oauthAuthorizationServer {issuer}");
+            }
+        }
     }
 }
 

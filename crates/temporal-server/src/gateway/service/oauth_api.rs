@@ -189,3 +189,76 @@ fn api_auth_flow_status(value: auth_registry::AuthFlowStatus) -> api::AuthFlowSt
 pub(super) fn oauth_redirect_uri(public_base_url: &str) -> String {
     format!("{}/auth/callback", public_base_url.trim_end_matches('/'))
 }
+
+/// The gateway-hosted Client ID Metadata Document URL. CIMD client ids must
+/// be HTTPS URLs the authorization server can fetch, so this is only usable
+/// when the deployment has a public https base URL.
+pub(super) fn cimd_client_id_url(public_base_url: &str) -> String {
+    format!(
+        "{}/auth/client-metadata.json",
+        public_base_url.trim_end_matches('/')
+    )
+}
+
+pub(super) fn cimd_config(public_base_url: &str) -> Option<auth_registry::CimdConfig> {
+    public_base_url
+        .starts_with("https://")
+        .then(|| auth_registry::CimdConfig {
+            client_id_url: cimd_client_id_url(public_base_url),
+        })
+}
+
+/// The Client ID Metadata Document this gateway serves
+/// (draft-ietf-oauth-client-id-metadata-document): a public PKCE client
+/// whose id is the document URL itself.
+pub(super) fn cimd_document(public_base_url: &str) -> serde_json::Value {
+    let base = public_base_url.trim_end_matches('/');
+    serde_json::json!({
+        "client_id": cimd_client_id_url(public_base_url),
+        "client_name": "Forge",
+        "client_uri": base,
+        "redirect_uris": [oauth_redirect_uri(public_base_url)],
+        "grant_types": ["authorization_code", "refresh_token"],
+        "response_types": ["code"],
+        "token_endpoint_auth_method": "none",
+    })
+}
+
+/// Build the discovery target for an OAuth-protected MCP server from its
+/// catalog record. Bearer/no-auth servers cannot be logged into.
+pub(super) fn mcp_oauth_target_from_record(
+    record: &mcp_registry::McpServerRecord,
+) -> Result<auth_registry::McpOAuthTarget, AgentApiError> {
+    match &record.auth_policy {
+        mcp_registry::McpServerAuthPolicy::OptionalOAuth {
+            resource,
+            scopes_default,
+            protected_resource_metadata_url,
+            authorization_server,
+        }
+        | mcp_registry::McpServerAuthPolicy::RequiredOAuth {
+            resource,
+            scopes_default,
+            protected_resource_metadata_url,
+            authorization_server,
+        } => Ok(auth_registry::McpOAuthTarget {
+            server_id: record.server_id.as_str().to_owned(),
+            server_url: resource.clone(),
+            scopes_default: scopes_default.clone(),
+            protected_resource_metadata_url: protected_resource_metadata_url.clone(),
+            authorization_server_hint: authorization_server.clone(),
+        }),
+        other => Err(AgentApiError::rejected(format!(
+            "MCP server {} auth policy {:?} does not use OAuth; use `auth grant import` \
+             for bearer servers",
+            record.server_id, other
+        ))),
+    }
+}
+
+pub(super) fn map_mcp_oauth_error(error: auth_registry::McpOAuthError) -> AgentApiError {
+    match error {
+        auth_registry::McpOAuthError::Registry(error) => map_auth_registry_error(error),
+        other => AgentApiError::rejected(other.to_string()),
+    }
+}

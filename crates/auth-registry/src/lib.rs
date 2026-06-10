@@ -99,6 +99,7 @@ mod broker;
 mod flow;
 mod grants;
 mod locks;
+mod mcp_oauth;
 mod memory;
 mod oauth;
 mod secrets;
@@ -115,6 +116,12 @@ pub use grants::{
     CreateAuthGrantRecord, ListAuthGrants, PrincipalKind, PrincipalRef,
 };
 pub use locks::{GrantLockGuard, GrantRefreshLock, InMemoryGrantLocks};
+pub use mcp_oauth::{
+    AuthorizationServerMetadata, CimdConfig, HttpOAuthMetadataClient, McpOAuthDriver,
+    McpOAuthError, McpOAuthTarget, OAuthMetadataClient, ProtectedResourceMetadata,
+    authorization_server_metadata_urls, mcp_oauth_client_id, protected_resource_metadata_urls,
+    select_authorization_server,
+};
 pub use memory::{
     InMemoryAuthFlowStore, InMemoryAuthGrantStore, InMemoryOAuthClientStore, InMemorySecretStore,
 };

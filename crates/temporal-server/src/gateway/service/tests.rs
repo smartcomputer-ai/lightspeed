@@ -1197,6 +1197,62 @@ fn oauth_redirect_uris_normalize_trailing_slashes() {
 }
 
 #[test]
+fn mcp_oauth_targets_come_from_oauth_policies_only() {
+    let mut record = test_mcp_server_record("playground", mcp_registry::McpServerStatus::Active);
+    record.auth_policy = mcp_registry::McpServerAuthPolicy::RequiredOAuth {
+        resource: "https://playground.example.com/mcp".to_owned(),
+        scopes_default: vec!["tools.run".to_owned()],
+        protected_resource_metadata_url: Some(
+            "https://playground.example.com/.well-known/oauth-protected-resource/mcp".to_owned(),
+        ),
+        authorization_server: Some("https://as.example.com".to_owned()),
+    };
+
+    let target = oauth_api::mcp_oauth_target_from_record(&record).expect("oauth target");
+
+    assert_eq!(target.server_id, "playground");
+    assert_eq!(target.server_url, "https://playground.example.com/mcp");
+    assert_eq!(target.scopes_default, vec!["tools.run".to_owned()]);
+    assert_eq!(
+        target.authorization_server_hint.as_deref(),
+        Some("https://as.example.com")
+    );
+
+    let mut bearer = test_mcp_server_record("bearer", mcp_registry::McpServerStatus::Active);
+    bearer.auth_policy = mcp_registry::McpServerAuthPolicy::RequiredBearer;
+    let error = oauth_api::mcp_oauth_target_from_record(&bearer)
+        .expect_err("bearer servers cannot be logged into");
+    assert_eq!(error.kind, AgentApiErrorKind::Rejected);
+}
+
+#[test]
+fn cimd_config_requires_a_public_https_base_url() {
+    assert!(oauth_api::cimd_config("http://127.0.0.1:18080").is_none());
+
+    let cimd = oauth_api::cimd_config("https://forge.example.com/").expect("cimd config");
+    assert_eq!(
+        cimd.client_id_url,
+        "https://forge.example.com/auth/client-metadata.json"
+    );
+}
+
+#[test]
+fn cimd_documents_declare_a_public_pkce_client() {
+    let document = oauth_api::cimd_document("https://forge.example.com");
+
+    assert_eq!(
+        document["client_id"],
+        "https://forge.example.com/auth/client-metadata.json"
+    );
+    assert_eq!(
+        document["redirect_uris"][0],
+        "https://forge.example.com/auth/callback"
+    );
+    assert_eq!(document["token_endpoint_auth_method"], "none");
+    assert_eq!(document["grant_types"][0], "authorization_code");
+}
+
+#[test]
 fn auth_flow_views_carry_derived_status() {
     let record = auth_registry::CreateAuthFlowRecord {
         flow_id: auth_registry::AuthFlowId::new("authflow_1"),

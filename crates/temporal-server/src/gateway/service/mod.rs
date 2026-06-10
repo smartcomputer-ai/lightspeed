@@ -21,8 +21,9 @@ use auth_api::{
     parse_auth_grant_id, registry_auth_grant_status_for_filter,
 };
 use oauth_api::{
-    auth_client_create_draft, auth_flow_view, oauth_client_view, oauth_redirect_uri,
-    parse_auth_flow_id, parse_oauth_client_id,
+    auth_client_create_draft, auth_flow_view, cimd_config, map_mcp_oauth_error,
+    mcp_oauth_target_from_record, oauth_client_view, oauth_redirect_uri, parse_auth_flow_id,
+    parse_oauth_client_id,
 };
 use blobs::{get_blob, has_blobs, put_blob, put_blobs};
 use errors::*;
@@ -102,8 +103,9 @@ use engine::{
     storage::{BlobStore, BlobStoreError, ReadSessionEvents, SessionStore},
 };
 use auth_registry::{
-    AuthFlowStore, AuthGrantStore, HttpOAuthTokenClient, OAuthClientStore, OAuthFlowService,
-    OAuthTokenClient, SecretStore, StartAuthFlow,
+    AuthFlowStore, AuthGrantStore, HttpOAuthMetadataClient, HttpOAuthTokenClient, McpOAuthDriver,
+    OAuthClientStore, OAuthFlowService, OAuthMetadataClient, OAuthTokenClient, SecretStore,
+    StartAuthFlow,
 };
 use mcp_registry::McpRegistryStore;
 use store_pg::PgStore;
@@ -158,6 +160,7 @@ pub struct GatewayAgentApiBuilder {
     operation_timeout: Duration,
     public_base_url: String,
     oauth_token_client: Option<Arc<dyn OAuthTokenClient>>,
+    oauth_metadata_client: Option<Arc<dyn OAuthMetadataClient>>,
 }
 
 impl GatewayAgentApiBuilder {
@@ -176,6 +179,15 @@ impl GatewayAgentApiBuilder {
     /// Override the OAuth token-endpoint client (tests).
     pub fn with_oauth_token_client(mut self, token_client: Arc<dyn OAuthTokenClient>) -> Self {
         self.oauth_token_client = Some(token_client);
+        self
+    }
+
+    /// Override the OAuth discovery/registration metadata client (tests).
+    pub fn with_oauth_metadata_client(
+        mut self,
+        metadata_client: Arc<dyn OAuthMetadataClient>,
+    ) -> Self {
+        self.oauth_metadata_client = Some(metadata_client);
         self
     }
 
@@ -223,6 +235,17 @@ impl GatewayAgentApiBuilder {
             self.store.clone() as Arc<dyn SecretStore>,
             token_client,
         );
+        let metadata_client = self.oauth_metadata_client.unwrap_or_else(|| {
+            Arc::new(
+                HttpOAuthMetadataClient::new()
+                    .expect("construct OAuth metadata HTTP client"),
+            )
+        });
+        let mcp_oauth = McpOAuthDriver::new(
+            self.store.clone() as Arc<dyn OAuthClientStore>,
+            self.store.clone() as Arc<dyn SecretStore>,
+            metadata_client,
+        );
         GatewayAgentApi {
             client: self.client,
             store: self.store,
@@ -235,6 +258,7 @@ impl GatewayAgentApiBuilder {
             operation_timeout: self.operation_timeout,
             public_base_url: self.public_base_url,
             oauth_flows,
+            mcp_oauth,
             metadata: RwLock::new(BTreeMap::new()),
         }
     }
@@ -257,6 +281,7 @@ pub struct GatewayAgentApi {
     operation_timeout: Duration,
     public_base_url: String,
     oauth_flows: OAuthFlowService,
+    mcp_oauth: McpOAuthDriver,
     metadata: RwLock<BTreeMap<SessionId, GatewaySessionMetadata>>,
 }
 
@@ -274,6 +299,7 @@ impl GatewayAgentApi {
             operation_timeout: DEFAULT_OPERATION_TIMEOUT,
             public_base_url: DEFAULT_PUBLIC_BASE_URL.to_owned(),
             oauth_token_client: None,
+            oauth_metadata_client: None,
         }
     }
 
@@ -1494,7 +1520,12 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: AuthFlowStartParams,
     ) -> Result<AgentApiOutcome<AuthFlowStartResponse>, AgentApiError> {
-        let client_id = parse_oauth_client_id(params.client_id)?;
+        // `mcp:<server_id>` lazily discovers and registers the OAuth client
+        // for a catalogued MCP server before starting the flow.
+        let client_id = match params.client_id.strip_prefix("mcp:") {
+            Some(server_id) => self.ensure_mcp_oauth_client(server_id).await?,
+            None => parse_oauth_client_id(params.client_id)?,
+        };
         let started = self
             .oauth_flows
             .start_flow(StartAuthFlow {
@@ -1543,6 +1574,49 @@ pub enum OAuthCallbackOutcome {
 }
 
 impl GatewayAgentApi {
+    /// Lazily discover and register the OAuth client for an OAuth-protected
+    /// MCP server (P69 G4): protected resource metadata, authorization
+    /// server metadata, then CIMD or dynamic client registration. Existing
+    /// `mcp:<server_id>` client records are reused without network traffic.
+    async fn ensure_mcp_oauth_client(
+        &self,
+        server_id: &str,
+    ) -> Result<auth_registry::OAuthClientId, AgentApiError> {
+        // A manually registered `mcp:<server_id>` client always wins: reuse
+        // it without touching the catalog or the network, so login works
+        // even when the catalog record is named differently or absent.
+        let client_id =
+            auth_registry::mcp_oauth_client_id(server_id).map_err(map_auth_registry_error)?;
+        match self.store.read_oauth_client(&client_id).await {
+            Ok(existing) => return Ok(existing.client_id),
+            Err(auth_registry::AuthRegistryError::ClientNotFound { .. }) => {}
+            Err(error) => return Err(map_auth_registry_error(error)),
+        }
+
+        let server_id = parse_mcp_server_id(server_id.to_owned())?;
+        let record = self
+            .store
+            .read_server(&server_id)
+            .await
+            .map_err(map_mcp_registry_error)?;
+        let target = mcp_oauth_target_from_record(&record)?;
+        let redirect_uri = oauth_redirect_uri(&self.public_base_url);
+        let cimd = cimd_config(&self.public_base_url);
+        let client = self
+            .mcp_oauth
+            .ensure_client(&target, &redirect_uri, cimd.as_ref())
+            .await
+            .map_err(map_mcp_oauth_error)?;
+        Ok(client.client_id)
+    }
+
+    /// The Client ID Metadata Document served at
+    /// `/auth/client-metadata.json` for authorization servers that support
+    /// CIMD client ids.
+    pub fn cimd_document(&self) -> serde_json::Value {
+        oauth_api::cimd_document(&self.public_base_url)
+    }
+
     /// Handle the OAuth redirect: consume the flow, exchange the code, and
     /// store the resulting grant. Called by the gateway's HTTP callback
     /// route, not via JSON-RPC.

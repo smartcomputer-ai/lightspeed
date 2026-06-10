@@ -32,6 +32,15 @@ execution — never in the engine or the session log.
 - `flow` — `OAuthFlowService`: start builds the authorization URL and
   persists the encrypted PKCE verifier; the callback atomically consumes the
   flow, exchanges the code, stores encrypted tokens, and mints the grant.
+- `mcp_oauth` — the MCP OAuth driver (P69 G4): discovers protected resource
+  metadata (RFC 9728, path-inserted URL with root fallback) and
+  authorization server metadata (RFC 8414/OIDC), requires PKCE S256,
+  identifies the client via CIMD (when the AS supports client-id metadata
+  documents and the deployment has a public https URL) or dynamic client
+  registration (RFC 7591), and lazily upserts the result as an
+  `mcp:<server_id>` client record. Existing records are reused without
+  network traffic; manual `forge auth client add --id mcp:<server_id>` always
+  wins.
 - `memory` — in-memory grant/secret/client/flow stores for tests.
 
 ## How it works
@@ -100,8 +109,9 @@ holds only ciphertext.
 
 Works against any standard authorization server with a manually configured
 client (a GitHub OAuth app is the cheapest real one; set its callback URL to
-`http://127.0.0.1:18080/auth/callback` for local dev). MCP-server discovery
-(`forge auth login mcp:<server>`) arrives with P69 G4.
+`http://127.0.0.1:18080/auth/callback` for local dev). For OAuth-protected
+MCP servers, prefer `forge auth login mcp:<server>` below — it discovers and
+registers the client automatically where the AS allows it.
 
 ```bash
 # 0. infra + env + gateway as above (env.sh sourced everywhere)
@@ -125,9 +135,90 @@ cargo run -q -p cli -- auth login github
 cargo run -q -p cli -- auth grant list
 ```
 
-For an OAuth-protected MCP server, register the client with
-`--kind mcp-oauth --audience <server URL>`; the resulting grant is
-audience-bound and linkable via `forge mcp link --auth-grant-id ...` against
-servers with an OAuth auth policy. The broker refreshes the grant's access
-token automatically when it expires, as long as the authorization server
-issued a refresh token.
+## Testing an MCP OAuth login end to end
+
+For a catalogued MCP server with an OAuth auth policy, no manual client setup
+is needed — the gateway discovers and registers the client on first login:
+
+```bash
+# 1. register the server with an OAuth policy (resource = canonical server URL)
+cargo run -q -p cli -- mcp server add https://crm.example.com/mcp \
+  --id crm --label crm --auth-policy required-oauth \
+  --oauth-resource https://crm.example.com/mcp
+
+# 2. login by server id: discovers PRM + AS metadata, registers a client
+#    (CIMD if supported and the gateway is public https, else DCR),
+#    then runs the normal browser flow
+cargo run -q -p cli -- auth login mcp:crm
+
+# 3. the discovered client and the audience-bound grant are inspectable
+cargo run -q -p cli -- auth client read mcp:crm
+cargo run -q -p cli -- auth grant list
+
+# 4. link with the grant id printed by login
+cargo run -q -p cli -- mcp link --session s1 --auth-grant-id <grant id> crm
+```
+
+To force re-discovery (for example after the server changes authorization
+servers), remove the client: `forge auth client remove mcp:crm`. If the AS
+supports neither CIMD nor dynamic registration, login fails with instructions
+to register manually — see the verified walkthrough below.
+
+## Walkthrough: GitHub Copilot MCP (verified end to end)
+
+The GitHub Copilot MCP server (`https://api.githubcopilot.com/mcp/`) is a
+real OAuth-protected server whose authorization server (`github.com`)
+supports **neither dynamic client registration nor CIMD**, so it exercises
+the manual-client fallback: discovery finds the AS, then login tells you to
+register a client by hand. A manually registered `mcp:<server_id>` client
+always wins — login reuses it without touching the catalog or the network.
+
+One-time GitHub setup: create a GitHub App (or OAuth app) with the
+authorization callback URL set to `http://127.0.0.1:18080/auth/callback`.
+GitHub App client ids look like `Iv23...`; their tokens are scoped by the
+app's permissions (OAuth scopes are ignored), and with "user token
+expiration" enabled they come with refresh tokens, which exercises the
+broker's automatic refresh path.
+
+```bash
+# 0. infra + schema, env in every terminal; gateway in its own terminal
+dev/local/up.sh && source dev/local/env.sh
+dev/local/pg-migrate.sh
+cargo run -p temporal-server        # separate terminal, env.sh sourced
+
+# 1. register the MCP server under id gh
+cargo run -q -p cli -- mcp server add https://api.githubcopilot.com/mcp/ \
+  --id gh --label github --auth-policy required-oauth
+
+# 2. register the GitHub app as the manual OAuth client for it.
+#    The id mcp:gh is what `auth login mcp:gh` looks for.
+export GH_OAUTH_SECRET=<client secret from GitHub>
+cargo run -q -p cli -- auth client add --id mcp:gh \
+  --kind mcp-oauth \
+  --audience https://api.githubcopilot.com/mcp/ \
+  --authorization-endpoint https://github.com/login/oauth/authorize \
+  --token-endpoint https://github.com/login/oauth/access_token \
+  --client-id <GitHub app client id> \
+  --client-secret-env GH_OAUTH_SECRET
+
+# 3. log in: prints the GitHub consent URL, polls until the callback lands
+cargo run -q -p cli -- auth login mcp:gh
+# -> "login complete" + grantId authgrant_...
+
+# 4. create a session, link the server with the grant, open the TUI
+cargo run -q -p cli -- chat --session gh_test "hello"
+cargo run -q -p cli -- mcp link --session gh_test --auth-grant-id <grantId> gh
+cargo run -q -p cli -- chat --session gh_test
+# then ask it to use the GitHub tools
+
+# sanity checks along the way
+cargo run -q -p cli -- mcp server read gh        # authPolicy required-oauth
+cargo run -q -p cli -- auth client read mcp:gh   # endpoints, hasClientSecret true
+cargo run -q -p cli -- auth grant list           # grant status, never token values
+```
+
+The link passes validation because the grant's kind is `mcp_oauth`, its
+status is `active`, and its audience (`https://api.githubcopilot.com/mcp/`)
+covers the server URL. The broker refreshes the grant's access token
+automatically when it expires, as long as the authorization server issued a
+refresh token.

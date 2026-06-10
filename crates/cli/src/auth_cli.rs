@@ -280,7 +280,9 @@ struct AuthLoginArgs {
     /// Emit the final flow status as JSON.
     #[arg(long)]
     json: bool,
-    /// OAuth client id to authorize against.
+    /// OAuth client id to authorize against. Use `mcp:<server-id>` for a
+    /// catalogued OAuth MCP server: the gateway discovers the authorization
+    /// server and registers a client automatically on first login.
     client_id: String,
     /// Scope override. Repeat to request multiple.
     #[arg(long = "scope")]

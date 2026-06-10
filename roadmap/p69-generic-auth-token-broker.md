@@ -29,6 +29,11 @@
   `auth/clients/create|list|read|delete` and `auth/flows/start|status`;
   the CLI gained `forge auth client add|list|read|remove` and
   `forge auth login <client>` with status polling.
+- G4 implemented on 2026-06-10: `auth-registry::mcp_oauth` driver with PRM
+  (RFC 9728) and AS metadata (RFC 8414/OIDC) discovery, CIMD + DCR + manual
+  client identification, lazy `mcp:<server_id>` client upsert triggered by
+  `auth/flows/start` (`forge auth login mcp:<server>`), and the
+  gateway-served CIMD document at `/auth/client-metadata.json`.
 - G1 deliberately deferred `AuthProviderRecord`, `AuthFlowRecord`, and token
   leases; G2 landed `AuthFlowRecord` and OAuth client records, while
   `AuthProviderRecord` and token leases remain deferred (G5+). Static bearer
@@ -765,12 +770,36 @@ on both stores, so universe equality holds by construction):
 
 Acceptance criteria:
 
-- protected resource metadata and authorization server metadata are discovered;
-- MCP resource/audience binding (RFC 8707) is included in authorization and
-  token requests where required;
-- client identification supports CIMD, dynamic client registration, and manual
-  configuration;
-- P68 can validate and link MCP-compatible grants by auth handle.
+- [x] protected resource metadata and authorization server metadata are
+  discovered (RFC 9728 path-inserted PRM URL with root fallback and an
+  explicit catalog URL override; RFC 8414 OAuth + OIDC metadata forms;
+  `resource` and `issuer` echoes are verified; PKCE `S256` support is
+  required when the AS advertises `code_challenge_methods_supported`);
+- [x] MCP resource/audience binding (RFC 8707) is included in authorization
+  and token requests where required (since G2; the grant audience is the
+  PRM's canonical `resource`);
+- [x] client identification supports CIMD, dynamic client registration, and
+  manual configuration (CIMD when the AS advertises
+  `client_id_metadata_document_supported` and the gateway has a public
+  https base URL — the gateway serves the document at
+  `/auth/client-metadata.json`; DCR requests a public PKCE client and
+  encrypts any issued secret; existing `mcp:<server_id>` records are reused
+  without network traffic, so `forge auth client add --id mcp:<server_id>`
+  is the manual path);
+- [x] P68 can validate and link MCP-compatible grants by auth handle (since
+  G1; OAuth-minted grants carry kind `mcp_oauth`, provider id
+  `mcp:<server_id>`, and the canonical resource as audience).
+
+Implemented 2026-06-10: `auth-registry::mcp_oauth` (`McpOAuthDriver`,
+`McpOAuthTarget`, `OAuthMetadataClient` trait + reqwest impl, typed
+`McpOAuthError` kinds), gateway lazy upsert in `auth/flows/start` when the
+client id is `mcp:<server_id>` (so `forge auth login mcp:<server>` needs no
+new CLI surface), and the CIMD document route. Deferred: persisting DCR
+`registration_access_token`/`registration_client_uri` (registration
+management is not implemented, so re-registration is the recovery path) and
+P68's `authorization_server` field becoming a list (tracked for P68 G3; the
+driver already selects among the PRM's `authorization_servers` array, using
+the catalog's single field as a hint).
 
 ## G5: GitHub App Driver
 
