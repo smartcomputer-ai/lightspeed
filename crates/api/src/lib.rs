@@ -8,10 +8,14 @@
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
+use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
+
+mod schema_export;
+pub use schema_export::{ExportedSchemas, export_schemas};
 
 pub const PROTOCOL_VERSION: &str = "forge.agent.api.v1";
 
@@ -378,8 +382,9 @@ pub trait AgentApiService: Send + Sync {
     ) -> Result<AgentApiOutcome<AuthGitHubInstallationGrantResponse>, AgentApiError>;
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+#[schemars(rename = "AgentApiOutcomeOf{T}")]
 pub struct AgentApiOutcome<T> {
     pub result: T,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -402,28 +407,28 @@ impl<T> AgentApiOutcome<T> {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct InitializeParams {
     pub client_info: Option<ClientInfo>,
     pub capabilities: Option<ClientCapabilities>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientInfo {
     pub name: String,
     pub version: Option<String>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientCapabilities {
     #[serde(default)]
     pub experimental_api: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct InitializeResponse {
     pub protocol_version: String,
@@ -431,14 +436,14 @@ pub struct InitializeResponse {
     pub capabilities: ServerCapabilities,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerInfo {
     pub name: String,
     pub version: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerCapabilities {
     pub notifications: bool,
@@ -448,7 +453,7 @@ pub struct ServerCapabilities {
     pub local_execution: bool,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionStartParams {
     pub session_id: Option<SessionId>,
@@ -457,7 +462,7 @@ pub struct SessionStartParams {
     pub config: Option<SessionConfigInput>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionConfigInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -472,7 +477,7 @@ pub struct SessionConfigInput {
     pub tools: Option<ToolConfigInput>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerationConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -483,7 +488,7 @@ pub struct GenerationConfig {
     pub tool_choice: Option<ToolChoiceConfig>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolChoiceConfig {
     pub mode: ToolChoiceModeConfig,
@@ -491,7 +496,7 @@ pub struct ToolChoiceConfig {
     pub disable_parallel_tool_use: Option<bool>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "type",
     rename_all = "camelCase",
@@ -504,14 +509,14 @@ pub enum ToolChoiceModeConfig {
     Specific { tool_id: String },
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextConfigInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compaction: Option<CompactionPolicyInput>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", tag = "mode")]
 pub enum CompactionPolicyInput {
     Disabled,
@@ -527,7 +532,7 @@ pub enum CompactionPolicyInput {
     },
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RunDefaultsConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -536,7 +541,7 @@ pub struct RunDefaultsConfig {
     pub max_tool_rounds: Option<u32>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolConfigInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -547,7 +552,7 @@ pub struct ToolConfigInput {
     pub host: Option<HostToolMode>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum HostToolMode {
     None,
@@ -555,13 +560,13 @@ pub enum HostToolMode {
     Edit,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionStartResponse {
     pub session: SessionView,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionUpdateParams {
     pub session_id: SessionId,
@@ -571,7 +576,7 @@ pub struct SessionUpdateParams {
     pub patch: SessionConfigPatchInput,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionConfigPatchInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -586,14 +591,15 @@ pub struct SessionConfigPatchInput {
     pub tools: Option<ToolConfigPatchInput>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", tag = "op", content = "value")]
+#[schemars(rename = "FieldPatchOf{T}")]
 pub enum FieldPatch<T> {
     Set(T),
     Clear,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerationConfigPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -604,14 +610,14 @@ pub struct GenerationConfigPatch {
     pub tool_choice: Option<FieldPatch<ToolChoiceConfig>>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextConfigPatchInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compaction: Option<FieldPatch<CompactionPolicyInput>>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RunDefaultsPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -620,7 +626,7 @@ pub struct RunDefaultsPatch {
     pub max_tool_rounds: Option<FieldPatch<u32>>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolConfigPatchInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -631,13 +637,13 @@ pub struct ToolConfigPatchInput {
     pub host: Option<FieldPatch<HostToolMode>>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionUpdateResponse {
     pub session: SessionView,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionToolsUpdateParams {
     pub session_id: SessionId,
@@ -646,7 +652,7 @@ pub struct SessionToolsUpdateParams {
     pub update: SessionToolsUpdateInput,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "type",
     rename_all = "camelCase",
@@ -665,13 +671,13 @@ pub enum SessionToolsUpdateInput {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionToolsUpdateResponse {
     pub session: SessionView,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ActiveToolsView {
     pub revision: u64,
@@ -679,7 +685,7 @@ pub struct ActiveToolsView {
     pub tools: Vec<ToolView>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolView {
     pub tool_id: String,
@@ -690,7 +696,7 @@ pub struct ToolView {
     pub target_requirement: ToolTargetRequirementView,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "type",
     rename_all = "camelCase",
@@ -731,7 +737,7 @@ pub enum ToolKindView {
     },
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum ProviderNativeToolExecutionView {
     #[default]
@@ -739,7 +745,7 @@ pub enum ProviderNativeToolExecutionView {
     ClientEffect,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum ToolParallelismView {
     Exclusive,
@@ -747,7 +753,7 @@ pub enum ToolParallelismView {
     ParallelSafe,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "type",
     rename_all = "camelCase",
@@ -764,31 +770,31 @@ pub enum ToolTargetRequirementView {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextCompactParams {
     pub session_id: SessionId,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextCompactResponse {
     pub session: SessionView,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionReadParams {
     pub session_id: SessionId,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionReadResponse {
     pub session: SessionView,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionEventsReadParams {
     pub session_id: SessionId,
@@ -798,7 +804,7 @@ pub struct SessionEventsReadParams {
     pub limit: Option<u32>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionEventsReadResponse {
     #[serde(default)]
@@ -812,25 +818,25 @@ pub struct SessionEventsReadResponse {
     pub gap: Option<EventLogGap>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionCloseParams {
     pub session_id: SessionId,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionCloseResponse {
     pub session: SessionView,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct EventCursor {
     pub seq: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct EventLogGap {
     pub requested_after: Option<EventCursor>,
@@ -838,7 +844,7 @@ pub struct EventLogGap {
     pub next_cursor: Option<EventCursor>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionEventView {
     pub cursor: EventCursor,
@@ -848,7 +854,7 @@ pub struct SessionEventView {
     pub kind: SessionEventKindView,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct EventJoinsView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -865,7 +871,7 @@ pub struct EventJoinsView {
     pub correlation_id: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "type",
     rename_all = "camelCase",
@@ -1015,14 +1021,14 @@ pub enum SessionEventKindView {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolExecutionTargetView {
     pub namespace: String,
     pub id: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolCallEventView {
     pub call_id: String,
@@ -1034,7 +1040,7 @@ pub struct ToolCallEventView {
     pub display: Option<ToolCallDisplayView>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RunStartParams {
     pub session_id: SessionId,
@@ -1043,7 +1049,7 @@ pub struct RunStartParams {
     pub config: Option<RunStartConfig>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RunStartConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1054,7 +1060,7 @@ pub struct RunStartConfig {
     pub limits: Option<RunLimitsConfig>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RunLimitsConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1063,32 +1069,32 @@ pub struct RunLimitsConfig {
     pub max_tool_rounds: Option<u32>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RunStartResponse {
     pub run: RunView,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RunCancelParams {
     pub session_id: SessionId,
     pub run_id: RunId,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RunCancelResponse {
     pub run: RunView,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptsActiveParams {
     pub session_id: SessionId,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptsActiveResponse {
     #[serde(default)]
@@ -1099,7 +1105,7 @@ pub struct PromptsActiveResponse {
     pub report: Option<Value>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptInstructionView {
     pub key: String,
@@ -1110,13 +1116,13 @@ pub struct PromptInstructionView {
     pub preview: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillListParams {
     pub session_id: SessionId,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillListResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1125,7 +1131,7 @@ pub struct SkillListResponse {
     pub skills: Vec<SkillListItem>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillListItem {
     pub skill_id: SkillId,
@@ -1137,13 +1143,13 @@ pub struct SkillListItem {
     pub active: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillActiveParams {
     pub session_id: SessionId,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillActiveResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1152,7 +1158,7 @@ pub struct SkillActiveResponse {
     pub activations: Vec<SkillActivationView>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillActivationView {
     pub skill_id: SkillId,
@@ -1167,7 +1173,7 @@ pub struct SkillActivationView {
     pub source: SkillActivationSource,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum SkillActivationScope {
     #[default]
@@ -1175,7 +1181,7 @@ pub enum SkillActivationScope {
     Session,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "type",
     rename_all = "camelCase",
@@ -1186,7 +1192,7 @@ pub enum SkillActivationSource {
     DirectContext { context_ref: String },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillActivateParams {
     pub session_id: SessionId,
@@ -1195,7 +1201,7 @@ pub struct SkillActivateParams {
     pub scope: SkillActivationScope,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillActivateResponse {
     pub activation: SkillActivationView,
@@ -1203,14 +1209,14 @@ pub struct SkillActivateResponse {
     pub active: Vec<SkillActivationView>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillDeactivateParams {
     pub session_id: SessionId,
     pub skill_id: SkillId,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillDeactivateResponse {
     pub skill_id: SkillId,
@@ -1218,40 +1224,40 @@ pub struct SkillDeactivateResponse {
     pub active: Vec<SkillActivationView>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct BlobPutParams {
     pub bytes_base64: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct BlobPutResponse {
     pub blob_ref: String,
     pub bytes: u64,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct BlobPutManyParams {
     #[serde(default)]
     pub blobs: Vec<BlobPutParams>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct BlobPutManyResponse {
     #[serde(default)]
     pub blobs: Vec<BlobPutResponse>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct BlobGetParams {
     pub blob_ref: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct BlobGetResponse {
     pub blob_ref: String,
@@ -1259,34 +1265,34 @@ pub struct BlobGetResponse {
     pub bytes: u64,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct BlobHasManyParams {
     #[serde(default)]
     pub blob_refs: Vec<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct BlobHasItem {
     pub blob_ref: String,
     pub exists: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct BlobHasManyResponse {
     #[serde(default)]
     pub blobs: Vec<BlobHasItem>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct VfsSnapshotCommitParams {
     pub manifest: Value,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct VfsSnapshotCommitResponse {
     pub snapshot_ref: String,
@@ -1294,13 +1300,13 @@ pub struct VfsSnapshotCommitResponse {
     pub bytes: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct VfsSnapshotReadParams {
     pub snapshot_ref: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct VfsSnapshotReadResponse {
     pub snapshot_ref: String,
@@ -1309,7 +1315,7 @@ pub struct VfsSnapshotReadResponse {
     pub bytes: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct VfsWorkspaceCreateParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1319,25 +1325,25 @@ pub struct VfsWorkspaceCreateParams {
     pub display_name: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct VfsWorkspaceCreateResponse {
     pub workspace: VfsWorkspaceView,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct VfsWorkspaceReadParams {
     pub workspace_id: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct VfsWorkspaceReadResponse {
     pub workspace: VfsWorkspaceView,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct VfsWorkspaceUpdateParams {
     pub workspace_id: String,
@@ -1348,25 +1354,25 @@ pub struct VfsWorkspaceUpdateParams {
     pub display_name: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct VfsWorkspaceUpdateResponse {
     pub workspace: VfsWorkspaceView,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct VfsWorkspaceDeleteParams {
     pub workspace_id: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct VfsWorkspaceDeleteResponse {
     pub workspace: VfsWorkspaceView,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct VfsWorkspaceView {
     pub workspace_id: String,
@@ -1376,7 +1382,7 @@ pub struct VfsWorkspaceView {
     pub revision: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "type",
     rename_all = "camelCase",
@@ -1387,7 +1393,7 @@ pub enum VfsMountSourceInput {
     Workspace { workspace_id: String },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "type",
     rename_all = "camelCase",
@@ -1406,14 +1412,14 @@ pub enum VfsMountSourceView {
     },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum VfsMountAccess {
     ReadOnly,
     ReadWrite,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct VfsMountView {
     pub mount_path: String,
@@ -1421,7 +1427,7 @@ pub struct VfsMountView {
     pub access: VfsMountAccess,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct VfsMountPutParams {
     pub session_id: SessionId,
@@ -1430,41 +1436,41 @@ pub struct VfsMountPutParams {
     pub access: VfsMountAccess,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct VfsMountPutResponse {
     pub mount: VfsMountView,
     pub session: SessionView,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct VfsMountDeleteParams {
     pub session_id: SessionId,
     pub mount_path: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct VfsMountDeleteResponse {
     pub mount_path: String,
     pub session: SessionView,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct VfsMountListParams {
     pub session_id: SessionId,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct VfsMountListResponse {
     #[serde(default)]
     pub mounts: Vec<VfsMountView>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct McpServerView {
     pub server_id: String,
@@ -1486,7 +1492,7 @@ pub struct McpServerView {
     pub updated_at_ms: i64,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum RemoteMcpTransport {
     StreamableHttp,
@@ -1495,7 +1501,7 @@ pub enum RemoteMcpTransport {
     Auto,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum RemoteMcpApprovalPolicy {
     ProviderDefault,
@@ -1504,7 +1510,7 @@ pub enum RemoteMcpApprovalPolicy {
     Never,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum McpServerAuthPolicy {
     #[default]
@@ -1531,7 +1537,7 @@ pub enum McpServerAuthPolicy {
     },
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum McpServerStatus {
     #[default]
@@ -1541,7 +1547,7 @@ pub enum McpServerStatus {
     Disabled,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct McpServerCreateParams {
     pub server_id: String,
@@ -1565,51 +1571,51 @@ pub struct McpServerCreateParams {
     pub status: McpServerStatus,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct McpServerCreateResponse {
     pub server: McpServerView,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct McpServerListParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<McpServerStatus>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct McpServerListResponse {
     #[serde(default)]
     pub servers: Vec<McpServerView>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct McpServerReadParams {
     pub server_id: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct McpServerReadResponse {
     pub server: McpServerView,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct McpServerDeleteParams {
     pub server_id: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct McpServerDeleteResponse {
     pub server: McpServerView,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionMcpLinkView {
     pub tool_id: String,
@@ -1624,14 +1630,14 @@ pub struct SessionMcpLinkView {
     pub auth_ref: Option<SecretRefView>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SecretRefView {
     pub namespace: String,
     pub id: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum AuthProviderKind {
     StaticBearer,
@@ -1644,7 +1650,7 @@ pub enum AuthProviderKind {
     ModelOAuth,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum AuthGrantStatus {
     #[default]
@@ -1654,7 +1660,7 @@ pub enum AuthGrantStatus {
     Failed,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum PrincipalKind {
     User,
@@ -1663,7 +1669,7 @@ pub enum PrincipalKind {
     UniverseDefault,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PrincipalRefView {
     #[serde(default)]
@@ -1672,7 +1678,7 @@ pub struct PrincipalRefView {
     pub id: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthGrantView {
     pub grant_id: String,
@@ -1712,7 +1718,7 @@ fn metadata_is_empty(value: &serde_json::Value) -> bool {
 /// deliberate inbound-plaintext path: `token` is encrypted on receipt and is
 /// never returned by any method. `Debug` output redacts the token; request
 /// logging must never echo these params.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthGrantImportParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1747,51 +1753,51 @@ impl std::fmt::Debug for AuthGrantImportParams {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthGrantImportResponse {
     pub grant: AuthGrantView,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthGrantListParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<AuthGrantStatus>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthGrantListResponse {
     #[serde(default)]
     pub grants: Vec<AuthGrantView>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthGrantReadParams {
     pub grant_id: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthGrantReadResponse {
     pub grant: AuthGrantView,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthGrantRevokeParams {
     pub grant_id: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthGrantRevokeResponse {
     pub grant: AuthGrantView,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum TokenEndpointAuthMethod {
     #[default]
@@ -1800,7 +1806,7 @@ pub enum TokenEndpointAuthMethod {
     None,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct OAuthClientView {
     pub client_id: String,
@@ -1825,7 +1831,7 @@ pub struct OAuthClientView {
 /// deliberate inbound-plaintext path after `auth/grants/import`: it is
 /// encrypted on receipt and never returned by any method. `Debug` output
 /// redacts it; request logging must never echo these params.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthClientCreateParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1872,48 +1878,48 @@ impl std::fmt::Debug for AuthClientCreateParams {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthClientCreateResponse {
     pub client: OAuthClientView,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthClientListParams {}
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthClientListResponse {
     #[serde(default)]
     pub clients: Vec<OAuthClientView>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthClientReadParams {
     pub client_id: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthClientReadResponse {
     pub client: OAuthClientView,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthClientDeleteParams {
     pub client_id: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthClientDeleteResponse {
     pub client: OAuthClientView,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum AuthFlowStatus {
     Pending,
@@ -1922,7 +1928,7 @@ pub enum AuthFlowStatus {
     Expired,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthFlowStartParams {
     pub client_id: String,
@@ -1932,7 +1938,7 @@ pub struct AuthFlowStartParams {
     pub audience: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthFlowStartResponse {
     pub flow_id: String,
@@ -1942,13 +1948,13 @@ pub struct AuthFlowStartResponse {
     pub expires_at_ms: i64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthFlowStatusParams {
     pub flow_id: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthFlowView {
     pub flow_id: String,
@@ -1964,13 +1970,13 @@ pub struct AuthFlowView {
     pub updated_at_ms: i64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthFlowStatusResponse {
     pub flow: AuthFlowView,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum AuthProviderStatus {
     #[default]
@@ -1981,7 +1987,7 @@ pub enum AuthProviderStatus {
 
 /// Non-secret, provider-specific configuration. New providers add a
 /// variant, not a table.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type")]
 pub enum AuthProviderConfigView {
     #[serde(rename = "githubApp", rename_all = "camelCase")]
@@ -2003,7 +2009,7 @@ pub enum AuthProviderConfigView {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type")]
 pub enum AuthProviderConfigInput {
     #[serde(rename = "githubApp", rename_all = "camelCase")]
@@ -2026,7 +2032,7 @@ pub enum AuthProviderConfigInput {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthProviderView {
     pub provider_id: String,
@@ -2044,7 +2050,7 @@ pub struct AuthProviderView {
 /// key PEM) is the third deliberate inbound-plaintext path: it is encrypted
 /// on receipt and never returned by any method. `Debug` output redacts it;
 /// request logging must never echo these params.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthProviderCreateParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2067,48 +2073,48 @@ impl std::fmt::Debug for AuthProviderCreateParams {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthProviderCreateResponse {
     pub provider: AuthProviderView,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthProviderListParams {}
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthProviderListResponse {
     #[serde(default)]
     pub providers: Vec<AuthProviderView>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthProviderReadParams {
     pub provider_id: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthProviderReadResponse {
     pub provider: AuthProviderView,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthProviderDeleteParams {
     pub provider_id: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthProviderDeleteResponse {
     pub provider: AuthProviderView,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct GitHubInstallationView {
     pub installation_id: i64,
@@ -2121,20 +2127,20 @@ pub struct GitHubInstallationView {
     pub permissions: serde_json::Value,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthGitHubInstallationListParams {
     pub provider_id: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthGitHubInstallationListResponse {
     #[serde(default)]
     pub installations: Vec<GitHubInstallationView>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthGitHubInstallationGrantParams {
     pub provider_id: String,
@@ -2145,13 +2151,13 @@ pub struct AuthGitHubInstallationGrantParams {
     pub display_name: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthGitHubInstallationGrantResponse {
     pub grant: AuthGrantView,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionMcpLinkParams {
     pub session_id: SessionId,
@@ -2170,7 +2176,7 @@ pub struct SessionMcpLinkParams {
     pub auth_grant_id: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionMcpLinkResponse {
     pub link: SessionMcpLinkView,
@@ -2179,14 +2185,14 @@ pub struct SessionMcpLinkResponse {
     pub session: SessionView,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionMcpUnlinkParams {
     pub session_id: SessionId,
     pub tool_id: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionMcpUnlinkResponse {
     pub tool_id: String,
@@ -2195,20 +2201,20 @@ pub struct SessionMcpUnlinkResponse {
     pub session: SessionView,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionMcpListParams {
     pub session_id: SessionId,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionMcpListResponse {
     #[serde(default)]
     pub links: Vec<SessionMcpLinkView>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelConfig {
     pub provider_id: String,
@@ -2216,7 +2222,7 @@ pub struct ModelConfig {
     pub model: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum ReasoningEffort {
     None,
@@ -2225,7 +2231,7 @@ pub enum ReasoningEffort {
     High,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionView {
     pub id: SessionId,
@@ -2245,7 +2251,7 @@ pub struct SessionView {
     pub vfs_mounts: Vec<VfsMountView>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextView {
     pub revision: u64,
@@ -2253,7 +2259,7 @@ pub struct ContextView {
     pub items: Vec<SessionItemView>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionConfigView {
     pub model: ModelConfig,
@@ -2263,7 +2269,7 @@ pub struct SessionConfigView {
     pub tools: ToolConfigView,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolConfigView {
     pub web_search: bool,
@@ -2271,7 +2277,7 @@ pub struct ToolConfigView {
     pub host: HostToolMode,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum SessionStatus {
     NotLoaded,
@@ -2281,7 +2287,7 @@ pub enum SessionStatus {
     Error,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RunView {
     pub id: RunId,
@@ -2293,7 +2299,7 @@ pub struct RunView {
     pub tool_batches: Vec<ToolBatchView>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolBatchView {
     pub id: String,
@@ -2303,7 +2309,7 @@ pub struct ToolBatchView {
     pub calls: Vec<ToolCallView>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolCallView {
     pub call_id: String,
@@ -2322,7 +2328,7 @@ pub struct ToolCallView {
     pub display: Option<ToolCallDisplayView>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolEffectView {
     pub kind: String,
@@ -2330,7 +2336,7 @@ pub struct ToolEffectView {
     pub data: BTreeMap<String, String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolCallDisplayView {
     pub group: ToolCallDisplayGroup,
@@ -2341,7 +2347,7 @@ pub struct ToolCallDisplayView {
     pub detail: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum ToolCallDisplayGroup {
     Explore,
@@ -2350,7 +2356,7 @@ pub enum ToolCallDisplayGroup {
     Other,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderContextDisplayView {
     pub summary: ToolCallDisplayView,
@@ -2366,7 +2372,7 @@ pub struct ProviderContextDisplayView {
     pub error: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum RunStatus {
     Queued,
@@ -2377,7 +2383,7 @@ pub enum RunStatus {
     Cancelled,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "type",
     rename_all = "camelCase",
@@ -2388,7 +2394,7 @@ pub enum InputItem {
     TextRef { blob_ref: String },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextEntryInputView {
     pub kind: ContextEntryKindView,
@@ -2405,7 +2411,7 @@ pub struct ContextEntryInputView {
     pub token_estimate: Option<TokenEstimateView>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "type",
     rename_all = "camelCase",
@@ -2422,21 +2428,21 @@ pub enum ContextEntryKindView {
     ProviderOpaque,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum ContextMessageRoleView {
     User,
     Assistant,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct TokenEstimateView {
     pub tokens: u32,
     pub quality: TokenEstimateQualityView,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum TokenEstimateQualityView {
     Exact,
@@ -2444,7 +2450,7 @@ pub enum TokenEstimateQualityView {
     Estimated,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "type",
     rename_all = "camelCase",
@@ -2495,7 +2501,7 @@ pub enum SessionItemView {
     },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum ToolItemStatus {
     Requested,
@@ -2505,7 +2511,7 @@ pub enum ToolItemStatus {
     Unavailable,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "method", content = "params", rename_all = "camelCase")]
 pub enum AgentNotification {
     #[serde(rename = "session/started")]
@@ -2567,7 +2573,7 @@ impl AgentNotification {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentApiErrorKind {
     InvalidRequest,
@@ -2577,7 +2583,7 @@ pub enum AgentApiErrorKind {
     Internal,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Error)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Error)]
 #[error("{kind:?}: {message}")]
 #[serde(rename_all = "camelCase")]
 pub struct AgentApiError {
@@ -2624,14 +2630,14 @@ impl AgentApiError {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum RequestId {
     Number(u64),
     String(String),
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct JsonRpcRequest {
     pub id: RequestId,
@@ -2640,7 +2646,7 @@ pub struct JsonRpcRequest {
     pub params: Option<Value>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct JsonRpcNotification {
     pub method: String,
@@ -2648,7 +2654,7 @@ pub struct JsonRpcNotification {
     pub params: Option<Value>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct JsonRpcResponse {
     pub id: RequestId,
@@ -2679,7 +2685,7 @@ impl JsonRpcResponse {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct JsonRpcError {
     pub code: i64,
@@ -2724,267 +2730,127 @@ impl From<AgentApiError> for JsonRpcError {
     }
 }
 
-pub async fn dispatch_json_rpc(
-    service: &dyn AgentApiService,
-    request: JsonRpcRequest,
-) -> JsonRpcResponse {
-    let id = request.id;
-    match request.method.as_str() {
-        METHOD_INITIALIZE => match json_rpc_params::<InitializeParams>(request.params) {
-            Ok(params) => json_rpc_outcome(id, service.initialize(params).await),
-            Err(error) => JsonRpcResponse::failure(id, error),
-        },
-        METHOD_SESSION_START => match json_rpc_params::<SessionStartParams>(request.params) {
-            Ok(params) => json_rpc_outcome(id, service.start_session(params).await),
-            Err(error) => JsonRpcResponse::failure(id, error),
-        },
-        METHOD_SESSION_UPDATE => match json_rpc_params::<SessionUpdateParams>(request.params) {
-            Ok(params) => json_rpc_outcome(id, service.update_session(params).await),
-            Err(error) => JsonRpcResponse::failure(id, error),
-        },
-        METHOD_SESSION_TOOLS_UPDATE => {
-            match json_rpc_params::<SessionToolsUpdateParams>(request.params) {
-                Ok(params) => json_rpc_outcome(id, service.update_session_tools(params).await),
-                Err(error) => JsonRpcResponse::failure(id, error),
-            }
-        }
-        METHOD_SESSION_READ => match json_rpc_params::<SessionReadParams>(request.params) {
-            Ok(params) => json_rpc_outcome(id, service.read_session(params).await),
-            Err(error) => JsonRpcResponse::failure(id, error),
-        },
-        METHOD_SESSION_EVENTS_READ => {
-            match json_rpc_params::<SessionEventsReadParams>(request.params) {
-                Ok(params) => json_rpc_outcome(id, service.read_session_events(params).await),
-                Err(error) => JsonRpcResponse::failure(id, error),
-            }
-        }
-        METHOD_SESSION_CLOSE => match json_rpc_params::<SessionCloseParams>(request.params) {
-            Ok(params) => json_rpc_outcome(id, service.close_session(params).await),
-            Err(error) => JsonRpcResponse::failure(id, error),
-        },
-        METHOD_CONTEXT_COMPACT => match json_rpc_params::<ContextCompactParams>(request.params) {
-            Ok(params) => json_rpc_outcome(id, service.compact_context(params).await),
-            Err(error) => JsonRpcResponse::failure(id, error),
-        },
-        METHOD_RUN_START => match json_rpc_params::<RunStartParams>(request.params) {
-            Ok(params) => json_rpc_outcome(id, service.start_run(params).await),
-            Err(error) => JsonRpcResponse::failure(id, error),
-        },
-        METHOD_RUN_CANCEL => match json_rpc_params::<RunCancelParams>(request.params) {
-            Ok(params) => json_rpc_outcome(id, service.cancel_run(params).await),
-            Err(error) => JsonRpcResponse::failure(id, error),
-        },
-        METHOD_PROMPTS_ACTIVE => match json_rpc_params::<PromptsActiveParams>(request.params) {
-            Ok(params) => json_rpc_outcome(id, service.active_prompts(params).await),
-            Err(error) => JsonRpcResponse::failure(id, error),
-        },
-        METHOD_SKILLS_LIST => match json_rpc_params::<SkillListParams>(request.params) {
-            Ok(params) => json_rpc_outcome(id, service.list_skills(params).await),
-            Err(error) => JsonRpcResponse::failure(id, error),
-        },
-        METHOD_SKILLS_ACTIVE => match json_rpc_params::<SkillActiveParams>(request.params) {
-            Ok(params) => json_rpc_outcome(id, service.active_skills(params).await),
-            Err(error) => JsonRpcResponse::failure(id, error),
-        },
-        METHOD_SKILLS_ACTIVATE => match json_rpc_params::<SkillActivateParams>(request.params) {
-            Ok(params) => json_rpc_outcome(id, service.activate_skill(params).await),
-            Err(error) => JsonRpcResponse::failure(id, error),
-        },
-        METHOD_SKILLS_DEACTIVATE => {
-            match json_rpc_params::<SkillDeactivateParams>(request.params) {
-                Ok(params) => json_rpc_outcome(id, service.deactivate_skill(params).await),
-                Err(error) => JsonRpcResponse::failure(id, error),
-            }
-        }
-        METHOD_BLOB_PUT => match json_rpc_params::<BlobPutParams>(request.params) {
-            Ok(params) => json_rpc_outcome(id, service.put_blob(params).await),
-            Err(error) => JsonRpcResponse::failure(id, error),
-        },
-        METHOD_BLOB_PUT_MANY => match json_rpc_params::<BlobPutManyParams>(request.params) {
-            Ok(params) => json_rpc_outcome(id, service.put_blobs(params).await),
-            Err(error) => JsonRpcResponse::failure(id, error),
-        },
-        METHOD_BLOB_GET => match json_rpc_params::<BlobGetParams>(request.params) {
-            Ok(params) => json_rpc_outcome(id, service.get_blob(params).await),
-            Err(error) => JsonRpcResponse::failure(id, error),
-        },
-        METHOD_BLOB_HAS_MANY => match json_rpc_params::<BlobHasManyParams>(request.params) {
-            Ok(params) => json_rpc_outcome(id, service.has_blobs(params).await),
-            Err(error) => JsonRpcResponse::failure(id, error),
-        },
-        METHOD_VFS_SNAPSHOT_COMMIT => {
-            match json_rpc_params::<VfsSnapshotCommitParams>(request.params) {
-                Ok(params) => json_rpc_outcome(id, service.commit_vfs_snapshot(params).await),
-                Err(error) => JsonRpcResponse::failure(id, error),
-            }
-        }
-        METHOD_VFS_SNAPSHOT_READ => {
-            match json_rpc_params::<VfsSnapshotReadParams>(request.params) {
-                Ok(params) => json_rpc_outcome(id, service.read_vfs_snapshot(params).await),
-                Err(error) => JsonRpcResponse::failure(id, error),
-            }
-        }
-        METHOD_VFS_WORKSPACE_CREATE => {
-            match json_rpc_params::<VfsWorkspaceCreateParams>(request.params) {
-                Ok(params) => json_rpc_outcome(id, service.create_vfs_workspace(params).await),
-                Err(error) => JsonRpcResponse::failure(id, error),
-            }
-        }
-        METHOD_VFS_WORKSPACE_READ => {
-            match json_rpc_params::<VfsWorkspaceReadParams>(request.params) {
-                Ok(params) => json_rpc_outcome(id, service.read_vfs_workspace(params).await),
-                Err(error) => JsonRpcResponse::failure(id, error),
-            }
-        }
-        METHOD_VFS_WORKSPACE_UPDATE => {
-            match json_rpc_params::<VfsWorkspaceUpdateParams>(request.params) {
-                Ok(params) => json_rpc_outcome(id, service.update_vfs_workspace(params).await),
-                Err(error) => JsonRpcResponse::failure(id, error),
-            }
-        }
-        METHOD_VFS_WORKSPACE_DELETE => {
-            match json_rpc_params::<VfsWorkspaceDeleteParams>(request.params) {
-                Ok(params) => json_rpc_outcome(id, service.delete_vfs_workspace(params).await),
-                Err(error) => JsonRpcResponse::failure(id, error),
-            }
-        }
-        METHOD_VFS_MOUNT_PUT => match json_rpc_params::<VfsMountPutParams>(request.params) {
-            Ok(params) => json_rpc_outcome(id, service.put_vfs_mount(params).await),
-            Err(error) => JsonRpcResponse::failure(id, error),
-        },
-        METHOD_VFS_MOUNT_DELETE => match json_rpc_params::<VfsMountDeleteParams>(request.params) {
-            Ok(params) => json_rpc_outcome(id, service.delete_vfs_mount(params).await),
-            Err(error) => JsonRpcResponse::failure(id, error),
-        },
-        METHOD_VFS_MOUNT_LIST => match json_rpc_params::<VfsMountListParams>(request.params) {
-            Ok(params) => json_rpc_outcome(id, service.list_vfs_mounts(params).await),
-            Err(error) => JsonRpcResponse::failure(id, error),
-        },
-        METHOD_MCP_SERVERS_CREATE => {
-            match json_rpc_params::<McpServerCreateParams>(request.params) {
-                Ok(params) => json_rpc_outcome(id, service.create_mcp_server(params).await),
-                Err(error) => JsonRpcResponse::failure(id, error),
-            }
-        }
-        METHOD_MCP_SERVERS_LIST => match json_rpc_params::<McpServerListParams>(request.params) {
-            Ok(params) => json_rpc_outcome(id, service.list_mcp_servers(params).await),
-            Err(error) => JsonRpcResponse::failure(id, error),
-        },
-        METHOD_MCP_SERVERS_READ => match json_rpc_params::<McpServerReadParams>(request.params) {
-            Ok(params) => json_rpc_outcome(id, service.read_mcp_server(params).await),
-            Err(error) => JsonRpcResponse::failure(id, error),
-        },
-        METHOD_MCP_SERVERS_DELETE => {
-            match json_rpc_params::<McpServerDeleteParams>(request.params) {
-                Ok(params) => json_rpc_outcome(id, service.delete_mcp_server(params).await),
-                Err(error) => JsonRpcResponse::failure(id, error),
-            }
-        }
-        METHOD_SESSION_MCP_LINK => match json_rpc_params::<SessionMcpLinkParams>(request.params) {
-            Ok(params) => json_rpc_outcome(id, service.link_session_mcp(params).await),
-            Err(error) => JsonRpcResponse::failure(id, error),
-        },
-        METHOD_SESSION_MCP_UNLINK => {
-            match json_rpc_params::<SessionMcpUnlinkParams>(request.params) {
-                Ok(params) => json_rpc_outcome(id, service.unlink_session_mcp(params).await),
-                Err(error) => JsonRpcResponse::failure(id, error),
-            }
-        }
-        METHOD_SESSION_MCP_LIST => match json_rpc_params::<SessionMcpListParams>(request.params) {
-            Ok(params) => json_rpc_outcome(id, service.list_session_mcp(params).await),
-            Err(error) => JsonRpcResponse::failure(id, error),
-        },
-        METHOD_AUTH_GRANTS_IMPORT => {
-            match json_rpc_params::<AuthGrantImportParams>(request.params) {
-                Ok(params) => json_rpc_outcome(id, service.import_auth_grant(params).await),
-                Err(error) => JsonRpcResponse::failure(id, error),
-            }
-        }
-        METHOD_AUTH_GRANTS_LIST => match json_rpc_params::<AuthGrantListParams>(request.params) {
-            Ok(params) => json_rpc_outcome(id, service.list_auth_grants(params).await),
-            Err(error) => JsonRpcResponse::failure(id, error),
-        },
-        METHOD_AUTH_GRANTS_READ => match json_rpc_params::<AuthGrantReadParams>(request.params) {
-            Ok(params) => json_rpc_outcome(id, service.read_auth_grant(params).await),
-            Err(error) => JsonRpcResponse::failure(id, error),
-        },
-        METHOD_AUTH_GRANTS_REVOKE => {
-            match json_rpc_params::<AuthGrantRevokeParams>(request.params) {
-                Ok(params) => json_rpc_outcome(id, service.revoke_auth_grant(params).await),
-                Err(error) => JsonRpcResponse::failure(id, error),
-            }
-        }
-        METHOD_AUTH_CLIENTS_CREATE => {
-            match json_rpc_params::<AuthClientCreateParams>(request.params) {
-                Ok(params) => json_rpc_outcome(id, service.create_auth_client(params).await),
-                Err(error) => JsonRpcResponse::failure(id, error),
-            }
-        }
-        METHOD_AUTH_CLIENTS_LIST => match json_rpc_params::<AuthClientListParams>(request.params) {
-            Ok(params) => json_rpc_outcome(id, service.list_auth_clients(params).await),
-            Err(error) => JsonRpcResponse::failure(id, error),
-        },
-        METHOD_AUTH_CLIENTS_READ => match json_rpc_params::<AuthClientReadParams>(request.params) {
-            Ok(params) => json_rpc_outcome(id, service.read_auth_client(params).await),
-            Err(error) => JsonRpcResponse::failure(id, error),
-        },
-        METHOD_AUTH_CLIENTS_DELETE => {
-            match json_rpc_params::<AuthClientDeleteParams>(request.params) {
-                Ok(params) => json_rpc_outcome(id, service.delete_auth_client(params).await),
-                Err(error) => JsonRpcResponse::failure(id, error),
-            }
-        }
-        METHOD_AUTH_FLOWS_START => match json_rpc_params::<AuthFlowStartParams>(request.params) {
-            Ok(params) => json_rpc_outcome(id, service.start_auth_flow(params).await),
-            Err(error) => JsonRpcResponse::failure(id, error),
-        },
-        METHOD_AUTH_FLOWS_STATUS => match json_rpc_params::<AuthFlowStatusParams>(request.params) {
-            Ok(params) => json_rpc_outcome(id, service.read_auth_flow_status(params).await),
-            Err(error) => JsonRpcResponse::failure(id, error),
-        },
-        METHOD_AUTH_PROVIDERS_CREATE => {
-            match json_rpc_params::<AuthProviderCreateParams>(request.params) {
-                Ok(params) => json_rpc_outcome(id, service.create_auth_provider(params).await),
-                Err(error) => JsonRpcResponse::failure(id, error),
-            }
-        }
-        METHOD_AUTH_PROVIDERS_LIST => {
-            match json_rpc_params::<AuthProviderListParams>(request.params) {
-                Ok(params) => json_rpc_outcome(id, service.list_auth_providers(params).await),
-                Err(error) => JsonRpcResponse::failure(id, error),
-            }
-        }
-        METHOD_AUTH_PROVIDERS_READ => {
-            match json_rpc_params::<AuthProviderReadParams>(request.params) {
-                Ok(params) => json_rpc_outcome(id, service.read_auth_provider(params).await),
-                Err(error) => JsonRpcResponse::failure(id, error),
-            }
-        }
-        METHOD_AUTH_PROVIDERS_DELETE => {
-            match json_rpc_params::<AuthProviderDeleteParams>(request.params) {
-                Ok(params) => json_rpc_outcome(id, service.delete_auth_provider(params).await),
-                Err(error) => JsonRpcResponse::failure(id, error),
-            }
-        }
-        METHOD_AUTH_GITHUB_INSTALLATIONS_LIST => {
-            match json_rpc_params::<AuthGitHubInstallationListParams>(request.params) {
-                Ok(params) => {
-                    json_rpc_outcome(id, service.list_github_installations(params).await)
-                }
-                Err(error) => JsonRpcResponse::failure(id, error),
-            }
-        }
-        METHOD_AUTH_GITHUB_INSTALLATIONS_GRANT => {
-            match json_rpc_params::<AuthGitHubInstallationGrantParams>(request.params) {
-                Ok(params) => {
-                    json_rpc_outcome(id, service.grant_github_installation(params).await)
-                }
-                Err(error) => JsonRpcResponse::failure(id, error),
-            }
-        }
-        other => JsonRpcResponse::failure(id, JsonRpcError::method_not_found(other)),
-    }
+/// Wire contract of one JSON-RPC method: its name, the Rust types of its
+/// params and result, and a hook registering both schemas with a
+/// [`schemars::SchemaGenerator`]. Produced by the same macro invocation that
+/// generates [`dispatch_json_rpc`], so the manifest cannot drift from the
+/// dispatcher.
+pub struct MethodSpec {
+    pub method: &'static str,
+    pub params_type: &'static str,
+    pub result_type: &'static str,
+    pub register_schemas: fn(&mut schemars::SchemaGenerator) -> MethodSchemas,
 }
+
+pub struct MethodSchemas {
+    pub params: schemars::Schema,
+    pub result: schemars::Schema,
+}
+
+macro_rules! api_methods {
+    ($($method_const:ident => $service_fn:ident($params:ty) -> $response:ty),+ $(,)?) => {
+        pub async fn dispatch_json_rpc(
+            service: &dyn AgentApiService,
+            request: JsonRpcRequest,
+        ) -> JsonRpcResponse {
+            let id = request.id;
+            match request.method.as_str() {
+                $(
+                    $method_const => match json_rpc_params::<$params>(request.params) {
+                        Ok(params) => json_rpc_outcome(id, service.$service_fn(params).await),
+                        Err(error) => JsonRpcResponse::failure(id, error),
+                    },
+                )+
+                other => JsonRpcResponse::failure(id, JsonRpcError::method_not_found(other)),
+            }
+        }
+
+        /// One entry per JSON-RPC method, in dispatch order. The JSON-RPC
+        /// result envelope is `AgentApiOutcome<Response>`, which is what
+        /// `result_type` and the registered result schema describe.
+        pub fn method_manifest() -> Vec<MethodSpec> {
+            vec![
+                $(
+                    MethodSpec {
+                        method: $method_const,
+                        params_type: stringify!($params),
+                        result_type: concat!("AgentApiOutcome<", stringify!($response), ">"),
+                        register_schemas: |generator| MethodSchemas {
+                            params: generator.subschema_for::<$params>(),
+                            result: generator.subschema_for::<AgentApiOutcome<$response>>(),
+                        },
+                    },
+                )+
+            ]
+        }
+    };
+}
+
+api_methods! {
+    METHOD_INITIALIZE => initialize(InitializeParams) -> InitializeResponse,
+    METHOD_SESSION_START => start_session(SessionStartParams) -> SessionStartResponse,
+    METHOD_SESSION_UPDATE => update_session(SessionUpdateParams) -> SessionUpdateResponse,
+    METHOD_SESSION_TOOLS_UPDATE => update_session_tools(SessionToolsUpdateParams) -> SessionToolsUpdateResponse,
+    METHOD_SESSION_READ => read_session(SessionReadParams) -> SessionReadResponse,
+    METHOD_SESSION_EVENTS_READ => read_session_events(SessionEventsReadParams) -> SessionEventsReadResponse,
+    METHOD_SESSION_CLOSE => close_session(SessionCloseParams) -> SessionCloseResponse,
+    METHOD_CONTEXT_COMPACT => compact_context(ContextCompactParams) -> ContextCompactResponse,
+    METHOD_RUN_START => start_run(RunStartParams) -> RunStartResponse,
+    METHOD_RUN_CANCEL => cancel_run(RunCancelParams) -> RunCancelResponse,
+    METHOD_PROMPTS_ACTIVE => active_prompts(PromptsActiveParams) -> PromptsActiveResponse,
+    METHOD_SKILLS_LIST => list_skills(SkillListParams) -> SkillListResponse,
+    METHOD_SKILLS_ACTIVE => active_skills(SkillActiveParams) -> SkillActiveResponse,
+    METHOD_SKILLS_ACTIVATE => activate_skill(SkillActivateParams) -> SkillActivateResponse,
+    METHOD_SKILLS_DEACTIVATE => deactivate_skill(SkillDeactivateParams) -> SkillDeactivateResponse,
+    METHOD_BLOB_PUT => put_blob(BlobPutParams) -> BlobPutResponse,
+    METHOD_BLOB_PUT_MANY => put_blobs(BlobPutManyParams) -> BlobPutManyResponse,
+    METHOD_BLOB_GET => get_blob(BlobGetParams) -> BlobGetResponse,
+    METHOD_BLOB_HAS_MANY => has_blobs(BlobHasManyParams) -> BlobHasManyResponse,
+    METHOD_VFS_SNAPSHOT_COMMIT => commit_vfs_snapshot(VfsSnapshotCommitParams) -> VfsSnapshotCommitResponse,
+    METHOD_VFS_SNAPSHOT_READ => read_vfs_snapshot(VfsSnapshotReadParams) -> VfsSnapshotReadResponse,
+    METHOD_VFS_WORKSPACE_CREATE => create_vfs_workspace(VfsWorkspaceCreateParams) -> VfsWorkspaceCreateResponse,
+    METHOD_VFS_WORKSPACE_READ => read_vfs_workspace(VfsWorkspaceReadParams) -> VfsWorkspaceReadResponse,
+    METHOD_VFS_WORKSPACE_UPDATE => update_vfs_workspace(VfsWorkspaceUpdateParams) -> VfsWorkspaceUpdateResponse,
+    METHOD_VFS_WORKSPACE_DELETE => delete_vfs_workspace(VfsWorkspaceDeleteParams) -> VfsWorkspaceDeleteResponse,
+    METHOD_VFS_MOUNT_PUT => put_vfs_mount(VfsMountPutParams) -> VfsMountPutResponse,
+    METHOD_VFS_MOUNT_DELETE => delete_vfs_mount(VfsMountDeleteParams) -> VfsMountDeleteResponse,
+    METHOD_VFS_MOUNT_LIST => list_vfs_mounts(VfsMountListParams) -> VfsMountListResponse,
+    METHOD_MCP_SERVERS_CREATE => create_mcp_server(McpServerCreateParams) -> McpServerCreateResponse,
+    METHOD_MCP_SERVERS_LIST => list_mcp_servers(McpServerListParams) -> McpServerListResponse,
+    METHOD_MCP_SERVERS_READ => read_mcp_server(McpServerReadParams) -> McpServerReadResponse,
+    METHOD_MCP_SERVERS_DELETE => delete_mcp_server(McpServerDeleteParams) -> McpServerDeleteResponse,
+    METHOD_SESSION_MCP_LINK => link_session_mcp(SessionMcpLinkParams) -> SessionMcpLinkResponse,
+    METHOD_SESSION_MCP_UNLINK => unlink_session_mcp(SessionMcpUnlinkParams) -> SessionMcpUnlinkResponse,
+    METHOD_SESSION_MCP_LIST => list_session_mcp(SessionMcpListParams) -> SessionMcpListResponse,
+    METHOD_AUTH_GRANTS_IMPORT => import_auth_grant(AuthGrantImportParams) -> AuthGrantImportResponse,
+    METHOD_AUTH_GRANTS_LIST => list_auth_grants(AuthGrantListParams) -> AuthGrantListResponse,
+    METHOD_AUTH_GRANTS_READ => read_auth_grant(AuthGrantReadParams) -> AuthGrantReadResponse,
+    METHOD_AUTH_GRANTS_REVOKE => revoke_auth_grant(AuthGrantRevokeParams) -> AuthGrantRevokeResponse,
+    METHOD_AUTH_CLIENTS_CREATE => create_auth_client(AuthClientCreateParams) -> AuthClientCreateResponse,
+    METHOD_AUTH_CLIENTS_LIST => list_auth_clients(AuthClientListParams) -> AuthClientListResponse,
+    METHOD_AUTH_CLIENTS_READ => read_auth_client(AuthClientReadParams) -> AuthClientReadResponse,
+    METHOD_AUTH_CLIENTS_DELETE => delete_auth_client(AuthClientDeleteParams) -> AuthClientDeleteResponse,
+    METHOD_AUTH_FLOWS_START => start_auth_flow(AuthFlowStartParams) -> AuthFlowStartResponse,
+    METHOD_AUTH_FLOWS_STATUS => read_auth_flow_status(AuthFlowStatusParams) -> AuthFlowStatusResponse,
+    METHOD_AUTH_PROVIDERS_CREATE => create_auth_provider(AuthProviderCreateParams) -> AuthProviderCreateResponse,
+    METHOD_AUTH_PROVIDERS_LIST => list_auth_providers(AuthProviderListParams) -> AuthProviderListResponse,
+    METHOD_AUTH_PROVIDERS_READ => read_auth_provider(AuthProviderReadParams) -> AuthProviderReadResponse,
+    METHOD_AUTH_PROVIDERS_DELETE => delete_auth_provider(AuthProviderDeleteParams) -> AuthProviderDeleteResponse,
+    METHOD_AUTH_GITHUB_INSTALLATIONS_LIST => list_github_installations(AuthGitHubInstallationListParams) -> AuthGitHubInstallationListResponse,
+    METHOD_AUTH_GITHUB_INSTALLATIONS_GRANT => grant_github_installation(AuthGitHubInstallationGrantParams) -> AuthGitHubInstallationGrantResponse,
+}
+
+/// JSON-RPC notification methods the server can emit, with payloads described
+/// by the [`AgentNotification`] schema.
+pub const NOTIFICATION_METHODS: &[&str] = &[
+    NOTIFY_SESSION_STARTED,
+    NOTIFY_SESSION_STATUS_CHANGED,
+    NOTIFY_SESSION_EVENT,
+    NOTIFY_RUN_STARTED,
+    NOTIFY_RUN_COMPLETED,
+    NOTIFY_ITEM_COMPLETED,
+    NOTIFY_ERROR,
+];
 
 fn json_rpc_params<T>(params: Option<Value>) -> Result<T, JsonRpcError>
 where

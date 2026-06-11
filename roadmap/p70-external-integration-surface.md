@@ -101,15 +101,32 @@ Design notes:
 
 Acceptance criteria:
 
-- [ ] all types reachable from any method's params/result derive or implement
-  `JsonSchema`;
-- [ ] manifest <-> dispatch drift test exists and fails when a method is
-  added to one but not the other;
-- [ ] `export-schema` is deterministic (stable ordering) so the CI diff test
-  is meaningful;
-- [ ] exported schemas round-trip: a serialized example of each top-level
+- [x] all types reachable from any method's params/result derive or implement
+  `JsonSchema` (all 201 serializable `api` types derive it);
+- [x] manifest <-> dispatch drift test exists and fails when a method is
+  added to one but not the other — superseded by a stronger guarantee: a
+  single `api_methods!` macro table generates `dispatch_json_rpc`,
+  `method_manifest()`, and the per-method schema registration, so the three
+  cannot drift by construction (a manifest uniqueness/count test remains);
+- [x] `export-schema` is deterministic (stable ordering) so the CI diff test
+  is meaningful (definitions collected into a `BTreeMap`; verified by
+  double-run diff);
+- [x] exported schemas round-trip: a serialized example of each top-level
   params/result type validates against its exported schema (spot-check via
-  test fixtures, not exhaustively).
+  test fixtures, not exhaustively — `RunStartParams`,
+  `AgentApiOutcomeOfRunStartResponse` incl. a notification,
+  `SessionEventsReadParams`, validated with the `jsonschema` dev-dependency).
+
+Implemented 2026-06-11: `schemars` derives across `crates/api` (generic
+definition names templated via `#[schemars(rename = "AgentApiOutcomeOf{T}")]`
+/ `FieldPatchOf{T}` to avoid collision-counter names), the `api_methods!`
+macro (replacing ~260 lines of hand-written dispatch), `NOTIFICATION_METHODS`
+with a schema-variant drift test, the `schema_export` module +
+`export-schema` binary, committed `schemas/api.schema.json` (248 definitions)
+/ `methods.json` (51 methods) / `openrpc.json`, and the
+`schema_artifacts` currency + ref-resolution + fixture-validation tests.
+The result envelope on the wire is `AgentApiOutcome<Response>`; manifest and
+schemas describe the envelope, not the bare response type.
 
 ## G2: Idempotent `run/start`
 
