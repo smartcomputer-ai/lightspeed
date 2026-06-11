@@ -9,6 +9,7 @@
 - direct remote MCP ([P67 proposed](p67-direct-remote-mcp.md))
 - remote MCP registry/linking ([P68 proposed](p68-remote-mcp-registry-linking.md))
 - generic auth/token broker ([P69 proposed](p69-generic-auth-token-broker.md))
+- external integration surface: api schema, ts/py clients, idempotent runs, long-poll events ([P70 proposed](p70-external-integration-surface.md))
 - (go live)
 - timers/schedules/cron
 - vms/sandboxes

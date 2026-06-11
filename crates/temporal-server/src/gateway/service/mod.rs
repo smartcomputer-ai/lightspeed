@@ -335,8 +335,7 @@ impl GatewayAgentApi {
             env::var("TEMPORAL_ADDRESS").unwrap_or_else(|_| DEFAULT_TEMPORAL_TARGET.to_owned());
         let namespace = env::var("TEMPORAL_NAMESPACE")
             .unwrap_or_else(|_| DEFAULT_TEMPORAL_NAMESPACE.to_owned());
-        let task_queue =
-            env::var("FORGE_TASK_QUEUE").unwrap_or_else(|_| DEFAULT_TASK_QUEUE.to_owned());
+        let task_queue = crate::config::task_queue_from_env()?;
         let client = connect_temporal(&temporal_target, &namespace).await?;
         let store = pg_store_from_env().await?;
         Ok(Self::builder(client, store)

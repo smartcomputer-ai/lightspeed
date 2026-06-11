@@ -299,7 +299,7 @@ the same variables directly in your shell.
 | `FORGE_API_URL` | CLI JSON-RPC gateway URL |
 | `FORGE_POSTGRES_URL` | PostgreSQL session/CAS database URL |
 | `FORGE_PG_UNIVERSE_ID` | Hosted store universe UUID |
-| `FORGE_TASK_QUEUE` | Temporal task queue used by the temporal-server worker and gateway modes |
+| `FORGE_TASK_QUEUE` | Temporal task queue override; defaults to `forge-universe-{FORGE_PG_UNIVERSE_ID}` |
 | `FORGE_OBJECT_STORE_ENDPOINT` | S3-compatible object store endpoint |
 | `RUST_LOG` | Server log filter. Defaults to app/Temporal info and dependency warnings; use `temporal_server=debug,temporal_workflow=debug` for more detail |
 | `FORGE_LOG_FORMAT` | Server log format: `compact` (default), `pretty`, or `json` |

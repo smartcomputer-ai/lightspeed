@@ -7,4 +7,4 @@ pub mod config;
 pub mod gateway;
 pub mod worker;
 
-pub use config::{default_model_from_env, pg_store_from_env};
+pub use config::{default_model_from_env, pg_store_from_env, task_queue_from_env};

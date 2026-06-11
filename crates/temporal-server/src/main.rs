@@ -3,11 +3,11 @@ use std::{env, net::SocketAddr, sync::Arc, time::Duration};
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand};
 use temporal_server::{
-    config::pg_store_from_env,
+    config::{pg_store_from_env, task_queue_from_env},
     gateway::{
-        DEFAULT_GATEWAY_BIND, DEFAULT_MAX_REQUEST_BODY_BYTES, DEFAULT_TASK_QUEUE,
-        DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET, GatewayAgentApi, GatewayServerConfig,
-        gateway_router, serve_gateway,
+        DEFAULT_GATEWAY_BIND, DEFAULT_MAX_REQUEST_BODY_BYTES, DEFAULT_TEMPORAL_NAMESPACE,
+        DEFAULT_TEMPORAL_TARGET, GatewayAgentApi, GatewayServerConfig, gateway_router,
+        serve_gateway,
     },
     worker::{self, WorkerActivities, WorkerServerConfig},
 };
@@ -36,8 +36,9 @@ enum Command {
 
 #[derive(Clone, Debug, Args)]
 struct TemporalArgs {
-    #[arg(long, env = "FORGE_TASK_QUEUE", default_value = DEFAULT_TASK_QUEUE)]
-    task_queue: String,
+    /// Temporal task queue. Defaults to forge-universe-{FORGE_PG_UNIVERSE_ID}.
+    #[arg(long, env = "FORGE_TASK_QUEUE")]
+    task_queue: Option<String>,
 
     #[arg(long, env = "TEMPORAL_ADDRESS", default_value = DEFAULT_TEMPORAL_TARGET)]
     temporal_target: String,
@@ -97,12 +98,18 @@ struct BothArgs {
 impl TemporalArgs {
     fn from_env() -> Self {
         Self {
-            task_queue: env::var("FORGE_TASK_QUEUE")
-                .unwrap_or_else(|_| DEFAULT_TASK_QUEUE.to_owned()),
+            task_queue: env::var("FORGE_TASK_QUEUE").ok(),
             temporal_target: env::var("TEMPORAL_ADDRESS")
                 .unwrap_or_else(|_| DEFAULT_TEMPORAL_TARGET.to_owned()),
             namespace: env::var("TEMPORAL_NAMESPACE")
                 .unwrap_or_else(|_| DEFAULT_TEMPORAL_NAMESPACE.to_owned()),
+        }
+    }
+
+    fn resolved_task_queue(&self) -> anyhow::Result<String> {
+        match self.task_queue.as_deref().filter(|value| !value.is_empty()) {
+            Some(task_queue) => Ok(task_queue.to_owned()),
+            None => task_queue_from_env(),
         }
     }
 }
@@ -142,7 +149,7 @@ async fn main() -> anyhow::Result<()> {
         Some(Command::Gateway(args)) => {
             serve_gateway(GatewayServerConfig {
                 bind: args.bind,
-                task_queue: args.temporal.task_queue,
+                task_queue: args.temporal.resolved_task_queue()?,
                 temporal_target: args.temporal.temporal_target,
                 namespace: args.temporal.namespace,
                 max_request_body_bytes: args.max_request_body_bytes,
@@ -152,7 +159,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Command::Worker(args)) => {
             worker::run_worker(WorkerServerConfig {
-                task_queue: args.temporal.task_queue,
+                task_queue: args.temporal.resolved_task_queue()?,
                 temporal_target: args.temporal.temporal_target,
                 namespace: args.temporal.namespace,
             })
@@ -164,6 +171,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn run_both(args: BothArgs) -> anyhow::Result<()> {
+    let task_queue = args.temporal.resolved_task_queue()?;
     let runtime = worker::core_runtime()?;
     let client = temporal_server::gateway::connect_temporal(
         &args.temporal.temporal_target,
@@ -175,7 +183,7 @@ async fn run_both(args: BothArgs) -> anyhow::Result<()> {
     let mut temporal_worker = worker::worker_with_activities(
         &runtime,
         client.clone(),
-        args.temporal.task_queue.clone(),
+        task_queue.clone(),
         activities,
     )?;
     let shutdown_worker = temporal_worker.shutdown_handle();
@@ -186,13 +194,13 @@ async fn run_both(args: BothArgs) -> anyhow::Result<()> {
         target: "temporal_server",
         temporal_target = %args.temporal.temporal_target,
         namespace = %args.temporal.namespace,
-        task_queue = %args.temporal.task_queue,
+        task_queue = %task_queue,
         "temporal worker polling"
     );
 
     let api = Arc::new(
         GatewayAgentApi::builder(client, store)
-            .with_task_queue(args.temporal.task_queue)
+            .with_task_queue(task_queue)
             .with_public_base_url(
                 args.public_base_url
                     .clone()
