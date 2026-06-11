@@ -282,6 +282,17 @@ Acceptance criteria:
   code/data preserved;
 - [ ] CI fails when committed schemas and generated clients drift.
 
+TypeScript first slice implemented 2026-06-11: `clients/typescript/`
+contains a private ESM package outside the Cargo workspace; `npm run generate`
+reads only `schemas/api.schema.json` and `schemas/methods.json` to produce
+`src/generated/types.ts` and the typed method map/wrappers in
+`src/generated/methods.ts`; the hand-written surface is a small `fetch`-based
+JSON-RPC transport, `ForgeRpcError` preserving code/message/data, and helpers
+for generated-submission-id `startRun`, long-poll `readEvents`, and resumable
+`awaitRun`. Unit tests cover request envelopes, typed JSON-RPC errors,
+submission-id generation, and the long-poll terminal-run loop. Remaining G4
+work: Python client, opt-in gateway smoke tests, and CI drift checks.
+
 ## Deployment Notes: Universes
 
 The universe is a server-side deployment binding, not a wire concept. The API

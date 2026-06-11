@@ -2,6 +2,7 @@
 # Project specific .gitignore
 # ===========================================================================
 .DS_Store
+node_modules/
 .store/
 .forge/
 .aos/
