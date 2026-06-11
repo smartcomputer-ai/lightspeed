@@ -1587,6 +1587,21 @@ impl AgentApiService for GatewayAgentApi {
         params: AuthProviderCreateParams,
     ) -> Result<AgentApiOutcome<AuthProviderCreateResponse>, AgentApiError> {
         let draft = auth_provider_create_draft(params, now_ms()?)?;
+        // A model_oauth binding must point at a real, active grant; validate
+        // before committing the provider row.
+        if let auth_registry::AuthProviderConfig::ModelOAuth(config) = &draft.provider.config {
+            let grant = self
+                .store
+                .read_grant(&config.grant_id)
+                .await
+                .map_err(map_auth_registry_error)?;
+            if grant.status != auth_registry::AuthGrantStatus::Active {
+                return Err(AgentApiError::rejected(format!(
+                    "auth grant {} is not active: {:?}",
+                    grant.grant_id, grant.status
+                )));
+            }
+        }
         // The secret must exist before the provider row: auth_providers
         // carries a foreign key into auth_secrets.
         if let Some(secret) = &draft.secret {

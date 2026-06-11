@@ -11,8 +11,9 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AuthProviderId, AuthProviderKind, AuthRegistryError, SecretId, validate_audience_url,
-    validate_nonempty_optional, validate_nonnegative_i64, validate_token_component,
+    AuthGrantId, AuthProviderId, AuthProviderKind, AuthRegistryError, SecretId,
+    validate_audience_url, validate_nonempty_optional, validate_nonnegative_i64,
+    validate_token_component,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -33,6 +34,8 @@ pub enum AuthProviderConfig {
     GitHubApp(GitHubAppConfig),
     #[serde(rename = "model_api_key")]
     ModelApiKey(ModelApiKeyConfig),
+    #[serde(rename = "model_oauth")]
+    ModelOAuth(ModelOAuthConfig),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -44,15 +47,31 @@ pub struct GitHubAppConfig {
     pub api_base_url: String,
 }
 
-/// Stored API key for an LLM provider (P69 G6). The key itself is the provider
-/// row's credential secret; the config carries no secret material. Rows use
-/// the `model:<provider_id>` provider-id convention, keyed off the session's
-/// `ModelSelection.provider_id`.
+/// Stored API key for a model provider (P69 G6). The key itself is the
+/// provider row's credential secret; the config carries no secret material.
+/// Rows use the `model:<provider_id>` provider-id convention, keyed off the
+/// session's `ModelSelection.provider_id`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct ModelApiKeyConfig {}
 
-/// Provider-row id for a stored LLM provider key: `model:<provider_id>`.
+/// OAuth-grant-backed model provider credential (P69 G7). The referenced
+/// grant's access token (refreshed by the broker as needed) authenticates
+/// provider calls as an OAuth bearer token instead of an API key. The row
+/// carries no credential secret of its own.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ModelOAuthConfig {
+    /// Grant whose access token authenticates calls to this provider.
+    pub grant_id: AuthGrantId,
+    /// Audience URL requested from the broker, typically the provider API
+    /// base URL. When omitted, only audience-unrestricted grants resolve.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<String>,
+}
+
+/// Provider-row id for a stored model provider credential:
+/// `model:<provider_id>`.
 pub fn model_auth_provider_id(provider_id: &str) -> String {
     format!("model:{provider_id}")
 }
@@ -62,6 +81,7 @@ impl AuthProviderConfig {
         match self {
             Self::GitHubApp(_) => AuthProviderKind::GitHubApp,
             Self::ModelApiKey(_) => AuthProviderKind::ModelApiKey,
+            Self::ModelOAuth(_) => AuthProviderKind::ModelOAuth,
         }
     }
 
@@ -99,6 +119,19 @@ impl AuthProviderConfig {
                 })
             }
             Self::ModelApiKey(ModelApiKeyConfig {}) => Ok(()),
+            Self::ModelOAuth(config) => {
+                if let Some(audience) = &config.audience {
+                    validate_audience_url(audience).map_err(|error| match error {
+                        AuthRegistryError::InvalidInput { message } => {
+                            AuthRegistryError::InvalidInput {
+                                message: format!("model oauth audience: {message}"),
+                            }
+                        }
+                        other => other,
+                    })?;
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -142,6 +175,14 @@ impl AuthProviderRecord {
         {
             return Err(AuthRegistryError::InvalidInput {
                 message: "model_api_key providers require the API key credential".to_owned(),
+            });
+        }
+        if matches!(self.config, AuthProviderConfig::ModelOAuth(_))
+            && self.credential_secret.is_some()
+        {
+            return Err(AuthRegistryError::InvalidInput {
+                message: "model_oauth providers bind a grant and carry no credential secret"
+                    .to_owned(),
             });
         }
         validate_nonnegative_i64(self.created_at_ms, "created_at_ms")?;
@@ -303,6 +344,63 @@ mod tests {
 
         let json = config.to_json().expect("encode config");
         assert_eq!(json["type"], "model_api_key");
+
+        let decoded = AuthProviderConfig::from_json(&json).expect("decode config");
+        assert_eq!(decoded, config);
+    }
+
+    fn model_oauth_config(audience: Option<&str>) -> AuthProviderConfig {
+        AuthProviderConfig::ModelOAuth(ModelOAuthConfig {
+            grant_id: AuthGrantId::new("authgrant_1"),
+            audience: audience.map(str::to_owned),
+        })
+    }
+
+    #[test]
+    fn model_oauth_records_validate_and_derive_kind() {
+        let record = CreateAuthProviderRecord {
+            provider_id: AuthProviderId::new(model_auth_provider_id("anthropic")),
+            display_name: None,
+            config: model_oauth_config(Some("https://api.anthropic.com")),
+            credential_secret: None,
+            status: AuthProviderStatus::Active,
+            created_at_ms: 10,
+        }
+        .into_record();
+
+        record.validate().expect("valid model oauth record");
+        assert_eq!(record.provider_kind, AuthProviderKind::ModelOAuth);
+    }
+
+    #[test]
+    fn model_oauth_providers_reject_credential_secrets_and_bad_audiences() {
+        let with_credential = CreateAuthProviderRecord {
+            provider_id: AuthProviderId::new("model:anthropic"),
+            display_name: None,
+            config: model_oauth_config(None),
+            credential_secret: Some(SecretId::new("authsec_key")),
+            status: AuthProviderStatus::Active,
+            created_at_ms: 10,
+        }
+        .into_record();
+        assert!(matches!(
+            with_credential.validate(),
+            Err(AuthRegistryError::InvalidInput { .. })
+        ));
+
+        assert!(matches!(
+            model_oauth_config(Some("not a url")).validate(),
+            Err(AuthRegistryError::InvalidInput { .. })
+        ));
+    }
+
+    #[test]
+    fn model_oauth_configs_round_trip_through_tagged_json() {
+        let config = model_oauth_config(Some("https://api.anthropic.com"));
+
+        let json = config.to_json().expect("encode config");
+        assert_eq!(json["type"], "model_oauth");
+        assert_eq!(json["grant_id"], "authgrant_1");
 
         let decoded = AuthProviderConfig::from_json(&json).expect("decode config");
         assert_eq!(decoded, config);

@@ -13,7 +13,7 @@ use crate::transport::{ApiResponse, ApiStreamEvent, HeaderSnapshot, HttpClient, 
 use crate::{SseEvent, SseParser};
 use bytes::Bytes;
 use futures_util::{Stream, StreamExt};
-use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use reqwest::{Method, Url};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -23,6 +23,9 @@ use std::pin::Pin;
 
 pub const API_KIND: &str = "anthropic:messages";
 pub const DEFAULT_ANTHROPIC_VERSION: &str = "2023-06-01";
+/// Beta header required when authenticating with an OAuth bearer token
+/// instead of an API key.
+pub const ANTHROPIC_OAUTH_BETA: &str = "oauth-2025-04-20";
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com/v1";
 
 #[derive(Clone, Debug, PartialEq)]
@@ -92,9 +95,12 @@ pub struct Client {
     http: HttpClient,
     messages_url: Url,
     count_tokens_url: Url,
-    /// Configured `x-api-key` value; requests may override it with a
-    /// per-request key, and fail before I/O when neither exists.
+    /// Configured `x-api-key` value; requests may override it with
+    /// per-request auth, and fail before I/O when neither exists.
     auth: Option<HeaderValue>,
+    /// Configured beta headers, kept so OAuth bearer requests can merge the
+    /// OAuth beta into them instead of replacing the default header.
+    beta_headers: Vec<String>,
 }
 
 impl Client {
@@ -129,6 +135,7 @@ impl Client {
             messages_url,
             count_tokens_url,
             auth,
+            beta_headers: config.beta_headers,
         })
     }
 
@@ -139,10 +146,47 @@ impl Client {
             Some(api_key) => api_key_header_value(api_key),
             None => self.auth.clone().ok_or_else(|| {
                 ConfigurationError::new(
-                    "no Anthropic API key configured for this client and no per-request key provided",
+                    "no Anthropic API key configured for this client and no per-request auth provided",
                 )
                 .into()
             }),
+        }
+    }
+
+    /// Attach per-request auth: API keys go in `x-api-key`; OAuth bearer
+    /// tokens go in `Authorization` plus the OAuth beta header merged with
+    /// the configured beta headers (a per-request header replaces the
+    /// default, so the merge must re-include them).
+    fn apply_auth(
+        &self,
+        builder: reqwest::RequestBuilder,
+        auth: Option<crate::RequestAuth<'_>>,
+    ) -> Result<reqwest::RequestBuilder, LlmApiError> {
+        match auth {
+            None | Some(crate::RequestAuth::ApiKey(_)) => {
+                let api_key = match auth {
+                    Some(crate::RequestAuth::ApiKey(api_key)) => Some(api_key),
+                    _ => None,
+                };
+                Ok(builder.header("x-api-key", self.auth_header(api_key)?))
+            }
+            Some(crate::RequestAuth::Bearer(token)) => {
+                let mut bearer = HeaderValue::from_str(&format!("Bearer {token}"))
+                    .map_err(|err| {
+                        ConfigurationError::new(format!(
+                            "invalid Anthropic bearer token header: {err}"
+                        ))
+                    })?;
+                bearer.set_sensitive(true);
+                let mut betas = self.beta_headers.clone();
+                betas.push(ANTHROPIC_OAUTH_BETA.to_owned());
+                let betas = HeaderValue::from_str(&betas.join(",")).map_err(|err| {
+                    ConfigurationError::new(format!("invalid anthropic-beta header: {err}"))
+                })?;
+                Ok(builder
+                    .header(AUTHORIZATION, bearer)
+                    .header("anthropic-beta", betas))
+            }
         }
     }
 
@@ -150,20 +194,20 @@ impl Client {
         &self,
         request: CreateMessageRequest,
     ) -> Result<ApiResponse<Message>, LlmApiError> {
-        self.create_with_api_key(request, None).await
+        self.create_with_auth(request, None).await
     }
 
-    pub async fn create_with_api_key(
+    pub async fn create_with_auth(
         &self,
         mut request: CreateMessageRequest,
-        api_key: Option<&str>,
+        auth: Option<crate::RequestAuth<'_>>,
     ) -> Result<ApiResponse<Message>, LlmApiError> {
         request.stream = Some(false);
-        let auth = self.auth_header(api_key)?;
-        let response = self
+        let builder = self
             .http
-            .request(Method::POST, self.messages_url.clone())
-            .header("x-api-key", auth)
+            .request(Method::POST, self.messages_url.clone());
+        let response = self
+            .apply_auth(builder, auth)?
             .json(&request)
             .send()
             .await

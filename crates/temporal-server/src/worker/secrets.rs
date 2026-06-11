@@ -13,7 +13,7 @@ use auth_registry::{
     model_auth_provider_id,
 };
 use engine::SecretRef;
-use llm_runtime::provider_keys::{ProviderKeyError, ProviderKeyResolver};
+use llm_runtime::provider_keys::{ProviderKeyError, ProviderKeyResolver, ResolvedProviderAuth};
 use llm_runtime::secrets::{
     EnvSecretResolver, ResolvedSecretValue, SECRET_NAMESPACE_AUTH_GRANT, SECRET_NAMESPACE_ENV,
     SecretResolveError, SecretResolver,
@@ -74,19 +74,33 @@ impl SecretResolver for BrokerSecretResolver {
     }
 }
 
-/// Resolves stored model provider API keys from `model:<provider_id>` auth
-/// provider rows (P69 G6). An absent row resolves to `None` so adapters fall
-/// back to the env-configured client key; a row that exists but is disabled,
-/// of the wrong kind, or missing its credential fails resolution instead of
-/// silently falling back.
+/// Resolves stored model provider credentials from `model:<provider_id>`
+/// auth provider rows (P69 G6/G7). An absent row resolves to `None` so
+/// adapters fall back to the env-configured client key; a row that exists but
+/// is disabled, of the wrong kind, missing its credential, or bound to an
+/// unusable grant fails resolution instead of silently falling back.
+///
+/// Two row kinds resolve: `model_api_key` reads the row's encrypted
+/// credential secret (sent in the provider's native key header), and
+/// `model_oauth` resolves the bound grant through the token broker (refresh
+/// included) and sends it as an OAuth bearer token.
 pub struct StoredProviderKeyResolver {
     providers: Arc<dyn AuthProviderStore>,
     secrets: Arc<dyn SecretStore>,
+    broker: Arc<dyn AuthTokenBroker>,
 }
 
 impl StoredProviderKeyResolver {
-    pub fn new(providers: Arc<dyn AuthProviderStore>, secrets: Arc<dyn SecretStore>) -> Self {
-        Self { providers, secrets }
+    pub fn new(
+        providers: Arc<dyn AuthProviderStore>,
+        secrets: Arc<dyn SecretStore>,
+        broker: Arc<dyn AuthTokenBroker>,
+    ) -> Self {
+        Self {
+            providers,
+            secrets,
+            broker,
+        }
     }
 }
 
@@ -95,7 +109,7 @@ impl ProviderKeyResolver for StoredProviderKeyResolver {
     async fn resolve_provider_key(
         &self,
         provider_id: &str,
-    ) -> Result<Option<ResolvedSecretValue>, ProviderKeyError> {
+    ) -> Result<Option<ResolvedProviderAuth>, ProviderKeyError> {
         let row_id = AuthProviderId::try_new(model_auth_provider_id(provider_id)).map_err(
             |error| ProviderKeyError::Backend {
                 provider_id: provider_id.to_owned(),
@@ -112,34 +126,58 @@ impl ProviderKeyResolver for StoredProviderKeyResolver {
                 });
             }
         };
-        if !matches!(record.config, AuthProviderConfig::ModelApiKey(_)) {
-            return Err(ProviderKeyError::NotUsable {
-                provider_id: provider_id.to_owned(),
-                message: format!(
-                    "auth provider {row_id} is kind {:?}, not model_api_key",
-                    record.provider_kind
-                ),
-            });
-        }
         if record.status != AuthProviderStatus::Active {
             return Err(ProviderKeyError::NotUsable {
                 provider_id: provider_id.to_owned(),
                 message: format!("auth provider {row_id} is {:?}", record.status),
             });
         }
-        let Some(secret_id) = record.credential_secret else {
-            return Err(ProviderKeyError::NotUsable {
-                provider_id: provider_id.to_owned(),
-                message: format!("auth provider {row_id} has no credential secret"),
-            });
-        };
-        let (_, value) = self.secrets.read_secret(&secret_id).await.map_err(|error| {
-            ProviderKeyError::Backend {
-                provider_id: provider_id.to_owned(),
-                message: format!("read credential secret: {error}"),
+        match &record.config {
+            AuthProviderConfig::ModelApiKey(_) => {
+                let Some(secret_id) = &record.credential_secret else {
+                    return Err(ProviderKeyError::NotUsable {
+                        provider_id: provider_id.to_owned(),
+                        message: format!("auth provider {row_id} has no credential secret"),
+                    });
+                };
+                let (_, value) =
+                    self.secrets.read_secret(secret_id).await.map_err(|error| {
+                        ProviderKeyError::Backend {
+                            provider_id: provider_id.to_owned(),
+                            message: format!("read credential secret: {error}"),
+                        }
+                    })?;
+                Ok(Some(ResolvedProviderAuth::api_key(value.expose())))
             }
-        })?;
-        Ok(Some(ResolvedSecretValue::new(value.expose())))
+            AuthProviderConfig::ModelOAuth(config) => {
+                let audience = config
+                    .audience
+                    .clone()
+                    .unwrap_or_else(|| model_auth_provider_id(provider_id));
+                let token = self
+                    .broker
+                    .bearer_token(&config.grant_id, &TokenAudience::ModelProvider(audience))
+                    .await
+                    .map_err(|error| match error {
+                        AuthBrokerError::Store { message } => ProviderKeyError::Backend {
+                            provider_id: provider_id.to_owned(),
+                            message,
+                        },
+                        other => ProviderKeyError::NotUsable {
+                            provider_id: provider_id.to_owned(),
+                            message: other.to_string(),
+                        },
+                    })?;
+                Ok(Some(ResolvedProviderAuth::bearer(token.expose())))
+            }
+            other => Err(ProviderKeyError::NotUsable {
+                provider_id: provider_id.to_owned(),
+                message: format!(
+                    "auth provider {row_id} is kind {:?}, not a model provider credential",
+                    other.provider_kind()
+                ),
+            }),
+        }
     }
 }
 
@@ -282,6 +320,16 @@ mod tests {
         ));
     }
 
+    /// Broker over empty stores: good enough for the api-key paths, which
+    /// never consult it.
+    fn empty_broker() -> Arc<dyn AuthTokenBroker> {
+        Arc::new(RegistryTokenBroker::new(
+            Arc::new(InMemoryAuthGrantStore::new()),
+            Arc::new(InMemorySecretStore::new()),
+            Arc::new(InMemoryGrantLocks::new()),
+        ))
+    }
+
     async fn provider_key_resolver(
         status: auth_registry::AuthProviderStatus,
     ) -> StoredProviderKeyResolver {
@@ -307,19 +355,24 @@ mod tests {
             })
             .await
             .expect("create provider");
-        StoredProviderKeyResolver::new(providers, secrets)
+        StoredProviderKeyResolver::new(providers, secrets, empty_broker())
     }
 
     #[tokio::test]
     async fn resolves_stored_llm_provider_keys() {
         let resolver = provider_key_resolver(AuthProviderStatus::Active).await;
 
-        let key = resolver
+        let auth = resolver
             .resolve_provider_key("openai")
             .await
-            .expect("resolve");
+            .expect("resolve")
+            .expect("auth present");
 
-        assert_eq!(key.expect("key present").expose(), "stored-api-key");
+        assert_eq!(auth.value.expose(), "stored-api-key");
+        assert_eq!(
+            auth.scheme,
+            llm_runtime::provider_keys::ProviderAuthScheme::ApiKey
+        );
     }
 
     #[tokio::test]
@@ -373,12 +426,130 @@ mod tests {
             })
             .await
             .expect("create provider");
-        let resolver = StoredProviderKeyResolver::new(providers, secrets);
+        let resolver = StoredProviderKeyResolver::new(providers, secrets, empty_broker());
 
         let error = resolver
             .resolve_provider_key("openai")
             .await
             .expect_err("non-llm provider row must fail");
+
+        assert!(matches!(error, ProviderKeyError::NotUsable { .. }));
+    }
+
+    /// Build a resolver with a `model_oauth` row bound to a grant whose
+    /// access token lives in the shared secret store.
+    async fn model_oauth_resolver(
+        grant_audience: Option<&str>,
+        binding_audience: Option<&str>,
+    ) -> StoredProviderKeyResolver {
+        let providers = Arc::new(auth_registry::InMemoryAuthProviderStore::new());
+        let grants = Arc::new(InMemoryAuthGrantStore::new());
+        let secrets = Arc::new(InMemorySecretStore::new());
+        grants
+            .create_grant(CreateAuthGrantRecord {
+                grant_id: AuthGrantId::new("authgrant_model"),
+                provider_id: "custom".to_owned(),
+                provider_kind: AuthProviderKind::CustomOAuth,
+                principal: PrincipalRef::universe_default(),
+                display_name: None,
+                subject_hint: None,
+                scopes: Vec::new(),
+                audience: grant_audience.map(str::to_owned),
+                access_token_secret: Some(SecretId::new("authsec_access")),
+                refresh_token_secret: None,
+                oauth_client: None,
+                expires_at_ms: None,
+                status: AuthGrantStatus::Active,
+                metadata: serde_json::Value::Object(Default::default()),
+                created_at_ms: 10,
+            })
+            .await
+            .expect("create grant");
+        secrets
+            .put_secret(PutSecretRecord {
+                secret_id: SecretId::new("authsec_access"),
+                secret_kind: "auth.oauth.access_token".to_owned(),
+                value: SecretValue::new("oauth-access-token"),
+                created_at_ms: 10,
+            })
+            .await
+            .expect("put secret");
+        providers
+            .create_auth_provider(auth_registry::CreateAuthProviderRecord {
+                provider_id: AuthProviderId::new(model_auth_provider_id("anthropic")),
+                display_name: None,
+                config: AuthProviderConfig::ModelOAuth(auth_registry::ModelOAuthConfig {
+                    grant_id: AuthGrantId::new("authgrant_model"),
+                    audience: binding_audience.map(str::to_owned),
+                }),
+                credential_secret: None,
+                status: AuthProviderStatus::Active,
+                created_at_ms: 10,
+            })
+            .await
+            .expect("create provider");
+        let broker: Arc<dyn AuthTokenBroker> = Arc::new(RegistryTokenBroker::new(
+            grants,
+            secrets.clone(),
+            Arc::new(InMemoryGrantLocks::new()),
+        ));
+        StoredProviderKeyResolver::new(providers, secrets, broker)
+    }
+
+    #[tokio::test]
+    async fn model_oauth_rows_resolve_grant_tokens_as_bearer_auth() {
+        let resolver = model_oauth_resolver(
+            Some("https://api.anthropic.com"),
+            Some("https://api.anthropic.com"),
+        )
+        .await;
+
+        let auth = resolver
+            .resolve_provider_key("anthropic")
+            .await
+            .expect("resolve")
+            .expect("auth present");
+
+        assert_eq!(auth.value.expose(), "oauth-access-token");
+        assert_eq!(
+            auth.scheme,
+            llm_runtime::provider_keys::ProviderAuthScheme::Bearer
+        );
+    }
+
+    #[tokio::test]
+    async fn model_oauth_bindings_without_audience_only_cover_unrestricted_grants() {
+        let resolver = model_oauth_resolver(None, None).await;
+        let auth = resolver
+            .resolve_provider_key("anthropic")
+            .await
+            .expect("resolve")
+            .expect("auth present");
+        assert_eq!(auth.value.expose(), "oauth-access-token");
+
+        // An audience-bound grant must not resolve through an audience-less
+        // binding: the sentinel `model:<provider_id>` is not a URL the grant
+        // audience can cover.
+        let resolver = model_oauth_resolver(Some("https://api.anthropic.com"), None).await;
+        let error = resolver
+            .resolve_provider_key("anthropic")
+            .await
+            .expect_err("audience-bound grant must fail without binding audience");
+        assert!(matches!(error, ProviderKeyError::NotUsable { .. }));
+    }
+
+    #[tokio::test]
+    async fn model_oauth_bindings_fail_on_audience_mismatch() {
+        let resolver = model_oauth_resolver(
+            Some("https://api.anthropic.com"),
+            Some("https://api.openai.com"),
+        )
+        .await;
+
+        let error = resolver
+            .resolve_provider_key("anthropic")
+            .await
+            .expect_err("mismatched audience must fail");
 
         assert!(matches!(error, ProviderKeyError::NotUsable { .. }));
     }

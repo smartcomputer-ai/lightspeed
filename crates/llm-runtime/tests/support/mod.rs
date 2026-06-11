@@ -45,15 +45,11 @@ impl AnthropicMessagesApi for RetryingAnthropicMessagesClient {
     async fn create(
         &self,
         request: am::CreateMessageRequest,
-        api_key: Option<&str>,
+        auth: Option<llm_clients::RequestAuth<'_>>,
     ) -> Result<ApiResponse<am::Message>, LlmApiError> {
         let mut attempt = 0;
         loop {
-            match self
-                .client
-                .create_with_api_key(request.clone(), api_key)
-                .await
-            {
+            match self.client.create_with_auth(request.clone(), auth).await {
                 Ok(response) => return Ok(response),
                 Err(error) if should_retry(&error, attempt) => {
                     sleep_before_retry(&error, attempt, "anthropic:messages create");
@@ -79,15 +75,11 @@ impl OpenAiResponsesApi for RetryingOpenAiResponsesClient {
     async fn create(
         &self,
         request: CreateResponseRequest,
-        api_key: Option<&str>,
+        auth: Option<llm_clients::RequestAuth<'_>>,
     ) -> Result<ApiResponse<Response>, LlmApiError> {
         let mut attempt = 0;
         loop {
-            match self
-                .client
-                .create_with_api_key(request.clone(), api_key)
-                .await
-            {
+            match self.client.create_with_auth(request.clone(), auth).await {
                 Ok(response) => return Ok(response),
                 Err(error) if should_retry(&error, attempt) => {
                     sleep_before_retry(&error, attempt, "openai:responses create");
@@ -101,15 +93,11 @@ impl OpenAiResponsesApi for RetryingOpenAiResponsesClient {
     async fn compact(
         &self,
         request: CompactResponseRequest,
-        api_key: Option<&str>,
+        auth: Option<llm_clients::RequestAuth<'_>>,
     ) -> Result<ApiResponse<CompactResponse>, LlmApiError> {
         let mut attempt = 0;
         loop {
-            match self
-                .client
-                .compact_with_api_key(request.clone(), api_key)
-                .await
-            {
+            match self.client.compact_with_auth(request.clone(), auth).await {
                 Ok(response) => return Ok(response),
                 Err(error) if should_retry(&error, attempt) => {
                     sleep_before_retry(&error, attempt, "openai:responses compact");

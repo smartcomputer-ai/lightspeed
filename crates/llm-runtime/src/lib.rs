@@ -25,7 +25,8 @@ pub use error::{LlmAdapterError, LlmAdapterResult};
 pub use executor::{LlmAdapterRegistry, LlmCompactionAdapter, LlmGenerationAdapter, LlmRuntime};
 pub use openai_responses::{OpenAiResponsesApi, OpenAiResponsesLlmAdapter};
 pub use provider_keys::{
-    NoStoredProviderKeys, ProviderKeyError, ProviderKeyResolver, StaticProviderKeys,
+    NoStoredProviderKeys, ProviderAuthScheme, ProviderKeyError, ProviderKeyResolver,
+    ResolvedProviderAuth, StaticProviderKeys,
 };
 pub use secrets::{
     EnvSecretResolver, REDACTED_SECRET_PLACEHOLDER, ResolvedSecretValue, SECRET_NAMESPACE_AUTH_GRANT,

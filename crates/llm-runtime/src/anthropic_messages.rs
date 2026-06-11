@@ -63,12 +63,12 @@ to continue seamlessly. Reply with the summary only.";
 
 #[async_trait]
 pub trait AnthropicMessagesApi: Send + Sync {
-    /// `api_key` overrides the client's transport-configured key for this
-    /// request (stored provider keys, P69 G6).
+    /// `auth` overrides the client's transport-configured key for this
+    /// request (stored provider credentials, P69 G6).
     async fn create(
         &self,
         request: am::CreateMessageRequest,
-        api_key: Option<&str>,
+        auth: Option<llm_clients::RequestAuth<'_>>,
     ) -> Result<ApiResponse<am::Message>, llm_clients::LlmApiError>;
 }
 
@@ -77,9 +77,9 @@ impl AnthropicMessagesApi for am::Client {
     async fn create(
         &self,
         request: am::CreateMessageRequest,
-        api_key: Option<&str>,
+        auth: Option<llm_clients::RequestAuth<'_>>,
     ) -> Result<ApiResponse<am::Message>, llm_clients::LlmApiError> {
-        am::Client::create_with_api_key(self, request, api_key).await
+        am::Client::create_with_auth(self, request, auth).await
     }
 }
 
@@ -151,7 +151,10 @@ impl LlmGenerationAdapter for AnthropicMessagesLlmAdapter {
         let provider_request_ref = put_json(self.blobs.as_ref(), &redacted_request).await?;
         let response = self
             .client
-            .create(send_request, stored_key.as_ref().map(|key| key.expose()))
+            .create(
+                send_request,
+                stored_key.as_ref().map(|auth| auth.as_request_auth()),
+            )
             .await?;
         let raw_response_ref = put_json(self.blobs.as_ref(), &response.raw_json).await?;
         let result = result_from_response(self.blobs.as_ref(), &request, &response).await?;
@@ -187,7 +190,7 @@ impl LlmCompactionAdapter for AnthropicMessagesLlmAdapter {
             .client
             .create(
                 provider_request,
-                stored_key.as_ref().map(|key| key.expose()),
+                stored_key.as_ref().map(|auth| auth.as_request_auth()),
             )
             .await?;
         let _raw_response_ref = put_json(self.blobs.as_ref(), &response.raw_json).await?;
@@ -982,18 +985,25 @@ mod tests {
         seen_api_keys: Mutex<Vec<Option<String>>>,
     }
 
+    fn observed_auth(auth: Option<llm_clients::RequestAuth<'_>>) -> Option<String> {
+        auth.map(|auth| match auth {
+            llm_clients::RequestAuth::ApiKey(value) => format!("api_key:{value}"),
+            llm_clients::RequestAuth::Bearer(value) => format!("bearer:{value}"),
+        })
+    }
+
     #[async_trait]
     impl AnthropicMessagesApi for FakeAnthropicMessagesApi {
         async fn create(
             &self,
             request: am::CreateMessageRequest,
-            api_key: Option<&str>,
+            auth: Option<llm_clients::RequestAuth<'_>>,
         ) -> Result<ApiResponse<am::Message>, llm_clients::LlmApiError> {
             self.seen.lock().expect("lock").push(request);
             self.seen_api_keys
                 .lock()
                 .expect("lock")
-                .push(api_key.map(str::to_owned));
+                .push(observed_auth(auth));
             Ok(self.response.clone())
         }
     }
@@ -1578,7 +1588,27 @@ mod tests {
 
         assert_eq!(
             api.seen_api_keys.lock().expect("lock").clone(),
-            vec![Some("stored-key".to_owned())]
+            vec![Some("api_key:stored-key".to_owned())]
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn generate_passes_stored_bearer_auth_to_the_client() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let api = fake_api(completed_text_response_json());
+        let adapter = AnthropicMessagesLlmAdapter::new(api.clone(), blobs)
+            .with_provider_key_resolver(Arc::new(
+                crate::provider_keys::StaticProviderKeys::new()
+                    .with_bearer("anthropic", "oauth-token"),
+            ));
+
+        LlmGenerationAdapter::generate(&adapter, generation_request())
+            .await
+            .expect("generate");
+
+        assert_eq!(
+            api.seen_api_keys.lock().expect("lock").clone(),
+            vec![Some("bearer:oauth-token".to_owned())]
         );
     }
 

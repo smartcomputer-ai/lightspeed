@@ -119,7 +119,8 @@ pub use github::{
 };
 pub use providers::{
     AuthProviderConfig, AuthProviderRecord, AuthProviderStatus, AuthProviderStore,
-    CreateAuthProviderRecord, GitHubAppConfig, ModelApiKeyConfig, model_auth_provider_id,
+    CreateAuthProviderRecord, GitHubAppConfig, ModelApiKeyConfig, ModelOAuthConfig,
+    model_auth_provider_id,
 };
 pub use flow::{
     AuthCallback, DEFAULT_AUTH_FLOW_TTL_MS, OAuthFlowService, StartAuthFlow, StartedAuthFlow,

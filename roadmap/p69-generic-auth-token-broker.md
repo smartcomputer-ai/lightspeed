@@ -46,6 +46,11 @@
   `model_api_key` rows in `auth_providers` (no new table, no grant artifact),
   resolved at provider-send time inside the LLM activity with fallback to
   env-configured keys; `forge auth model add|list|remove` CLI.
+- G7 grant-backed slice implemented on 2026-06-11: scheme-aware per-request
+  auth in `llm-clients`, `model_oauth` provider rows binding grants,
+  `TokenAudience::ModelProvider` broker resolution (refresh included), and
+  `forge auth model bind`. Loopback-redirect flow and provider login presets
+  stay deferred.
 - G1 deliberately deferred `AuthProviderRecord`, `AuthFlowRecord`, and token
   leases; G2 landed `AuthFlowRecord` and OAuth client records; G5 landed
   provider records as the generic `auth_providers` table. Static bearer and
@@ -942,25 +947,54 @@ binding is a different record with a different lifecycle and earns its own
 (possibly consumer-generic) table when the requirement is concrete. The
 resolution chain already leaves room for it: session -> universe -> env.
 
+## G7: Model Provider OAuth Credentials
+
+Authenticate model provider calls with OAuth grants instead of (or alongside)
+stored API keys. The OAuth token is a grant, not a provider credential — it
+has a principal, refresh token, expiry, and reauth state — so it lives in
+`auth_grants` and resolves through the existing broker; the
+`model:<provider_id>` row stays the single binding point.
+
+Acceptance criteria (grant-backed resolution slice):
+
+- [x] provider clients accept scheme-aware per-request auth
+  (`RequestAuth::ApiKey | Bearer` in `llm-clients`; Anthropic sends bearer
+  tokens as `Authorization: Bearer` plus the `oauth-2025-04-20` beta header
+  merged with configured beta headers, OpenAI sends both schemes as
+  `Bearer`);
+- [x] `llm-runtime`'s resolver boundary carries the scheme
+  (`ResolvedProviderAuth { value, scheme }`), with adapters passing it
+  through on generation and compaction;
+- [x] a `model_oauth` provider row binds a grant
+  (`AuthProviderConfig::ModelOAuth { grant_id, audience }`) and resolves
+  through `AuthTokenBroker::bearer_token` with
+  `TokenAudience::ModelProvider`, so refresh, single-flight locking, and
+  `NeedsReauth` come from G3 unchanged;
+- [x] audience enforcement: the binding's audience URL is requested from the
+  broker; a binding without an audience requests the non-URL
+  `model:<provider_id>` sentinel, which only audience-unrestricted grants
+  cover (an audience-bound grant never silently resolves through an
+  audience-less binding);
+- [x] `auth/providers/create` accepts the `modelOAuth` config (no credential;
+  the gateway validates the grant exists and is active before committing the
+  row) and `forge auth model bind <provider> --grant <id> [--audience <url>]`
+  creates the binding.
+
+Implemented 2026-06-11 (slices 1+2 of the G7 plan). With a provider that
+allows custom OAuth clients, the full path works today:
+`forge auth client add` -> `forge auth login <client>` (gateway callback) ->
+`forge auth model bind <provider> --grant <grant_id>`.
+
+Deferred to a concrete provider-login decision: the loopback-redirect flow
+(provider-fixed client ids use localhost redirect URIs the gateway callback
+cannot serve; needs an `auth/flows/complete` RPC plus a CLI-side listener)
+and per-provider login presets (client id, endpoints, scopes). Per-provider
+ToS for subscription-token reuse and the P69 token-egress consent framing
+apply; note OpenAI subscription (Codex/ChatGPT-login) tokens target a
+different backend API, which is adapter-level work beyond auth.
+
 ## Future Work
 
-- Model provider OAuth login (sign-in-with-provider tokens instead of API
-  keys, e.g. ChatGPT/Codex-style flows). Design sketch from the G6 review:
-  the OAuth token is a grant, not a provider credential — it has a
-  principal, refresh token, expiry, and reauth state, so it lands in
-  `auth_grants` and resolves through the existing broker (single-flight
-  refresh, `NeedsReauth`) with a new `TokenAudience::ModelProvider` variant.
-  The `model:<provider_id>` row stays the binding point and gains a
-  grant-backed config variant; `StoredProviderKeyResolver` dispatches static
-  secret vs broker. Genuinely new work: (a) auth-scheme-aware per-request
-  auth in `llm-clients` (`ResolvedProviderAuth { value, scheme,
-  extra_headers }` — Anthropic OAuth tokens use `Authorization: Bearer` +
-  an `anthropic-beta` header instead of `x-api-key`); (b) the
-  loopback-redirect flow already deferred from G2 (provider-fixed client ids
-  use localhost redirect URIs the gateway callback cannot serve); (c) a
-  small per-provider quirks config (endpoints, client id, scopes, scheme).
-  Deferred until a concrete provider login ships; per-provider ToS for
-  subscription-token reuse and the P69 token-egress consent framing apply.
 - GitHub App user access token flow.
 - GitHub OAuth App fallback flow.
 - OAuth client credentials extension for non-human automation.

@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use auth_registry::{
-    AuthGrantStore, AuthProviderKind, AuthProviderStore, GitHubAppRuntime, GrantRefreshLock,
-    HttpGitHubApiClient, HttpOAuthTokenClient, OAuthClientStore, OAuthRefreshRuntime,
-    RegistryTokenBroker, SecretStore,
+    AuthGrantStore, AuthProviderKind, AuthProviderStore, AuthTokenBroker, GitHubAppRuntime,
+    GrantRefreshLock, HttpGitHubApiClient, HttpOAuthTokenClient, OAuthClientStore,
+    OAuthRefreshRuntime, RegistryTokenBroker, SecretStore,
 };
 use engine::{
     CoreAgentLlm, CoreAgentTools, ProviderApiKind,
@@ -103,8 +103,10 @@ impl ActivityState {
 
     pub fn from_pg_store_with_default_runtime(store: Arc<PgStore>) -> anyhow::Result<Self> {
         let blobs: Arc<dyn BlobStore> = store.clone();
-        let secrets = broker_secret_resolver(store.clone())?;
-        let provider_keys = stored_provider_key_resolver(store.clone());
+        let broker = registry_token_broker(store.clone())?;
+        let secrets: Arc<dyn SecretResolver> =
+            Arc::new(BrokerSecretResolver::new(broker.clone()));
+        let provider_keys = stored_provider_key_resolver(store.clone(), broker);
         let llm = default_llm_runtime(blobs, Some(secrets), Some(provider_keys))?;
         let tools = session_tools(store.clone());
         Ok(Self::from_pg_store(store, llm, tools))
@@ -136,13 +138,16 @@ fn session_tools(store: Arc<PgStore>) -> Arc<dyn CoreAgentTools> {
     Arc::new(SessionTools::from_pg_store(store))
 }
 
-fn stored_provider_key_resolver(store: Arc<PgStore>) -> Arc<dyn ProviderKeyResolver> {
+fn stored_provider_key_resolver(
+    store: Arc<PgStore>,
+    broker: Arc<dyn AuthTokenBroker>,
+) -> Arc<dyn ProviderKeyResolver> {
     let providers: Arc<dyn AuthProviderStore> = store.clone();
     let secrets: Arc<dyn SecretStore> = store;
-    Arc::new(StoredProviderKeyResolver::new(providers, secrets))
+    Arc::new(StoredProviderKeyResolver::new(providers, secrets, broker))
 }
 
-fn broker_secret_resolver(store: Arc<PgStore>) -> anyhow::Result<Arc<dyn SecretResolver>> {
+fn registry_token_broker(store: Arc<PgStore>) -> anyhow::Result<Arc<dyn AuthTokenBroker>> {
     let grants: Arc<dyn AuthGrantStore> = store.clone();
     let secrets: Arc<dyn SecretStore> = store.clone();
     let clients: Arc<dyn OAuthClientStore> = store.clone();
@@ -163,7 +168,7 @@ fn broker_secret_resolver(store: Arc<PgStore>) -> anyhow::Result<Arc<dyn SecretR
                 secrets,
             )),
         );
-    Ok(Arc::new(BrokerSecretResolver::new(Arc::new(broker))))
+    Ok(Arc::new(broker))
 }
 
 /// Builds the default LLM runtime. Adapters register unconditionally:

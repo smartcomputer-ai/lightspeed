@@ -103,6 +103,20 @@ pub(super) fn auth_provider_create_draft(
             );
             (config, Some((secret_id, secret)))
         }
+        api::AuthProviderConfigInput::ModelOAuth { grant_id, audience } => {
+            if params.credential.is_some() {
+                return Err(AgentApiError::invalid_request(
+                    "model_oauth providers bind a grant and accept no credential",
+                ));
+            }
+            let grant_id = auth_registry::AuthGrantId::try_new(grant_id).map_err(|error| {
+                AgentApiError::invalid_request(format!("invalid auth grant id: {error}"))
+            })?;
+            let config = auth_registry::AuthProviderConfig::ModelOAuth(
+                auth_registry::ModelOAuthConfig { grant_id, audience },
+            );
+            (config, None)
+        }
     };
 
     let provider = auth_registry::CreateAuthProviderRecord {
@@ -140,6 +154,12 @@ pub(super) fn auth_provider_view(
             }
             auth_registry::AuthProviderConfig::ModelApiKey(_) => {
                 api::AuthProviderConfigView::ModelApiKey {}
+            }
+            auth_registry::AuthProviderConfig::ModelOAuth(config) => {
+                api::AuthProviderConfigView::ModelOAuth {
+                    grant_id: config.grant_id.as_str().to_owned(),
+                    audience: config.audience,
+                }
             }
         },
         has_credential: record.credential_secret.is_some(),

@@ -139,14 +139,17 @@ impl Client {
         })
     }
 
-    /// Effective `Authorization` value: the per-request key when supplied,
-    /// otherwise the configured key. Fails before any I/O when neither exists.
-    fn auth_header(&self, api_key: Option<&str>) -> Result<HeaderValue, LlmApiError> {
-        match api_key {
-            Some(api_key) => bearer_auth_value(api_key),
+    /// Effective `Authorization` value: the per-request auth when supplied,
+    /// otherwise the configured key. OpenAI sends API keys and OAuth tokens
+    /// the same way (`Bearer`). Fails before any I/O when neither exists.
+    fn auth_header(&self, auth: Option<crate::RequestAuth<'_>>) -> Result<HeaderValue, LlmApiError> {
+        match auth {
+            Some(crate::RequestAuth::ApiKey(value)) | Some(crate::RequestAuth::Bearer(value)) => {
+                bearer_auth_value(value)
+            }
             None => self.auth.clone().ok_or_else(|| {
                 ConfigurationError::new(
-                    "no OpenAI API key configured for this client and no per-request key provided",
+                    "no OpenAI API key configured for this client and no per-request auth provided",
                 )
                 .into()
             }),
@@ -157,16 +160,16 @@ impl Client {
         &self,
         request: CreateResponseRequest,
     ) -> Result<ApiResponse<Response>, LlmApiError> {
-        self.create_with_api_key(request, None).await
+        self.create_with_auth(request, None).await
     }
 
-    pub async fn create_with_api_key(
+    pub async fn create_with_auth(
         &self,
         mut request: CreateResponseRequest,
-        api_key: Option<&str>,
+        auth: Option<crate::RequestAuth<'_>>,
     ) -> Result<ApiResponse<Response>, LlmApiError> {
         request.stream = Some(false);
-        let auth = self.auth_header(api_key)?;
+        let auth = self.auth_header(auth)?;
         let response = self
             .http
             .request(Method::POST, self.responses_url.clone())
@@ -283,15 +286,15 @@ impl Client {
         &self,
         request: CompactResponseRequest,
     ) -> Result<ApiResponse<CompactResponse>, LlmApiError> {
-        self.compact_with_api_key(request, None).await
+        self.compact_with_auth(request, None).await
     }
 
-    pub async fn compact_with_api_key(
+    pub async fn compact_with_auth(
         &self,
         request: CompactResponseRequest,
-        api_key: Option<&str>,
+        auth: Option<crate::RequestAuth<'_>>,
     ) -> Result<ApiResponse<CompactResponse>, LlmApiError> {
-        let auth = self.auth_header(api_key)?;
+        let auth = self.auth_header(auth)?;
         let response = self
             .http
             .request(Method::POST, self.compact_url.clone())

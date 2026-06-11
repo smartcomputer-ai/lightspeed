@@ -190,6 +190,7 @@ pub(super) fn api_auth_provider_kind(
         auth_registry::AuthProviderKind::GitHubOAuthApp => api::AuthProviderKind::GitHubOAuthApp,
         auth_registry::AuthProviderKind::CustomOAuth => api::AuthProviderKind::CustomOAuth,
         auth_registry::AuthProviderKind::ModelApiKey => api::AuthProviderKind::ModelApiKey,
+        auth_registry::AuthProviderKind::ModelOAuth => api::AuthProviderKind::ModelOAuth,
     }
 }
 

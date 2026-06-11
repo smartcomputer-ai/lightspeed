@@ -84,7 +84,8 @@ CREATE TABLE IF NOT EXISTS auth_grants (
                 'github_app_user',
                 'github_oauth_app',
                 'custom_oauth',
-                'model_api_key'
+                'model_api_key',
+                'model_oauth'
             )
         ),
     CONSTRAINT auth_grants_principal_kind_known
@@ -280,7 +281,8 @@ CREATE TABLE IF NOT EXISTS auth_providers (
                 'github_app_user',
                 'github_oauth_app',
                 'custom_oauth',
-                'model_api_key'
+                'model_api_key',
+                'model_oauth'
             )
         ),
     CONSTRAINT auth_providers_display_name_not_empty
@@ -323,7 +325,8 @@ ALTER TABLE auth_grants ADD CONSTRAINT auth_grants_provider_kind_known
             'github_app_user',
             'github_oauth_app',
             'custom_oauth',
-            'model_api_key'
+            'model_api_key',
+            'model_oauth'
         )
     );
 ALTER TABLE auth_providers DROP CONSTRAINT IF EXISTS auth_providers_provider_kind_known;
@@ -336,6 +339,7 @@ ALTER TABLE auth_providers ADD CONSTRAINT auth_providers_provider_kind_known
             'github_app_user',
             'github_oauth_app',
             'custom_oauth',
-            'model_api_key'
+            'model_api_key',
+            'model_oauth'
         )
     );

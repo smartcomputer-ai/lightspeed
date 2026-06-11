@@ -36,10 +36,36 @@ enum AuthModelCommand {
     /// Store a model provider API key encrypted; provider API calls
     /// use it instead of the worker's environment key.
     Add(AuthModelAddArgs),
-    /// List stored model provider keys.
+    /// Bind an existing OAuth grant as the provider credential; calls send
+    /// its access token as an OAuth bearer token (refreshed automatically).
+    Bind(AuthModelBindArgs),
+    /// List stored model provider credentials.
     List(AuthModelListArgs),
-    /// Remove a stored model provider key.
+    /// Remove a stored model provider credential.
     Remove(AuthModelRemoveArgs),
+}
+
+#[derive(Args, Debug, Clone)]
+struct AuthModelBindArgs {
+    /// JSON-RPC agent API URL.
+    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    api_url: String,
+    /// Emit the created provider as JSON.
+    #[arg(long)]
+    json: bool,
+    /// Model provider id from the session model selection (e.g. "openai",
+    /// "anthropic"). Stored as the `model:<provider_id>` auth provider row.
+    provider_id: String,
+    /// Grant id to bind (e.g. from `forge auth login`).
+    #[arg(long = "grant")]
+    grant_id: String,
+    /// Audience URL requested from the broker, typically the provider API
+    /// base URL. Omit only when the grant is audience-unrestricted.
+    #[arg(long = "audience")]
+    audience: Option<String>,
+    /// Optional display name.
+    #[arg(long = "display-name")]
+    display_name: Option<String>,
 }
 
 #[derive(Args, Clone)]
@@ -588,6 +614,7 @@ pub(crate) async fn handle(args: AuthArgs) -> Result<()> {
 async fn model(args: AuthModelArgs) -> Result<()> {
     match args.command {
         AuthModelCommand::Add(args) => model_add(args).await,
+        AuthModelCommand::Bind(args) => model_bind(args).await,
         AuthModelCommand::List(args) => model_list(args).await,
         AuthModelCommand::Remove(args) => model_remove(args).await,
     }
@@ -996,6 +1023,29 @@ async fn model_add(args: AuthModelAddArgs) -> Result<()> {
     Ok(())
 }
 
+async fn model_bind(args: AuthModelBindArgs) -> Result<()> {
+    let api = HttpAgentApi::new(args.api_url.clone());
+    let response = api
+        .create_auth_provider(api::AuthProviderCreateParams {
+            provider_id: Some(model_provider_row_id(&args.provider_id)),
+            display_name: args.display_name.clone(),
+            config: api::AuthProviderConfigInput::ModelOAuth {
+                grant_id: args.grant_id.clone(),
+                audience: args.audience.clone(),
+            },
+            credential: None,
+        })
+        .await
+        .map_err(crate::api_client::api_error)?
+        .result;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&response)?);
+        return Ok(());
+    }
+    print_provider(&response.provider);
+    Ok(())
+}
+
 async fn model_list(args: AuthModelListArgs) -> Result<()> {
     let api = HttpAgentApi::new(args.api_url);
     let response = api
@@ -1185,6 +1235,12 @@ fn print_provider(provider: &api::AuthProviderView) {
             println!("apiBaseUrl {api_base_url}");
         }
         api::AuthProviderConfigView::ModelApiKey {} => {}
+        api::AuthProviderConfigView::ModelOAuth { grant_id, audience } => {
+            println!("grantId {grant_id}");
+            if let Some(audience) = audience {
+                println!("audience {audience}");
+            }
+        }
     }
     println!("hasCredential {}", provider.has_credential);
     println!("createdAtMs {}", provider.created_at_ms);
