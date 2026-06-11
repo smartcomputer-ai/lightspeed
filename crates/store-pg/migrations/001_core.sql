@@ -133,7 +133,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS cas_blobs_object_key_idx
     ON cas_blobs (object_key)
     WHERE object_key IS NOT NULL;
 
-CREATE TABLE IF NOT EXISTS session_blob_roots (
+CREATE TABLE IF NOT EXISTS cas_session_roots (
     universe_id uuid NOT NULL,
     session_id text NOT NULL,
     digest text NOT NULL,
@@ -147,13 +147,13 @@ CREATE TABLE IF NOT EXISTS session_blob_roots (
     FOREIGN KEY (universe_id, digest)
         REFERENCES cas_blobs (universe_id, digest) ON DELETE RESTRICT,
 
-    CONSTRAINT session_blob_roots_root_kind_present
+    CONSTRAINT cas_session_roots_root_kind_present
         CHECK (root_kind <> ''),
-    CONSTRAINT session_blob_roots_first_seq_positive
+    CONSTRAINT cas_session_roots_first_seq_positive
         CHECK (first_seq IS NULL OR first_seq > 0),
-    CONSTRAINT session_blob_roots_last_seq_positive
+    CONSTRAINT cas_session_roots_last_seq_positive
         CHECK (last_seq IS NULL OR last_seq > 0),
-    CONSTRAINT session_blob_roots_seq_order
+    CONSTRAINT cas_session_roots_seq_order
         CHECK (
             first_seq IS NULL
             OR last_seq IS NULL
@@ -161,8 +161,8 @@ CREATE TABLE IF NOT EXISTS session_blob_roots (
         )
 );
 
-CREATE INDEX IF NOT EXISTS session_blob_roots_digest_idx
-    ON session_blob_roots (universe_id, digest);
+CREATE INDEX IF NOT EXISTS cas_session_roots_digest_idx
+    ON cas_session_roots (universe_id, digest);
 
 CREATE TABLE IF NOT EXISTS cas_blob_edges (
     universe_id uuid NOT NULL,
@@ -191,7 +191,7 @@ COMMENT ON TABLE session_events IS
     'Append-only dynamic session entries stored as canonical JSONB with generated query columns.';
 COMMENT ON TABLE cas_blobs IS
     'Universe-scoped CAS catalog keyed by sha256 digest; small payloads inline, large payloads external.';
-COMMENT ON TABLE session_blob_roots IS
+COMMENT ON TABLE cas_session_roots IS
     'Session-scoped CAS roots used by future reachability and garbage collection.';
 COMMENT ON TABLE cas_blob_edges IS
     'Optional best-effort parent-child CAS edges recorded outside put_bytes.';

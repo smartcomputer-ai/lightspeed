@@ -204,7 +204,7 @@ async fn pg_live_records_session_roots_and_blob_edges() {
     let root_row = sqlx::query(
         r#"
         SELECT first_seq, last_seq
-        FROM session_blob_roots
+        FROM cas_session_roots
         WHERE universe_id = $1
           AND session_id = $2
           AND digest = $3
