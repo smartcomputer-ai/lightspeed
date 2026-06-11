@@ -802,6 +802,12 @@ pub struct SessionEventsReadParams {
     pub after: Option<EventCursor>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
+    /// Long-poll: when no events exist past `after`, hold the request until
+    /// one lands or this many milliseconds elapse, then return a normal
+    /// (possibly empty) page. Zero or absent preserves immediate return.
+    /// Values above the server cap are clamped, not rejected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1045,6 +1051,12 @@ pub struct ToolCallEventView {
 pub struct RunStartParams {
     pub session_id: SessionId,
     pub input: Vec<InputItem>,
+    /// Client-supplied idempotency key, unique per session. Retrying
+    /// `run/start` with the same submission id and the same input/config
+    /// returns the original run instead of starting a second one; reusing a
+    /// submission id with different input or config is rejected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub submission_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config: Option<RunStartConfig>,
 }

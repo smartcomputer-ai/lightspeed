@@ -52,6 +52,7 @@ fn serialized_fixtures_validate_against_exported_schemas() {
         input: vec![InputItem::Text {
             text: "hello".to_owned(),
         }],
+        submission_id: Some("retry_1".to_owned()),
         config: None,
     };
     let value = serde_json::to_value(&params).expect("serialize");
@@ -80,6 +81,7 @@ fn serialized_fixtures_validate_against_exported_schemas() {
         session_id: "session_1".to_owned(),
         after: Some(EventCursor { seq: 42 }),
         limit: Some(100),
+        wait_ms: Some(10_000),
     };
     let value = serde_json::to_value(&params).expect("serialize");
     assert_validates(&bundle, "SessionEventsReadParams", &value);

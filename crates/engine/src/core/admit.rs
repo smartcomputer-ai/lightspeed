@@ -89,6 +89,28 @@ impl AdmitCommand for CoreAdmitCommand {
                 input,
                 run_config,
             } => {
+                // Duplicate detection precedes every other check so a retried
+                // submission resolves idempotently even when session state has
+                // moved on (e.g. the original run completed or the session is
+                // compacting).
+                if let Some(submission_id) = submission_id.as_ref() {
+                    use crate::core::components::run::{
+                        SubmissionMatch, match_existing_submission,
+                    };
+                    match match_existing_submission(state, submission_id, &input, &run_config) {
+                        Some(SubmissionMatch::Identical) => return Ok(Vec::new()),
+                        Some(SubmissionMatch::Different) => {
+                            return reject(
+                                CommandRejectionKind::DuplicateSubmission,
+                                format!(
+                                    "submission id {submission_id} was already used by a run \
+                                     with different input or run config"
+                                ),
+                            );
+                        }
+                        None => {}
+                    }
+                }
                 require_open(state)?;
                 require_no_pending_compaction(
                     state,

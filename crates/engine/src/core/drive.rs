@@ -2305,4 +2305,114 @@ mod tests {
             CoreAgentAction::Idle
         ));
     }
+
+    fn request_run_with_submission(
+        drive: &mut CoreAgentDrive,
+        submission_id: &str,
+        input_ref: BlobRef,
+    ) -> Result<CoreAgentAction, CoreAgentDriveError> {
+        drive.admit_command(
+            CoreAgentCommand::RequestRun {
+                submission_id: Some(crate::SubmissionId::new(submission_id)),
+                input: user_input(input_ref),
+                run_config: run_config(),
+            },
+            20,
+        )
+    }
+
+    #[test]
+    fn duplicate_submission_admits_as_no_op_while_queued() {
+        let mut drive =
+            CoreAgentDrive::from_replayed(SessionId::new("session-a"), CoreAgentState::new(), None);
+        open_session(&mut drive);
+
+        let accepted = request_run_with_submission(&mut drive, "retry_1", BlobRef::from_bytes(b"x"))
+            .expect("first request run");
+        commit_action(&mut drive, accepted);
+        assert_eq!(drive.state().runs.queued.len(), 1);
+
+        let duplicate =
+            request_run_with_submission(&mut drive, "retry_1", BlobRef::from_bytes(b"x"))
+                .expect("duplicate request run");
+        assert!(
+            !matches!(duplicate, CoreAgentAction::AppendEvents { .. }),
+            "duplicate submission must not append events: {duplicate:?}"
+        );
+        assert_eq!(drive.state().runs.queued.len(), 1);
+    }
+
+    #[test]
+    fn duplicate_submission_with_different_input_is_rejected() {
+        let mut drive =
+            CoreAgentDrive::from_replayed(SessionId::new("session-a"), CoreAgentState::new(), None);
+        open_session(&mut drive);
+
+        let accepted = request_run_with_submission(&mut drive, "retry_1", BlobRef::from_bytes(b"x"))
+            .expect("first request run");
+        commit_action(&mut drive, accepted);
+
+        let error =
+            request_run_with_submission(&mut drive, "retry_1", BlobRef::from_bytes(b"other"))
+                .expect_err("duplicate with different input must fail");
+        let CoreAgentDriveError::Command(CommandError::Rejected(rejection)) = error else {
+            panic!("expected command rejection, got: {error:?}");
+        };
+        assert_eq!(rejection.kind, CommandRejectionKind::DuplicateSubmission);
+    }
+
+    #[test]
+    fn duplicate_submission_after_run_completion_admits_as_no_op() {
+        let mut drive =
+            CoreAgentDrive::from_replayed(SessionId::new("session-a"), CoreAgentState::new(), None);
+        open_session(&mut drive);
+
+        let accepted = request_run_with_submission(&mut drive, "retry_1", BlobRef::from_bytes(b"x"))
+            .expect("first request run");
+        commit_action(&mut drive, accepted);
+        let llm_request = drive_until_generate(&mut drive);
+        let resumed = drive
+            .resume_generation(
+                LlmGenerationResult {
+                    run_id: llm_request.run_id,
+                    turn_id: llm_request.turn_id,
+                    status: LlmGenerationStatus::Succeeded,
+                    failure_ref: None,
+                    context_entries: Vec::new(),
+                    facts: LlmGenerationFacts {
+                        provider_response_id: Some("resp-1".to_owned()),
+                        finish: LlmFinish::Stop,
+                        usage: None,
+                        tool_calls: Vec::new(),
+                        context_token_estimate: None,
+                    },
+                },
+                30,
+            )
+            .expect("resume generation");
+        commit_action(&mut drive, resumed);
+        let complete_run = drive.next_action(31, 64).expect("complete run");
+        commit_action(&mut drive, complete_run);
+        let completed = drive.state().runs.completed.last().expect("completed run");
+        assert_eq!(completed.status, RunStatus::Completed);
+        assert!(completed.submission_digest.is_some());
+
+        let duplicate =
+            request_run_with_submission(&mut drive, "retry_1", BlobRef::from_bytes(b"x"))
+                .expect("duplicate after completion");
+        assert!(
+            !matches!(duplicate, CoreAgentAction::AppendEvents { .. }),
+            "duplicate submission must not append events: {duplicate:?}"
+        );
+        assert_eq!(drive.state().runs.completed.len(), 1);
+        assert!(drive.state().runs.queued.is_empty());
+
+        let mismatch =
+            request_run_with_submission(&mut drive, "retry_1", BlobRef::from_bytes(b"other"))
+                .expect_err("completed duplicate with different input must fail");
+        let CoreAgentDriveError::Command(CommandError::Rejected(rejection)) = mismatch else {
+            panic!("expected command rejection, got: {mismatch:?}");
+        };
+        assert_eq!(rejection.kind, CommandRejectionKind::DuplicateSubmission);
+    }
 }

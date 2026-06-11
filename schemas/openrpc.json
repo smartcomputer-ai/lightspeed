@@ -3571,6 +3571,13 @@
           },
           "sessionId": {
             "type": "string"
+          },
+          "submissionId": {
+            "description": "Client-supplied idempotency key, unique per session. Retrying\n`run/start` with the same submission id and the same input/config\nreturns the original run instead of starting a second one; reusing a\nsubmission id with different input or config is rejected.",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -4686,6 +4693,15 @@
           },
           "sessionId": {
             "type": "string"
+          },
+          "waitMs": {
+            "description": "Long-poll: when no events exist past `after`, hold the request until\none lands or this many milliseconds elapse, then return a normal\n(possibly empty) page. Zero or absent preserves immediate return.\nValues above the server cap are clamped, not rejected.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
           }
         },
         "required": [

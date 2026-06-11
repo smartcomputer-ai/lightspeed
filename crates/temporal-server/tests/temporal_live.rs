@@ -200,6 +200,7 @@ async fn run_fake_live_client(
 
     let first = api
         .start_run(RunStartParams {
+            submission_id: None,
             session_id: session_id.as_str().to_owned(),
             input: vec![InputItem::Text {
                 text: "hello temporal agent".to_owned(),
@@ -213,6 +214,7 @@ async fn run_fake_live_client(
 
     let second = api
         .start_run(RunStartParams {
+            submission_id: Some("live-retry-1".to_owned()),
             session_id: session_id.as_str().to_owned(),
             input: vec![InputItem::Text {
                 text: "second session-start input".to_owned(),
@@ -224,6 +226,44 @@ async fn run_fake_live_client(
     let second_output = final_assistant_text(&second_run).expect("second assistant output");
     assert!(second_output.contains("Fake agent completed run"));
 
+    // Retried run/start with the same submission id and input returns the
+    // original run instead of starting a second one.
+    let retried = api
+        .start_run(RunStartParams {
+            submission_id: Some("live-retry-1".to_owned()),
+            session_id: session_id.as_str().to_owned(),
+            input: vec![InputItem::Text {
+                text: "second session-start input".to_owned(),
+            }],
+            config: None,
+        })
+        .await?;
+    assert_eq!(retried.result.run.id, second.result.run.id);
+
+    // Same submission id with different input is a typed rejection.
+    let mismatch = api
+        .start_run(RunStartParams {
+            submission_id: Some("live-retry-1".to_owned()),
+            session_id: session_id.as_str().to_owned(),
+            input: vec![InputItem::Text {
+                text: "different input".to_owned(),
+            }],
+            config: None,
+        })
+        .await;
+    let mismatch_error = mismatch.expect_err("duplicate submission with different input fails");
+    assert_eq!(mismatch_error.kind, api::AgentApiErrorKind::Rejected);
+
+    // Retried session/start with the same session id returns the session.
+    let restarted = api
+        .start_session(SessionStartParams {
+            session_id: Some(session_id.as_str().to_owned()),
+            cwd: None,
+            config: None,
+        })
+        .await?;
+    assert_eq!(restarted.result.session.id, session_id.as_str());
+
     let read = api
         .read_session(SessionReadParams {
             session_id: session_id.as_str().to_owned(),
@@ -233,12 +273,29 @@ async fn run_fake_live_client(
 
     let events = api
         .read_session_events(SessionEventsReadParams {
+            wait_ms: Some(2_000),
             session_id: session_id.as_str().to_owned(),
             after: None,
             limit: Some(64),
         })
         .await?;
     assert!(!events.result.events.is_empty());
+
+    // Long-poll at the head: no new events, so the read parks until the
+    // wait elapses and returns an empty page with no cursor movement.
+    let head_cursor = events.result.head_cursor;
+    let parked_started = std::time::Instant::now();
+    let parked = api
+        .read_session_events(SessionEventsReadParams {
+            wait_ms: Some(1_000),
+            session_id: session_id.as_str().to_owned(),
+            after: head_cursor,
+            limit: Some(64),
+        })
+        .await?;
+    assert!(parked.result.events.is_empty());
+    assert!(parked.result.complete);
+    assert!(parked_started.elapsed() >= std::time::Duration::from_millis(900));
 
     let handle = client.get_workflow_handle::<AgentSessionWorkflow>(session_id.as_str());
     let _ = handle
@@ -276,6 +333,7 @@ async fn run_continue_as_new_live_client(
     .await?;
 
     api.start_run(RunStartParams {
+        submission_id: None,
         session_id: session_id.as_str().to_owned(),
         input: vec![InputItem::Text {
             text: "first run before continue as new".to_owned(),
@@ -286,6 +344,7 @@ async fn run_continue_as_new_live_client(
 
     let second = api
         .start_run(RunStartParams {
+            submission_id: None,
             session_id: session_id.as_str().to_owned(),
             input: vec![InputItem::Text {
                 text: "second run after continue as new".to_owned(),
@@ -333,6 +392,7 @@ async fn run_missing_session_live_client(
 
     let error = api
         .start_run(RunStartParams {
+            submission_id: None,
             session_id: session_id.as_str().to_owned(),
             input: vec![InputItem::Text {
                 text: "this should not create a session".to_owned(),
@@ -387,6 +447,7 @@ async fn run_admission_failure_live_client(
 
     let run = api
         .start_run(RunStartParams {
+            submission_id: None,
             session_id: session_id.as_str().to_owned(),
             input: vec![InputItem::Text {
                 text: "valid run after malformed command".to_owned(),
@@ -412,6 +473,7 @@ async fn run_admission_failure_live_client(
 
     let error = api
         .start_run(RunStartParams {
+            submission_id: None,
             session_id: session_id.as_str().to_owned(),
             input: vec![InputItem::Text {
                 text: "run after close should be rejected".to_owned(),
@@ -587,6 +649,7 @@ async fn run_openai_live_client(
 
     let run = api
         .start_run(RunStartParams {
+            submission_id: None,
             session_id: session_id.as_str().to_owned(),
             input: vec![InputItem::Text {
                 text: "Reply with exactly: real llm agent ok".to_owned(),

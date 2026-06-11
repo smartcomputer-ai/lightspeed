@@ -158,16 +158,34 @@ Design notes:
 
 Acceptance criteria:
 
-- [ ] `run/start` with a repeated `submissionId` (same input) returns the
+- [x] `run/start` with a repeated `submissionId` (same input) returns the
   original run and appends no second `RunAccepted` event, verified at the
-  session-log level;
-- [ ] `run/start` with a repeated `submissionId` and different input fails
-  with a typed error;
-- [ ] duplicate admission delivered at the workflow layer (simulated
-  re-signal) also results in no second accepted run;
-- [ ] `session/start` with an existing `session_id` is idempotent and
-  documented as such;
-- [ ] CLI passes a generated submission id by default.
+  session-log level (engine drive tests assert no appended events for
+  queued and completed originals; the live suite asserts the same run id
+  comes back);
+- [x] `run/start` with a repeated `submissionId` and different input fails
+  with a typed error (`CommandRejectionKind::DuplicateSubmission` ->
+  admission failure -> API `Rejected`);
+- [x] duplicate admission delivered at the workflow layer (simulated
+  re-signal) also results in no second accepted run — the dedup lives in
+  the deterministic admit path the workflow itself drives
+  (`drive.admit_command`), so re-signals are covered by the same engine
+  tests;
+- [x] `session/start` with an existing `session_id` is idempotent and
+  documented as such (config on the retried call is ignored; session config
+  applies only at creation; a closed session returns its closed view);
+- [x] CLI passes a generated submission id by default.
+
+Implemented 2026-06-11: engine dedup in `CoreAdmitCommand` (duplicate check
+precedes all other admission checks so retries resolve even after state
+moves on), `RunRecord.submission_digest` (FNV-1a over the serde_json payload,
+computed in the reducer at completion — not stored in events) for
+input-equality checks against completed runs, `submissionId` on
+`RunStartParams`, gateway passthrough with `SubmissionId` validation, and
+idempotent `start_session` (the previous `open_or_start_session` wrapper
+behavior moved into the wire method; the wrapper now delegates). The
+duplicate-response path reuses the existing `wait_for_run_accepted`
+submission-id correlation unchanged.
 
 ## G3: Long-Poll `session/events/read`
 
@@ -202,12 +220,24 @@ Design notes:
 
 Acceptance criteria:
 
-- [ ] `waitMs` returns early when an event arrives mid-wait and empty at the
-  cap otherwise, with cursor semantics identical to the immediate path;
-- [ ] `waitMs` above the server cap is clamped, not rejected;
-- [ ] concurrent long-poll readers on the same session each receive the new
-  events (cursor reads are independent; no consume semantics);
-- [ ] CLI chat uses the long-poll path and drops its client-side sleep loop.
+- [x] `waitMs` returns early when an event arrives mid-wait and empty at the
+  cap otherwise, with cursor semantics identical to the immediate path (the
+  loop re-runs the exact existing read; the live suite asserts a parked
+  read at head holds for its wait and returns an empty complete page);
+- [x] `waitMs` above the server cap is clamped, not rejected (clamped via
+  `min` against the cap before the deadline is computed);
+- [x] concurrent long-poll readers on the same session each receive the new
+  events (reads stay independent cursor reads; parking adds no consume
+  semantics);
+- [x] CLI chat uses the long-poll path and drops its client-side sleep loop.
+
+Implemented 2026-06-11: `waitMs` on `SessionEventsReadParams`, gateway park
+loop in `read_session_events` (store re-read every
+`min(poll_interval, 250ms)`, `events_wait_cap` on the builder, default 30s),
+and the CLI follow loop now passes a 2s wait on its drains instead of
+sleeping 250ms between them (first drain stays immediate to flush backlog).
+Session close wakes parked readers naturally because closing appends a
+lifecycle event. `run/wait` was not added, per the one-primitive decision.
 
 ## G4: TypeScript And Python Clients
 

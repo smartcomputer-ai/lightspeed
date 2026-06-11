@@ -14,7 +14,6 @@ use api::{
 use clap::Args;
 use serde_json::Value;
 use tokio::task::JoinHandle;
-use tokio::time::sleep;
 
 use crate::api_client::{HttpAgentApi, api_error};
 use crate::chat::preview::compact_preview;
@@ -25,7 +24,7 @@ use crate::chat::protocol::{
     ChatToolDisplayGroup, ChatTurn, DEFAULT_CHAT_REASONING_EFFORT, GATEWAY_WORLD_ID, run_status,
     session_lifecycle,
 };
-use crate::chat::session::{new_session_id, validate_session_id};
+use crate::chat::session::{new_session_id, new_submission_id, validate_session_id};
 
 #[derive(Args, Debug, Clone)]
 pub(crate) struct ChatArgs {
@@ -347,9 +346,14 @@ impl ChatSessionDriver {
     where
         F: FnMut(ChatEvent),
     {
+        const FOLLOW_EVENT_WAIT_MS: u64 = 2_000;
         let mut inactivity_deadline = InactivityDeadline::new(Instant::now(), timeout);
+        let mut wait_ms = None;
         loop {
-            let events = self.drain_event_log().await?;
+            let events = self.drain_event_log_with_wait(wait_ms).await?;
+            // The first drain is immediate to flush backlog; subsequent
+            // drains long-poll server-side instead of sleeping client-side.
+            wait_ms = Some(FOLLOW_EVENT_WAIT_MS);
             let mut saw_activity = !events.is_empty();
             for event in events {
                 emit(event);
@@ -392,9 +396,9 @@ impl ChatSessionDriver {
             }
             if saw_activity {
                 tokio::task::yield_now().await;
-            } else {
-                sleep(Duration::from_millis(250)).await;
             }
+            // No client-side sleep: the next drain's long-poll parks
+            // server-side until events arrive or the wait elapses.
         }
     }
 
@@ -415,6 +419,7 @@ impl ChatSessionDriver {
             api.start_run(RunStartParams {
                 session_id,
                 input: vec![InputItem::Text { text }],
+                submission_id: Some(new_submission_id()),
                 config: Some(config),
             })
             .await
@@ -602,8 +607,18 @@ impl ChatSessionDriver {
     }
 
     async fn drain_event_log(&mut self) -> Result<Vec<ChatEvent>> {
+        self.drain_event_log_with_wait(None).await
+    }
+
+    /// Drains the event log; `wait_first_ms` long-polls the first page so
+    /// callers park server-side instead of sleeping between empty drains.
+    async fn drain_event_log_with_wait(
+        &mut self,
+        wait_first_ms: Option<u64>,
+    ) -> Result<Vec<ChatEvent>> {
         let mut events = Vec::new();
         let mut needs_snapshot = false;
+        let mut wait_ms = wait_first_ms;
         loop {
             let page = self
                 .api
@@ -611,6 +626,7 @@ impl ChatSessionDriver {
                     session_id: self.session_id.clone(),
                     after: self.event_cursor,
                     limit: Some(128),
+                    wait_ms: wait_ms.take(),
                 })
                 .await
                 .map_err(api_error)?;
@@ -793,6 +809,7 @@ impl ChatSessionDriver {
                     session_id: self.session_id.clone(),
                     after: self.event_cursor,
                     limit: Some(512),
+                    wait_ms: None,
                 })
                 .await
                 .map_err(api_error)?;
