@@ -293,6 +293,16 @@ for generated-submission-id `startRun`, long-poll `readEvents`, and resumable
 submission-id generation, and the long-poll terminal-run loop. Remaining G4
 work: Python client, opt-in gateway smoke tests, and CI drift checks.
 
+Messaging bridge overlay implemented 2026-06-11: `bridges/messaging/` contains
+a private Node package for Telegram and WhatsApp, intentionally outside
+`clients/` because it is an integration process rather than a generated API
+client. It depends on `@forge/agent-client` via
+`file:../../clients/typescript`, maps each chat/thread to a stable Forge
+session, uses stable submission ids for channel message retries, long-polls run
+completion through the JSON-RPC API, and keeps channel state/dedupe in a local
+JSON store. This does not change the gateway contract; channel-specific gaps
+should still be solved in the overlay unless they expose a generic API need.
+
 ## Deployment Notes: Universes
 
 The universe is a server-side deployment binding, not a wire concept. The API

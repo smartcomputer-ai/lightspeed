@@ -10,6 +10,8 @@ notes-world/
 .playwright-mcp/
 .tmp/
 refs/
+.bridge-state.json
+.whatsapp-auth/
 
 # ===========================================================================
 # Rust.gitignore
