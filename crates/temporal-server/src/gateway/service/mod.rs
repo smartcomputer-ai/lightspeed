@@ -153,6 +153,10 @@ use super::{
 
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const DEFAULT_OPERATION_TIMEOUT: Duration = Duration::from_secs(90);
+/// Server-side cap for `session/events/read` long-poll waits. Requests above
+/// the cap are clamped, not rejected. The gateway HTTP request timeout must
+/// stay above this cap.
+const DEFAULT_EVENTS_WAIT_CAP: Duration = Duration::from_secs(30);
 
 /// Default public base URL for the gateway-hosted OAuth callback; matches
 /// `DEFAULT_GATEWAY_BIND`. Hosted deployments must set the real public URL.
@@ -168,6 +172,7 @@ pub struct GatewayAgentApiBuilder {
     continue_as_new_history_threshold: Option<u32>,
     poll_interval: Duration,
     operation_timeout: Duration,
+    events_wait_cap: Duration,
     public_base_url: String,
     oauth_token_client: Option<Arc<dyn OAuthTokenClient>>,
     oauth_metadata_client: Option<Arc<dyn OAuthMetadataClient>>,
@@ -238,6 +243,11 @@ impl GatewayAgentApiBuilder {
         self
     }
 
+    pub fn with_events_wait_cap(mut self, events_wait_cap: Duration) -> Self {
+        self.events_wait_cap = events_wait_cap;
+        self
+    }
+
     pub fn build(self) -> GatewayAgentApi {
         let token_client = self.oauth_token_client.unwrap_or_else(|| {
             Arc::new(
@@ -276,6 +286,7 @@ impl GatewayAgentApiBuilder {
             continue_as_new_history_threshold: self.continue_as_new_history_threshold,
             poll_interval: self.poll_interval,
             operation_timeout: self.operation_timeout,
+            events_wait_cap: self.events_wait_cap,
             public_base_url: self.public_base_url,
             oauth_flows,
             mcp_oauth,
@@ -300,6 +311,7 @@ pub struct GatewayAgentApi {
     continue_as_new_history_threshold: Option<u32>,
     poll_interval: Duration,
     operation_timeout: Duration,
+    events_wait_cap: Duration,
     public_base_url: String,
     oauth_flows: OAuthFlowService,
     mcp_oauth: McpOAuthDriver,
@@ -319,6 +331,7 @@ impl GatewayAgentApi {
             continue_as_new_history_threshold: None,
             poll_interval: DEFAULT_POLL_INTERVAL,
             operation_timeout: DEFAULT_OPERATION_TIMEOUT,
+            events_wait_cap: DEFAULT_EVENTS_WAIT_CAP,
             public_base_url: DEFAULT_PUBLIC_BASE_URL.to_owned(),
             oauth_token_client: None,
             oauth_metadata_client: None,
@@ -335,8 +348,7 @@ impl GatewayAgentApi {
             env::var("TEMPORAL_ADDRESS").unwrap_or_else(|_| DEFAULT_TEMPORAL_TARGET.to_owned());
         let namespace = env::var("TEMPORAL_NAMESPACE")
             .unwrap_or_else(|_| DEFAULT_TEMPORAL_NAMESPACE.to_owned());
-        let task_queue =
-            env::var("FORGE_TASK_QUEUE").unwrap_or_else(|_| DEFAULT_TASK_QUEUE.to_owned());
+        let task_queue = crate::config::task_queue_from_env()?;
         let client = connect_temporal(&temporal_target, &namespace).await?;
         let store = pg_store_from_env().await?;
         Ok(Self::builder(client, store)
@@ -348,29 +360,9 @@ impl GatewayAgentApi {
         &self,
         params: SessionStartParams,
     ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError> {
-        match self.start_session(params.clone()).await {
-            Ok(outcome) => Ok(outcome),
-            Err(error)
-                if matches!(error.kind, AgentApiErrorKind::Conflict)
-                    && params.session_id.is_some() =>
-            {
-                let session_id =
-                    SessionId::try_new(params.session_id.expect("checked session id present"))
-                        .map_err(|error| {
-                            AgentApiError::invalid_request(format!("invalid session id: {error}"))
-                        })?;
-                self.write_session_metadata(
-                    session_id.clone(),
-                    GatewaySessionMetadata {
-                        cwd: params.cwd,
-                        ..self.session_metadata(&session_id)?
-                    },
-                )?;
-                let session = self.wait_for_open_session(&session_id).await?;
-                Ok(AgentApiOutcome::new(SessionStartResponse { session }))
-            }
-            Err(error) => Err(error),
-        }
+        // `start_session` is idempotent on client-supplied session ids; this
+        // wrapper remains for callers predating that behavior.
+        self.start_session(params).await
     }
 
     fn allocate_session_id(&self) -> SessionId {
@@ -550,6 +542,11 @@ impl AgentApiService for GatewayAgentApi {
         }))
     }
 
+    /// Idempotent on a client-supplied session id: when the session already
+    /// exists, the existing session view is returned (any `config` in the
+    /// retried request is ignored; session config is applied only at
+    /// creation). This keeps a retried `session/start` + `run/start` pair
+    /// safe end to end.
     async fn start_session(
         &self,
         params: SessionStartParams,
@@ -559,6 +556,7 @@ impl AgentApiService for GatewayAgentApi {
             cwd,
             config,
         } = params;
+        let client_supplied_id = session_id.is_some();
         let session_id = match session_id {
             Some(session_id) => SessionId::try_new(session_id).map_err(|error| {
                 AgentApiError::invalid_request(format!("invalid session id: {error}"))
@@ -566,15 +564,35 @@ impl AgentApiService for GatewayAgentApi {
             None => self.allocate_session_id(),
         };
         let session_config = self.session_config_for_start(config.clone()).await?;
-        self.write_session_metadata(session_id.clone(), GatewaySessionMetadata { cwd })?;
-        self.client
+        self.write_session_metadata(
+            session_id.clone(),
+            GatewaySessionMetadata {
+                cwd,
+                ..self.session_metadata(&session_id)?
+            },
+        )?;
+        let started = self
+            .client
             .start_workflow(
                 AgentSessionWorkflow::run,
                 self.workflow_args(session_id.clone(), session_config),
                 WorkflowStartOptions::new(self.task_queue.clone(), session_id.as_str()).build(),
             )
             .await
-            .map_err(map_workflow_start_error)?;
+            .map_err(map_workflow_start_error);
+        match started {
+            Ok(_) => {}
+            Err(error) if matches!(error.kind, AgentApiErrorKind::Conflict) && client_supplied_id => {
+                let loaded = self.load_session_state(&session_id).await?;
+                if loaded.state.lifecycle.status == CoreAgentStatus::Closed {
+                    let session = self.project_session_by_id(&session_id).await?;
+                    return Ok(AgentApiOutcome::new(SessionStartResponse { session }));
+                }
+                let session = self.wait_for_open_session(&session_id).await?;
+                return Ok(AgentApiOutcome::new(SessionStartResponse { session }));
+            }
+            Err(error) => return Err(error),
+        }
         self.wait_for_open_session(&session_id).await?;
         let loaded = self.load_session_state(&session_id).await?;
         let session = self.configure_session_toolset(&session_id, &loaded).await?;
@@ -729,35 +747,52 @@ impl AgentApiService for GatewayAgentApi {
             .map_err(map_session_store_error)?
             .ok_or_else(|| AgentApiError::not_found(format!("session not found: {session_id}")))?;
         let limit = event_page_limit(params.limit)?;
-        let page = self
-            .store
-            .read_after(ReadSessionEvents {
-                session_id: session_id.clone(),
-                after: params.after.map(|cursor| engine::EventSeq::new(cursor.seq)),
-                limit,
-            })
-            .await
-            .map_err(map_session_store_error)?;
-        let head_cursor = self
-            .store
-            .head(&session_id)
-            .await
-            .map_err(map_session_store_error)?
-            .map(|position| event_cursor(position.seq));
-        let codec = engine::CoreAgentCodec;
-        let mut events = Vec::with_capacity(page.entries.len());
-        for entry in &page.entries {
-            let entry = decode_dynamic_entry(&codec, entry)?;
-            events.push(self.projector().project_entry(&session_id, &entry).await?);
-        }
+        // Long-poll: clamp the requested wait to the server cap and park
+        // until an event lands past the cursor or the deadline passes. A
+        // `session/close` appends a lifecycle event, so parked readers
+        // observe closes as a normal wakeup.
+        let wait = Duration::from_millis(params.wait_ms.unwrap_or(0)).min(self.events_wait_cap);
+        let deadline = Instant::now() + wait;
+        loop {
+            let page = self
+                .store
+                .read_after(ReadSessionEvents {
+                    session_id: session_id.clone(),
+                    after: params.after.map(|cursor| engine::EventSeq::new(cursor.seq)),
+                    limit,
+                })
+                .await
+                .map_err(map_session_store_error)?;
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if page.entries.is_empty() && !remaining.is_zero() {
+                let poll = self
+                    .poll_interval
+                    .min(Duration::from_millis(250))
+                    .min(remaining);
+                tokio::time::sleep(poll).await;
+                continue;
+            }
+            let head_cursor = self
+                .store
+                .head(&session_id)
+                .await
+                .map_err(map_session_store_error)?
+                .map(|position| event_cursor(position.seq));
+            let codec = engine::CoreAgentCodec;
+            let mut events = Vec::with_capacity(page.entries.len());
+            for entry in &page.entries {
+                let entry = decode_dynamic_entry(&codec, entry)?;
+                events.push(self.projector().project_entry(&session_id, &entry).await?);
+            }
 
-        Ok(AgentApiOutcome::new(SessionEventsReadResponse {
-            events,
-            next_cursor: page.next_after.map(event_cursor),
-            head_cursor,
-            complete: page.complete,
-            gap: None,
-        }))
+            return Ok(AgentApiOutcome::new(SessionEventsReadResponse {
+                events,
+                next_cursor: page.next_after.map(event_cursor),
+                head_cursor,
+                complete: page.complete,
+                gap: None,
+            }));
+        }
     }
 
     async fn close_session(
@@ -824,7 +859,12 @@ impl AgentApiService for GatewayAgentApi {
         })?;
         self.load_session_state_with_current_run_context(&session_id)
             .await?;
-        let submission_id = self.allocate_submission_id();
+        let submission_id = match params.submission_id {
+            Some(submission_id) => SubmissionId::try_new(submission_id).map_err(|error| {
+                AgentApiError::invalid_request(format!("invalid submission id: {error}"))
+            })?,
+            None => self.allocate_submission_id(),
+        };
         let run_config = self
             .run_config_for_start(&session_id, params.config)
             .await?;

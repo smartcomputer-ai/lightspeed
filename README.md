@@ -44,7 +44,7 @@ We belive running and coordination agents at scale are best managed by durable w
 | Crate | Path | Purpose |
 |-------|------|---------|
 | `engine` | `crates/engine` | Deterministic session kernel plus built-in CoreAgent: dynamic session log storage, CoreAgent command/event/state models, planning, codecs, and the substrate-neutral drive machine |
-| `api` | `crates/api` | Client-facing session/run/item API types, views, and notifications |
+| `api` | `crates/api` | Client-facing session/run/item API types, views, notifications, and the exported wire-contract schemas under `schemas/` |
 | `api-projection` | `crates/api-projection` | Shared CoreAgent-to-`api` projection helpers for local and workflow-backed gateways |
 | `temporal-workflow` | `crates/temporal-workflow` | Temporal workflow, signals, queries, and activity request/response DTOs |
 | `temporal-server` | `crates/temporal-server` | Hosted runtime binary and modules for the Temporal worker, HTTP/JSON-RPC gateway, and combined local/small-deployment mode |
@@ -279,6 +279,25 @@ Ignored live provider tests require API keys and may cost money:
 cargo test -p llm-clients -- --ignored
 ```
 
+## Wire Contract Schemas
+
+`schemas/` holds the committed machine-readable contract of the JSON-RPC
+gateway, generated from the `api` crate's types via schemars:
+
+- `api.schema.json` — draft-07 JSON Schema bundle of every wire type;
+- `methods.json` — method/notification manifest with refs into the bundle;
+- `openrpc.json` — OpenRPC document for docs tooling (not for codegen).
+
+The manifest is produced by the same macro that generates the JSON-RPC
+dispatcher, so it cannot drift from what the server serves. After changing
+`api` types, regenerate and commit:
+
+```bash
+cargo run -p api --bin export-schema
+```
+
+`cargo test -p api` fails while the committed artifacts are stale.
+
 ## Environment Variables
 
 Local commands load a root `.env` file when present. Use
@@ -299,7 +318,7 @@ the same variables directly in your shell.
 | `FORGE_API_URL` | CLI JSON-RPC gateway URL |
 | `FORGE_POSTGRES_URL` | PostgreSQL session/CAS database URL |
 | `FORGE_PG_UNIVERSE_ID` | Hosted store universe UUID |
-| `FORGE_TASK_QUEUE` | Temporal task queue used by the temporal-server worker and gateway modes |
+| `FORGE_TASK_QUEUE` | Temporal task queue override; defaults to `forge-universe-{FORGE_PG_UNIVERSE_ID}` |
 | `FORGE_OBJECT_STORE_ENDPOINT` | S3-compatible object store endpoint |
 | `RUST_LOG` | Server log filter. Defaults to app/Temporal info and dependency warnings; use `temporal_server=debug,temporal_workflow=debug` for more detail |
 | `FORGE_LOG_FORMAT` | Server log format: `compact` (default), `pretty`, or `json` |

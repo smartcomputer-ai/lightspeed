@@ -1,0 +1,39 @@
+{
+  "name": "@forge/agent-client",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "TypeScript JSON-RPC client for the Forge agent API.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "examples",
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "prepare": "npm run build",
+    "generate": "node scripts/generate.mjs",
+    "check:generated": "npm run generate && git diff --exit-code -- src/generated",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "check": "npm run check:generated && npm run typecheck && npm run test && npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "json-schema-to-typescript": "^15.0.4",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  }
+}

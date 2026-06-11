@@ -100,6 +100,11 @@ pub struct RunRecord {
     pub run_id: RunId,
     pub status: RunStatus,
     pub submission_id: Option<SubmissionId>,
+    /// Digest of the accepted (input, run_config), kept after the full input
+    /// is dropped so duplicate submissions can still be checked for
+    /// input/config equality against completed runs.
+    #[serde(default)]
+    pub submission_digest: Option<u64>,
     pub output_ref: Option<BlobRef>,
     pub failure: Option<RunFailure>,
 }
@@ -427,6 +432,87 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
     }
 }
 
+/// Outcome of matching a `RequestRun` submission id against runs already in
+/// session state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SubmissionMatch {
+    /// Same submission id with the same input and run config: the command is
+    /// a retry and admits as an idempotent no-op.
+    Identical,
+    /// Same submission id but different input or run config: a client bug,
+    /// rejected.
+    Different,
+}
+
+pub(crate) fn match_existing_submission(
+    state: &CoreAgentState,
+    submission_id: &SubmissionId,
+    input: &[ContextEntryInput],
+    run_config: &RunConfig,
+) -> Option<SubmissionMatch> {
+    if let Some(active) = state
+        .runs
+        .active
+        .as_ref()
+        .filter(|run| run.submission_id.as_ref() == Some(submission_id))
+    {
+        return Some(
+            if active.input.input == input && &active.run_config == run_config {
+                SubmissionMatch::Identical
+            } else {
+                SubmissionMatch::Different
+            },
+        );
+    }
+    if let Some(queued) = state
+        .runs
+        .queued
+        .iter()
+        .find(|run| run.submission_id.as_ref() == Some(submission_id))
+    {
+        return Some(
+            if queued.input == input && &queued.run_config == run_config {
+                SubmissionMatch::Identical
+            } else {
+                SubmissionMatch::Different
+            },
+        );
+    }
+    if let Some(completed) = state
+        .runs
+        .completed
+        .iter()
+        .find(|run| run.submission_id.as_ref() == Some(submission_id))
+    {
+        // Completed runs keep only a digest of their accepted input/config.
+        // A record without a digest cannot be compared and is treated as a
+        // retry, which is the safe behavior for retried clients.
+        return Some(match completed.submission_digest {
+            Some(digest) if digest != submission_digest(input, run_config) => {
+                SubmissionMatch::Different
+            }
+            _ => SubmissionMatch::Identical,
+        });
+    }
+    None
+}
+
+/// Deterministic digest of a run submission's payload. FNV-1a over the
+/// serde_json encoding; collision resistance is not a goal — this guards
+/// against client bugs, not adversaries.
+pub(crate) fn submission_digest(input: &[ContextEntryInput], run_config: &RunConfig) -> u64 {
+    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+    let bytes = serde_json::to_vec(&(input, run_config))
+        .expect("run submission payload serializes to JSON");
+    let mut hash = FNV_OFFSET;
+    for byte in bytes {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash
+}
+
 pub(crate) fn active_run_mut(
     state: &mut CoreAgentState,
     run_id: RunId,
@@ -480,10 +566,15 @@ fn finish_active_run(
         .active
         .take()
         .expect("active run checked before take");
+    let submission_digest = active_run
+        .submission_id
+        .as_ref()
+        .map(|_| submission_digest(&active_run.input.input, &active_run.run_config));
     state.runs.completed.push(RunRecord {
         run_id: active_run.run_id,
         status,
         submission_id: active_run.submission_id,
+        submission_digest,
         output_ref,
         failure,
     });

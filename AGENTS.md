@@ -56,6 +56,13 @@ Additional per-capability live suites exist for both providers under
 `crates/llm-runtime/tests/` (`*_compaction_live`, `*_mcp_live`,
 `*_prompts_live`, `*_skills_live`).
 
+After changing `api` wire types, regenerate the committed contract artifacts
+under `schemas/` (`cargo test -p api` fails while they are stale):
+
+```bash
+cargo run -p api --bin export-schema
+```
+
 CLI usage:
 
 ```bash

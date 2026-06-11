@@ -45,6 +45,7 @@ pub enum CommandRejectionKind {
     InvalidConfiguration,
     ProviderCompatibility,
     InvariantViolation,
+    DuplicateSubmission,
     Other,
 }
 

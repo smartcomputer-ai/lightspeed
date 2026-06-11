@@ -15,16 +15,32 @@ pub fn default_model_from_env() -> ModelSelection {
     }
 }
 
+fn universe_id_from_env() -> anyhow::Result<Uuid> {
+    let universe_id = env::var("FORGE_PG_UNIVERSE_ID")
+        .map_err(|_| anyhow::anyhow!("FORGE_PG_UNIVERSE_ID must be set"))?;
+    Uuid::parse_str(&universe_id)
+        .map_err(|error| anyhow::anyhow!("invalid FORGE_PG_UNIVERSE_ID: {error}"))
+}
+
+/// Resolve the Temporal task queue for this deployment: an explicit
+/// `FORGE_TASK_QUEUE` wins, otherwise the queue derives from the bound
+/// universe (`forge-universe-{FORGE_PG_UNIVERSE_ID}`) so two universe
+/// deployments sharing a Temporal namespace can never pick up each other's
+/// sessions by accident.
+pub fn task_queue_from_env() -> anyhow::Result<String> {
+    if let Some(task_queue) = optional_env("FORGE_TASK_QUEUE") {
+        return Ok(task_queue);
+    }
+    Ok(format!("forge-universe-{}", universe_id_from_env()?))
+}
+
 pub async fn pg_store_from_env() -> anyhow::Result<Arc<PgStore>> {
     let database_url = env::var("FORGE_POSTGRES_URL")
         .or_else(|_| env::var("FORGE_TEST_POSTGRES_URL"))
         .map_err(|_| {
             anyhow::anyhow!("FORGE_POSTGRES_URL or FORGE_TEST_POSTGRES_URL must be set")
         })?;
-    let universe_id = env::var("FORGE_PG_UNIVERSE_ID")
-        .map_err(|_| anyhow::anyhow!("FORGE_PG_UNIVERSE_ID must be set"))?;
-    let universe_id = Uuid::parse_str(&universe_id)
-        .map_err(|error| anyhow::anyhow!("invalid FORGE_PG_UNIVERSE_ID: {error}"))?;
+    let universe_id = universe_id_from_env()?;
     let config = pg_store_config_from_env(universe_id)?;
     let store = match object_store_config_from_env()? {
         Some(object_config) => {
