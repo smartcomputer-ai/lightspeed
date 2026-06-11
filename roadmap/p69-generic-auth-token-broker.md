@@ -850,6 +850,15 @@ grants are created against verified installations. No Forge consumer spends
 GitHub tokens yet (no repo tools); the broker path is unit-tested against a
 mocked GitHub API.
 
+Refactored 2026-06-11: provider-kind dispatch moved behind the
+`GrantTokenSource` trait. `RegistryTokenBroker` now owns only grant loading,
+status/audience enforcement, and the per-grant single-flight lock around a
+generic fast-path/renew skeleton; stored/OAuth-refreshable tokens are served
+by a built-in source, and `GitHubAppRuntime` lives in
+`auth-registry::github` as a registered source (`with_token_source`), so
+`broker.rs` carries no GitHub imports and the next provider kind
+(`github_app_user`) is a new source impl, not a new broker branch.
+
 ## Future Work
 
 - GitHub App user access token flow.

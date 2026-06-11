@@ -15,8 +15,6 @@ use crate::{
     validate_nonempty_optional, validate_nonnegative_i64, validate_token_component,
 };
 
-pub const DEFAULT_GITHUB_API_BASE_URL: &str = "https://api.github.com";
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AuthProviderStatus {
@@ -176,6 +174,7 @@ pub trait AuthProviderStore: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::DEFAULT_GITHUB_API_BASE_URL;
 
     fn github_config() -> AuthProviderConfig {
         AuthProviderConfig::GitHubApp(GitHubAppConfig {

@@ -7,7 +7,7 @@ use crate::{
     validate_token_component,
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum AuthProviderKind {
     #[serde(rename = "static_bearer")]
     StaticBearer,

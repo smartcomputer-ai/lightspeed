@@ -108,17 +108,18 @@ mod providers;
 mod secrets;
 
 pub use broker::{
-    AuthBrokerError, AuthTokenBroker, DEFAULT_REFRESH_EXPIRY_MARGIN_MS, GitHubAppRuntime,
+    AuthBrokerError, AuthTokenBroker, DEFAULT_REFRESH_EXPIRY_MARGIN_MS, GrantTokenSource,
     OAuthRefreshRuntime, RegistryTokenBroker, TokenAudience, audience_covers,
 };
 pub use github::{
-    GitHubApiClient, GitHubAppError, GitHubInstallation, GitHubInstallationGrantMetadata,
-    GitHubInstallationToken, HttpGitHubApiClient, SECRET_KIND_GITHUB_APP_PRIVATE_KEY,
-    sign_github_app_jwt, validate_github_app_private_key,
+    DEFAULT_GITHUB_API_BASE_URL, GitHubApiClient, GitHubAppError, GitHubAppRuntime,
+    GitHubInstallation, GitHubInstallationGrantMetadata, GitHubInstallationToken,
+    HttpGitHubApiClient, SECRET_KIND_GITHUB_APP_PRIVATE_KEY, sign_github_app_jwt,
+    validate_github_app_private_key,
 };
 pub use providers::{
     AuthProviderConfig, AuthProviderRecord, AuthProviderStatus, AuthProviderStore,
-    CreateAuthProviderRecord, DEFAULT_GITHUB_API_BASE_URL, GitHubAppConfig,
+    CreateAuthProviderRecord, GitHubAppConfig,
 };
 pub use flow::{
     AuthCallback, DEFAULT_AUTH_FLOW_TTL_MS, OAuthFlowService, StartAuthFlow, StartedAuthFlow,

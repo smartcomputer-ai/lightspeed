@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use auth_registry::{
-    AuthGrantStore, AuthProviderStore, GitHubAppRuntime, GrantRefreshLock, HttpGitHubApiClient,
-    HttpOAuthTokenClient, OAuthClientStore, OAuthRefreshRuntime, RegistryTokenBroker, SecretStore,
+    AuthGrantStore, AuthProviderKind, AuthProviderStore, GitHubAppRuntime, GrantRefreshLock,
+    HttpGitHubApiClient, HttpOAuthTokenClient, OAuthClientStore, OAuthRefreshRuntime,
+    RegistryTokenBroker, SecretStore,
 };
 use engine::{
     CoreAgentLlm, CoreAgentTools, ProviderApiKind,
@@ -143,17 +144,17 @@ fn broker_secret_resolver(store: Arc<PgStore>) -> anyhow::Result<Arc<dyn SecretR
         .map_err(|error| anyhow::anyhow!("construct oauth token client: {error}"))?;
     let github_api = HttpGitHubApiClient::new()
         .map_err(|error| anyhow::anyhow!("construct github api client: {error}"))?;
-    let broker = RegistryTokenBroker::new(grants, secrets)
-        .with_oauth_refresh(OAuthRefreshRuntime::new(
-            clients,
-            Arc::new(token_client),
-            locks.clone(),
-        ))
-        .with_github_app(GitHubAppRuntime::new(
-            providers,
-            Arc::new(github_api),
-            locks,
-        ));
+    let broker = RegistryTokenBroker::new(grants.clone(), secrets.clone(), locks)
+        .with_oauth_refresh(OAuthRefreshRuntime::new(clients, Arc::new(token_client)))
+        .with_token_source(
+            AuthProviderKind::GitHubApp,
+            Arc::new(GitHubAppRuntime::new(
+                providers,
+                Arc::new(github_api),
+                grants,
+                secrets,
+            )),
+        );
     Ok(Arc::new(BrokerSecretResolver::new(Arc::new(broker))))
 }
 

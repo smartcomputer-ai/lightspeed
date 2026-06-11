@@ -92,8 +92,9 @@ mod tests {
 
     use auth_registry::{
         AuthGrantStatus, AuthGrantStore, AuthProviderKind, CreateAuthGrantRecord,
-        InMemoryAuthGrantStore, InMemorySecretStore, PrincipalRef, PutSecretRecord,
-        RegistryTokenBroker, SECRET_KIND_STATIC_BEARER, SecretId, SecretStore, SecretValue,
+        InMemoryAuthGrantStore, InMemoryGrantLocks, InMemorySecretStore, PrincipalRef,
+        PutSecretRecord, RegistryTokenBroker, SECRET_KIND_STATIC_BEARER, SecretId, SecretStore,
+        SecretValue,
     };
 
     use super::*;
@@ -130,7 +131,11 @@ mod tests {
             })
             .await
             .expect("put secret");
-        BrokerSecretResolver::new(Arc::new(RegistryTokenBroker::new(grants, secrets)))
+        BrokerSecretResolver::new(Arc::new(RegistryTokenBroker::new(
+            grants,
+            secrets,
+            Arc::new(InMemoryGrantLocks::new()),
+        )))
     }
 
     fn auth_grant_ref(id: &str) -> SecretRef {

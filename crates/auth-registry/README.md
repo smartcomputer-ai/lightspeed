@@ -20,11 +20,15 @@ execution — never in the engine or the session log.
 - `broker` — the `AuthTokenBroker` trait and `RegistryTokenBroker`: resolves
   a grant id plus a `TokenAudience` to a bearer `SecretValue`, enforcing
   status, expiry, and `audience_covers` (exact match or path-boundary prefix),
-  with typed `AuthBrokerError` kinds instead of `Option`. OAuth grants
-  refresh automatically: single-flight per grant (`GrantRefreshLock`; a
-  Postgres advisory lock in `store-pg`), a 60s expiry margin, rotation-safe
-  secret swaps, `invalid_grant` → `needs_reauth`, and fallback to the stored
-  token when a refresh fails transiently but the token is still valid.
+  with typed `AuthBrokerError` kinds instead of `Option`. The broker owns
+  grant loading, enforcement, and single-flight renewal per grant
+  (`GrantRefreshLock`; a Postgres advisory lock in `store-pg`); how a token
+  is obtained per provider kind sits behind the `GrantTokenSource` trait —
+  stored/OAuth-refreshable tokens are built in, on-demand minters (the
+  GitHub App runtime) register via `with_token_source`. OAuth grants refresh
+  automatically: a 60s expiry margin, rotation-safe secret swaps,
+  `invalid_grant` → `needs_reauth`, and fallback to the stored token when a
+  refresh fails transiently but the token is still valid.
 - `oauth` — `OAuthClientRecord` (manually configured authorization/token
   endpoints + AS-issued client id), `AuthFlowRecord` (one-time
   authorization-code flows storing only the SHA-256 of `state`), PKCE S256
@@ -47,10 +51,11 @@ execution — never in the engine or the session log.
   as a typed field (`store-pg` backs it with a foreign key into
   `secret_records`).
 - `github` — the GitHub App driver (P69 G5): RS256 app JWT signing,
-  installation listing, and on-demand installation token minting via the
-  `GitHubApiClient` trait. Installation grants store no tokens; the broker
-  mints a ~1h token per call with a process-local cache, and `401`/`404`
-  from GitHub mark the grant `failed`/`needs_reauth` respectively.
+  installation listing, and the `GitHubAppRuntime` token source (on-demand
+  installation token minting via the `GitHubApiClient` trait). Installation
+  grants store no tokens; minting happens per call with a process-local
+  cache, and `401`/`404` from GitHub mark the grant `failed`/`needs_reauth`
+  respectively.
 - `memory` — in-memory grant/secret/client/flow/provider stores for tests.
 
 ## How it works

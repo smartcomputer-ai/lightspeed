@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -6,12 +7,10 @@ use thiserror::Error;
 
 use crate::{
     AuthGrantId, AuthGrantRecord, AuthGrantStatus, AuthGrantStore, AuthGrantTokenRefresh,
-    AuthProviderConfig, AuthProviderId, AuthProviderStatus, AuthProviderStore, AuthProviderKind,
-    AuthRegistryError, GitHubApiClient, GitHubAppError, GitHubInstallationGrantMetadata,
-    GitHubInstallationToken, GrantRefreshLock, OAuthClientStore, OAuthTokenClient,
+    AuthProviderKind, AuthRegistryError, GrantRefreshLock, OAuthClientStore, OAuthTokenClient,
     OAuthTokenError, OAuthTokenGrant, OAuthTokenRequest, PutSecretRecord,
     SECRET_KIND_OAUTH_ACCESS_TOKEN, SECRET_KIND_OAUTH_REFRESH_TOKEN, SecretId, SecretStore,
-    SecretValue, random_auth_id, sign_github_app_jwt,
+    SecretValue, random_auth_id,
 };
 
 /// The resource a resolved token is about to be sent to. Audience enforcement
@@ -69,6 +68,12 @@ pub enum AuthBrokerError {
         message: String,
     },
 
+    #[error("no token source is configured for provider kind {provider_kind:?} (grant {grant_id})")]
+    SourceNotConfigured {
+        grant_id: AuthGrantId,
+        provider_kind: AuthProviderKind,
+    },
+
     #[error("auth broker store failure: {message}")]
     Store { message: String },
 }
@@ -76,14 +81,39 @@ pub enum AuthBrokerError {
 #[async_trait]
 pub trait AuthTokenBroker: Send + Sync {
     /// Resolve a current bearer token for `grant_id`, enforcing grant status,
-    /// expiry, and audience, refreshing OAuth grants when needed. Fails with
-    /// a typed error; never returns a silent absence. Optional-auth-absent is
-    /// a link-policy concern expressed by omitting `auth_ref` upstream, not
+    /// expiry, and audience, renewing (refreshing/minting) when needed. Fails
+    /// with a typed error; never returns a silent absence. Optional-auth-absent
+    /// is a link-policy concern expressed by omitting `auth_ref` upstream, not
     /// by the broker.
     async fn bearer_token(
         &self,
         grant_id: &AuthGrantId,
         audience: &TokenAudience,
+    ) -> Result<SecretValue, AuthBrokerError>;
+}
+
+/// Provider-kind-specific token resolution behind the generic broker. The
+/// broker owns grant loading, status/audience enforcement, and per-grant
+/// single-flight locking; sources own how a token is obtained for their
+/// provider kind (stored secret, OAuth refresh, on-demand mint, ...).
+#[async_trait]
+pub trait GrantTokenSource: Send + Sync {
+    /// Fast path, called without the per-grant lock: return a token that is
+    /// currently valid (outside any expiry margin), `None` when renewal is
+    /// needed, or a typed error when the grant cannot resolve at all.
+    async fn current_token(
+        &self,
+        grant: &AuthGrantRecord,
+        now_ms: i64,
+    ) -> Result<Option<SecretValue>, AuthBrokerError>;
+
+    /// Slow path, called with the per-grant lock held after the grant was
+    /// re-read and `current_token` re-checked. Implementations own their
+    /// provider-specific grant-status transitions (`NeedsReauth`, `Failed`).
+    async fn renew_token(
+        &self,
+        grant: &AuthGrantRecord,
+        now_ms: i64,
     ) -> Result<SecretValue, AuthBrokerError>;
 }
 
@@ -100,8 +130,8 @@ pub fn audience_covers(audience: &str, resource: &str) -> bool {
     false
 }
 
-/// Refresh tokens this close to (or past) `expires_at_ms` instead of using
-/// the stored access token, so a token does not expire mid provider call.
+/// Renew tokens this close to (or past) `expires_at_ms` instead of using
+/// the stored or cached token, so a token does not expire mid provider call.
 pub const DEFAULT_REFRESH_EXPIRY_MARGIN_MS: i64 = 60_000;
 
 /// OAuth refresh dependencies for [`RegistryTokenBroker`]. Without this
@@ -111,20 +141,14 @@ pub const DEFAULT_REFRESH_EXPIRY_MARGIN_MS: i64 = 60_000;
 pub struct OAuthRefreshRuntime {
     pub clients: Arc<dyn OAuthClientStore>,
     pub token_client: Arc<dyn OAuthTokenClient>,
-    pub locks: Arc<dyn GrantRefreshLock>,
     pub expiry_margin_ms: i64,
 }
 
 impl OAuthRefreshRuntime {
-    pub fn new(
-        clients: Arc<dyn OAuthClientStore>,
-        token_client: Arc<dyn OAuthTokenClient>,
-        locks: Arc<dyn GrantRefreshLock>,
-    ) -> Self {
+    pub fn new(clients: Arc<dyn OAuthClientStore>, token_client: Arc<dyn OAuthTokenClient>) -> Self {
         Self {
             clients,
             token_client,
-            locks,
             expiry_margin_ms: DEFAULT_REFRESH_EXPIRY_MARGIN_MS,
         }
     }
@@ -135,127 +159,27 @@ impl OAuthRefreshRuntime {
     }
 }
 
-/// GitHub App minting dependencies for [`RegistryTokenBroker`]. Installation
-/// tokens are never stored durably: each is minted on demand (app JWT ->
-/// installation token) and cached only in process memory until its expiry
-/// margin.
-#[derive(Clone)]
-pub struct GitHubAppRuntime {
-    pub providers: Arc<dyn AuthProviderStore>,
-    pub api: Arc<dyn GitHubApiClient>,
-    pub locks: Arc<dyn GrantRefreshLock>,
-    pub expiry_margin_ms: i64,
-    cache: Arc<std::sync::Mutex<std::collections::BTreeMap<AuthGrantId, GitHubInstallationToken>>>,
-}
+/// Provider kinds whose grants carry a stored access token (optionally
+/// refreshable through OAuth). Served by [`StoredTokenSource`].
+const STORED_TOKEN_KINDS: [AuthProviderKind; 5] = [
+    AuthProviderKind::StaticBearer,
+    AuthProviderKind::McpOAuth,
+    AuthProviderKind::CustomOAuth,
+    AuthProviderKind::GitHubAppUser,
+    AuthProviderKind::GitHubOAuthApp,
+];
 
-impl GitHubAppRuntime {
-    pub fn new(
-        providers: Arc<dyn AuthProviderStore>,
-        api: Arc<dyn GitHubApiClient>,
-        locks: Arc<dyn GrantRefreshLock>,
-    ) -> Self {
-        Self {
-            providers,
-            api,
-            locks,
-            expiry_margin_ms: DEFAULT_REFRESH_EXPIRY_MARGIN_MS,
-            cache: Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new())),
-        }
-    }
-
-    pub fn with_expiry_margin_ms(mut self, expiry_margin_ms: i64) -> Self {
-        self.expiry_margin_ms = expiry_margin_ms.max(0);
-        self
-    }
-
-    fn cached_token(&self, grant_id: &AuthGrantId, now_ms: i64) -> Option<SecretValue> {
-        let cache = self.cache.lock().ok()?;
-        cache.get(grant_id).and_then(|token| {
-            (now_ms < token.expires_at_ms.saturating_sub(self.expiry_margin_ms))
-                .then(|| token.token.clone())
-        })
-    }
-
-    fn store_token(&self, grant_id: &AuthGrantId, token: GitHubInstallationToken) {
-        if let Ok(mut cache) = self.cache.lock() {
-            cache.insert(grant_id.clone(), token);
-        }
-    }
-}
-
-/// Broker over the registry store traits. Resolves static bearer grants,
-/// OAuth grants (refreshing single-flight per grant when the stored access
-/// token is missing or inside the expiry margin), and GitHub App
-/// installation grants (minting tokens on demand).
-#[derive(Clone)]
-pub struct RegistryTokenBroker {
+/// Token source for grants with stored access tokens: static bearer imports
+/// and OAuth grants. With an [`OAuthRefreshRuntime`] configured, expiring
+/// OAuth tokens refresh (with rotation persisted atomically); without one,
+/// stored tokens are served until they expire.
+struct StoredTokenSource {
     grants: Arc<dyn AuthGrantStore>,
     secrets: Arc<dyn SecretStore>,
-    oauth: Option<OAuthRefreshRuntime>,
-    github: Option<GitHubAppRuntime>,
-    now_ms: Arc<dyn Fn() -> i64 + Send + Sync>,
+    refresh: Option<OAuthRefreshRuntime>,
 }
 
-impl RegistryTokenBroker {
-    pub fn new(grants: Arc<dyn AuthGrantStore>, secrets: Arc<dyn SecretStore>) -> Self {
-        Self {
-            grants,
-            secrets,
-            oauth: None,
-            github: None,
-            now_ms: Arc::new(system_now_ms),
-        }
-    }
-
-    pub fn with_oauth_refresh(mut self, oauth: OAuthRefreshRuntime) -> Self {
-        self.oauth = Some(oauth);
-        self
-    }
-
-    pub fn with_github_app(mut self, github: GitHubAppRuntime) -> Self {
-        self.github = Some(github);
-        self
-    }
-
-    pub fn with_now_fn(mut self, now_ms: Arc<dyn Fn() -> i64 + Send + Sync>) -> Self {
-        self.now_ms = now_ms;
-        self
-    }
-
-    async fn read_checked_grant(
-        &self,
-        grant_id: &AuthGrantId,
-        audience: &TokenAudience,
-    ) -> Result<AuthGrantRecord, AuthBrokerError> {
-        let grant = self
-            .grants
-            .read_grant(grant_id)
-            .await
-            .map_err(|error| match error {
-                AuthRegistryError::GrantNotFound { grant_id } => {
-                    AuthBrokerError::GrantNotFound { grant_id }
-                }
-                other => AuthBrokerError::Store {
-                    message: other.to_string(),
-                },
-            })?;
-        if grant.status != AuthGrantStatus::Active {
-            return Err(AuthBrokerError::GrantNotActive {
-                grant_id: grant.grant_id,
-                status: grant.status,
-            });
-        }
-        if let Some(grant_audience) = &grant.audience {
-            if !audience_covers(grant_audience, audience.resource()) {
-                return Err(AuthBrokerError::AudienceMismatch {
-                    grant_id: grant.grant_id,
-                    requested: audience.resource().to_owned(),
-                });
-            }
-        }
-        Ok(grant)
-    }
-
+impl StoredTokenSource {
     async fn read_access_token(
         &self,
         grant: &AuthGrantRecord,
@@ -282,7 +206,7 @@ impl RegistryTokenBroker {
 
     /// The stored access token can be served as-is: it exists and is not
     /// inside the refresh margin.
-    fn token_is_fresh(&self, grant: &AuthGrantRecord, now_ms: i64, margin_ms: i64) -> bool {
+    fn token_is_fresh(grant: &AuthGrantRecord, now_ms: i64, margin_ms: i64) -> bool {
         grant.access_token_secret.is_some()
             && grant
                 .expires_at_ms
@@ -297,92 +221,9 @@ impl RegistryTokenBroker {
     }
 
     fn refresh_available(&self, grant: &AuthGrantRecord) -> bool {
-        self.oauth.is_some()
+        self.refresh.is_some()
             && grant.refresh_token_secret.is_some()
             && grant.oauth_client.is_some()
-    }
-
-    /// Mint a GitHub App installation token for the grant. Caller holds the
-    /// per-grant lock and has re-checked the cache.
-    async fn mint_github_token(
-        &self,
-        grant: &AuthGrantRecord,
-        github: &GitHubAppRuntime,
-    ) -> Result<SecretValue, AuthBrokerError> {
-        let grant_id = grant.grant_id.clone();
-        let mint_error = |message: String| AuthBrokerError::MintFailed {
-            grant_id: grant_id.clone(),
-            message,
-        };
-
-        let metadata = GitHubInstallationGrantMetadata::from_grant(grant)
-            .map_err(|error| mint_error(error.to_string()))?;
-        let provider_id = AuthProviderId::try_new(grant.provider_id.clone())
-            .map_err(|error| mint_error(format!("invalid provider id: {error}")))?;
-        let provider = github
-            .providers
-            .read_auth_provider(&provider_id)
-            .await
-            .map_err(|error| mint_error(format!("load auth provider: {error}")))?;
-        if provider.status != AuthProviderStatus::Active {
-            return Err(mint_error(format!(
-                "auth provider {provider_id} is not active: {:?}",
-                provider.status
-            )));
-        }
-        let AuthProviderConfig::GitHubApp(config) = &provider.config;
-        let Some(key_secret) = &provider.credential_secret else {
-            return Err(mint_error(format!(
-                "auth provider {provider_id} has no private key credential"
-            )));
-        };
-        let (_, private_key) = self
-            .secrets
-            .read_secret(key_secret)
-            .await
-            .map_err(|error| AuthBrokerError::Store {
-                message: format!("read github app private key: {error}"),
-            })?;
-        let app_jwt = sign_github_app_jwt(&config.app_id, &private_key, (self.now_ms)())
-            .map_err(|error| mint_error(error.to_string()))?;
-
-        match github
-            .api
-            .create_installation_token(&config.api_base_url, &app_jwt, metadata.installation_id)
-            .await
-        {
-            Ok(token) => {
-                let value = token.token.clone();
-                github.store_token(&grant_id, token);
-                Ok(value)
-            }
-            Err(GitHubAppError::CredentialsRejected { .. }) => {
-                // The app key was revoked or rotated; minting cannot succeed
-                // until the provider credential is fixed.
-                let now_ms = (self.now_ms)();
-                let _ = self
-                    .grants
-                    .update_grant_status(&grant_id, AuthGrantStatus::Failed, now_ms)
-                    .await;
-                Err(AuthBrokerError::GrantNotActive {
-                    grant_id,
-                    status: AuthGrantStatus::Failed,
-                })
-            }
-            Err(GitHubAppError::InstallationNotFound { .. }) => {
-                // The app was uninstalled; reinstalling produces a new grant.
-                let now_ms = (self.now_ms)();
-                let _ = self
-                    .grants
-                    .update_grant_status(&grant_id, AuthGrantStatus::NeedsReauth, now_ms)
-                    .await;
-                Err(AuthBrokerError::GrantNotActive {
-                    grant_id,
-                    status: AuthGrantStatus::NeedsReauth,
-                })
-            }
-            Err(other) => Err(mint_error(other.to_string())),
-        }
     }
 
     /// Refresh the grant's tokens. Caller holds the per-grant lock and has
@@ -391,6 +232,7 @@ impl RegistryTokenBroker {
         &self,
         grant: &AuthGrantRecord,
         oauth: &OAuthRefreshRuntime,
+        now_ms: i64,
     ) -> Result<SecretValue, AuthBrokerError> {
         let grant_id = grant.grant_id.clone();
         let store_error = |message: String| AuthBrokerError::Store { message };
@@ -441,7 +283,6 @@ impl RegistryTokenBroker {
             Err(OAuthTokenError::InvalidGrant { .. }) => {
                 // The refresh token is dead; further attempts cannot succeed
                 // until the user reauthorizes.
-                let now_ms = (self.now_ms)();
                 let _ = self
                     .grants
                     .update_grant_status(&grant_id, AuthGrantStatus::NeedsReauth, now_ms)
@@ -460,7 +301,6 @@ impl RegistryTokenBroker {
             )));
         }
 
-        let now_ms = (self.now_ms)();
         // Persist the rotated refresh token first: once the AS rotated it,
         // losing the new value strands the grant.
         let new_refresh_secret_id = match &response.refresh_token {
@@ -518,6 +358,162 @@ impl RegistryTokenBroker {
     }
 }
 
+#[async_trait]
+impl GrantTokenSource for StoredTokenSource {
+    async fn current_token(
+        &self,
+        grant: &AuthGrantRecord,
+        now_ms: i64,
+    ) -> Result<Option<SecretValue>, AuthBrokerError> {
+        let margin_ms = self
+            .refresh
+            .as_ref()
+            .map_or(0, |refresh| refresh.expiry_margin_ms);
+        if Self::token_is_fresh(grant, now_ms, margin_ms) {
+            return self.read_access_token(grant).await.map(Some);
+        }
+        if !self.refresh_available(grant) {
+            if grant
+                .expires_at_ms
+                .is_some_and(|expires_at_ms| now_ms >= expires_at_ms)
+            {
+                return Err(AuthBrokerError::GrantExpired {
+                    grant_id: grant.grant_id.clone(),
+                });
+            }
+            // Inside the margin without a refresh path: still valid.
+            return self.read_access_token(grant).await.map(Some);
+        }
+        Ok(None)
+    }
+
+    async fn renew_token(
+        &self,
+        grant: &AuthGrantRecord,
+        now_ms: i64,
+    ) -> Result<SecretValue, AuthBrokerError> {
+        let Some(oauth) = &self.refresh else {
+            // current_token only defers to renewal when refresh is available.
+            return Err(AuthBrokerError::RefreshFailed {
+                grant_id: grant.grant_id.clone(),
+                message: "oauth refresh is not configured".to_owned(),
+            });
+        };
+        match self.refresh_grant(grant, oauth, now_ms).await {
+            Ok(token) => Ok(token),
+            Err(error @ AuthBrokerError::GrantNotActive { .. }) => Err(error),
+            Err(error) => {
+                // Inside the margin but not yet expired the stored token
+                // is still valid; serve it instead of failing the call on
+                // a transient refresh problem.
+                if Self::token_is_usable(grant, now_ms) {
+                    return self.read_access_token(grant).await;
+                }
+                Err(error)
+            }
+        }
+    }
+}
+
+/// Broker over the registry store traits. Loads grants, enforces status and
+/// audience, and serializes renewal single-flight per grant; how a token is
+/// obtained for each provider kind is delegated to the registered
+/// [`GrantTokenSource`]s (stored/OAuth-refreshable tokens built in, on-demand
+/// minters such as the GitHub App runtime registered via
+/// [`RegistryTokenBroker::with_token_source`]).
+#[derive(Clone)]
+pub struct RegistryTokenBroker {
+    grants: Arc<dyn AuthGrantStore>,
+    secrets: Arc<dyn SecretStore>,
+    locks: Arc<dyn GrantRefreshLock>,
+    sources: BTreeMap<AuthProviderKind, Arc<dyn GrantTokenSource>>,
+    now_ms: Arc<dyn Fn() -> i64 + Send + Sync>,
+}
+
+impl RegistryTokenBroker {
+    pub fn new(
+        grants: Arc<dyn AuthGrantStore>,
+        secrets: Arc<dyn SecretStore>,
+        locks: Arc<dyn GrantRefreshLock>,
+    ) -> Self {
+        let mut broker = Self {
+            grants,
+            secrets,
+            locks,
+            sources: BTreeMap::new(),
+            now_ms: Arc::new(system_now_ms),
+        };
+        broker.register_stored_source(None);
+        broker
+    }
+
+    pub fn with_oauth_refresh(mut self, oauth: OAuthRefreshRuntime) -> Self {
+        self.register_stored_source(Some(oauth));
+        self
+    }
+
+    /// Register the token source for a provider kind, replacing any existing
+    /// registration for that kind.
+    pub fn with_token_source(
+        mut self,
+        provider_kind: AuthProviderKind,
+        source: Arc<dyn GrantTokenSource>,
+    ) -> Self {
+        self.sources.insert(provider_kind, source);
+        self
+    }
+
+    pub fn with_now_fn(mut self, now_ms: Arc<dyn Fn() -> i64 + Send + Sync>) -> Self {
+        self.now_ms = now_ms;
+        self
+    }
+
+    fn register_stored_source(&mut self, refresh: Option<OAuthRefreshRuntime>) {
+        let source: Arc<dyn GrantTokenSource> = Arc::new(StoredTokenSource {
+            grants: self.grants.clone(),
+            secrets: self.secrets.clone(),
+            refresh,
+        });
+        for kind in STORED_TOKEN_KINDS {
+            self.sources.insert(kind, source.clone());
+        }
+    }
+
+    async fn read_checked_grant(
+        &self,
+        grant_id: &AuthGrantId,
+        audience: &TokenAudience,
+    ) -> Result<AuthGrantRecord, AuthBrokerError> {
+        let grant = self
+            .grants
+            .read_grant(grant_id)
+            .await
+            .map_err(|error| match error {
+                AuthRegistryError::GrantNotFound { grant_id } => {
+                    AuthBrokerError::GrantNotFound { grant_id }
+                }
+                other => AuthBrokerError::Store {
+                    message: other.to_string(),
+                },
+            })?;
+        if grant.status != AuthGrantStatus::Active {
+            return Err(AuthBrokerError::GrantNotActive {
+                grant_id: grant.grant_id,
+                status: grant.status,
+            });
+        }
+        if let Some(grant_audience) = &grant.audience {
+            if !audience_covers(grant_audience, audience.resource()) {
+                return Err(AuthBrokerError::AudienceMismatch {
+                    grant_id: grant.grant_id,
+                    requested: audience.resource().to_owned(),
+                });
+            }
+        }
+        Ok(grant)
+    }
+}
+
 fn random_secret_id() -> Result<SecretId, AuthBrokerError> {
     SecretId::try_new(random_auth_id("authsec_")).map_err(|error| AuthBrokerError::Store {
         message: format!("generate secret id: {error}"),
@@ -539,83 +535,31 @@ impl AuthTokenBroker for RegistryTokenBroker {
         audience: &TokenAudience,
     ) -> Result<SecretValue, AuthBrokerError> {
         let grant = self.read_checked_grant(grant_id, audience).await?;
-
-        if grant.provider_kind == AuthProviderKind::GitHubApp {
-            let Some(github) = self.github.clone() else {
-                return Err(AuthBrokerError::MintFailed {
-                    grant_id: grant.grant_id,
-                    message: "github app runtime is not configured".to_owned(),
-                });
-            };
-            if let Some(token) = github.cached_token(grant_id, (self.now_ms)()) {
-                return Ok(token);
-            }
-            let _guard = github
-                .locks
-                .lock_grant(grant_id)
-                .await
-                .map_err(|error| AuthBrokerError::Store {
-                    message: format!("acquire grant mint lock: {error}"),
-                })?;
-            // Re-check under the lock: a concurrent resolver may have minted
-            // while this call waited.
-            if let Some(token) = github.cached_token(grant_id, (self.now_ms)()) {
-                return Ok(token);
-            }
-            let grant = self.read_checked_grant(grant_id, audience).await?;
-            return self.mint_github_token(&grant, &github).await;
-        }
-
-        let margin_ms = self
-            .oauth
-            .as_ref()
-            .map_or(0, |oauth| oauth.expiry_margin_ms);
-        let now_ms = (self.now_ms)();
-        if self.token_is_fresh(&grant, now_ms, margin_ms) {
-            return self.read_access_token(&grant).await;
-        }
-
-        if self.refresh_available(&grant) {
-            let oauth = self.oauth.clone().expect("refresh_available checked oauth");
-            let _guard = oauth
-                .locks
-                .lock_grant(grant_id)
-                .await
-                .map_err(|error| AuthBrokerError::Store {
-                    message: format!("acquire grant refresh lock: {error}"),
-                })?;
-            // Re-read under the lock: a concurrent resolver may have
-            // refreshed while this call waited.
-            let grant = self.read_checked_grant(grant_id, audience).await?;
-            let now_ms = (self.now_ms)();
-            if self.token_is_fresh(&grant, now_ms, oauth.expiry_margin_ms) {
-                return self.read_access_token(&grant).await;
-            }
-            return match self.refresh_grant(&grant, &oauth).await {
-                Ok(token) => Ok(token),
-                Err(error @ AuthBrokerError::GrantNotActive { .. }) => Err(error),
-                Err(error) => {
-                    // Inside the margin but not yet expired the stored token
-                    // is still valid; serve it instead of failing the call on
-                    // a transient refresh problem.
-                    if Self::token_is_usable(&grant, now_ms) {
-                        return self.read_access_token(&grant).await;
-                    }
-                    Err(error)
-                }
-            };
-        }
-
-        if grant
-            .expires_at_ms
-            .is_some_and(|expires_at_ms| now_ms >= expires_at_ms)
-        {
-            return Err(AuthBrokerError::GrantExpired {
+        let Some(source) = self.sources.get(&grant.provider_kind).cloned() else {
+            return Err(AuthBrokerError::SourceNotConfigured {
                 grant_id: grant.grant_id,
+                provider_kind: grant.provider_kind,
             });
+        };
+
+        if let Some(token) = source.current_token(&grant, (self.now_ms)()).await? {
+            return Ok(token);
         }
-        // Inside the margin without a refresh path: the token is still valid.
-        self.read_access_token(&grant).await
+
+        let _guard = self
+            .locks
+            .lock_grant(grant_id)
+            .await
+            .map_err(|error| AuthBrokerError::Store {
+                message: format!("acquire grant renewal lock: {error}"),
+            })?;
+        // Re-read and re-check under the lock: a concurrent resolver may
+        // have renewed while this call waited.
+        let grant = self.read_checked_grant(grant_id, audience).await?;
+        if let Some(token) = source.current_token(&grant, (self.now_ms)()).await? {
+            return Ok(token);
+        }
+        source.renew_token(&grant, (self.now_ms)()).await
     }
 }
 
@@ -626,7 +570,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        AuthProviderKind, CreateAuthGrantRecord, CreateOAuthClientRecord, InMemoryAuthGrantStore,
+        CreateAuthGrantRecord, CreateOAuthClientRecord, InMemoryAuthGrantStore,
         InMemoryGrantLocks, InMemoryOAuthClientStore, InMemorySecretStore, OAuthClientId,
         OAuthTokenResponse, PrincipalRef, SECRET_KIND_STATIC_BEARER, TokenEndpointAuthMethod,
     };
@@ -669,7 +613,7 @@ mod tests {
                 .await
                 .expect("put secret");
         }
-        RegistryTokenBroker::new(grants, secrets)
+        RegistryTokenBroker::new(grants, secrets, Arc::new(InMemoryGrantLocks::new()))
     }
 
     fn mcp_audience(resource: &str) -> TokenAudience {
@@ -916,16 +860,15 @@ mod tests {
         let token_client = Arc::new(CountingTokenClient::new(responses));
         let now = Arc::new(AtomicI64::new(now));
         let now_for_fn = now.clone();
-        let broker = RegistryTokenBroker::new(grants.clone(), secrets.clone())
-            .with_oauth_refresh(
-                OAuthRefreshRuntime::new(
-                    clients,
-                    token_client.clone(),
-                    Arc::new(InMemoryGrantLocks::new()),
-                )
-                .with_expiry_margin_ms(100),
-            )
-            .with_now_fn(Arc::new(move || now_for_fn.load(Ordering::SeqCst)));
+        let broker = RegistryTokenBroker::new(
+            grants.clone(),
+            secrets.clone(),
+            Arc::new(InMemoryGrantLocks::new()),
+        )
+        .with_oauth_refresh(
+            OAuthRefreshRuntime::new(clients, token_client.clone()).with_expiry_margin_ms(100),
+        )
+        .with_now_fn(Arc::new(move || now_for_fn.load(Ordering::SeqCst)));
         OAuthHarness {
             broker,
             grants,
@@ -1190,268 +1133,32 @@ mod tests {
         assert_eq!(harness.token_client.calls.load(Ordering::SeqCst), 1);
     }
 
-    struct CountingGitHubApi {
-        responses: Mutex<Vec<Result<GitHubInstallationToken, crate::GitHubAppError>>>,
-        calls: AtomicI64,
-    }
-
-    #[async_trait]
-    impl GitHubApiClient for CountingGitHubApi {
-        async fn list_installations(
-            &self,
-            _api_base_url: &str,
-            _app_jwt: &SecretValue,
-        ) -> Result<Vec<crate::GitHubInstallation>, crate::GitHubAppError> {
-            Ok(Vec::new())
-        }
-
-        async fn create_installation_token(
-            &self,
-            _api_base_url: &str,
-            app_jwt: &SecretValue,
-            installation_id: i64,
-        ) -> Result<GitHubInstallationToken, crate::GitHubAppError> {
-            assert!(!app_jwt.expose().is_empty(), "app jwt must be signed");
-            assert_eq!(installation_id, 678);
-            self.calls.fetch_add(1, Ordering::SeqCst);
-            self.responses.lock().expect("lock").remove(0)
-        }
-    }
-
-    struct GitHubHarness {
-        broker: RegistryTokenBroker,
-        grants: Arc<InMemoryAuthGrantStore>,
-        api: Arc<CountingGitHubApi>,
-        now: Arc<AtomicI64>,
-    }
-
-    async fn github_harness(
-        responses: Vec<Result<GitHubInstallationToken, crate::GitHubAppError>>,
-    ) -> GitHubHarness {
+    #[tokio::test]
+    async fn grants_without_a_registered_source_fail_with_a_typed_error() {
         let grants = Arc::new(InMemoryAuthGrantStore::new());
         let secrets = Arc::new(InMemorySecretStore::new());
-        let providers = Arc::new(crate::InMemoryAuthProviderStore::new());
-        secrets
-            .put_secret(PutSecretRecord {
-                secret_id: SecretId::new("authsec_appkey"),
-                secret_kind: crate::SECRET_KIND_GITHUB_APP_PRIVATE_KEY.to_owned(),
-                value: SecretValue::new(include_str!("../testdata/github_app_test_key.pem")),
-                created_at_ms: 10,
-            })
-            .await
-            .expect("put app key");
-        providers
-            .create_auth_provider(crate::CreateAuthProviderRecord {
-                provider_id: AuthProviderId::new("forge-github"),
-                display_name: None,
-                config: AuthProviderConfig::GitHubApp(crate::GitHubAppConfig {
-                    app_id: "12345".to_owned(),
-                    api_base_url: "https://api.github.com".to_owned(),
-                }),
-                credential_secret: Some(SecretId::new("authsec_appkey")),
-                status: AuthProviderStatus::Active,
-                created_at_ms: 10,
-            })
-            .await
-            .expect("create provider");
-        grants
-            .create_grant(CreateAuthGrantRecord {
-                grant_id: AuthGrantId::new("authgrant_install"),
-                provider_id: "forge-github".to_owned(),
-                provider_kind: AuthProviderKind::GitHubApp,
-                principal: PrincipalRef::universe_default(),
-                display_name: None,
-                subject_hint: Some("acme".to_owned()),
-                scopes: Vec::new(),
-                audience: Some("https://api.github.com".to_owned()),
-                access_token_secret: None,
-                refresh_token_secret: None,
-                oauth_client: None,
-                expires_at_ms: None,
-                status: AuthGrantStatus::Active,
-                metadata: serde_json::json!({
-                    "installation_id": 678,
-                    "account_login": "acme",
-                }),
-                created_at_ms: 10,
-            })
-            .await
-            .expect("create installation grant");
-        let api = Arc::new(CountingGitHubApi {
-            responses: Mutex::new(responses),
-            calls: AtomicI64::new(0),
-        });
-        let now = Arc::new(AtomicI64::new(1_000_000));
-        let now_for_fn = now.clone();
-        let broker = RegistryTokenBroker::new(grants.clone(), secrets)
-            .with_github_app(
-                GitHubAppRuntime::new(
-                    providers,
-                    api.clone(),
-                    Arc::new(InMemoryGrantLocks::new()),
-                )
-                .with_expiry_margin_ms(100),
-            )
-            .with_now_fn(Arc::new(move || now_for_fn.load(Ordering::SeqCst)));
-        GitHubHarness {
-            broker,
-            grants,
-            api,
-            now,
-        }
-    }
-
-    fn minted(token: &str, expires_at_ms: i64) -> GitHubInstallationToken {
-        GitHubInstallationToken {
-            token: SecretValue::new(token),
-            expires_at_ms,
-        }
-    }
-
-    fn install_grant_id() -> AuthGrantId {
-        AuthGrantId::new("authgrant_install")
-    }
-
-    fn github_audience() -> TokenAudience {
-        TokenAudience::GitHubApi("https://api.github.com".to_owned())
-    }
-
-    #[tokio::test]
-    async fn github_grants_mint_installation_tokens_and_cache_them() {
-        let harness = github_harness(vec![
-            Ok(minted("ghs_one", 1_000_000 + 3_600_000)),
-            Ok(minted("ghs_two", 1_000_000 + 7_200_000)),
-        ])
-        .await;
-
-        let first = harness
-            .broker
-            .bearer_token(&install_grant_id(), &github_audience())
-            .await
-            .expect("mint token");
-        let second = harness
-            .broker
-            .bearer_token(&install_grant_id(), &github_audience())
-            .await
-            .expect("cached token");
-
-        assert_eq!(first.expose(), "ghs_one");
-        assert_eq!(second.expose(), "ghs_one");
-        assert_eq!(harness.api.calls.load(Ordering::SeqCst), 1);
-
-        // Past the cached token's expiry a new one is minted.
-        harness.now.store(1_000_000 + 3_600_000, Ordering::SeqCst);
-        let third = harness
-            .broker
-            .bearer_token(&install_grant_id(), &github_audience())
-            .await
-            .expect("re-mint token");
-        assert_eq!(third.expose(), "ghs_two");
-        assert_eq!(harness.api.calls.load(Ordering::SeqCst), 2);
-    }
-
-    #[tokio::test]
-    async fn github_grants_enforce_audience() {
-        let harness = github_harness(Vec::new()).await;
-
-        let error = harness
-            .broker
-            .bearer_token(
-                &install_grant_id(),
-                &TokenAudience::GitHubApi("https://api.evil.example.com".to_owned()),
-            )
-            .await
-            .expect_err("audience mismatch must fail");
-
-        assert!(matches!(error, AuthBrokerError::AudienceMismatch { .. }));
-    }
-
-    #[tokio::test]
-    async fn rejected_app_credentials_mark_the_grant_failed() {
-        let harness = github_harness(vec![Err(crate::GitHubAppError::CredentialsRejected {
-            message: "bad credentials".to_owned(),
-        })])
-        .await;
-
-        let error = harness
-            .broker
-            .bearer_token(&install_grant_id(), &github_audience())
-            .await
-            .expect_err("rejected credentials must fail");
-
-        assert!(matches!(
-            error,
-            AuthBrokerError::GrantNotActive {
-                status: AuthGrantStatus::Failed,
-                ..
-            }
-        ));
-        let grant = harness
-            .grants
-            .read_grant(&install_grant_id())
-            .await
-            .expect("grant");
-        assert_eq!(grant.status, AuthGrantStatus::Failed);
-    }
-
-    #[tokio::test]
-    async fn uninstalled_apps_mark_the_grant_needs_reauth() {
-        let harness = github_harness(vec![Err(crate::GitHubAppError::InstallationNotFound {
-            installation_id: 678,
-        })])
-        .await;
-
-        let error = harness
-            .broker
-            .bearer_token(&install_grant_id(), &github_audience())
-            .await
-            .expect_err("uninstalled app must fail");
-
-        assert!(matches!(
-            error,
-            AuthBrokerError::GrantNotActive {
-                status: AuthGrantStatus::NeedsReauth,
-                ..
-            }
-        ));
-    }
-
-    #[tokio::test]
-    async fn transient_github_failures_do_not_poison_the_grant() {
-        let harness = github_harness(vec![Err(crate::GitHubAppError::Http {
-            status: Some(503),
-            message: "unavailable".to_owned(),
-        })])
-        .await;
-
-        let error = harness
-            .broker
-            .bearer_token(&install_grant_id(), &github_audience())
-            .await
-            .expect_err("transient failure surfaces");
-
-        assert!(matches!(error, AuthBrokerError::MintFailed { .. }));
-        let grant = harness
-            .grants
-            .read_grant(&install_grant_id())
-            .await
-            .expect("grant");
-        assert_eq!(grant.status, AuthGrantStatus::Active);
-    }
-
-    #[tokio::test]
-    async fn github_grants_without_runtime_fail_clearly() {
-        let harness = github_harness(Vec::new()).await;
-        let broker = RegistryTokenBroker::new(
-            harness.grants.clone(),
-            Arc::new(InMemorySecretStore::new()),
-        );
+        let mut request = grant_request("authgrant_1", None);
+        request.provider_kind = AuthProviderKind::GitHubApp;
+        request.access_token_secret = None;
+        grants.create_grant(request).await.expect("create grant");
+        // No source is registered for GitHubApp on a bare broker.
+        let broker =
+            RegistryTokenBroker::new(grants, secrets, Arc::new(InMemoryGrantLocks::new()));
 
         let error = broker
-            .bearer_token(&install_grant_id(), &github_audience())
+            .bearer_token(
+                &AuthGrantId::new("authgrant_1"),
+                &mcp_audience("https://crm.example.com/mcp"),
+            )
             .await
-            .expect_err("missing runtime must fail");
+            .expect_err("missing source must fail");
 
-        assert!(matches!(error, AuthBrokerError::MintFailed { .. }));
+        assert!(matches!(
+            error,
+            AuthBrokerError::SourceNotConfigured {
+                provider_kind: AuthProviderKind::GitHubApp,
+                ..
+            }
+        ));
     }
 }

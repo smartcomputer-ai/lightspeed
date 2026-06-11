@@ -1,10 +1,11 @@
-//! Per-grant refresh serialization (P69 G3).
+//! Per-grant token renewal serialization (P69 G3).
 //!
-//! Refresh must be single-flight per grant: with refresh-token rotation, a
-//! double refresh is destructive because several authorization servers treat
-//! refresh-token reuse as theft and revoke the whole grant chain. Adapters
-//! implement [`GrantRefreshLock`]; `store-pg` uses a Postgres advisory lock
-//! so the guarantee holds across processes.
+//! Renewal (OAuth refresh, on-demand minting) must be single-flight per
+//! grant: with refresh-token rotation, a double refresh is destructive
+//! because several authorization servers treat refresh-token reuse as theft
+//! and revoke the whole grant chain. Adapters implement [`GrantRefreshLock`];
+//! `store-pg` uses a Postgres advisory lock so the guarantee holds across
+//! processes. The broker acquires the lock around every renewal.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
