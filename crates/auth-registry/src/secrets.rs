@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::{AuthRegistryError, SecretId, validate_token_component};
 
 pub const SECRET_KIND_STATIC_BEARER: &str = "auth.static_bearer";
+pub const SECRET_KIND_MODEL_API_KEY: &str = "auth.model.api_key";
 
 /// An in-memory secret value. `Debug` output is redacted and the type is
 /// deliberately not serializable, so values cannot leak through derived

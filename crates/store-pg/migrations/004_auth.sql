@@ -83,7 +83,9 @@ CREATE TABLE IF NOT EXISTS auth_grants (
                 'github_app',
                 'github_app_user',
                 'github_oauth_app',
-                'custom_oauth'
+                'custom_oauth',
+                'model_api_key',
+                'model_oauth'
             )
         ),
     CONSTRAINT auth_grants_principal_kind_known
@@ -278,7 +280,9 @@ CREATE TABLE IF NOT EXISTS auth_providers (
                 'github_app',
                 'github_app_user',
                 'github_oauth_app',
-                'custom_oauth'
+                'custom_oauth',
+                'model_api_key',
+                'model_oauth'
             )
         ),
     CONSTRAINT auth_providers_display_name_not_empty
@@ -307,3 +311,35 @@ COMMENT ON TABLE auth_clients IS
     'Universe-scoped OAuth client configurations; secrets live in auth_secrets.';
 COMMENT ON TABLE auth_flows IS
     'One-time authorization-code flows; stores the state hash, never the state or tokens.';
+
+-- The scripts re-run idempotently at startup, so widening a kind list must
+-- also swap the constraint on databases created before the new kind existed
+-- (P69 G6 added 'model_api_key'). DROP + ADD as a pair stays idempotent.
+ALTER TABLE auth_grants DROP CONSTRAINT IF EXISTS auth_grants_provider_kind_known;
+ALTER TABLE auth_grants ADD CONSTRAINT auth_grants_provider_kind_known
+    CHECK (
+        provider_kind IN (
+            'static_bearer',
+            'mcp_oauth',
+            'github_app',
+            'github_app_user',
+            'github_oauth_app',
+            'custom_oauth',
+            'model_api_key',
+            'model_oauth'
+        )
+    );
+ALTER TABLE auth_providers DROP CONSTRAINT IF EXISTS auth_providers_provider_kind_known;
+ALTER TABLE auth_providers ADD CONSTRAINT auth_providers_provider_kind_known
+    CHECK (
+        provider_kind IN (
+            'static_bearer',
+            'mcp_oauth',
+            'github_app',
+            'github_app_user',
+            'github_oauth_app',
+            'custom_oauth',
+            'model_api_key',
+            'model_oauth'
+        )
+    );

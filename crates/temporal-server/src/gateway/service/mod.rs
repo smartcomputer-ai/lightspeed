@@ -1587,6 +1587,21 @@ impl AgentApiService for GatewayAgentApi {
         params: AuthProviderCreateParams,
     ) -> Result<AgentApiOutcome<AuthProviderCreateResponse>, AgentApiError> {
         let draft = auth_provider_create_draft(params, now_ms()?)?;
+        // A model_oauth binding must point at a real, active grant; validate
+        // before committing the provider row.
+        if let auth_registry::AuthProviderConfig::ModelOAuth(config) = &draft.provider.config {
+            let grant = self
+                .store
+                .read_grant(&config.grant_id)
+                .await
+                .map_err(map_auth_registry_error)?;
+            if grant.status != auth_registry::AuthGrantStatus::Active {
+                return Err(AgentApiError::rejected(format!(
+                    "auth grant {} is not active: {:?}",
+                    grant.grant_id, grant.status
+                )));
+            }
+        }
         // The secret must exist before the provider row: auth_providers
         // carries a foreign key into auth_secrets.
         if let Some(secret) = &draft.secret {
@@ -1662,7 +1677,12 @@ impl AgentApiService for GatewayAgentApi {
         params: AuthGitHubInstallationListParams,
     ) -> Result<AgentApiOutcome<AuthGitHubInstallationListResponse>, AgentApiError> {
         let (provider, app_jwt) = self.github_provider_jwt(params.provider_id).await?;
-        let auth_registry::AuthProviderConfig::GitHubApp(config) = &provider.config;
+        let auth_registry::AuthProviderConfig::GitHubApp(config) = &provider.config else {
+            return Err(AgentApiError::rejected(format!(
+                "auth provider {} is not a github_app provider",
+                provider.provider_id
+            )));
+        };
         let installations = self
             .github_api
             .list_installations(&config.api_base_url, &app_jwt)
@@ -1681,7 +1701,12 @@ impl AgentApiService for GatewayAgentApi {
         params: AuthGitHubInstallationGrantParams,
     ) -> Result<AgentApiOutcome<AuthGitHubInstallationGrantResponse>, AgentApiError> {
         let (provider, app_jwt) = self.github_provider_jwt(params.provider_id).await?;
-        let auth_registry::AuthProviderConfig::GitHubApp(config) = &provider.config;
+        let auth_registry::AuthProviderConfig::GitHubApp(config) = &provider.config else {
+            return Err(AgentApiError::rejected(format!(
+                "auth provider {} is not a github_app provider",
+                provider.provider_id
+            )));
+        };
         // Verify the installation exists live before recording the grant;
         // this also captures its account/permission metadata.
         let installations = self
@@ -1787,7 +1812,11 @@ impl GatewayAgentApi {
             .read_auth_provider(&provider_id)
             .await
             .map_err(map_auth_registry_error)?;
-        let auth_registry::AuthProviderConfig::GitHubApp(config) = &provider.config;
+        let auth_registry::AuthProviderConfig::GitHubApp(config) = &provider.config else {
+            return Err(AgentApiError::rejected(format!(
+                "auth provider {provider_id} is not a github_app provider"
+            )));
+        };
         let Some(credential_secret) = &provider.credential_secret else {
             return Err(AgentApiError::rejected(format!(
                 "auth provider {provider_id} has no private key credential"

@@ -22,6 +22,7 @@ use crate::{
     executor::{LlmCompactionAdapter, LlmGenerationAdapter},
     params::openai_responses_params,
     result::LlmGenerationExecution,
+    provider_keys::{NoStoredProviderKeys, ProviderKeyResolver, resolve_stored_provider_key},
     secrets::{REDACTED_SECRET_PLACEHOLDER, SecretResolver, UnconfiguredSecretResolver},
 };
 
@@ -32,14 +33,18 @@ const MEDIA_TYPE_TEXT: &str = "text/plain";
 
 #[async_trait]
 pub trait OpenAiResponsesApi: Send + Sync {
+    /// `auth` overrides the client's transport-configured key for this
+    /// request (stored provider credentials, P69 G6).
     async fn create(
         &self,
         request: oai::CreateResponseRequest,
+        auth: Option<llm_clients::RequestAuth<'_>>,
     ) -> Result<ApiResponse<oai::Response>, llm_clients::LlmApiError>;
 
     async fn compact(
         &self,
         request: oai::CompactResponseRequest,
+        auth: Option<llm_clients::RequestAuth<'_>>,
     ) -> Result<ApiResponse<oai::CompactResponse>, llm_clients::LlmApiError>;
 }
 
@@ -48,15 +53,17 @@ impl OpenAiResponsesApi for oai::Client {
     async fn create(
         &self,
         request: oai::CreateResponseRequest,
+        auth: Option<llm_clients::RequestAuth<'_>>,
     ) -> Result<ApiResponse<oai::Response>, llm_clients::LlmApiError> {
-        oai::Client::create(self, request).await
+        oai::Client::create_with_auth(self, request, auth).await
     }
 
     async fn compact(
         &self,
         request: oai::CompactResponseRequest,
+        auth: Option<llm_clients::RequestAuth<'_>>,
     ) -> Result<ApiResponse<oai::CompactResponse>, llm_clients::LlmApiError> {
-        oai::Client::compact(self, request).await
+        oai::Client::compact_with_auth(self, request, auth).await
     }
 }
 
@@ -65,6 +72,7 @@ pub struct OpenAiResponsesLlmAdapter {
     client: Arc<dyn OpenAiResponsesApi>,
     blobs: Arc<dyn BlobStore>,
     secrets: Arc<dyn SecretResolver>,
+    provider_keys: Arc<dyn ProviderKeyResolver>,
 }
 
 impl OpenAiResponsesLlmAdapter {
@@ -73,11 +81,17 @@ impl OpenAiResponsesLlmAdapter {
             client,
             blobs,
             secrets: Arc::new(UnconfiguredSecretResolver),
+            provider_keys: Arc::new(NoStoredProviderKeys),
         }
     }
 
     pub fn with_secret_resolver(mut self, secrets: Arc<dyn SecretResolver>) -> Self {
         self.secrets = secrets;
+        self
+    }
+
+    pub fn with_provider_key_resolver(mut self, provider_keys: Arc<dyn ProviderKeyResolver>) -> Self {
+        self.provider_keys = provider_keys;
         self
     }
 
@@ -115,8 +129,17 @@ impl LlmGenerationAdapter for OpenAiResponsesLlmAdapter {
         let (send_request, redacted_request) =
             inject_remote_mcp_auth(self.secrets.as_ref(), &request.request, provider_request)
                 .await?;
+        let stored_key =
+            resolve_stored_provider_key(self.provider_keys.as_ref(), &request.request.model)
+                .await?;
         let provider_request_ref = put_json(self.blobs.as_ref(), &redacted_request).await?;
-        let response = self.client.create(send_request).await?;
+        let response = self
+            .client
+            .create(
+                send_request,
+                stored_key.as_ref().map(|auth| auth.as_request_auth()),
+            )
+            .await?;
         let raw_response_ref = put_json(self.blobs.as_ref(), &response.raw_json).await?;
         let result = result_from_response(self.blobs.as_ref(), &request, &response).await?;
 
@@ -143,8 +166,17 @@ impl LlmCompactionAdapter for OpenAiResponsesLlmAdapter {
             });
         }
         let provider_request = self.materialize_compact_request(&request.request).await?;
+        let stored_key =
+            resolve_stored_provider_key(self.provider_keys.as_ref(), &request.request.model)
+                .await?;
         let _provider_request_ref = put_json(self.blobs.as_ref(), &provider_request).await?;
-        let response = self.client.compact(provider_request).await?;
+        let response = self
+            .client
+            .compact(
+                provider_request,
+                stored_key.as_ref().map(|auth| auth.as_request_auth()),
+            )
+            .await?;
         let _raw_response_ref = put_json(self.blobs.as_ref(), &response.raw_json).await?;
         result_from_compact_response(self.blobs.as_ref(), &request, &response).await
     }
@@ -1011,6 +1043,14 @@ mod tests {
         compact_response: ApiResponse<oai::CompactResponse>,
         seen: Mutex<Vec<oai::CreateResponseRequest>>,
         seen_compact: Mutex<Vec<oai::CompactResponseRequest>>,
+        seen_api_keys: Mutex<Vec<Option<String>>>,
+    }
+
+    fn observed_auth(auth: Option<llm_clients::RequestAuth<'_>>) -> Option<String> {
+        auth.map(|auth| match auth {
+            llm_clients::RequestAuth::ApiKey(value) => format!("api_key:{value}"),
+            llm_clients::RequestAuth::Bearer(value) => format!("bearer:{value}"),
+        })
     }
 
     #[async_trait]
@@ -1018,16 +1058,26 @@ mod tests {
         async fn create(
             &self,
             request: oai::CreateResponseRequest,
+            auth: Option<llm_clients::RequestAuth<'_>>,
         ) -> Result<ApiResponse<oai::Response>, llm_clients::LlmApiError> {
             self.seen.lock().expect("lock").push(request);
+            self.seen_api_keys
+                .lock()
+                .expect("lock")
+                .push(observed_auth(auth));
             Ok(self.response.clone())
         }
 
         async fn compact(
             &self,
             request: oai::CompactResponseRequest,
+            auth: Option<llm_clients::RequestAuth<'_>>,
         ) -> Result<ApiResponse<oai::CompactResponse>, llm_clients::LlmApiError> {
             self.seen_compact.lock().expect("lock").push(request);
+            self.seen_api_keys
+                .lock()
+                .expect("lock")
+                .push(observed_auth(auth));
             Ok(self.compact_response.clone())
         }
     }
@@ -1385,6 +1435,7 @@ mod tests {
             },
             seen: Mutex::new(Vec::new()),
             seen_compact: Mutex::new(Vec::new()),
+            seen_api_keys: Mutex::new(Vec::new()),
         })
     }
 
@@ -1469,6 +1520,110 @@ mod tests {
         assert!(
             api.seen.lock().expect("lock").is_empty(),
             "no provider call may happen when auth resolution fails"
+        );
+    }
+
+    fn generation_request() -> LlmGenerationRequest {
+        LlmGenerationRequest {
+            session_id: SessionId::new("session-a"),
+            run_id: RunId::new(1),
+            turn_id: TurnId::new(1),
+            request: {
+                let mut request = intent_request(Vec::new());
+                request.output_limit = Some(256);
+                request
+            },
+        }
+    }
+
+    struct FailingProviderKeys;
+
+    #[async_trait]
+    impl crate::provider_keys::ProviderKeyResolver for FailingProviderKeys {
+        async fn resolve_provider_key(
+            &self,
+            provider_id: &str,
+        ) -> Result<
+            Option<crate::provider_keys::ResolvedProviderAuth>,
+            crate::provider_keys::ProviderKeyError,
+        > {
+            Err(crate::provider_keys::ProviderKeyError::NotUsable {
+                provider_id: provider_id.to_owned(),
+                message: "provider key is disabled".to_owned(),
+            })
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn generate_passes_stored_provider_key_to_the_client() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let api = fake_api_with(completed_message_response());
+        let adapter = OpenAiResponsesLlmAdapter::new(api.clone(), blobs)
+            .with_provider_key_resolver(Arc::new(
+                crate::provider_keys::StaticProviderKeys::new().with_key("openai", "stored-key"),
+            ));
+
+        LlmGenerationAdapter::generate(&adapter, generation_request())
+            .await
+            .expect("generate");
+
+        assert_eq!(
+            api.seen_api_keys.lock().expect("lock").clone(),
+            vec![Some("api_key:stored-key".to_owned())]
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn generate_passes_stored_bearer_auth_to_the_client() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let api = fake_api_with(completed_message_response());
+        let adapter = OpenAiResponsesLlmAdapter::new(api.clone(), blobs)
+            .with_provider_key_resolver(Arc::new(
+                crate::provider_keys::StaticProviderKeys::new()
+                    .with_bearer("openai", "oauth-token"),
+            ));
+
+        LlmGenerationAdapter::generate(&adapter, generation_request())
+            .await
+            .expect("generate");
+
+        assert_eq!(
+            api.seen_api_keys.lock().expect("lock").clone(),
+            vec![Some("bearer:oauth-token".to_owned())]
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn generate_uses_client_key_when_no_stored_provider_key_exists() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let api = fake_api_with(completed_message_response());
+        let adapter = OpenAiResponsesLlmAdapter::new(api.clone(), blobs);
+
+        LlmGenerationAdapter::generate(&adapter, generation_request())
+            .await
+            .expect("generate");
+
+        assert_eq!(api.seen_api_keys.lock().expect("lock").clone(), vec![None]);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn generate_fails_before_provider_io_when_stored_key_is_not_usable() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let api = fake_api_with(completed_message_response());
+        let adapter = OpenAiResponsesLlmAdapter::new(api.clone(), blobs)
+            .with_provider_key_resolver(Arc::new(FailingProviderKeys));
+
+        let error = LlmGenerationAdapter::generate(&adapter, generation_request())
+            .await
+            .expect_err("unusable stored key must fail generation");
+
+        assert!(matches!(
+            error,
+            LlmAdapterError::ProviderKeyResolution { .. }
+        ));
+        assert!(
+            api.seen.lock().expect("lock").is_empty(),
+            "no provider call may happen when stored key resolution fails"
         );
     }
 
@@ -1649,6 +1804,7 @@ mod tests {
             },
             seen: Mutex::new(Vec::new()),
             seen_compact: Mutex::new(Vec::new()),
+            seen_api_keys: Mutex::new(Vec::new()),
         });
         let adapter = Arc::new(OpenAiResponsesLlmAdapter::new(api.clone(), blobs.clone()));
         let registry = LlmAdapterRegistry::new()
@@ -1772,6 +1928,7 @@ mod tests {
             },
             seen: Mutex::new(Vec::new()),
             seen_compact: Mutex::new(Vec::new()),
+            seen_api_keys: Mutex::new(Vec::new()),
         });
         let adapter = Arc::new(OpenAiResponsesLlmAdapter::new(api.clone(), blobs.clone()));
         let registry = LlmAdapterRegistry::new()

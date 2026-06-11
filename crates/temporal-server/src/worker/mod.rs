@@ -15,7 +15,7 @@ pub use activities::{
     ToolActivityDeps, WorkerActivities,
 };
 pub use fake::{FakeLlm, FakeTools};
-pub use secrets::BrokerSecretResolver;
+pub use secrets::{BrokerSecretResolver, StoredProviderKeyResolver};
 pub use session_tools::SessionTools;
 pub use temporal_workflow::{
     ACTIVITY_APPEND_EVENTS, ACTIVITY_CONTEXT_COMPACT, ACTIVITY_CREATE_OR_LOAD_SESSION,

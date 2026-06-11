@@ -1640,6 +1640,8 @@ pub enum AuthProviderKind {
     GitHubAppUser,
     GitHubOAuthApp,
     CustomOAuth,
+    ModelApiKey,
+    ModelOAuth,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1987,6 +1989,18 @@ pub enum AuthProviderConfigView {
         app_id: String,
         api_base_url: String,
     },
+    /// Stored model provider API key (`model:<provider_id>` rows). The key itself
+    /// is the provider credential and never appears in views.
+    #[serde(rename = "modelApiKey", rename_all = "camelCase")]
+    ModelApiKey {},
+    /// OAuth-grant-backed model provider credential: provider calls send the
+    /// bound grant's access token as an OAuth bearer token.
+    #[serde(rename = "modelOAuth", rename_all = "camelCase")]
+    ModelOAuth {
+        grant_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        audience: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1997,6 +2011,18 @@ pub enum AuthProviderConfigInput {
         app_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         api_base_url: Option<String>,
+    },
+    /// Stored model provider API key; the key arrives via `credential` and is
+    /// encrypted on receipt.
+    #[serde(rename = "modelApiKey", rename_all = "camelCase")]
+    ModelApiKey {},
+    /// Bind an existing auth grant as a model provider credential. No
+    /// `credential` is accepted; the grant's tokens stay in the grant store.
+    #[serde(rename = "modelOAuth", rename_all = "camelCase")]
+    ModelOAuth {
+        grant_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        audience: Option<String>,
     },
 }
 

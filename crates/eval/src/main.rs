@@ -140,10 +140,11 @@ impl OpenAiResponsesApi for DiagnosticOpenAiResponsesApi {
     async fn create(
         &self,
         request: oai::CreateResponseRequest,
+        auth: Option<llm_clients::RequestAuth<'_>>,
     ) -> Result<ApiResponse<oai::Response>, llm_clients::LlmApiError> {
         let request_text = serde_json::to_string(&request)
             .unwrap_or_else(|error| format!("failed to encode request: {error}"));
-        let result = self.inner.create(request).await;
+        let result = self.inner.create_with_auth(request, auth).await;
         let outcome = match &result {
             Ok(response) => format!(
                 "http_status={} response_status={:?} raw={}",
@@ -163,10 +164,11 @@ impl OpenAiResponsesApi for DiagnosticOpenAiResponsesApi {
     async fn compact(
         &self,
         request: oai::CompactResponseRequest,
+        auth: Option<llm_clients::RequestAuth<'_>>,
     ) -> Result<ApiResponse<oai::CompactResponse>, llm_clients::LlmApiError> {
         let request_text = serde_json::to_string(&request)
             .unwrap_or_else(|error| format!("failed to encode compact request: {error}"));
-        let result = self.inner.compact(request).await;
+        let result = self.inner.compact_with_auth(request, auth).await;
         let outcome = match &result {
             Ok(response) => format!(
                 "http_status={} raw={}",

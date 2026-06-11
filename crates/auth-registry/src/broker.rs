@@ -22,6 +22,11 @@ pub enum TokenAudience {
     McpResource(String),
     /// GitHub REST API base URL the installation token is for.
     GitHubApi(String),
+    /// Model provider API base URL an LLM/model call is about to hit
+    /// (P69 G7 model provider OAuth). Bindings without a configured audience
+    /// request a non-URL `model:<provider_id>` sentinel, which only
+    /// audience-unrestricted grants cover.
+    ModelProvider(String),
 }
 
 impl TokenAudience {
@@ -29,6 +34,7 @@ impl TokenAudience {
         match self {
             Self::McpResource(resource) => resource,
             Self::GitHubApi(resource) => resource,
+            Self::ModelProvider(resource) => resource,
         }
     }
 }

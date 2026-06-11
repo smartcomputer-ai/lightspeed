@@ -45,10 +45,11 @@ impl AnthropicMessagesApi for RetryingAnthropicMessagesClient {
     async fn create(
         &self,
         request: am::CreateMessageRequest,
+        auth: Option<llm_clients::RequestAuth<'_>>,
     ) -> Result<ApiResponse<am::Message>, LlmApiError> {
         let mut attempt = 0;
         loop {
-            match self.client.create(request.clone()).await {
+            match self.client.create_with_auth(request.clone(), auth).await {
                 Ok(response) => return Ok(response),
                 Err(error) if should_retry(&error, attempt) => {
                     sleep_before_retry(&error, attempt, "anthropic:messages create");
@@ -74,10 +75,11 @@ impl OpenAiResponsesApi for RetryingOpenAiResponsesClient {
     async fn create(
         &self,
         request: CreateResponseRequest,
+        auth: Option<llm_clients::RequestAuth<'_>>,
     ) -> Result<ApiResponse<Response>, LlmApiError> {
         let mut attempt = 0;
         loop {
-            match self.client.create(request.clone()).await {
+            match self.client.create_with_auth(request.clone(), auth).await {
                 Ok(response) => return Ok(response),
                 Err(error) if should_retry(&error, attempt) => {
                     sleep_before_retry(&error, attempt, "openai:responses create");
@@ -91,10 +93,11 @@ impl OpenAiResponsesApi for RetryingOpenAiResponsesClient {
     async fn compact(
         &self,
         request: CompactResponseRequest,
+        auth: Option<llm_clients::RequestAuth<'_>>,
     ) -> Result<ApiResponse<CompactResponse>, LlmApiError> {
         let mut attempt = 0;
         loop {
-            match self.client.compact(request.clone()).await {
+            match self.client.compact_with_auth(request.clone(), auth).await {
                 Ok(response) => return Ok(response),
                 Err(error) if should_retry(&error, attempt) => {
                     sleep_before_retry(&error, attempt, "openai:responses compact");

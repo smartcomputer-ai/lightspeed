@@ -75,6 +75,48 @@ pub(super) fn auth_provider_create_draft(
             );
             (config, Some((secret_id, secret)))
         }
+        api::AuthProviderConfigInput::ModelApiKey {} => {
+            let Some(credential) = params.credential else {
+                return Err(AgentApiError::invalid_request(
+                    "model_api_key providers require the API key as credential",
+                ));
+            };
+            let api_key = auth_registry::SecretValue::new(credential);
+            if api_key.expose().trim().is_empty() {
+                return Err(AgentApiError::invalid_request(
+                    "model_api_key credential must not be empty",
+                ));
+            }
+            let secret_id =
+                auth_registry::SecretId::try_new(auth_registry::random_auth_id("authsec_"))
+                    .map_err(|error| {
+                        AgentApiError::internal(format!("generate secret id: {error}"))
+                    })?;
+            let secret = auth_registry::PutSecretRecord {
+                secret_id: secret_id.clone(),
+                secret_kind: auth_registry::SECRET_KIND_MODEL_API_KEY.to_owned(),
+                value: api_key,
+                created_at_ms: now_ms,
+            };
+            let config = auth_registry::AuthProviderConfig::ModelApiKey(
+                auth_registry::ModelApiKeyConfig::default(),
+            );
+            (config, Some((secret_id, secret)))
+        }
+        api::AuthProviderConfigInput::ModelOAuth { grant_id, audience } => {
+            if params.credential.is_some() {
+                return Err(AgentApiError::invalid_request(
+                    "model_oauth providers bind a grant and accept no credential",
+                ));
+            }
+            let grant_id = auth_registry::AuthGrantId::try_new(grant_id).map_err(|error| {
+                AgentApiError::invalid_request(format!("invalid auth grant id: {error}"))
+            })?;
+            let config = auth_registry::AuthProviderConfig::ModelOAuth(
+                auth_registry::ModelOAuthConfig { grant_id, audience },
+            );
+            (config, None)
+        }
     };
 
     let provider = auth_registry::CreateAuthProviderRecord {
@@ -108,6 +150,15 @@ pub(super) fn auth_provider_view(
                 api::AuthProviderConfigView::GitHubApp {
                     app_id: config.app_id,
                     api_base_url: config.api_base_url,
+                }
+            }
+            auth_registry::AuthProviderConfig::ModelApiKey(_) => {
+                api::AuthProviderConfigView::ModelApiKey {}
+            }
+            auth_registry::AuthProviderConfig::ModelOAuth(config) => {
+                api::AuthProviderConfigView::ModelOAuth {
+                    grant_id: config.grant_id.as_str().to_owned(),
+                    audience: config.audience,
                 }
             }
         },
@@ -150,7 +201,12 @@ pub(super) fn github_installation_grant_draft(
         None => auth_registry::AuthGrantId::try_new(auth_registry::random_auth_id("authgrant_"))
             .map_err(|error| AgentApiError::internal(format!("generate auth grant id: {error}")))?,
     };
-    let auth_registry::AuthProviderConfig::GitHubApp(config) = &provider.config;
+    let auth_registry::AuthProviderConfig::GitHubApp(config) = &provider.config else {
+        return Err(AgentApiError::rejected(format!(
+            "auth provider {} is not a github_app provider",
+            provider.provider_id
+        )));
+    };
     let metadata =
         auth_registry::GitHubInstallationGrantMetadata::from_installation(installation)
             .to_json()

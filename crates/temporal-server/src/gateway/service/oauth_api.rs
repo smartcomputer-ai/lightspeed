@@ -145,6 +145,8 @@ pub(super) fn registry_auth_provider_kind(
         api::AuthProviderKind::GitHubAppUser => auth_registry::AuthProviderKind::GitHubAppUser,
         api::AuthProviderKind::GitHubOAuthApp => auth_registry::AuthProviderKind::GitHubOAuthApp,
         api::AuthProviderKind::CustomOAuth => auth_registry::AuthProviderKind::CustomOAuth,
+        api::AuthProviderKind::ModelApiKey => auth_registry::AuthProviderKind::ModelApiKey,
+        api::AuthProviderKind::ModelOAuth => auth_registry::AuthProviderKind::ModelOAuth,
     }
 }
 

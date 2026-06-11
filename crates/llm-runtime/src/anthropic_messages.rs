@@ -32,6 +32,7 @@ use crate::{
     error::{LlmAdapterError, LlmAdapterResult},
     executor::{LlmCompactionAdapter, LlmGenerationAdapter},
     params::anthropic_messages_params,
+    provider_keys::{NoStoredProviderKeys, ProviderKeyResolver, resolve_stored_provider_key},
     result::LlmGenerationExecution,
     secrets::{REDACTED_SECRET_PLACEHOLDER, SecretResolver, UnconfiguredSecretResolver},
 };
@@ -62,9 +63,12 @@ to continue seamlessly. Reply with the summary only.";
 
 #[async_trait]
 pub trait AnthropicMessagesApi: Send + Sync {
+    /// `auth` overrides the client's transport-configured key for this
+    /// request (stored provider credentials, P69 G6).
     async fn create(
         &self,
         request: am::CreateMessageRequest,
+        auth: Option<llm_clients::RequestAuth<'_>>,
     ) -> Result<ApiResponse<am::Message>, llm_clients::LlmApiError>;
 }
 
@@ -73,8 +77,9 @@ impl AnthropicMessagesApi for am::Client {
     async fn create(
         &self,
         request: am::CreateMessageRequest,
+        auth: Option<llm_clients::RequestAuth<'_>>,
     ) -> Result<ApiResponse<am::Message>, llm_clients::LlmApiError> {
-        am::Client::create(self, request).await
+        am::Client::create_with_auth(self, request, auth).await
     }
 }
 
@@ -83,6 +88,7 @@ pub struct AnthropicMessagesLlmAdapter {
     client: Arc<dyn AnthropicMessagesApi>,
     blobs: Arc<dyn BlobStore>,
     secrets: Arc<dyn SecretResolver>,
+    provider_keys: Arc<dyn ProviderKeyResolver>,
 }
 
 impl AnthropicMessagesLlmAdapter {
@@ -91,11 +97,17 @@ impl AnthropicMessagesLlmAdapter {
             client,
             blobs,
             secrets: Arc::new(UnconfiguredSecretResolver),
+            provider_keys: Arc::new(NoStoredProviderKeys),
         }
     }
 
     pub fn with_secret_resolver(mut self, secrets: Arc<dyn SecretResolver>) -> Self {
         self.secrets = secrets;
+        self
+    }
+
+    pub fn with_provider_key_resolver(mut self, provider_keys: Arc<dyn ProviderKeyResolver>) -> Self {
+        self.provider_keys = provider_keys;
         self
     }
 
@@ -133,8 +145,17 @@ impl LlmGenerationAdapter for AnthropicMessagesLlmAdapter {
         let (send_request, redacted_request) =
             inject_remote_mcp_auth(self.secrets.as_ref(), &request.request, provider_request)
                 .await?;
+        let stored_key =
+            resolve_stored_provider_key(self.provider_keys.as_ref(), &request.request.model)
+                .await?;
         let provider_request_ref = put_json(self.blobs.as_ref(), &redacted_request).await?;
-        let response = self.client.create(send_request).await?;
+        let response = self
+            .client
+            .create(
+                send_request,
+                stored_key.as_ref().map(|auth| auth.as_request_auth()),
+            )
+            .await?;
         let raw_response_ref = put_json(self.blobs.as_ref(), &response.raw_json).await?;
         let result = result_from_response(self.blobs.as_ref(), &request, &response).await?;
 
@@ -161,8 +182,17 @@ impl LlmCompactionAdapter for AnthropicMessagesLlmAdapter {
             });
         }
         let provider_request = self.materialize_compact_request(&request.request).await?;
+        let stored_key =
+            resolve_stored_provider_key(self.provider_keys.as_ref(), &request.request.model)
+                .await?;
         let _provider_request_ref = put_json(self.blobs.as_ref(), &provider_request).await?;
-        let response = self.client.create(provider_request).await?;
+        let response = self
+            .client
+            .create(
+                provider_request,
+                stored_key.as_ref().map(|auth| auth.as_request_auth()),
+            )
+            .await?;
         let _raw_response_ref = put_json(self.blobs.as_ref(), &response.raw_json).await?;
         result_from_compact_response(self.blobs.as_ref(), &request, &response).await
     }
@@ -952,6 +982,14 @@ mod tests {
     struct FakeAnthropicMessagesApi {
         response: ApiResponse<am::Message>,
         seen: Mutex<Vec<am::CreateMessageRequest>>,
+        seen_api_keys: Mutex<Vec<Option<String>>>,
+    }
+
+    fn observed_auth(auth: Option<llm_clients::RequestAuth<'_>>) -> Option<String> {
+        auth.map(|auth| match auth {
+            llm_clients::RequestAuth::ApiKey(value) => format!("api_key:{value}"),
+            llm_clients::RequestAuth::Bearer(value) => format!("bearer:{value}"),
+        })
     }
 
     #[async_trait]
@@ -959,8 +997,13 @@ mod tests {
         async fn create(
             &self,
             request: am::CreateMessageRequest,
+            auth: Option<llm_clients::RequestAuth<'_>>,
         ) -> Result<ApiResponse<am::Message>, llm_clients::LlmApiError> {
             self.seen.lock().expect("lock").push(request);
+            self.seen_api_keys
+                .lock()
+                .expect("lock")
+                .push(observed_auth(auth));
             Ok(self.response.clone())
         }
     }
@@ -974,6 +1017,7 @@ mod tests {
                 headers: HeaderSnapshot::default(),
             },
             seen: Mutex::new(Vec::new()),
+            seen_api_keys: Mutex::new(Vec::new()),
         })
     }
 
@@ -1513,6 +1557,72 @@ mod tests {
             api.seen.lock().expect("lock").is_empty(),
             "no provider call may happen when auth resolution fails"
         );
+    }
+
+    fn generation_request() -> LlmGenerationRequest {
+        LlmGenerationRequest {
+            session_id: SessionId::new("session-a"),
+            run_id: RunId::new(1),
+            turn_id: TurnId::new(1),
+            request: {
+                let mut request = intent_request(Vec::new());
+                request.output_limit = Some(256);
+                request
+            },
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn generate_passes_stored_provider_key_to_the_client() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let api = fake_api(completed_text_response_json());
+        let adapter = AnthropicMessagesLlmAdapter::new(api.clone(), blobs)
+            .with_provider_key_resolver(Arc::new(
+                crate::provider_keys::StaticProviderKeys::new()
+                    .with_key("anthropic", "stored-key"),
+            ));
+
+        LlmGenerationAdapter::generate(&adapter, generation_request())
+            .await
+            .expect("generate");
+
+        assert_eq!(
+            api.seen_api_keys.lock().expect("lock").clone(),
+            vec![Some("api_key:stored-key".to_owned())]
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn generate_passes_stored_bearer_auth_to_the_client() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let api = fake_api(completed_text_response_json());
+        let adapter = AnthropicMessagesLlmAdapter::new(api.clone(), blobs)
+            .with_provider_key_resolver(Arc::new(
+                crate::provider_keys::StaticProviderKeys::new()
+                    .with_bearer("anthropic", "oauth-token"),
+            ));
+
+        LlmGenerationAdapter::generate(&adapter, generation_request())
+            .await
+            .expect("generate");
+
+        assert_eq!(
+            api.seen_api_keys.lock().expect("lock").clone(),
+            vec![Some("bearer:oauth-token".to_owned())]
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn generate_uses_client_key_when_no_stored_provider_key_exists() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let api = fake_api(completed_text_response_json());
+        let adapter = AnthropicMessagesLlmAdapter::new(api.clone(), blobs);
+
+        LlmGenerationAdapter::generate(&adapter, generation_request())
+            .await
+            .expect("generate");
+
+        assert_eq!(api.seen_api_keys.lock().expect("lock").clone(), vec![None]);
     }
 
     #[tokio::test(flavor = "current_thread")]
