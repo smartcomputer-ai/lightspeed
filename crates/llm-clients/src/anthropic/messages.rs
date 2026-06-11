@@ -187,6 +187,10 @@ pub struct CreateMessageRequest {
     pub temperature: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking: Option<Thinking>,
+    /// Output/effort configuration used with adaptive thinking models
+    /// (e.g. `{"effort": "high"}`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_config: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<ToolChoice>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -217,6 +221,7 @@ impl CreateMessageRequest {
             stream: None,
             temperature: None,
             thinking: None,
+            output_config: None,
             tool_choice: None,
             tools: None,
             top_k: None,
@@ -482,6 +487,17 @@ impl Thinking {
         Self {
             r#type: "enabled".to_string(),
             budget_tokens: Some(budget_tokens),
+            display: None,
+            extra: BTreeMap::new(),
+        }
+    }
+
+    /// Adaptive thinking for models that control thinking through
+    /// `output_config.effort` instead of a token budget.
+    pub fn adaptive() -> Self {
+        Self {
+            r#type: "adaptive".to_string(),
+            budget_tokens: None,
             display: None,
             extra: BTreeMap::new(),
         }

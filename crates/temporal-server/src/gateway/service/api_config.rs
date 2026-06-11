@@ -330,30 +330,61 @@ pub(super) fn provider_params_with_reasoning(
     base: Option<&ProviderParams>,
     effort: ReasoningEffort,
 ) -> Result<ProviderParams, AgentApiError> {
-    if api_kind != &ProviderApiKind::OpenAiResponses {
-        return Err(AgentApiError::invalid_request(
-            "reasoning effort is only supported for openai:responses",
-        ));
+    match api_kind {
+        ProviderApiKind::OpenAiResponses => {
+            let mut params = llm_runtime::params::openai_responses_params(base)
+                .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
+            params.reasoning = match effort {
+                ReasoningEffort::None => None,
+                ReasoningEffort::Low => Some(openai_reasoning("low")),
+                ReasoningEffort::Medium => Some(openai_reasoning("medium")),
+                ReasoningEffort::High => Some(openai_reasoning("high")),
+            };
+            Ok(ProviderParams::new(
+                ProviderApiKind::OpenAiResponses,
+                serde_json::to_value(&params)
+                    .map_err(|error| AgentApiError::invalid_request(error.to_string()))?,
+            ))
+        }
+        ProviderApiKind::AnthropicMessages => {
+            let mut params = llm_runtime::params::anthropic_messages_params(base)
+                .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
+            // Current Anthropic models steer thinking through adaptive
+            // thinking plus an output effort level, not token budgets.
+            let effort_level = match effort {
+                ReasoningEffort::None => None,
+                ReasoningEffort::Low => Some("low"),
+                ReasoningEffort::Medium => Some("medium"),
+                ReasoningEffort::High => Some("high"),
+            };
+            params.thinking = effort_level.map(|_| anthropic_adaptive_thinking());
+            params.output_config =
+                effort_level.map(|level| serde_json::json!({ "effort": level }));
+            Ok(ProviderParams::new(
+                ProviderApiKind::AnthropicMessages,
+                serde_json::to_value(&params)
+                    .map_err(|error| AgentApiError::invalid_request(error.to_string()))?,
+            ))
+        }
+        ProviderApiKind::OpenAiCompletions => Err(AgentApiError::invalid_request(
+            "reasoning effort is not supported for openai:completions",
+        )),
     }
-    let mut params = llm_runtime::params::openai_responses_params(base)
-        .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
-    params.reasoning = match effort {
-        ReasoningEffort::None => None,
-        ReasoningEffort::Low => Some(openai_reasoning("low")),
-        ReasoningEffort::Medium => Some(openai_reasoning("medium")),
-        ReasoningEffort::High => Some(openai_reasoning("high")),
-    };
-    Ok(ProviderParams::new(
-        ProviderApiKind::OpenAiResponses,
-        serde_json::to_value(&params)
-            .map_err(|error| AgentApiError::invalid_request(error.to_string()))?,
-    ))
 }
 
 pub(super) fn openai_reasoning(effort: &str) -> llm_runtime::OpenAiReasoningConfig {
     llm_runtime::OpenAiReasoningConfig {
         effort: Some(effort.to_owned()),
         summary: Some("auto".to_owned()),
+        extra: BTreeMap::new(),
+    }
+}
+
+fn anthropic_adaptive_thinking() -> llm_runtime::AnthropicThinkingConfig {
+    llm_runtime::AnthropicThinkingConfig {
+        r#type: "adaptive".to_owned(),
+        budget_tokens: None,
+        display: None,
         extra: BTreeMap::new(),
     }
 }

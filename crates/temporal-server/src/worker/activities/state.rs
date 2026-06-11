@@ -9,9 +9,10 @@ use engine::{
     CoreAgentLlm, CoreAgentTools, ProviderApiKind,
     storage::{BlobStore, SessionStore},
 };
-use llm_clients::openai::responses as oai;
+use llm_clients::{anthropic::messages as am, openai::responses as oai};
 use llm_runtime::{
-    LlmAdapterRegistry, LlmRuntime, OpenAiResponsesLlmAdapter, secrets::SecretResolver,
+    AnthropicMessagesLlmAdapter, LlmAdapterRegistry, LlmRuntime, OpenAiResponsesLlmAdapter,
+    secrets::SecretResolver,
 };
 use store_pg::PgStore;
 use vfs::{VfsMountStore, VfsWorkspaceStore};
@@ -103,7 +104,7 @@ impl ActivityState {
     pub fn from_pg_store_with_default_runtime(store: Arc<PgStore>) -> anyhow::Result<Self> {
         let blobs: Arc<dyn BlobStore> = store.clone();
         let secrets = broker_secret_resolver(store.clone())?;
-        let llm = openai_responses_llm(blobs, Some(secrets))?;
+        let llm = default_llm_runtime(blobs, Some(secrets))?;
         let tools = session_tools(store.clone());
         Ok(Self::from_pg_store(store, llm, tools))
     }
@@ -158,20 +159,42 @@ fn broker_secret_resolver(store: Arc<PgStore>) -> anyhow::Result<Arc<dyn SecretR
     Ok(Arc::new(BrokerSecretResolver::new(Arc::new(broker))))
 }
 
-fn openai_responses_llm(
+/// Builds the default LLM runtime from environment credentials. Registers an
+/// adapter per provider API kind whose credentials are configured and fails
+/// when none are available.
+fn default_llm_runtime(
     blobs: Arc<dyn BlobStore>,
     secrets: Option<Arc<dyn SecretResolver>>,
 ) -> anyhow::Result<Arc<dyn CoreAgentLlm>> {
-    let openai = oai::Client::new(oai::Config::from_env()?)?;
-    let mut adapter = OpenAiResponsesLlmAdapter::new(Arc::new(openai), blobs);
-    if let Some(secrets) = secrets {
-        adapter = adapter.with_secret_resolver(secrets);
+    let mut registry = LlmAdapterRegistry::new();
+
+    if std::env::var("OPENAI_API_KEY").is_ok_and(|key| !key.trim().is_empty()) {
+        let openai = oai::Client::new(oai::Config::from_env()?)?;
+        let mut adapter = OpenAiResponsesLlmAdapter::new(Arc::new(openai), blobs.clone());
+        if let Some(secrets) = secrets {
+            adapter = adapter.with_secret_resolver(secrets);
+        }
+        let adapter = Arc::new(adapter);
+        registry.insert_generation_adapter(ProviderApiKind::OpenAiResponses, adapter.clone());
+        registry.insert_compaction_adapter(ProviderApiKind::OpenAiResponses, adapter);
     }
-    let adapter = Arc::new(adapter);
-    let runtime = LlmRuntime::new(
-        LlmAdapterRegistry::new()
-            .with_generation_adapter(ProviderApiKind::OpenAiResponses, adapter.clone())
-            .with_compaction_adapter(ProviderApiKind::OpenAiResponses, adapter),
-    );
-    Ok(Arc::new(runtime))
+    if std::env::var("ANTHROPIC_API_KEY").is_ok_and(|key| !key.trim().is_empty()) {
+        let anthropic = am::Client::new(am::Config::from_env()?)?;
+        let adapter = Arc::new(AnthropicMessagesLlmAdapter::new(Arc::new(anthropic), blobs));
+        registry.insert_generation_adapter(ProviderApiKind::AnthropicMessages, adapter.clone());
+        registry.insert_compaction_adapter(ProviderApiKind::AnthropicMessages, adapter);
+    }
+
+    if registry
+        .generation_adapter(&ProviderApiKind::OpenAiResponses)
+        .is_none()
+        && registry
+            .generation_adapter(&ProviderApiKind::AnthropicMessages)
+            .is_none()
+    {
+        anyhow::bail!(
+            "no LLM provider credentials configured: set OPENAI_API_KEY and/or ANTHROPIC_API_KEY"
+        );
+    }
+    Ok(Arc::new(LlmRuntime::new(registry)))
 }

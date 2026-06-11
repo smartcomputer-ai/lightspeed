@@ -294,7 +294,7 @@ the same variables directly in your shell.
 | `FORGE_CHAT_PROVIDER` | Default chat provider ID |
 | `FORGE_CHAT_API_KIND` | Default chat provider API kind |
 | `FORGE_CHAT_MODEL` | Default chat model |
-| `FORGE_CHAT_REASONING_EFFORT` | Default OpenAI Responses reasoning effort |
+| `FORGE_CHAT_REASONING_EFFORT` | Default reasoning effort (OpenAI reasoning / Anthropic thinking) |
 | `FORGE_CHAT_MAX_TOKENS` | Default max output token setting for chat runs |
 | `FORGE_API_URL` | CLI JSON-RPC gateway URL |
 | `FORGE_POSTGRES_URL` | PostgreSQL session/CAS database URL |
