@@ -6,17 +6,27 @@ use crate::{
     ActiveRun, BlobRef, ContextEntry, ContextEntryInput, ContextEntryKind, ContextEntrySource,
     ContextEvent, CoreAgentEventKind, CoreAgentEventProposal, CoreAgentJoins, CoreAgentState,
     CoreAgentStatus, DomainError, PlanNext, PlanningError, ProviderApiKind, RunId, RunStatus,
-    ToolBatchId, ToolCallId, ToolEffect, ToolName, ToolProfileId, TurnId, TurnOutcome, TurnStatus,
+    ToolBatchId, ToolCallId, ToolEffect, ToolName, TurnId, TurnOutcome, TurnStatus,
     core::components::context::context_entries_from_inputs,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConfigEvent {
-    RegistryChanged { registry: ToolRegistry },
-    ProfileSelected { profile_id: ToolProfileId },
-    DefaultTargetSet { target: ToolExecutionTarget },
-    DefaultTargetCleared { namespace: String },
+    ToolsReplaced {
+        base_revision: u64,
+        tools: BTreeMap<ToolName, ToolSpec>,
+    },
+    ToolsPatched {
+        base_revision: u64,
+        patch: ToolPatch,
+    },
+    DefaultTargetSet {
+        target: ToolExecutionTarget,
+    },
+    DefaultTargetCleared {
+        namespace: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -139,94 +149,114 @@ impl PlanNext for CoreToolPlanner {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolingState {
-    pub registry: ToolRegistry,
-    pub selected_profile_id: Option<ToolProfileId>,
+    pub revision: u64,
+    pub tools: BTreeMap<ToolName, ToolSpec>,
     pub routing: ToolRoutingState,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ToolRegistry {
-    pub tools: BTreeMap<ToolName, ToolSpec>,
-    pub profiles: BTreeMap<ToolProfileId, ToolProfile>,
-}
-
-impl ToolRegistry {
-    pub fn validate(&self) -> Result<(), DomainError> {
-        for (tool_name, tool) in &self.tools {
-            if &tool.name != tool_name {
-                return Err(DomainError::InvariantViolation(format!(
-                    "tool registry key {} does not match tool name {}",
-                    tool_name, tool.name
-                )));
-            }
+pub fn validate_tool_map(tools: &BTreeMap<ToolName, ToolSpec>) -> Result<(), DomainError> {
+    for (tool_name, tool) in tools {
+        if &tool.name != tool_name {
+            return Err(DomainError::InvariantViolation(format!(
+                "tool map key {} does not match tool name {}",
+                tool_name, tool.name
+            )));
         }
-
-        for (profile_id, profile) in &self.profiles {
-            if &profile.profile_id != profile_id {
-                return Err(DomainError::InvariantViolation(format!(
-                    "tool profile key {} does not match profile id {}",
-                    profile_id, profile.profile_id
-                )));
-            }
-            for tool_name in &profile.visible_tools {
-                if !self.tools.contains_key(tool_name) {
-                    return Err(DomainError::InvariantViolation(format!(
-                        "tool profile {} references missing tool {}",
-                        profile_id, tool_name
-                    )));
-                }
-            }
-            if let Some(ToolChoice {
-                mode: ToolChoiceMode::Specific { tool_name },
-                ..
-            }) = &profile.tool_choice
-            {
-                if !profile.visible_tools.iter().any(|name| name == tool_name) {
-                    return Err(DomainError::InvariantViolation(format!(
-                        "tool profile {} chooses non-visible tool {}",
-                        profile_id, tool_name
-                    )));
-                }
-            }
-        }
-
-        for tool in self.tools.values() {
-            tool.target_requirement.validate()?;
-        }
-
-        Ok(())
     }
+
+    validate_unique_remote_mcp_server_labels(tools)?;
+
+    for tool in tools.values() {
+        tool.validate()?;
+    }
+
+    Ok(())
 }
 
-pub(crate) fn validate_registry_keeps_active_profile(
-    state: &CoreAgentState,
-    registry: &ToolRegistry,
+fn validate_unique_remote_mcp_server_labels(
+    tools: &BTreeMap<ToolName, ToolSpec>,
 ) -> Result<(), DomainError> {
-    if let Some(profile_id) = state.tooling.selected_profile_id.as_ref() {
-        validate_profile_exists(registry, profile_id)?;
+    let mut labels = BTreeMap::<&str, &ToolName>::new();
+    for (tool_name, tool) in tools {
+        let ToolKind::RemoteMcp(remote_mcp) = &tool.kind else {
+            continue;
+        };
+        if let Some(existing_tool_name) = labels.insert(remote_mcp.server_label.as_str(), tool_name)
+        {
+            return Err(DomainError::InvariantViolation(format!(
+                "active tool set has duplicate remote MCP server label {} for tools {} and {}",
+                remote_mcp.server_label, existing_tool_name, tool_name
+            )));
+        }
     }
     Ok(())
 }
 
-pub(crate) fn validate_profile_exists(
-    registry: &ToolRegistry,
-    profile_id: &ToolProfileId,
-) -> Result<(), DomainError> {
-    if registry.profiles.contains_key(profile_id) {
-        Ok(())
-    } else {
-        Err(DomainError::InvariantViolation(format!(
-            "tool profile {} does not exist",
-            profile_id
-        )))
-    }
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolPatch {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub upsert: Vec<ToolSpec>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remove: Vec<ToolName>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ToolProfile {
-    pub profile_id: ToolProfileId,
-    pub visible_tools: Vec<ToolName>,
-    pub tool_choice: Option<ToolChoice>,
+impl ToolPatch {
+    pub fn is_empty(&self) -> bool {
+        self.upsert.is_empty() && self.remove.is_empty()
+    }
+
+    pub fn validate_for(&self, tools: &BTreeMap<ToolName, ToolSpec>) -> Result<(), DomainError> {
+        let mut upsert_names = BTreeSet::new();
+        for tool in &self.upsert {
+            tool.validate()?;
+            if !upsert_names.insert(tool.name.clone()) {
+                return Err(DomainError::InvariantViolation(format!(
+                    "tool patch contains duplicate upsert {}",
+                    tool.name
+                )));
+            }
+        }
+
+        let mut remove_names = BTreeSet::new();
+        for tool_name in &self.remove {
+            if !remove_names.insert(tool_name.clone()) {
+                return Err(DomainError::InvariantViolation(format!(
+                    "tool patch contains duplicate remove {}",
+                    tool_name
+                )));
+            }
+            if upsert_names.contains(tool_name) {
+                return Err(DomainError::InvariantViolation(format!(
+                    "tool patch cannot both upsert and remove {}",
+                    tool_name
+                )));
+            }
+            if !tools.contains_key(tool_name) {
+                return Err(DomainError::InvariantViolation(format!(
+                    "tool patch removes missing tool {}",
+                    tool_name
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn apply_to(
+        &self,
+        tools: &BTreeMap<ToolName, ToolSpec>,
+    ) -> Result<BTreeMap<ToolName, ToolSpec>, DomainError> {
+        self.validate_for(tools)?;
+        let mut next = tools.clone();
+        for tool_name in &self.remove {
+            next.remove(tool_name);
+        }
+        for tool in &self.upsert {
+            next.insert(tool.name.clone(), tool.clone());
+        }
+        validate_tool_map(&next)?;
+        Ok(next)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -239,12 +269,29 @@ pub struct ToolSpec {
 }
 
 impl ToolSpec {
+    pub fn validate(&self) -> Result<(), DomainError> {
+        self.target_requirement.validate()?;
+        match &self.kind {
+            ToolKind::Function(_) | ToolKind::ProviderNative(_) => Ok(()),
+            ToolKind::RemoteMcp(remote_mcp) => {
+                if self.target_requirement != ToolTargetRequirement::None {
+                    return Err(DomainError::InvariantViolation(format!(
+                        "remote MCP tool {} must not declare an execution target requirement",
+                        self.name
+                    )));
+                }
+                remote_mcp.validate()
+            }
+        }
+    }
+
     pub fn invokes_client_effect(&self) -> bool {
         match &self.kind {
             ToolKind::Function(_) => true,
             ToolKind::ProviderNative(native) => {
                 native.execution == ProviderNativeToolExecution::ClientEffect
             }
+            ToolKind::RemoteMcp(_) => false,
         }
     }
 }
@@ -454,6 +501,7 @@ fn validate_target_component(
 pub enum ToolKind {
     Function(FunctionToolSpec),
     ProviderNative(ProviderNativeToolSpec),
+    RemoteMcp(RemoteMcpToolSpec),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -471,6 +519,183 @@ pub struct ProviderNativeToolSpec {
     pub api_kind: ProviderApiKind,
     pub native_tool_ref: BlobRef,
     pub execution: ProviderNativeToolExecution,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteMcpToolSpec {
+    pub server_label: String,
+    pub server_url: String,
+    pub description_ref: Option<BlobRef>,
+    pub allowed_tools: Option<Vec<String>>,
+    pub approval: RemoteMcpApprovalPolicy,
+    pub defer_loading: Option<bool>,
+    pub auth_ref: Option<SecretRef>,
+}
+
+impl RemoteMcpToolSpec {
+    pub fn validate(&self) -> Result<(), DomainError> {
+        validate_remote_mcp_server_label(&self.server_label)?;
+        validate_remote_mcp_server_url(&self.server_url)?;
+        if let Some(allowed_tools) = &self.allowed_tools {
+            if allowed_tools.is_empty() {
+                return Err(DomainError::InvariantViolation(
+                    "remote MCP allowed_tools must not be empty when present".to_owned(),
+                ));
+            }
+            let mut seen = BTreeSet::new();
+            for tool_name in allowed_tools {
+                validate_remote_mcp_allowed_tool_name(tool_name)?;
+                if !seen.insert(tool_name.as_str()) {
+                    return Err(DomainError::InvariantViolation(format!(
+                        "remote MCP allowed_tools contains duplicate tool name {}",
+                        tool_name
+                    )));
+                }
+            }
+        }
+        if let Some(auth_ref) = &self.auth_ref {
+            auth_ref.validate()?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoteMcpApprovalPolicy {
+    ProviderDefault,
+    Always,
+    Never,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecretRef {
+    pub namespace: String,
+    pub id: String,
+}
+
+impl SecretRef {
+    pub fn validate(&self) -> Result<(), DomainError> {
+        validate_secret_ref_component("secret ref namespace", &self.namespace)?;
+        validate_secret_ref_component("secret ref id", &self.id)
+    }
+}
+
+const REMOTE_MCP_URL_MAX_LEN: usize = 2048;
+const REMOTE_MCP_ALLOWED_TOOL_MAX_LEN: usize = 128;
+
+fn validate_remote_mcp_server_label(value: &str) -> Result<(), DomainError> {
+    validate_target_component(
+        "remote MCP server label",
+        value,
+        "ASCII letters, digits, '_', '-'",
+        |ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-'),
+    )
+}
+
+fn validate_remote_mcp_server_url(value: &str) -> Result<(), DomainError> {
+    if value.is_empty() {
+        return Err(DomainError::InvariantViolation(
+            "remote MCP server URL must not be empty".to_owned(),
+        ));
+    }
+    if value.len() > REMOTE_MCP_URL_MAX_LEN {
+        return Err(DomainError::InvariantViolation(format!(
+            "remote MCP server URL is too long: {} bytes, max {}",
+            value.len(),
+            REMOTE_MCP_URL_MAX_LEN
+        )));
+    }
+    if value.chars().any(char::is_whitespace) || value.chars().any(|ch| ch.is_control()) {
+        return Err(DomainError::InvariantViolation(
+            "remote MCP server URL must not contain whitespace or control characters".to_owned(),
+        ));
+    }
+    if value.contains('#') {
+        return Err(DomainError::InvariantViolation(
+            "remote MCP server URL must not contain a fragment".to_owned(),
+        ));
+    }
+
+    let Some((scheme, rest)) = value.split_once("://") else {
+        return Err(DomainError::InvariantViolation(
+            "remote MCP server URL must include http:// or https:// scheme".to_owned(),
+        ));
+    };
+    let scheme = scheme.to_ascii_lowercase();
+    if scheme != "http" && scheme != "https" {
+        return Err(DomainError::InvariantViolation(format!(
+            "remote MCP server URL scheme {scheme:?} is not supported"
+        )));
+    }
+
+    let authority_end = rest
+        .find(|ch| matches!(ch, '/' | '?' | '#'))
+        .unwrap_or(rest.len());
+    let authority = &rest[..authority_end];
+    if authority.is_empty() {
+        return Err(DomainError::InvariantViolation(
+            "remote MCP server URL host must not be empty".to_owned(),
+        ));
+    }
+    if authority.contains('@') {
+        return Err(DomainError::InvariantViolation(
+            "remote MCP server URL must not include credentials".to_owned(),
+        ));
+    }
+
+    if let Some(stripped) = authority.strip_prefix('[') {
+        let Some(end) = stripped.find(']') else {
+            return Err(DomainError::InvariantViolation(
+                "remote MCP server URL IPv6 host is missing closing ']'".to_owned(),
+            ));
+        };
+        if end == 0 {
+            return Err(DomainError::InvariantViolation(
+                "remote MCP server URL host must not be empty".to_owned(),
+            ));
+        }
+    } else {
+        let host = authority.split(':').next().unwrap_or(authority);
+        if host.is_empty() {
+            return Err(DomainError::InvariantViolation(
+                "remote MCP server URL host must not be empty".to_owned(),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_remote_mcp_allowed_tool_name(value: &str) -> Result<(), DomainError> {
+    if value.is_empty() {
+        return Err(DomainError::InvariantViolation(
+            "remote MCP allowed tool name must not be empty".to_owned(),
+        ));
+    }
+    if value.len() > REMOTE_MCP_ALLOWED_TOOL_MAX_LEN {
+        return Err(DomainError::InvariantViolation(format!(
+            "remote MCP allowed tool name is too long: {} bytes, max {}",
+            value.len(),
+            REMOTE_MCP_ALLOWED_TOOL_MAX_LEN
+        )));
+    }
+    if value.trim() != value || value.chars().any(char::is_whitespace) {
+        return Err(DomainError::InvariantViolation(
+            "remote MCP allowed tool name must not contain whitespace".to_owned(),
+        ));
+    }
+    if value.chars().any(|ch| ch.is_control()) {
+        return Err(DomainError::InvariantViolation(
+            "remote MCP allowed tool name must not contain control characters".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_secret_ref_component(kind: &'static str, value: &str) -> Result<(), DomainError> {
+    crate::validate_general_string_id(kind, value)
+        .map_err(|error| DomainError::InvariantViolation(error.to_string()))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -631,7 +856,9 @@ fn decide_active_tool_batch_invocations(
         if call_state.status != ToolCallStatus::Accepted {
             continue;
         }
-        let Some(tool) = state.tooling.registry.tools.get(&call_state.call.tool_name) else {
+        let Some(tool) =
+            planned_tool_for_turn(active_run, batch.turn_id, &call_state.call.tool_name)
+        else {
             return Err(DomainError::InvariantViolation(format!(
                 "accepted tool call references missing tool {}",
                 call_state.call.tool_name
@@ -641,7 +868,7 @@ fn decide_active_tool_batch_invocations(
         if !tool.invokes_client_effect() {
             continue;
         }
-        let execution_target = resolve_tool_execution_target(state, tool)?;
+        let execution_target = resolve_tool_execution_target(state, &tool)?;
 
         let joins = CoreAgentJoins {
             run_id: Some(batch.run_id),
@@ -820,7 +1047,7 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
             }
             let call_states = calls
                 .iter()
-                .map(|call| initial_tool_call_state(state, call))
+                .map(|call| initial_tool_call_state(state, *turn_id, call))
                 .collect::<Vec<_>>();
             {
                 let active_run = crate::core::components::run::active_run_mut(state, *run_id)?;
@@ -940,20 +1167,23 @@ pub(crate) fn apply_config_event(
     }
 
     match event {
-        ConfigEvent::RegistryChanged { registry } => {
-            registry.validate()?;
-            validate_registry_keeps_active_profile(state, registry)?;
-            state.tooling.registry = registry.clone();
+        ConfigEvent::ToolsReplaced {
+            base_revision,
+            tools,
+        } => {
+            validate_tooling_base_revision(state, *base_revision)?;
+            validate_tool_map(tools)?;
+            state.tooling.tools = tools.clone();
+            bump_tooling_revision(state)?;
             Ok(())
         }
-        ConfigEvent::ProfileSelected { profile_id } => {
-            if !state.tooling.registry.profiles.contains_key(profile_id) {
-                return Err(DomainError::InvariantViolation(format!(
-                    "tool profile {} does not exist",
-                    profile_id
-                )));
-            }
-            state.tooling.selected_profile_id = Some(profile_id.clone());
+        ConfigEvent::ToolsPatched {
+            base_revision,
+            patch,
+        } => {
+            validate_tooling_base_revision(state, *base_revision)?;
+            state.tooling.tools = patch.apply_to(&state.tooling.tools)?;
+            bump_tooling_revision(state)?;
             Ok(())
         }
         ConfigEvent::DefaultTargetSet { target } => {
@@ -973,8 +1203,35 @@ pub(crate) fn apply_config_event(
     }
 }
 
-fn initial_tool_call_state(state: &CoreAgentState, call: &ObservedToolCall) -> ToolCallState {
-    let status = initial_tool_call_status(state, call);
+fn validate_tooling_base_revision(
+    state: &CoreAgentState,
+    base_revision: u64,
+) -> Result<(), DomainError> {
+    if base_revision == state.tooling.revision {
+        Ok(())
+    } else {
+        Err(DomainError::InvariantViolation(format!(
+            "tool event base revision {} does not match active revision {}",
+            base_revision, state.tooling.revision
+        )))
+    }
+}
+
+fn bump_tooling_revision(state: &mut CoreAgentState) -> Result<(), DomainError> {
+    state.tooling.revision = state
+        .tooling
+        .revision
+        .checked_add(1)
+        .ok_or_else(|| DomainError::InvariantViolation("tool revision exhausted".to_owned()))?;
+    Ok(())
+}
+
+fn initial_tool_call_state(
+    state: &CoreAgentState,
+    turn_id: TurnId,
+    call: &ObservedToolCall,
+) -> ToolCallState {
+    let status = initial_tool_call_status(state, turn_id, call);
     let result = if status == ToolCallStatus::Unavailable {
         Some(unavailable_tool_result(call))
     } else {
@@ -988,21 +1245,15 @@ fn initial_tool_call_state(state: &CoreAgentState, call: &ObservedToolCall) -> T
     }
 }
 
-fn initial_tool_call_status(state: &CoreAgentState, call: &ObservedToolCall) -> ToolCallStatus {
-    let Some(profile_id) = state.tooling.selected_profile_id.as_ref() else {
+fn initial_tool_call_status(
+    state: &CoreAgentState,
+    turn_id: TurnId,
+    call: &ObservedToolCall,
+) -> ToolCallStatus {
+    let Some(active_run) = state.runs.active.as_ref() else {
         return ToolCallStatus::Unavailable;
     };
-    let Some(profile) = state.tooling.registry.profiles.get(profile_id) else {
-        return ToolCallStatus::Unavailable;
-    };
-    if !profile
-        .visible_tools
-        .iter()
-        .any(|name| name == &call.tool_name)
-    {
-        return ToolCallStatus::Unavailable;
-    }
-    let Some(tool) = state.tooling.registry.tools.get(&call.tool_name) else {
+    let Some(tool) = planned_tool_for_turn(active_run, turn_id, &call.tool_name) else {
         return ToolCallStatus::Unavailable;
     };
     if !tool.invokes_client_effect() {
@@ -1031,14 +1282,36 @@ fn required_target_namespace(requirement: &ToolTargetRequirement) -> Option<&str
     }
 }
 
+fn planned_tool_for_turn(
+    active_run: &ActiveRun,
+    turn_id: TurnId,
+    tool_name: &ToolName,
+) -> Option<ToolSpec> {
+    let turn = active_run.turns.get(&turn_id)?;
+    let request = turn.request.as_ref()?;
+    request
+        .tools
+        .iter()
+        .find(|tool| &tool.name == tool_name)
+        .cloned()
+}
+
+/// Model-visible content for tool calls the engine marks unavailable.
+///
+/// The deterministic core cannot write blobs, so unavailable results reference
+/// this well-known constant content by hash. Every runtime that fulfills core
+/// actions must guarantee the matching blob exists (see
+/// [`crate::storage::ensure_engine_blobs`]); content-addressed puts make that
+/// idempotent.
+pub const UNAVAILABLE_TOOL_RESULT_CONTENT: &str =
+    "tool unavailable: this tool cannot be invoked in this session\n";
+
+pub fn unavailable_tool_result_ref() -> BlobRef {
+    BlobRef::from_bytes(UNAVAILABLE_TOOL_RESULT_CONTENT.as_bytes())
+}
+
 fn unavailable_tool_result(call: &ObservedToolCall) -> ToolCallResult {
-    let error_ref = BlobRef::from_bytes(
-        format!(
-            "engine tool unavailable\ncall_id={}\ntool_name={}\n",
-            call.call_id, call.tool_name
-        )
-        .as_bytes(),
-    );
+    let error_ref = unavailable_tool_result_ref();
     ToolCallResult {
         call_id: call.call_id.clone(),
         status: ToolCallStatus::Unavailable,
@@ -1131,12 +1404,15 @@ fn start_tool_call(
     arguments_ref: &BlobRef,
     execution_target: Option<&ToolExecutionTarget>,
 ) -> Result<(), DomainError> {
-    let tool = state.tooling.registry.tools.get(tool_name).ok_or_else(|| {
-        DomainError::InvariantViolation(format!(
-            "tool call start references missing tool {}",
-            tool_name
-        ))
-    })?;
+    let tool = {
+        let active_run = crate::core::components::run::active_run_ref(state, run_id)?;
+        planned_tool_for_turn(active_run, turn_id, tool_name).ok_or_else(|| {
+            DomainError::InvariantViolation(format!(
+                "tool call start references tool {} missing from planned request",
+                tool_name
+            ))
+        })?
+    };
     if !tool.invokes_client_effect() {
         return Err(DomainError::InvariantViolation(
             "tool call start requires a client-effect tool".into(),
@@ -1250,4 +1526,118 @@ fn complete_tool_call(
     call_state.status = result.status;
     call_state.result = Some(result.clone());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn remote_mcp_spec(server_label: &str, server_url: &str) -> RemoteMcpToolSpec {
+        RemoteMcpToolSpec {
+            server_label: server_label.to_owned(),
+            server_url: server_url.to_owned(),
+            description_ref: None,
+            allowed_tools: Some(vec!["hello".to_owned()]),
+            approval: RemoteMcpApprovalPolicy::Never,
+            defer_loading: Some(true),
+            auth_ref: Some(SecretRef {
+                namespace: "mcp_grant".to_owned(),
+                id: "mcpgrant_123".to_owned(),
+            }),
+        }
+    }
+
+    fn remote_mcp_tool(name: &str, server_label: &str) -> ToolSpec {
+        ToolSpec {
+            name: ToolName::new(name),
+            kind: ToolKind::RemoteMcp(remote_mcp_spec(
+                server_label,
+                "https://echo.example.com/mcp",
+            )),
+            parallelism: ToolParallelism::ParallelSafe,
+            target_requirement: ToolTargetRequirement::None,
+        }
+    }
+
+    #[test]
+    fn remote_mcp_tool_is_not_a_client_effect() {
+        let tool = remote_mcp_tool("mcp_echo", "echo");
+
+        tool.validate().expect("valid remote MCP tool");
+        assert!(!tool.invokes_client_effect());
+    }
+
+    #[test]
+    fn remote_mcp_tool_rejects_execution_target_requirement() {
+        let mut tool = remote_mcp_tool("mcp_echo", "echo");
+        tool.target_requirement = ToolTargetRequirement::required("host");
+
+        let error = tool
+            .validate()
+            .expect_err("remote MCP must not declare an execution target");
+
+        assert!(matches!(error, DomainError::InvariantViolation(_)));
+    }
+
+    #[test]
+    fn remote_mcp_validation_rejects_url_credentials() {
+        let mut spec = remote_mcp_spec("echo", "https://echo.example.com/mcp");
+        spec.server_url = "https://user:secret@echo.example.com/mcp".to_owned();
+
+        let error = spec
+            .validate()
+            .expect_err("remote MCP URL credentials must be rejected");
+
+        let DomainError::InvariantViolation(message) = error else {
+            panic!("expected invariant violation, got {error:?}");
+        };
+        assert!(message.contains("credentials"));
+    }
+
+    #[test]
+    fn remote_mcp_validation_rejects_duplicate_allowed_tools() {
+        let mut spec = remote_mcp_spec("echo", "https://echo.example.com/mcp");
+        spec.allowed_tools = Some(vec!["hello".to_owned(), "hello".to_owned()]);
+
+        let error = spec
+            .validate()
+            .expect_err("duplicate allowed_tools entries must be rejected");
+
+        assert!(matches!(error, DomainError::InvariantViolation(_)));
+    }
+
+    #[test]
+    fn tool_map_rejects_duplicate_remote_mcp_labels() {
+        let first = remote_mcp_tool("mcp_echo_one", "echo");
+        let second = remote_mcp_tool("mcp_echo_two", "echo");
+        let first_name = first.name.clone();
+        let second_name = second.name.clone();
+        let tools = BTreeMap::from([(first_name.clone(), first), (second_name.clone(), second)]);
+
+        let error = validate_tool_map(&tools)
+            .expect_err("duplicate remote MCP labels in active tools must be rejected");
+
+        let DomainError::InvariantViolation(message) = error else {
+            panic!("expected invariant violation, got {error:?}");
+        };
+        assert!(message.contains("duplicate remote MCP server label echo"));
+    }
+
+    #[test]
+    fn unavailable_tool_results_reference_the_well_known_constant_blob() {
+        let call = ObservedToolCall {
+            call_id: crate::ToolCallId::new("call_1"),
+            tool_name: ToolName::new("missing_tool"),
+            provider_kind: None,
+            arguments_ref: BlobRef::from_bytes(b"{}"),
+            native_call_ref: None,
+        };
+
+        let result = unavailable_tool_result(&call);
+
+        let expected = BlobRef::from_bytes(UNAVAILABLE_TOOL_RESULT_CONTENT.as_bytes());
+        assert_eq!(result.model_visible_output_ref, Some(expected.clone()));
+        assert_eq!(result.error_ref, Some(expected));
+        assert_eq!(result.status, ToolCallStatus::Unavailable);
+    }
 }

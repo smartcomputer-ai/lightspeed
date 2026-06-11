@@ -26,6 +26,14 @@ We belive running and coordination agents at scale are best managed by durable w
   different context rules, tool encodings, streaming events, cache behavior,
   continuation semantics, and error shapes.
 - Parse only required reducer facts for deterministic branching. Provider-native data that the reducer does not need to branch on should remain opaque and blob-backed.
+- Keep provider request vocabulary out of the deterministic core. The engine
+  plans a provider-neutral generation intent (model route, context snapshot,
+  tools, tool choice, output limit) plus opaque `ProviderParams`; `llm-runtime`
+  adapters own the typed param schemas and materialize provider-native wire
+  requests. Params are validated against the adapter schema at the admission
+  boundary, before they enter the session log. Transport configuration
+  (endpoints, credentials, headers) is runtime deployment config keyed by
+  `provider_id` and never enters the log.
 - Store the rest of the user inputs, context, files, and model respones in content addressed storage and only pass refs to that data, so that the objects traveling between deterministic workflow and effexts stays thin and minimal.
 - Treat context management as a first-class agent concern. The core plans context windows, records context items, and leaves room for compaction as an explicit future operation.
 - Keep the client boundary stable. CLIs, TUIs, editors, hosted gateways, and future Temporal frontends should consume `api`, not reducer internals.
@@ -43,7 +51,9 @@ We belive running and coordination agents at scale are best managed by durable w
 | `test-support` | `crates/test-support` | Fast in-process runner harness for tests/evals; not a production runtime |
 | `tools` | `crates/tools` | Optional host filesystem/process tool package |
 | `store-fs` | `crates/store-fs` | Filesystem-backed session log and content-addressed blob store adapters |
-| `store-pg` | `crates/store-pg` | PostgreSQL-backed session store and CAS catalog schema |
+| `store-pg` | `crates/store-pg` | PostgreSQL-backed session store, CAS catalog, MCP server catalog, and encrypted auth storage |
+| `mcp-registry` | `crates/mcp-registry` | Provider-independent remote MCP server catalog DTOs, validation, and store traits |
+| `auth-registry` | `crates/auth-registry` | Generic auth grants/secrets/providers, OAuth + GitHub App drivers, and the refreshing/minting token broker |
 | `eval` | `crates/eval` | Eval harness for agent/tool workflows |
 | `llm-runtime` | `crates/llm-runtime` | CoreAgent LLM runtime over provider-native clients |
 | `llm-clients` | `crates/llm-clients` | Provider-native OpenAI and Anthropic API clients |
@@ -284,7 +294,7 @@ the same variables directly in your shell.
 | `FORGE_CHAT_PROVIDER` | Default chat provider ID |
 | `FORGE_CHAT_API_KIND` | Default chat provider API kind |
 | `FORGE_CHAT_MODEL` | Default chat model |
-| `FORGE_CHAT_REASONING_EFFORT` | Default OpenAI Responses reasoning effort |
+| `FORGE_CHAT_REASONING_EFFORT` | Default reasoning effort (OpenAI reasoning / Anthropic thinking) |
 | `FORGE_CHAT_MAX_TOKENS` | Default max output token setting for chat runs |
 | `FORGE_API_URL` | CLI JSON-RPC gateway URL |
 | `FORGE_POSTGRES_URL` | PostgreSQL session/CAS database URL |

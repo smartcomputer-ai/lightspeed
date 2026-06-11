@@ -142,6 +142,263 @@ fn active_skill_ids_after_remove_drops_selected_skill() {
 }
 
 #[test]
+fn mcp_link_materializes_remote_tool_patch() {
+    let tool_name = ToolName::new("mcp_crm");
+    let tools = BTreeMap::new();
+    let record = test_mcp_server_record("crm", mcp_registry::McpServerStatus::Active);
+    let draft = session_mcp_link_from_record(
+        api::SessionMcpLinkParams {
+            session_id: "session_1".to_owned(),
+            server_id: "crm".to_owned(),
+            tool_id: Some(tool_name.as_str().to_owned()),
+            server_label: None,
+            allowed_tools: Some(vec!["lookup_customer".to_owned()]),
+            approval: Some(api::RemoteMcpApprovalPolicy::Never),
+            defer_loading: Some(true),
+            auth_grant_id: None,
+        },
+        &record,
+        None,
+    )
+    .expect("materialize MCP link draft");
+
+    let patch = apply_session_mcp_link(&tools, draft).expect("apply MCP link");
+    let tools = patch.apply_to(&tools).expect("apply MCP patch");
+
+    let tool = tools.get(&tool_name).expect("MCP tool");
+    let engine::ToolKind::RemoteMcp(spec) = &tool.kind else {
+        panic!("expected remote MCP tool");
+    };
+    assert_eq!(spec.server_label, "crm");
+    assert_eq!(spec.allowed_tools, Some(vec!["lookup_customer".to_owned()]));
+    assert_eq!(spec.approval, engine::RemoteMcpApprovalPolicy::Never);
+    assert_eq!(linked_session_mcp(&tools)[0].tool_id, tool_name.as_str());
+}
+
+fn test_auth_grant_record(
+    grant_id: &str,
+    provider_kind: auth_registry::AuthProviderKind,
+    status: auth_registry::AuthGrantStatus,
+    audience: Option<&str>,
+) -> auth_registry::AuthGrantRecord {
+    auth_registry::CreateAuthGrantRecord {
+        grant_id: auth_registry::AuthGrantId::new(grant_id),
+        provider_id: "static".to_owned(),
+        provider_kind,
+        principal: auth_registry::PrincipalRef::universe_default(),
+        display_name: None,
+        subject_hint: None,
+        scopes: Vec::new(),
+        audience: audience.map(str::to_owned),
+        access_token_secret: Some(auth_registry::SecretId::new("authsec_1")),
+        refresh_token_secret: None,
+        oauth_client: None,
+        expires_at_ms: None,
+        status,
+        metadata: serde_json::Value::Object(Default::default()),
+        created_at_ms: 1,
+    }
+    .into_record()
+}
+
+fn mcp_link_params_with_grant(grant_id: &str) -> api::SessionMcpLinkParams {
+    api::SessionMcpLinkParams {
+        session_id: "session_1".to_owned(),
+        server_id: "crm".to_owned(),
+        tool_id: Some("mcp_crm".to_owned()),
+        server_label: None,
+        allowed_tools: None,
+        approval: None,
+        defer_loading: None,
+        auth_grant_id: Some(grant_id.to_owned()),
+    }
+}
+
+#[test]
+fn mcp_link_with_grant_materializes_auth_ref_for_bearer_server() {
+    let mut record = test_mcp_server_record("crm", mcp_registry::McpServerStatus::Active);
+    record.auth_policy = mcp_registry::McpServerAuthPolicy::RequiredBearer;
+    let grant = test_auth_grant_record(
+        "authgrant_1",
+        auth_registry::AuthProviderKind::StaticBearer,
+        auth_registry::AuthGrantStatus::Active,
+        Some("https://crm.example.com"),
+    );
+
+    let draft =
+        session_mcp_link_from_record(mcp_link_params_with_grant("authgrant_1"), &record, Some(&grant))
+            .expect("materialize MCP link draft with grant");
+
+    assert_eq!(
+        draft.spec.auth_ref,
+        Some(engine::SecretRef {
+            namespace: "auth_grant".to_owned(),
+            id: "authgrant_1".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn mcp_link_rejects_revoked_grant() {
+    let mut record = test_mcp_server_record("crm", mcp_registry::McpServerStatus::Active);
+    record.auth_policy = mcp_registry::McpServerAuthPolicy::RequiredBearer;
+    let grant = test_auth_grant_record(
+        "authgrant_1",
+        auth_registry::AuthProviderKind::StaticBearer,
+        auth_registry::AuthGrantStatus::Revoked,
+        None,
+    );
+
+    let error =
+        session_mcp_link_from_record(mcp_link_params_with_grant("authgrant_1"), &record, Some(&grant))
+            .expect_err("revoked grant must be rejected");
+
+    assert_eq!(error.kind, api::AgentApiErrorKind::Rejected);
+}
+
+#[test]
+fn mcp_link_rejects_grant_kind_incompatible_with_auth_policy() {
+    let mut record = test_mcp_server_record("crm", mcp_registry::McpServerStatus::Active);
+    record.auth_policy = mcp_registry::McpServerAuthPolicy::RequiredOAuth {
+        resource: "https://crm.example.com".to_owned(),
+        scopes_default: Vec::new(),
+        protected_resource_metadata_url: None,
+        authorization_server: None,
+    };
+    let grant = test_auth_grant_record(
+        "authgrant_1",
+        auth_registry::AuthProviderKind::StaticBearer,
+        auth_registry::AuthGrantStatus::Active,
+        None,
+    );
+
+    let error =
+        session_mcp_link_from_record(mcp_link_params_with_grant("authgrant_1"), &record, Some(&grant))
+            .expect_err("bearer grant must not satisfy OAuth policy");
+
+    assert_eq!(error.kind, api::AgentApiErrorKind::Rejected);
+}
+
+#[test]
+fn mcp_link_rejects_grant_audience_that_does_not_cover_server() {
+    let mut record = test_mcp_server_record("crm", mcp_registry::McpServerStatus::Active);
+    record.auth_policy = mcp_registry::McpServerAuthPolicy::OptionalBearer;
+    let grant = test_auth_grant_record(
+        "authgrant_1",
+        auth_registry::AuthProviderKind::StaticBearer,
+        auth_registry::AuthGrantStatus::Active,
+        Some("https://other.example.com"),
+    );
+
+    let error =
+        session_mcp_link_from_record(mcp_link_params_with_grant("authgrant_1"), &record, Some(&grant))
+            .expect_err("audience mismatch must be rejected");
+
+    assert_eq!(error.kind, api::AgentApiErrorKind::Rejected);
+}
+
+#[test]
+fn mcp_link_rejects_grant_for_no_auth_server() {
+    let record = test_mcp_server_record("crm", mcp_registry::McpServerStatus::Active);
+    let grant = test_auth_grant_record(
+        "authgrant_1",
+        auth_registry::AuthProviderKind::StaticBearer,
+        auth_registry::AuthGrantStatus::Active,
+        None,
+    );
+
+    let error =
+        session_mcp_link_from_record(mcp_link_params_with_grant("authgrant_1"), &record, Some(&grant))
+            .expect_err("grant on no-auth server must be rejected");
+
+    assert_eq!(error.kind, api::AgentApiErrorKind::InvalidRequest);
+}
+
+#[test]
+fn mcp_link_requires_grant_for_required_auth_server() {
+    let mut record = test_mcp_server_record("crm", mcp_registry::McpServerStatus::Active);
+    record.auth_policy = mcp_registry::McpServerAuthPolicy::RequiredBearer;
+    let mut params = mcp_link_params_with_grant("authgrant_1");
+    params.auth_grant_id = None;
+
+    let error = session_mcp_link_from_record(params, &record, None)
+        .expect_err("missing grant must be rejected for required auth");
+
+    assert_eq!(error.kind, api::AgentApiErrorKind::Rejected);
+}
+
+#[test]
+fn standard_toolset_patch_preserves_remote_mcp_links() {
+    let remote_tool_name = ToolName::new("mcp_crm");
+    let old_tool_name = ToolName::new("old_tool");
+    let new_tool_name = ToolName::new("new_tool");
+    let active = BTreeMap::from([
+        (
+            remote_tool_name.clone(),
+            test_remote_mcp_tool(remote_tool_name.clone()),
+        ),
+        (
+            old_tool_name.clone(),
+            test_function_tool(old_tool_name.clone()),
+        ),
+    ]);
+    let toolset = ResolvedToolset {
+        tools: BTreeMap::from([(
+            new_tool_name.clone(),
+            test_function_tool(new_tool_name.clone()),
+        )]),
+        documents: Vec::new(),
+        catalog: tools::runtime::ToolCatalog::new(),
+        provider_params_patch: tools::toolset::ProviderParamsPatch::default(),
+    };
+
+    let patch = super::vfs_api::standard_toolset_patch(&active, toolset);
+    let tools = patch.apply_to(&active).expect("apply standard tool patch");
+
+    assert!(tools.contains_key(&remote_tool_name));
+    assert!(!tools.contains_key(&old_tool_name));
+    assert!(tools.contains_key(&new_tool_name));
+}
+
+#[test]
+fn session_tools_update_patch_accepts_remote_mcp_tool() {
+    let update = api::SessionToolsUpdateInput::Patch {
+        upsert: vec![api_remote_mcp_tool("mcp_crm", "crm")],
+        remove: Vec::new(),
+    };
+
+    let tools_api::CoreToolUpdate::Patch(patch) =
+        tools_api::core_tool_update_from_api(update).expect("convert tool update")
+    else {
+        panic!("expected tool patch");
+    };
+    patch
+        .validate_for(&BTreeMap::new())
+        .expect("validate tool patch");
+
+    assert_eq!(patch.upsert.len(), 1);
+    assert_eq!(patch.upsert[0].name, ToolName::new("mcp_crm"));
+    let engine::ToolKind::RemoteMcp(remote_mcp) = &patch.upsert[0].kind else {
+        panic!("expected remote MCP tool");
+    };
+    assert_eq!(remote_mcp.server_label, "crm");
+}
+
+#[test]
+fn session_tools_update_replace_rejects_duplicate_tool_ids() {
+    let update = api::SessionToolsUpdateInput::Replace {
+        tools: vec![
+            api_remote_mcp_tool("mcp_crm", "crm"),
+            api_remote_mcp_tool("mcp_crm", "crm_alt"),
+        ],
+    };
+
+    let error = tools_api::core_tool_update_from_api(update).expect_err("duplicate tool id");
+
+    assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
+}
+
+#[test]
 fn prompt_report_ref_reads_prompt_provider_metadata() {
     let prompt_ref = BlobRef::from_bytes(b"prompt");
     let report_ref = BlobRef::from_bytes(b"prompt-report");
@@ -240,18 +497,45 @@ fn session_start_config_maps_reasoning_and_max_output_tokens() {
         Some(GenerationConfig {
             max_output_tokens: Some(2048),
             reasoning_effort: Some(ReasoningEffort::High),
+            tool_choice: None,
         }),
     )
     .expect("apply config");
 
     assert_eq!(config.turn.max_output_tokens, Some(2048));
-    let ProviderRequestDefaults::OpenAiResponses(defaults) = config.turn.provider_request_defaults
-    else {
-        panic!("expected OpenAI Responses defaults");
-    };
-    let reasoning = defaults.reasoning.expect("reasoning");
-    assert_eq!(reasoning.effort.as_deref(), Some("high"));
-    assert_eq!(reasoning.summary.as_deref(), Some("auto"));
+    let params = config.turn.provider_params.expect("provider params");
+    assert_eq!(params.api_kind, engine::ProviderApiKind::OpenAiResponses);
+    assert_eq!(params.body["reasoning"]["effort"], "high");
+    assert_eq!(params.body["reasoning"]["summary"], "auto");
+}
+
+#[test]
+fn session_start_config_maps_tool_choice() {
+    let mut config = default_session_config(openai_model());
+
+    apply_generation_config(
+        &mut config,
+        Some(GenerationConfig {
+            max_output_tokens: None,
+            reasoning_effort: None,
+            tool_choice: Some(ToolChoiceConfig {
+                mode: ToolChoiceModeConfig::Specific {
+                    tool_id: "web_fetch".to_owned(),
+                },
+                disable_parallel_tool_use: Some(true),
+            }),
+        }),
+    )
+    .expect("apply config");
+
+    let tool_choice = config.turn.tool_choice.expect("tool choice");
+    assert_eq!(tool_choice.disable_parallel_tool_use, Some(true));
+    assert_eq!(
+        tool_choice.mode,
+        engine::ToolChoiceMode::Specific {
+            tool_name: ToolName::new("web_fetch")
+        }
+    );
 }
 
 #[test]
@@ -317,6 +601,7 @@ fn run_start_config_maps_model_and_generation_overrides() {
             generation: Some(GenerationConfig {
                 max_output_tokens: Some(1024),
                 reasoning_effort: Some(ReasoningEffort::Medium),
+                tool_choice: None,
             }),
             limits: None,
         }),
@@ -331,15 +616,38 @@ fn run_start_config_maps_model_and_generation_overrides() {
         Some("gpt-5.5-mini")
     );
     assert_eq!(run_config.max_output_tokens, Some(1024));
-    let ProviderRequestDefaults::OpenAiResponses(defaults) = run_config
-        .provider_request_defaults
-        .expect("request defaults")
-    else {
-        panic!("expected OpenAI Responses defaults");
-    };
+    let params = run_config.provider_params.expect("provider params");
+    assert_eq!(params.api_kind, engine::ProviderApiKind::OpenAiResponses);
+    assert_eq!(params.body["reasoning"]["effort"], "medium");
+    assert!(run_config.tool_choice.is_none());
+}
+
+#[test]
+fn run_start_config_maps_tool_choice() {
+    let session_config = default_session_config(openai_model());
+    let mut run_config = session_config.run.clone();
+
+    apply_run_start_config(
+        &mut run_config,
+        &session_config,
+        Some(RunStartConfig {
+            model: None,
+            generation: Some(GenerationConfig {
+                max_output_tokens: None,
+                reasoning_effort: None,
+                tool_choice: Some(ToolChoiceConfig {
+                    mode: ToolChoiceModeConfig::RequiredAny,
+                    disable_parallel_tool_use: None,
+                }),
+            }),
+            limits: None,
+        }),
+    )
+    .expect("apply run config");
+
     assert_eq!(
-        defaults.reasoning.expect("reasoning").effort.as_deref(),
-        Some("medium")
+        run_config.tool_choice.expect("tool choice").mode,
+        engine::ToolChoiceMode::RequiredAny
     );
 }
 
@@ -389,7 +697,6 @@ fn web_search_rejects_explicit_enable_for_non_openai_responses() {
         api_kind: ProviderApiKind::AnthropicMessages,
         provider_id: "anthropic".to_owned(),
         model: "claude-test".to_owned(),
-        options: ModelProviderOptions::None,
     });
     apply_tool_config(
         &mut config.tools,
@@ -627,7 +934,6 @@ fn openai_model() -> ModelSelection {
         api_kind: ProviderApiKind::OpenAiResponses,
         provider_id: "openai".to_owned(),
         model: "gpt-5.5".to_owned(),
-        options: ModelProviderOptions::None,
     }
 }
 
@@ -699,6 +1005,77 @@ fn direct_activation(
     }
 }
 
+fn test_mcp_server_record(
+    server_id: &str,
+    status: mcp_registry::McpServerStatus,
+) -> mcp_registry::McpServerRecord {
+    mcp_registry::CreateMcpServerRecord {
+        server_id: mcp_registry::McpServerId::new(server_id),
+        display_name: Some(format!("{server_id} MCP")),
+        server_url: format!("https://{server_id}.example.com/mcp"),
+        transport: mcp_registry::RemoteMcpTransport::Auto,
+        default_server_label: server_id.to_owned(),
+        description: None,
+        allowed_tools: None,
+        approval_default: mcp_registry::McpApprovalPolicy::ProviderDefault,
+        defer_loading_default: None,
+        auth_policy: mcp_registry::McpServerAuthPolicy::None,
+        status,
+        created_at_ms: 1,
+    }
+    .into_record()
+}
+
+fn api_remote_mcp_tool(tool_id: &str, server_label: &str) -> api::ToolView {
+    api::ToolView {
+        tool_id: tool_id.to_owned(),
+        kind: api::ToolKindView::RemoteMcp {
+            server_label: server_label.to_owned(),
+            server_url: format!("https://{server_label}.example.com/mcp"),
+            description_ref: None,
+            allowed_tools: None,
+            approval: api::RemoteMcpApprovalPolicy::ProviderDefault,
+            defer_loading: None,
+            auth_ref: None,
+        },
+        parallelism: api::ToolParallelismView::ParallelSafe,
+        target_requirement: api::ToolTargetRequirementView::None,
+    }
+}
+
+fn test_remote_mcp_tool(tool_name: ToolName) -> engine::ToolSpec {
+    engine::ToolSpec {
+        name: tool_name,
+        kind: engine::ToolKind::RemoteMcp(engine::RemoteMcpToolSpec {
+            server_label: "crm".to_owned(),
+            server_url: "https://crm.example.com/mcp".to_owned(),
+            description_ref: None,
+            allowed_tools: None,
+            approval: engine::RemoteMcpApprovalPolicy::ProviderDefault,
+            defer_loading: None,
+            auth_ref: None,
+        }),
+        parallelism: engine::ToolParallelism::ParallelSafe,
+        target_requirement: engine::ToolTargetRequirement::None,
+    }
+}
+
+fn test_function_tool(tool_name: ToolName) -> engine::ToolSpec {
+    engine::ToolSpec {
+        name: tool_name,
+        kind: engine::ToolKind::Function(engine::FunctionToolSpec {
+            model_name: None,
+            description_ref: None,
+            input_schema_ref: BlobRef::from_bytes(b"schema"),
+            output_schema_ref: None,
+            strict: Some(true),
+            provider_options_ref: None,
+        }),
+        parallelism: engine::ToolParallelism::Exclusive,
+        target_requirement: engine::ToolTargetRequirement::None,
+    }
+}
+
 struct EmptyWorkspaceStore;
 
 #[async_trait]
@@ -737,4 +1114,167 @@ fn workspace_not_found(id: &str) -> vfs::VfsCatalogError {
         kind: "workspace",
         id: id.to_owned(),
     }
+}
+
+fn client_create_params() -> AuthClientCreateParams {
+    serde_json::from_value(serde_json::json!({
+        "clientId": "crm",
+        "providerKind": "mcpOAuth",
+        "authorizationEndpoint": "https://as.example.com/authorize",
+        "tokenEndpoint": "https://as.example.com/token",
+        "remoteClientId": "client-1",
+        "clientSecret": "shh-secret",
+        "audience": "https://crm.example.com/mcp"
+    }))
+    .expect("client create params")
+}
+
+#[test]
+fn auth_client_drafts_encrypt_secret_and_default_to_basic_auth() {
+    let draft = oauth_api::auth_client_create_draft(client_create_params(), 10)
+        .expect("draft oauth client");
+
+    let secret = draft.secret.expect("client secret drafted");
+    assert_eq!(
+        secret.secret_kind,
+        auth_registry::SECRET_KIND_OAUTH_CLIENT_SECRET
+    );
+    assert_eq!(secret.value.expose(), "shh-secret");
+    assert_eq!(draft.client.client_secret, Some(secret.secret_id.clone()));
+    assert_eq!(
+        draft.client.token_endpoint_auth_method,
+        auth_registry::TokenEndpointAuthMethod::ClientSecretBasic
+    );
+    // Provider id defaults to the client id.
+    assert_eq!(draft.client.provider_id, "crm");
+}
+
+#[test]
+fn auth_client_drafts_without_secret_default_to_public_client() {
+    let mut params = client_create_params();
+    params.client_secret = None;
+
+    let draft = oauth_api::auth_client_create_draft(params, 10).expect("draft oauth client");
+
+    assert!(draft.secret.is_none());
+    assert_eq!(
+        draft.client.token_endpoint_auth_method,
+        auth_registry::TokenEndpointAuthMethod::None
+    );
+}
+
+#[test]
+fn auth_client_drafts_reject_non_oauth_kinds() {
+    let mut params = client_create_params();
+    params.provider_kind = api::AuthProviderKind::StaticBearer;
+
+    let error = oauth_api::auth_client_create_draft(params, 10)
+        .expect_err("static bearer kind must be rejected");
+
+    assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
+}
+
+#[test]
+fn mcp_oauth_client_drafts_require_an_audience() {
+    let mut params = client_create_params();
+    params.audience = None;
+
+    let error = oauth_api::auth_client_create_draft(params, 10)
+        .expect_err("mcp oauth without audience must be rejected");
+
+    assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
+}
+
+#[test]
+fn oauth_redirect_uris_normalize_trailing_slashes() {
+    assert_eq!(
+        oauth_api::oauth_redirect_uri("http://127.0.0.1:18080"),
+        "http://127.0.0.1:18080/auth/callback"
+    );
+    assert_eq!(
+        oauth_api::oauth_redirect_uri("https://forge.example.com/"),
+        "https://forge.example.com/auth/callback"
+    );
+}
+
+#[test]
+fn mcp_oauth_targets_come_from_oauth_policies_only() {
+    let mut record = test_mcp_server_record("playground", mcp_registry::McpServerStatus::Active);
+    record.auth_policy = mcp_registry::McpServerAuthPolicy::RequiredOAuth {
+        resource: "https://playground.example.com/mcp".to_owned(),
+        scopes_default: vec!["tools.run".to_owned()],
+        protected_resource_metadata_url: Some(
+            "https://playground.example.com/.well-known/oauth-protected-resource/mcp".to_owned(),
+        ),
+        authorization_server: Some("https://as.example.com".to_owned()),
+    };
+
+    let target = oauth_api::mcp_oauth_target_from_record(&record).expect("oauth target");
+
+    assert_eq!(target.server_id, "playground");
+    assert_eq!(target.server_url, "https://playground.example.com/mcp");
+    assert_eq!(target.scopes_default, vec!["tools.run".to_owned()]);
+    assert_eq!(
+        target.authorization_server_hint.as_deref(),
+        Some("https://as.example.com")
+    );
+
+    let mut bearer = test_mcp_server_record("bearer", mcp_registry::McpServerStatus::Active);
+    bearer.auth_policy = mcp_registry::McpServerAuthPolicy::RequiredBearer;
+    let error = oauth_api::mcp_oauth_target_from_record(&bearer)
+        .expect_err("bearer servers cannot be logged into");
+    assert_eq!(error.kind, AgentApiErrorKind::Rejected);
+}
+
+#[test]
+fn cimd_config_requires_a_public_https_base_url() {
+    assert!(oauth_api::cimd_config("http://127.0.0.1:18080").is_none());
+
+    let cimd = oauth_api::cimd_config("https://forge.example.com/").expect("cimd config");
+    assert_eq!(
+        cimd.client_id_url,
+        "https://forge.example.com/auth/client-metadata.json"
+    );
+}
+
+#[test]
+fn cimd_documents_declare_a_public_pkce_client() {
+    let document = oauth_api::cimd_document("https://forge.example.com");
+
+    assert_eq!(
+        document["client_id"],
+        "https://forge.example.com/auth/client-metadata.json"
+    );
+    assert_eq!(
+        document["redirect_uris"][0],
+        "https://forge.example.com/auth/callback"
+    );
+    assert_eq!(document["token_endpoint_auth_method"], "none");
+    assert_eq!(document["grant_types"][0], "authorization_code");
+}
+
+#[test]
+fn auth_flow_views_carry_derived_status() {
+    let record = auth_registry::CreateAuthFlowRecord {
+        flow_id: auth_registry::AuthFlowId::new("authflow_1"),
+        client_id: auth_registry::OAuthClientId::new("crm"),
+        provider_id: "crm".to_owned(),
+        provider_kind: auth_registry::AuthProviderKind::McpOAuth,
+        principal: auth_registry::PrincipalRef::universe_default(),
+        state_hash: auth_registry::state_hash("state-1"),
+        pkce_verifier_secret: auth_registry::SecretId::new("authsec_pkce"),
+        redirect_uri: "http://127.0.0.1:18080/auth/callback".to_owned(),
+        scopes: Vec::new(),
+        audience: Some("https://crm.example.com/mcp".to_owned()),
+        expires_at_ms: 100,
+        created_at_ms: 10,
+    }
+    .into_record();
+
+    let pending = oauth_api::auth_flow_view(record.clone(), 50);
+    assert_eq!(pending.status, api::AuthFlowStatus::Pending);
+    assert!(pending.grant_id.is_none());
+
+    let expired = oauth_api::auth_flow_view(record, 200);
+    assert_eq!(expired.status, api::AuthFlowStatus::Expired);
 }

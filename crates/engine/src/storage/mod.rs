@@ -14,7 +14,7 @@ pub use crate::session::{
 };
 pub use blobs::{
     BlobCacheLimits, BlobCacheStats, BlobEdge, BlobGraphStore, BlobInfo, BlobStore, BlobStoreError,
-    CachedBlobStore, InMemoryBlobCache, InMemoryBlobStore, SessionBlobRoot,
+    CachedBlobStore, InMemoryBlobCache, InMemoryBlobStore, SessionBlobRoot, ensure_engine_blobs,
 };
 pub use session::{
     AppendSessionEvents, AppendSessionEventsResult, CreateSession, InMemorySessionStore,

@@ -2,6 +2,7 @@
 
 mod activities;
 mod fake;
+mod secrets;
 mod session_tools;
 
 use temporalio_client::Client;
@@ -14,6 +15,7 @@ pub use activities::{
     ToolActivityDeps, WorkerActivities,
 };
 pub use fake::{FakeLlm, FakeTools};
+pub use secrets::BrokerSecretResolver;
 pub use session_tools::SessionTools;
 pub use temporal_workflow::{
     ACTIVITY_APPEND_EVENTS, ACTIVITY_CONTEXT_COMPACT, ACTIVITY_CREATE_OR_LOAD_SESSION,

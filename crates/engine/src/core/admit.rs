@@ -8,8 +8,7 @@ use crate::{
     core::components::{
         config::{validate_config_update_for_state, validate_run_config_for_state},
         tooling::{
-            validate_default_tool_target_clear, validate_default_tool_target_set,
-            validate_profile_exists, validate_registry_keeps_active_profile,
+            validate_default_tool_target_clear, validate_default_tool_target_set, validate_tool_map,
         },
     },
 };
@@ -258,25 +257,41 @@ impl AdmitCommand for CoreAdmitCommand {
                     }),
                 )])
             }
-            CoreAgentCommand::SetToolRegistry { registry } => {
+            CoreAgentCommand::ReplaceTools {
+                expected_revision,
+                tools,
+            } => {
                 require_open(state)?;
-                registry.validate().map_err(command_rejection_from_domain)?;
-                validate_registry_keeps_active_profile(state, &registry)
+                validate_expected_tool_revision(state, expected_revision)?;
+                validate_tool_map(&tools).map_err(command_rejection_from_domain)?;
+
+                Ok(vec![CoreAgentEventProposal::new(
+                    CoreAgentJoins::default(),
+                    CoreAgentEventKind::ToolConfig(ToolConfigEvent::ToolsReplaced {
+                        base_revision: state.tooling.revision,
+                        tools,
+                    }),
+                )])
+            }
+            CoreAgentCommand::PatchTools {
+                expected_revision,
+                patch,
+            } => {
+                require_open(state)?;
+                validate_expected_tool_revision(state, expected_revision)?;
+                if patch.is_empty() {
+                    return Ok(Vec::new());
+                }
+                patch
+                    .apply_to(&state.tooling.tools)
                     .map_err(command_rejection_from_domain)?;
 
                 Ok(vec![CoreAgentEventProposal::new(
                     CoreAgentJoins::default(),
-                    CoreAgentEventKind::ToolConfig(ToolConfigEvent::RegistryChanged { registry }),
-                )])
-            }
-            CoreAgentCommand::SelectToolProfile { profile_id } => {
-                require_open(state)?;
-                validate_profile_exists(&state.tooling.registry, &profile_id)
-                    .map_err(unknown_reference_rejection_from_domain)?;
-
-                Ok(vec![CoreAgentEventProposal::new(
-                    CoreAgentJoins::default(),
-                    CoreAgentEventKind::ToolConfig(ToolConfigEvent::ProfileSelected { profile_id }),
+                    CoreAgentEventKind::ToolConfig(ToolConfigEvent::ToolsPatched {
+                        base_revision: state.tooling.revision,
+                        patch,
+                    }),
                 )])
             }
             CoreAgentCommand::SetDefaultToolTarget { target } => {
@@ -316,6 +331,25 @@ fn require_no_active_or_queued_work(
     } else {
         Ok(())
     }
+}
+
+fn validate_expected_tool_revision(
+    state: &CoreAgentState,
+    expected_revision: Option<u64>,
+) -> Result<(), CommandError> {
+    if let Some(expected_revision) = expected_revision {
+        let actual_revision = state.tooling.revision;
+        if expected_revision != actual_revision {
+            return reject(
+                CommandRejectionKind::InvalidConfiguration,
+                format!(
+                    "expected tool revision {}, got {}",
+                    expected_revision, actual_revision
+                ),
+            );
+        }
+    }
+    Ok(())
 }
 
 fn require_no_pending_compaction(

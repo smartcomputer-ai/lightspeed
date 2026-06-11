@@ -324,17 +324,24 @@ impl GatewayAgentApi {
         let blobs: Arc<dyn BlobStore> = self.store.clone();
         store_tool_documents(blobs.as_ref(), &toolset.documents).await?;
 
-        let mut registry = loaded.state.tooling.registry.clone();
-        let profile_id = toolset.profile_id.clone();
-        merge_toolset_registry(&mut registry, toolset);
+        let expected_standard_tools = toolset.tools.keys().cloned().collect::<BTreeSet<_>>();
+        let patch = standard_toolset_patch(&loaded.state.tooling.tools, toolset);
 
         let baseline_failures = self
             .query_status_optional(session_id)
             .await?
             .map(|status| status.admission_failures.len())
             .unwrap_or(0);
-        self.submit_core_command(session_id, CoreAgentCommand::SetToolRegistry { registry })
+        if !patch.is_empty() {
+            self.submit_core_command(
+                session_id,
+                CoreAgentCommand::PatchTools {
+                    expected_revision: Some(loaded.state.tooling.revision),
+                    patch,
+                },
+            )
             .await?;
+        }
         if host_tools_enabled {
             self.submit_core_command(
                 session_id,
@@ -352,16 +359,9 @@ impl GatewayAgentApi {
             )
             .await?;
         }
-        self.submit_core_command(
-            session_id,
-            CoreAgentCommand::SelectToolProfile {
-                profile_id: profile_id.clone(),
-            },
-        )
-        .await?;
         self.wait_for_session_toolset(
             session_id,
-            &profile_id,
+            expected_standard_tools,
             host_tools_enabled,
             baseline_failures,
         )
@@ -371,7 +371,7 @@ impl GatewayAgentApi {
     pub(super) async fn wait_for_session_toolset(
         &self,
         session_id: &SessionId,
-        profile_id: &engine::ToolProfileId,
+        expected_standard_tools: BTreeSet<ToolName>,
         expect_host_target: bool,
         baseline_failures: usize,
     ) -> Result<SessionView, AgentApiError> {
@@ -395,7 +395,7 @@ impl GatewayAgentApi {
                 }
             }
             let loaded = self.load_session_state(session_id).await?;
-            let selected = loaded.state.tooling.selected_profile_id.as_ref() == Some(profile_id);
+            let actual_standard_tools = standard_tool_names(&loaded.state.tooling.tools);
             let target = loaded
                 .state
                 .tooling
@@ -407,7 +407,7 @@ impl GatewayAgentApi {
             } else {
                 target.is_none()
             };
-            if selected && target_ready {
+            if actual_standard_tools == expected_standard_tools && target_ready {
                 return self.project_session_by_id(session_id).await;
             }
             tokio::time::sleep(self.poll_interval).await;
@@ -415,26 +415,37 @@ impl GatewayAgentApi {
     }
 }
 
-fn merge_toolset_registry(registry: &mut engine::ToolRegistry, toolset: ResolvedToolset) {
-    if let Some(previous) = registry.profiles.remove(&toolset.profile_id) {
-        for tool_name in previous.visible_tools {
-            let still_referenced = registry.profiles.values().any(|profile| {
-                profile
-                    .visible_tools
-                    .iter()
-                    .any(|visible| visible == &tool_name)
-            });
-            if !still_referenced {
-                registry.tools.remove(&tool_name);
-            }
+pub(super) fn standard_toolset_patch(
+    active: &BTreeMap<ToolName, engine::ToolSpec>,
+    toolset: ResolvedToolset,
+) -> engine::ToolPatch {
+    let mut remove = Vec::new();
+    for (tool_name, tool) in active {
+        if matches!(tool.kind, engine::ToolKind::RemoteMcp(_)) {
+            continue;
+        }
+        if !toolset.tools.contains_key(tool_name) {
+            remove.push(tool_name.clone());
         }
     }
-    for (tool_name, spec) in toolset.registry.tools {
-        registry.tools.insert(tool_name, spec);
+
+    let mut upsert = Vec::new();
+    for (tool_name, tool) in toolset.tools {
+        if active.get(&tool_name) != Some(&tool) {
+            upsert.push(tool);
+        }
     }
-    for (profile_id, tool_profile) in toolset.registry.profiles {
-        registry.profiles.insert(profile_id, tool_profile);
-    }
+
+    engine::ToolPatch { upsert, remove }
+}
+
+fn standard_tool_names(active: &BTreeMap<ToolName, engine::ToolSpec>) -> BTreeSet<ToolName> {
+    active
+        .iter()
+        .filter_map(|(tool_name, tool)| {
+            (!matches!(tool.kind, engine::ToolKind::RemoteMcp(_))).then_some(tool_name.clone())
+        })
+        .collect()
 }
 
 pub(super) async fn commit_vfs_snapshot(

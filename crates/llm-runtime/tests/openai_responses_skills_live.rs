@@ -7,8 +7,8 @@ use std::{
 use async_trait::async_trait;
 use engine::{
     AgentHandle, BlobRef, ContextConfig, ContextEntryInput, ContextEntryKind, ContextMessageRole,
-    CoreAgentCommand, CoreAgentEventKind, ModelProviderOptions, ModelSelection,
-    OpenAiResponsesRequestDefaults, ProviderApiKind, ProviderRequestDefaults, RunConfig, RunStatus,
+    CoreAgentCommand, CoreAgentEventKind, ModelSelection,
+    ProviderApiKind, RunConfig, RunStatus,
     SessionConfig, SessionId, ToolExecutionTarget,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
 };
@@ -296,7 +296,6 @@ async fn openai_responses_live_selects_and_activates_the_matching_skill() {
         api_kind: ProviderApiKind::OpenAiResponses,
         provider_id: "openai".to_string(),
         model: live_model(),
-        options: ModelProviderOptions::None,
     };
     let target = tools::runtime::ToolTarget::from(&model);
     let toolset = resolve_toolset(
@@ -338,24 +337,14 @@ async fn openai_responses_live_selects_and_activates_the_matching_skill() {
         .drive_command(DriveCommand {
             session_id: session_id.clone(),
             observed_at_ms: 11,
-            command: CoreAgentCommand::SetToolRegistry {
-                registry: toolset.registry,
+            command: CoreAgentCommand::ReplaceTools {
+                expected_revision: Some(0),
+                tools: toolset.tools,
             },
             max_steps: None,
         })
         .await
-        .expect("set registry");
-    runner
-        .drive_command(DriveCommand {
-            session_id: session_id.clone(),
-            observed_at_ms: 12,
-            command: CoreAgentCommand::SelectToolProfile {
-                profile_id: toolset.profile_id,
-            },
-            max_steps: None,
-        })
-        .await
-        .expect("select profile");
+        .expect("replace tools");
     runner
         .drive_command(DriveCommand {
             session_id: session_id.clone(),
@@ -444,12 +433,11 @@ fn session_config(model: ModelSelection) -> SessionConfig {
         run: run_config(),
         turn: engine::TurnConfig {
             max_output_tokens: Some(1024),
-            provider_request_defaults: ProviderRequestDefaults::OpenAiResponses(
-                OpenAiResponsesRequestDefaults {
-                    store: Some(false),
-                    ..OpenAiResponsesRequestDefaults::default()
-                },
-            ),
+            tool_choice: None,
+            provider_params: Some(support::openai_params(&llm_runtime::OpenAiResponsesParams {
+                store: Some(false),
+                ..llm_runtime::OpenAiResponsesParams::default()
+            })),
         },
         context: ContextConfig { compaction: None },
         tools: Default::default(),
@@ -462,7 +450,8 @@ fn run_config() -> RunConfig {
         max_tool_rounds: Some(3),
         model_override: None,
         max_output_tokens: None,
-        provider_request_defaults: None,
+        provider_params: None,
+        tool_choice: None,
     }
 }
 

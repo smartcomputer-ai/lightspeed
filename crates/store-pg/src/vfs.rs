@@ -34,8 +34,7 @@ impl VfsSnapshotStore for PgStore {
             SET
                 source_json = EXCLUDED.source_json,
                 display_name = EXCLUDED.display_name,
-                created_at_ms = EXCLUDED.created_at_ms,
-                modified_at = now()
+                created_at_ms = EXCLUDED.created_at_ms
             "#,
         )
         .bind(self.config.universe_id)
@@ -223,8 +222,7 @@ impl VfsWorkspaceStore for PgStore {
             SET
                 head_snapshot_digest = $3,
                 revision = $4,
-                updated_at_ms = $5,
-                modified_at = now()
+                updated_at_ms = $5
             WHERE universe_id = $1 AND workspace_id = $2
             RETURNING
                 workspace_id,
@@ -309,8 +307,7 @@ impl VfsMountStore for PgStore {
                 source_kind = EXCLUDED.source_kind,
                 snapshot_digest = EXCLUDED.snapshot_digest,
                 workspace_id = EXCLUDED.workspace_id,
-                access = EXCLUDED.access,
-                modified_at = now()
+                access = EXCLUDED.access
             "#,
         )
         .bind(self.config.universe_id)

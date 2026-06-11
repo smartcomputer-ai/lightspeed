@@ -1,4 +1,4 @@
--- Initial PostgreSQL schema for Forge sessions and content-addressed storage.
+-- Core PostgreSQL schema for Forge sessions and content-addressed storage.
 --
 -- Design notes:
 -- - Postgres is the source of truth for session logs and CAS metadata.
@@ -14,8 +14,6 @@
 CREATE TABLE IF NOT EXISTS universes (
     universe_id uuid PRIMARY KEY,
     slug text UNIQUE,
-    created_at timestamptz NOT NULL DEFAULT now(),
-    modified_at timestamptz NOT NULL DEFAULT now(),
 
     CONSTRAINT universes_slug_format
         CHECK (slug IS NULL OR slug ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$')
@@ -29,8 +27,6 @@ CREATE TABLE IF NOT EXISTS sessions (
     head_seq bigint,
     created_at_ms bigint NOT NULL,
     updated_at_ms bigint NOT NULL,
-    inserted_at timestamptz NOT NULL DEFAULT now(),
-    modified_at timestamptz NOT NULL DEFAULT now(),
 
     PRIMARY KEY (universe_id, session_id),
 
@@ -63,7 +59,6 @@ CREATE TABLE IF NOT EXISTS session_events (
         (entry_json #>> '{event,kind}') STORED,
     event_version integer GENERATED ALWAYS AS
         ((entry_json #>> '{event,version}')::integer) STORED,
-    inserted_at timestamptz NOT NULL DEFAULT now(),
 
     PRIMARY KEY (universe_id, session_id, seq),
     FOREIGN KEY (universe_id, session_id)
@@ -102,7 +97,6 @@ CREATE TABLE IF NOT EXISTS cas_blobs (
     object_key text,
     object_etag text,
     object_version text,
-    inserted_at timestamptz NOT NULL DEFAULT now(),
 
     PRIMARY KEY (universe_id, digest),
 
@@ -139,15 +133,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS cas_blobs_object_key_idx
     ON cas_blobs (object_key)
     WHERE object_key IS NOT NULL;
 
-CREATE TABLE IF NOT EXISTS session_blob_roots (
+CREATE TABLE IF NOT EXISTS cas_session_roots (
     universe_id uuid NOT NULL,
     session_id text NOT NULL,
     digest text NOT NULL,
     root_kind text NOT NULL DEFAULT 'session',
     first_seq bigint,
     last_seq bigint,
-    inserted_at timestamptz NOT NULL DEFAULT now(),
-    modified_at timestamptz NOT NULL DEFAULT now(),
 
     PRIMARY KEY (universe_id, session_id, digest, root_kind),
     FOREIGN KEY (universe_id, session_id)
@@ -155,13 +147,13 @@ CREATE TABLE IF NOT EXISTS session_blob_roots (
     FOREIGN KEY (universe_id, digest)
         REFERENCES cas_blobs (universe_id, digest) ON DELETE RESTRICT,
 
-    CONSTRAINT session_blob_roots_root_kind_present
+    CONSTRAINT cas_session_roots_root_kind_present
         CHECK (root_kind <> ''),
-    CONSTRAINT session_blob_roots_first_seq_positive
+    CONSTRAINT cas_session_roots_first_seq_positive
         CHECK (first_seq IS NULL OR first_seq > 0),
-    CONSTRAINT session_blob_roots_last_seq_positive
+    CONSTRAINT cas_session_roots_last_seq_positive
         CHECK (last_seq IS NULL OR last_seq > 0),
-    CONSTRAINT session_blob_roots_seq_order
+    CONSTRAINT cas_session_roots_seq_order
         CHECK (
             first_seq IS NULL
             OR last_seq IS NULL
@@ -169,15 +161,14 @@ CREATE TABLE IF NOT EXISTS session_blob_roots (
         )
 );
 
-CREATE INDEX IF NOT EXISTS session_blob_roots_digest_idx
-    ON session_blob_roots (universe_id, digest);
+CREATE INDEX IF NOT EXISTS cas_session_roots_digest_idx
+    ON cas_session_roots (universe_id, digest);
 
 CREATE TABLE IF NOT EXISTS cas_blob_edges (
     universe_id uuid NOT NULL,
     parent_digest text NOT NULL,
     child_digest text NOT NULL,
     edge_kind text NOT NULL DEFAULT 'contains',
-    inserted_at timestamptz NOT NULL DEFAULT now(),
 
     PRIMARY KEY (universe_id, parent_digest, child_digest, edge_kind),
     FOREIGN KEY (universe_id, parent_digest)
@@ -192,114 +183,6 @@ CREATE TABLE IF NOT EXISTS cas_blob_edges (
 CREATE INDEX IF NOT EXISTS cas_blob_edges_child_digest_idx
     ON cas_blob_edges (universe_id, child_digest);
 
-CREATE TABLE IF NOT EXISTS vfs_snapshots (
-    universe_id uuid NOT NULL
-        REFERENCES universes (universe_id) ON DELETE CASCADE,
-    digest text NOT NULL,
-    snapshot_ref text GENERATED ALWAYS AS ('sha256:' || digest) STORED,
-    source_json jsonb NOT NULL,
-    display_name text,
-    created_at_ms bigint NOT NULL,
-    inserted_at timestamptz NOT NULL DEFAULT now(),
-    modified_at timestamptz NOT NULL DEFAULT now(),
-
-    PRIMARY KEY (universe_id, digest),
-    FOREIGN KEY (universe_id, digest)
-        REFERENCES cas_blobs (universe_id, digest) ON DELETE RESTRICT,
-
-    CONSTRAINT vfs_snapshots_digest_format
-        CHECK (digest ~ '^[0-9a-f]{64}$'),
-    CONSTRAINT vfs_snapshots_source_is_object
-        CHECK (jsonb_typeof(source_json) = 'object'),
-    CONSTRAINT vfs_snapshots_created_at_ms_nonnegative
-        CHECK (created_at_ms >= 0)
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS vfs_snapshots_snapshot_ref_idx
-    ON vfs_snapshots (universe_id, snapshot_ref);
-
-CREATE TABLE IF NOT EXISTS vfs_workspaces (
-    universe_id uuid NOT NULL
-        REFERENCES universes (universe_id) ON DELETE CASCADE,
-    workspace_id text NOT NULL,
-    base_snapshot_digest text,
-    head_snapshot_digest text NOT NULL,
-    revision bigint NOT NULL,
-    created_at_ms bigint NOT NULL,
-    updated_at_ms bigint NOT NULL,
-    inserted_at timestamptz NOT NULL DEFAULT now(),
-    modified_at timestamptz NOT NULL DEFAULT now(),
-
-    PRIMARY KEY (universe_id, workspace_id),
-    FOREIGN KEY (universe_id, base_snapshot_digest)
-        REFERENCES cas_blobs (universe_id, digest) ON DELETE RESTRICT,
-    FOREIGN KEY (universe_id, head_snapshot_digest)
-        REFERENCES cas_blobs (universe_id, digest) ON DELETE RESTRICT,
-
-    CONSTRAINT vfs_workspaces_workspace_id_format
-        CHECK (workspace_id ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$'),
-    CONSTRAINT vfs_workspaces_base_digest_format
-        CHECK (base_snapshot_digest IS NULL OR base_snapshot_digest ~ '^[0-9a-f]{64}$'),
-    CONSTRAINT vfs_workspaces_head_digest_format
-        CHECK (head_snapshot_digest ~ '^[0-9a-f]{64}$'),
-    CONSTRAINT vfs_workspaces_revision_nonnegative
-        CHECK (revision >= 0),
-    CONSTRAINT vfs_workspaces_created_at_ms_nonnegative
-        CHECK (created_at_ms >= 0),
-    CONSTRAINT vfs_workspaces_updated_at_ms_nonnegative
-        CHECK (updated_at_ms >= 0),
-    CONSTRAINT vfs_workspaces_updated_after_created
-        CHECK (updated_at_ms >= created_at_ms)
-);
-
-CREATE INDEX IF NOT EXISTS vfs_workspaces_head_digest_idx
-    ON vfs_workspaces (universe_id, head_snapshot_digest);
-
-CREATE TABLE IF NOT EXISTS vfs_mounts (
-    universe_id uuid NOT NULL
-        REFERENCES universes (universe_id) ON DELETE CASCADE,
-    session_id text NOT NULL,
-    mount_path text NOT NULL,
-    source_kind text NOT NULL,
-    snapshot_digest text,
-    workspace_id text,
-    access text NOT NULL,
-    inserted_at timestamptz NOT NULL DEFAULT now(),
-    modified_at timestamptz NOT NULL DEFAULT now(),
-
-    PRIMARY KEY (universe_id, session_id, mount_path),
-    FOREIGN KEY (universe_id, snapshot_digest)
-        REFERENCES cas_blobs (universe_id, digest) ON DELETE RESTRICT,
-    FOREIGN KEY (universe_id, workspace_id)
-        REFERENCES vfs_workspaces (universe_id, workspace_id) ON DELETE CASCADE,
-
-    CONSTRAINT vfs_mounts_session_id_format
-        CHECK (session_id ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$'),
-    CONSTRAINT vfs_mounts_mount_path_absolute
-        CHECK (mount_path LIKE '/%'),
-    CONSTRAINT vfs_mounts_source_kind_known
-        CHECK (source_kind IN ('snapshot', 'workspace')),
-    CONSTRAINT vfs_mounts_access_known
-        CHECK (access IN ('read_only', 'read_write')),
-    CONSTRAINT vfs_mounts_source_shape
-        CHECK (
-            (
-                source_kind = 'snapshot'
-                AND snapshot_digest IS NOT NULL
-                AND workspace_id IS NULL
-            )
-            OR
-            (
-                source_kind = 'workspace'
-                AND snapshot_digest IS NULL
-                AND workspace_id IS NOT NULL
-            )
-        )
-);
-
-CREATE INDEX IF NOT EXISTS vfs_mounts_session_idx
-    ON vfs_mounts (universe_id, session_id);
-
 COMMENT ON TABLE universes IS
     'Tenant/project/workspace boundary; sessions and CAS are shared within one universe.';
 COMMENT ON TABLE sessions IS
@@ -308,13 +191,7 @@ COMMENT ON TABLE session_events IS
     'Append-only dynamic session entries stored as canonical JSONB with generated query columns.';
 COMMENT ON TABLE cas_blobs IS
     'Universe-scoped CAS catalog keyed by sha256 digest; small payloads inline, large payloads external.';
-COMMENT ON TABLE session_blob_roots IS
+COMMENT ON TABLE cas_session_roots IS
     'Session-scoped CAS roots used by future reachability and garbage collection.';
 COMMENT ON TABLE cas_blob_edges IS
     'Optional best-effort parent-child CAS edges recorded outside put_bytes.';
-COMMENT ON TABLE vfs_snapshots IS
-    'Descriptive metadata for immutable CAS-backed VFS snapshot manifests.';
-COMMENT ON TABLE vfs_workspaces IS
-    'Mutable workspace heads pointing at immutable VFS snapshot refs.';
-COMMENT ON TABLE vfs_mounts IS
-    'Session-visible VFS mount records for snapshot and workspace roots.';

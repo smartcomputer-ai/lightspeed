@@ -95,7 +95,7 @@ impl PgStore {
             sqlx::query(
                 r#"
                 UPDATE sessions
-                SET head_seq = $3, updated_at_ms = $4, modified_at = now()
+                SET head_seq = $3, updated_at_ms = $4
                 WHERE universe_id = $1 AND session_id = $2
                 "#,
             )

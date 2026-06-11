@@ -11,9 +11,21 @@ use engine::{
         SessionBlobRoot, SessionStore,
     },
 };
+use mcp_registry::{
+    CreateMcpServerRecord, ListMcpServers, McpApprovalPolicy, McpRegistryError, McpRegistryStore,
+    McpServerAuthPolicy, McpServerId, McpServerStatus, RemoteMcpTransport,
+};
+use auth_registry::{
+    AuthFlowId, AuthFlowStore, AuthGrantId, AuthGrantStatus, AuthGrantStore,
+    AuthGrantTokenRefresh, AuthProviderKind, AuthRegistryError, CreateAuthFlowRecord,
+    CreateAuthGrantRecord, CreateOAuthClientRecord, FinishAuthFlow, GrantRefreshLock,
+    ListAuthGrants, OAuthClientId, OAuthClientStore, PrincipalRef, PutSecretRecord,
+    SECRET_KIND_STATIC_BEARER, SecretId, SecretStore, SecretValue, TokenEndpointAuthMethod,
+    state_hash,
+};
 use object_store::{ObjectStore, aws::AmazonS3Builder};
 use sqlx::{PgPool, Row, postgres::PgPoolOptions};
-use store_pg::{PgStore, PgStoreConfig};
+use store_pg::{PgStore, PgStoreConfig, SecretsMasterKey};
 use tokio::sync::OnceCell;
 use uuid::Uuid;
 use vfs::{
@@ -192,7 +204,7 @@ async fn pg_live_records_session_roots_and_blob_edges() {
     let root_row = sqlx::query(
         r#"
         SELECT first_seq, last_seq
-        FROM session_blob_roots
+        FROM cas_session_roots
         WHERE universe_id = $1
           AND session_id = $2
           AND digest = $3
@@ -361,6 +373,595 @@ async fn pg_live_vfs_catalog_tracks_workspace_heads_and_mounts() {
     );
 }
 
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires dev/local/up.sh or compatible Postgres + MinIO env"]
+async fn pg_live_mcp_registry_crud_and_universe_isolation() {
+    let left = live_store("mcp-registry-left", 1024).await;
+    let right = live_store("mcp-registry-right", 1024).await;
+    let server_id = McpServerId::new("crm");
+
+    let created = left
+        .create_server(create_mcp_server("crm", McpServerStatus::Active))
+        .await
+        .expect("create MCP server");
+    assert_eq!(created.server_id, server_id);
+
+    assert!(matches!(
+        left.create_server(create_mcp_server("crm", McpServerStatus::Active))
+            .await,
+        Err(McpRegistryError::AlreadyExists { server_id }) if server_id.as_str() == "crm"
+    ));
+
+    assert_eq!(
+        left.read_server(&server_id).await.expect("read MCP server"),
+        created
+    );
+    assert!(matches!(
+        right.read_server(&server_id).await,
+        Err(McpRegistryError::NotFound { server_id }) if server_id.as_str() == "crm"
+    ));
+
+    let oauth = left
+        .create_server(create_oauth_mcp_server(
+            "docs",
+            McpServerStatus::NeedsAuthConfig,
+        ))
+        .await
+        .expect("create OAuth MCP server");
+    assert!(matches!(
+        oauth.auth_policy,
+        McpServerAuthPolicy::RequiredOAuth { .. }
+    ));
+
+    let active = left
+        .list_servers(ListMcpServers {
+            status: Some(McpServerStatus::Active),
+        })
+        .await
+        .expect("list active MCP servers");
+    assert_eq!(active, vec![created.clone()]);
+
+    let deleted = left
+        .delete_server(&server_id)
+        .await
+        .expect("delete MCP server");
+    assert_eq!(deleted, created);
+    assert!(matches!(
+        left.read_server(&server_id).await,
+        Err(McpRegistryError::NotFound { server_id }) if server_id.as_str() == "crm"
+    ));
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires dev/local/up.sh or compatible Postgres + MinIO env"]
+async fn pg_live_auth_secrets_are_encrypted_and_universe_scoped() {
+    let left = live_store("auth-left", 1024).await;
+    let right = live_store("auth-right", 1024).await;
+    let secret_id = SecretId::new("authsec_crm");
+    let token = "live-test-bearer-token-12345";
+
+    left.put_secret(PutSecretRecord {
+        secret_id: secret_id.clone(),
+        secret_kind: SECRET_KIND_STATIC_BEARER.to_owned(),
+        value: SecretValue::new(token),
+        created_at_ms: 10,
+    })
+    .await
+    .expect("put secret");
+
+    assert!(matches!(
+        left.put_secret(PutSecretRecord {
+            secret_id: secret_id.clone(),
+            secret_kind: SECRET_KIND_STATIC_BEARER.to_owned(),
+            value: SecretValue::new(token),
+            created_at_ms: 11,
+        })
+        .await,
+        Err(AuthRegistryError::SecretAlreadyExists { .. })
+    ));
+
+    let (meta, value) = left.read_secret(&secret_id).await.expect("read secret");
+    assert_eq!(meta.secret_kind, SECRET_KIND_STATIC_BEARER);
+    assert_eq!(value.expose(), token);
+
+    let row = sqlx::query(
+        "SELECT ciphertext FROM auth_secrets WHERE universe_id = $1 AND secret_id = $2",
+    )
+    .bind(left.config().universe_id)
+    .bind(secret_id.as_str())
+    .fetch_one(left.pool())
+    .await
+    .expect("read raw secret row");
+    let ciphertext: Vec<u8> = row.try_get("ciphertext").expect("decode ciphertext");
+    assert!(
+        !ciphertext
+            .windows(token.len())
+            .any(|window| window == token.as_bytes()),
+        "ciphertext must not contain the plaintext token"
+    );
+
+    assert!(matches!(
+        right.read_secret(&secret_id).await,
+        Err(AuthRegistryError::SecretNotFound { .. })
+    ));
+
+    let wrong_key_store = PgStore::with_object_store(
+        left.pool().clone(),
+        live_object_store(),
+        left.config().clone().with_secrets_master_key(random_master_key()),
+    );
+    assert!(matches!(
+        wrong_key_store.read_secret(&secret_id).await,
+        Err(AuthRegistryError::Store { .. })
+    ));
+
+    left.delete_secret(&secret_id).await.expect("delete secret");
+    assert!(matches!(
+        left.read_secret(&secret_id).await,
+        Err(AuthRegistryError::SecretNotFound { .. })
+    ));
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires dev/local/up.sh or compatible Postgres + MinIO env"]
+async fn pg_live_auth_grants_crud_and_status_updates() {
+    let store = live_store("auth-grants", 1024).await;
+    let grant_id = AuthGrantId::new("authgrant_crm");
+
+    let created = store
+        .create_grant(CreateAuthGrantRecord {
+            grant_id: grant_id.clone(),
+            provider_id: "static".to_owned(),
+            provider_kind: AuthProviderKind::StaticBearer,
+            principal: PrincipalRef::universe_default(),
+            display_name: Some("CRM token".to_owned()),
+            subject_hint: None,
+            scopes: vec!["contacts.read".to_owned()],
+            audience: Some("https://crm.example.com/mcp".to_owned()),
+            access_token_secret: Some(SecretId::new("authsec_crm")),
+            refresh_token_secret: None,
+            oauth_client: None,
+            expires_at_ms: None,
+            status: AuthGrantStatus::Active,
+            metadata: serde_json::Value::Object(Default::default()),
+            created_at_ms: 10,
+        })
+        .await
+        .expect("create grant");
+    assert_eq!(created.updated_at_ms, created.created_at_ms);
+
+    assert!(matches!(
+        store
+            .create_grant(CreateAuthGrantRecord {
+                created_at_ms: 11,
+                ..CreateAuthGrantRecord {
+                    grant_id: grant_id.clone(),
+                    provider_id: "static".to_owned(),
+                    provider_kind: AuthProviderKind::StaticBearer,
+                    principal: PrincipalRef::universe_default(),
+                    display_name: None,
+                    subject_hint: None,
+                    scopes: Vec::new(),
+                    audience: None,
+                    access_token_secret: None,
+                    refresh_token_secret: None,
+                    oauth_client: None,
+                    expires_at_ms: None,
+                    status: AuthGrantStatus::Active,
+                    metadata: serde_json::Value::Object(Default::default()),
+                    created_at_ms: 11,
+                }
+            })
+            .await,
+        Err(AuthRegistryError::GrantAlreadyExists { .. })
+    ));
+
+    assert_eq!(
+        store.read_grant(&grant_id).await.expect("read grant"),
+        created
+    );
+    assert_eq!(
+        store
+            .list_grants(ListAuthGrants {
+                status: Some(AuthGrantStatus::Active),
+            })
+            .await
+            .expect("list active grants"),
+        vec![created.clone()]
+    );
+
+    let revoked = store
+        .update_grant_status(&grant_id, AuthGrantStatus::Revoked, 20)
+        .await
+        .expect("revoke grant");
+    assert_eq!(revoked.status, AuthGrantStatus::Revoked);
+    assert_eq!(revoked.updated_at_ms, 20);
+    assert!(
+        store
+            .list_grants(ListAuthGrants {
+                status: Some(AuthGrantStatus::Active),
+            })
+            .await
+            .expect("list active grants after revoke")
+            .is_empty()
+    );
+
+    let deleted = store.delete_grant(&grant_id).await.expect("delete grant");
+    assert_eq!(deleted.grant_id, grant_id);
+    assert!(matches!(
+        store.read_grant(&grant_id).await,
+        Err(AuthRegistryError::GrantNotFound { .. })
+    ));
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires dev/local/up.sh or compatible Postgres + MinIO env"]
+async fn pg_live_oauth_clients_crud() {
+    let store = live_store("oauth-clients", 1024).await;
+    let client_id = OAuthClientId::new("crm");
+
+    let created = store
+        .create_oauth_client(create_oauth_client_record(&client_id))
+        .await
+        .expect("create oauth client");
+    assert_eq!(created.updated_at_ms, created.created_at_ms);
+    assert_eq!(
+        created.token_endpoint_auth_method,
+        TokenEndpointAuthMethod::None
+    );
+
+    assert!(matches!(
+        store
+            .create_oauth_client(create_oauth_client_record(&client_id))
+            .await,
+        Err(AuthRegistryError::ClientAlreadyExists { .. })
+    ));
+
+    assert_eq!(
+        store
+            .read_oauth_client(&client_id)
+            .await
+            .expect("read oauth client"),
+        created
+    );
+    assert_eq!(
+        store
+            .list_oauth_clients()
+            .await
+            .expect("list oauth clients"),
+        vec![created.clone()]
+    );
+
+    let deleted = store
+        .delete_oauth_client(&client_id)
+        .await
+        .expect("delete oauth client");
+    assert_eq!(deleted.client_id, client_id);
+    assert!(matches!(
+        store.read_oauth_client(&client_id).await,
+        Err(AuthRegistryError::ClientNotFound { .. })
+    ));
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires dev/local/up.sh or compatible Postgres + MinIO env"]
+async fn pg_live_auth_flows_are_one_time_use() {
+    let store = live_store("auth-flows", 1024).await;
+    let flow_id = AuthFlowId::new("authflow_live");
+    let state = "state-live-1";
+
+    let created = store
+        .create_flow(CreateAuthFlowRecord {
+            flow_id: flow_id.clone(),
+            client_id: OAuthClientId::new("crm"),
+            provider_id: "crm".to_owned(),
+            provider_kind: AuthProviderKind::McpOAuth,
+            principal: PrincipalRef::universe_default(),
+            state_hash: state_hash(state),
+            pkce_verifier_secret: SecretId::new("authsec_pkce_live"),
+            redirect_uri: "https://forge.example.com/auth/callback".to_owned(),
+            scopes: vec!["contacts.read".to_owned()],
+            audience: Some("https://crm.example.com/mcp".to_owned()),
+            expires_at_ms: 10_000,
+            created_at_ms: 10,
+        })
+        .await
+        .expect("create flow");
+    assert!(created.consumed_at_ms.is_none());
+
+    let by_state = store
+        .read_flow_by_state_hash(&state_hash(state))
+        .await
+        .expect("lookup by state hash")
+        .expect("flow found");
+    assert_eq!(by_state.flow_id, flow_id);
+    assert!(
+        store
+            .read_flow_by_state_hash(&state_hash("forged"))
+            .await
+            .expect("lookup forged state")
+            .is_none()
+    );
+
+    let consumed = store.consume_flow(&flow_id, 100).await.expect("consume");
+    assert_eq!(consumed.consumed_at_ms, Some(100));
+    assert!(matches!(
+        store.consume_flow(&flow_id, 101).await,
+        Err(AuthRegistryError::FlowAlreadyConsumed { .. })
+    ));
+
+    let finished = store
+        .finish_flow(&flow_id, FinishAuthFlow {
+            grant_id: Some(AuthGrantId::new("authgrant_flow_live")),
+            error: None,
+            completed_at_ms: 150,
+        })
+        .await
+        .expect("finish flow");
+    assert_eq!(
+        finished.grant_id,
+        Some(AuthGrantId::new("authgrant_flow_live"))
+    );
+    assert!(matches!(
+        store
+            .finish_flow(&flow_id, FinishAuthFlow {
+                grant_id: None,
+                error: Some("late".to_owned()),
+                completed_at_ms: 160,
+            })
+            .await,
+        Err(AuthRegistryError::FlowAlreadyCompleted { .. })
+    ));
+
+    // A separate expired flow cannot be consumed.
+    let expired_id = AuthFlowId::new("authflow_live_expired");
+    store
+        .create_flow(CreateAuthFlowRecord {
+            flow_id: expired_id.clone(),
+            client_id: OAuthClientId::new("crm"),
+            provider_id: "crm".to_owned(),
+            provider_kind: AuthProviderKind::McpOAuth,
+            principal: PrincipalRef::universe_default(),
+            state_hash: state_hash("state-live-2"),
+            pkce_verifier_secret: SecretId::new("authsec_pkce_live2"),
+            redirect_uri: "https://forge.example.com/auth/callback".to_owned(),
+            scopes: Vec::new(),
+            audience: Some("https://crm.example.com/mcp".to_owned()),
+            expires_at_ms: 50,
+            created_at_ms: 10,
+        })
+        .await
+        .expect("create expired flow");
+    assert!(matches!(
+        store.consume_flow(&expired_id, 1_000).await,
+        Err(AuthRegistryError::FlowExpired { .. })
+    ));
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires dev/local/up.sh or compatible Postgres + MinIO env"]
+async fn pg_live_grant_refresh_updates_token_refs_and_lock_serializes() {
+    let store = Arc::new(live_store("grant-refresh", 1024).await);
+    let grant_id = AuthGrantId::new("authgrant_refresh_live");
+    store
+        .create_grant(CreateAuthGrantRecord {
+            grant_id: grant_id.clone(),
+            provider_id: "crm".to_owned(),
+            provider_kind: AuthProviderKind::McpOAuth,
+            principal: PrincipalRef::universe_default(),
+            display_name: None,
+            subject_hint: None,
+            scopes: Vec::new(),
+            audience: Some("https://crm.example.com/mcp".to_owned()),
+            access_token_secret: Some(SecretId::new("authsec_old_access")),
+            refresh_token_secret: Some(SecretId::new("authsec_old_refresh")),
+            oauth_client: Some(OAuthClientId::new("crm")),
+            expires_at_ms: Some(1_000),
+            status: AuthGrantStatus::Active,
+            metadata: serde_json::Value::Object(Default::default()),
+            created_at_ms: 10,
+        })
+        .await
+        .expect("create oauth grant");
+
+    let refreshed = store
+        .record_grant_refresh(&grant_id, AuthGrantTokenRefresh {
+            access_token_secret: SecretId::new("authsec_new_access"),
+            refresh_token_secret: None,
+            expires_at_ms: Some(5_000),
+            updated_at_ms: 2_000,
+        })
+        .await
+        .expect("record refresh without rotation");
+    assert_eq!(
+        refreshed.access_token_secret,
+        Some(SecretId::new("authsec_new_access"))
+    );
+    // No rotation: the refresh token reference is preserved.
+    assert_eq!(
+        refreshed.refresh_token_secret,
+        Some(SecretId::new("authsec_old_refresh"))
+    );
+    assert_eq!(refreshed.expires_at_ms, Some(5_000));
+
+    let rotated = store
+        .record_grant_refresh(&grant_id, AuthGrantTokenRefresh {
+            access_token_secret: SecretId::new("authsec_newer_access"),
+            refresh_token_secret: Some(SecretId::new("authsec_new_refresh")),
+            expires_at_ms: Some(9_000),
+            updated_at_ms: 3_000,
+        })
+        .await
+        .expect("record refresh with rotation");
+    assert_eq!(
+        rotated.refresh_token_secret,
+        Some(SecretId::new("authsec_new_refresh"))
+    );
+
+    // The advisory lock serializes concurrent holders for the same grant.
+    let guard = store.lock_grant(&grant_id).await.expect("first lock");
+    let contender_store = store.clone();
+    let contender_grant = grant_id.clone();
+    let contender = tokio::spawn(async move {
+        contender_store
+            .lock_grant(&contender_grant)
+            .await
+            .map(|_| ())
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert!(!contender.is_finished(), "advisory lock must block");
+    drop(guard);
+    contender
+        .await
+        .expect("join contender")
+        .expect("second lock after release");
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires dev/local/up.sh or compatible Postgres + MinIO env"]
+async fn pg_live_auth_providers_crud_and_credential_fk() {
+    use auth_registry::{
+        AuthProviderConfig, AuthProviderId, AuthProviderStatus, AuthProviderStore,
+        CreateAuthProviderRecord, GitHubAppConfig, SECRET_KIND_GITHUB_APP_PRIVATE_KEY,
+    };
+
+    let store = live_store("auth-providers", 1024).await;
+    let provider_id = AuthProviderId::new("forge-github");
+    let key_secret = SecretId::new("authsec_github_key_live");
+    store
+        .put_secret(PutSecretRecord {
+            secret_id: key_secret.clone(),
+            secret_kind: SECRET_KIND_GITHUB_APP_PRIVATE_KEY.to_owned(),
+            value: SecretValue::new("-----BEGIN RSA PRIVATE KEY-----\ntest\n-----END RSA PRIVATE KEY-----"),
+            created_at_ms: 10,
+        })
+        .await
+        .expect("put app key secret");
+
+    let created = store
+        .create_auth_provider(CreateAuthProviderRecord {
+            provider_id: provider_id.clone(),
+            display_name: Some("Forge GitHub App".to_owned()),
+            config: AuthProviderConfig::GitHubApp(GitHubAppConfig {
+                app_id: "12345".to_owned(),
+                api_base_url: "https://api.github.com".to_owned(),
+            }),
+            credential_secret: Some(key_secret.clone()),
+            status: AuthProviderStatus::Active,
+            created_at_ms: 10,
+        })
+        .await
+        .expect("create provider");
+    assert_eq!(created.provider_kind, AuthProviderKind::GitHubApp);
+
+    assert!(matches!(
+        store
+            .create_auth_provider(CreateAuthProviderRecord {
+                provider_id: provider_id.clone(),
+                display_name: None,
+                config: AuthProviderConfig::GitHubApp(GitHubAppConfig {
+                    app_id: "12345".to_owned(),
+                    api_base_url: "https://api.github.com".to_owned(),
+                }),
+                credential_secret: Some(key_secret.clone()),
+                status: AuthProviderStatus::Active,
+                created_at_ms: 11,
+            })
+            .await,
+        Err(AuthRegistryError::ProviderAlreadyExists { .. })
+    ));
+
+    assert_eq!(
+        store
+            .read_auth_provider(&provider_id)
+            .await
+            .expect("read provider"),
+        created
+    );
+    assert_eq!(
+        store
+            .list_auth_providers()
+            .await
+            .expect("list providers"),
+        vec![created.clone()]
+    );
+
+    // Referential integrity: the credential secret cannot be deleted while
+    // the provider references it.
+    assert!(matches!(
+        store.delete_secret(&key_secret).await,
+        Err(AuthRegistryError::Store { .. })
+    ));
+
+    let deleted = store
+        .delete_auth_provider(&provider_id)
+        .await
+        .expect("delete provider");
+    assert_eq!(deleted.provider_id, provider_id);
+    // After the provider is gone the secret is deletable.
+    store
+        .delete_secret(&key_secret)
+        .await
+        .expect("delete app key secret after provider");
+    assert!(matches!(
+        store.read_auth_provider(&provider_id).await,
+        Err(AuthRegistryError::ProviderNotFound { .. })
+    ));
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires dev/local/up.sh or compatible Postgres + MinIO env"]
+async fn pg_live_grant_metadata_round_trips() {
+    let store = live_store("grant-metadata", 1024).await;
+    let grant_id = AuthGrantId::new("authgrant_install_live");
+
+    let created = store
+        .create_grant(CreateAuthGrantRecord {
+            grant_id: grant_id.clone(),
+            provider_id: "forge-github".to_owned(),
+            provider_kind: AuthProviderKind::GitHubApp,
+            principal: PrincipalRef::universe_default(),
+            display_name: None,
+            subject_hint: Some("acme".to_owned()),
+            scopes: Vec::new(),
+            audience: Some("https://api.github.com".to_owned()),
+            access_token_secret: None,
+            refresh_token_secret: None,
+            oauth_client: None,
+            expires_at_ms: None,
+            status: AuthGrantStatus::Active,
+            metadata: serde_json::json!({
+                "installation_id": 678,
+                "account_login": "acme",
+                "permissions": {"contents": "read"},
+            }),
+            created_at_ms: 10,
+        })
+        .await
+        .expect("create installation grant");
+
+    assert_eq!(created.metadata["installation_id"], 678);
+    let read = store.read_grant(&grant_id).await.expect("read grant");
+    assert_eq!(read.metadata, created.metadata);
+}
+
+fn create_oauth_client_record(client_id: &OAuthClientId) -> CreateOAuthClientRecord {
+    CreateOAuthClientRecord {
+        client_id: client_id.clone(),
+        provider_id: "crm".to_owned(),
+        provider_kind: AuthProviderKind::McpOAuth,
+        display_name: Some("CRM".to_owned()),
+        authorization_endpoint: "https://as.example.com/authorize".to_owned(),
+        token_endpoint: "https://as.example.com/token".to_owned(),
+        remote_client_id: "client-live-1".to_owned(),
+        client_secret: None,
+        token_endpoint_auth_method: TokenEndpointAuthMethod::None,
+        scopes_default: vec!["contacts.read".to_owned()],
+        audience: Some("https://crm.example.com/mcp".to_owned()),
+        created_at_ms: 10,
+    }
+}
+
 async fn live_store(test_name: &str, inline_threshold_bytes: usize) -> PgStore {
     let database_url = env_or_dotenv_var("FORGE_TEST_POSTGRES_URL").expect(
         "FORGE_TEST_POSTGRES_URL must be set in env or root .env to run store-pg live tests; run dev/local/up.sh and source dev/local/env.sh",
@@ -376,10 +977,17 @@ async fn live_store(test_name: &str, inline_threshold_bytes: usize) -> PgStore {
         env_or_dotenv_var("FORGE_OBJECT_STORE_PREFIX").unwrap_or_else(|_| "forge".to_string());
     let config = PgStoreConfig::new(Uuid::new_v4())
         .with_inline_threshold_bytes(inline_threshold_bytes)
-        .with_object_prefix(format!("{}/tests/{}", prefix.trim_matches('/'), test_name));
+        .with_object_prefix(format!("{}/tests/{}", prefix.trim_matches('/'), test_name))
+        .with_secrets_master_key(random_master_key());
     let store = PgStore::with_object_store(pool, live_object_store(), config);
     store.ensure_universe().await.expect("ensure test universe");
     store
+}
+
+fn random_master_key() -> SecretsMasterKey {
+    let mut bytes = [0u8; 32];
+    rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut bytes);
+    SecretsMasterKey::from_bytes(bytes)
 }
 
 async fn migrate_once(pool: &PgPool) {
@@ -432,6 +1040,36 @@ fn open_event(at_ms: u64) -> DynamicUncommittedSessionEvent {
             serde_json::Value::Object(Default::default()),
         ),
     }
+}
+
+fn create_mcp_server(server_id: &str, status: McpServerStatus) -> CreateMcpServerRecord {
+    CreateMcpServerRecord {
+        server_id: McpServerId::new(server_id),
+        display_name: Some(format!("{server_id} MCP")),
+        server_url: format!("https://{server_id}.example.com/mcp"),
+        transport: RemoteMcpTransport::Auto,
+        default_server_label: server_id.to_owned(),
+        description: Some(format!("{server_id} remote MCP server")),
+        allowed_tools: Some(vec!["lookup_customer".to_owned()]),
+        approval_default: McpApprovalPolicy::Never,
+        defer_loading_default: Some(true),
+        auth_policy: McpServerAuthPolicy::None,
+        status,
+        created_at_ms: 10,
+    }
+}
+
+fn create_oauth_mcp_server(server_id: &str, status: McpServerStatus) -> CreateMcpServerRecord {
+    let mut record = create_mcp_server(server_id, status);
+    record.auth_policy = McpServerAuthPolicy::RequiredOAuth {
+        resource: format!("https://{server_id}.example.com"),
+        scopes_default: Vec::new(),
+        protected_resource_metadata_url: Some(format!(
+            "https://{server_id}.example.com/.well-known/oauth-protected-resource"
+        )),
+        authorization_server: Some("https://login.example.com".to_owned()),
+    };
+    record
 }
 
 struct BlobLayoutRow {

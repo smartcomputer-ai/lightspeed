@@ -16,6 +16,18 @@ pub const SKILL_ACTIVATION_PROVIDER_KIND_RUN: &str = "forge.skill.activation.run
 pub const SKILL_ACTIVATION_PROVIDER_KIND_SESSION: &str = "forge.skill.activation.session";
 pub const OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND: &str = "openai.responses.compaction";
 pub const OPENAI_RESPONSES_WEB_SEARCH_CALL_PROVIDER_KIND: &str = "openai.responses.web_search_call";
+pub const OPENAI_RESPONSES_MCP_LIST_TOOLS_PROVIDER_KIND: &str = "openai.responses.mcp_list_tools";
+pub const OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND: &str = "openai.responses.mcp_call";
+pub const OPENAI_RESPONSES_MCP_APPROVAL_REQUEST_PROVIDER_KIND: &str =
+    "openai.responses.mcp_approval_request";
+pub const ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND: &str = "anthropic.messages.compaction";
+pub const ANTHROPIC_MESSAGES_SERVER_TOOL_USE_PROVIDER_KIND: &str =
+    "anthropic.messages.server_tool_use";
+pub const ANTHROPIC_MESSAGES_SERVER_TOOL_RESULT_PROVIDER_KIND: &str =
+    "anthropic.messages.server_tool_result";
+pub const ANTHROPIC_MESSAGES_MCP_TOOL_USE_PROVIDER_KIND: &str = "anthropic.messages.mcp_tool_use";
+pub const ANTHROPIC_MESSAGES_MCP_TOOL_RESULT_PROVIDER_KIND: &str =
+    "anthropic.messages.mcp_tool_result";
 
 pub type ContextEntryId = ContextItemId;
 
@@ -858,8 +870,18 @@ fn latest_provider_compaction_entry(state: &CoreAgentState) -> Option<&ContextEn
 }
 
 fn is_provider_compaction_entry(entry: &ContextEntry) -> bool {
-    matches!(entry.kind, ContextEntryKind::ProviderOpaque)
-        && entry.provider_kind.as_deref() == Some(OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND)
+    match entry.provider_kind.as_deref() {
+        // OpenAI Responses returns an opaque encrypted compaction item.
+        Some(OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND) => {
+            matches!(entry.kind, ContextEntryKind::ProviderOpaque)
+        }
+        // The Anthropic adapter compacts by summarization and returns the
+        // summary as a user-visible replacement message.
+        Some(ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND) => {
+            matches!(entry.kind, ContextEntryKind::Message { .. })
+        }
+        _ => false,
+    }
 }
 
 fn is_provider_compaction_prunable_entry(state: &CoreAgentState, entry: &ContextEntry) -> bool {

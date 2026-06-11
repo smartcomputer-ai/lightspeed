@@ -18,6 +18,7 @@ pub const PROTOCOL_VERSION: &str = "forge.agent.api.v1";
 pub const METHOD_INITIALIZE: &str = "initialize";
 pub const METHOD_SESSION_START: &str = "session/start";
 pub const METHOD_SESSION_UPDATE: &str = "session/update";
+pub const METHOD_SESSION_TOOLS_UPDATE: &str = "session/tools/update";
 pub const METHOD_SESSION_READ: &str = "session/read";
 pub const METHOD_SESSION_EVENTS_READ: &str = "session/events/read";
 pub const METHOD_SESSION_CLOSE: &str = "session/close";
@@ -42,6 +43,29 @@ pub const METHOD_VFS_WORKSPACE_DELETE: &str = "vfs/workspace/delete";
 pub const METHOD_VFS_MOUNT_PUT: &str = "vfs/mount/put";
 pub const METHOD_VFS_MOUNT_LIST: &str = "vfs/mount/list";
 pub const METHOD_VFS_MOUNT_DELETE: &str = "vfs/mount/delete";
+pub const METHOD_MCP_SERVERS_CREATE: &str = "mcp/servers/create";
+pub const METHOD_MCP_SERVERS_LIST: &str = "mcp/servers/list";
+pub const METHOD_MCP_SERVERS_READ: &str = "mcp/servers/read";
+pub const METHOD_MCP_SERVERS_DELETE: &str = "mcp/servers/delete";
+pub const METHOD_SESSION_MCP_LINK: &str = "session/mcp/link";
+pub const METHOD_SESSION_MCP_UNLINK: &str = "session/mcp/unlink";
+pub const METHOD_SESSION_MCP_LIST: &str = "session/mcp/list";
+pub const METHOD_AUTH_GRANTS_IMPORT: &str = "auth/grants/import";
+pub const METHOD_AUTH_GRANTS_LIST: &str = "auth/grants/list";
+pub const METHOD_AUTH_GRANTS_READ: &str = "auth/grants/read";
+pub const METHOD_AUTH_GRANTS_REVOKE: &str = "auth/grants/revoke";
+pub const METHOD_AUTH_CLIENTS_CREATE: &str = "auth/clients/create";
+pub const METHOD_AUTH_CLIENTS_LIST: &str = "auth/clients/list";
+pub const METHOD_AUTH_CLIENTS_READ: &str = "auth/clients/read";
+pub const METHOD_AUTH_CLIENTS_DELETE: &str = "auth/clients/delete";
+pub const METHOD_AUTH_FLOWS_START: &str = "auth/flows/start";
+pub const METHOD_AUTH_FLOWS_STATUS: &str = "auth/flows/status";
+pub const METHOD_AUTH_PROVIDERS_CREATE: &str = "auth/providers/create";
+pub const METHOD_AUTH_PROVIDERS_LIST: &str = "auth/providers/list";
+pub const METHOD_AUTH_PROVIDERS_READ: &str = "auth/providers/read";
+pub const METHOD_AUTH_PROVIDERS_DELETE: &str = "auth/providers/delete";
+pub const METHOD_AUTH_GITHUB_INSTALLATIONS_LIST: &str = "auth/github/installations/list";
+pub const METHOD_AUTH_GITHUB_INSTALLATIONS_GRANT: &str = "auth/github/installations/grant";
 
 pub const NOTIFY_SESSION_STARTED: &str = "session/started";
 pub const NOTIFY_SESSION_STATUS_CHANGED: &str = "session/status/changed";
@@ -112,6 +136,11 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: SessionUpdateParams,
     ) -> Result<AgentApiOutcome<SessionUpdateResponse>, AgentApiError>;
+
+    async fn update_session_tools(
+        &self,
+        params: SessionToolsUpdateParams,
+    ) -> Result<AgentApiOutcome<SessionToolsUpdateResponse>, AgentApiError>;
 
     async fn read_session(
         &self,
@@ -232,6 +261,121 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: VfsMountListParams,
     ) -> Result<AgentApiOutcome<VfsMountListResponse>, AgentApiError>;
+
+    async fn create_mcp_server(
+        &self,
+        params: McpServerCreateParams,
+    ) -> Result<AgentApiOutcome<McpServerCreateResponse>, AgentApiError>;
+
+    async fn list_mcp_servers(
+        &self,
+        params: McpServerListParams,
+    ) -> Result<AgentApiOutcome<McpServerListResponse>, AgentApiError>;
+
+    async fn read_mcp_server(
+        &self,
+        params: McpServerReadParams,
+    ) -> Result<AgentApiOutcome<McpServerReadResponse>, AgentApiError>;
+
+    async fn delete_mcp_server(
+        &self,
+        params: McpServerDeleteParams,
+    ) -> Result<AgentApiOutcome<McpServerDeleteResponse>, AgentApiError>;
+
+    async fn link_session_mcp(
+        &self,
+        params: SessionMcpLinkParams,
+    ) -> Result<AgentApiOutcome<SessionMcpLinkResponse>, AgentApiError>;
+
+    async fn unlink_session_mcp(
+        &self,
+        params: SessionMcpUnlinkParams,
+    ) -> Result<AgentApiOutcome<SessionMcpUnlinkResponse>, AgentApiError>;
+
+    async fn list_session_mcp(
+        &self,
+        params: SessionMcpListParams,
+    ) -> Result<AgentApiOutcome<SessionMcpListResponse>, AgentApiError>;
+
+    async fn import_auth_grant(
+        &self,
+        params: AuthGrantImportParams,
+    ) -> Result<AgentApiOutcome<AuthGrantImportResponse>, AgentApiError>;
+
+    async fn list_auth_grants(
+        &self,
+        params: AuthGrantListParams,
+    ) -> Result<AgentApiOutcome<AuthGrantListResponse>, AgentApiError>;
+
+    async fn read_auth_grant(
+        &self,
+        params: AuthGrantReadParams,
+    ) -> Result<AgentApiOutcome<AuthGrantReadResponse>, AgentApiError>;
+
+    async fn revoke_auth_grant(
+        &self,
+        params: AuthGrantRevokeParams,
+    ) -> Result<AgentApiOutcome<AuthGrantRevokeResponse>, AgentApiError>;
+
+    async fn create_auth_client(
+        &self,
+        params: AuthClientCreateParams,
+    ) -> Result<AgentApiOutcome<AuthClientCreateResponse>, AgentApiError>;
+
+    async fn list_auth_clients(
+        &self,
+        params: AuthClientListParams,
+    ) -> Result<AgentApiOutcome<AuthClientListResponse>, AgentApiError>;
+
+    async fn read_auth_client(
+        &self,
+        params: AuthClientReadParams,
+    ) -> Result<AgentApiOutcome<AuthClientReadResponse>, AgentApiError>;
+
+    async fn delete_auth_client(
+        &self,
+        params: AuthClientDeleteParams,
+    ) -> Result<AgentApiOutcome<AuthClientDeleteResponse>, AgentApiError>;
+
+    async fn start_auth_flow(
+        &self,
+        params: AuthFlowStartParams,
+    ) -> Result<AgentApiOutcome<AuthFlowStartResponse>, AgentApiError>;
+
+    async fn read_auth_flow_status(
+        &self,
+        params: AuthFlowStatusParams,
+    ) -> Result<AgentApiOutcome<AuthFlowStatusResponse>, AgentApiError>;
+
+    async fn create_auth_provider(
+        &self,
+        params: AuthProviderCreateParams,
+    ) -> Result<AgentApiOutcome<AuthProviderCreateResponse>, AgentApiError>;
+
+    async fn list_auth_providers(
+        &self,
+        params: AuthProviderListParams,
+    ) -> Result<AgentApiOutcome<AuthProviderListResponse>, AgentApiError>;
+
+    async fn read_auth_provider(
+        &self,
+        params: AuthProviderReadParams,
+    ) -> Result<AgentApiOutcome<AuthProviderReadResponse>, AgentApiError>;
+
+    async fn delete_auth_provider(
+        &self,
+        params: AuthProviderDeleteParams,
+    ) -> Result<AgentApiOutcome<AuthProviderDeleteResponse>, AgentApiError>;
+
+    async fn list_github_installations(
+        &self,
+        params: AuthGitHubInstallationListParams,
+    ) -> Result<AgentApiOutcome<AuthGitHubInstallationListResponse>, AgentApiError>;
+
+    async fn grant_github_installation(
+        &self,
+        params: AuthGitHubInstallationGrantParams,
+    ) -> Result<AgentApiOutcome<AuthGitHubInstallationGrantResponse>, AgentApiError>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -335,6 +479,29 @@ pub struct GenerationConfig {
     pub max_output_tokens: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<ReasoningEffort>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoiceConfig>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolChoiceConfig {
+    pub mode: ToolChoiceModeConfig,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disable_parallel_tool_use: Option<bool>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ToolChoiceModeConfig {
+    Auto,
+    None,
+    RequiredAny,
+    Specific { tool_id: String },
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -433,6 +600,8 @@ pub struct GenerationConfigPatch {
     pub max_output_tokens: Option<FieldPatch<u32>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<ReasoningEffort>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<FieldPatch<ToolChoiceConfig>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -466,6 +635,133 @@ pub struct ToolConfigPatchInput {
 #[serde(rename_all = "camelCase")]
 pub struct SessionUpdateResponse {
     pub session: SessionView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionToolsUpdateParams {
+    pub session_id: SessionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_tools_revision: Option<u64>,
+    pub update: SessionToolsUpdateInput,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum SessionToolsUpdateInput {
+    Replace {
+        #[serde(default)]
+        tools: Vec<ToolView>,
+    },
+    Patch {
+        #[serde(default)]
+        upsert: Vec<ToolView>,
+        #[serde(default)]
+        remove: Vec<String>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionToolsUpdateResponse {
+    pub session: SessionView,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActiveToolsView {
+    pub revision: u64,
+    #[serde(default)]
+    pub tools: Vec<ToolView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolView {
+    pub tool_id: String,
+    pub kind: ToolKindView,
+    #[serde(default)]
+    pub parallelism: ToolParallelismView,
+    #[serde(default)]
+    pub target_requirement: ToolTargetRequirementView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ToolKindView {
+    Function {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model_name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        description_ref: Option<String>,
+        input_schema_ref: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output_schema_ref: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        strict: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider_options_ref: Option<String>,
+    },
+    ProviderNative {
+        api_kind: String,
+        native_tool_ref: String,
+        execution: ProviderNativeToolExecutionView,
+    },
+    RemoteMcp {
+        server_label: String,
+        server_url: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        description_ref: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        allowed_tools: Option<Vec<String>>,
+        #[serde(default)]
+        approval: RemoteMcpApprovalPolicy,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        defer_loading: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        auth_ref: Option<SecretRefView>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProviderNativeToolExecutionView {
+    #[default]
+    ProviderHosted,
+    ClientEffect,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ToolParallelismView {
+    Exclusive,
+    #[default]
+    ParallelSafe,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ToolTargetRequirementView {
+    #[default]
+    None,
+    Optional {
+        namespace: String,
+    },
+    Required {
+        namespace: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -677,9 +973,15 @@ pub enum SessionEventKindView {
     SkillActivationsSet {
         skill_ids: Vec<String>,
     },
-    ToolRegistryChanged,
-    ToolProfileSelected {
-        profile_id: String,
+    ToolsReplaced {
+        base_revision: u64,
+        revision: u64,
+    },
+    ToolsPatched {
+        base_revision: u64,
+        revision: u64,
+        upserted: Vec<String>,
+        removed: Vec<String>,
     },
     ToolDefaultTargetChanged {
         namespace: String,
@@ -1164,6 +1466,724 @@ pub struct VfsMountListResponse {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct McpServerView {
+    pub server_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    pub server_url: String,
+    pub transport: RemoteMcpTransport,
+    pub default_server_label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_tools: Option<Vec<String>>,
+    pub approval_default: RemoteMcpApprovalPolicy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub defer_loading_default: Option<bool>,
+    pub auth_policy: McpServerAuthPolicy,
+    pub status: McpServerStatus,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RemoteMcpTransport {
+    StreamableHttp,
+    Sse,
+    #[default]
+    Auto,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RemoteMcpApprovalPolicy {
+    ProviderDefault,
+    Always,
+    #[default]
+    Never,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum McpServerAuthPolicy {
+    #[default]
+    None,
+    OptionalBearer,
+    RequiredBearer,
+    OptionalOAuth {
+        resource: String,
+        #[serde(default)]
+        scopes_default: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        protected_resource_metadata_url: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        authorization_server: Option<String>,
+    },
+    RequiredOAuth {
+        resource: String,
+        #[serde(default)]
+        scopes_default: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        protected_resource_metadata_url: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        authorization_server: Option<String>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum McpServerStatus {
+    #[default]
+    Active,
+    NeedsAuthConfig,
+    Unverified,
+    Disabled,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerCreateParams {
+    pub server_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    pub server_url: String,
+    #[serde(default)]
+    pub transport: RemoteMcpTransport,
+    pub default_server_label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_tools: Option<Vec<String>>,
+    #[serde(default)]
+    pub approval_default: RemoteMcpApprovalPolicy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub defer_loading_default: Option<bool>,
+    #[serde(default)]
+    pub auth_policy: McpServerAuthPolicy,
+    #[serde(default)]
+    pub status: McpServerStatus,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerCreateResponse {
+    pub server: McpServerView,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerListParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<McpServerStatus>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerListResponse {
+    #[serde(default)]
+    pub servers: Vec<McpServerView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerReadParams {
+    pub server_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerReadResponse {
+    pub server: McpServerView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerDeleteParams {
+    pub server_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerDeleteResponse {
+    pub server: McpServerView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionMcpLinkView {
+    pub tool_id: String,
+    pub server_label: String,
+    pub server_url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_tools: Option<Vec<String>>,
+    pub approval: RemoteMcpApprovalPolicy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub defer_loading: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_ref: Option<SecretRefView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SecretRefView {
+    pub namespace: String,
+    pub id: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AuthProviderKind {
+    StaticBearer,
+    McpOAuth,
+    GitHubApp,
+    GitHubAppUser,
+    GitHubOAuthApp,
+    CustomOAuth,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AuthGrantStatus {
+    #[default]
+    Active,
+    NeedsReauth,
+    Revoked,
+    Failed,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PrincipalKind {
+    User,
+    ServiceAccount,
+    #[default]
+    UniverseDefault,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrincipalRefView {
+    #[serde(default)]
+    pub kind: PrincipalKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthGrantView {
+    pub grant_id: String,
+    pub provider_id: String,
+    pub provider_kind: AuthProviderKind,
+    pub principal: PrincipalRefView,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_hint: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<String>,
+    pub has_access_token: bool,
+    pub has_refresh_token: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at_ms: Option<i64>,
+    pub status: AuthGrantStatus,
+    /// Non-secret provider-specific metadata (for GitHub App installation
+    /// grants: installation id, account, permissions, repository selection).
+    #[serde(default, skip_serializing_if = "metadata_is_empty")]
+    pub metadata: serde_json::Value,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+fn metadata_is_empty(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Null => true,
+        serde_json::Value::Object(map) => map.is_empty(),
+        _ => false,
+    }
+}
+
+/// Import a static bearer credential as an auth grant. This is the one
+/// deliberate inbound-plaintext path: `token` is encrypted on receipt and is
+/// never returned by any method. `Debug` output redacts the token; request
+/// logging must never echo these params.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthGrantImportParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    pub token: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_hint: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at_ms: Option<i64>,
+}
+
+impl std::fmt::Debug for AuthGrantImportParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthGrantImportParams")
+            .field("grant_id", &self.grant_id)
+            .field("provider_id", &self.provider_id)
+            .field("token", &"<redacted>")
+            .field("display_name", &self.display_name)
+            .field("subject_hint", &self.subject_hint)
+            .field("scopes", &self.scopes)
+            .field("audience", &self.audience)
+            .field("expires_at_ms", &self.expires_at_ms)
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthGrantImportResponse {
+    pub grant: AuthGrantView,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthGrantListParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<AuthGrantStatus>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthGrantListResponse {
+    #[serde(default)]
+    pub grants: Vec<AuthGrantView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthGrantReadParams {
+    pub grant_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthGrantReadResponse {
+    pub grant: AuthGrantView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthGrantRevokeParams {
+    pub grant_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthGrantRevokeResponse {
+    pub grant: AuthGrantView,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TokenEndpointAuthMethod {
+    #[default]
+    ClientSecretBasic,
+    ClientSecretPost,
+    None,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OAuthClientView {
+    pub client_id: String,
+    pub provider_id: String,
+    pub provider_kind: AuthProviderKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    pub authorization_endpoint: String,
+    pub token_endpoint: String,
+    pub remote_client_id: String,
+    pub has_client_secret: bool,
+    pub token_endpoint_auth_method: TokenEndpointAuthMethod,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes_default: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<String>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+/// Register an OAuth client configuration. `client_secret` is the second
+/// deliberate inbound-plaintext path after `auth/grants/import`: it is
+/// encrypted on receipt and never returned by any method. `Debug` output
+/// redacts it; request logging must never echo these params.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthClientCreateParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    pub provider_kind: AuthProviderKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    pub authorization_endpoint: String,
+    pub token_endpoint: String,
+    pub remote_client_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_secret: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_endpoint_auth_method: Option<TokenEndpointAuthMethod>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes_default: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<String>,
+}
+
+impl std::fmt::Debug for AuthClientCreateParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthClientCreateParams")
+            .field("client_id", &self.client_id)
+            .field("provider_id", &self.provider_id)
+            .field("provider_kind", &self.provider_kind)
+            .field("display_name", &self.display_name)
+            .field("authorization_endpoint", &self.authorization_endpoint)
+            .field("token_endpoint", &self.token_endpoint)
+            .field("remote_client_id", &self.remote_client_id)
+            .field(
+                "client_secret",
+                &self.client_secret.as_ref().map(|_| "<redacted>"),
+            )
+            .field(
+                "token_endpoint_auth_method",
+                &self.token_endpoint_auth_method,
+            )
+            .field("scopes_default", &self.scopes_default)
+            .field("audience", &self.audience)
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthClientCreateResponse {
+    pub client: OAuthClientView,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthClientListParams {}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthClientListResponse {
+    #[serde(default)]
+    pub clients: Vec<OAuthClientView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthClientReadParams {
+    pub client_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthClientReadResponse {
+    pub client: OAuthClientView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthClientDeleteParams {
+    pub client_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthClientDeleteResponse {
+    pub client: OAuthClientView,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AuthFlowStatus {
+    Pending,
+    Completed,
+    Failed,
+    Expired,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthFlowStartParams {
+    pub client_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scopes: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthFlowStartResponse {
+    pub flow_id: String,
+    /// Authorization URL the user must open. It embeds the one-time `state`;
+    /// treat it as sensitive and do not log it server-side.
+    pub authorize_url: String,
+    pub expires_at_ms: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthFlowStatusParams {
+    pub flow_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthFlowView {
+    pub flow_id: String,
+    pub client_id: String,
+    pub provider_id: String,
+    pub status: AuthFlowStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub expires_at_ms: i64,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthFlowStatusResponse {
+    pub flow: AuthFlowView,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AuthProviderStatus {
+    #[default]
+    Active,
+    NeedsConfiguration,
+    Disabled,
+}
+
+/// Non-secret, provider-specific configuration. New providers add a
+/// variant, not a table.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum AuthProviderConfigView {
+    #[serde(rename = "githubApp", rename_all = "camelCase")]
+    GitHubApp {
+        app_id: String,
+        api_base_url: String,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum AuthProviderConfigInput {
+    #[serde(rename = "githubApp", rename_all = "camelCase")]
+    GitHubApp {
+        app_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        api_base_url: Option<String>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthProviderView {
+    pub provider_id: String,
+    pub provider_kind: AuthProviderKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    pub config: AuthProviderConfigView,
+    pub has_credential: bool,
+    pub status: AuthProviderStatus,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+/// Register an auth provider. `credential` (for GitHub Apps: the private
+/// key PEM) is the third deliberate inbound-plaintext path: it is encrypted
+/// on receipt and never returned by any method. `Debug` output redacts it;
+/// request logging must never echo these params.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthProviderCreateParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    pub config: AuthProviderConfigInput,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential: Option<String>,
+}
+
+impl std::fmt::Debug for AuthProviderCreateParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthProviderCreateParams")
+            .field("provider_id", &self.provider_id)
+            .field("display_name", &self.display_name)
+            .field("config", &self.config)
+            .field("credential", &self.credential.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthProviderCreateResponse {
+    pub provider: AuthProviderView,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthProviderListParams {}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthProviderListResponse {
+    #[serde(default)]
+    pub providers: Vec<AuthProviderView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthProviderReadParams {
+    pub provider_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthProviderReadResponse {
+    pub provider: AuthProviderView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthProviderDeleteParams {
+    pub provider_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthProviderDeleteResponse {
+    pub provider: AuthProviderView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubInstallationView {
+    pub installation_id: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_login: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository_selection: Option<String>,
+    /// Fine-grained permission map as GitHub reports it.
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    pub permissions: serde_json::Value,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthGitHubInstallationListParams {
+    pub provider_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthGitHubInstallationListResponse {
+    #[serde(default)]
+    pub installations: Vec<GitHubInstallationView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthGitHubInstallationGrantParams {
+    pub provider_id: String,
+    pub installation_id: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthGitHubInstallationGrantResponse {
+    pub grant: AuthGrantView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionMcpLinkParams {
+    pub session_id: SessionId,
+    pub server_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_tools: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval: Option<RemoteMcpApprovalPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub defer_loading: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_grant_id: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionMcpLinkResponse {
+    pub link: SessionMcpLinkView,
+    #[serde(default)]
+    pub links: Vec<SessionMcpLinkView>,
+    pub session: SessionView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionMcpUnlinkParams {
+    pub session_id: SessionId,
+    pub tool_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionMcpUnlinkResponse {
+    pub tool_id: String,
+    #[serde(default)]
+    pub links: Vec<SessionMcpLinkView>,
+    pub session: SessionView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionMcpListParams {
+    pub session_id: SessionId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionMcpListResponse {
+    #[serde(default)]
+    pub links: Vec<SessionMcpLinkView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ModelConfig {
     pub provider_id: String,
     pub api_kind: String,
@@ -1193,6 +2213,8 @@ pub struct SessionView {
     #[serde(default)]
     pub runs: Vec<RunView>,
     pub active_context: ContextView,
+    #[serde(default)]
+    pub active_tools: ActiveToolsView,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub vfs_mounts: Vec<VfsMountView>,
 }
@@ -1300,6 +2322,22 @@ pub enum ToolCallDisplayGroup {
     Edit,
     Execute,
     Other,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderContextDisplayView {
+    pub summary: ToolCallDisplayView,
+    pub tool_name: String,
+    pub status: ToolItemStatus,
+    #[serde(default)]
+    pub is_error: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arguments: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1426,6 +2464,8 @@ pub enum SessionItemView {
         provider_item_id: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         token_estimate: Option<TokenEstimateView>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        display: Option<ProviderContextDisplayView>,
     },
 }
 
@@ -1676,6 +2716,12 @@ pub async fn dispatch_json_rpc(
             Ok(params) => json_rpc_outcome(id, service.update_session(params).await),
             Err(error) => JsonRpcResponse::failure(id, error),
         },
+        METHOD_SESSION_TOOLS_UPDATE => {
+            match json_rpc_params::<SessionToolsUpdateParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.update_session_tools(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
         METHOD_SESSION_READ => match json_rpc_params::<SessionReadParams>(request.params) {
             Ok(params) => json_rpc_outcome(id, service.read_session(params).await),
             Err(error) => JsonRpcResponse::failure(id, error),
@@ -1788,6 +2834,128 @@ pub async fn dispatch_json_rpc(
             Ok(params) => json_rpc_outcome(id, service.list_vfs_mounts(params).await),
             Err(error) => JsonRpcResponse::failure(id, error),
         },
+        METHOD_MCP_SERVERS_CREATE => {
+            match json_rpc_params::<McpServerCreateParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.create_mcp_server(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
+        METHOD_MCP_SERVERS_LIST => match json_rpc_params::<McpServerListParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.list_mcp_servers(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
+        METHOD_MCP_SERVERS_READ => match json_rpc_params::<McpServerReadParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.read_mcp_server(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
+        METHOD_MCP_SERVERS_DELETE => {
+            match json_rpc_params::<McpServerDeleteParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.delete_mcp_server(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
+        METHOD_SESSION_MCP_LINK => match json_rpc_params::<SessionMcpLinkParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.link_session_mcp(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
+        METHOD_SESSION_MCP_UNLINK => {
+            match json_rpc_params::<SessionMcpUnlinkParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.unlink_session_mcp(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
+        METHOD_SESSION_MCP_LIST => match json_rpc_params::<SessionMcpListParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.list_session_mcp(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
+        METHOD_AUTH_GRANTS_IMPORT => {
+            match json_rpc_params::<AuthGrantImportParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.import_auth_grant(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
+        METHOD_AUTH_GRANTS_LIST => match json_rpc_params::<AuthGrantListParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.list_auth_grants(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
+        METHOD_AUTH_GRANTS_READ => match json_rpc_params::<AuthGrantReadParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.read_auth_grant(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
+        METHOD_AUTH_GRANTS_REVOKE => {
+            match json_rpc_params::<AuthGrantRevokeParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.revoke_auth_grant(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
+        METHOD_AUTH_CLIENTS_CREATE => {
+            match json_rpc_params::<AuthClientCreateParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.create_auth_client(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
+        METHOD_AUTH_CLIENTS_LIST => match json_rpc_params::<AuthClientListParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.list_auth_clients(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
+        METHOD_AUTH_CLIENTS_READ => match json_rpc_params::<AuthClientReadParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.read_auth_client(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
+        METHOD_AUTH_CLIENTS_DELETE => {
+            match json_rpc_params::<AuthClientDeleteParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.delete_auth_client(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
+        METHOD_AUTH_FLOWS_START => match json_rpc_params::<AuthFlowStartParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.start_auth_flow(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
+        METHOD_AUTH_FLOWS_STATUS => match json_rpc_params::<AuthFlowStatusParams>(request.params) {
+            Ok(params) => json_rpc_outcome(id, service.read_auth_flow_status(params).await),
+            Err(error) => JsonRpcResponse::failure(id, error),
+        },
+        METHOD_AUTH_PROVIDERS_CREATE => {
+            match json_rpc_params::<AuthProviderCreateParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.create_auth_provider(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
+        METHOD_AUTH_PROVIDERS_LIST => {
+            match json_rpc_params::<AuthProviderListParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.list_auth_providers(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
+        METHOD_AUTH_PROVIDERS_READ => {
+            match json_rpc_params::<AuthProviderReadParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.read_auth_provider(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
+        METHOD_AUTH_PROVIDERS_DELETE => {
+            match json_rpc_params::<AuthProviderDeleteParams>(request.params) {
+                Ok(params) => json_rpc_outcome(id, service.delete_auth_provider(params).await),
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
+        METHOD_AUTH_GITHUB_INSTALLATIONS_LIST => {
+            match json_rpc_params::<AuthGitHubInstallationListParams>(request.params) {
+                Ok(params) => {
+                    json_rpc_outcome(id, service.list_github_installations(params).await)
+                }
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
+        METHOD_AUTH_GITHUB_INSTALLATIONS_GRANT => {
+            match json_rpc_params::<AuthGitHubInstallationGrantParams>(request.params) {
+                Ok(params) => {
+                    json_rpc_outcome(id, service.grant_github_installation(params).await)
+                }
+                Err(error) => JsonRpcResponse::failure(id, error),
+            }
+        }
         other => JsonRpcResponse::failure(id, JsonRpcError::method_not_found(other)),
     }
 }
@@ -1852,6 +3020,59 @@ mod tests {
                 }
             })
         );
+    }
+
+    #[test]
+    fn auth_grant_import_params_redact_token_in_debug_output() {
+        let params: AuthGrantImportParams = serde_json::from_value(json!({
+            "grantId": "authgrant_1",
+            "token": "super-secret-token",
+            "audience": "https://crm.example.com/mcp"
+        }))
+        .expect("deserialize import params");
+
+        let debug = format!("{params:?}");
+
+        assert!(!debug.contains("super-secret-token"), "{debug}");
+        assert!(debug.contains("<redacted>"));
+        assert_eq!(params.token, "super-secret-token");
+    }
+
+    #[test]
+    fn auth_client_create_params_redact_client_secret_in_debug_output() {
+        let params: AuthClientCreateParams = serde_json::from_value(json!({
+            "providerKind": "customOAuth",
+            "authorizationEndpoint": "https://as.example.com/authorize",
+            "tokenEndpoint": "https://as.example.com/token",
+            "remoteClientId": "client-1",
+            "clientSecret": "super-secret-client-secret"
+        }))
+        .expect("deserialize client create params");
+
+        let debug = format!("{params:?}");
+
+        assert!(!debug.contains("super-secret-client-secret"), "{debug}");
+        assert!(debug.contains("<redacted>"));
+        assert_eq!(
+            params.client_secret.as_deref(),
+            Some("super-secret-client-secret")
+        );
+    }
+
+    #[test]
+    fn auth_provider_create_params_redact_credential_in_debug_output() {
+        let params: AuthProviderCreateParams = serde_json::from_value(json!({
+            "providerId": "forge-github",
+            "config": {"type": "githubApp", "appId": "12345"},
+            "credential": "-----BEGIN RSA PRIVATE KEY-----\nsuper-secret-key"
+        }))
+        .expect("deserialize provider create params");
+
+        let debug = format!("{params:?}");
+
+        assert!(!debug.contains("super-secret-key"), "{debug}");
+        assert!(debug.contains("<redacted>"));
+        assert!(params.credential.as_deref().unwrap().contains("super-secret-key"));
     }
 
     #[test]
@@ -1952,6 +3173,33 @@ mod tests {
         assert_eq!(
             response.result.expect("result")["result"]["session"]["id"],
             json!("session_1")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_session_tools_update() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_SESSION_TOOLS_UPDATE.to_owned(),
+                params: Some(json!({
+                    "sessionId": "session_1",
+                    "expectedToolsRevision": 4,
+                    "update": {
+                        "type": "patch",
+                        "upsert": [],
+                        "remove": []
+                    }
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["session"]["activeTools"]["revision"],
+            json!(5)
         );
     }
 
@@ -2095,6 +3343,86 @@ mod tests {
         assert_eq!(
             response.result.expect("result")["result"]["skillId"],
             json!("skill:one")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_mcp_server_create() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_MCP_SERVERS_CREATE.to_owned(),
+                params: Some(json!({
+                    "serverId": "echo",
+                    "serverUrl": "https://echo.example.com/mcp",
+                    "defaultServerLabel": "echo"
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["server"]["serverId"],
+            json!("echo")
+        );
+    }
+
+    #[test]
+    fn mcp_server_create_params_default_approval_is_never() {
+        let params: McpServerCreateParams = serde_json::from_value(json!({
+            "serverId": "echo",
+            "serverUrl": "https://echo.example.com/mcp",
+            "defaultServerLabel": "echo"
+        }))
+        .expect("params");
+
+        assert_eq!(params.approval_default, RemoteMcpApprovalPolicy::Never);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_session_mcp_link() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_SESSION_MCP_LINK.to_owned(),
+                params: Some(json!({
+                    "sessionId": "session_1",
+                    "serverId": "echo",
+                    "toolId": "mcp_echo"
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["link"]["toolId"],
+            json!("mcp_echo")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_session_mcp_unlink() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_SESSION_MCP_UNLINK.to_owned(),
+                params: Some(json!({
+                    "sessionId": "session_1",
+                    "toolId": "mcp_echo"
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["toolId"],
+            json!("mcp_echo")
         );
     }
 
@@ -2435,6 +3763,7 @@ mod tests {
                 tokens: 123,
                 quality: TokenEstimateQualityView::ProviderCounted,
             }),
+            display: None,
         };
 
         let value = serde_json::to_value(item).expect("serialize provider context item");
@@ -2452,6 +3781,60 @@ mod tests {
                 "tokenEstimate": {
                     "tokens": 123,
                     "quality": "providerCounted"
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn provider_context_item_serializes_mcp_display() {
+        let item = SessionItemView::ProviderContext {
+            id: "item_43".to_owned(),
+            content_ref: "sha256:mcp".to_owned(),
+            media_type: Some("application/json".to_owned()),
+            preview: Some("OpenAI Responses MCP tool call: echo.echo".to_owned()),
+            provider_kind: Some("openai.responses.mcp_call".to_owned()),
+            provider_item_id: Some("mcp_1".to_owned()),
+            token_estimate: None,
+            display: Some(ProviderContextDisplayView {
+                summary: ToolCallDisplayView {
+                    group: ToolCallDisplayGroup::Other,
+                    verb: "MCP".to_owned(),
+                    target: Some("echo.echo".to_owned()),
+                    detail: None,
+                },
+                tool_name: "echo.echo".to_owned(),
+                status: ToolItemStatus::Succeeded,
+                is_error: false,
+                arguments: Some(r#"{"data":"simba"}"#.to_owned()),
+                output: Some("Echoing your input: simba".to_owned()),
+                error: None,
+            }),
+        };
+
+        let value = serde_json::to_value(item).expect("serialize mcp provider context item");
+
+        assert_eq!(
+            value,
+            json!({
+                "type": "providerContext",
+                "id": "item_43",
+                "contentRef": "sha256:mcp",
+                "mediaType": "application/json",
+                "preview": "OpenAI Responses MCP tool call: echo.echo",
+                "providerKind": "openai.responses.mcp_call",
+                "providerItemId": "mcp_1",
+                "display": {
+                    "summary": {
+                        "group": "other",
+                        "verb": "MCP",
+                        "target": "echo.echo"
+                    },
+                    "toolName": "echo.echo",
+                    "status": "succeeded",
+                    "isError": false,
+                    "arguments": "{\"data\":\"simba\"}",
+                    "output": "Echoing your input: simba"
                 }
             })
         );
@@ -2593,6 +3976,15 @@ mod tests {
             Ok(AgentApiOutcome::new(SessionUpdateResponse {
                 session: test_session(params.session_id, SessionStatus::Idle),
             }))
+        }
+
+        async fn update_session_tools(
+            &self,
+            params: SessionToolsUpdateParams,
+        ) -> Result<AgentApiOutcome<SessionToolsUpdateResponse>, AgentApiError> {
+            let mut session = test_session(params.session_id, SessionStatus::Idle);
+            session.active_tools.revision = params.expected_tools_revision.unwrap_or(0) + 1;
+            Ok(AgentApiOutcome::new(SessionToolsUpdateResponse { session }))
         }
 
         async fn read_session(
@@ -2913,6 +4305,298 @@ mod tests {
                 }],
             }))
         }
+
+        async fn create_mcp_server(
+            &self,
+            params: McpServerCreateParams,
+        ) -> Result<AgentApiOutcome<McpServerCreateResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(McpServerCreateResponse {
+                server: test_mcp_server(params.server_id),
+            }))
+        }
+
+        async fn list_mcp_servers(
+            &self,
+            _params: McpServerListParams,
+        ) -> Result<AgentApiOutcome<McpServerListResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(McpServerListResponse {
+                servers: vec![test_mcp_server("echo".to_owned())],
+            }))
+        }
+
+        async fn read_mcp_server(
+            &self,
+            params: McpServerReadParams,
+        ) -> Result<AgentApiOutcome<McpServerReadResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(McpServerReadResponse {
+                server: test_mcp_server(params.server_id),
+            }))
+        }
+
+        async fn delete_mcp_server(
+            &self,
+            params: McpServerDeleteParams,
+        ) -> Result<AgentApiOutcome<McpServerDeleteResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(McpServerDeleteResponse {
+                server: test_mcp_server(params.server_id),
+            }))
+        }
+
+        async fn link_session_mcp(
+            &self,
+            params: SessionMcpLinkParams,
+        ) -> Result<AgentApiOutcome<SessionMcpLinkResponse>, AgentApiError> {
+            let link = test_mcp_link(params.tool_id.unwrap_or_else(|| "mcp_echo".to_owned()));
+            Ok(AgentApiOutcome::new(SessionMcpLinkResponse {
+                link: link.clone(),
+                links: vec![link],
+                session: test_session(params.session_id, SessionStatus::Idle),
+            }))
+        }
+
+        async fn unlink_session_mcp(
+            &self,
+            params: SessionMcpUnlinkParams,
+        ) -> Result<AgentApiOutcome<SessionMcpUnlinkResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(SessionMcpUnlinkResponse {
+                tool_id: params.tool_id,
+                links: Vec::new(),
+                session: test_session(params.session_id, SessionStatus::Idle),
+            }))
+        }
+
+        async fn list_session_mcp(
+            &self,
+            _params: SessionMcpListParams,
+        ) -> Result<AgentApiOutcome<SessionMcpListResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(SessionMcpListResponse {
+                links: vec![test_mcp_link("mcp_echo".to_owned())],
+            }))
+        }
+
+        async fn import_auth_grant(
+            &self,
+            params: AuthGrantImportParams,
+        ) -> Result<AgentApiOutcome<AuthGrantImportResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(AuthGrantImportResponse {
+                grant: test_auth_grant(
+                    params.grant_id.unwrap_or_else(|| "authgrant_1".to_owned()),
+                    AuthGrantStatus::Active,
+                ),
+            }))
+        }
+
+        async fn list_auth_grants(
+            &self,
+            _params: AuthGrantListParams,
+        ) -> Result<AgentApiOutcome<AuthGrantListResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(AuthGrantListResponse {
+                grants: vec![test_auth_grant(
+                    "authgrant_1".to_owned(),
+                    AuthGrantStatus::Active,
+                )],
+            }))
+        }
+
+        async fn read_auth_grant(
+            &self,
+            params: AuthGrantReadParams,
+        ) -> Result<AgentApiOutcome<AuthGrantReadResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(AuthGrantReadResponse {
+                grant: test_auth_grant(params.grant_id, AuthGrantStatus::Active),
+            }))
+        }
+
+        async fn revoke_auth_grant(
+            &self,
+            params: AuthGrantRevokeParams,
+        ) -> Result<AgentApiOutcome<AuthGrantRevokeResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(AuthGrantRevokeResponse {
+                grant: test_auth_grant(params.grant_id, AuthGrantStatus::Revoked),
+            }))
+        }
+
+        async fn create_auth_client(
+            &self,
+            params: AuthClientCreateParams,
+        ) -> Result<AgentApiOutcome<AuthClientCreateResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(AuthClientCreateResponse {
+                client: test_auth_client(params.client_id.unwrap_or_else(|| "crm".to_owned())),
+            }))
+        }
+
+        async fn list_auth_clients(
+            &self,
+            _params: AuthClientListParams,
+        ) -> Result<AgentApiOutcome<AuthClientListResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(AuthClientListResponse {
+                clients: vec![test_auth_client("crm".to_owned())],
+            }))
+        }
+
+        async fn read_auth_client(
+            &self,
+            params: AuthClientReadParams,
+        ) -> Result<AgentApiOutcome<AuthClientReadResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(AuthClientReadResponse {
+                client: test_auth_client(params.client_id),
+            }))
+        }
+
+        async fn delete_auth_client(
+            &self,
+            params: AuthClientDeleteParams,
+        ) -> Result<AgentApiOutcome<AuthClientDeleteResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(AuthClientDeleteResponse {
+                client: test_auth_client(params.client_id),
+            }))
+        }
+
+        async fn start_auth_flow(
+            &self,
+            params: AuthFlowStartParams,
+        ) -> Result<AgentApiOutcome<AuthFlowStartResponse>, AgentApiError> {
+            let _ = params;
+            Ok(AgentApiOutcome::new(AuthFlowStartResponse {
+                flow_id: "authflow_1".to_owned(),
+                authorize_url: "https://as.example.com/authorize?state=test".to_owned(),
+                expires_at_ms: 600_000,
+            }))
+        }
+
+        async fn read_auth_flow_status(
+            &self,
+            params: AuthFlowStatusParams,
+        ) -> Result<AgentApiOutcome<AuthFlowStatusResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(AuthFlowStatusResponse {
+                flow: AuthFlowView {
+                    flow_id: params.flow_id,
+                    client_id: "crm".to_owned(),
+                    provider_id: "crm".to_owned(),
+                    status: AuthFlowStatus::Pending,
+                    grant_id: None,
+                    error: None,
+                    expires_at_ms: 600_000,
+                    created_at_ms: 1,
+                    updated_at_ms: 2,
+                },
+            }))
+        }
+
+        async fn create_auth_provider(
+            &self,
+            params: AuthProviderCreateParams,
+        ) -> Result<AgentApiOutcome<AuthProviderCreateResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(AuthProviderCreateResponse {
+                provider: test_auth_provider(
+                    params.provider_id.unwrap_or_else(|| "forge-github".to_owned()),
+                ),
+            }))
+        }
+
+        async fn list_auth_providers(
+            &self,
+            _params: AuthProviderListParams,
+        ) -> Result<AgentApiOutcome<AuthProviderListResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(AuthProviderListResponse {
+                providers: vec![test_auth_provider("forge-github".to_owned())],
+            }))
+        }
+
+        async fn read_auth_provider(
+            &self,
+            params: AuthProviderReadParams,
+        ) -> Result<AgentApiOutcome<AuthProviderReadResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(AuthProviderReadResponse {
+                provider: test_auth_provider(params.provider_id),
+            }))
+        }
+
+        async fn delete_auth_provider(
+            &self,
+            params: AuthProviderDeleteParams,
+        ) -> Result<AgentApiOutcome<AuthProviderDeleteResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(AuthProviderDeleteResponse {
+                provider: test_auth_provider(params.provider_id),
+            }))
+        }
+
+        async fn list_github_installations(
+            &self,
+            _params: AuthGitHubInstallationListParams,
+        ) -> Result<AgentApiOutcome<AuthGitHubInstallationListResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(AuthGitHubInstallationListResponse {
+                installations: vec![GitHubInstallationView {
+                    installation_id: 678,
+                    account_login: Some("acme".to_owned()),
+                    repository_selection: Some("selected".to_owned()),
+                    permissions: serde_json::json!({"contents": "read"}),
+                }],
+            }))
+        }
+
+        async fn grant_github_installation(
+            &self,
+            _params: AuthGitHubInstallationGrantParams,
+        ) -> Result<AgentApiOutcome<AuthGitHubInstallationGrantResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(AuthGitHubInstallationGrantResponse {
+                grant: test_auth_grant("authgrant_install".to_owned(), AuthGrantStatus::Active),
+            }))
+        }
+    }
+
+    fn test_auth_provider(provider_id: String) -> AuthProviderView {
+        AuthProviderView {
+            provider_id,
+            provider_kind: AuthProviderKind::GitHubApp,
+            display_name: None,
+            config: AuthProviderConfigView::GitHubApp {
+                app_id: "12345".to_owned(),
+                api_base_url: "https://api.github.com".to_owned(),
+            },
+            has_credential: true,
+            status: AuthProviderStatus::Active,
+            created_at_ms: 1,
+            updated_at_ms: 2,
+        }
+    }
+
+    fn test_auth_client(client_id: String) -> OAuthClientView {
+        OAuthClientView {
+            client_id,
+            provider_id: "crm".to_owned(),
+            provider_kind: AuthProviderKind::McpOAuth,
+            display_name: None,
+            authorization_endpoint: "https://as.example.com/authorize".to_owned(),
+            token_endpoint: "https://as.example.com/token".to_owned(),
+            remote_client_id: "client-1".to_owned(),
+            has_client_secret: false,
+            token_endpoint_auth_method: TokenEndpointAuthMethod::None,
+            scopes_default: Vec::new(),
+            audience: Some("https://crm.example.com/mcp".to_owned()),
+            created_at_ms: 1,
+            updated_at_ms: 2,
+        }
+    }
+
+    fn test_auth_grant(grant_id: String, status: AuthGrantStatus) -> AuthGrantView {
+        AuthGrantView {
+            grant_id,
+            provider_id: "static".to_owned(),
+            provider_kind: AuthProviderKind::StaticBearer,
+            principal: PrincipalRefView::default(),
+            display_name: None,
+            subject_hint: None,
+            scopes: Vec::new(),
+            audience: None,
+            has_access_token: true,
+            has_refresh_token: false,
+            expires_at_ms: None,
+            status,
+            metadata: serde_json::Value::Object(Default::default()),
+            created_at_ms: 1,
+            updated_at_ms: 2,
+        }
     }
 
     fn test_session(id: SessionId, status: SessionStatus) -> SessionView {
@@ -2926,6 +4610,7 @@ mod tests {
             updated_at_ms: 2,
             runs: Vec::new(),
             active_context: ContextView::default(),
+            active_tools: ActiveToolsView::default(),
             vfs_mounts: Vec::new(),
         }
     }
@@ -2951,6 +4636,36 @@ mod tests {
             source: SkillActivationSource::DirectContext {
                 context_ref: format!("sha256:{}", "6".repeat(64)),
             },
+        }
+    }
+
+    fn test_mcp_server(server_id: String) -> McpServerView {
+        McpServerView {
+            default_server_label: server_id.clone(),
+            server_url: format!("https://{server_id}.example.com/mcp"),
+            server_id,
+            display_name: None,
+            transport: RemoteMcpTransport::Auto,
+            description: None,
+            allowed_tools: None,
+            approval_default: RemoteMcpApprovalPolicy::ProviderDefault,
+            defer_loading_default: None,
+            auth_policy: McpServerAuthPolicy::None,
+            status: McpServerStatus::Active,
+            created_at_ms: 1,
+            updated_at_ms: 1,
+        }
+    }
+
+    fn test_mcp_link(tool_id: String) -> SessionMcpLinkView {
+        SessionMcpLinkView {
+            tool_id,
+            server_label: "echo".to_owned(),
+            server_url: "https://echo.example.com/mcp".to_owned(),
+            allowed_tools: None,
+            approval: RemoteMcpApprovalPolicy::ProviderDefault,
+            defer_loading: None,
+            auth_ref: None,
         }
     }
 }

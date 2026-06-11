@@ -28,6 +28,11 @@ services:
     restart: unless-stopped
     environment:
       PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+      # Required by the image even in desktop mode. Avoid special-use TLDs
+      # like .local; newer email validation rejects them.
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@forge.dev}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-forge}
     ports:
       - "${PGADMIN_PORT:-15080}:80"
     volumes:

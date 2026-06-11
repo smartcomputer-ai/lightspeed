@@ -222,7 +222,7 @@ impl BlobGraphStore for PgStore {
             }
             sqlx::query(
                 r#"
-                INSERT INTO session_blob_roots (
+                INSERT INTO cas_session_roots (
                     universe_id,
                     session_id,
                     digest,
@@ -234,16 +234,15 @@ impl BlobGraphStore for PgStore {
                 ON CONFLICT (universe_id, session_id, digest, root_kind) DO UPDATE
                 SET
                     first_seq = CASE
-                        WHEN session_blob_roots.first_seq IS NULL THEN EXCLUDED.first_seq
-                        WHEN EXCLUDED.first_seq IS NULL THEN session_blob_roots.first_seq
-                        ELSE LEAST(session_blob_roots.first_seq, EXCLUDED.first_seq)
+                        WHEN cas_session_roots.first_seq IS NULL THEN EXCLUDED.first_seq
+                        WHEN EXCLUDED.first_seq IS NULL THEN cas_session_roots.first_seq
+                        ELSE LEAST(cas_session_roots.first_seq, EXCLUDED.first_seq)
                     END,
                     last_seq = CASE
-                        WHEN session_blob_roots.last_seq IS NULL THEN EXCLUDED.last_seq
-                        WHEN EXCLUDED.last_seq IS NULL THEN session_blob_roots.last_seq
-                        ELSE GREATEST(session_blob_roots.last_seq, EXCLUDED.last_seq)
-                    END,
-                    modified_at = now()
+                        WHEN cas_session_roots.last_seq IS NULL THEN EXCLUDED.last_seq
+                        WHEN EXCLUDED.last_seq IS NULL THEN cas_session_roots.last_seq
+                        ELSE GREATEST(cas_session_roots.last_seq, EXCLUDED.last_seq)
+                    END
                 "#,
             )
             .bind(self.config.universe_id)

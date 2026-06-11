@@ -60,6 +60,11 @@ struct GatewayArgs {
         default_value_t = DEFAULT_MAX_REQUEST_BODY_BYTES
     )]
     max_request_body_bytes: usize,
+
+    /// Externally reachable base URL for the OAuth callback. Defaults to
+    /// http://{bind}.
+    #[arg(long, env = "FORGE_PUBLIC_BASE_URL")]
+    public_base_url: Option<String>,
 }
 
 #[derive(Clone, Debug, Args)]
@@ -82,6 +87,11 @@ struct BothArgs {
         default_value_t = DEFAULT_MAX_REQUEST_BODY_BYTES
     )]
     max_request_body_bytes: usize,
+
+    /// Externally reachable base URL for the OAuth callback. Defaults to
+    /// http://{bind}.
+    #[arg(long, env = "FORGE_PUBLIC_BASE_URL")]
+    public_base_url: Option<String>,
 }
 
 impl TemporalArgs {
@@ -116,6 +126,9 @@ impl BothArgs {
             bind,
             temporal: TemporalArgs::from_env(),
             max_request_body_bytes,
+            public_base_url: env::var("FORGE_PUBLIC_BASE_URL")
+                .ok()
+                .filter(|value| !value.is_empty()),
         })
     }
 }
@@ -133,6 +146,7 @@ async fn main() -> anyhow::Result<()> {
                 temporal_target: args.temporal.temporal_target,
                 namespace: args.temporal.namespace,
                 max_request_body_bytes: args.max_request_body_bytes,
+                public_base_url: args.public_base_url,
             })
             .await
         }
@@ -179,6 +193,11 @@ async fn run_both(args: BothArgs) -> anyhow::Result<()> {
     let api = Arc::new(
         GatewayAgentApi::builder(client, store)
             .with_task_queue(args.temporal.task_queue)
+            .with_public_base_url(
+                args.public_base_url
+                    .clone()
+                    .unwrap_or_else(|| format!("http://{}", args.bind)),
+            )
             .build(),
     );
     let app = gateway_router(api, args.max_request_body_bytes);

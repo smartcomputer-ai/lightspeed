@@ -1,16 +1,66 @@
 use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
+use engine::{ProviderApiKind, ProviderParams};
 use llm_clients::{
     ApiResponse, LlmApiError,
+    anthropic::messages::{self as am},
     openai::responses::{
         Client, CompactResponse, CompactResponseRequest, CreateResponseRequest, Response,
     },
 };
-use llm_runtime::OpenAiResponsesApi;
+use llm_runtime::{
+    AnthropicMessagesApi, AnthropicMessagesParams, OpenAiResponsesApi, OpenAiResponsesParams,
+};
 
 const MAX_LIVE_ATTEMPTS: usize = 3;
 
+#[allow(dead_code)]
+pub fn openai_params(params: &OpenAiResponsesParams) -> ProviderParams {
+    ProviderParams::new(
+        ProviderApiKind::OpenAiResponses,
+        serde_json::to_value(params).expect("serialize params"),
+    )
+}
+
+#[allow(dead_code)]
+pub fn anthropic_params(params: &AnthropicMessagesParams) -> ProviderParams {
+    ProviderParams::new(
+        ProviderApiKind::AnthropicMessages,
+        serde_json::to_value(params).expect("serialize params"),
+    )
+}
+
+#[allow(dead_code)]
+pub fn retrying_anthropic_messages_client(client: am::Client) -> Arc<dyn AnthropicMessagesApi> {
+    Arc::new(RetryingAnthropicMessagesClient { client })
+}
+
+struct RetryingAnthropicMessagesClient {
+    client: am::Client,
+}
+
+#[async_trait]
+impl AnthropicMessagesApi for RetryingAnthropicMessagesClient {
+    async fn create(
+        &self,
+        request: am::CreateMessageRequest,
+    ) -> Result<ApiResponse<am::Message>, LlmApiError> {
+        let mut attempt = 0;
+        loop {
+            match self.client.create(request.clone()).await {
+                Ok(response) => return Ok(response),
+                Err(error) if should_retry(&error, attempt) => {
+                    sleep_before_retry(&error, attempt, "anthropic:messages create");
+                    attempt += 1;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+}
+
+#[allow(dead_code)]
 pub fn retrying_openai_responses_client(client: Client) -> Arc<dyn OpenAiResponsesApi> {
     Arc::new(RetryingOpenAiResponsesClient { client })
 }
@@ -30,7 +80,7 @@ impl OpenAiResponsesApi for RetryingOpenAiResponsesClient {
             match self.client.create(request.clone()).await {
                 Ok(response) => return Ok(response),
                 Err(error) if should_retry(&error, attempt) => {
-                    sleep_before_retry(&error, attempt, "create");
+                    sleep_before_retry(&error, attempt, "openai:responses create");
                     attempt += 1;
                 }
                 Err(error) => return Err(error),
@@ -47,7 +97,7 @@ impl OpenAiResponsesApi for RetryingOpenAiResponsesClient {
             match self.client.compact(request.clone()).await {
                 Ok(response) => return Ok(response),
                 Err(error) if should_retry(&error, attempt) => {
-                    sleep_before_retry(&error, attempt, "compact");
+                    sleep_before_retry(&error, attempt, "openai:responses compact");
                     attempt += 1;
                 }
                 Err(error) => return Err(error),
@@ -69,8 +119,7 @@ fn should_retry(error: &LlmApiError, attempt: usize) -> bool {
 fn sleep_before_retry(error: &LlmApiError, attempt: usize, operation: &str) {
     let delay = retry_delay(error, attempt);
     eprintln!(
-        "retrying OpenAI Responses live {operation} after retryable error \
-         (attempt {}/{}): {error}",
+        "retrying live {operation} after retryable error (attempt {}/{}): {error}",
         attempt + 1,
         MAX_LIVE_ATTEMPTS
     );

@@ -2,10 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use engine::{
-    OpenAiResponsesRequestDefaults, ProviderApiKind, ProviderRequestDefaults, ToolChoice, ToolName,
-    ToolProfile, ToolProfileId, ToolRegistry,
-};
+use engine::{ProviderApiKind, ToolName, ToolSpec};
 
 use crate::{
     error::{ToolError, ToolResult},
@@ -13,30 +10,24 @@ use crate::{
     runtime::{ToolCatalog, ToolDocument, ToolExecutionMode, ToolSpecBundle, ToolTarget},
     web::fetch::{WebFetchToolConfig, web_fetch_tool_binding, web_fetch_tool_bundle},
     web::search::{
-        OpenAiResponsesWebSearchConfig, apply_openai_responses_web_search_defaults,
+        OpenAiResponsesWebSearchConfig, apply_openai_responses_web_search_includes,
         openai_responses_web_search_tool_bundle,
     },
 };
 
-pub const DEFAULT_TOOLSET_PROFILE_ID: &str = "default_tools";
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ToolsetConfig {
-    pub profile_id: ToolProfileId,
     pub host: HostToolsetConfig,
     pub openai_web_search: OpenAiResponsesWebSearchConfig,
     pub web_fetch: WebFetchToolConfig,
-    pub tool_choice: Option<ToolChoice>,
 }
 
 impl ToolsetConfig {
     pub fn empty() -> Self {
         Self {
-            profile_id: ToolProfileId::new(DEFAULT_TOOLSET_PROFILE_ID),
             host: HostToolsetConfig::disabled(),
             openai_web_search: OpenAiResponsesWebSearchConfig::default(),
             web_fetch: WebFetchToolConfig::default(),
-            tool_choice: None,
         }
     }
 
@@ -247,60 +238,37 @@ pub struct ToolsetEnvironment<'a> {
     pub target: &'a ToolTarget,
 }
 
+/// Provider request parameter additions required by the resolved toolset.
+///
+/// The toolset only reports the required values; applying them to a session's
+/// opaque provider params is owned by the runtime layer that knows the params
+/// schema.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct ProviderRequestDefaultsPatch {
+pub struct ProviderParamsPatch {
     openai_responses_include: Vec<String>,
 }
 
-impl ProviderRequestDefaultsPatch {
+impl ProviderParamsPatch {
     pub fn is_empty(&self) -> bool {
         self.openai_responses_include.is_empty()
     }
 
-    pub fn apply_to(&self, defaults: &mut ProviderRequestDefaults) -> ToolResult<()> {
-        if self.openai_responses_include.is_empty() {
-            return Ok(());
-        }
-
-        let defaults = match defaults {
-            ProviderRequestDefaults::OpenAiResponses(defaults) => defaults,
-            ProviderRequestDefaults::None => {
-                *defaults = ProviderRequestDefaults::OpenAiResponses(
-                    OpenAiResponsesRequestDefaults::default(),
-                );
-                let ProviderRequestDefaults::OpenAiResponses(defaults) = defaults else {
-                    unreachable!("just assigned OpenAI Responses defaults")
-                };
-                defaults
-            }
-            other => {
-                return Err(ToolError::InvalidRequest {
-                    message: format!(
-                        "OpenAI Responses tool defaults cannot apply to request defaults {other:?}"
-                    ),
-                });
-            }
-        };
-
-        for include in &self.openai_responses_include {
-            if !defaults.include.iter().any(|existing| existing == include) {
-                defaults.include.push(include.clone());
-            }
-        }
-        Ok(())
+    /// OpenAI Responses `include` values the toolset needs on generation
+    /// requests.
+    pub fn openai_responses_include(&self) -> &[String] {
+        &self.openai_responses_include
     }
 
     fn add_openai_web_search(&mut self, config: &OpenAiResponsesWebSearchConfig) {
-        let mut defaults = OpenAiResponsesRequestDefaults::default();
-        defaults.include.clear();
-        apply_openai_responses_web_search_defaults(&mut defaults, config);
-        for include in defaults.include {
+        let mut include = Vec::new();
+        apply_openai_responses_web_search_includes(&mut include, config);
+        for value in include {
             if !self
                 .openai_responses_include
                 .iter()
-                .any(|existing| existing == &include)
+                .any(|existing| existing == &value)
             {
-                self.openai_responses_include.push(include);
+                self.openai_responses_include.push(value);
             }
         }
     }
@@ -308,18 +276,17 @@ impl ProviderRequestDefaultsPatch {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResolvedToolset {
-    pub profile_id: ToolProfileId,
-    pub registry: ToolRegistry,
+    pub tools: BTreeMap<ToolName, ToolSpec>,
     pub documents: Vec<ToolDocument>,
     pub catalog: ToolCatalog,
-    pub provider_request_defaults_patch: ProviderRequestDefaultsPatch,
+    pub provider_params_patch: ProviderParamsPatch,
 }
 
 pub fn resolve_toolset(
     env: ToolsetEnvironment<'_>,
     config: &ToolsetConfig,
 ) -> ToolResult<ResolvedToolset> {
-    let mut builder = ToolsetBuilder::new(config.profile_id.clone(), config.tool_choice.clone());
+    let mut builder = ToolsetBuilder::new();
 
     if config.host.enabled() {
         builder.add_host_tools(env.target, &config.host)?;
@@ -341,7 +308,7 @@ pub fn resolve_toolset(
             })?;
         builder.add_provider_tool_bundle(bundle);
         builder
-            .provider_request_defaults_patch
+            .provider_params_patch
             .add_openai_web_search(&config.openai_web_search);
     }
 
@@ -357,27 +324,23 @@ pub fn resolve_toolset(
 }
 
 struct ToolsetBuilder {
-    profile_id: ToolProfileId,
-    tool_choice: Option<ToolChoice>,
-    registry: ToolRegistry,
+    tools: BTreeMap<ToolName, ToolSpec>,
     catalog: ToolCatalog,
     documents_by_ref: BTreeMap<engine::BlobRef, ToolDocument>,
     visible_tools: Vec<ToolName>,
     seen_tools: BTreeSet<ToolName>,
-    provider_request_defaults_patch: ProviderRequestDefaultsPatch,
+    provider_params_patch: ProviderParamsPatch,
 }
 
 impl ToolsetBuilder {
-    fn new(profile_id: ToolProfileId, tool_choice: Option<ToolChoice>) -> Self {
+    fn new() -> Self {
         Self {
-            profile_id,
-            tool_choice,
-            registry: ToolRegistry::default(),
+            tools: BTreeMap::new(),
             catalog: ToolCatalog::new(),
             documents_by_ref: BTreeMap::new(),
             visible_tools: Vec::new(),
             seen_tools: BTreeSet::new(),
-            provider_request_defaults_patch: ProviderRequestDefaultsPatch::default(),
+            provider_params_patch: ProviderParamsPatch::default(),
         }
     }
 
@@ -427,25 +390,16 @@ impl ToolsetBuilder {
                 .entry(document.blob_ref.clone())
                 .or_insert(document);
         }
-        self.registry.tools.insert(tool_name.clone(), bundle.spec);
+        self.tools.insert(tool_name.clone(), bundle.spec);
         self.visible_tools.push(tool_name);
     }
 
-    fn finish(mut self) -> ResolvedToolset {
-        self.registry.profiles.insert(
-            self.profile_id.clone(),
-            ToolProfile {
-                profile_id: self.profile_id.clone(),
-                visible_tools: self.visible_tools,
-                tool_choice: self.tool_choice,
-            },
-        );
+    fn finish(self) -> ResolvedToolset {
         ResolvedToolset {
-            profile_id: self.profile_id,
-            registry: self.registry,
+            tools: self.tools,
             documents: self.documents_by_ref.into_values().collect(),
             catalog: self.catalog,
-            provider_request_defaults_patch: self.provider_request_defaults_patch,
+            provider_params_patch: self.provider_params_patch,
         }
     }
 }
@@ -454,7 +408,7 @@ const STATIC_SCOPED_HOST_PATHS: bool = true;
 
 #[cfg(test)]
 mod tests {
-    use engine::{ProviderRequestDefaults, ToolTargetRequirement};
+    use engine::ToolTargetRequirement;
     use serde_json::{Value, json};
 
     use super::*;
@@ -467,12 +421,8 @@ mod tests {
 
     fn visible_names(toolset: &ResolvedToolset) -> Vec<String> {
         toolset
-            .registry
-            .profiles
-            .get(&toolset.profile_id)
-            .expect("profile")
-            .visible_tools
-            .iter()
+            .tools
+            .keys()
             .map(|name| name.as_str().to_owned())
             .collect()
     }
@@ -490,17 +440,17 @@ mod tests {
         assert_eq!(
             visible_names(&toolset),
             vec![
-                "read_file",
-                "write_file",
-                "edit_file",
                 "apply_patch",
-                "grep",
+                "edit_file",
                 "glob",
-                "list_dir"
+                "grep",
+                "list_dir",
+                "read_file",
+                "write_file"
             ]
         );
         assert!(toolset.catalog.get(&ToolName::new("read_file")).is_some());
-        assert!(toolset.provider_request_defaults_patch.is_empty());
+        assert!(toolset.provider_params_patch.is_empty());
     }
 
     #[test]
@@ -539,7 +489,7 @@ mod tests {
 
         assert_eq!(
             visible_names(&toolset),
-            vec!["Read", "Write", "Edit", "Grep", "Glob"]
+            vec!["Edit", "Glob", "Grep", "Read", "Write"]
         );
     }
 
@@ -573,20 +523,9 @@ mod tests {
             })
         );
 
-        let mut defaults =
-            ProviderRequestDefaults::OpenAiResponses(OpenAiResponsesRequestDefaults::default());
-        toolset
-            .provider_request_defaults_patch
-            .apply_to(&mut defaults)
-            .expect("apply defaults");
-        let ProviderRequestDefaults::OpenAiResponses(defaults) = defaults else {
-            panic!("expected OpenAI Responses defaults")
-        };
-        assert!(
-            defaults
-                .include
-                .iter()
-                .any(|include| { include == engine::OPENAI_RESPONSES_WEB_SEARCH_SOURCES_INCLUDE })
+        assert_eq!(
+            toolset.provider_params_patch.openai_responses_include(),
+            [crate::web::search::OPENAI_RESPONSES_WEB_SEARCH_SOURCES_INCLUDE.to_owned()]
         );
     }
 
@@ -619,7 +558,6 @@ mod tests {
                 .is_some()
         );
         let spec = toolset
-            .registry
             .tools
             .get(&ToolName::new(WEB_FETCH_TOOL_NAME))
             .expect("web_fetch spec");

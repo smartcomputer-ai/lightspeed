@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use engine::{
-    ApplyEvent, BlobRef, ContextCompactionRequest, ContextCompactionRequestKind,
-    ContextCompactionResult, ContextCompactionStatus, CoreAgentAction, CoreAgentCommand,
-    CoreAgentDrive, CoreAgentDriveError, CoreAgentIoError, CoreAgentLlm, CoreAgentState,
-    CoreAgentTools, CoreApplyEvent, EventSeq, LlmFinish, LlmGenerationFacts, LlmGenerationRequest,
+    ApplyEvent, BlobRef, ContextCompactionRequest, ContextCompactionResult,
+    ContextCompactionStatus, CoreAgentAction, CoreAgentCommand, CoreAgentDrive,
+    CoreAgentDriveError, CoreAgentIoError, CoreAgentLlm, CoreAgentState, CoreAgentTools,
+    CoreApplyEvent, EventSeq, LlmFinish, LlmGenerationFacts, LlmGenerationRequest,
     LlmGenerationResult, LlmGenerationStatus, SKILL_CATALOG_CONTEXT_KEY, SessionId, ToolCallStatus,
     ToolInvocationBatchRequest, ToolInvocationBatchResult, ToolInvocationResult,
     storage::{AppendSessionEvents, BlobStore, ReadSessionEvents},
@@ -159,6 +159,7 @@ impl SessionRunner {
 
     pub async fn drive_command(&self, request: DriveCommand) -> Result<DriveOutcome, RunnerError> {
         let max_steps = resolve_max_steps(request.max_steps)?;
+        engine::storage::ensure_engine_blobs(self.stores.blobs.as_ref()).await?;
         let mut drive = self.load_drive(&request.session_id).await?;
         let mut emitted_entries = Vec::new();
 
@@ -561,11 +562,7 @@ async fn failed_context_compaction_result_from_error(
 }
 
 fn compaction_request_context_revision(request: &ContextCompactionRequest) -> u64 {
-    match &request.request.kind {
-        ContextCompactionRequestKind::OpenAiResponses(openai_request) => {
-            openai_request.input_context.context_revision
-        }
-    }
+    request.request.context.context_revision
 }
 
 async fn failed_tool_batch_result(
@@ -624,11 +621,10 @@ mod tests {
         AgentHandle, CompactionPolicy, ContextCompactionRequest, ContextCompactionResult,
         ContextCompactionStatus, ContextConfig, ContextEntryInput, ContextEntryKey,
         ContextEntryKind, ContextMessageRole, CoreAgentCommand, CoreAgentEventKind,
-        FunctionToolSpec, LlmFinish, LlmRequestKind, ModelProviderOptions, ModelSelection,
-        ObservedToolCall, ProviderApiKind, ProviderRequestDefaults, RunConfig, RunStatus,
+        FunctionToolSpec, LlmFinish, ModelSelection, ObservedToolCall,
+        ProviderApiKind, RunConfig, RunStatus,
         SessionConfig, SessionId, ToolCallResult, ToolExecutionTarget, ToolKind, ToolName,
-        ToolParallelism, ToolProfile, ToolProfileId, ToolRegistry, ToolSpec, ToolTargetRequirement,
-        TurnConfig, TurnEvent,
+        ToolParallelism, ToolSpec, ToolTargetRequirement, TurnConfig, TurnEvent,
         storage::{
             BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore,
         },
@@ -994,12 +990,12 @@ mod tests {
                 api_kind: ProviderApiKind::OpenAiResponses,
                 provider_id: "openai".to_owned(),
                 model: "gpt-test".to_owned(),
-                options: ModelProviderOptions::None,
             },
             run: run_config(),
             turn: TurnConfig {
                 max_output_tokens: None,
-                provider_request_defaults: ProviderRequestDefaults::None,
+                tool_choice: None,
+                provider_params: None,
             },
             context: ContextConfig { compaction: None },
             tools: Default::default(),
@@ -1021,7 +1017,8 @@ mod tests {
             max_tool_rounds: None,
             model_override: None,
             max_output_tokens: None,
-            provider_request_defaults: None,
+            provider_params: None,
+            tool_choice: None,
         }
     }
 
@@ -1040,35 +1037,24 @@ mod tests {
         (SessionRunner::new(stores, llm), session_id)
     }
 
-    fn tool_registry() -> ToolRegistry {
+    fn tool_set() -> BTreeMap<ToolName, ToolSpec> {
         let tool_name = ToolName::new("test_tool");
-        let profile_id = ToolProfileId::new("test_profile");
-        ToolRegistry {
-            tools: BTreeMap::from([(
-                tool_name.clone(),
-                ToolSpec {
-                    name: tool_name.clone(),
-                    kind: ToolKind::Function(FunctionToolSpec {
-                        model_name: None,
-                        description_ref: None,
-                        input_schema_ref: BlobRef::from_bytes(br#"{}"#),
-                        output_schema_ref: None,
-                        strict: None,
-                        provider_options_ref: None,
-                    }),
-                    parallelism: ToolParallelism::ParallelSafe,
-                    target_requirement: ToolTargetRequirement::None,
-                },
-            )]),
-            profiles: BTreeMap::from([(
-                profile_id.clone(),
-                ToolProfile {
-                    profile_id,
-                    visible_tools: vec![tool_name],
-                    tool_choice: None,
-                },
-            )]),
-        }
+        BTreeMap::from([(
+            tool_name.clone(),
+            ToolSpec {
+                name: tool_name.clone(),
+                kind: ToolKind::Function(FunctionToolSpec {
+                    model_name: None,
+                    description_ref: None,
+                    input_schema_ref: BlobRef::from_bytes(br#"{}"#),
+                    output_schema_ref: None,
+                    strict: None,
+                    provider_options_ref: None,
+                }),
+                parallelism: ToolParallelism::ParallelSafe,
+                target_requirement: ToolTargetRequirement::None,
+            },
+        )])
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1484,8 +1470,7 @@ mod tests {
             &ToolsetConfig::workspace(),
         )
         .expect("toolset");
-        let registry = toolset.registry.clone();
-        let profile_id = toolset.profile_id.clone();
+        let tool_set = toolset.tools.clone();
         let tools = InlineHostToolRuntime::new(ctx, toolset.catalog);
         let runner = SessionRunner::new(
             stores,
@@ -1513,20 +1498,14 @@ mod tests {
             .drive_command(DriveCommand {
                 session_id: session_id.clone(),
                 observed_at_ms: 11,
-                command: CoreAgentCommand::SetToolRegistry { registry },
+                command: CoreAgentCommand::ReplaceTools {
+                    expected_revision: Some(0),
+                    tools: tool_set,
+                },
                 max_steps: None,
             })
             .await
-            .expect("set registry");
-        runner
-            .drive_command(DriveCommand {
-                session_id: session_id.clone(),
-                observed_at_ms: 12,
-                command: CoreAgentCommand::SelectToolProfile { profile_id },
-                max_steps: None,
-            })
-            .await
-            .expect("select profile");
+            .expect("replace tools");
         runner
             .drive_command(DriveCommand {
                 session_id: session_id.clone(),
@@ -1638,8 +1617,7 @@ mod tests {
             &ToolsetConfig::workspace(),
         )
         .expect("toolset");
-        let registry = toolset.registry.clone();
-        let profile_id = toolset.profile_id.clone();
+        let tool_set = toolset.tools.clone();
         let tools = InlineHostToolRuntime::new(ctx, toolset.catalog);
         let runner = SessionRunner::new(
             stores,
@@ -1667,20 +1645,14 @@ mod tests {
             .drive_command(DriveCommand {
                 session_id: session_id.clone(),
                 observed_at_ms: 11,
-                command: CoreAgentCommand::SetToolRegistry { registry },
+                command: CoreAgentCommand::ReplaceTools {
+                    expected_revision: Some(0),
+                    tools: tool_set,
+                },
                 max_steps: None,
             })
             .await
-            .expect("set registry");
-        runner
-            .drive_command(DriveCommand {
-                session_id: session_id.clone(),
-                observed_at_ms: 12,
-                command: CoreAgentCommand::SelectToolProfile { profile_id },
-                max_steps: None,
-            })
-            .await
-            .expect("select profile");
+            .expect("replace tools");
         runner
             .drive_command(DriveCommand {
                 session_id: session_id.clone(),
@@ -1840,10 +1812,7 @@ mod tests {
     }
 
     fn request_context_entries(request: &LlmGenerationRequest) -> &[engine::ContextEntry] {
-        let LlmRequestKind::OpenAiResponses(openai) = &request.request.kind else {
-            panic!("expected OpenAI Responses request");
-        };
-        &openai.input_context.entries
+        &request.request.context.entries
     }
 
     fn is_prompt_instruction_entry(entry: &engine::ContextEntry) -> bool {
@@ -1959,24 +1928,14 @@ mod tests {
             .drive_command(DriveCommand {
                 session_id: session_id.clone(),
                 observed_at_ms: 11,
-                command: CoreAgentCommand::SetToolRegistry {
-                    registry: tool_registry(),
+                command: CoreAgentCommand::ReplaceTools {
+                    expected_revision: Some(0),
+                    tools: tool_set(),
                 },
                 max_steps: None,
             })
             .await
-            .expect("set registry");
-        runner
-            .drive_command(DriveCommand {
-                session_id: session_id.clone(),
-                observed_at_ms: 12,
-                command: CoreAgentCommand::SelectToolProfile {
-                    profile_id: ToolProfileId::new("test_profile"),
-                },
-                max_steps: None,
-            })
-            .await
-            .expect("select profile");
+            .expect("replace tools");
 
         let outcome = runner
             .drive_command(DriveCommand {

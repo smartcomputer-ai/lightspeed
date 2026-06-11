@@ -32,6 +32,8 @@ cargo test -p test-support
 cargo test -p tools
 cargo test -p store-fs
 cargo test -p store-pg
+cargo test -p mcp-registry
+cargo test -p auth-registry
 cargo test -p llm-runtime
 cargo test -p llm-clients
 cargo test -p eval
@@ -47,7 +49,12 @@ cargo test -p llm-clients --test openai_responses_live -- --ignored
 cargo test -p llm-clients --test openai_completions_live -- --ignored
 cargo test -p llm-clients --test anthropic_messages_live -- --ignored
 cargo test -p llm-runtime --test openai_responses_live -- --ignored
+cargo test -p llm-runtime --test anthropic_messages_live -- --ignored
 ```
+
+Additional per-capability live suites exist for both providers under
+`crates/llm-runtime/tests/` (`*_compaction_live`, `*_mcp_live`,
+`*_prompts_live`, `*_skills_live`).
 
 CLI usage:
 
@@ -78,7 +85,14 @@ cargo run -p cli -- chat --api-url http://127.0.0.1:18080/rpc --session session_
 - `crates/tools/` — optional host filesystem/process tool package.
 - `crates/store-fs/` — filesystem-backed session log and content-addressed blob
   store adapters.
-- `crates/store-pg/` — PostgreSQL-backed session store and CAS catalog schema.
+- `crates/store-pg/` — PostgreSQL-backed session store, CAS catalog, MCP server
+  catalog, and AEAD-encrypted auth grant/secret storage.
+- `crates/mcp-registry/` — provider-independent remote MCP server catalog DTOs,
+  validation, and store traits.
+- `crates/auth-registry/` — generic auth grant/secret/provider records,
+  OAuth client and authorization-flow records, PKCE helpers, the MCP OAuth
+  and GitHub App drivers, store traits, typed broker errors, and the runtime
+  token broker with single-flight refresh and on-demand minting (P69).
 - `crates/eval/` — eval harness for agent/tool workflows.
 - `crates/llm-runtime/` — CoreAgent LLM runtime from planned requests to
   provider-native client calls.
@@ -96,6 +110,13 @@ cargo run -p cli -- chat --api-url http://127.0.0.1:18080/rpc --session session_
   Do not rebuild a fake universal LLM message model.
 - Parse only reducer facts needed for deterministic branching; keep other
   provider-native data opaque/blob-backed.
+- Keep provider request vocabulary out of `engine`. The core plans a
+  provider-neutral `LlmRequest` intent with opaque `ProviderParams`
+  (`api_kind` + versioned JSON body); typed param schemas and wire-request
+  materialization live in `llm-runtime` adapters, and admission boundaries
+  validate params before they enter the session log. Transport config
+  (base URLs, credentials, headers) stays in runtime deployment config, not
+  in `ModelSelection` or the session log.
 - Keep clients on `api`. CLIs, TUIs, editors, hosted gateways, and future
   Temporal frontends should not consume reducer internals directly.
 - Treat hosted `run/start` as an acceptance/start boundary, not a final-output
@@ -116,6 +137,8 @@ Local commands load a root `.env` file when present. The `.env` file usually exi
 | `ANTHROPIC_BASE_URL` | Override Anthropic API endpoint |
 | `FORGE_CHAT_PROVIDER` | Default chat provider ID |
 | `FORGE_CHAT_MODEL` | Default chat model |
+| `FORGE_SECRETS_MASTER_KEY` | Base64 32-byte AES key for the encrypted secret store |
+| `FORGE_PUBLIC_BASE_URL` | Externally reachable gateway base URL for the OAuth callback (defaults to `http://{bind}`) |
 
 ## Test Rules
 

@@ -1,20 +1,43 @@
 //! `api` gateway for the Temporal-backed agent workflow.
 
 mod api_config;
+mod auth_api;
 mod blobs;
 mod errors;
+mod github_api;
 mod input;
+mod mcp_api;
+mod oauth_api;
 mod parse;
 mod prompts;
 mod skills;
+mod tools_api;
 mod vfs_api;
 mod workflow;
 
 #[cfg(test)]
 use api_config::*;
+use auth_api::{
+    api_auth_provider_kind, auth_grant_import_draft, auth_grant_view, map_auth_registry_error,
+    parse_auth_grant_id, registry_auth_grant_status_for_filter,
+};
+use github_api::{
+    auth_provider_create_draft, auth_provider_view, github_installation_grant_draft,
+    github_installation_view, map_github_app_error, parse_auth_provider_id,
+};
+use oauth_api::{
+    auth_client_create_draft, auth_flow_view, cimd_config, map_mcp_oauth_error,
+    mcp_oauth_target_from_record, oauth_client_view, oauth_redirect_uri, parse_auth_flow_id,
+    parse_oauth_client_id,
+};
 use blobs::{get_blob, has_blobs, put_blob, put_blobs};
 use errors::*;
 use input::run_input_from_api;
+use mcp_api::{
+    apply_session_mcp_link, create_mcp_server_record, linked_session_mcp, map_mcp_registry_error,
+    mcp_server_view, parse_mcp_server_id, parse_mcp_tool_name, remove_session_mcp_link,
+    session_mcp_link_from_record,
+};
 use parse::*;
 use skills::{
     active_skill_catalog_ref, active_skill_ids, active_skill_ids_after_remove,
@@ -22,7 +45,7 @@ use skills::{
 };
 #[cfg(test)]
 use skills::{read_skill_doc_for_activation_from_vfs, skill_active_response, skill_list_response};
-use vfs_api::{commit_vfs_snapshot, read_vfs_snapshot, vfs_workspace_view};
+use vfs_api::{commit_vfs_snapshot, now_ms, read_vfs_snapshot, vfs_workspace_view};
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -32,29 +55,45 @@ use std::{
 };
 
 use api::{
-    AgentApiError, AgentApiErrorKind, AgentApiOutcome, AgentApiService, BlobGetParams,
+    AgentApiError, AgentApiErrorKind, AgentApiOutcome, AgentApiService, AuthClientCreateParams,
+    AuthClientCreateResponse, AuthClientDeleteParams, AuthClientDeleteResponse,
+    AuthClientListParams, AuthClientListResponse, AuthClientReadParams, AuthClientReadResponse,
+    AuthFlowStartParams, AuthFlowStartResponse, AuthFlowStatusParams, AuthFlowStatusResponse,
+    AuthGitHubInstallationGrantParams, AuthGitHubInstallationGrantResponse,
+    AuthGitHubInstallationListParams, AuthGitHubInstallationListResponse,
+    AuthProviderCreateParams, AuthProviderCreateResponse, AuthProviderDeleteParams,
+    AuthProviderDeleteResponse, AuthProviderListParams, AuthProviderListResponse,
+    AuthProviderReadParams, AuthProviderReadResponse,
+    AuthGrantImportParams,
+    AuthGrantImportResponse, AuthGrantListParams, AuthGrantListResponse, AuthGrantReadParams,
+    AuthGrantReadResponse, AuthGrantRevokeParams, AuthGrantRevokeResponse, BlobGetParams,
     BlobGetResponse, BlobHasItem, BlobHasManyParams, BlobHasManyResponse, BlobPutManyParams,
     BlobPutManyResponse, BlobPutParams, BlobPutResponse, ClientCapabilities, CompactionPolicyInput,
     ContextCompactParams, ContextCompactResponse, ContextConfigInput as ApiContextConfigInput,
     ContextConfigPatchInput, FieldPatch, GenerationConfig, GenerationConfigPatch, InitializeParams,
-    InitializeResponse, InputItem, ModelConfig, PromptInstructionView, PromptsActiveParams,
-    PromptsActiveResponse, ReasoningEffort, RunCancelParams, RunCancelResponse, RunDefaultsConfig,
-    RunDefaultsPatch, RunLimitsConfig, RunStartConfig, RunStartParams, RunStartResponse, RunView,
-    ServerCapabilities, ServerInfo, SessionCloseParams, SessionCloseResponse, SessionConfigInput,
-    SessionConfigPatchInput, SessionEventsReadParams, SessionEventsReadResponse, SessionReadParams,
-    SessionReadResponse, SessionStartParams, SessionStartResponse, SessionUpdateParams,
-    SessionUpdateResponse, SessionView, SkillActivateParams, SkillActivateResponse,
-    SkillActivationScope as ApiSkillActivationScope,
+    InitializeResponse, InputItem, McpServerCreateParams, McpServerCreateResponse,
+    McpServerDeleteParams, McpServerDeleteResponse, McpServerListParams, McpServerListResponse,
+    McpServerReadParams, McpServerReadResponse, ModelConfig, PromptInstructionView,
+    PromptsActiveParams, PromptsActiveResponse, ReasoningEffort, RunCancelParams,
+    RunCancelResponse, RunDefaultsConfig, RunDefaultsPatch, RunLimitsConfig, RunStartConfig,
+    RunStartParams, RunStartResponse, RunView, ServerCapabilities, ServerInfo, SessionCloseParams,
+    SessionCloseResponse, SessionConfigInput, SessionConfigPatchInput, SessionEventsReadParams,
+    SessionEventsReadResponse, SessionMcpLinkParams, SessionMcpLinkResponse, SessionMcpListParams,
+    SessionMcpListResponse, SessionMcpUnlinkParams, SessionMcpUnlinkResponse, SessionReadParams,
+    SessionReadResponse, SessionStartParams, SessionStartResponse, SessionToolsUpdateParams,
+    SessionToolsUpdateResponse, SessionUpdateParams, SessionUpdateResponse, SessionView,
+    SkillActivateParams, SkillActivateResponse, SkillActivationScope as ApiSkillActivationScope,
     SkillActivationSource as ApiSkillActivationSource, SkillActivationView, SkillActiveParams,
     SkillActiveResponse, SkillDeactivateParams, SkillDeactivateResponse, SkillListItem,
-    SkillListParams, SkillListResponse, ToolConfigInput, ToolConfigPatchInput,
-    VfsMountAccess as ApiVfsMountAccess, VfsMountDeleteParams, VfsMountDeleteResponse,
-    VfsMountListParams, VfsMountListResponse, VfsMountPutParams, VfsMountPutResponse,
-    VfsMountSourceInput, VfsMountSourceView, VfsMountView, VfsSnapshotCommitParams,
-    VfsSnapshotCommitResponse, VfsSnapshotReadParams, VfsSnapshotReadResponse,
-    VfsWorkspaceCreateParams, VfsWorkspaceCreateResponse, VfsWorkspaceDeleteParams,
-    VfsWorkspaceDeleteResponse, VfsWorkspaceReadParams, VfsWorkspaceReadResponse,
-    VfsWorkspaceUpdateParams, VfsWorkspaceUpdateResponse, VfsWorkspaceView,
+    SkillListParams, SkillListResponse, ToolChoiceConfig, ToolChoiceModeConfig, ToolConfigInput,
+    ToolConfigPatchInput, VfsMountAccess as ApiVfsMountAccess, VfsMountDeleteParams,
+    VfsMountDeleteResponse, VfsMountListParams, VfsMountListResponse, VfsMountPutParams,
+    VfsMountPutResponse, VfsMountSourceInput, VfsMountSourceView, VfsMountView,
+    VfsSnapshotCommitParams, VfsSnapshotCommitResponse, VfsSnapshotReadParams,
+    VfsSnapshotReadResponse, VfsWorkspaceCreateParams, VfsWorkspaceCreateResponse,
+    VfsWorkspaceDeleteParams, VfsWorkspaceDeleteResponse, VfsWorkspaceReadParams,
+    VfsWorkspaceReadResponse, VfsWorkspaceUpdateParams, VfsWorkspaceUpdateResponse,
+    VfsWorkspaceView,
 };
 use api_projection::{
     CoreAgentProjector, MAX_EVENT_PAGE_LIMIT, ProjectSession, api_kind_from_str, api_run_id,
@@ -64,16 +103,21 @@ use api_projection::{
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use engine::{
-    AnthropicMessagesRequestDefaults, BlobRef, CommandCodec, CompactionPolicy, ContextConfigPatch,
-    ContextEntry, ContextEntryInput, ContextEntryKey, ContextEntryKind, ContextMessageRole,
-    CoreAgentCommand, CoreAgentStatus, HostToolMode, ModelProviderOptions, ModelSelection,
-    OpenAiCompletionsRequestDefaults, OpenAiReasoningConfig, OpenAiResponsesRequestDefaults,
-    OptionalConfigPatch, ProviderApiKind, ProviderRequestDefaults, RunConfig, RunConfigPatch,
-    RunId, RunStatus, SKILL_ACTIVATION_PROVIDER_KIND_RUN, SKILL_ACTIVATION_PROVIDER_KIND_SESSION,
+    BlobRef, CommandCodec, CompactionPolicy, ContextConfigPatch, ContextEntry, ContextEntryInput,
+    ContextEntryKey, ContextEntryKind, ContextMessageRole, CoreAgentCommand, CoreAgentStatus,
+    HostToolMode, ModelSelection, OptionalConfigPatch, ProviderApiKind,
+    ProviderParams, RunConfig, RunConfigPatch, RunId, RunStatus,
+    SKILL_ACTIVATION_PROVIDER_KIND_RUN, SKILL_ACTIVATION_PROVIDER_KIND_SESSION,
     SKILL_CATALOG_CONTEXT_KEY, SessionConfig, SessionConfigPatch, SessionId, SkillId, SubmissionId,
-    TurnConfigPatch, skill_activation_context_key,
+    ToolChoice, ToolChoiceMode, ToolName, TurnConfigPatch, skill_activation_context_key,
     storage::{BlobStore, BlobStoreError, ReadSessionEvents, SessionStore},
 };
+use auth_registry::{
+    AuthFlowStore, AuthGrantStore, AuthProviderStore, GitHubApiClient, HttpGitHubApiClient,
+    HttpOAuthMetadataClient, HttpOAuthTokenClient, McpOAuthDriver, OAuthClientStore,
+    OAuthFlowService, OAuthMetadataClient, OAuthTokenClient, SecretStore, StartAuthFlow,
+};
+use mcp_registry::McpRegistryStore;
 use store_pg::PgStore;
 use temporalio_client::{
     Client, WorkflowHandle, WorkflowQueryOptions, WorkflowSignalOptions, WorkflowStartOptions,
@@ -110,6 +154,10 @@ use super::{
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const DEFAULT_OPERATION_TIMEOUT: Duration = Duration::from_secs(90);
 
+/// Default public base URL for the gateway-hosted OAuth callback; matches
+/// `DEFAULT_GATEWAY_BIND`. Hosted deployments must set the real public URL.
+pub const DEFAULT_PUBLIC_BASE_URL: &str = "http://127.0.0.1:18080";
+
 pub struct GatewayAgentApiBuilder {
     client: Client,
     store: Arc<PgStore>,
@@ -120,11 +168,43 @@ pub struct GatewayAgentApiBuilder {
     continue_as_new_history_threshold: Option<u32>,
     poll_interval: Duration,
     operation_timeout: Duration,
+    public_base_url: String,
+    oauth_token_client: Option<Arc<dyn OAuthTokenClient>>,
+    oauth_metadata_client: Option<Arc<dyn OAuthMetadataClient>>,
+    github_api_client: Option<Arc<dyn GitHubApiClient>>,
 }
 
 impl GatewayAgentApiBuilder {
     pub fn with_task_queue(mut self, task_queue: impl Into<String>) -> Self {
         self.task_queue = task_queue.into();
+        self
+    }
+
+    /// Externally reachable base URL of this gateway, used to build the OAuth
+    /// redirect URI (`{base}/auth/callback`).
+    pub fn with_public_base_url(mut self, public_base_url: impl Into<String>) -> Self {
+        self.public_base_url = public_base_url.into();
+        self
+    }
+
+    /// Override the OAuth token-endpoint client (tests).
+    pub fn with_oauth_token_client(mut self, token_client: Arc<dyn OAuthTokenClient>) -> Self {
+        self.oauth_token_client = Some(token_client);
+        self
+    }
+
+    /// Override the OAuth discovery/registration metadata client (tests).
+    pub fn with_oauth_metadata_client(
+        mut self,
+        metadata_client: Arc<dyn OAuthMetadataClient>,
+    ) -> Self {
+        self.oauth_metadata_client = Some(metadata_client);
+        self
+    }
+
+    /// Override the GitHub REST client (tests).
+    pub fn with_github_api_client(mut self, github_api_client: Arc<dyn GitHubApiClient>) -> Self {
+        self.github_api_client = Some(github_api_client);
         self
     }
 
@@ -159,6 +239,33 @@ impl GatewayAgentApiBuilder {
     }
 
     pub fn build(self) -> GatewayAgentApi {
+        let token_client = self.oauth_token_client.unwrap_or_else(|| {
+            Arc::new(
+                HttpOAuthTokenClient::new()
+                    .expect("construct OAuth token endpoint HTTP client"),
+            )
+        });
+        let oauth_flows = OAuthFlowService::new(
+            self.store.clone() as Arc<dyn OAuthClientStore>,
+            self.store.clone() as Arc<dyn AuthFlowStore>,
+            self.store.clone() as Arc<dyn AuthGrantStore>,
+            self.store.clone() as Arc<dyn SecretStore>,
+            token_client,
+        );
+        let metadata_client = self.oauth_metadata_client.unwrap_or_else(|| {
+            Arc::new(
+                HttpOAuthMetadataClient::new()
+                    .expect("construct OAuth metadata HTTP client"),
+            )
+        });
+        let mcp_oauth = McpOAuthDriver::new(
+            self.store.clone() as Arc<dyn OAuthClientStore>,
+            self.store.clone() as Arc<dyn SecretStore>,
+            metadata_client,
+        );
+        let github_api = self.github_api_client.unwrap_or_else(|| {
+            Arc::new(HttpGitHubApiClient::new().expect("construct GitHub REST HTTP client"))
+        });
         GatewayAgentApi {
             client: self.client,
             store: self.store,
@@ -169,6 +276,10 @@ impl GatewayAgentApiBuilder {
             continue_as_new_history_threshold: self.continue_as_new_history_threshold,
             poll_interval: self.poll_interval,
             operation_timeout: self.operation_timeout,
+            public_base_url: self.public_base_url,
+            oauth_flows,
+            mcp_oauth,
+            github_api,
             metadata: RwLock::new(BTreeMap::new()),
         }
     }
@@ -189,6 +300,10 @@ pub struct GatewayAgentApi {
     continue_as_new_history_threshold: Option<u32>,
     poll_interval: Duration,
     operation_timeout: Duration,
+    public_base_url: String,
+    oauth_flows: OAuthFlowService,
+    mcp_oauth: McpOAuthDriver,
+    github_api: Arc<dyn GitHubApiClient>,
     metadata: RwLock<BTreeMap<SessionId, GatewaySessionMetadata>>,
 }
 
@@ -204,6 +319,10 @@ impl GatewayAgentApi {
             continue_as_new_history_threshold: None,
             poll_interval: DEFAULT_POLL_INTERVAL,
             operation_timeout: DEFAULT_OPERATION_TIMEOUT,
+            public_base_url: DEFAULT_PUBLIC_BASE_URL.to_owned(),
+            oauth_token_client: None,
+            oauth_metadata_client: None,
+            github_api_client: None,
         }
     }
 
@@ -529,6 +648,54 @@ impl AgentApiService for GatewayAgentApi {
         let loaded = self.load_session_state(&session_id).await?;
         let session = self.configure_session_toolset(&session_id, &loaded).await?;
         Ok(AgentApiOutcome::new(SessionUpdateResponse { session }))
+    }
+
+    async fn update_session_tools(
+        &self,
+        params: SessionToolsUpdateParams,
+    ) -> Result<AgentApiOutcome<SessionToolsUpdateResponse>, AgentApiError> {
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let loaded = self.load_session_state(&session_id).await?;
+        self.require_open_idle_session(&session_id, &loaded, "tool update")?;
+        if let Some(expected) = params.expected_tools_revision {
+            let actual = loaded.state.tooling.revision;
+            if expected != actual {
+                return Err(AgentApiError::conflict(format!(
+                    "expected tools revision {expected}, got {actual}"
+                )));
+            }
+        }
+
+        let update = tools_api::core_tool_update_from_api(params.update)?;
+        update.validate_for(&loaded.state.tooling.tools)?;
+        if update.is_empty() {
+            return Ok(AgentApiOutcome::new(SessionToolsUpdateResponse {
+                session: self.project_session_by_id(&session_id).await?,
+            }));
+        }
+
+        let target_revision = loaded
+            .state
+            .tooling
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| AgentApiError::internal("tools revision exhausted"))?;
+        let baseline_failures = self
+            .query_status_optional(&session_id)
+            .await?
+            .map(|status| status.admission_failures.len())
+            .unwrap_or(0);
+        self.submit_core_command(
+            &session_id,
+            update.into_command(params.expected_tools_revision),
+        )
+        .await?;
+        let session = self
+            .wait_for_tool_revision(&session_id, target_revision, baseline_failures)
+            .await?;
+        Ok(AgentApiOutcome::new(SessionToolsUpdateResponse { session }))
     }
 
     async fn read_session(
@@ -1045,6 +1212,620 @@ impl AgentApiService for GatewayAgentApi {
         Ok(AgentApiOutcome::new(VfsMountListResponse {
             mounts: self.project_vfs_mounts(&session_id).await?,
         }))
+    }
+
+    async fn create_mcp_server(
+        &self,
+        params: McpServerCreateParams,
+    ) -> Result<AgentApiOutcome<McpServerCreateResponse>, AgentApiError> {
+        let record = create_mcp_server_record(params, now_ms()?)?;
+        let server = self
+            .store
+            .create_server(record)
+            .await
+            .map_err(map_mcp_registry_error)?;
+        Ok(AgentApiOutcome::new(McpServerCreateResponse {
+            server: mcp_server_view(server),
+        }))
+    }
+
+    async fn list_mcp_servers(
+        &self,
+        params: McpServerListParams,
+    ) -> Result<AgentApiOutcome<McpServerListResponse>, AgentApiError> {
+        let servers = self
+            .store
+            .list_servers(mcp_registry::ListMcpServers {
+                status: params.status.map(mcp_api::registry_status_for_filter),
+            })
+            .await
+            .map_err(map_mcp_registry_error)?
+            .into_iter()
+            .map(mcp_server_view)
+            .collect();
+        Ok(AgentApiOutcome::new(McpServerListResponse { servers }))
+    }
+
+    async fn read_mcp_server(
+        &self,
+        params: McpServerReadParams,
+    ) -> Result<AgentApiOutcome<McpServerReadResponse>, AgentApiError> {
+        let server_id = parse_mcp_server_id(params.server_id)?;
+        let server = self
+            .store
+            .read_server(&server_id)
+            .await
+            .map_err(map_mcp_registry_error)?;
+        Ok(AgentApiOutcome::new(McpServerReadResponse {
+            server: mcp_server_view(server),
+        }))
+    }
+
+    async fn delete_mcp_server(
+        &self,
+        params: McpServerDeleteParams,
+    ) -> Result<AgentApiOutcome<McpServerDeleteResponse>, AgentApiError> {
+        let server_id = parse_mcp_server_id(params.server_id)?;
+        let server = self
+            .store
+            .delete_server(&server_id)
+            .await
+            .map_err(map_mcp_registry_error)?;
+        Ok(AgentApiOutcome::new(McpServerDeleteResponse {
+            server: mcp_server_view(server),
+        }))
+    }
+
+    async fn link_session_mcp(
+        &self,
+        params: SessionMcpLinkParams,
+    ) -> Result<AgentApiOutcome<SessionMcpLinkResponse>, AgentApiError> {
+        let session_id = SessionId::try_new(params.session_id.clone()).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let server_id = parse_mcp_server_id(params.server_id.clone())?;
+        let server = self
+            .store
+            .read_server(&server_id)
+            .await
+            .map_err(map_mcp_registry_error)?;
+        let grant = match params.auth_grant_id.clone() {
+            Some(grant_id) => {
+                let grant_id = parse_auth_grant_id(grant_id)?;
+                Some(
+                    self.store
+                        .read_grant(&grant_id)
+                        .await
+                        .map_err(map_auth_registry_error)?,
+                )
+            }
+            None => None,
+        };
+        let loaded = self.load_session_state(&session_id).await?;
+        self.require_open_idle_session(&session_id, &loaded, "MCP link")?;
+
+        let draft = session_mcp_link_from_record(params, &server, grant.as_ref())?;
+        let link_tool_name = draft.tool_name.clone();
+        let patch = apply_session_mcp_link(&loaded.state.tooling.tools, draft)?;
+        let expected_tools = patch
+            .apply_to(&loaded.state.tooling.tools)
+            .map_err(|error| {
+                AgentApiError::invalid_request(format!("invalid MCP tool patch: {error}"))
+            })?;
+        let expected_tool_ids = mcp_api::linked_session_mcp_tool_ids(&expected_tools);
+        let baseline_failures = self
+            .query_status_optional(&session_id)
+            .await?
+            .map(|status| status.admission_failures.len())
+            .unwrap_or(0);
+        self.submit_core_command(
+            &session_id,
+            CoreAgentCommand::PatchTools {
+                expected_revision: Some(loaded.state.tooling.revision),
+                patch,
+            },
+        )
+        .await?;
+        let (session, links) = self
+            .wait_for_session_mcp_links(&session_id, expected_tool_ids, baseline_failures)
+            .await?;
+        let link = links
+            .iter()
+            .find(|link| link.tool_id == link_tool_name.as_str())
+            .cloned()
+            .ok_or_else(|| {
+                AgentApiError::internal(format!("linked MCP tool not visible: {link_tool_name}"))
+            })?;
+        Ok(AgentApiOutcome::new(SessionMcpLinkResponse {
+            link,
+            links,
+            session,
+        }))
+    }
+
+    async fn unlink_session_mcp(
+        &self,
+        params: SessionMcpUnlinkParams,
+    ) -> Result<AgentApiOutcome<SessionMcpUnlinkResponse>, AgentApiError> {
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let tool_name = parse_mcp_tool_name(params.tool_id)?;
+        let loaded = self.load_session_state(&session_id).await?;
+        self.require_open_idle_session(&session_id, &loaded, "MCP unlink")?;
+
+        let patch = remove_session_mcp_link(&loaded.state.tooling.tools, &tool_name)?;
+        let expected_tools = patch
+            .apply_to(&loaded.state.tooling.tools)
+            .map_err(|error| {
+                AgentApiError::invalid_request(format!("invalid MCP tool patch: {error}"))
+            })?;
+        let expected_tool_ids = mcp_api::linked_session_mcp_tool_ids(&expected_tools);
+        let baseline_failures = self
+            .query_status_optional(&session_id)
+            .await?
+            .map(|status| status.admission_failures.len())
+            .unwrap_or(0);
+        self.submit_core_command(
+            &session_id,
+            CoreAgentCommand::PatchTools {
+                expected_revision: Some(loaded.state.tooling.revision),
+                patch,
+            },
+        )
+        .await?;
+        let (session, links) = self
+            .wait_for_session_mcp_links(&session_id, expected_tool_ids, baseline_failures)
+            .await?;
+        Ok(AgentApiOutcome::new(SessionMcpUnlinkResponse {
+            tool_id: tool_name.as_str().to_owned(),
+            links,
+            session,
+        }))
+    }
+
+    async fn list_session_mcp(
+        &self,
+        params: SessionMcpListParams,
+    ) -> Result<AgentApiOutcome<SessionMcpListResponse>, AgentApiError> {
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let loaded = self.load_session_state(&session_id).await?;
+        Ok(AgentApiOutcome::new(SessionMcpListResponse {
+            links: linked_session_mcp(&loaded.state.tooling.tools),
+        }))
+    }
+
+    async fn import_auth_grant(
+        &self,
+        params: AuthGrantImportParams,
+    ) -> Result<AgentApiOutcome<AuthGrantImportResponse>, AgentApiError> {
+        let draft = auth_grant_import_draft(params, now_ms()?)?;
+        self.store
+            .put_secret(draft.secret.clone())
+            .await
+            .map_err(map_auth_registry_error)?;
+        match self.store.create_grant(draft.grant).await {
+            Ok(record) => Ok(AgentApiOutcome::new(AuthGrantImportResponse {
+                grant: auth_grant_view(record),
+            })),
+            Err(error) => {
+                // The secret is orphaned without its grant; clean up best-effort
+                // so a failed import does not leave sealed values behind.
+                let _ = self.store.delete_secret(&draft.secret.secret_id).await;
+                Err(map_auth_registry_error(error))
+            }
+        }
+    }
+
+    async fn list_auth_grants(
+        &self,
+        params: AuthGrantListParams,
+    ) -> Result<AgentApiOutcome<AuthGrantListResponse>, AgentApiError> {
+        let grants = self
+            .store
+            .list_grants(auth_registry::ListAuthGrants {
+                status: params.status.map(registry_auth_grant_status_for_filter),
+            })
+            .await
+            .map_err(map_auth_registry_error)?;
+        Ok(AgentApiOutcome::new(AuthGrantListResponse {
+            grants: grants.into_iter().map(auth_grant_view).collect(),
+        }))
+    }
+
+    async fn read_auth_grant(
+        &self,
+        params: AuthGrantReadParams,
+    ) -> Result<AgentApiOutcome<AuthGrantReadResponse>, AgentApiError> {
+        let grant_id = parse_auth_grant_id(params.grant_id)?;
+        let record = self
+            .store
+            .read_grant(&grant_id)
+            .await
+            .map_err(map_auth_registry_error)?;
+        Ok(AgentApiOutcome::new(AuthGrantReadResponse {
+            grant: auth_grant_view(record),
+        }))
+    }
+
+    async fn revoke_auth_grant(
+        &self,
+        params: AuthGrantRevokeParams,
+    ) -> Result<AgentApiOutcome<AuthGrantRevokeResponse>, AgentApiError> {
+        let grant_id = parse_auth_grant_id(params.grant_id)?;
+        let record = self
+            .store
+            .update_grant_status(&grant_id, auth_registry::AuthGrantStatus::Revoked, now_ms()?)
+            .await
+            .map_err(map_auth_registry_error)?;
+        Ok(AgentApiOutcome::new(AuthGrantRevokeResponse {
+            grant: auth_grant_view(record),
+        }))
+    }
+
+    async fn create_auth_client(
+        &self,
+        params: AuthClientCreateParams,
+    ) -> Result<AgentApiOutcome<AuthClientCreateResponse>, AgentApiError> {
+        let draft = auth_client_create_draft(params, now_ms()?)?;
+        if let Some(secret) = &draft.secret {
+            self.store
+                .put_secret(secret.clone())
+                .await
+                .map_err(map_auth_registry_error)?;
+        }
+        match self.store.create_oauth_client(draft.client).await {
+            Ok(record) => Ok(AgentApiOutcome::new(AuthClientCreateResponse {
+                client: oauth_client_view(record),
+            })),
+            Err(error) => {
+                // The secret is orphaned without its client; clean up
+                // best-effort and surface the original failure.
+                if let Some(secret) = &draft.secret {
+                    let _ = self.store.delete_secret(&secret.secret_id).await;
+                }
+                Err(map_auth_registry_error(error))
+            }
+        }
+    }
+
+    async fn list_auth_clients(
+        &self,
+        _params: AuthClientListParams,
+    ) -> Result<AgentApiOutcome<AuthClientListResponse>, AgentApiError> {
+        let clients = self
+            .store
+            .list_oauth_clients()
+            .await
+            .map_err(map_auth_registry_error)?;
+        Ok(AgentApiOutcome::new(AuthClientListResponse {
+            clients: clients.into_iter().map(oauth_client_view).collect(),
+        }))
+    }
+
+    async fn read_auth_client(
+        &self,
+        params: AuthClientReadParams,
+    ) -> Result<AgentApiOutcome<AuthClientReadResponse>, AgentApiError> {
+        let client_id = parse_oauth_client_id(params.client_id)?;
+        let record = self
+            .store
+            .read_oauth_client(&client_id)
+            .await
+            .map_err(map_auth_registry_error)?;
+        Ok(AgentApiOutcome::new(AuthClientReadResponse {
+            client: oauth_client_view(record),
+        }))
+    }
+
+    async fn delete_auth_client(
+        &self,
+        params: AuthClientDeleteParams,
+    ) -> Result<AgentApiOutcome<AuthClientDeleteResponse>, AgentApiError> {
+        let client_id = parse_oauth_client_id(params.client_id)?;
+        let record = self
+            .store
+            .delete_oauth_client(&client_id)
+            .await
+            .map_err(map_auth_registry_error)?;
+        // The stored client secret is unreachable without its client.
+        if let Some(secret_id) = &record.client_secret {
+            let _ = self.store.delete_secret(secret_id).await;
+        }
+        Ok(AgentApiOutcome::new(AuthClientDeleteResponse {
+            client: oauth_client_view(record),
+        }))
+    }
+
+    async fn start_auth_flow(
+        &self,
+        params: AuthFlowStartParams,
+    ) -> Result<AgentApiOutcome<AuthFlowStartResponse>, AgentApiError> {
+        // `mcp:<server_id>` lazily discovers and registers the OAuth client
+        // for a catalogued MCP server before starting the flow.
+        let client_id = match params.client_id.strip_prefix("mcp:") {
+            Some(server_id) => self.ensure_mcp_oauth_client(server_id).await?,
+            None => parse_oauth_client_id(params.client_id)?,
+        };
+        let started = self
+            .oauth_flows
+            .start_flow(StartAuthFlow {
+                client_id,
+                redirect_uri: oauth_redirect_uri(&self.public_base_url),
+                scopes: params.scopes,
+                audience: params.audience,
+                principal: auth_registry::PrincipalRef::universe_default(),
+            })
+            .await
+            .map_err(map_auth_registry_error)?;
+        Ok(AgentApiOutcome::new(AuthFlowStartResponse {
+            flow_id: started.flow.flow_id.as_str().to_owned(),
+            authorize_url: started.authorize_url,
+            expires_at_ms: started.flow.expires_at_ms,
+        }))
+    }
+
+    async fn read_auth_flow_status(
+        &self,
+        params: AuthFlowStatusParams,
+    ) -> Result<AgentApiOutcome<AuthFlowStatusResponse>, AgentApiError> {
+        let flow_id = parse_auth_flow_id(params.flow_id)?;
+        let record = self
+            .oauth_flows
+            .read_flow(&flow_id)
+            .await
+            .map_err(map_auth_registry_error)?;
+        Ok(AgentApiOutcome::new(AuthFlowStatusResponse {
+            flow: auth_flow_view(record, self.oauth_flows.now_ms()),
+        }))
+    }
+
+    async fn create_auth_provider(
+        &self,
+        params: AuthProviderCreateParams,
+    ) -> Result<AgentApiOutcome<AuthProviderCreateResponse>, AgentApiError> {
+        let draft = auth_provider_create_draft(params, now_ms()?)?;
+        // The secret must exist before the provider row: auth_providers
+        // carries a foreign key into auth_secrets.
+        if let Some(secret) = &draft.secret {
+            self.store
+                .put_secret(secret.clone())
+                .await
+                .map_err(map_auth_registry_error)?;
+        }
+        match self.store.create_auth_provider(draft.provider).await {
+            Ok(record) => Ok(AgentApiOutcome::new(AuthProviderCreateResponse {
+                provider: auth_provider_view(record),
+            })),
+            Err(error) => {
+                if let Some(secret) = &draft.secret {
+                    let _ = self.store.delete_secret(&secret.secret_id).await;
+                }
+                Err(map_auth_registry_error(error))
+            }
+        }
+    }
+
+    async fn list_auth_providers(
+        &self,
+        _params: AuthProviderListParams,
+    ) -> Result<AgentApiOutcome<AuthProviderListResponse>, AgentApiError> {
+        let providers = self
+            .store
+            .list_auth_providers()
+            .await
+            .map_err(map_auth_registry_error)?;
+        Ok(AgentApiOutcome::new(AuthProviderListResponse {
+            providers: providers.into_iter().map(auth_provider_view).collect(),
+        }))
+    }
+
+    async fn read_auth_provider(
+        &self,
+        params: AuthProviderReadParams,
+    ) -> Result<AgentApiOutcome<AuthProviderReadResponse>, AgentApiError> {
+        let provider_id = parse_auth_provider_id(params.provider_id)?;
+        let record = self
+            .store
+            .read_auth_provider(&provider_id)
+            .await
+            .map_err(map_auth_registry_error)?;
+        Ok(AgentApiOutcome::new(AuthProviderReadResponse {
+            provider: auth_provider_view(record),
+        }))
+    }
+
+    async fn delete_auth_provider(
+        &self,
+        params: AuthProviderDeleteParams,
+    ) -> Result<AgentApiOutcome<AuthProviderDeleteResponse>, AgentApiError> {
+        let provider_id = parse_auth_provider_id(params.provider_id)?;
+        // The provider row must go first: its foreign key prevents deleting
+        // the credential secret while the provider references it.
+        let record = self
+            .store
+            .delete_auth_provider(&provider_id)
+            .await
+            .map_err(map_auth_registry_error)?;
+        if let Some(secret_id) = &record.credential_secret {
+            let _ = self.store.delete_secret(secret_id).await;
+        }
+        Ok(AgentApiOutcome::new(AuthProviderDeleteResponse {
+            provider: auth_provider_view(record),
+        }))
+    }
+
+    async fn list_github_installations(
+        &self,
+        params: AuthGitHubInstallationListParams,
+    ) -> Result<AgentApiOutcome<AuthGitHubInstallationListResponse>, AgentApiError> {
+        let (provider, app_jwt) = self.github_provider_jwt(params.provider_id).await?;
+        let auth_registry::AuthProviderConfig::GitHubApp(config) = &provider.config;
+        let installations = self
+            .github_api
+            .list_installations(&config.api_base_url, &app_jwt)
+            .await
+            .map_err(map_github_app_error)?;
+        Ok(AgentApiOutcome::new(AuthGitHubInstallationListResponse {
+            installations: installations
+                .iter()
+                .map(github_installation_view)
+                .collect(),
+        }))
+    }
+
+    async fn grant_github_installation(
+        &self,
+        params: AuthGitHubInstallationGrantParams,
+    ) -> Result<AgentApiOutcome<AuthGitHubInstallationGrantResponse>, AgentApiError> {
+        let (provider, app_jwt) = self.github_provider_jwt(params.provider_id).await?;
+        let auth_registry::AuthProviderConfig::GitHubApp(config) = &provider.config;
+        // Verify the installation exists live before recording the grant;
+        // this also captures its account/permission metadata.
+        let installations = self
+            .github_api
+            .list_installations(&config.api_base_url, &app_jwt)
+            .await
+            .map_err(map_github_app_error)?;
+        let Some(installation) = installations
+            .iter()
+            .find(|installation| installation.installation_id == params.installation_id)
+        else {
+            return Err(AgentApiError::not_found(format!(
+                "github app installation {} not found for provider {}",
+                params.installation_id, provider.provider_id
+            )));
+        };
+        let draft = github_installation_grant_draft(
+            &provider,
+            installation,
+            params.grant_id,
+            params.display_name,
+            now_ms()?,
+        )?;
+        let record = self
+            .store
+            .create_grant(draft)
+            .await
+            .map_err(map_auth_registry_error)?;
+        Ok(AgentApiOutcome::new(AuthGitHubInstallationGrantResponse {
+            grant: auth_grant_view(record),
+        }))
+    }
+}
+
+/// Result of an authorization callback, consumed by the HTTP handler to
+/// render a user-facing page. Never carries token material.
+#[derive(Debug)]
+pub enum OAuthCallbackOutcome {
+    /// The flow completed and minted a grant.
+    Completed { grant_id: String },
+    /// The flow terminated without a grant (denial or failed exchange).
+    Failed { message: String },
+    /// The callback could not be matched to a live flow (unknown state,
+    /// replay, or expiry).
+    Rejected { message: String },
+}
+
+impl GatewayAgentApi {
+    /// Lazily discover and register the OAuth client for an OAuth-protected
+    /// MCP server (P69 G4): protected resource metadata, authorization
+    /// server metadata, then CIMD or dynamic client registration. Existing
+    /// `mcp:<server_id>` client records are reused without network traffic.
+    async fn ensure_mcp_oauth_client(
+        &self,
+        server_id: &str,
+    ) -> Result<auth_registry::OAuthClientId, AgentApiError> {
+        // A manually registered `mcp:<server_id>` client always wins: reuse
+        // it without touching the catalog or the network, so login works
+        // even when the catalog record is named differently or absent.
+        let client_id =
+            auth_registry::mcp_oauth_client_id(server_id).map_err(map_auth_registry_error)?;
+        match self.store.read_oauth_client(&client_id).await {
+            Ok(existing) => return Ok(existing.client_id),
+            Err(auth_registry::AuthRegistryError::ClientNotFound { .. }) => {}
+            Err(error) => return Err(map_auth_registry_error(error)),
+        }
+
+        let server_id = parse_mcp_server_id(server_id.to_owned())?;
+        let record = self
+            .store
+            .read_server(&server_id)
+            .await
+            .map_err(map_mcp_registry_error)?;
+        let target = mcp_oauth_target_from_record(&record)?;
+        let redirect_uri = oauth_redirect_uri(&self.public_base_url);
+        let cimd = cimd_config(&self.public_base_url);
+        let client = self
+            .mcp_oauth
+            .ensure_client(&target, &redirect_uri, cimd.as_ref())
+            .await
+            .map_err(map_mcp_oauth_error)?;
+        Ok(client.client_id)
+    }
+
+    /// The Client ID Metadata Document served at
+    /// `/auth/client-metadata.json` for authorization servers that support
+    /// CIMD client ids.
+    pub fn cimd_document(&self) -> serde_json::Value {
+        oauth_api::cimd_document(&self.public_base_url)
+    }
+
+    /// Load a GitHub App provider and sign its app JWT for control-plane
+    /// calls (installation listing/verification). The JWT and the key only
+    /// exist in memory inside [`auth_registry::SecretValue`] wrappers.
+    async fn github_provider_jwt(
+        &self,
+        provider_id: String,
+    ) -> Result<(auth_registry::AuthProviderRecord, auth_registry::SecretValue), AgentApiError>
+    {
+        let provider_id = parse_auth_provider_id(provider_id)?;
+        let provider = self
+            .store
+            .read_auth_provider(&provider_id)
+            .await
+            .map_err(map_auth_registry_error)?;
+        let auth_registry::AuthProviderConfig::GitHubApp(config) = &provider.config;
+        let Some(credential_secret) = &provider.credential_secret else {
+            return Err(AgentApiError::rejected(format!(
+                "auth provider {provider_id} has no private key credential"
+            )));
+        };
+        let (_, private_key) = self
+            .store
+            .read_secret(credential_secret)
+            .await
+            .map_err(map_auth_registry_error)?;
+        let app_jwt = auth_registry::sign_github_app_jwt(&config.app_id, &private_key, now_ms()?)
+            .map_err(map_github_app_error)?;
+        Ok((provider, app_jwt))
+    }
+
+    /// Handle the OAuth redirect: consume the flow, exchange the code, and
+    /// store the resulting grant. Called by the gateway's HTTP callback
+    /// route, not via JSON-RPC.
+    pub async fn complete_oauth_callback(
+        &self,
+        callback: auth_registry::AuthCallback,
+    ) -> OAuthCallbackOutcome {
+        match self.oauth_flows.complete_callback(callback).await {
+            Ok(record) => match (&record.grant_id, &record.error) {
+                (Some(grant_id), _) => OAuthCallbackOutcome::Completed {
+                    grant_id: grant_id.as_str().to_owned(),
+                },
+                (None, Some(error)) => OAuthCallbackOutcome::Failed {
+                    message: error.clone(),
+                },
+                (None, None) => OAuthCallbackOutcome::Failed {
+                    message: "authorization flow ended without an outcome".to_owned(),
+                },
+            },
+            Err(error) => OAuthCallbackOutcome::Rejected {
+                message: map_auth_registry_error(error).message,
+            },
+        }
     }
 }
 #[cfg(test)]

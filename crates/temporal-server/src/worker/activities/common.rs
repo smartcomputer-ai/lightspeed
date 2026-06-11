@@ -1,5 +1,5 @@
 use engine::{
-    BlobRef, ContextCompactionRequest, ContextCompactionRequestKind, ContextCompactionResult,
+    BlobRef, ContextCompactionRequest, ContextCompactionResult,
     ContextCompactionStatus, CoreAgentIoError, LlmFinish, LlmGenerationFacts, LlmGenerationRequest,
     LlmGenerationResult, LlmGenerationStatus, ToolCallStatus, ToolInvocationBatchRequest,
     ToolInvocationBatchResult, ToolInvocationResult,
@@ -64,11 +64,7 @@ pub(super) async fn failed_context_compaction_result_from_error(
 }
 
 fn compaction_request_context_revision(request: &ContextCompactionRequest) -> u64 {
-    match &request.request.kind {
-        ContextCompactionRequestKind::OpenAiResponses(openai_request) => {
-            openai_request.input_context.context_revision
-        }
-    }
+    request.request.context.context_revision
 }
 
 pub(super) async fn failed_tool_batch_result(

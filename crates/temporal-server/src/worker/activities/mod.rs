@@ -50,13 +50,12 @@ impl WorkerActivities {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, sync::Arc};
+    use std::sync::Arc;
 
     use engine::{
         ContextSnapshot, CoreAgentLlm, CoreAgentTools, LlmGenerationRequest, LlmRequest,
-        LlmRequestKind, ModelProviderOptions, ModelSelection, OpenAiResponsesRequest,
-        ProviderApiKind, RunId, SessionId, ToolBatchId, ToolCallStatus, ToolInvocationBatchRequest,
-        ToolInvocationRequest, TurnId,
+        ModelSelection, ProviderApiKind, RunId, SessionId, ToolBatchId,
+        ToolCallStatus, ToolInvocationBatchRequest, ToolInvocationRequest, TurnId,
         storage::{BlobStore, InMemoryBlobStore, InMemorySessionStore, SessionStore},
     };
 
@@ -157,34 +156,34 @@ mod tests {
                     api_kind: ProviderApiKind::OpenAiResponses,
                     provider_id: "fake".to_owned(),
                     model: "fake-agent".to_owned(),
-                    options: ModelProviderOptions::None,
                 },
                 request_fingerprint: "fake-agent-test".to_owned(),
-                kind: LlmRequestKind::OpenAiResponses(OpenAiResponsesRequest {
-                    input_context: ContextSnapshot {
-                        api_kind: ProviderApiKind::OpenAiResponses,
-                        context_revision: 0,
-                        entries: Vec::new(),
-                        token_estimate: None,
-                    },
-                    previous_response_id: None,
-                    tools: Vec::new(),
-                    tool_choice: None,
-                    reasoning: None,
-                    text: None,
-                    include: Vec::new(),
-                    max_output_tokens: None,
-                    max_tool_calls: None,
-                    temperature: None,
-                    top_p: None,
-                    metadata: BTreeMap::new(),
-                    parallel_tool_calls: None,
-                    store: None,
-                    stream: None,
-                    truncation: None,
-                    context_management: None,
-                    extra: BTreeMap::new(),
-                }),
+                context: ContextSnapshot {
+                    api_kind: ProviderApiKind::OpenAiResponses,
+                    context_revision: 0,
+                    entries: Vec::new(),
+                    token_estimate: None,
+                },
+                tools: vec![engine::ToolSpec {
+                    name: engine::ToolName::new(FAKE_TOOL_NAME),
+                    kind: engine::ToolKind::Function(engine::FunctionToolSpec {
+                        model_name: None,
+                        description_ref: None,
+                        input_schema_ref: engine::BlobRef::from_bytes(
+                            br#"{"type":"object","properties":{"text":{"type":"string"}}}"#,
+                        ),
+                        output_schema_ref: None,
+                        strict: Some(true),
+                        provider_options_ref: None,
+                    }),
+                    parallelism: engine::ToolParallelism::ParallelSafe,
+                    target_requirement: engine::ToolTargetRequirement::None,
+                }],
+                tool_choice: None,
+                output_limit: None,
+                provider_response_id: None,
+                compaction: None,
+                params: None,
             },
         }
     }

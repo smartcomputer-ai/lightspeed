@@ -1,19 +1,22 @@
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use engine::{
-    BlobRef, ContextEntry, ContextEntryId, ContextEntryKind, ContextEntrySource,
+    BlobRef, CompactionPolicy, ContextEntry, ContextEntryId, ContextEntryKind, ContextEntrySource,
     ContextMessageRole, ContextSnapshot, LlmFinish, LlmGenerationRequest, LlmGenerationStatus,
-    LlmRequest, LlmRequestKind, ModelProviderOptions, ModelSelection,
-    OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND,
-    OPENAI_RESPONSES_REASONING_ENCRYPTED_CONTENT_INCLUDE,
-    OPENAI_RESPONSES_WEB_SEARCH_CALL_PROVIDER_KIND, OPENAI_RESPONSES_WEB_SEARCH_SOURCES_INCLUDE,
-    OpenAiResponsesRequest, OpenAiResponsesToolChoice, ProviderApiKind, RunId, SessionId, TurnId,
+    LlmRequest, ModelSelection, OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND,
+    OPENAI_RESPONSES_WEB_SEARCH_CALL_PROVIDER_KIND, ProviderApiKind, ProviderParams, RunId,
+    SessionId, ToolChoice, ToolChoiceMode, TurnId,
     storage::{BlobStore, InMemoryBlobStore},
 };
 use llm_clients::openai::responses::{Client, Config};
-use llm_runtime::{LlmGenerationAdapter, OpenAiResponsesLlmAdapter};
+use llm_runtime::{
+    LlmGenerationAdapter, OpenAiResponsesLlmAdapter, OpenAiResponsesParams,
+    params::{
+        OPENAI_RESPONSES_REASONING_ENCRYPTED_CONTENT_INCLUDE,
+        OPENAI_RESPONSES_WEB_SEARCH_SOURCES_INCLUDE,
+    },
+};
 use serde_json::{Value, json};
 use tools::web::search::{
     OpenAiResponsesWebSearchConfig, WebSearchContextSize, WebSearchMode,
@@ -107,6 +110,13 @@ async fn text_blob(blobs: &InMemoryBlobStore, text: &str) -> BlobRef {
     blobs.insert_text(text).await
 }
 
+fn openai_params(params: &OpenAiResponsesParams) -> ProviderParams {
+    ProviderParams::new(
+        ProviderApiKind::OpenAiResponses,
+        serde_json::to_value(params).expect("serialize params"),
+    )
+}
+
 async fn store_tool_documents(
     blobs: &InMemoryBlobStore,
     documents: &[tools::runtime::ToolDocument],
@@ -155,34 +165,24 @@ async fn openai_responses_live_adapter_generates_result() {
                 api_kind: ProviderApiKind::OpenAiResponses,
                 provider_id: "openai".to_string(),
                 model: live_model(),
-                options: ModelProviderOptions::None,
             },
             request_fingerprint: "live-openai-responses".to_string(),
-            kind: LlmRequestKind::OpenAiResponses(OpenAiResponsesRequest {
-                input_context: ContextSnapshot {
-                    api_kind: ProviderApiKind::OpenAiResponses,
-                    context_revision: 0,
-                    entries: vec![context_entry],
-                    token_estimate: None,
-                },
-                previous_response_id: None,
-                tools: Vec::new(),
-                tool_choice: None,
-                reasoning: None,
-                text: None,
-                include: Vec::new(),
-                max_output_tokens: Some(512),
-                max_tool_calls: None,
-                temperature: None,
-                top_p: None,
-                metadata: BTreeMap::new(),
-                parallel_tool_calls: None,
+            context: ContextSnapshot {
+                api_kind: ProviderApiKind::OpenAiResponses,
+                context_revision: 0,
+                entries: vec![context_entry],
+                token_estimate: None,
+            },
+            tools: Vec::new(),
+            tool_choice: None,
+            output_limit: Some(512),
+            provider_response_id: None,
+            compaction: None,
+            params: Some(openai_params(&OpenAiResponsesParams {
                 store: Some(false),
                 stream: Some(false),
-                truncation: None,
-                context_management: None,
-                extra: BTreeMap::new(),
-            }),
+                ..OpenAiResponsesParams::default()
+            })),
         },
     };
 
@@ -288,39 +288,27 @@ async fn openai_responses_live_adapter_captures_provider_triggered_compaction() 
                 api_kind: ProviderApiKind::OpenAiResponses,
                 provider_id: "openai".to_string(),
                 model: live_compaction_model(),
-                options: ModelProviderOptions::None,
             },
             request_fingerprint: "live-openai-responses-compaction".to_string(),
-            kind: LlmRequestKind::OpenAiResponses(OpenAiResponsesRequest {
-                input_context: ContextSnapshot {
-                    api_kind: ProviderApiKind::OpenAiResponses,
-                    context_revision: 0,
-                    entries: vec![context_entry],
-                    token_estimate: None,
-                },
-                previous_response_id: None,
-                tools: Vec::new(),
-                tool_choice: None,
-                reasoning: None,
-                text: None,
+            context: ContextSnapshot {
+                api_kind: ProviderApiKind::OpenAiResponses,
+                context_revision: 0,
+                entries: vec![context_entry],
+                token_estimate: None,
+            },
+            tools: Vec::new(),
+            tool_choice: None,
+            output_limit: Some(512),
+            provider_response_id: None,
+            compaction: Some(CompactionPolicy::ProviderTriggered {
+                compact_threshold_tokens: Some(2000),
+            }),
+            params: Some(openai_params(&OpenAiResponsesParams {
                 include: vec![OPENAI_RESPONSES_REASONING_ENCRYPTED_CONTENT_INCLUDE.to_string()],
-                max_output_tokens: Some(512),
-                max_tool_calls: None,
-                temperature: None,
-                top_p: None,
-                metadata: BTreeMap::new(),
-                parallel_tool_calls: None,
                 store: Some(false),
                 stream: Some(false),
-                truncation: None,
-                context_management: Some(json!([
-                    {
-                        "type": "compaction",
-                        "compact_threshold": 2000
-                    }
-                ])),
-                extra: BTreeMap::new(),
-            }),
+                ..OpenAiResponsesParams::default()
+            })),
         },
     };
 
@@ -397,34 +385,28 @@ async fn openai_responses_live_adapter_captures_web_search_call() {
                 api_kind: ProviderApiKind::OpenAiResponses,
                 provider_id: "openai".to_string(),
                 model: live_web_search_model(),
-                options: ModelProviderOptions::None,
             },
             request_fingerprint: "live-openai-responses-web-search".to_string(),
-            kind: LlmRequestKind::OpenAiResponses(OpenAiResponsesRequest {
-                input_context: ContextSnapshot {
-                    api_kind: ProviderApiKind::OpenAiResponses,
-                    context_revision: 0,
-                    entries: vec![context_entry],
-                    token_estimate: None,
-                },
-                previous_response_id: None,
-                tools: vec![bundle.spec],
-                tool_choice: Some(OpenAiResponsesToolChoice::Required),
-                reasoning: None,
-                text: None,
+            context: ContextSnapshot {
+                api_kind: ProviderApiKind::OpenAiResponses,
+                context_revision: 0,
+                entries: vec![context_entry],
+                token_estimate: None,
+            },
+            tools: vec![bundle.spec],
+            tool_choice: Some(ToolChoice {
+                mode: ToolChoiceMode::RequiredAny,
+                disable_parallel_tool_use: None,
+            }),
+            output_limit: Some(1024),
+            provider_response_id: None,
+            compaction: None,
+            params: Some(openai_params(&OpenAiResponsesParams {
                 include: vec![OPENAI_RESPONSES_WEB_SEARCH_SOURCES_INCLUDE.to_string()],
-                max_output_tokens: Some(1024),
-                max_tool_calls: None,
-                temperature: None,
-                top_p: None,
-                metadata: BTreeMap::new(),
-                parallel_tool_calls: None,
                 store: Some(false),
                 stream: Some(false),
-                truncation: None,
-                context_management: None,
-                extra: BTreeMap::new(),
-            }),
+                ..OpenAiResponsesParams::default()
+            })),
         },
     };
 

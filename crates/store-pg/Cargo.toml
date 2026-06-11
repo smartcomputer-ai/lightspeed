@@ -4,9 +4,15 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+aes-gcm = "0.10"
+auth-registry = { path = "../auth-registry" }
+base64 = "0.22"
 engine = { path = "../engine" }
 async-trait = "0.1"
+mcp-registry = { path = "../mcp-registry" }
 object_store = { version = "0.13.1", features = ["aws"] }
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "uuid", "json"] }
 thiserror = "1"
@@ -14,4 +20,4 @@ uuid = { version = "1", features = ["v4"] }
 vfs = { path = "../vfs" }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt", "sync"] }
+tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }

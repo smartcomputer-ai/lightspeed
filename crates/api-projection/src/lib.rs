@@ -7,14 +7,16 @@
 use std::collections::BTreeMap;
 
 use api::{
-    AgentApiError, CompactionPolicyInput, ContextConfigInput, ContextEntryInputView,
-    ContextEntryKindView, ContextMessageRoleView, ContextView, EventCursor, EventJoinsView,
-    GenerationConfig, HostToolMode as ApiHostToolMode, InputItem, ModelConfig, ReasoningEffort,
+    ActiveToolsView, AgentApiError, CompactionPolicyInput, ContextConfigInput,
+    ContextEntryInputView, ContextEntryKindView, ContextMessageRoleView, ContextView, EventCursor,
+    EventJoinsView, GenerationConfig, HostToolMode as ApiHostToolMode, InputItem, ModelConfig,
+    ProviderContextDisplayView, ProviderNativeToolExecutionView, ReasoningEffort,
     RunDefaultsConfig, RunStatus as ApiRunStatus, RunView, SessionConfigView, SessionEventKindView,
     SessionEventView, SessionItemView, SessionStatus as ApiSessionStatus, SessionView,
     TokenEstimateQualityView, TokenEstimateView, ToolBatchView, ToolCallDisplayGroup,
-    ToolCallDisplayView, ToolCallEventView, ToolCallView, ToolConfigView, ToolEffectView,
-    ToolExecutionTargetView, ToolItemStatus,
+    ToolCallDisplayView, ToolCallEventView, ToolCallView, ToolChoiceConfig, ToolChoiceModeConfig,
+    ToolConfigView, ToolEffectView, ToolExecutionTargetView, ToolItemStatus, ToolKindView,
+    ToolParallelismView, ToolTargetRequirementView, ToolView,
 };
 use engine::{ApplyEvent, ToolExecutionTarget};
 use engine::{
@@ -22,10 +24,11 @@ use engine::{
     ContextEntryId, ContextEntryInput, ContextEntryKind, ContextEntrySource, ContextEvent,
     ContextMessageRole, ContextRemovalReason, ContextRewriteReason, CoreAgentCodec, CoreAgentEntry,
     CoreAgentEventKind, CoreAgentJoins, CoreAgentLifecycleEvent, CoreAgentState, CoreAgentStatus,
-    CoreApplyEvent, EventSeq, LlmGenerationStatus, ModelProviderOptions, ModelSelection,
-    ObservedToolCall, ProviderApiKind, ProviderRequestDefaults, RunEvent, RunFailure, RunId,
-    RunStatus, SessionConfig, SessionId, SteeringId, ToolBatchId, ToolCallStatus, ToolConfigEvent,
-    ToolEvent, TurnEvent, TurnId,
+    CoreApplyEvent, EventSeq, LlmGenerationStatus, ModelSelection,
+    OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND, ObservedToolCall, ProviderApiKind, ProviderParams,
+    RunEvent, RunFailure, RunId, RunStatus, SessionConfig, SessionId,
+    SteeringId, ToolBatchId, ToolCallStatus, ToolChoice, ToolChoiceMode, ToolConfigEvent,
+    ToolEvent, ToolKind, ToolParallelism, ToolSpec, ToolTargetRequirement, TurnEvent, TurnId,
     storage::{
         BlobStore, BlobStoreError, DynamicSessionEntry, ReadSessionEvents, SessionRecord,
         SessionStore, SessionStoreError,
@@ -89,6 +92,10 @@ impl<'a> CoreAgentProjector<'a> {
             active_context: self
                 .project_context_state(params.state.context.revision, &params.state.context.entries)
                 .await?,
+            active_tools: active_tools_to_api(
+                params.state.tooling.revision,
+                &params.state.tooling.tools,
+            ),
             vfs_mounts: Vec::new(),
         })
     }
@@ -202,6 +209,7 @@ impl<'a> CoreAgentProjector<'a> {
                 provider_kind: item.provider_kind.clone(),
                 provider_item_id: item.provider_item_id.clone(),
                 token_estimate: item.token_estimate.as_ref().map(token_estimate_to_api),
+                display: self.provider_context_display(item).await,
             }),
         }
     }
@@ -234,7 +242,8 @@ impl<'a> CoreAgentProjector<'a> {
             model: model_to_api(&config.model),
             generation: GenerationConfig {
                 max_output_tokens: config.turn.max_output_tokens,
-                reasoning_effort: reasoning_effort_to_api(&config.turn.provider_request_defaults),
+                reasoning_effort: reasoning_effort_to_api(config.turn.provider_params.as_ref()),
+                tool_choice: config.turn.tool_choice.as_ref().map(tool_choice_to_api),
             },
             context: ContextConfigInput {
                 compaction: config
@@ -451,14 +460,29 @@ impl<'a> CoreAgentProjector<'a> {
                 }),
             },
             CoreAgentEventKind::ToolConfig(event) => match event {
-                ToolConfigEvent::RegistryChanged { .. } => {
-                    Ok(SessionEventKindView::ToolRegistryChanged)
-                }
-                ToolConfigEvent::ProfileSelected { profile_id } => {
-                    Ok(SessionEventKindView::ToolProfileSelected {
-                        profile_id: profile_id.as_str().to_owned(),
+                ToolConfigEvent::ToolsReplaced { base_revision, .. } => {
+                    Ok(SessionEventKindView::ToolsReplaced {
+                        base_revision: *base_revision,
+                        revision: tool_event_revision(*base_revision)?,
                     })
                 }
+                ToolConfigEvent::ToolsPatched {
+                    base_revision,
+                    patch,
+                } => Ok(SessionEventKindView::ToolsPatched {
+                    base_revision: *base_revision,
+                    revision: tool_event_revision(*base_revision)?,
+                    upserted: patch
+                        .upsert
+                        .iter()
+                        .map(|tool| tool.name.as_str().to_owned())
+                        .collect(),
+                    removed: patch
+                        .remove
+                        .iter()
+                        .map(|tool_name| tool_name.as_str().to_owned())
+                        .collect(),
+                }),
                 ToolConfigEvent::DefaultTargetSet { target } => {
                     Ok(SessionEventKindView::ToolDefaultTargetChanged {
                         namespace: target.namespace.clone(),
@@ -641,6 +665,18 @@ impl<'a> CoreAgentProjector<'a> {
             );
         }
         Ok(result_by_call)
+    }
+
+    async fn provider_context_display(
+        &self,
+        item: &ContextEntry,
+    ) -> Option<ProviderContextDisplayView> {
+        if item.provider_kind.as_deref() != Some(OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND) {
+            return None;
+        }
+        let text = self.read_blob_text(&item.content_ref).await.ok()?;
+        let value = serde_json::from_str::<Value>(&text).ok()?;
+        openai_mcp_call_display(&value)
     }
 
     async fn read_blob_text(&self, blob_ref: &engine::BlobRef) -> Result<String, AgentApiError> {
@@ -859,6 +895,12 @@ fn context_event_revision(base_revision: u64) -> Result<u64, AgentApiError> {
         .ok_or_else(|| AgentApiError::internal("context event revision overflow"))
 }
 
+fn tool_event_revision(base_revision: u64) -> Result<u64, AgentApiError> {
+    base_revision
+        .checked_add(1)
+        .ok_or_else(|| AgentApiError::internal("tool event revision overflow"))
+}
+
 fn context_removal_reason_to_api(reason: &ContextRemovalReason) -> &'static str {
     match reason {
         ContextRemovalReason::Pruned => "pruned",
@@ -963,21 +1005,36 @@ pub fn model_to_api(model: &ModelSelection) -> ModelConfig {
     }
 }
 
-fn reasoning_effort_to_api(defaults: &ProviderRequestDefaults) -> Option<ReasoningEffort> {
-    match defaults {
-        ProviderRequestDefaults::OpenAiResponses(defaults) => {
-            match defaults
-                .reasoning
-                .as_ref()
-                .and_then(|reasoning| reasoning.effort.as_deref().map(str::to_ascii_lowercase))
-            {
-                Some(value) if value == "low" => Some(ReasoningEffort::Low),
-                Some(value) if value == "medium" => Some(ReasoningEffort::Medium),
-                Some(value) if value == "high" => Some(ReasoningEffort::High),
-                Some(_) | None => None,
-            }
-        }
+fn reasoning_effort_to_api(params: Option<&ProviderParams>) -> Option<ReasoningEffort> {
+    let params = params?;
+    if params.api_kind != ProviderApiKind::OpenAiResponses {
+        return None;
+    }
+    let effort = params
+        .body
+        .get("reasoning")?
+        .get("effort")?
+        .as_str()?
+        .to_ascii_lowercase();
+    match effort.as_str() {
+        "low" => Some(ReasoningEffort::Low),
+        "medium" => Some(ReasoningEffort::Medium),
+        "high" => Some(ReasoningEffort::High),
         _ => None,
+    }
+}
+
+fn tool_choice_to_api(choice: &ToolChoice) -> ToolChoiceConfig {
+    ToolChoiceConfig {
+        mode: match &choice.mode {
+            ToolChoiceMode::Auto => ToolChoiceModeConfig::Auto,
+            ToolChoiceMode::None => ToolChoiceModeConfig::None,
+            ToolChoiceMode::RequiredAny => ToolChoiceModeConfig::RequiredAny,
+            ToolChoiceMode::Specific { tool_name } => ToolChoiceModeConfig::Specific {
+                tool_id: tool_name.as_str().to_owned(),
+            },
+        },
+        disable_parallel_tool_use: choice.disable_parallel_tool_use,
     }
 }
 
@@ -1002,6 +1059,107 @@ fn host_tool_mode_to_api(mode: engine::HostToolMode) -> ApiHostToolMode {
     }
 }
 
+fn active_tools_to_api(
+    revision: u64,
+    tools: &BTreeMap<engine::ToolName, ToolSpec>,
+) -> ActiveToolsView {
+    ActiveToolsView {
+        revision,
+        tools: tools.values().map(tool_to_api).collect(),
+    }
+}
+
+fn tool_to_api(tool: &ToolSpec) -> ToolView {
+    ToolView {
+        tool_id: tool.name.as_str().to_owned(),
+        kind: tool_kind_to_api(&tool.kind),
+        parallelism: tool_parallelism_to_api(tool.parallelism),
+        target_requirement: tool_target_requirement_to_api(&tool.target_requirement),
+    }
+}
+
+fn tool_kind_to_api(kind: &ToolKind) -> ToolKindView {
+    match kind {
+        ToolKind::Function(function) => ToolKindView::Function {
+            model_name: function
+                .model_name
+                .as_ref()
+                .map(|name| name.as_str().to_owned()),
+            description_ref: function
+                .description_ref
+                .as_ref()
+                .map(|blob_ref| blob_ref.as_str().to_owned()),
+            input_schema_ref: function.input_schema_ref.as_str().to_owned(),
+            output_schema_ref: function
+                .output_schema_ref
+                .as_ref()
+                .map(|blob_ref| blob_ref.as_str().to_owned()),
+            strict: function.strict,
+            provider_options_ref: function
+                .provider_options_ref
+                .as_ref()
+                .map(|blob_ref| blob_ref.as_str().to_owned()),
+        },
+        ToolKind::ProviderNative(native) => ToolKindView::ProviderNative {
+            api_kind: api_kind_to_str(&native.api_kind).to_owned(),
+            native_tool_ref: native.native_tool_ref.as_str().to_owned(),
+            execution: match native.execution {
+                engine::ProviderNativeToolExecution::ProviderHosted => {
+                    ProviderNativeToolExecutionView::ProviderHosted
+                }
+                engine::ProviderNativeToolExecution::ClientEffect => {
+                    ProviderNativeToolExecutionView::ClientEffect
+                }
+            },
+        },
+        ToolKind::RemoteMcp(remote_mcp) => ToolKindView::RemoteMcp {
+            server_label: remote_mcp.server_label.clone(),
+            server_url: remote_mcp.server_url.clone(),
+            description_ref: remote_mcp
+                .description_ref
+                .as_ref()
+                .map(|blob_ref| blob_ref.as_str().to_owned()),
+            allowed_tools: remote_mcp.allowed_tools.clone(),
+            approval: match &remote_mcp.approval {
+                engine::RemoteMcpApprovalPolicy::ProviderDefault => {
+                    api::RemoteMcpApprovalPolicy::ProviderDefault
+                }
+                engine::RemoteMcpApprovalPolicy::Always => api::RemoteMcpApprovalPolicy::Always,
+                engine::RemoteMcpApprovalPolicy::Never => api::RemoteMcpApprovalPolicy::Never,
+            },
+            defer_loading: remote_mcp.defer_loading,
+            auth_ref: remote_mcp
+                .auth_ref
+                .as_ref()
+                .map(|auth_ref| api::SecretRefView {
+                    namespace: auth_ref.namespace.clone(),
+                    id: auth_ref.id.clone(),
+                }),
+        },
+    }
+}
+
+fn tool_parallelism_to_api(parallelism: ToolParallelism) -> ToolParallelismView {
+    match parallelism {
+        ToolParallelism::Exclusive => ToolParallelismView::Exclusive,
+        ToolParallelism::ParallelSafe => ToolParallelismView::ParallelSafe,
+    }
+}
+
+fn tool_target_requirement_to_api(
+    requirement: &ToolTargetRequirement,
+) -> ToolTargetRequirementView {
+    match requirement {
+        ToolTargetRequirement::None => ToolTargetRequirementView::None,
+        ToolTargetRequirement::Optional { namespace } => ToolTargetRequirementView::Optional {
+            namespace: namespace.clone(),
+        },
+        ToolTargetRequirement::Required { namespace } => ToolTargetRequirementView::Required {
+            namespace: namespace.clone(),
+        },
+    }
+}
+
 pub fn session_config_for_api_model(
     default_config: &SessionConfig,
     model: Option<ModelConfig>,
@@ -1014,7 +1172,6 @@ pub fn session_config_for_api_model(
         api_kind: api_kind_from_str(&model.api_kind)?,
         provider_id: model.provider_id,
         model: model.model,
-        options: ModelProviderOptions::None,
     };
     config
         .validate_provider_compatibility()
@@ -1214,6 +1371,57 @@ fn tool_effects_to_api(effects: &[engine::ToolEffect]) -> Vec<ToolEffectView> {
         .collect()
 }
 
+fn openai_mcp_call_display(value: &Value) -> Option<ProviderContextDisplayView> {
+    if value.get("type").and_then(Value::as_str) != Some("mcp_call") {
+        return None;
+    }
+
+    let name = json_field_text(value, "name")?;
+    let server_label = json_field_text(value, "server_label");
+    let tool_name = match server_label.as_deref() {
+        Some(server_label) if !server_label.is_empty() => format!("{server_label}.{name}"),
+        _ => name,
+    };
+    let raw_status = value.get("status").and_then(Value::as_str);
+    let error = json_field_text(value, "error");
+    let is_error = error.is_some() || matches!(raw_status, Some("failed" | "incomplete"));
+    let status = match raw_status {
+        Some("in_progress" | "running" | "queued") => ToolItemStatus::Running,
+        Some("failed" | "incomplete") => ToolItemStatus::Failed,
+        _ if is_error => ToolItemStatus::Failed,
+        _ => ToolItemStatus::Succeeded,
+    };
+    let detail = match raw_status {
+        Some("completed") | None if !is_error => None,
+        Some(status) => Some(status.to_owned()),
+        None => Some("failed".to_owned()),
+    };
+
+    Some(ProviderContextDisplayView {
+        summary: ToolCallDisplayView {
+            group: ToolCallDisplayGroup::Other,
+            verb: "MCP".to_owned(),
+            target: Some(tool_name.clone()),
+            detail,
+        },
+        tool_name,
+        status,
+        is_error,
+        arguments: json_field_text(value, "arguments"),
+        output: json_field_text(value, "output"),
+        error,
+    })
+}
+
+fn json_field_text(value: &Value, field: &str) -> Option<String> {
+    let text = match value.get(field)? {
+        Value::Null => return None,
+        Value::String(text) => text.clone(),
+        other => serde_json::to_string(other).ok()?,
+    };
+    (!text.is_empty()).then_some(text)
+}
+
 fn tool_call_display(tool_name: &str, arguments: &str) -> Option<ToolCallDisplayView> {
     let json = serde_json::from_str::<Value>(arguments).ok();
     let normalized = tool_name.to_ascii_lowercase();
@@ -1352,7 +1560,8 @@ fn patch_target(patch: &str) -> Option<String> {
 mod tests {
     use engine::{
         BlobRef, ContextEntryId, CoreAgentJoins, EventSeq, SessionPosition, TokenEstimate,
-        TokenEstimateQuality, storage::InMemoryBlobStore,
+        TokenEstimateQuality,
+        storage::{BlobStore, InMemoryBlobStore},
     };
 
     use super::*;
@@ -1491,6 +1700,67 @@ mod tests {
                 token_estimate: Some(TokenEstimateView {
                     tokens: 123,
                     quality: TokenEstimateQualityView::ProviderCounted,
+                }),
+                display: None,
+            }
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn provider_context_item_projects_mcp_call_display() {
+        let blobs = InMemoryBlobStore::new();
+        let content_ref = blobs
+            .put_bytes(
+                br#"{"type":"mcp_call","server_label":"echo","name":"echo","arguments":"{\"data\":\"simba\"}","output":"Echoing your input: simba","error":null,"status":"completed"}"#
+                    .to_vec(),
+            )
+            .await
+            .expect("store mcp call");
+        let projector = CoreAgentProjector::new(&blobs);
+        let item = ContextEntry {
+            entry_id: ContextEntryId::new(43),
+            key: None,
+            kind: ContextEntryKind::ProviderOpaque,
+            source: ContextEntrySource::AssistantOutput {
+                run_id: RunId::new(7),
+                turn_id: TurnId::new(8),
+            },
+            content_ref: content_ref.clone(),
+            media_type: Some("application/json".to_owned()),
+            preview: Some("OpenAI Responses MCP tool call: echo.echo".to_owned()),
+            provider_kind: Some(OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND.to_owned()),
+            provider_item_id: Some("mcp_1".to_owned()),
+            token_estimate: None,
+        };
+
+        let projected = projector
+            .project_item(&item)
+            .await
+            .expect("project mcp provider context item");
+
+        assert_eq!(
+            projected,
+            SessionItemView::ProviderContext {
+                id: "item_43".to_owned(),
+                content_ref: content_ref.as_str().to_owned(),
+                media_type: Some("application/json".to_owned()),
+                preview: Some("OpenAI Responses MCP tool call: echo.echo".to_owned()),
+                provider_kind: Some(OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND.to_owned()),
+                provider_item_id: Some("mcp_1".to_owned()),
+                token_estimate: None,
+                display: Some(ProviderContextDisplayView {
+                    summary: ToolCallDisplayView {
+                        group: ToolCallDisplayGroup::Other,
+                        verb: "MCP".to_owned(),
+                        target: Some("echo.echo".to_owned()),
+                        detail: None,
+                    },
+                    tool_name: "echo.echo".to_owned(),
+                    status: ToolItemStatus::Succeeded,
+                    is_error: false,
+                    arguments: Some(r#"{"data":"simba"}"#.to_owned()),
+                    output: Some("Echoing your input: simba".to_owned()),
+                    error: None,
                 }),
             }
         );

@@ -3,9 +3,9 @@ use std::{path::PathBuf, sync::Arc};
 use engine::{
     AgentHandle, BlobRef, CompactionPolicy, ContextCompactionStatus, ContextCompactionTrigger,
     ContextConfig, ContextEntryInput, ContextEntryKey, ContextEntryKind, ContextMessageRole,
-    ContextRemovalReason, CoreAgentCommand, CoreAgentEventKind, ModelProviderOptions,
-    ModelSelection, OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, OpenAiResponsesRequestDefaults,
-    ProviderApiKind, ProviderRequestDefaults, RunConfig, RunStatus, SessionConfig, SessionId,
+    ContextRemovalReason, CoreAgentCommand, CoreAgentEventKind,
+    ModelSelection, OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND,
+    ProviderApiKind, RunConfig, RunStatus, SessionConfig, SessionId,
     TokenEstimate, TokenEstimateQuality, TurnConfig,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
 };
@@ -110,7 +110,6 @@ async fn openai_responses_live_engine_prunes_and_reuses_provider_compaction() {
         api_kind: ProviderApiKind::OpenAiResponses,
         provider_id: "openai".to_string(),
         model: live_compaction_model(),
-        options: ModelProviderOptions::None,
     };
     let llm = Arc::new(LlmRuntime::new(
         LlmAdapterRegistry::new().with_generation_adapter(
@@ -399,7 +398,6 @@ fn live_model_selection() -> ModelSelection {
         api_kind: ProviderApiKind::OpenAiResponses,
         provider_id: "openai".to_string(),
         model: live_compaction_model(),
-        options: ModelProviderOptions::None,
     }
 }
 
@@ -409,13 +407,12 @@ fn session_config(model: ModelSelection) -> SessionConfig {
         run: run_config(),
         turn: TurnConfig {
             max_output_tokens: Some(160),
-            provider_request_defaults: ProviderRequestDefaults::OpenAiResponses(
-                OpenAiResponsesRequestDefaults {
-                    store: Some(false),
-                    stream: Some(false),
-                    ..OpenAiResponsesRequestDefaults::default()
-                },
-            ),
+            tool_choice: None,
+            provider_params: Some(support::openai_params(&llm_runtime::OpenAiResponsesParams {
+                store: Some(false),
+                stream: Some(false),
+                ..llm_runtime::OpenAiResponsesParams::default()
+            })),
         },
         context: ContextConfig {
             compaction: Some(CompactionPolicy::ProviderTriggered {
@@ -435,13 +432,12 @@ fn standalone_session_config(
         run: run_config(),
         turn: TurnConfig {
             max_output_tokens: Some(160),
-            provider_request_defaults: ProviderRequestDefaults::OpenAiResponses(
-                OpenAiResponsesRequestDefaults {
-                    store: Some(false),
-                    stream: Some(false),
-                    ..OpenAiResponsesRequestDefaults::default()
-                },
-            ),
+            tool_choice: None,
+            provider_params: Some(support::openai_params(&llm_runtime::OpenAiResponsesParams {
+                store: Some(false),
+                stream: Some(false),
+                ..llm_runtime::OpenAiResponsesParams::default()
+            })),
         },
         context: ContextConfig {
             compaction: Some(CompactionPolicy::ProviderStandalone {
@@ -459,7 +455,8 @@ fn run_config() -> RunConfig {
         max_tool_rounds: Some(0),
         model_override: None,
         max_output_tokens: None,
-        provider_request_defaults: None,
+        provider_params: None,
+        tool_choice: None,
     }
 }
 

@@ -545,16 +545,16 @@ fn validate_tool_batch_result(result: &ToolInvocationBatchResult) -> Result<(), 
 mod tests {
     use super::*;
     use crate::{
-        BlobRef, CommandRejectionKind, CompactionPolicy, ContextCompactionRequestKind,
-        ContextCompactionStatus, ContextCompactionTrigger, ContextConfig, ContextConfigPatch,
-        ContextEntry, ContextEntryId, ContextEntryInput, ContextEntryKey, ContextEntryKind,
-        ContextRemovalReason, ContextRewriteReason, CoreAgentCommand, LlmGenerationFacts,
-        LlmRequestKind, ModelProviderOptions, ModelSelection,
-        OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, OptionalConfigPatch, ProviderApiKind,
-        ProviderRequestDefaults, RunConfig, RunFailureKind, RunStatus,
+        BlobRef, CommandRejectionKind, CompactionPolicy, ContextCompactionStatus,
+        ContextCompactionTrigger, ContextConfig, ContextConfigPatch, ContextEntry, ContextEntryId,
+        ContextEntryInput, ContextEntryKey, ContextEntryKind, ContextRemovalReason,
+        ContextRewriteReason, CoreAgentCommand, LlmGenerationFacts,
+        ModelSelection, OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, OptionalConfigPatch,
+        ProviderApiKind, RunConfig, RunFailureKind, RunStatus,
         SKILL_ACTIVATION_PROVIDER_KIND_RUN, SKILL_CATALOG_CONTEXT_KEY, SessionConfig,
-        SessionConfigPatch, SkillId, TokenEstimate, TokenEstimateQuality, TurnConfig,
-        TurnConfigPatch, TurnStatus, skill_activation_context_key,
+        SessionConfigPatch, SkillId, TokenEstimate, TokenEstimateQuality, ToolChoice,
+        ToolChoiceMode, ToolName, TurnConfig, TurnConfigPatch, TurnStatus,
+        skill_activation_context_key,
     };
 
     fn config() -> SessionConfig {
@@ -563,18 +563,19 @@ mod tests {
                 api_kind: ProviderApiKind::OpenAiResponses,
                 provider_id: "openai".to_owned(),
                 model: "gpt-test".to_owned(),
-                options: ModelProviderOptions::None,
             },
             run: RunConfig {
                 max_turns: None,
                 max_tool_rounds: None,
                 model_override: None,
                 max_output_tokens: None,
-                provider_request_defaults: None,
+                provider_params: None,
+                tool_choice: None,
             },
             turn: TurnConfig {
                 max_output_tokens: None,
-                provider_request_defaults: ProviderRequestDefaults::None,
+                tool_choice: None,
+                provider_params: None,
             },
             context: ContextConfig { compaction: None },
             tools: Default::default(),
@@ -587,7 +588,8 @@ mod tests {
             max_tool_rounds: None,
             model_override: None,
             max_output_tokens: None,
-            provider_request_defaults: None,
+            provider_params: None,
+            tool_choice: None,
         }
     }
 
@@ -799,10 +801,7 @@ mod tests {
     }
 
     fn openai_items(request: &LlmGenerationRequest) -> &[ContextEntry] {
-        let LlmRequestKind::OpenAiResponses(openai) = &request.request.kind else {
-            panic!("expected OpenAI Responses request");
-        };
-        &openai.input_context.entries
+        &request.request.context.entries
     }
 
     #[test]
@@ -1335,19 +1334,19 @@ mod tests {
             panic!("expected compact action");
         };
         assert_eq!(request.session_id, session_id);
-        let ContextCompactionRequestKind::OpenAiResponses(openai_request) = &request.request.kind;
-        assert_eq!(openai_request.target_tokens, Some(256));
+        let compaction_task = &request.request;
+        assert_eq!(compaction_task.target_tokens, Some(256));
         assert_eq!(
-            openai_request.input_context.entry_ids(),
+            compaction_task.context.entry_ids(),
             vec![original_entry_id]
         );
-        assert_eq!(openai_request.input_context.context_revision, 2);
+        assert_eq!(compaction_task.context.context_revision, 2);
 
         let completed = drive
             .resume_context_compaction(
                 ContextCompactionResult {
                     session_id: request.session_id,
-                    context_revision: openai_request.input_context.context_revision,
+                    context_revision: compaction_task.context.context_revision,
                     status: ContextCompactionStatus::Succeeded,
                     failure_ref: None,
                     context_entries: vec![openai_compaction_input(BlobRef::from_bytes(
@@ -1415,13 +1414,13 @@ mod tests {
         else {
             panic!("expected compact action");
         };
-        let ContextCompactionRequestKind::OpenAiResponses(openai_request) = &request.request.kind;
+        let compaction_task = &request.request;
         let failure_ref = BlobRef::from_bytes(b"compact failed");
         let completed = drive
             .resume_context_compaction(
                 ContextCompactionResult {
                     session_id,
-                    context_revision: openai_request.input_context.context_revision,
+                    context_revision: compaction_task.context.context_revision,
                     status: ContextCompactionStatus::Failed,
                     failure_ref: Some(failure_ref.clone()),
                     context_entries: Vec::new(),
@@ -1547,12 +1546,12 @@ mod tests {
             panic!("expected compact action");
         };
         assert_eq!(request.session_id, session_id);
-        let ContextCompactionRequestKind::OpenAiResponses(openai_request) = &request.request.kind;
-        assert_eq!(openai_request.target_tokens, Some(4));
-        assert_eq!(openai_request.input_context.entry_ids(), entry_ids);
+        let compaction_task = &request.request;
+        assert_eq!(compaction_task.target_tokens, Some(4));
+        assert_eq!(compaction_task.context.entry_ids(), entry_ids);
         assert_eq!(
-            openai_request
-                .input_context
+            compaction_task
+                .context
                 .token_estimate
                 .as_ref()
                 .map(|estimate| estimate.tokens),
@@ -1607,19 +1606,19 @@ mod tests {
             panic!("expected compact action");
         };
         assert_eq!(request.session_id, session_id);
-        let ContextCompactionRequestKind::OpenAiResponses(openai_request) = &request.request.kind;
+        let compaction_task = &request.request;
         assert_eq!(
-            openai_request.input_context.entries.len(),
+            compaction_task.context.entries.len(),
             1,
             "instructions are preserved outside the compactable provider window"
         );
         assert!(matches!(
-            openai_request.input_context.entries[0].kind,
+            compaction_task.context.entries[0].kind,
             ContextEntryKind::ProviderOpaque
         ));
         assert_eq!(
-            openai_request
-                .input_context
+            compaction_task
+                .context
                 .token_estimate
                 .as_ref()
                 .map(|estimate| estimate.tokens),
@@ -1788,10 +1787,7 @@ mod tests {
         let active_turn = active_run.turns.get(&request.turn_id).expect("active turn");
         assert_eq!(active_turn.status, TurnStatus::GenerationPending);
         let planned_request = active_turn.request.as_ref().expect("planned request");
-        let LlmRequestKind::OpenAiResponses(openai) = &planned_request.kind else {
-            panic!("expected OpenAI Responses request");
-        };
-        assert_eq!(openai.input_context.entries.len(), 1);
+        assert_eq!(planned_request.context.entries.len(), 1);
     }
 
     #[test]
@@ -1858,6 +1854,77 @@ mod tests {
             .expect("session config");
         assert_eq!(drive.state().lifecycle.config_revision, 1);
         assert_eq!(config.turn.max_output_tokens, Some(2048));
+    }
+
+    #[test]
+    fn patch_session_config_rejects_specific_tool_choice_for_missing_tool() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let open = drive
+            .admit_command(CoreAgentCommand::OpenSession { config: config() }, 10)
+            .expect("open");
+        commit_action(&mut drive, open);
+
+        let patch = SessionConfigPatch {
+            turn: TurnConfigPatch {
+                tool_choice: Some(OptionalConfigPatch::Set(ToolChoice {
+                    mode: ToolChoiceMode::Specific {
+                        tool_name: ToolName::new("missing_tool"),
+                    },
+                    disable_parallel_tool_use: None,
+                })),
+                ..TurnConfigPatch::default()
+            },
+            ..SessionConfigPatch::default()
+        };
+
+        let error = drive
+            .admit_command(
+                CoreAgentCommand::PatchSessionConfig {
+                    expected_revision: Some(0),
+                    patch,
+                },
+                20,
+            )
+            .expect_err("patch must reject missing specific tool choice");
+
+        let CoreAgentDriveError::Command(crate::CommandError::Rejected(rejection)) = error else {
+            panic!("expected rejected command");
+        };
+        assert_eq!(rejection.kind, CommandRejectionKind::InvariantViolation);
+    }
+
+    #[test]
+    fn request_run_rejects_specific_tool_choice_for_missing_tool() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let open = drive
+            .admit_command(CoreAgentCommand::OpenSession { config: config() }, 10)
+            .expect("open");
+        commit_action(&mut drive, open);
+        let mut run_config = run_config();
+        run_config.tool_choice = Some(ToolChoice {
+            mode: ToolChoiceMode::Specific {
+                tool_name: ToolName::new("missing_tool"),
+            },
+            disable_parallel_tool_use: None,
+        });
+
+        let error = drive
+            .admit_command(
+                CoreAgentCommand::RequestRun {
+                    submission_id: None,
+                    input: user_input(BlobRef::from_bytes(b"input")),
+                    run_config,
+                },
+                20,
+            )
+            .expect_err("run must reject missing specific tool choice");
+
+        let CoreAgentDriveError::Command(crate::CommandError::Rejected(rejection)) = error else {
+            panic!("expected rejected command");
+        };
+        assert_eq!(rejection.kind, CommandRejectionKind::InvariantViolation);
     }
 
     #[test]

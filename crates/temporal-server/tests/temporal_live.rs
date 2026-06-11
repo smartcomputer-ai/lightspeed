@@ -6,14 +6,16 @@ use std::{
 };
 
 use api::{
-    AgentApiErrorKind, AgentApiService, InitializeParams, InputItem, RunStartParams, RunStatus,
-    SessionConfigInput, SessionEventsReadParams, SessionItemView, SessionReadParams,
-    SessionStartParams, SessionStatus,
+    AgentApiErrorKind, AgentApiService, InitializeParams, InputItem, McpServerCreateParams,
+    McpServerDeleteParams, McpServerListParams, McpServerReadParams, McpServerStatus,
+    RemoteMcpApprovalPolicy, RemoteMcpTransport, RunStartParams, RunStatus, SessionConfigInput,
+    SessionEventsReadParams, SessionItemView, SessionMcpLinkParams, SessionMcpListParams,
+    SessionMcpUnlinkParams, SessionReadParams, SessionStartParams, SessionStatus,
 };
 use api_projection::model_to_api;
 use engine::{
     CommandCodec, CoreAgentCodec, CoreAgentCommand, CoreAgentLlm, CoreAgentTools, DynamicCommand,
-    ModelProviderOptions, ModelSelection, ProviderApiKind, SessionId, storage::BlobStore,
+    ModelSelection, ProviderApiKind, SessionId, storage::BlobStore,
 };
 use temporal_server::{
     default_model_from_env,
@@ -76,6 +78,17 @@ async fn temporal_live_admission_failures_do_not_poison_workflow() -> anyhow::Re
 
     let activities = fake_worker_activities().await?;
     run_with_live_worker(activities, run_admission_failure_live_client).await
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires dev/local/up.sh or compatible Temporal + Postgres env"]
+async fn temporal_live_mcp_registry_and_session_links_materialize() -> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().expect("live test lock");
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+
+    let activities = fake_worker_activities().await?;
+    run_with_live_worker(activities, run_mcp_registry_live_client).await
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -434,6 +447,118 @@ async fn run_admission_failure_live_client(
     Ok(())
 }
 
+async fn run_mcp_registry_live_client(
+    client: Client,
+    task_queue: String,
+    session_id: SessionId,
+) -> anyhow::Result<()> {
+    let store = pg_store_from_env().await?;
+    let model = default_model_from_env();
+    let api = GatewayAgentApi::builder(client.clone(), store)
+        .with_task_queue(task_queue)
+        .with_default_model(model.clone())
+        .with_max_steps_per_input(128)
+        .build();
+    let server_id = format!("crm_{}", uuid::Uuid::new_v4().simple());
+
+    let created = api
+        .create_mcp_server(McpServerCreateParams {
+            server_id: server_id.clone(),
+            display_name: Some("CRM".to_owned()),
+            server_url: format!("https://{server_id}.example.com/mcp"),
+            transport: RemoteMcpTransport::Auto,
+            default_server_label: "crm".to_owned(),
+            description: Some("CRM MCP server".to_owned()),
+            allowed_tools: Some(vec!["lookup_customer".to_owned()]),
+            approval_default: RemoteMcpApprovalPolicy::Never,
+            defer_loading_default: Some(true),
+            auth_policy: api::McpServerAuthPolicy::None,
+            status: McpServerStatus::Active,
+        })
+        .await?;
+    assert_eq!(created.result.server.server_id, server_id);
+
+    let read = api
+        .read_mcp_server(McpServerReadParams {
+            server_id: server_id.clone(),
+        })
+        .await?;
+    assert_eq!(read.result.server.default_server_label, "crm");
+
+    let listed = api
+        .list_mcp_servers(McpServerListParams {
+            status: Some(McpServerStatus::Active),
+        })
+        .await?;
+    assert!(
+        listed
+            .result
+            .servers
+            .iter()
+            .any(|server| server.server_id == server_id)
+    );
+
+    api.start_session(SessionStartParams {
+        session_id: Some(session_id.as_str().to_owned()),
+        cwd: None,
+        config: Some(SessionConfigInput {
+            model: Some(model_to_api(&model)),
+            ..SessionConfigInput::default()
+        }),
+    })
+    .await?;
+
+    let linked = api
+        .link_session_mcp(SessionMcpLinkParams {
+            session_id: session_id.as_str().to_owned(),
+            server_id: server_id.clone(),
+            tool_id: Some("mcp_crm".to_owned()),
+            server_label: None,
+            allowed_tools: Some(vec!["lookup_customer".to_owned()]),
+            approval: Some(RemoteMcpApprovalPolicy::Never),
+            defer_loading: Some(true),
+            auth_grant_id: None,
+        })
+        .await?;
+    assert_eq!(linked.result.link.tool_id, "mcp_crm");
+    assert_eq!(linked.result.link.server_label, "crm");
+    assert_eq!(
+        linked.result.link.allowed_tools,
+        Some(vec!["lookup_customer".to_owned()])
+    );
+
+    let session_links = api
+        .list_session_mcp(SessionMcpListParams {
+            session_id: session_id.as_str().to_owned(),
+        })
+        .await?;
+    assert_eq!(session_links.result.links.len(), 1);
+    assert_eq!(session_links.result.links[0].tool_id, "mcp_crm");
+
+    let unlinked = api
+        .unlink_session_mcp(SessionMcpUnlinkParams {
+            session_id: session_id.as_str().to_owned(),
+            tool_id: "mcp_crm".to_owned(),
+        })
+        .await?;
+    assert!(unlinked.result.links.is_empty());
+
+    let deleted = api
+        .delete_mcp_server(McpServerDeleteParams { server_id })
+        .await?;
+    assert_eq!(deleted.result.server.default_server_label, "crm");
+
+    let handle = client.get_workflow_handle::<AgentSessionWorkflow>(session_id.as_str());
+    let _ = handle
+        .terminate(
+            WorkflowTerminateOptions::builder()
+                .reason("agent MCP live test cleanup")
+                .build(),
+        )
+        .await;
+    Ok(())
+}
+
 async fn run_openai_live_client(
     client: Client,
     task_queue: String,
@@ -616,6 +741,5 @@ fn openai_live_model() -> ModelSelection {
             .or_else(|_| env::var("OPENAI_LIVE_MODEL"))
             .or_else(|_| env::var("FORGE_CHAT_MODEL"))
             .unwrap_or_else(|_| "gpt-5.5".to_owned()),
-        options: ModelProviderOptions::None,
     }
 }

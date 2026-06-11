@@ -5,7 +5,8 @@ use engine::{
     ContextEntryInput, ContextEntryKind, ContextMessageRole, CoreAgentIoError, CoreAgentLlm,
     CoreAgentTools, LlmFinish, LlmGenerationFacts, LlmGenerationRequest, LlmGenerationResult,
     LlmGenerationStatus, ObservedToolCall, ToolCallId, ToolCallStatus, ToolInvocationBatchRequest,
-    ToolInvocationBatchResult, ToolInvocationResult, ToolName, storage::BlobStore,
+    ToolInvocationBatchResult, ToolInvocationResult, ToolKind, ToolName, ToolTargetRequirement,
+    storage::BlobStore,
 };
 use serde_json::Value;
 
@@ -24,6 +25,7 @@ impl FakeLlm {
     async fn tool_call_result(
         &self,
         request: &LlmGenerationRequest,
+        tool_name: ToolName,
     ) -> Result<LlmGenerationResult, CoreAgentIoError> {
         let arguments = serde_json::json!({
             "text": format!("echo from run {} turn {}", request.run_id, request.turn_id)
@@ -35,7 +37,6 @@ impl FakeLlm {
             .await
             .map_err(io_error)?;
         let call_id = ToolCallId::new(format!("agent_call_{}", request.turn_id.as_u64()));
-        let tool_name = ToolName::new(FAKE_TOOL_NAME);
         Ok(LlmGenerationResult {
             run_id: request.run_id,
             turn_id: request.turn_id,
@@ -48,7 +49,7 @@ impl FakeLlm {
                 },
                 content_ref: arguments_ref.clone(),
                 media_type: Some("application/json".to_owned()),
-                preview: Some(format!("{FAKE_TOOL_NAME}({arguments})")),
+                preview: Some(format!("{tool_name}({arguments})")),
                 provider_kind: Some("fake".to_owned()),
                 provider_item_id: Some(call_id.as_str().to_owned()),
                 token_estimate: None,
@@ -113,9 +114,11 @@ impl CoreAgentLlm for FakeLlm {
         request: LlmGenerationRequest,
     ) -> Result<LlmGenerationResult, CoreAgentIoError> {
         if request_has_tool_result(&request) {
-            self.final_result(&request).await
-        } else {
-            self.tool_call_result(&request).await
+            return self.final_result(&request).await;
+        }
+        match invocable_fake_tool(&request) {
+            Some(tool_name) => self.tool_call_result(&request, tool_name).await,
+            None => self.final_result(&request).await,
         }
     }
 }
@@ -139,23 +142,6 @@ impl CoreAgentTools for FakeTools {
     ) -> Result<ToolInvocationBatchResult, CoreAgentIoError> {
         let mut results = Vec::with_capacity(request.calls.len());
         for call in &request.calls {
-            if call.tool_name.as_str() != FAKE_TOOL_NAME {
-                let error_ref = self
-                    .blobs
-                    .put_bytes(format!("unknown fake agent tool: {}", call.tool_name).into_bytes())
-                    .await
-                    .map_err(io_error)?;
-                results.push(ToolInvocationResult {
-                    call_id: call.call_id.clone(),
-                    status: ToolCallStatus::Failed,
-                    output_ref: None,
-                    model_visible_output_ref: Some(error_ref.clone()),
-                    error_ref: Some(error_ref),
-                    effects: Vec::new(),
-                });
-                continue;
-            }
-
             let args = self
                 .blobs
                 .read_text(&call.arguments_ref)
@@ -170,7 +156,7 @@ impl CoreAgentTools for FakeTools {
                         .map(ToOwned::to_owned)
                 })
                 .unwrap_or(args);
-            let output = format!("agent_echo: {text}");
+            let output = format!("{}: {text}", call.tool_name);
             let output_ref = self
                 .blobs
                 .put_bytes(output.into_bytes())
@@ -195,23 +181,33 @@ impl CoreAgentTools for FakeTools {
 }
 
 fn request_has_tool_result(request: &LlmGenerationRequest) -> bool {
-    match &request.request.kind {
-        engine::LlmRequestKind::OpenAiResponses(request) => request
-            .input_context
-            .entries
-            .iter()
-            .any(|entry| matches!(entry.kind, ContextEntryKind::ToolResult { .. })),
-        engine::LlmRequestKind::AnthropicMessages(request) => request
-            .messages_context
-            .entries
-            .iter()
-            .any(|entry| matches!(entry.kind, ContextEntryKind::ToolResult { .. })),
-        engine::LlmRequestKind::OpenAiCompletions(request) => request
-            .messages_context
-            .entries
-            .iter()
-            .any(|entry| matches!(entry.kind, ContextEntryKind::ToolResult { .. })),
+    request
+        .request
+        .context
+        .entries
+        .iter()
+        .any(|entry| matches!(entry.kind, ContextEntryKind::ToolResult { .. }))
+}
+
+/// Picks a tool the fake model can call from the planned request toolset,
+/// preferring the canonical fake echo tool when it is registered. Returns
+/// `None` when the session has no client-invocable function tool, in which
+/// case the fake model answers directly.
+fn invocable_fake_tool(request: &LlmGenerationRequest) -> Option<ToolName> {
+    let tools = &request.request.tools;
+    if let Some(tool) = tools.iter().find(|tool| tool.name.as_str() == FAKE_TOOL_NAME) {
+        return Some(tool.name.clone());
     }
+    tools
+        .iter()
+        .find(|tool| {
+            matches!(tool.kind, ToolKind::Function(_))
+                && matches!(
+                    tool.target_requirement,
+                    ToolTargetRequirement::None | ToolTargetRequirement::Optional { .. }
+                )
+        })
+        .map(|tool| tool.name.clone())
 }
 
 fn io_error(error: impl std::fmt::Display) -> CoreAgentIoError {
