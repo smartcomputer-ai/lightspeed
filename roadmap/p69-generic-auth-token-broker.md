@@ -850,6 +850,13 @@ grants are created against verified installations. No Forge consumer spends
 GitHub tokens yet (no repo tools); the broker path is unit-tested against a
 mocked GitHub API.
 
+Anthropic parity 2026-06-11: the Anthropic Messages adapter gained remote MCP
+auth injection through the same `SecretResolver` boundary (resolved
+`authorization_token` set on the matching top-level `mcp_servers` entry at
+send time; persisted request blobs carry `<redacted>`; resolution failures
+fail with typed errors before provider I/O), and the worker default runtime
+now hands the broker resolver to both provider adapters.
+
 Refactored 2026-06-11: provider-kind dispatch moved behind the
 `GrantTokenSource` trait. `RegistryTokenBroker` now owns only grant loading,
 status/audience enforcement, and the per-grant single-flight lock around a

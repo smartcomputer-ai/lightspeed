@@ -33,6 +33,7 @@ use crate::{
     executor::{LlmCompactionAdapter, LlmGenerationAdapter},
     params::anthropic_messages_params,
     result::LlmGenerationExecution,
+    secrets::{REDACTED_SECRET_PLACEHOLDER, SecretResolver, UnconfiguredSecretResolver},
 };
 
 const PROVIDER_KIND_TEXT: &str = "anthropic.messages.text";
@@ -81,11 +82,21 @@ impl AnthropicMessagesApi for am::Client {
 pub struct AnthropicMessagesLlmAdapter {
     client: Arc<dyn AnthropicMessagesApi>,
     blobs: Arc<dyn BlobStore>,
+    secrets: Arc<dyn SecretResolver>,
 }
 
 impl AnthropicMessagesLlmAdapter {
     pub fn new(client: Arc<dyn AnthropicMessagesApi>, blobs: Arc<dyn BlobStore>) -> Self {
-        Self { client, blobs }
+        Self {
+            client,
+            blobs,
+            secrets: Arc::new(UnconfiguredSecretResolver),
+        }
+    }
+
+    pub fn with_secret_resolver(mut self, secrets: Arc<dyn SecretResolver>) -> Self {
+        self.secrets = secrets;
+        self
     }
 
     pub async fn materialize_create_request(
@@ -119,8 +130,11 @@ impl LlmGenerationAdapter for AnthropicMessagesLlmAdapter {
         }
 
         let provider_request = self.materialize_create_request(&request.request).await?;
-        let provider_request_ref = put_json(self.blobs.as_ref(), &provider_request).await?;
-        let response = self.client.create(provider_request).await?;
+        let (send_request, redacted_request) =
+            inject_remote_mcp_auth(self.secrets.as_ref(), &request.request, provider_request)
+                .await?;
+        let provider_request_ref = put_json(self.blobs.as_ref(), &redacted_request).await?;
+        let response = self.client.create(send_request).await?;
         let raw_response_ref = put_json(self.blobs.as_ref(), &response.raw_json).await?;
         let result = result_from_response(self.blobs.as_ref(), &request, &response).await?;
 
@@ -495,14 +509,9 @@ async fn materialize_remote_mcp_server(
     tool: &ToolSpec,
     remote_mcp: &RemoteMcpToolSpec,
 ) -> LlmAdapterResult<Value> {
-    if remote_mcp.auth_ref.is_some() {
-        return Err(LlmAdapterError::InvalidProviderRequest {
-            message: format!(
-                "remote MCP tool {} requires auth, but Anthropic Messages MCP auth injection is not implemented yet",
-                tool.name
-            ),
-        });
-    }
+    // Materialized requests never contain auth values; `inject_remote_mcp_auth`
+    // adds `authorization_token` to the send request immediately before
+    // provider I/O.
     if matches!(remote_mcp.approval, RemoteMcpApprovalPolicy::Always) {
         return Err(LlmAdapterError::InvalidProviderRequest {
             message: format!(
@@ -525,6 +534,86 @@ async fn materialize_remote_mcp_server(
         );
     }
     Ok(value)
+}
+
+/// Produce the request pair `generate` actually uses: the send request with
+/// `authorization_token` resolved at the last moment, and the redacted request
+/// that is persisted to blobs, preserving only the fact that auth was
+/// configured.
+async fn inject_remote_mcp_auth(
+    secrets: &dyn SecretResolver,
+    request: &LlmRequest,
+    materialized: am::CreateMessageRequest,
+) -> LlmAdapterResult<(am::CreateMessageRequest, am::CreateMessageRequest)> {
+    let auth_specs: Vec<(&ToolSpec, &RemoteMcpToolSpec)> = request
+        .tools
+        .iter()
+        .filter_map(|tool| match &tool.kind {
+            ToolKind::RemoteMcp(remote_mcp) if remote_mcp.auth_ref.is_some() => {
+                Some((tool, remote_mcp))
+            }
+            _ => None,
+        })
+        .collect();
+    if auth_specs.is_empty() {
+        let redacted = materialized.clone();
+        return Ok((materialized, redacted));
+    }
+
+    let mut send_request = materialized.clone();
+    let mut redacted_request = materialized;
+    for (tool, remote_mcp) in auth_specs {
+        let auth_ref = remote_mcp.auth_ref.as_ref().expect("auth_ref present");
+        let token = secrets
+            .resolve(auth_ref, Some(remote_mcp.server_url.as_str()))
+            .await
+            .map_err(|error| LlmAdapterError::SecretResolution {
+                tool: tool.name.to_string(),
+                message: error.to_string(),
+            })?;
+        set_remote_mcp_authorization_token(
+            &mut send_request,
+            &remote_mcp.server_label,
+            token.expose(),
+            tool,
+        )?;
+        set_remote_mcp_authorization_token(
+            &mut redacted_request,
+            &remote_mcp.server_label,
+            REDACTED_SECRET_PLACEHOLDER,
+            tool,
+        )?;
+    }
+    Ok((send_request, redacted_request))
+}
+
+fn set_remote_mcp_authorization_token(
+    request: &mut am::CreateMessageRequest,
+    server_label: &str,
+    value: &str,
+    tool: &ToolSpec,
+) -> LlmAdapterResult<()> {
+    let entry = request
+        .mcp_servers
+        .as_mut()
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_object_mut)
+        .find(|server| server.get("name").and_then(Value::as_str) == Some(server_label));
+    let Some(entry) = entry else {
+        return Err(LlmAdapterError::InvalidProviderRequest {
+            message: format!(
+                "materialized request is missing MCP server entry for {} (server name {server_label})",
+                tool.name
+            ),
+        });
+    };
+    entry.insert(
+        "authorization_token".to_string(),
+        Value::String(value.to_owned()),
+    );
+    Ok(())
 }
 
 fn anthropic_tool_choice(choice: &ToolChoice) -> am::ToolChoice {
@@ -1304,6 +1393,128 @@ mod tests {
         assert_eq!(value.get("tools"), None);
     }
 
+    fn auth_remote_mcp_tool() -> ToolSpec {
+        ToolSpec {
+            name: ToolName::new("mcp_echo"),
+            kind: ToolKind::RemoteMcp(RemoteMcpToolSpec {
+                server_label: "echo".to_string(),
+                server_url: "https://echo.example.com/mcp".to_string(),
+                description_ref: None,
+                allowed_tools: None,
+                approval: RemoteMcpApprovalPolicy::Never,
+                defer_loading: None,
+                auth_ref: Some(engine::SecretRef {
+                    namespace: "auth_grant".to_string(),
+                    id: "grant_123".to_string(),
+                }),
+            }),
+            parallelism: ToolParallelism::ParallelSafe,
+            target_requirement: Default::default(),
+        }
+    }
+
+    fn mcp_auth_generation_request() -> LlmGenerationRequest {
+        LlmGenerationRequest {
+            session_id: SessionId::new("session-a"),
+            run_id: RunId::new(1),
+            turn_id: TurnId::new(1),
+            request: {
+                let mut request = intent_request(Vec::new());
+                request.tools = vec![auth_remote_mcp_tool()];
+                request.output_limit = Some(256);
+                request
+            },
+        }
+    }
+
+    fn completed_text_response_json() -> Value {
+        json!({
+            "id": "msg_1",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-opus-4-8",
+            "stop_reason": "end_turn",
+            "content": [{ "type": "text", "text": "Done." }],
+            "usage": { "input_tokens": 10, "output_tokens": 5 }
+        })
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn materialize_create_request_omits_authorization_token_for_remote_mcp_auth_ref() {
+        let blobs = InMemoryBlobStore::new();
+        let mut request = intent_request(Vec::new());
+        request.tools = vec![auth_remote_mcp_tool()];
+        request.output_limit = Some(1024);
+
+        let materialized = materialize_create_request(&blobs, &request)
+            .await
+            .expect("materialize");
+        let value = serde_json::to_value(materialized).expect("json");
+
+        assert_eq!(value["mcp_servers"][0]["name"], json!("echo"));
+        assert!(
+            value["mcp_servers"][0].get("authorization_token").is_none(),
+            "materialized requests must not carry auth values: {value}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn generate_injects_remote_mcp_authorization_token_and_redacts_persisted_request() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let api = fake_api(completed_text_response_json());
+        let adapter = AnthropicMessagesLlmAdapter::new(api.clone(), blobs.clone())
+            .with_secret_resolver(Arc::new(
+                crate::secrets::StaticSecretResolver::new().with_secret(
+                    "auth_grant",
+                    "grant_123",
+                    "token-xyz",
+                ),
+            ));
+
+        let execution = LlmGenerationAdapter::generate(&adapter, mcp_auth_generation_request())
+            .await
+            .expect("generate");
+
+        let sent = api.seen.lock().expect("lock").clone();
+        assert_eq!(sent.len(), 1);
+        let sent_json = serde_json::to_value(&sent[0]).expect("sent json");
+        assert_eq!(
+            sent_json["mcp_servers"][0]["authorization_token"],
+            json!("token-xyz")
+        );
+
+        let stored = crate::blob_io::read_json(blobs.as_ref(), &execution.provider_request_ref)
+            .await
+            .expect("stored provider request");
+        assert_eq!(
+            stored["mcp_servers"][0]["authorization_token"],
+            json!("<redacted>")
+        );
+        assert!(
+            !serde_json::to_string(&stored)
+                .expect("stored string")
+                .contains("token-xyz"),
+            "persisted provider request must not contain the resolved token"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn generate_fails_before_provider_io_when_auth_ref_cannot_be_resolved() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let api = fake_api(completed_text_response_json());
+        let adapter = AnthropicMessagesLlmAdapter::new(api.clone(), blobs.clone());
+
+        let error = LlmGenerationAdapter::generate(&adapter, mcp_auth_generation_request())
+            .await
+            .expect_err("unresolvable auth ref must fail generation");
+
+        assert!(matches!(error, LlmAdapterError::SecretResolution { .. }));
+        assert!(
+            api.seen.lock().expect("lock").is_empty(),
+            "no provider call may happen when auth resolution fails"
+        );
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn materialize_create_request_rejects_unsupported_intents() {
         let blobs = InMemoryBlobStore::new();
@@ -1348,34 +1559,6 @@ mod tests {
             error,
             LlmAdapterError::InvalidProviderRequest { .. }
         ));
-
-        let mut mcp_auth = intent_request(Vec::new());
-        mcp_auth.tools = vec![ToolSpec {
-            name: ToolName::new("mcp_echo"),
-            kind: ToolKind::RemoteMcp(RemoteMcpToolSpec {
-                server_label: "echo".to_string(),
-                server_url: "https://echo.example.com/mcp".to_string(),
-                description_ref: None,
-                allowed_tools: None,
-                approval: RemoteMcpApprovalPolicy::Never,
-                defer_loading: None,
-                auth_ref: Some(engine::SecretRef {
-                    namespace: "auth_grant".to_string(),
-                    id: "grant_123".to_string(),
-                }),
-            }),
-            parallelism: ToolParallelism::ParallelSafe,
-            target_requirement: Default::default(),
-        }];
-        let error = materialize_create_request(&blobs, &mcp_auth)
-            .await
-            .expect_err("mcp auth must fail");
-        assert!(
-            error
-                .to_string()
-                .contains("Anthropic Messages MCP auth injection is not implemented yet"),
-            "{error}"
-        );
 
         let mut mcp_approval = intent_request(Vec::new());
         mcp_approval.tools = vec![ToolSpec {

@@ -171,8 +171,8 @@ fn default_llm_runtime(
     if std::env::var("OPENAI_API_KEY").is_ok_and(|key| !key.trim().is_empty()) {
         let openai = oai::Client::new(oai::Config::from_env()?)?;
         let mut adapter = OpenAiResponsesLlmAdapter::new(Arc::new(openai), blobs.clone());
-        if let Some(secrets) = secrets {
-            adapter = adapter.with_secret_resolver(secrets);
+        if let Some(secrets) = &secrets {
+            adapter = adapter.with_secret_resolver(secrets.clone());
         }
         let adapter = Arc::new(adapter);
         registry.insert_generation_adapter(ProviderApiKind::OpenAiResponses, adapter.clone());
@@ -180,7 +180,11 @@ fn default_llm_runtime(
     }
     if std::env::var("ANTHROPIC_API_KEY").is_ok_and(|key| !key.trim().is_empty()) {
         let anthropic = am::Client::new(am::Config::from_env()?)?;
-        let adapter = Arc::new(AnthropicMessagesLlmAdapter::new(Arc::new(anthropic), blobs));
+        let mut adapter = AnthropicMessagesLlmAdapter::new(Arc::new(anthropic), blobs);
+        if let Some(secrets) = &secrets {
+            adapter = adapter.with_secret_resolver(secrets.clone());
+        }
+        let adapter = Arc::new(adapter);
         registry.insert_generation_adapter(ProviderApiKind::AnthropicMessages, adapter.clone());
         registry.insert_compaction_adapter(ProviderApiKind::AnthropicMessages, adapter);
     }
