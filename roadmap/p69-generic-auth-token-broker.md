@@ -5,7 +5,7 @@
 - G1 implemented on 2026-06-10: `auth-registry` crate (grant/secret records,
   store traits, `SecretValue` redacted wrapper, `TokenAudience`,
   `RegistryTokenBroker` with typed `AuthBrokerError` kinds, in-memory test
-  adapters); `store-pg` `secret_records`/`auth_grants` tables with AES-256-GCM
+  adapters); `store-pg` `auth_secrets`/`auth_grants` tables with AES-256-GCM
   encryption (AAD = universe/secret id/kind, `FORGE_SECRETS_MASTER_KEY`
   config; `dev/local/` exports a well-known dev-only default key);
   `auth/grants/import|list|read|revoke` JSON-RPC + `forge auth grant` CLI; `llm-runtime` `SecretResolver` with OpenAI Responses `authorization`
@@ -23,7 +23,7 @@
   rotation persisted under new secret ids before the grant row swap,
   `invalid_grant` -> `NeedsReauth`, and fallback to a still-valid stored
   token on transient refresh failures. `store-pg` migration 004 adds
-  `oauth_clients`, `auth_flows`, and `auth_grants.oauth_client_id`. The
+  `auth_clients`, `auth_flows`, and `auth_grants.oauth_client_id`. The
   gateway hosts `GET /auth/callback` (public base URL via
   `FORGE_PUBLIC_BASE_URL`, default `http://{bind}`) plus
   `auth/clients/create|list|read|delete` and `auth/flows/start|status`;
@@ -36,7 +36,7 @@
   gateway-served CIMD document at `/auth/client-metadata.json`.
 - G5 mint slice implemented on 2026-06-10: generic `auth_providers` table
   (typed `AuthProviderConfig` enum over `config_json`, credential secret FK
-  into `secret_records`), `auth_grants.metadata_json`, GitHub App driver
+  into `auth_secrets`), `auth_grants.metadata_json`, GitHub App driver
   (app JWT signing, on-demand installation token minting with in-process
   caching, live installation listing/verification),
   `auth/providers/*` + `auth/github/installations/*` API, and
@@ -224,7 +224,7 @@ Add a generic encrypted secret store instead of provider-specific token columns.
 Candidate table shape:
 
 ```sql
-CREATE TABLE secret_records (
+CREATE TABLE auth_secrets (
     universe_id uuid NOT NULL REFERENCES universes (universe_id) ON DELETE CASCADE,
     secret_id text NOT NULL,
     secret_kind text NOT NULL,
@@ -609,7 +609,7 @@ crates/auth-registry/
   in-memory adapters for tests
 
 crates/store-pg/src/auth.rs (+ migration)
-  secret_records and auth_grants tables
+  auth_secrets and auth_grants tables
   AEAD encryption with configured master key (KMS envelope later)
   PgStore impls of the auth-registry store traits
 
@@ -819,7 +819,7 @@ Acceptance criteria:
 - [x] GitHub App private key is stored in the secret store
   (`auth.github_app.private_key`; the PEM is validated at registration, and
   `auth_providers.credential_secret_id` carries a foreign key into
-  `secret_records` with ON DELETE RESTRICT);
+  `auth_secrets` with ON DELETE RESTRICT);
 - [x] installation records can be represented as grants (kind `github_app`,
   no stored tokens, audience = the API base URL, installation facts in the
   new `auth_grants.metadata_json`);

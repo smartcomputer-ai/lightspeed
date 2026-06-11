@@ -2,7 +2,7 @@
 //! refresh lock (P69 G2/G3).
 //!
 //! Tables never hold secret values: client secrets and PKCE verifiers live in
-//! `secret_records`, flows store only the SHA-256 hash of the `state`
+//! `auth_secrets`, flows store only the SHA-256 hash of the `state`
 //! parameter. The refresh lock is a Postgres transaction-scoped advisory
 //! lock keyed by universe and grant, so refresh single-flight holds across
 //! worker processes.
@@ -72,7 +72,7 @@ impl OAuthClientStore for PgStore {
         record.validate()?;
         let query = format!(
             r#"
-            INSERT INTO oauth_clients (
+            INSERT INTO auth_clients (
                 universe_id,
                 client_id,
                 provider_id,
@@ -128,7 +128,7 @@ impl OAuthClientStore for PgStore {
         let query = format!(
             r#"
             SELECT {OAUTH_CLIENT_COLUMNS}
-            FROM oauth_clients
+            FROM auth_clients
             WHERE universe_id = $1 AND client_id = $2
             "#
         );
@@ -151,7 +151,7 @@ impl OAuthClientStore for PgStore {
         let query = format!(
             r#"
             SELECT {OAUTH_CLIENT_COLUMNS}
-            FROM oauth_clients
+            FROM auth_clients
             WHERE universe_id = $1
             ORDER BY client_id
             "#
@@ -170,7 +170,7 @@ impl OAuthClientStore for PgStore {
     ) -> Result<OAuthClientRecord, AuthRegistryError> {
         let query = format!(
             r#"
-            DELETE FROM oauth_clients
+            DELETE FROM auth_clients
             WHERE universe_id = $1 AND client_id = $2
             RETURNING {OAUTH_CLIENT_COLUMNS}
             "#

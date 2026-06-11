@@ -3,7 +3,7 @@
 //! One table serves every provider kind. Non-secret config is stored as
 //! tagged JSON and decoded into the typed `AuthProviderConfig` enum on read;
 //! the credential reference is a typed column with a foreign key into
-//! `secret_records` (ON DELETE RESTRICT), so a provider's private key cannot
+//! `auth_secrets` (ON DELETE RESTRICT), so a provider's private key cannot
 //! be deleted out from under it.
 
 use async_trait::async_trait;

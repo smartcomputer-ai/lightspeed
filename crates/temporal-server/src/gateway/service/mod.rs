@@ -1588,7 +1588,7 @@ impl AgentApiService for GatewayAgentApi {
     ) -> Result<AgentApiOutcome<AuthProviderCreateResponse>, AgentApiError> {
         let draft = auth_provider_create_draft(params, now_ms()?)?;
         // The secret must exist before the provider row: auth_providers
-        // carries a foreign key into secret_records.
+        // carries a foreign key into auth_secrets.
         if let Some(secret) = &draft.secret {
             self.store
                 .put_secret(secret.clone())

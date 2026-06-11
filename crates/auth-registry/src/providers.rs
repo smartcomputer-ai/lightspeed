@@ -5,7 +5,7 @@
 //! enum at the store boundary, so consumers never touch raw JSON. The
 //! load-bearing credential reference (for GitHub Apps: the private key) is a
 //! typed field; `store-pg` backs it with a foreign key into
-//! `secret_records`.
+//! `auth_secrets`.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};

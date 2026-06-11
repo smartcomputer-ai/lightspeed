@@ -23,10 +23,10 @@ use sqlx::{Executor, PgPool, postgres::PgPoolOptions};
 use thiserror::Error;
 use uuid::Uuid;
 
-pub const INITIAL_SCHEMA_SQL: &str = include_str!("../migrations/001_initial.sql");
-pub const MCP_REGISTRY_SCHEMA_SQL: &str = include_str!("../migrations/002_mcp_registry.sql");
-pub const AUTH_SCHEMA_SQL: &str = include_str!("../migrations/003_auth.sql");
-pub const OAUTH_SCHEMA_SQL: &str = include_str!("../migrations/004_oauth.sql");
+pub const CORE_SCHEMA_SQL: &str = include_str!("../migrations/001_core.sql");
+pub const VFS_SCHEMA_SQL: &str = include_str!("../migrations/002_vfs.sql");
+pub const MCP_SCHEMA_SQL: &str = include_str!("../migrations/003_mcp.sql");
+pub const AUTH_SCHEMA_SQL: &str = include_str!("../migrations/004_auth.sql");
 
 pub const DEFAULT_INLINE_THRESHOLD_BYTES: usize = 64 * 1024;
 
@@ -245,10 +245,10 @@ impl PgStore {
     }
 
     pub async fn migrate(pool: &PgPool) -> Result<(), PgStoreError> {
-        pool.execute(INITIAL_SCHEMA_SQL).await?;
-        pool.execute(MCP_REGISTRY_SCHEMA_SQL).await?;
+        pool.execute(CORE_SCHEMA_SQL).await?;
+        pool.execute(VFS_SCHEMA_SQL).await?;
+        pool.execute(MCP_SCHEMA_SQL).await?;
         pool.execute(AUTH_SCHEMA_SQL).await?;
-        pool.execute(OAUTH_SCHEMA_SQL).await?;
         Ok(())
     }
 

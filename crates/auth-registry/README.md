@@ -49,7 +49,7 @@ execution — never in the engine or the session log.
   provider kind, with non-secret config decoded into the typed
   `AuthProviderConfig` enum (GitHub Apps first) and the credential reference
   as a typed field (`store-pg` backs it with a foreign key into
-  `secret_records`).
+  `auth_secrets`).
 - `github` — the GitHub App driver (P69 G5): RS256 app JWT signing,
   installation listing, and the `GitHubAppRuntime` token source (on-demand
   installation token minting via the `GitHubApiClient` trait). Installation
@@ -117,7 +117,7 @@ while the TUI sits idle at the prompt, and the next message will see the MCP
 tools — linking patches the live session's tool set.
 
 Verify redaction afterwards: the `cas_blobs` request blobs must contain
-`"authorization": "<redacted>"` and never the token, and `secret_records`
+`"authorization": "<redacted>"` and never the token, and `auth_secrets`
 holds only ciphertext.
 
 ## Testing an OAuth login end to end

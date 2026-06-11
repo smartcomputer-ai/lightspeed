@@ -465,7 +465,7 @@ async fn pg_live_auth_secrets_are_encrypted_and_universe_scoped() {
     assert_eq!(value.expose(), token);
 
     let row = sqlx::query(
-        "SELECT ciphertext FROM secret_records WHERE universe_id = $1 AND secret_id = $2",
+        "SELECT ciphertext FROM auth_secrets WHERE universe_id = $1 AND secret_id = $2",
     )
     .bind(left.config().universe_id)
     .bind(secret_id.as_str())

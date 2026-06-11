@@ -109,7 +109,7 @@ impl SecretStore for PgStore {
 
         let row = sqlx::query(
             r#"
-            INSERT INTO secret_records (
+            INSERT INTO auth_secrets (
                 universe_id,
                 secret_id,
                 secret_kind,
@@ -151,7 +151,7 @@ impl SecretStore for PgStore {
         let row = sqlx::query(
             r#"
             SELECT secret_id, secret_kind, key_id, nonce, ciphertext, created_at_ms, updated_at_ms
-            FROM secret_records
+            FROM auth_secrets
             WHERE universe_id = $1 AND secret_id = $2
             "#,
         )
@@ -189,7 +189,7 @@ impl SecretStore for PgStore {
     async fn delete_secret(&self, secret_id: &SecretId) -> Result<(), AuthRegistryError> {
         let result = sqlx::query(
             r#"
-            DELETE FROM secret_records
+            DELETE FROM auth_secrets
             WHERE universe_id = $1 AND secret_id = $2
             "#,
         )
