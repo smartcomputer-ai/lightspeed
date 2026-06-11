@@ -11,6 +11,7 @@ pub mod executor;
 pub mod openai_completions;
 pub mod openai_responses;
 pub mod params;
+pub mod provider_keys;
 pub mod result;
 pub mod secrets;
 mod skill_prompts;
@@ -23,6 +24,9 @@ pub use anthropic_messages::{
 pub use error::{LlmAdapterError, LlmAdapterResult};
 pub use executor::{LlmAdapterRegistry, LlmCompactionAdapter, LlmGenerationAdapter, LlmRuntime};
 pub use openai_responses::{OpenAiResponsesApi, OpenAiResponsesLlmAdapter};
+pub use provider_keys::{
+    NoStoredProviderKeys, ProviderKeyError, ProviderKeyResolver, StaticProviderKeys,
+};
 pub use secrets::{
     EnvSecretResolver, REDACTED_SECRET_PLACEHOLDER, ResolvedSecretValue, SECRET_NAMESPACE_AUTH_GRANT,
     SECRET_NAMESPACE_ENV, SecretResolveError, SecretResolver, StaticSecretResolver,

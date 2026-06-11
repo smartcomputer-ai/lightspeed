@@ -12,14 +12,14 @@ use engine::{
 use llm_clients::{anthropic::messages as am, openai::responses as oai};
 use llm_runtime::{
     AnthropicMessagesLlmAdapter, LlmAdapterRegistry, LlmRuntime, OpenAiResponsesLlmAdapter,
-    secrets::SecretResolver,
+    provider_keys::ProviderKeyResolver, secrets::SecretResolver,
 };
 use store_pg::PgStore;
 use vfs::{VfsMountStore, VfsWorkspaceStore};
 
 use crate::{
     config::pg_store_from_env,
-    worker::{BrokerSecretResolver, SessionTools},
+    worker::{BrokerSecretResolver, SessionTools, StoredProviderKeyResolver},
 };
 
 #[derive(Clone)]
@@ -104,7 +104,8 @@ impl ActivityState {
     pub fn from_pg_store_with_default_runtime(store: Arc<PgStore>) -> anyhow::Result<Self> {
         let blobs: Arc<dyn BlobStore> = store.clone();
         let secrets = broker_secret_resolver(store.clone())?;
-        let llm = default_llm_runtime(blobs, Some(secrets))?;
+        let provider_keys = stored_provider_key_resolver(store.clone());
+        let llm = default_llm_runtime(blobs, Some(secrets), Some(provider_keys))?;
         let tools = session_tools(store.clone());
         Ok(Self::from_pg_store(store, llm, tools))
     }
@@ -135,6 +136,12 @@ fn session_tools(store: Arc<PgStore>) -> Arc<dyn CoreAgentTools> {
     Arc::new(SessionTools::from_pg_store(store))
 }
 
+fn stored_provider_key_resolver(store: Arc<PgStore>) -> Arc<dyn ProviderKeyResolver> {
+    let providers: Arc<dyn AuthProviderStore> = store.clone();
+    let secrets: Arc<dyn SecretStore> = store;
+    Arc::new(StoredProviderKeyResolver::new(providers, secrets))
+}
+
 fn broker_secret_resolver(store: Arc<PgStore>) -> anyhow::Result<Arc<dyn SecretResolver>> {
     let grants: Arc<dyn AuthGrantStore> = store.clone();
     let secrets: Arc<dyn SecretStore> = store.clone();
@@ -159,46 +166,41 @@ fn broker_secret_resolver(store: Arc<PgStore>) -> anyhow::Result<Arc<dyn SecretR
     Ok(Arc::new(BrokerSecretResolver::new(Arc::new(broker))))
 }
 
-/// Builds the default LLM runtime from environment credentials. Registers an
-/// adapter per provider API kind whose credentials are configured and fails
-/// when none are available.
+/// Builds the default LLM runtime. Adapters register unconditionally:
+/// requests resolve a stored `model:<provider_id>` key first and fall back to
+/// the env-configured client key, so a deployment can run on stored keys
+/// alone. When neither exists, requests fail with a typed error before
+/// provider I/O.
 fn default_llm_runtime(
     blobs: Arc<dyn BlobStore>,
     secrets: Option<Arc<dyn SecretResolver>>,
+    provider_keys: Option<Arc<dyn ProviderKeyResolver>>,
 ) -> anyhow::Result<Arc<dyn CoreAgentLlm>> {
     let mut registry = LlmAdapterRegistry::new();
 
-    if std::env::var("OPENAI_API_KEY").is_ok_and(|key| !key.trim().is_empty()) {
-        let openai = oai::Client::new(oai::Config::from_env()?)?;
-        let mut adapter = OpenAiResponsesLlmAdapter::new(Arc::new(openai), blobs.clone());
-        if let Some(secrets) = &secrets {
-            adapter = adapter.with_secret_resolver(secrets.clone());
-        }
-        let adapter = Arc::new(adapter);
-        registry.insert_generation_adapter(ProviderApiKind::OpenAiResponses, adapter.clone());
-        registry.insert_compaction_adapter(ProviderApiKind::OpenAiResponses, adapter);
+    let openai = oai::Client::new(oai::Config::from_env_allow_missing_key())?;
+    let mut adapter = OpenAiResponsesLlmAdapter::new(Arc::new(openai), blobs.clone());
+    if let Some(secrets) = &secrets {
+        adapter = adapter.with_secret_resolver(secrets.clone());
     }
-    if std::env::var("ANTHROPIC_API_KEY").is_ok_and(|key| !key.trim().is_empty()) {
-        let anthropic = am::Client::new(am::Config::from_env()?)?;
-        let mut adapter = AnthropicMessagesLlmAdapter::new(Arc::new(anthropic), blobs);
-        if let Some(secrets) = &secrets {
-            adapter = adapter.with_secret_resolver(secrets.clone());
-        }
-        let adapter = Arc::new(adapter);
-        registry.insert_generation_adapter(ProviderApiKind::AnthropicMessages, adapter.clone());
-        registry.insert_compaction_adapter(ProviderApiKind::AnthropicMessages, adapter);
+    if let Some(provider_keys) = &provider_keys {
+        adapter = adapter.with_provider_key_resolver(provider_keys.clone());
     }
+    let adapter = Arc::new(adapter);
+    registry.insert_generation_adapter(ProviderApiKind::OpenAiResponses, adapter.clone());
+    registry.insert_compaction_adapter(ProviderApiKind::OpenAiResponses, adapter);
 
-    if registry
-        .generation_adapter(&ProviderApiKind::OpenAiResponses)
-        .is_none()
-        && registry
-            .generation_adapter(&ProviderApiKind::AnthropicMessages)
-            .is_none()
-    {
-        anyhow::bail!(
-            "no LLM provider credentials configured: set OPENAI_API_KEY and/or ANTHROPIC_API_KEY"
-        );
+    let anthropic = am::Client::new(am::Config::from_env_allow_missing_key())?;
+    let mut adapter = AnthropicMessagesLlmAdapter::new(Arc::new(anthropic), blobs);
+    if let Some(secrets) = &secrets {
+        adapter = adapter.with_secret_resolver(secrets.clone());
     }
+    if let Some(provider_keys) = &provider_keys {
+        adapter = adapter.with_provider_key_resolver(provider_keys.clone());
+    }
+    let adapter = Arc::new(adapter);
+    registry.insert_generation_adapter(ProviderApiKind::AnthropicMessages, adapter.clone());
+    registry.insert_compaction_adapter(ProviderApiKind::AnthropicMessages, adapter);
+
     Ok(Arc::new(LlmRuntime::new(registry)))
 }

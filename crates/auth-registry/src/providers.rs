@@ -31,6 +31,8 @@ pub enum AuthProviderStatus {
 pub enum AuthProviderConfig {
     #[serde(rename = "github_app")]
     GitHubApp(GitHubAppConfig),
+    #[serde(rename = "model_api_key")]
+    ModelApiKey(ModelApiKeyConfig),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,10 +44,24 @@ pub struct GitHubAppConfig {
     pub api_base_url: String,
 }
 
+/// Stored API key for an LLM provider (P69 G6). The key itself is the provider
+/// row's credential secret; the config carries no secret material. Rows use
+/// the `model:<provider_id>` provider-id convention, keyed off the session's
+/// `ModelSelection.provider_id`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ModelApiKeyConfig {}
+
+/// Provider-row id for a stored LLM provider key: `model:<provider_id>`.
+pub fn model_auth_provider_id(provider_id: &str) -> String {
+    format!("model:{provider_id}")
+}
+
 impl AuthProviderConfig {
     pub fn provider_kind(&self) -> AuthProviderKind {
         match self {
             Self::GitHubApp(_) => AuthProviderKind::GitHubApp,
+            Self::ModelApiKey(_) => AuthProviderKind::ModelApiKey,
         }
     }
 
@@ -82,6 +98,7 @@ impl AuthProviderConfig {
                     other => other,
                 })
             }
+            Self::ModelApiKey(ModelApiKeyConfig {}) => Ok(()),
         }
     }
 }
@@ -118,6 +135,13 @@ impl AuthProviderRecord {
         {
             return Err(AuthRegistryError::InvalidInput {
                 message: "github_app providers require a private key credential".to_owned(),
+            });
+        }
+        if matches!(self.config, AuthProviderConfig::ModelApiKey(_))
+            && self.credential_secret.is_none()
+        {
+            return Err(AuthRegistryError::InvalidInput {
+                message: "model_api_key providers require the API key credential".to_owned(),
             });
         }
         validate_nonnegative_i64(self.created_at_ms, "created_at_ms")?;
@@ -233,6 +257,52 @@ mod tests {
         let json = config.to_json().expect("encode config");
         assert_eq!(json["type"], "github_app");
         assert_eq!(json["app_id"], "12345");
+
+        let decoded = AuthProviderConfig::from_json(&json).expect("decode config");
+        assert_eq!(decoded, config);
+    }
+
+    #[test]
+    fn model_api_key_records_validate_and_derive_kind() {
+        let record = CreateAuthProviderRecord {
+            provider_id: AuthProviderId::new(model_auth_provider_id("openai")),
+            display_name: None,
+            config: AuthProviderConfig::ModelApiKey(ModelApiKeyConfig::default()),
+            credential_secret: Some(SecretId::new("authsec_key")),
+            status: AuthProviderStatus::Active,
+            created_at_ms: 10,
+        }
+        .into_record();
+
+        record.validate().expect("valid llm api key record");
+        assert_eq!(record.provider_kind, AuthProviderKind::ModelApiKey);
+        assert_eq!(record.provider_id.as_str(), "model:openai");
+    }
+
+    #[test]
+    fn model_api_key_providers_require_a_credential() {
+        let record = CreateAuthProviderRecord {
+            provider_id: AuthProviderId::new("model:openai"),
+            display_name: None,
+            config: AuthProviderConfig::ModelApiKey(ModelApiKeyConfig::default()),
+            credential_secret: None,
+            status: AuthProviderStatus::Active,
+            created_at_ms: 10,
+        }
+        .into_record();
+
+        assert!(matches!(
+            record.validate(),
+            Err(AuthRegistryError::InvalidInput { .. })
+        ));
+    }
+
+    #[test]
+    fn model_api_key_configs_round_trip_through_tagged_json() {
+        let config = AuthProviderConfig::ModelApiKey(ModelApiKeyConfig::default());
+
+        let json = config.to_json().expect("encode config");
+        assert_eq!(json["type"], "model_api_key");
 
         let decoded = AuthProviderConfig::from_json(&json).expect("decode config");
         assert_eq!(decoded, config);

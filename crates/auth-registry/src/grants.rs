@@ -21,6 +21,8 @@ pub enum AuthProviderKind {
     GitHubOAuthApp,
     #[serde(rename = "custom_oauth")]
     CustomOAuth,
+    #[serde(rename = "model_api_key")]
+    ModelApiKey,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

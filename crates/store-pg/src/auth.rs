@@ -567,6 +567,7 @@ pub(crate) fn provider_kind_to_str(value: AuthProviderKind) -> &'static str {
         AuthProviderKind::GitHubAppUser => "github_app_user",
         AuthProviderKind::GitHubOAuthApp => "github_oauth_app",
         AuthProviderKind::CustomOAuth => "custom_oauth",
+        AuthProviderKind::ModelApiKey => "model_api_key",
     }
 }
 
@@ -578,6 +579,7 @@ pub(crate) fn provider_kind_from_str(value: &str) -> Result<AuthProviderKind, Au
         "github_app_user" => Ok(AuthProviderKind::GitHubAppUser),
         "github_oauth_app" => Ok(AuthProviderKind::GitHubOAuthApp),
         "custom_oauth" => Ok(AuthProviderKind::CustomOAuth),
+        "model_api_key" => Ok(AuthProviderKind::ModelApiKey),
         other => Err(AuthRegistryError::Store {
             message: format!("unsupported auth provider kind '{other}'"),
         }),

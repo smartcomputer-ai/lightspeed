@@ -1640,6 +1640,7 @@ pub enum AuthProviderKind {
     GitHubAppUser,
     GitHubOAuthApp,
     CustomOAuth,
+    ModelApiKey,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1987,6 +1988,10 @@ pub enum AuthProviderConfigView {
         app_id: String,
         api_base_url: String,
     },
+    /// Stored model provider API key (`model:<provider_id>` rows). The key itself
+    /// is the provider credential and never appears in views.
+    #[serde(rename = "modelApiKey", rename_all = "camelCase")]
+    ModelApiKey {},
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1998,6 +2003,10 @@ pub enum AuthProviderConfigInput {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         api_base_url: Option<String>,
     },
+    /// Stored model provider API key; the key arrives via `credential` and is
+    /// encrypted on receipt.
+    #[serde(rename = "modelApiKey", rename_all = "camelCase")]
+    ModelApiKey {},
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

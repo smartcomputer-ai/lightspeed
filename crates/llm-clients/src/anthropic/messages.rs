@@ -27,7 +27,9 @@ const DEFAULT_BASE_URL: &str = "https://api.anthropic.com/v1";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Config {
-    pub api_key: String,
+    /// Default API key for every request. `None` builds a client that can
+    /// only send requests carrying a per-request key.
+    pub api_key: Option<String>,
     pub base_url: String,
     pub anthropic_version: String,
     pub beta_headers: Vec<String>,
@@ -36,8 +38,14 @@ pub struct Config {
 
 impl Config {
     pub fn new(api_key: impl Into<String>) -> Self {
+        let mut config = Self::without_api_key();
+        config.api_key = Some(api_key.into());
+        config
+    }
+
+    pub fn without_api_key() -> Self {
         Self {
-            api_key: api_key.into(),
+            api_key: None,
             base_url: DEFAULT_BASE_URL.to_string(),
             anthropic_version: DEFAULT_ANTHROPIC_VERSION.to_string(),
             beta_headers: Vec::new(),
@@ -52,18 +60,30 @@ impl Config {
         if api_key.trim().is_empty() {
             return Err(ConfigurationError::new("ANTHROPIC_API_KEY is set but empty").into());
         }
+        Ok(Self::new(api_key).with_env_overrides())
+    }
 
-        let mut config = Self::new(api_key);
+    /// Like [`Config::from_env`], but tolerates a missing or empty
+    /// `ANTHROPIC_API_KEY`: requests must then carry a per-request key.
+    pub fn from_env_allow_missing_key() -> Self {
+        let config = match std::env::var("ANTHROPIC_API_KEY") {
+            Ok(api_key) if !api_key.trim().is_empty() => Self::new(api_key),
+            _ => Self::without_api_key(),
+        };
+        config.with_env_overrides()
+    }
+
+    fn with_env_overrides(mut self) -> Self {
         if let Ok(base_url) = std::env::var("ANTHROPIC_BASE_URL") {
-            config.base_url = base_url;
+            self.base_url = base_url;
         }
         if let Ok(version) = std::env::var("ANTHROPIC_VERSION") {
-            config.anthropic_version = version;
+            self.anthropic_version = version;
         }
         if let Ok(beta_headers) = std::env::var("ANTHROPIC_BETA") {
-            config.beta_headers = split_beta_headers(&beta_headers);
+            self.beta_headers = split_beta_headers(&beta_headers);
         }
-        Ok(config)
+        self
     }
 }
 
@@ -72,6 +92,9 @@ pub struct Client {
     http: HttpClient,
     messages_url: Url,
     count_tokens_url: Url,
+    /// Configured `x-api-key` value; requests may override it with a
+    /// per-request key, and fail before I/O when neither exists.
+    auth: Option<HeaderValue>,
 }
 
 impl Client {
@@ -79,14 +102,13 @@ impl Client {
         let base_url = normalize_base_url(&config.base_url)?;
         let messages_url = join_url(&base_url, "messages")?;
         let count_tokens_url = join_url(&base_url, "messages/count_tokens")?;
+        let auth = config
+            .api_key
+            .as_deref()
+            .map(api_key_header_value)
+            .transpose()?;
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        headers.insert(
-            "x-api-key",
-            HeaderValue::from_str(&config.api_key).map_err(|err| {
-                ConfigurationError::new(format!("invalid Anthropic API key header: {err}"))
-            })?,
-        );
         headers.insert(
             "anthropic-version",
             HeaderValue::from_str(&config.anthropic_version).map_err(|err| {
@@ -106,17 +128,42 @@ impl Client {
             http: HttpClient::with_headers(config.http, headers)?,
             messages_url,
             count_tokens_url,
+            auth,
         })
+    }
+
+    /// Effective `x-api-key` value: the per-request key when supplied,
+    /// otherwise the configured key. Fails before any I/O when neither exists.
+    fn auth_header(&self, api_key: Option<&str>) -> Result<HeaderValue, LlmApiError> {
+        match api_key {
+            Some(api_key) => api_key_header_value(api_key),
+            None => self.auth.clone().ok_or_else(|| {
+                ConfigurationError::new(
+                    "no Anthropic API key configured for this client and no per-request key provided",
+                )
+                .into()
+            }),
+        }
     }
 
     pub async fn create(
         &self,
+        request: CreateMessageRequest,
+    ) -> Result<ApiResponse<Message>, LlmApiError> {
+        self.create_with_api_key(request, None).await
+    }
+
+    pub async fn create_with_api_key(
+        &self,
         mut request: CreateMessageRequest,
+        api_key: Option<&str>,
     ) -> Result<ApiResponse<Message>, LlmApiError> {
         request.stream = Some(false);
+        let auth = self.auth_header(api_key)?;
         let response = self
             .http
             .request(Method::POST, self.messages_url.clone())
+            .header("x-api-key", auth)
             .json(&request)
             .send()
             .await
@@ -136,6 +183,7 @@ impl Client {
         let response = self
             .http
             .request(Method::POST, self.messages_url.clone())
+            .header("x-api-key", self.auth_header(None)?)
             .json(&request)
             .send()
             .await
@@ -158,6 +206,7 @@ impl Client {
         let response = self
             .http
             .request(Method::POST, self.count_tokens_url.clone())
+            .header("x-api-key", self.auth_header(None)?)
             .json(&request)
             .send()
             .await
@@ -168,6 +217,14 @@ impl Client {
         let body = response.text().await.map_err(map_reqwest_error)?;
         parse_json_response(status, headers, body, "Anthropic count tokens response")
     }
+}
+
+fn api_key_header_value(api_key: &str) -> Result<HeaderValue, LlmApiError> {
+    let mut value = HeaderValue::from_str(api_key).map_err(|err| {
+        ConfigurationError::new(format!("invalid Anthropic API key header: {err}"))
+    })?;
+    value.set_sensitive(true);
+    Ok(value)
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

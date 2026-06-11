@@ -119,7 +119,7 @@ pub use github::{
 };
 pub use providers::{
     AuthProviderConfig, AuthProviderRecord, AuthProviderStatus, AuthProviderStore,
-    CreateAuthProviderRecord, GitHubAppConfig,
+    CreateAuthProviderRecord, GitHubAppConfig, ModelApiKeyConfig, model_auth_provider_id,
 };
 pub use flow::{
     AuthCallback, DEFAULT_AUTH_FLOW_TTL_MS, OAuthFlowService, StartAuthFlow, StartedAuthFlow,
@@ -149,7 +149,8 @@ pub use oauth::{
     state_hash,
 };
 pub use secrets::{
-    PutSecretRecord, SECRET_KIND_STATIC_BEARER, SecretRecordMeta, SecretStore, SecretValue,
+    PutSecretRecord, SECRET_KIND_MODEL_API_KEY, SECRET_KIND_STATIC_BEARER, SecretRecordMeta,
+    SecretStore, SecretValue,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]

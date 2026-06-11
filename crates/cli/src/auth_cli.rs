@@ -21,6 +21,85 @@ enum AuthCommand {
     Login(AuthLoginArgs),
     /// Manage GitHub App providers and installation grants.
     Github(AuthGithubArgs),
+    /// Manage stored model provider API keys.
+    Model(AuthModelArgs),
+}
+
+#[derive(Args, Debug, Clone)]
+struct AuthModelArgs {
+    #[command(subcommand)]
+    command: AuthModelCommand,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum AuthModelCommand {
+    /// Store a model provider API key encrypted; provider API calls
+    /// use it instead of the worker's environment key.
+    Add(AuthModelAddArgs),
+    /// List stored model provider keys.
+    List(AuthModelListArgs),
+    /// Remove a stored model provider key.
+    Remove(AuthModelRemoveArgs),
+}
+
+#[derive(Args, Clone)]
+#[command(group(ArgGroup::new("api_key_source").required(true)))]
+struct AuthModelAddArgs {
+    /// JSON-RPC agent API URL.
+    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    api_url: String,
+    /// Emit the created provider as JSON.
+    #[arg(long)]
+    json: bool,
+    /// model provider id from the session model selection (e.g. "openai",
+    /// "anthropic"). Stored as the `model:<provider_id>` auth provider row.
+    provider_id: String,
+    /// Read the API key from this file.
+    #[arg(long = "api-key-file", group = "api_key_source")]
+    api_key_file: Option<std::path::PathBuf>,
+    /// Read the API key from this environment variable.
+    #[arg(long = "api-key-env", group = "api_key_source")]
+    api_key_env: Option<String>,
+    /// Read the API key from stdin.
+    #[arg(long = "api-key-stdin", group = "api_key_source")]
+    api_key_stdin: bool,
+    /// Optional display name.
+    #[arg(long = "display-name")]
+    display_name: Option<String>,
+}
+
+impl std::fmt::Debug for AuthModelAddArgs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthModelAddArgs")
+            .field("api_url", &self.api_url)
+            .field("provider_id", &self.provider_id)
+            .field("api_key_file", &self.api_key_file)
+            .field("api_key_env", &self.api_key_env)
+            .field("api_key_stdin", &self.api_key_stdin)
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Args, Debug, Clone)]
+struct AuthModelListArgs {
+    /// JSON-RPC agent API URL.
+    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    api_url: String,
+    /// Emit providers as JSON.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Args, Debug, Clone)]
+struct AuthModelRemoveArgs {
+    /// JSON-RPC agent API URL.
+    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    api_url: String,
+    /// Emit the removed provider as JSON.
+    #[arg(long)]
+    json: bool,
+    /// model provider id (e.g. "openai") or full `model:<provider_id>` row id.
+    provider_id: String,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -502,6 +581,15 @@ pub(crate) async fn handle(args: AuthArgs) -> Result<()> {
         AuthCommand::Client(args) => client(args).await,
         AuthCommand::Login(args) => login(args).await,
         AuthCommand::Github(args) => github(args).await,
+        AuthCommand::Model(args) => model(args).await,
+    }
+}
+
+async fn model(args: AuthModelArgs) -> Result<()> {
+    match args.command {
+        AuthModelCommand::Add(args) => model_add(args).await,
+        AuthModelCommand::List(args) => model_list(args).await,
+        AuthModelCommand::Remove(args) => model_remove(args).await,
     }
 }
 
@@ -848,6 +936,109 @@ fn resolve_private_key(args: &AuthGithubAppAddArgs) -> Result<String> {
     Ok(key)
 }
 
+/// Normalize a CLI-supplied model provider id to the `model:<provider_id>` auth
+/// provider row id.
+fn model_provider_row_id(provider_id: &str) -> String {
+    if provider_id.starts_with("model:") {
+        provider_id.to_owned()
+    } else {
+        format!("model:{provider_id}")
+    }
+}
+
+fn resolve_model_api_key(args: &AuthModelAddArgs) -> Result<String> {
+    if let Some(path) = &args.api_key_file {
+        let key = std::fs::read_to_string(path)
+            .with_context(|| format!("read API key from {}", path.display()))?;
+        let key = key.trim().to_owned();
+        if key.is_empty() {
+            anyhow::bail!("API key file {} is empty", path.display());
+        }
+        return Ok(key);
+    }
+    if let Some(name) = &args.api_key_env {
+        let key = std::env::var(name)
+            .with_context(|| format!("environment variable {name} is not set"))?;
+        if key.is_empty() {
+            anyhow::bail!("environment variable {name} is empty");
+        }
+        return Ok(key);
+    }
+    let mut key = String::new();
+    std::io::stdin()
+        .read_to_string(&mut key)
+        .context("read API key from stdin")?;
+    let key = key.trim().to_owned();
+    if key.is_empty() {
+        anyhow::bail!("no API key provided on stdin");
+    }
+    Ok(key)
+}
+
+async fn model_add(args: AuthModelAddArgs) -> Result<()> {
+    let api_key = resolve_model_api_key(&args)?;
+    let api = HttpAgentApi::new(args.api_url.clone());
+    let response = api
+        .create_auth_provider(api::AuthProviderCreateParams {
+            provider_id: Some(model_provider_row_id(&args.provider_id)),
+            display_name: args.display_name.clone(),
+            config: api::AuthProviderConfigInput::ModelApiKey {},
+            credential: Some(api_key),
+        })
+        .await
+        .map_err(crate::api_client::api_error)?
+        .result;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&response)?);
+        return Ok(());
+    }
+    print_provider(&response.provider);
+    Ok(())
+}
+
+async fn model_list(args: AuthModelListArgs) -> Result<()> {
+    let api = HttpAgentApi::new(args.api_url);
+    let response = api
+        .list_auth_providers(api::AuthProviderListParams {})
+        .await
+        .map_err(crate::api_client::api_error)?
+        .result;
+    let providers: Vec<_> = response
+        .providers
+        .iter()
+        .filter(|provider| provider.provider_kind == api::AuthProviderKind::ModelApiKey)
+        .collect();
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&providers)?);
+        return Ok(());
+    }
+    if providers.is_empty() {
+        println!("providers 0");
+        return Ok(());
+    }
+    for provider in providers {
+        println!("{} {:?}", provider.provider_id, provider.status);
+    }
+    Ok(())
+}
+
+async fn model_remove(args: AuthModelRemoveArgs) -> Result<()> {
+    let api = HttpAgentApi::new(args.api_url);
+    let response = api
+        .delete_auth_provider(api::AuthProviderDeleteParams {
+            provider_id: model_provider_row_id(&args.provider_id),
+        })
+        .await
+        .map_err(crate::api_client::api_error)?
+        .result;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&response)?);
+        return Ok(());
+    }
+    print_provider(&response.provider);
+    Ok(())
+}
+
 async fn github_app_add(args: AuthGithubAppAddArgs) -> Result<()> {
     let private_key = resolve_private_key(&args)?;
     let api = HttpAgentApi::new(args.api_url.clone());
@@ -993,6 +1184,7 @@ fn print_provider(provider: &api::AuthProviderView) {
             println!("appId {app_id}");
             println!("apiBaseUrl {api_base_url}");
         }
+        api::AuthProviderConfigView::ModelApiKey {} => {}
     }
     println!("hasCredential {}", provider.has_credential);
     println!("createdAtMs {}", provider.created_at_ms);

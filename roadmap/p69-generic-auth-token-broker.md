@@ -42,6 +42,10 @@
   `auth/providers/*` + `auth/github/installations/*` API, and
   `forge auth github` CLI. Token leases remain deferred until a VM/sandbox
   consumer exists.
+- G6 implemented on 2026-06-11: stored LLM provider API keys as
+  `model_api_key` rows in `auth_providers` (no new table, no grant artifact),
+  resolved at provider-send time inside the LLM activity with fallback to
+  env-configured keys; `forge auth model add|list|remove` CLI.
 - G1 deliberately deferred `AuthProviderRecord`, `AuthFlowRecord`, and token
   leases; G2 landed `AuthFlowRecord` and OAuth client records; G5 landed
   provider records as the generic `auth_providers` table. Static bearer and
@@ -866,8 +870,97 @@ by a built-in source, and `GitHubAppRuntime` lives in
 `broker.rs` carries no GitHub imports and the next provider kind
 (`github_app_user`) is a new source impl, not a new broker branch.
 
+## G6: Model Provider API Keys
+
+Let LLM calls authenticate with API keys stored in the encrypted auth
+substrate, on top of (not instead of) environment-variable keys.
+
+Design position: an LLM API key is a deployment credential, not a grant.
+It has no principal, scopes, flow, refresh, or expiry — exactly like the
+GitHub App private key, which lives on the provider row
+(`auth_providers.credential_secret_id` -> `auth_secrets`), not in
+`auth_grants`. So G6 adds no new table and no grant artifact:
+
+- a new `AuthProviderKind::ModelApiKey` and `AuthProviderConfig::ModelApiKey`
+  variant in `auth_providers` (enum variant + CHECK constraint, no schema
+  redesign), with the key as the provider row's credential secret;
+- the `model:<provider_id>` provider-id convention (mirroring
+  `mcp:<server_id>`), keyed off `ModelSelection.provider_id`
+  (`model:openai`, `model:anthropic`);
+- resolution stays runtime-side. The session log and `ModelSelection` never
+  carry credentials or credential refs: which key sends a request changes
+  nothing about the planned request, so per the transport-config rule the
+  binding is invisible to the engine and to replay.
+
+Resolution chain at provider-send time, inside the LLM activity:
+stored provider key (`model:<provider_id>` row) -> client-configured env key ->
+typed failure before provider I/O. Adapter registration no longer requires
+env keys at startup; a deployment can run on stored keys alone.
+
+Boundary shape mirrors `SecretResolver`: `llm-runtime` owns a narrow
+`ProviderKeyResolver` trait (no auth/store dependencies); `temporal-server`
+adapts the universe-bound provider/secret stores to it. Resolution does not
+go through `AuthTokenBroker` — that boundary is grant-keyed and there is no
+grant; it is a provider-row read plus secret decrypt behind the trait.
+`llm-clients` accept a per-request key override so the key is attached at
+send time and never baked into client construction; it travels as a header
+and never enters persisted request blobs, so no new redaction surface.
+
+Acceptance criteria:
+
+- [x] LLM API keys can be registered as `model_api_key` provider rows with the
+  key encrypted in `auth_secrets` (`auth/providers/create` with the
+  `modelApiKey` config + `forge auth model add|list|remove`; the key is a
+  deliberate inbound-plaintext path, encrypted on receipt, never returned);
+- [x] generation and compaction calls resolve the stored key for the
+  request's `provider_id` at send time and fall back to the env-configured
+  key when no provider row exists (`ProviderKeyResolver` in `llm-runtime`,
+  `StoredProviderKeyResolver` in the worker, per-request
+  `create_with_api_key`/`compact_with_api_key` in `llm-clients`);
+- [x] a disabled, wrong-kind, or credential-less `model:<provider_id>` row
+  fails resolution with a typed error before provider I/O (no silent env
+  fallback once a row exists);
+- [x] no stored key value appears in persisted provider request blobs, API
+  responses, or `Debug` output (the key travels as a sensitive-marked
+  transport header; views expose only `has_credential`);
+- [x] worker runtime registers provider adapters without env keys
+  (`Config::from_env_allow_missing_key`) and fails clearly at request time
+  when neither a stored nor env key is available.
+
+Implemented 2026-06-11 in one cut: `AuthProviderKind::ModelApiKey` +
+`AuthProviderConfig::ModelApiKey` (+ widened provider-kind CHECK constraints
+with an idempotent constraint swap for existing databases), the
+`model:<provider_id>` row convention with `model_auth_provider_id`, the
+`auth.model.api_key` secret kind, per-request key override in both provider
+clients (auth moved out of reqwest default headers entirely; every request
+attaches its effective key, so an unkeyed client fails before I/O),
+`provider_keys.rs` in `llm-runtime`, the gateway create branch, and the CLI.
+
+Deferred: per-session key assignment. `auth_providers` is keyed
+`(universe_id, provider_id)` and deliberately stays that way; a session
+binding is a different record with a different lifecycle and earns its own
+(possibly consumer-generic) table when the requirement is concrete. The
+resolution chain already leaves room for it: session -> universe -> env.
+
 ## Future Work
 
+- Model provider OAuth login (sign-in-with-provider tokens instead of API
+  keys, e.g. ChatGPT/Codex-style flows). Design sketch from the G6 review:
+  the OAuth token is a grant, not a provider credential — it has a
+  principal, refresh token, expiry, and reauth state, so it lands in
+  `auth_grants` and resolves through the existing broker (single-flight
+  refresh, `NeedsReauth`) with a new `TokenAudience::ModelProvider` variant.
+  The `model:<provider_id>` row stays the binding point and gains a
+  grant-backed config variant; `StoredProviderKeyResolver` dispatches static
+  secret vs broker. Genuinely new work: (a) auth-scheme-aware per-request
+  auth in `llm-clients` (`ResolvedProviderAuth { value, scheme,
+  extra_headers }` — Anthropic OAuth tokens use `Authorization: Bearer` +
+  an `anthropic-beta` header instead of `x-api-key`); (b) the
+  loopback-redirect flow already deferred from G2 (provider-fixed client ids
+  use localhost redirect URIs the gateway callback cannot serve); (c) a
+  small per-provider quirks config (endpoints, client id, scopes, scheme).
+  Deferred until a concrete provider login ships; per-provider ToS for
+  subscription-token reuse and the P69 token-egress consent framing apply.
 - GitHub App user access token flow.
 - GitHub OAuth App fallback flow.
 - OAuth client credentials extension for non-human automation.

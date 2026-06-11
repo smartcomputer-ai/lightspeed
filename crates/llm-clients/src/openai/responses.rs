@@ -26,7 +26,9 @@ pub const DEFAULT_RESPONSES_REQUEST_TIMEOUT: Duration = Duration::from_secs(300)
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Config {
-    pub api_key: String,
+    /// Default API key for every request. `None` builds a client that can
+    /// only send requests carrying a per-request key.
+    pub api_key: Option<String>,
     pub base_url: String,
     pub organization: Option<String>,
     pub project: Option<String>,
@@ -35,10 +37,16 @@ pub struct Config {
 
 impl Config {
     pub fn new(api_key: impl Into<String>) -> Self {
+        let mut config = Self::without_api_key();
+        config.api_key = Some(api_key.into());
+        config
+    }
+
+    pub fn without_api_key() -> Self {
         let mut http = HttpClientConfig::default();
         http.request_timeout = DEFAULT_RESPONSES_REQUEST_TIMEOUT;
         Self {
-            api_key: api_key.into(),
+            api_key: None,
             base_url: DEFAULT_BASE_URL.to_string(),
             organization: None,
             project: None,
@@ -53,18 +61,31 @@ impl Config {
         if api_key.trim().is_empty() {
             return Err(ConfigurationError::new("OPENAI_API_KEY is set but empty").into());
         }
+        Ok(Self::new(api_key).with_env_overrides())
+    }
 
-        let mut config = Self::new(api_key);
+    /// Like [`Config::from_env`], but tolerates a missing or empty
+    /// `OPENAI_API_KEY`: requests must then carry a per-request key.
+    pub fn from_env_allow_missing_key() -> Self {
+        let mut config = match std::env::var("OPENAI_API_KEY") {
+            Ok(api_key) if !api_key.trim().is_empty() => Self::new(api_key),
+            _ => Self::without_api_key(),
+        };
+        config = config.with_env_overrides();
+        config
+    }
+
+    fn with_env_overrides(mut self) -> Self {
         if let Ok(base_url) = std::env::var("OPENAI_BASE_URL") {
-            config.base_url = base_url;
+            self.base_url = base_url;
         }
         if let Ok(organization) = std::env::var("OPENAI_ORG_ID") {
-            config.organization = Some(organization);
+            self.organization = Some(organization);
         }
         if let Ok(project) = std::env::var("OPENAI_PROJECT_ID") {
-            config.project = Some(project);
+            self.project = Some(project);
         }
-        Ok(config)
+        self
     }
 }
 
@@ -74,6 +95,9 @@ pub struct Client {
     responses_url: Url,
     compact_url: Url,
     input_tokens_url: Url,
+    /// Configured `Authorization` value; requests may override it with a
+    /// per-request key, and fail before I/O when neither exists.
+    auth: Option<HeaderValue>,
 }
 
 impl Client {
@@ -82,14 +106,13 @@ impl Client {
         let responses_url = join_url(&base_url, "responses")?;
         let compact_url = join_url(&base_url, "responses/compact")?;
         let input_tokens_url = join_url(&base_url, "responses/input_tokens")?;
+        let auth = config
+            .api_key
+            .as_deref()
+            .map(bearer_auth_value)
+            .transpose()?;
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        headers.insert(
-            AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", config.api_key)).map_err(|err| {
-                ConfigurationError::new(format!("invalid OpenAI API key header: {err}"))
-            })?,
-        );
         if let Some(organization) = &config.organization {
             headers.insert(
                 "OpenAI-Organization",
@@ -112,17 +135,42 @@ impl Client {
             responses_url,
             compact_url,
             input_tokens_url,
+            auth,
         })
+    }
+
+    /// Effective `Authorization` value: the per-request key when supplied,
+    /// otherwise the configured key. Fails before any I/O when neither exists.
+    fn auth_header(&self, api_key: Option<&str>) -> Result<HeaderValue, LlmApiError> {
+        match api_key {
+            Some(api_key) => bearer_auth_value(api_key),
+            None => self.auth.clone().ok_or_else(|| {
+                ConfigurationError::new(
+                    "no OpenAI API key configured for this client and no per-request key provided",
+                )
+                .into()
+            }),
+        }
     }
 
     pub async fn create(
         &self,
+        request: CreateResponseRequest,
+    ) -> Result<ApiResponse<Response>, LlmApiError> {
+        self.create_with_api_key(request, None).await
+    }
+
+    pub async fn create_with_api_key(
+        &self,
         mut request: CreateResponseRequest,
+        api_key: Option<&str>,
     ) -> Result<ApiResponse<Response>, LlmApiError> {
         request.stream = Some(false);
+        let auth = self.auth_header(api_key)?;
         let response = self
             .http
             .request(Method::POST, self.responses_url.clone())
+            .header(AUTHORIZATION, auth)
             .json(&request)
             .send()
             .await
@@ -146,6 +194,7 @@ impl Client {
         let response = self
             .http
             .request(Method::GET, self.response_url(response_id)?)
+            .header(AUTHORIZATION, self.auth_header(None)?)
             .query(&request)
             .send()
             .await
@@ -169,6 +218,7 @@ impl Client {
         let response = self
             .http
             .request(Method::GET, self.response_url(response_id)?)
+            .header(AUTHORIZATION, self.auth_header(None)?)
             .query(&request)
             .send()
             .await
@@ -194,6 +244,7 @@ impl Client {
         let response = self
             .http
             .request(Method::DELETE, self.response_url(response_id)?)
+            .header(AUTHORIZATION, self.auth_header(None)?)
             .send()
             .await
             .map_err(|err| self.map_reqwest_error(err))?;
@@ -214,6 +265,7 @@ impl Client {
                 Method::POST,
                 self.response_subresource_url(response_id, "cancel")?,
             )
+            .header(AUTHORIZATION, self.auth_header(None)?)
             .send()
             .await
             .map_err(|err| self.map_reqwest_error(err))?;
@@ -231,9 +283,19 @@ impl Client {
         &self,
         request: CompactResponseRequest,
     ) -> Result<ApiResponse<CompactResponse>, LlmApiError> {
+        self.compact_with_api_key(request, None).await
+    }
+
+    pub async fn compact_with_api_key(
+        &self,
+        request: CompactResponseRequest,
+        api_key: Option<&str>,
+    ) -> Result<ApiResponse<CompactResponse>, LlmApiError> {
+        let auth = self.auth_header(api_key)?;
         let response = self
             .http
             .request(Method::POST, self.compact_url.clone())
+            .header(AUTHORIZATION, auth)
             .json(&request)
             .send()
             .await
@@ -259,6 +321,7 @@ impl Client {
                 Method::GET,
                 self.response_subresource_url(response_id, "input_items")?,
             )
+            .header(AUTHORIZATION, self.auth_header(None)?)
             .query(&request)
             .send()
             .await
@@ -280,6 +343,7 @@ impl Client {
         let response = self
             .http
             .request(Method::POST, self.input_tokens_url.clone())
+            .header(AUTHORIZATION, self.auth_header(None)?)
             .json(&request)
             .send()
             .await
@@ -302,6 +366,7 @@ impl Client {
         let response = self
             .http
             .request(Method::POST, self.responses_url.clone())
+            .header(AUTHORIZATION, self.auth_header(None)?)
             .json(&request)
             .send()
             .await
@@ -350,6 +415,13 @@ impl Client {
     fn map_reqwest_error(&self, err: reqwest::Error) -> LlmApiError {
         map_reqwest_error(err, self.http.config().request_timeout)
     }
+}
+
+fn bearer_auth_value(api_key: &str) -> Result<HeaderValue, LlmApiError> {
+    let mut value = HeaderValue::from_str(&format!("Bearer {api_key}"))
+        .map_err(|err| ConfigurationError::new(format!("invalid OpenAI API key header: {err}")))?;
+    value.set_sensitive(true);
+    Ok(value)
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
