@@ -14,8 +14,6 @@
 CREATE TABLE IF NOT EXISTS universes (
     universe_id uuid PRIMARY KEY,
     slug text UNIQUE,
-    created_at timestamptz NOT NULL DEFAULT now(),
-    modified_at timestamptz NOT NULL DEFAULT now(),
 
     CONSTRAINT universes_slug_format
         CHECK (slug IS NULL OR slug ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$')
@@ -29,8 +27,6 @@ CREATE TABLE IF NOT EXISTS sessions (
     head_seq bigint,
     created_at_ms bigint NOT NULL,
     updated_at_ms bigint NOT NULL,
-    inserted_at timestamptz NOT NULL DEFAULT now(),
-    modified_at timestamptz NOT NULL DEFAULT now(),
 
     PRIMARY KEY (universe_id, session_id),
 
@@ -63,7 +59,6 @@ CREATE TABLE IF NOT EXISTS session_events (
         (entry_json #>> '{event,kind}') STORED,
     event_version integer GENERATED ALWAYS AS
         ((entry_json #>> '{event,version}')::integer) STORED,
-    inserted_at timestamptz NOT NULL DEFAULT now(),
 
     PRIMARY KEY (universe_id, session_id, seq),
     FOREIGN KEY (universe_id, session_id)
@@ -102,7 +97,6 @@ CREATE TABLE IF NOT EXISTS cas_blobs (
     object_key text,
     object_etag text,
     object_version text,
-    inserted_at timestamptz NOT NULL DEFAULT now(),
 
     PRIMARY KEY (universe_id, digest),
 
@@ -146,8 +140,6 @@ CREATE TABLE IF NOT EXISTS session_blob_roots (
     root_kind text NOT NULL DEFAULT 'session',
     first_seq bigint,
     last_seq bigint,
-    inserted_at timestamptz NOT NULL DEFAULT now(),
-    modified_at timestamptz NOT NULL DEFAULT now(),
 
     PRIMARY KEY (universe_id, session_id, digest, root_kind),
     FOREIGN KEY (universe_id, session_id)
@@ -177,7 +169,6 @@ CREATE TABLE IF NOT EXISTS cas_blob_edges (
     parent_digest text NOT NULL,
     child_digest text NOT NULL,
     edge_kind text NOT NULL DEFAULT 'contains',
-    inserted_at timestamptz NOT NULL DEFAULT now(),
 
     PRIMARY KEY (universe_id, parent_digest, child_digest, edge_kind),
     FOREIGN KEY (universe_id, parent_digest)

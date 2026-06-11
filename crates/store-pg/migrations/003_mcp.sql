@@ -26,8 +26,6 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
     status text NOT NULL DEFAULT 'active',
     created_at_ms bigint NOT NULL,
     updated_at_ms bigint NOT NULL,
-    inserted_at timestamptz NOT NULL DEFAULT now(),
-    modified_at timestamptz NOT NULL DEFAULT now(),
 
     PRIMARY KEY (universe_id, server_id),
 

@@ -370,7 +370,7 @@ impl AuthGrantStore for PgStore {
         let query = format!(
             r#"
             UPDATE auth_grants
-            SET status = $3, updated_at_ms = $4, modified_at = now()
+            SET status = $3, updated_at_ms = $4
             WHERE universe_id = $1 AND grant_id = $2
             RETURNING {GRANT_COLUMNS}
             "#
@@ -403,8 +403,7 @@ impl AuthGrantStore for PgStore {
             SET access_token_secret_id = $3,
                 refresh_token_secret_id = COALESCE($4, refresh_token_secret_id),
                 expires_at_ms = $5,
-                updated_at_ms = $6,
-                modified_at = now()
+                updated_at_ms = $6
             WHERE universe_id = $1 AND grant_id = $2
             RETURNING {GRANT_COLUMNS}
             "#

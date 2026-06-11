@@ -242,8 +242,7 @@ impl BlobGraphStore for PgStore {
                         WHEN session_blob_roots.last_seq IS NULL THEN EXCLUDED.last_seq
                         WHEN EXCLUDED.last_seq IS NULL THEN session_blob_roots.last_seq
                         ELSE GREATEST(session_blob_roots.last_seq, EXCLUDED.last_seq)
-                    END,
-                    modified_at = now()
+                    END
                 "#,
             )
             .bind(self.config.universe_id)

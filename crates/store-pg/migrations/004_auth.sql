@@ -27,8 +27,6 @@ CREATE TABLE IF NOT EXISTS auth_secrets (
     ciphertext bytea NOT NULL,
     created_at_ms bigint NOT NULL,
     updated_at_ms bigint NOT NULL,
-    inserted_at timestamptz NOT NULL DEFAULT now(),
-    modified_at timestamptz NOT NULL DEFAULT now(),
 
     PRIMARY KEY (universe_id, secret_id),
 
@@ -70,8 +68,6 @@ CREATE TABLE IF NOT EXISTS auth_grants (
     metadata_json jsonb NOT NULL DEFAULT '{}',
     created_at_ms bigint NOT NULL,
     updated_at_ms bigint NOT NULL,
-    inserted_at timestamptz NOT NULL DEFAULT now(),
-    modified_at timestamptz NOT NULL DEFAULT now(),
 
     PRIMARY KEY (universe_id, grant_id),
 
@@ -134,8 +130,6 @@ CREATE TABLE IF NOT EXISTS auth_clients (
     audience text,
     created_at_ms bigint NOT NULL,
     updated_at_ms bigint NOT NULL,
-    inserted_at timestamptz NOT NULL DEFAULT now(),
-    modified_at timestamptz NOT NULL DEFAULT now(),
 
     PRIMARY KEY (universe_id, client_id),
 
@@ -199,8 +193,6 @@ CREATE TABLE IF NOT EXISTS auth_flows (
     completed_at_ms bigint,
     created_at_ms bigint NOT NULL,
     updated_at_ms bigint NOT NULL,
-    inserted_at timestamptz NOT NULL DEFAULT now(),
-    modified_at timestamptz NOT NULL DEFAULT now(),
 
     PRIMARY KEY (universe_id, flow_id),
 
@@ -266,8 +258,6 @@ CREATE TABLE IF NOT EXISTS auth_providers (
     status text NOT NULL DEFAULT 'active',
     created_at_ms bigint NOT NULL,
     updated_at_ms bigint NOT NULL,
-    inserted_at timestamptz NOT NULL DEFAULT now(),
-    modified_at timestamptz NOT NULL DEFAULT now(),
 
     PRIMARY KEY (universe_id, provider_id),
 

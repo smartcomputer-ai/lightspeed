@@ -13,8 +13,6 @@ CREATE TABLE IF NOT EXISTS vfs_snapshots (
     source_json jsonb NOT NULL,
     display_name text,
     created_at_ms bigint NOT NULL,
-    inserted_at timestamptz NOT NULL DEFAULT now(),
-    modified_at timestamptz NOT NULL DEFAULT now(),
 
     PRIMARY KEY (universe_id, digest),
     FOREIGN KEY (universe_id, digest)
@@ -40,8 +38,6 @@ CREATE TABLE IF NOT EXISTS vfs_workspaces (
     revision bigint NOT NULL,
     created_at_ms bigint NOT NULL,
     updated_at_ms bigint NOT NULL,
-    inserted_at timestamptz NOT NULL DEFAULT now(),
-    modified_at timestamptz NOT NULL DEFAULT now(),
 
     PRIMARY KEY (universe_id, workspace_id),
     FOREIGN KEY (universe_id, base_snapshot_digest)
@@ -77,8 +73,6 @@ CREATE TABLE IF NOT EXISTS vfs_mounts (
     snapshot_digest text,
     workspace_id text,
     access text NOT NULL,
-    inserted_at timestamptz NOT NULL DEFAULT now(),
-    modified_at timestamptz NOT NULL DEFAULT now(),
 
     PRIMARY KEY (universe_id, session_id, mount_path),
     FOREIGN KEY (universe_id, snapshot_digest)

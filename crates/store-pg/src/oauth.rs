@@ -304,7 +304,7 @@ impl AuthFlowStore for PgStore {
         let query = format!(
             r#"
             UPDATE auth_flows
-            SET consumed_at_ms = $3, updated_at_ms = $3, modified_at = now()
+            SET consumed_at_ms = $3, updated_at_ms = $3
             WHERE universe_id = $1
               AND flow_id = $2
               AND consumed_at_ms IS NULL
@@ -347,8 +347,7 @@ impl AuthFlowStore for PgStore {
             SET grant_id = $3,
                 error = $4,
                 completed_at_ms = $5,
-                updated_at_ms = $5,
-                modified_at = now()
+                updated_at_ms = $5
             WHERE universe_id = $1
               AND flow_id = $2
               AND completed_at_ms IS NULL
