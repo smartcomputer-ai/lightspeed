@@ -138,12 +138,18 @@ Loop protection: the bridge ignores its own messages (`fromMe`, bot user id)
 and deduplicates inbound deliveries; room-event appends are idempotent per
 message key, so channel redelivery is harmless.
 
-The bridge handles text and images on both channels (P71 G3 first cut):
-photos in user turns are downloaded, stored in CAS via `blob/put`, and
-attached to the run as image input the model sees natively. Images are only
-downloaded for messages that activate a turn — unaddressed group photos
-buffer as `(sent an image)` placeholder text. Video/document/voice media is
-caption-only for now (audio transcription is P71 G6).
+The bridge handles text, images, and documents on both channels (P71 G3):
+photos and supported document attachments (PDF up to 10MB; markdown, plain
+text, CSV, and JSON up to 1MB) in user turns are downloaded, stored in CAS
+via `blob/put`, and attached to the run as input the model sees natively.
+Media is only downloaded for messages that activate a turn — unaddressed
+group attachments buffer as `(sent an image)` / `(sent a file: ...)`
+placeholder text. Other document types and video are caption-only; voice
+notes await audio transcription (P71 G6).
+
+While a turn is running the bridge shows a typing indicator in the chat
+(Telegram `sendChatAction`, WhatsApp `composing` presence), refreshed until
+the run completes.
 
 ## Verify
 

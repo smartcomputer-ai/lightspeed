@@ -616,6 +616,17 @@ pub enum InputContent {
         #[serde(skip_serializing_if = "Option::is_none")]
         detail: Option<String>,
     },
+    InputFile {
+        #[serde(rename = "type")]
+        r#type: InputFileContentType,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        filename: Option<String>,
+        /// `data:<mime>;base64,<data>` payload (the API accepts PDF only).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        file_data: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        file_id: Option<String>,
+    },
     Raw(Value),
 }
 
@@ -629,6 +640,12 @@ pub enum InputContentType {
 #[serde(rename_all = "snake_case")]
 pub enum InputImageContentType {
     InputImage,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InputFileContentType {
+    InputFile,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

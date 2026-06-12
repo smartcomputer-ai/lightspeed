@@ -250,6 +250,21 @@ describe("MessagingBridgeRuntime", () => {
     expect(downloads).toBe(1);
   });
 
+  it("fires the typing indicator while a turn is running", async () => {
+    let typingCalls = 0;
+    await runtime.handleInbound(inbound({ isDirect: true, text: "hello" }), policy, {
+      ...io(),
+      setTyping: async () => {
+        typingCalls += 1;
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await runtime.flush();
+
+    expect(typingCalls).toBeGreaterThanOrEqual(1);
+    expect(replies).toHaveLength(1);
+  });
+
   it("suppresses final-text delivery when the run used messaging tools", async () => {
     forge.messagingToolUsed = true;
     await runtime.handleInbound(

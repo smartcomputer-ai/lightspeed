@@ -6,6 +6,8 @@
   2026-06-12; G4 and G5 first cut (outbox, messaging toolset, tools-first
   delivery with final-text fallback) implemented 2026-06-12 (see goal
   sections for what shipped).
+- G3 second cut (document input: PDF + text-based documents) and bridge
+  typing indicators implemented 2026-06-12.
 - Builds on the P70 external integration surface (schema export, TS client,
   idempotent `run/start`, long-poll `session/events/read`), the first-cut
   Telegram/WhatsApp bridge in `interop/messaging/`, and the timers/triggers
@@ -397,6 +399,32 @@ attaches media items — room-event images buffer as `(sent an image)`
 placeholder text; envelopes now carry the channel message id
 (`[telegram:group Eng #4123] ...`).
 
+Second cut (documents) implemented 2026-06-12. Provider support drove the
+shape: PDF is the only document type both APIs accept natively (OpenAI
+`input_file` data-URL part, Anthropic base64 `document` block); text-based
+documents have no native shape on OpenAI and a native `text`-source
+`document` block on Anthropic. Accordingly:
+
+- admission accepts `MediaKind::Document` with `application/pdf` (10MB) and
+  text MIMEs `text/plain`, `text/markdown`, `text/csv`, `application/json`
+  (1MB, validated as UTF-8 at admission); other document types (docx, xlsx,
+  ...) get typed rejections;
+- a document is a `Message { role: User }` entry with the document MIME and
+  a `[document: name]` preview — PDFs are unambiguous by MIME, text
+  documents are recognized by the preview marker (ordinary text turns are
+  also `text/plain`);
+- `llm-runtime` materializes PDFs as provider-native file/document parts
+  (filename/title from the preview) and text documents as an Anthropic
+  text-source document block / an OpenAI inlined text part with a
+  `[document: name]` header; verified by unit tests plus
+  `*_live_adapter_reads_pdf_document_input` live tests against both real
+  APIs;
+- the bridge downloads Telegram `message:document` and WhatsApp
+  `documentMessage` attachments on user turns (extension-first MIME
+  resolution in `media.ts`, since channels report generic MIMEs for text
+  files) and derives the media kind from the MIME instead of hardcoding
+  image.
+
 ## G4: Delivery Outbox
 
 Durable, channel-neutral outbound delivery through the gateway.
@@ -529,8 +557,9 @@ Acceptance criteria:
   design revision per 2026-06-12 discussion: fallback is normal behavior,
   and the instruction prompting lives in the tool descriptions);
 - [ ] the model can react to a specific message and edit one of its own
-  messages end-to-end (deliverers implemented for both channels; needs a
-  manual smoke test with a live model choosing the tools);
+  messages end-to-end (deliverers implemented for both channels; reactions
+  verified in live chat 2026-06-12, the edit smoke test is deliberately
+  skipped for now — revisit when edits matter in practice);
 - [ ] cross-chat send via explicit target — deliberately deferred; the
   first cut is current-binding only (the bridge resolves session →
   binding, the tools carry no addressing);
@@ -622,7 +651,8 @@ Acceptance criteria:
 ## Safety And Trust
 
 - Allowlists default-on for real use (current empty-allowlist warning gets a
-  config flag to hard-fail in non-dev mode).
+  config flag to hard-fail in non-dev mode). Deferred 2026-06-12: a proper
+  login/authorization system is planned next and supersedes the flag.
 - Inbound channel text and media are untrusted data — same stance as P101
   external trigger payloads; envelopes make provenance explicit to the
   model.
@@ -647,8 +677,11 @@ Acceptance criteria:
   does not expose it. Without it, messages arriving mid-run queue as
   follow-up turns. Exposing `run/steer` would enable OpenClaw-style steer
   mode; deferred until the queueing UX proves insufficient.
-- **Read receipts / typing indicators:** pure bridge polish; whether typing
-  state should key off run-started session events.
+- **Read receipts / typing indicators:** typing indicators shipped
+  2026-06-12 — the bridge fires the channel typing action (Telegram
+  `sendChatAction`, WhatsApp `composing` presence) when a turn starts
+  processing and refreshes it until the run completes (capped at 3
+  minutes). Read receipts remain open.
 - **Group sender pairing:** per-sender authorization inside allowed groups
   (OpenClaw's `groupAllowFrom`) vs chat-level allowlists only.
 

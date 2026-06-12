@@ -354,6 +354,36 @@ async fn materialize_input_item(
                     extra: Default::default(),
                 }));
             }
+            if let Some(document) =
+                crate::blob_io::document_entry(item.media_type.as_deref(), item.preview.as_deref())
+            {
+                let part = if document.is_pdf {
+                    let data = crate::blob_io::read_base64(blobs, &item.content_ref).await?;
+                    oai::InputContent::InputFile {
+                        r#type: oai::InputFileContentType::InputFile,
+                        filename: Some(document.name.unwrap_or_else(|| "document.pdf".to_owned())),
+                        file_data: Some(format!("data:{};base64,{data}", document.mime)),
+                        file_id: None,
+                    }
+                } else {
+                    // The Responses API takes files as PDF only; text-based
+                    // documents are inlined with their name as a header.
+                    let text = read_text(blobs, &item.content_ref).await?;
+                    let header = match document.name {
+                        Some(name) => format!("[document: {name}]"),
+                        None => "[document]".to_owned(),
+                    };
+                    oai::InputContent::InputText {
+                        r#type: oai::InputContentType::InputText,
+                        text: format!("{header}\n{text}"),
+                    }
+                };
+                return Ok(oai::ResponseInputItem::Message(oai::InputMessage {
+                    role,
+                    content: oai::InputMessageContent::Parts(vec![part]),
+                    extra: Default::default(),
+                }));
+            }
             let text = read_text(blobs, &item.content_ref).await?;
             Ok(oai::ResponseInputItem::Message(oai::InputMessage {
                 role,
@@ -2356,6 +2386,78 @@ mod tests {
         assert_eq!(value["content"][0]["type"], json!("input_image"));
         assert_eq!(value["content"][1]["type"], json!("input_text"));
         assert_eq!(value["content"][1]["text"], json!("what is in this picture?"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pdf_document_entry_materializes_as_input_file_part() {
+        let blobs = InMemoryBlobStore::new();
+        let pdf_ref = blobs
+            .put_bytes(b"%PDF-1.4 fake".to_vec())
+            .await
+            .expect("store pdf");
+
+        let entries = vec![ContextEntry {
+            entry_id: ContextEntryId::new(1),
+            key: None,
+            kind: ContextEntryKind::Message {
+                role: ContextMessageRole::User,
+            },
+            source: ContextEntrySource::RunInput {
+                run_id: RunId::new(1),
+                input_index: 0,
+            },
+            content_ref: pdf_ref,
+            media_type: Some("application/pdf".to_owned()),
+            preview: Some("[document: offer.pdf]".to_owned()),
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        }];
+
+        let input = materialize_input_items(&blobs, &entries)
+            .await
+            .expect("materialize entries");
+
+        let value = serde_json::to_value(&input[0]).expect("serialize message");
+        assert_eq!(value["content"][0]["type"], json!("input_file"));
+        assert_eq!(value["content"][0]["filename"], json!("offer.pdf"));
+        let file_data = value["content"][0]["file_data"].as_str().expect("file data");
+        assert!(file_data.starts_with("data:application/pdf;base64,"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn markdown_document_entry_inlines_text_with_header() {
+        let blobs = InMemoryBlobStore::new();
+        let doc_ref = blobs.insert_text("# Notes\nhello").await;
+
+        let entries = vec![ContextEntry {
+            entry_id: ContextEntryId::new(1),
+            key: None,
+            kind: ContextEntryKind::Message {
+                role: ContextMessageRole::User,
+            },
+            source: ContextEntrySource::RunInput {
+                run_id: RunId::new(1),
+                input_index: 0,
+            },
+            content_ref: doc_ref,
+            media_type: Some("text/markdown".to_owned()),
+            preview: Some("[document: notes.md]".to_owned()),
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        }];
+
+        let input = materialize_input_items(&blobs, &entries)
+            .await
+            .expect("materialize entries");
+
+        let value = serde_json::to_value(&input[0]).expect("serialize message");
+        assert_eq!(value["content"][0]["type"], json!("input_text"));
+        assert_eq!(
+            value["content"][0]["text"],
+            json!("[document: notes.md]\n# Notes\nhello")
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

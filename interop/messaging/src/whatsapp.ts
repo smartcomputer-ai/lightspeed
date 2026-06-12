@@ -14,6 +14,7 @@ import qrcode from "qrcode-terminal";
 import type { OutboundMessageView } from "@forge/agent-client";
 import type { WhatsAppBridgeConfig } from "./config.js";
 import { stableHash } from "./ids.js";
+import { documentByteLimit, documentMime } from "./media.js";
 import { DeliveryError, type ChannelDeliverer, type DeliveryResult } from "./outbox.js";
 import { shouldQuoteChunk } from "./policy.js";
 import type {
@@ -189,7 +190,14 @@ async function handleWhatsAppMessage(
   const image = content?.imageMessage ?? null;
   const imageSize = Number(image?.fileLength ?? 0);
   const hasImage = Boolean(image) && imageSize <= MAX_WHATSAPP_IMAGE_BYTES;
-  if (!rawText && !hasImage) {
+  const document = content?.documentMessage ?? null;
+  const documentMimeType = document
+    ? documentMime(document.fileName, document.mimetype)
+    : null;
+  const hasDocument =
+    documentMimeType !== null &&
+    Number(document?.fileLength ?? 0) <= documentByteLimit(documentMimeType);
+  if (!rawText && !hasImage && !hasDocument) {
     return;
   }
 
@@ -221,7 +229,11 @@ async function handleWhatsAppMessage(
     senderId: senderJid,
     senderName: message.pushName?.trim() || senderJid.split("@")[0] || senderJid,
     timestampMs: Number(message.messageTimestamp ?? 0) * 1000,
-    text: rawText || "(sent an image)",
+    text:
+      rawText ||
+      (hasDocument
+        ? `(sent a file: ${document?.fileName ?? "document"})`
+        : "(sent an image)"),
     isDirect: !isGroup,
     chatLabel: isGroup ? remoteJid.split("@")[0] || remoteJid : "dm",
     mentionedBot: Boolean(
@@ -237,7 +249,12 @@ async function handleWhatsAppMessage(
     senderAllowed: allowFrom.size > 0 ? allowFrom.has(senderJid) : !isGroup,
     ...(hasImage
       ? { fetchMedia: () => downloadWhatsAppImage(message, image?.mimetype ?? null) }
-      : {}),
+      : hasDocument
+        ? {
+            fetchMedia: () =>
+              downloadWhatsAppDocument(message, documentMimeType, document?.fileName ?? null),
+          }
+        : {}),
   };
 
   await runtime.handleInbound(inbound, policy, {
@@ -251,6 +268,9 @@ async function handleWhatsAppMessage(
           quote ? { quoted: message } : {},
         );
       }
+    },
+    setTyping: async () => {
+      await sock.sendPresenceUpdate("composing", remoteJid);
     },
   });
 }
@@ -268,6 +288,24 @@ async function downloadWhatsAppImage(
     {
       base64: buffer.toString("base64"),
       mime,
+    },
+  ];
+}
+
+async function downloadWhatsAppDocument(
+  message: WAMessage,
+  mime: string,
+  fileName: string | null,
+): Promise<InboundMedia[]> {
+  const buffer = (await downloadMediaMessage(message, "buffer", {})) as Buffer;
+  if (buffer.byteLength > documentByteLimit(mime)) {
+    return [];
+  }
+  return [
+    {
+      base64: buffer.toString("base64"),
+      mime,
+      ...(fileName !== null ? { name: fileName } : {}),
     },
   ];
 }

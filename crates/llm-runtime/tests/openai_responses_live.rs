@@ -246,6 +246,149 @@ async fn openai_responses_live_adapter_describes_image_input() {
     );
 }
 
+/// A minimal one-page PDF with correct xref offsets carrying `text`.
+fn minimal_pdf(text: &str) -> Vec<u8> {
+    let content = format!("BT /F1 24 Tf 72 700 Td ({text}) Tj ET");
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R \
+         /Resources << /Font << /F1 5 0 R >> >> >>"
+            .to_string(),
+        format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string(),
+    ];
+    let mut pdf = String::from("%PDF-1.4\n");
+    let mut offsets = Vec::new();
+    for (index, object) in objects.iter().enumerate() {
+        offsets.push(pdf.len());
+        pdf.push_str(&format!("{} 0 obj\n{object}\nendobj\n", index + 1));
+    }
+    let xref_offset = pdf.len();
+    pdf.push_str(&format!("xref\n0 {}\n", objects.len() + 1));
+    pdf.push_str("0000000000 65535 f \n");
+    for offset in offsets {
+        pdf.push_str(&format!("{offset:010} 00000 n \n"));
+    }
+    pdf.push_str(&format!(
+        "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n",
+        objects.len() + 1
+    ));
+    pdf.into_bytes()
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires OPENAI_API_KEY (costs real money)"]
+async fn openai_responses_live_adapter_reads_pdf_document_input() {
+    let blobs = Arc::new(InMemoryBlobStore::new());
+    let pdf_ref = blobs
+        .put_bytes(minimal_pdf("The magic word is tangerine"))
+        .await
+        .expect("store pdf");
+    let question_ref = text_blob(
+        &blobs,
+        "What is the magic word in the attached document? Reply with one English word in lowercase.",
+    )
+    .await;
+
+    let entries = vec![
+        ContextEntry {
+            key: None,
+            entry_id: ContextEntryId::new(1),
+            kind: ContextEntryKind::Message {
+                role: ContextMessageRole::User,
+            },
+            source: ContextEntrySource::RunInput {
+                run_id: RunId::new(1),
+                input_index: 0,
+            },
+            content_ref: pdf_ref,
+            media_type: Some("application/pdf".to_owned()),
+            preview: Some("[document: magic.pdf]".to_owned()),
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        },
+        ContextEntry {
+            key: None,
+            entry_id: ContextEntryId::new(2),
+            kind: ContextEntryKind::Message {
+                role: ContextMessageRole::User,
+            },
+            source: ContextEntrySource::RunInput {
+                run_id: RunId::new(1),
+                input_index: 1,
+            },
+            content_ref: question_ref,
+            media_type: None,
+            preview: None,
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        },
+    ];
+    let adapter = OpenAiResponsesLlmAdapter::new(
+        retrying_openai_responses_client(live_client()),
+        blobs.clone(),
+    );
+    let request = LlmGenerationRequest {
+        session_id: SessionId::new("session-live-pdf"),
+        run_id: RunId::new(1),
+        turn_id: TurnId::new(1),
+        request: LlmRequest {
+            model: ModelSelection {
+                api_kind: ProviderApiKind::OpenAiResponses,
+                provider_id: "openai".to_string(),
+                model: live_model(),
+            },
+            request_fingerprint: "live-openai-responses-pdf".to_string(),
+            context: ContextSnapshot {
+                api_kind: ProviderApiKind::OpenAiResponses,
+                context_revision: 0,
+                entries,
+                token_estimate: None,
+            },
+            tools: Vec::new(),
+            tool_choice: None,
+            output_limit: Some(512),
+            provider_response_id: None,
+            compaction: None,
+            params: Some(openai_params(&OpenAiResponsesParams {
+                store: Some(false),
+                stream: Some(false),
+                ..OpenAiResponsesParams::default()
+            })),
+        },
+    };
+
+    let execution = adapter.generate(request).await.expect("generate response");
+
+    assert_eq!(execution.result.status, LlmGenerationStatus::Succeeded);
+    let assistant_ref = execution
+        .result
+        .context_entries
+        .iter()
+        .find(|entry| {
+            matches!(
+                entry.kind,
+                ContextEntryKind::Message {
+                    role: ContextMessageRole::Assistant,
+                }
+            )
+        })
+        .map(|entry| entry.content_ref.clone())
+        .expect("assistant entry");
+    let answer = blobs
+        .read_text(&assistant_ref)
+        .await
+        .expect("assistant text")
+        .to_lowercase();
+    assert!(
+        answer.contains("tangerine"),
+        "expected the model to read the PDF magic word, got: {answer}"
+    );
+}
+
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires OPENAI_API_KEY (costs real money)"]
 async fn openai_responses_live_adapter_generates_result() {

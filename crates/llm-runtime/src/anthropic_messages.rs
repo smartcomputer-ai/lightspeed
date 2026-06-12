@@ -423,6 +423,19 @@ async fn materialize_block(
                 let data = crate::blob_io::read_base64(blobs, &entry.content_ref).await?;
                 return Ok((role, am::ContentBlockParam::image_base64(mime, data)));
             }
+            if let Some(document) = crate::blob_io::document_entry(
+                entry.media_type.as_deref(),
+                entry.preview.as_deref(),
+            ) {
+                let block = if document.is_pdf {
+                    let data = crate::blob_io::read_base64(blobs, &entry.content_ref).await?;
+                    am::ContentBlockParam::document_base64(document.mime, data, document.name)
+                } else {
+                    let text = read_text(blobs, &entry.content_ref).await?;
+                    am::ContentBlockParam::document_text(text, document.name)
+                };
+                return Ok((role, block));
+            }
             let text = read_text(blobs, &entry.content_ref).await?;
             Ok((role, am::ContentBlockParam::text(text)))
         }
@@ -2117,5 +2130,114 @@ mod tests {
             .decode(value["source"]["data"].as_str().expect("data"))
             .expect("valid base64");
         assert_eq!(decoded, image_bytes);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pdf_document_entry_materializes_as_document_block() {
+        let blobs = InMemoryBlobStore::new();
+        let content_ref = blobs
+            .put_bytes(b"%PDF-1.4 fake".to_vec())
+            .await
+            .expect("store pdf");
+        let entry = ContextEntry {
+            entry_id: ContextEntryId::new(1),
+            key: None,
+            kind: ContextEntryKind::Message {
+                role: ContextMessageRole::User,
+            },
+            source: ContextEntrySource::RunInput {
+                run_id: RunId::new(1),
+                input_index: 0,
+            },
+            content_ref,
+            media_type: Some("application/pdf".to_owned()),
+            preview: Some("[document: offer.pdf]".to_owned()),
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        };
+
+        let (role, block) = materialize_block(&blobs, &entry)
+            .await
+            .expect("materialize pdf entry");
+
+        assert_eq!(role, am::MessageRole::User);
+        let value = serde_json::to_value(&block).expect("serialize block");
+        assert_eq!(value["type"], json!("document"));
+        assert_eq!(value["source"]["type"], json!("base64"));
+        assert_eq!(value["source"]["media_type"], json!("application/pdf"));
+        assert_eq!(value["title"], json!("offer.pdf"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn markdown_document_entry_materializes_as_text_document_block() {
+        let blobs = InMemoryBlobStore::new();
+        let content_ref = blobs
+            .put_bytes(b"# Notes\nhello".to_vec())
+            .await
+            .expect("store markdown");
+        let entry = ContextEntry {
+            entry_id: ContextEntryId::new(1),
+            key: None,
+            kind: ContextEntryKind::Message {
+                role: ContextMessageRole::User,
+            },
+            source: ContextEntrySource::RunInput {
+                run_id: RunId::new(1),
+                input_index: 0,
+            },
+            content_ref,
+            media_type: Some("text/markdown".to_owned()),
+            preview: Some("[document: notes.md]".to_owned()),
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        };
+
+        let (role, block) = materialize_block(&blobs, &entry)
+            .await
+            .expect("materialize markdown entry");
+
+        assert_eq!(role, am::MessageRole::User);
+        let value = serde_json::to_value(&block).expect("serialize block");
+        assert_eq!(value["type"], json!("document"));
+        assert_eq!(value["source"]["type"], json!("text"));
+        assert_eq!(value["source"]["media_type"], json!("text/plain"));
+        assert_eq!(value["source"]["data"], json!("# Notes\nhello"));
+        assert_eq!(value["title"], json!("notes.md"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn plain_text_turn_without_document_preview_stays_a_text_block() {
+        let blobs = InMemoryBlobStore::new();
+        let content_ref = blobs
+            .put_bytes(b"just a normal message".to_vec())
+            .await
+            .expect("store text");
+        let entry = ContextEntry {
+            entry_id: ContextEntryId::new(1),
+            key: None,
+            kind: ContextEntryKind::Message {
+                role: ContextMessageRole::User,
+            },
+            source: ContextEntrySource::RunInput {
+                run_id: RunId::new(1),
+                input_index: 0,
+            },
+            content_ref,
+            media_type: Some("text/plain".to_owned()),
+            preview: None,
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        };
+
+        let (_, block) = materialize_block(&blobs, &entry)
+            .await
+            .expect("materialize text entry");
+
+        let value = serde_json::to_value(&block).expect("serialize block");
+        assert_eq!(value["type"], json!("text"));
+        assert_eq!(value["text"], json!("just a normal message"));
     }
 }

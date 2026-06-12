@@ -11,6 +11,7 @@ import type {
   MessagingBridgeRuntime,
   NormalizedInbound,
 } from "./runtime.js";
+import { documentByteLimit, documentMime } from "./media.js";
 import type { BindingState } from "./store.js";
 import { splitMessageText } from "./text.js";
 
@@ -57,7 +58,11 @@ export async function startTelegramBridge(
 
     const text = message.text ?? message.caption ?? "";
     const hasPhoto = (message.photo?.length ?? 0) > 0;
-    if (!text && !hasPhoto) {
+    const documentMimeType = message.document
+      ? documentMime(message.document.file_name, message.document.mime_type)
+      : null;
+    const hasDocument = documentMimeType !== null;
+    if (!text && !hasPhoto && !hasDocument) {
       return;
     }
 
@@ -85,7 +90,11 @@ export async function startTelegramBridge(
       senderId,
       senderName: senderDisplayName(message),
       timestampMs: message.date * 1000,
-      text: text || "(sent an image)",
+      text:
+        text ||
+        (hasDocument
+          ? `(sent a file: ${message.document?.file_name ?? "document"})`
+          : "(sent an image)"),
       isDirect,
       chatLabel: isDirect ? "dm" : (message.chat.title ?? chatId),
       mentionedBot: messageMentionsBot(message, me.id, botUsername),
@@ -96,18 +105,29 @@ export async function startTelegramBridge(
       senderAllowed: allowFrom.size > 0 ? allowFrom.has(senderId) : isDirect,
       ...(hasPhoto
         ? { fetchMedia: () => downloadTelegramPhoto(ctx, config.botToken, message) }
-        : {}),
+        : hasDocument
+          ? {
+              fetchMedia: () =>
+                downloadTelegramDocument(ctx, config.botToken, message, documentMimeType),
+            }
+          : {}),
     };
 
     await runtime.handleInbound(inbound, policy, {
       sendReply: async (replyText) => {
         await sendTelegramReply(ctx, replyText, message.message_id, config.replyToMode, isDirect);
       },
+      setTyping: async () => {
+        await bot.api.sendChatAction(message.chat.id, "typing", {
+          ...(threadId !== undefined ? { message_thread_id: threadId } : {}),
+        });
+      },
     });
   };
 
   bot.on("message:text", handleMessage);
   bot.on("message:photo", handleMessage);
+  bot.on("message:document", handleMessage);
 
   const polling = bot.start({ allowed_updates: ["message"] }).catch((error) => {
     console.error("telegram: polling stopped", error);
@@ -218,6 +238,41 @@ async function downloadTelegramPhoto(
       base64: bytes.toString("base64"),
       mime: "image/jpeg",
       name: file.file_path.split("/").at(-1) ?? "photo.jpg",
+    },
+  ];
+}
+
+async function downloadTelegramDocument(
+  ctx: Context,
+  botToken: string,
+  message: Message,
+  mime: string,
+): Promise<InboundMedia[]> {
+  const document = message.document;
+  if (!document) {
+    return [];
+  }
+  const limit = documentByteLimit(mime);
+  if ((document.file_size ?? 0) > limit) {
+    return [];
+  }
+  const file = await ctx.api.getFile(document.file_id);
+  if (!file.file_path) {
+    return [];
+  }
+  const response = await fetch(`https://api.telegram.org/file/bot${botToken}/${file.file_path}`);
+  if (!response.ok) {
+    throw new Error(`telegram file download failed: ${response.status}`);
+  }
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (bytes.byteLength > limit) {
+    return [];
+  }
+  return [
+    {
+      base64: bytes.toString("base64"),
+      mime,
+      name: document.file_name ?? file.file_path.split("/").at(-1) ?? "document",
     },
   ];
 }

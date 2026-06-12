@@ -856,6 +856,83 @@ async fn run_input_from_api_maps_image_media_to_user_message_entry() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn run_input_from_api_maps_document_media_to_user_message_entry() {
+    let store = engine::storage::InMemoryBlobStore::new();
+    let pdf_ref = store
+        .put_bytes(b"%PDF-1.4 fake".to_vec())
+        .await
+        .expect("store pdf");
+    let md_ref = store
+        .put_bytes(b"# Notes".to_vec())
+        .await
+        .expect("store markdown");
+
+    let input = run_input_from_api(
+        &store,
+        &[
+            InputItem::Media {
+                blob_ref: pdf_ref.as_str().to_owned(),
+                mime: "application/pdf".to_owned(),
+                kind: api::MediaKind::Document,
+                name: Some("offer.pdf".to_owned()),
+            },
+            InputItem::Media {
+                blob_ref: md_ref.as_str().to_owned(),
+                mime: "text/markdown".to_owned(),
+                kind: api::MediaKind::Document,
+                name: Some("notes.md".to_owned()),
+            },
+        ],
+    )
+    .await
+    .expect("input");
+
+    assert_eq!(input.len(), 2);
+    assert_eq!(input[0].media_type.as_deref(), Some("application/pdf"));
+    assert_eq!(input[0].preview.as_deref(), Some("[document: offer.pdf]"));
+    assert_eq!(input[1].media_type.as_deref(), Some("text/markdown"));
+    assert_eq!(input[1].preview.as_deref(), Some("[document: notes.md]"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn run_input_from_api_rejects_unsupported_document_media() {
+    let store = engine::storage::InMemoryBlobStore::new();
+    let blob_ref = store.put_bytes(vec![1, 2, 3]).await.expect("store blob");
+
+    let docx = run_input_from_api(
+        &store,
+        &[InputItem::Media {
+            blob_ref: blob_ref.as_str().to_owned(),
+            mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                .to_owned(),
+            kind: api::MediaKind::Document,
+            name: None,
+        }],
+    )
+    .await
+    .expect_err("docx must be rejected");
+    assert_eq!(docx.kind, AgentApiErrorKind::InvalidRequest);
+
+    // Text documents must decode as UTF-8 at admission.
+    let binary_ref = store
+        .put_bytes(vec![0xff, 0xfe, 0x00])
+        .await
+        .expect("store binary blob");
+    let binary = run_input_from_api(
+        &store,
+        &[InputItem::Media {
+            blob_ref: binary_ref.as_str().to_owned(),
+            mime: "text/plain".to_owned(),
+            kind: api::MediaKind::Document,
+            name: None,
+        }],
+    )
+    .await
+    .expect_err("non-UTF-8 text document must be rejected");
+    assert_eq!(binary.kind, AgentApiErrorKind::InvalidRequest);
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn run_input_from_api_rejects_unsupported_media() {
     let store = engine::storage::InMemoryBlobStore::new();
     let blob_ref = store.put_bytes(vec![1, 2, 3]).await.expect("store blob");

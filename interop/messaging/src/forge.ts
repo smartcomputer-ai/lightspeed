@@ -8,6 +8,7 @@ import {
 } from "@forge/agent-client";
 import type { ForgeBridgeConfig } from "./config.js";
 import { stableSubmissionId } from "./ids.js";
+import { mediaKindForMime } from "./media.js";
 import type { JsonBridgeStore } from "./store.js";
 
 export interface ForgeTurnMedia {
@@ -97,7 +98,7 @@ export class ForgeSessionBridge {
         type: "media",
         blobRef: put.result.blobRef,
         mime: media.mime,
-        kind: "image",
+        kind: mediaKindForMime(media.mime),
         ...(media.name !== undefined ? { name: media.name } : {}),
       });
     }

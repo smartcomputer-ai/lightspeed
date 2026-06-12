@@ -50,6 +50,9 @@ export interface ChannelPolicy {
 
 export interface HandleInboundOptions {
   sendReply: (text: string) => Promise<void>;
+  /// Fires the channel's typing indicator; re-invoked periodically while a
+  /// turn is running.
+  setTyping?: () => Promise<void>;
 }
 
 export interface MessagingBridgeRuntimeOptions {
@@ -64,6 +67,37 @@ interface PendingTurn {
   message: NormalizedInbound;
   text: string;
   sendReply: (text: string) => Promise<void>;
+  setTyping?: (() => Promise<void>) | undefined;
+}
+
+const TYPING_INTERVAL_MS = 4_500;
+const TYPING_MAX_MS = 3 * 60_000;
+
+/// Fires the typing indicator now and keeps refreshing it (channels expire
+/// typing state after a few seconds) until the returned stop function runs
+/// or the cap is hit.
+function startTypingLoop(
+  setTyping: () => Promise<void>,
+  log: (message: string) => void,
+): () => void {
+  const fire = () => {
+    setTyping().catch((error) => {
+      log(
+        `bridge: typing action failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
+  };
+  fire();
+  const startedAt = Date.now();
+  const timer = setInterval(() => {
+    if (Date.now() - startedAt > TYPING_MAX_MS) {
+      clearInterval(timer);
+      return;
+    }
+    fire();
+  }, TYPING_INTERVAL_MS);
+  timer.unref?.();
+  return () => clearInterval(timer);
 }
 
 export class MessagingBridgeRuntime {
@@ -171,6 +205,7 @@ export class MessagingBridgeRuntime {
           message,
           text: classification.text,
           sendReply: options.sendReply,
+          setTyping: options.setTyping,
         });
         return;
       }
@@ -270,6 +305,7 @@ export class MessagingBridgeRuntime {
     if (!first) {
       return;
     }
+    const stopTyping = first.setTyping ? startTypingLoop(first.setTyping, this.log) : null;
     try {
       // Buffered room context lands before the turn so the run sees it.
       await this.rooms.drain(key).catch(() => undefined);
@@ -332,6 +368,8 @@ export class MessagingBridgeRuntime {
         }
       }
       this.log(`bridge: failed batch in ${key}: ${errorText}`);
+    } finally {
+      stopTyping?.();
     }
   }
 

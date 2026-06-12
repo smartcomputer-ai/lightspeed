@@ -1,8 +1,15 @@
 use super::*;
 
-/// G3 first cut: images only, bounded per run.
+/// P71 G3: images and documents, bounded per run.
 const ALLOWED_IMAGE_MIMES: &[&str] = &["image/jpeg", "image/png", "image/webp", "image/gif"];
+/// PDF is the only document type both providers accept natively; the text
+/// MIMEs are inlined as text by the llm-runtime adapters.
+const PDF_MIME: &str = "application/pdf";
+const TEXT_DOCUMENT_MIMES: &[&str] = &["text/plain", "text/markdown", "text/csv", "application/json"];
 const MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
+const MAX_PDF_BYTES: u64 = 10 * 1024 * 1024;
+/// Text documents land in model context verbatim; keep them small.
+const MAX_TEXT_DOCUMENT_BYTES: u64 = 1024 * 1024;
 const MAX_MEDIA_ITEMS_PER_RUN: usize = 8;
 
 pub(super) async fn run_input_from_api(
@@ -66,40 +73,55 @@ async fn media_message_input(
     kind: MediaKind,
     name: Option<&str>,
 ) -> Result<ContextEntryInput, AgentApiError> {
-    match kind {
-        MediaKind::Image => {}
+    let mime = mime.trim().to_ascii_lowercase();
+    let (label, max_bytes) = match kind {
+        MediaKind::Image => {
+            if !ALLOWED_IMAGE_MIMES.contains(&mime.as_str()) {
+                return Err(AgentApiError::invalid_request(format!(
+                    "unsupported image mime type {mime}; allowed: {}",
+                    ALLOWED_IMAGE_MIMES.join(", ")
+                )));
+            }
+            ("image", MAX_IMAGE_BYTES)
+        }
         MediaKind::Audio => {
             return Err(AgentApiError::invalid_request(
                 "audio media input is not supported yet (P71 G6 transcription)",
             ));
         }
-        MediaKind::Document => {
-            return Err(AgentApiError::invalid_request(
-                "document media input is not supported yet",
-            ));
+        MediaKind::Document if mime == PDF_MIME => ("document", MAX_PDF_BYTES),
+        MediaKind::Document if TEXT_DOCUMENT_MIMES.contains(&mime.as_str()) => {
+            ("document", MAX_TEXT_DOCUMENT_BYTES)
         }
-    }
-    let mime = mime.trim().to_ascii_lowercase();
-    if !ALLOWED_IMAGE_MIMES.contains(&mime.as_str()) {
-        return Err(AgentApiError::invalid_request(format!(
-            "unsupported image mime type {mime}; allowed: {}",
-            ALLOWED_IMAGE_MIMES.join(", ")
-        )));
-    }
+        MediaKind::Document => {
+            return Err(AgentApiError::invalid_request(format!(
+                "unsupported document mime type {mime}; allowed: {PDF_MIME}, {}",
+                TEXT_DOCUMENT_MIMES.join(", ")
+            )));
+        }
+    };
     let blob_ref = parse_blob_ref(blob_ref)?;
     let info = store
         .stat_blob(&blob_ref)
         .await
         .map_err(map_input_blob_store_error)?;
-    if info.byte_len > MAX_IMAGE_BYTES {
+    if info.byte_len > max_bytes {
         return Err(AgentApiError::invalid_request(format!(
-            "image blob is {} bytes; the limit is {MAX_IMAGE_BYTES} bytes",
+            "{label} blob is {} bytes; the limit is {max_bytes} bytes",
             info.byte_len
         )));
     }
+    if matches!(kind, MediaKind::Document) && mime != PDF_MIME {
+        // Text documents reach the model as text; reject undecodable bytes
+        // here instead of failing the run later in the adapter.
+        store
+            .read_text(&blob_ref)
+            .await
+            .map_err(map_input_blob_store_error)?;
+    }
     let preview = match name {
-        Some(name) if !name.trim().is_empty() => format!("[image: {}]", name.trim()),
-        _ => "[image]".to_owned(),
+        Some(name) if !name.trim().is_empty() => format!("[{label}: {}]", name.trim()),
+        _ => format!("[{label}]"),
     };
     Ok(ContextEntryInput {
         kind: ContextEntryKind::Message {

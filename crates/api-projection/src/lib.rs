@@ -9,7 +9,8 @@ use std::collections::BTreeMap;
 use api::{
     ActiveToolsView, AgentApiError, CompactionPolicyInput, ContextConfigInput,
     ContextEntryInputView, ContextEntryKindView, ContextMessageRoleView, ContextView, EventCursor,
-    EventJoinsView, GenerationConfig, HostToolMode as ApiHostToolMode, InputItem, ModelConfig,
+    EventJoinsView, GenerationConfig, HostToolMode as ApiHostToolMode, InputItem, MediaKind,
+    ModelConfig,
     ProviderContextDisplayView, ProviderNativeToolExecutionView, ReasoningEffort,
     RunDefaultsConfig, RunStatus as ApiRunStatus, RunView, SessionConfigView, SessionEventKindView,
     SessionEventView, SessionItemView, SessionStatus as ApiSessionStatus, SessionView,
@@ -229,9 +230,23 @@ impl<'a> CoreAgentProjector<'a> {
             match entry.kind {
                 ContextEntryKind::Message {
                     role: ContextMessageRole::User,
-                } => projected.push(InputItem::Text {
-                    text: self.read_blob_text(&entry.content_ref).await?,
-                }),
+                } => {
+                    // Binary media entries project as media items; decoding
+                    // the blob as UTF-8 text would fail.
+                    if is_text_message_media_type(entry.media_type.as_deref()) {
+                        projected.push(InputItem::Text {
+                            text: self.read_blob_text(&entry.content_ref).await?,
+                        });
+                    } else {
+                        let mime = entry.media_type.clone().unwrap_or_default();
+                        projected.push(InputItem::Media {
+                            blob_ref: entry.content_ref.as_str().to_owned(),
+                            kind: media_kind_for_mime(&mime),
+                            mime,
+                            name: None,
+                        });
+                    }
+                }
                 _ => projected.push(InputItem::TextRef {
                     blob_ref: entry.content_ref.as_str().to_owned(),
                 }),
@@ -1536,6 +1551,17 @@ fn tool_call_display(tool_name: &str, arguments: &str) -> Option<ToolCallDisplay
     Some(view)
 }
 
+fn media_kind_for_mime(mime: &str) -> MediaKind {
+    let mime = mime.trim().to_ascii_lowercase();
+    if mime.starts_with("image/") {
+        MediaKind::Image
+    } else if mime.starts_with("audio/") {
+        MediaKind::Audio
+    } else {
+        MediaKind::Document
+    }
+}
+
 fn is_text_message_media_type(media_type: Option<&str>) -> bool {
     match media_type {
         None => true,
@@ -1637,6 +1663,41 @@ mod tests {
                 role: ContextMessageRoleView::User
             }
         ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn input_projection_renders_binary_media_as_media_item() {
+        let blobs = InMemoryBlobStore::new();
+        let image_ref = blobs
+            .put_bytes(vec![0xff, 0xd8, 0xff, 0xe0])
+            .await
+            .expect("store image bytes");
+        let projector = CoreAgentProjector::new(&blobs);
+
+        let projected = projector
+            .project_input_entries(&[ContextEntryInput {
+                kind: ContextEntryKind::Message {
+                    role: ContextMessageRole::User,
+                },
+                content_ref: image_ref.clone(),
+                media_type: Some("image/jpeg".to_owned()),
+                preview: Some("[image: photo.jpg]".to_owned()),
+                provider_kind: None,
+                provider_item_id: None,
+                token_estimate: None,
+            }])
+            .await
+            .expect("project media input");
+
+        assert_eq!(
+            projected,
+            vec![InputItem::Media {
+                blob_ref: image_ref.as_str().to_owned(),
+                mime: "image/jpeg".to_owned(),
+                kind: MediaKind::Image,
+                name: None,
+            }]
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
