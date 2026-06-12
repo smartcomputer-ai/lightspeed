@@ -260,6 +260,69 @@ async fn anthropic_messages_live_adapter_generates_result() {
     );
 }
 
+/// 32x32 solid red PNG.
+const RED_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAKElEQVR4nO3NsQ0AAAzCMP5/un0CNkuZ41wybXsHAAAAAAAAAAAAxR4yw/wuPL6QkAAAAABJRU5ErkJggg==";
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ANTHROPIC_API_KEY (costs real money)"]
+async fn anthropic_messages_live_adapter_describes_image_input() {
+    use base64::Engine as _;
+    let blobs = Arc::new(InMemoryBlobStore::new());
+    let image_bytes = base64::engine::general_purpose::STANDARD
+        .decode(RED_PNG_BASE64)
+        .expect("decode test png");
+    let image_ref = blobs.put_bytes(image_bytes).await.expect("store image");
+    let question_ref = text_blob(
+        &blobs,
+        "What is the dominant color of this image? Reply with one English word in lowercase.",
+    )
+    .await;
+
+    let mut image_entry = user_entry(1, image_ref);
+    image_entry.media_type = Some("image/png".to_owned());
+    image_entry.preview = Some("[image: red.png]".to_owned());
+    let question_entry = user_entry(2, question_ref);
+
+    let adapter = AnthropicMessagesLlmAdapter::new(
+        retrying_anthropic_messages_client(live_client()),
+        blobs.clone(),
+    );
+    let request = generation_request(
+        1,
+        intent_request(
+            "live-anthropic-messages-image",
+            vec![image_entry, question_entry],
+        ),
+    );
+
+    let execution = adapter.generate(request).await.expect("generate message");
+
+    assert_eq!(execution.result.status, LlmGenerationStatus::Succeeded);
+    let assistant_ref = execution
+        .result
+        .context_entries
+        .iter()
+        .find(|entry| {
+            matches!(
+                entry.kind,
+                ContextEntryKind::Message {
+                    role: ContextMessageRole::Assistant,
+                }
+            )
+        })
+        .map(|entry| entry.content_ref.clone())
+        .expect("assistant entry");
+    let answer = blobs
+        .read_text(&assistant_ref)
+        .await
+        .expect("assistant text")
+        .to_lowercase();
+    assert!(
+        answer.contains("red"),
+        "expected the model to identify the red image, got: {answer}"
+    );
+}
+
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ANTHROPIC_API_KEY (costs real money)"]
 async fn anthropic_messages_live_adapter_runs_tool_round_trip() {

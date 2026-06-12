@@ -147,7 +147,13 @@ impl<'a> CoreAgentProjector<'a> {
         let id = api_item_id(item.entry_id);
         match &item.kind {
             ContextEntryKind::Message { role } => {
-                let text = self.read_blob_text(&item.content_ref).await?;
+                // Binary media entries render from their preview; decoding
+                // the blob as UTF-8 text would fail.
+                let text = if is_text_message_media_type(item.media_type.as_deref()) {
+                    self.read_blob_text(&item.content_ref).await?
+                } else {
+                    item.preview.clone().unwrap_or_else(|| "[media]".to_owned())
+                };
                 match role {
                     ContextMessageRole::User => Ok(SessionItemView::UserMessage { id, text }),
                     ContextMessageRole::Assistant => {
@@ -826,6 +832,11 @@ pub fn input_text(input: &[InputItem]) -> Result<String, AgentApiError> {
             InputItem::TextRef { .. } => {
                 return Err(AgentApiError::invalid_request(
                     "run/start textRef input requires blob store resolution",
+                ));
+            }
+            InputItem::Media { .. } => {
+                return Err(AgentApiError::invalid_request(
+                    "run/start media input requires blob store resolution",
                 ));
             }
         }
@@ -1523,6 +1534,18 @@ fn tool_call_display(tool_name: &str, arguments: &str) -> Option<ToolCallDisplay
         },
     };
     Some(view)
+}
+
+fn is_text_message_media_type(media_type: Option<&str>) -> bool {
+    match media_type {
+        None => true,
+        Some(media_type) => {
+            let media_type = media_type.trim().to_ascii_lowercase();
+            media_type.starts_with("text/")
+                || media_type == "application/json"
+                || media_type.is_empty()
+        }
+    }
 }
 
 fn first_string(json: &Value, keys: &[&str]) -> Option<String> {

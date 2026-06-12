@@ -608,6 +608,14 @@ pub enum InputContent {
         r#type: InputContentType,
         text: String,
     },
+    InputImage {
+        #[serde(rename = "type")]
+        r#type: InputImageContentType,
+        /// URL or `data:<mime>;base64,<data>` payload.
+        image_url: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
+    },
     Raw(Value),
 }
 
@@ -615,6 +623,12 @@ pub enum InputContent {
 #[serde(rename_all = "snake_case")]
 pub enum InputContentType {
     InputText,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InputImageContentType {
+    InputImage,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

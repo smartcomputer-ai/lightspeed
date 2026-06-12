@@ -361,6 +361,23 @@
         ],
         "type": "object"
       },
+      "AgentApiOutcomeOfContextAppendResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/ContextAppendResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
       "AgentApiOutcomeOfContextCompactResponse": {
         "properties": {
           "notifications": {
@@ -2141,6 +2158,67 @@
           }
         ]
       },
+      "ContextAppendEntry": {
+        "properties": {
+          "item": {
+            "$ref": "#/components/schemas/InputItem"
+          },
+          "key": {
+            "description": "Stable client-chosen context key. Re-sending the same key with the\nsame content is a no-op, so the key doubles as the idempotency handle.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "item"
+        ],
+        "type": "object"
+      },
+      "ContextAppendParams": {
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/ContextAppendEntry"
+            },
+            "type": "array"
+          },
+          "sessionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId",
+          "entries"
+        ],
+        "type": "object"
+      },
+      "ContextAppendResponse": {
+        "properties": {
+          "appliedKeys": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "contextRevision": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unchangedKeys": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "contextRevision",
+          "appliedKeys",
+          "unchangedKeys"
+        ],
+        "type": "object"
+      },
       "ContextCompactParams": {
         "properties": {
           "sessionId": {
@@ -2824,6 +2902,36 @@
               "blobRef"
             ],
             "type": "object"
+          },
+          {
+            "properties": {
+              "blobRef": {
+                "type": "string"
+              },
+              "kind": {
+                "$ref": "#/components/schemas/MediaKind"
+              },
+              "mime": {
+                "type": "string"
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "type": {
+                "const": "media",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "blobRef",
+              "mime",
+              "kind"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -3179,6 +3287,14 @@
           "updatedAtMs"
         ],
         "type": "object"
+      },
+      "MediaKind": {
+        "enum": [
+          "image",
+          "audio",
+          "document"
+        ],
+        "type": "string"
       },
       "ModelConfig": {
         "properties": {
@@ -6841,6 +6957,26 @@
         "name": "result",
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfContextCompactResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "context/append",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/ContextAppendParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfContextAppendResponse"
         }
       }
     },

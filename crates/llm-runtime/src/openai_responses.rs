@@ -284,11 +284,41 @@ async fn materialize_input_items(
     blobs: &dyn BlobStore,
     entries: &[ContextEntry],
 ) -> LlmAdapterResult<Vec<oai::ResponseInputItem>> {
-    let mut input = Vec::with_capacity(entries.len());
+    let mut input: Vec<oai::ResponseInputItem> = Vec::with_capacity(entries.len());
     for item in entries {
-        input.push(materialize_input_item(blobs, item).await?);
+        let next = materialize_input_item(blobs, item).await?;
+        // Consecutive same-role messages (for example an image entry plus
+        // its caption) fold into one message with multiple content parts —
+        // the canonical Responses input shape.
+        match (input.last_mut(), next) {
+            (
+                Some(oai::ResponseInputItem::Message(previous)),
+                oai::ResponseInputItem::Message(message),
+            ) if previous.role == message.role
+                && previous.extra.is_empty()
+                && message.extra.is_empty() =>
+            {
+                let mut parts = input_message_parts(std::mem::replace(
+                    &mut previous.content,
+                    oai::InputMessageContent::Parts(Vec::new()),
+                ));
+                parts.extend(input_message_parts(message.content));
+                previous.content = oai::InputMessageContent::Parts(parts);
+            }
+            (_, next) => input.push(next),
+        }
     }
     Ok(input)
+}
+
+fn input_message_parts(content: oai::InputMessageContent) -> Vec<oai::InputContent> {
+    match content {
+        oai::InputMessageContent::Text(text) => vec![oai::InputContent::InputText {
+            r#type: oai::InputContentType::InputText,
+            text,
+        }],
+        oai::InputMessageContent::Parts(parts) => parts,
+    }
 }
 
 async fn materialize_input_item(
@@ -303,12 +333,27 @@ async fn materialize_input_item(
 
     match &item.kind {
         ContextEntryKind::Message { role } => {
+            let role = match role {
+                ContextMessageRole::User => oai::MessageRole::User,
+                ContextMessageRole::Assistant => oai::MessageRole::Assistant,
+            };
+            if let Some(mime) = crate::blob_io::image_media_type(item.media_type.as_deref()) {
+                let data = crate::blob_io::read_base64(blobs, &item.content_ref).await?;
+                return Ok(oai::ResponseInputItem::Message(oai::InputMessage {
+                    role,
+                    content: oai::InputMessageContent::Parts(vec![
+                        oai::InputContent::InputImage {
+                            r#type: oai::InputImageContentType::InputImage,
+                            image_url: format!("data:{mime};base64,{data}"),
+                            detail: None,
+                        },
+                    ]),
+                    extra: Default::default(),
+                }));
+            }
             let text = read_text(blobs, &item.content_ref).await?;
             Ok(oai::ResponseInputItem::Message(oai::InputMessage {
-                role: match role {
-                    ContextMessageRole::User => oai::MessageRole::User,
-                    ContextMessageRole::Assistant => oai::MessageRole::Assistant,
-                },
+                role,
                 content: oai::InputMessageContent::Text(text),
                 extra: Default::default(),
             }))
@@ -2256,5 +2301,93 @@ mod tests {
             .expect("failure text");
         assert!(failure.contains("invalid_request_error"));
         assert!(failure.contains("The requested model is unavailable."));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn consecutive_user_entries_fold_into_one_message_with_parts() {
+        let blobs = InMemoryBlobStore::new();
+        let image_ref = blobs
+            .put_bytes(vec![0x89, 0x50, 0x4e, 0x47])
+            .await
+            .expect("store image");
+        let caption_ref = blobs.insert_text("what is in this picture?").await;
+
+        let entry = |id: u64, content_ref: BlobRef, media_type: Option<&str>| ContextEntry {
+            entry_id: ContextEntryId::new(id),
+            key: None,
+            kind: ContextEntryKind::Message {
+                role: ContextMessageRole::User,
+            },
+            source: ContextEntrySource::RunInput {
+                run_id: RunId::new(1),
+                input_index: id as u32 - 1,
+            },
+            content_ref,
+            media_type: media_type.map(str::to_owned),
+            preview: None,
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        };
+        let entries = vec![
+            entry(1, image_ref, Some("image/png")),
+            entry(2, caption_ref, None),
+        ];
+
+        let input = materialize_input_items(&blobs, &entries)
+            .await
+            .expect("materialize entries");
+
+        assert_eq!(input.len(), 1, "expected one folded message, got {input:?}");
+        let value = serde_json::to_value(&input[0]).expect("serialize message");
+        assert_eq!(value["role"], json!("user"));
+        assert_eq!(value["content"][0]["type"], json!("input_image"));
+        assert_eq!(value["content"][1]["type"], json!("input_text"));
+        assert_eq!(value["content"][1]["text"], json!("what is in this picture?"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn image_message_entry_materializes_as_input_image_part() {
+        let blobs = InMemoryBlobStore::new();
+        let image_bytes = vec![0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+        let content_ref = blobs
+            .put_bytes(image_bytes.clone())
+            .await
+            .expect("store image");
+        let entry = ContextEntry {
+            entry_id: ContextEntryId::new(1),
+            key: None,
+            kind: ContextEntryKind::Message {
+                role: ContextMessageRole::User,
+            },
+            source: ContextEntrySource::RunInput {
+                run_id: RunId::new(1),
+                input_index: 0,
+            },
+            content_ref,
+            media_type: Some("image/png".to_owned()),
+            preview: Some("[image: photo.png]".to_owned()),
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        };
+
+        let item = materialize_input_item(&blobs, &entry)
+            .await
+            .expect("materialize image entry");
+
+        let value = serde_json::to_value(&item).expect("serialize input item");
+        assert_eq!(value["role"], json!("user"));
+        assert_eq!(value["content"][0]["type"], json!("input_image"));
+        let url = value["content"][0]["image_url"]
+            .as_str()
+            .expect("image url");
+        assert!(url.starts_with("data:image/png;base64,"));
+        use base64::Engine as _;
+        let encoded = url.strip_prefix("data:image/png;base64,").expect("prefix");
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .expect("valid base64");
+        assert_eq!(decoded, image_bytes);
     }
 }

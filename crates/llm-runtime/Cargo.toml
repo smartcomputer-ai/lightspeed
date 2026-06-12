@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 async-trait = "0.1"
+base64 = "0.22"
 engine = { path = "../engine" }
 llm-clients = { path = "../llm-clients" }
 serde = { version = "1", features = ["derive"] }

@@ -1,6 +1,6 @@
 import type { SessionView } from "@forge/agent-client";
 import { describe, expect, it } from "vitest";
-import { extractLatestAssistantText } from "../src/forge.js";
+import { extractAssistantText } from "../src/forge.js";
 
 function sessionFixture(): SessionView {
   return {
@@ -30,7 +30,8 @@ function sessionFixture(): SessionView {
         input: [{ type: "text", text: "follow up" }],
         items: [
           { id: "u2", type: "userMessage", text: "follow up" },
-          { id: "a3", type: "assistantMessage", text: "run answer" },
+          { id: "a3", type: "assistantMessage", text: "first part" },
+          { id: "a4", type: "assistantMessage", text: "second part" },
         ],
         status: "completed",
       },
@@ -40,12 +41,12 @@ function sessionFixture(): SessionView {
   };
 }
 
-describe("extractLatestAssistantText", () => {
-  it("prefers assistant text from the matching run", () => {
-    expect(extractLatestAssistantText(sessionFixture(), "run_2")).toBe("run answer");
+describe("extractAssistantText", () => {
+  it("joins every assistant message from the matching run", () => {
+    expect(extractAssistantText(sessionFixture(), "run_2")).toBe("first part\n\nsecond part");
   });
 
-  it("falls back to active context", () => {
-    expect(extractLatestAssistantText(sessionFixture(), "missing")).toBe("fallback answer");
+  it("falls back to the latest active-context assistant text", () => {
+    expect(extractAssistantText(sessionFixture(), "missing")).toBe("fallback answer");
   });
 });

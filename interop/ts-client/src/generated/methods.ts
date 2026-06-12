@@ -13,6 +13,7 @@ export const METHODS = [
   "session/events/read",
   "session/close",
   "context/compact",
+  "context/append",
   "run/start",
   "run/cancel",
   "prompts/active",
@@ -103,6 +104,10 @@ export interface MethodMap {
   "context/compact": {
     params: Api.ContextCompactParams;
     result: Api.AgentApiOutcomeOfContextCompactResponse;
+  };
+  "context/append": {
+    params: Api.ContextAppendParams;
+    result: Api.AgentApiOutcomeOfContextAppendResponse;
   };
   "run/start": {
     params: Api.RunStartParams;
@@ -309,6 +314,9 @@ export const rpc = {
   },
   contextCompact(client: RpcCaller, params: Api.ContextCompactParams): Promise<Api.AgentApiOutcomeOfContextCompactResponse> {
     return client.call("context/compact", params);
+  },
+  contextAppend(client: RpcCaller, params: Api.ContextAppendParams): Promise<Api.AgentApiOutcomeOfContextAppendResponse> {
+    return client.call("context/append", params);
   },
   runStart(client: RpcCaller, params: Api.RunStartParams): Promise<Api.AgentApiOutcomeOfRunStartResponse> {
     return client.call("run/start", params);

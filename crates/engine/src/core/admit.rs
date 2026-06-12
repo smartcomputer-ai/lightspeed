@@ -149,6 +149,9 @@ impl AdmitCommand for CoreAdmitCommand {
                 )?;
                 crate::core::components::context::validate_external_context_edit(&key, &entry)
                     .map_err(command_rejection_from_domain)?;
+                if crate::core::components::context::context_upsert_is_noop(state, &key, &entry) {
+                    return Ok(Vec::new());
+                }
                 let entries = crate::core::components::context::context_entries_from_inputs(
                     state,
                     vec![(Some(key), ContextEntrySource::ContextEdit, entry)],

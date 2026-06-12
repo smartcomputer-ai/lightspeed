@@ -121,6 +121,46 @@ impl GatewayAgentApi {
         }
     }
 
+    pub(super) async fn wait_for_context_entries_applied(
+        &self,
+        session_id: &SessionId,
+        expected: &[(ContextEntryKey, ContextEntryInput)],
+        baseline_failures: usize,
+    ) -> Result<u64, AgentApiError> {
+        let started = Instant::now();
+        loop {
+            if started.elapsed() > self.operation_timeout {
+                return Err(AgentApiError::internal(format!(
+                    "timed out waiting for context entries to apply: {session_id}"
+                )));
+            }
+            if let Some(status) = self.query_status_optional(session_id).await? {
+                if status.admission_failures.len() > baseline_failures {
+                    if let Some(failure) = status.admission_failures.last() {
+                        return Err(map_admission_failure_to_api_error(failure));
+                    }
+                }
+                if let Some(error) = status.last_error {
+                    return Err(AgentApiError::internal(format!(
+                        "agent workflow reported error: {error}"
+                    )));
+                }
+            }
+            let loaded = self.load_session_state(session_id).await?;
+            let all_applied = expected.iter().all(|(key, input)| {
+                loaded.state.context.entries.iter().any(|entry| {
+                    entry.key.as_ref() == Some(key)
+                        && entry.kind == input.kind
+                        && entry.content_ref == input.content_ref
+                })
+            });
+            if all_applied {
+                return Ok(loaded.state.context.revision);
+            }
+            tokio::time::sleep(self.poll_interval).await;
+        }
+    }
+
     pub(super) async fn wait_for_context_compaction_complete(
         &self,
         session_id: &SessionId,

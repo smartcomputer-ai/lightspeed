@@ -7,15 +7,28 @@ import {
   type SessionView,
 } from "@forge/agent-client";
 import type { ForgeBridgeConfig } from "./config.js";
-import { stableSessionId, stableSubmissionId } from "./ids.js";
+import { stableSubmissionId } from "./ids.js";
 import type { JsonBridgeStore } from "./store.js";
 
-export interface ForgeInboundText {
+export interface ForgeTurnMedia {
+  base64: string;
+  mime: string;
+  name?: string;
+}
+
+export interface ForgeTurn {
   provider: string;
   accountId: string;
   conversationKey: string;
-  conversationParts: readonly unknown[];
-  messageId: string;
+  sessionId: string;
+  /// Stable parts identifying this turn batch for submission idempotency.
+  submissionParts: readonly unknown[];
+  text: string;
+  media?: readonly ForgeTurnMedia[];
+}
+
+export interface ForgeRoomEvent {
+  key: string;
   text: string;
 }
 
@@ -26,46 +39,85 @@ export interface ForgeReply {
   text: string;
 }
 
+const CONTEXT_APPEND_BATCH_LIMIT = 64;
+
 export class ForgeSessionBridge {
+  private readonly startedSessions = new Set<string>();
+
   constructor(
     private readonly client: ForgeClient,
     private readonly store: JsonBridgeStore,
     private readonly config: ForgeBridgeConfig,
   ) {}
 
-  async submitText(message: ForgeInboundText): Promise<ForgeReply> {
-    const sessionId = stableSessionId(this.config.sessionPrefix, message.conversationParts);
-    const conversation = await this.store.getOrCreateConversation(message.conversationKey, sessionId);
-
+  async ensureSession(sessionId: string): Promise<void> {
+    if (this.startedSessions.has(sessionId)) {
+      return;
+    }
     await this.client.call("session/start", {
-      sessionId: conversation.sessionId,
+      sessionId,
       cwd: this.config.cwd ?? null,
       config: null,
     });
+    this.startedSessions.add(sessionId);
+  }
 
-    const input: InputItem[] = [{ type: "text", text: message.text }];
-    const submissionId = stableSubmissionId(message.provider, [
-      message.accountId,
-      message.conversationKey,
-      message.messageId,
+  /// Appends unaddressed room chatter as session context without starting a
+  /// run. Idempotent per entry key, so channel redelivery is harmless.
+  async appendRoomEvents(sessionId: string, events: readonly ForgeRoomEvent[]): Promise<void> {
+    if (events.length === 0) {
+      return;
+    }
+    await this.ensureSession(sessionId);
+    for (let start = 0; start < events.length; start += CONTEXT_APPEND_BATCH_LIMIT) {
+      const batch = events.slice(start, start + CONTEXT_APPEND_BATCH_LIMIT);
+      await this.client.call("context/append", {
+        sessionId,
+        entries: batch.map((event) => ({
+          key: event.key,
+          item: { type: "text", text: event.text },
+        })),
+      });
+    }
+  }
+
+  async submitTurn(turn: ForgeTurn): Promise<ForgeReply> {
+    await this.ensureSession(turn.sessionId);
+
+    const input: InputItem[] = [{ type: "text", text: turn.text }];
+    for (const media of turn.media ?? []) {
+      const put = await this.client.call("blob/put", { bytesBase64: media.base64 });
+      input.push({
+        type: "media",
+        blobRef: put.result.blobRef,
+        mime: media.mime,
+        kind: "image",
+        ...(media.name !== undefined ? { name: media.name } : {}),
+      });
+    }
+    const submissionId = stableSubmissionId(turn.provider, [
+      turn.accountId,
+      turn.conversationKey,
+      ...turn.submissionParts,
     ]);
-    const started = await this.client.startRun(conversation.sessionId, input, { submissionId });
+    const started = await this.client.startRun(turn.sessionId, input, { submissionId });
     const run = started.result.run;
 
-    let cursor = conversation.cursor ?? null;
+    const binding = await this.store.getBinding(turn.conversationKey);
+    let cursor = binding?.cursor ?? null;
     const terminalStatus = terminalRunStatus(run.status);
     if (terminalStatus === "running") {
-      const awaited = await this.client.awaitRun(conversation.sessionId, run.id, {
+      const awaited = await this.client.awaitRun(turn.sessionId, run.id, {
         after: cursor,
         limit: this.config.eventLimit,
         waitMs: this.config.waitMs,
         heartbeat: async (nextCursor) => {
           cursor = nextCursor;
-          await this.store.updateCursor(message.conversationKey, nextCursor);
+          await this.store.updateCursor(turn.conversationKey, nextCursor);
         },
       });
       cursor = awaited.cursor;
-      await this.store.updateCursor(message.conversationKey, cursor);
+      await this.store.updateCursor(turn.conversationKey, cursor);
       if (awaited.state.status === "failed") {
         throw new Error(`Forge run failed: ${awaited.state.message}`);
       }
@@ -78,44 +130,48 @@ export class ForgeSessionBridge {
       throw new Error("Forge run was cancelled");
     }
 
-    const read = await this.client.call("session/read", { sessionId: conversation.sessionId });
+    const read = await this.client.call("session/read", { sessionId: turn.sessionId });
     const text =
-      extractLatestAssistantText(read.result.session, run.id) ??
+      extractAssistantText(read.result.session, run.id) ??
       "Forge completed the run, but no assistant text was available.";
     return {
       cursor,
       runId: run.id,
-      sessionId: conversation.sessionId,
+      sessionId: turn.sessionId,
       text,
     };
   }
 }
 
-export function extractLatestAssistantText(session: SessionView, runId?: string): string | null {
+/// Joins every assistant message produced by the run, so multi-message runs
+/// do not lose output. Falls back to the latest assistant text in the active
+/// context for runs whose items are no longer addressable.
+export function extractAssistantText(session: SessionView, runId?: string): string | null {
   if (runId) {
     const run = session.runs?.find((candidate) => candidate.id === runId);
-    const runText = latestAssistantText(run?.items);
-    if (runText) {
-      return runText;
+    const texts = assistantTexts(run?.items);
+    if (texts.length > 0) {
+      return texts.join("\n\n");
     }
   }
-  return latestAssistantText(session.activeContext.items);
+  const fallback = assistantTexts(session.activeContext.items);
+  return fallback.length > 0 ? (fallback.at(-1) ?? null) : null;
 }
 
-function latestAssistantText(items: readonly SessionItemView[] | undefined): string | null {
+function assistantTexts(items: readonly SessionItemView[] | undefined): string[] {
   if (!items) {
-    return null;
+    return [];
   }
-  for (let index = items.length - 1; index >= 0; index -= 1) {
-    const item = items[index];
+  const texts: string[] = [];
+  for (const item of items) {
     if (item?.type === "assistantMessage") {
       const text = item.text.trim();
       if (text) {
-        return text;
+        texts.push(text);
       }
     }
   }
-  return null;
+  return texts;
 }
 
 type TerminalRunStatus = "running" | "completed" | "failed" | "cancelled";

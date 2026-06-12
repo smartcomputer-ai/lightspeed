@@ -1,11 +1,34 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { EventCursor } from "@forge/agent-client";
+import type { ActivationPolicy } from "./policy.js";
 
 export interface ConversationState {
   sessionId: string;
   cursor?: EventCursor | null;
   updatedAtMs: number;
+}
+
+export interface BindingState {
+  channel: string;
+  accountId: string;
+  chatId: string;
+  threadId?: string;
+  sessionId: string;
+  /// Bumped by `/new`; folded into the derived session id.
+  generation: number;
+  activation: ActivationPolicy;
+  cursor?: EventCursor | null;
+  updatedAtMs: number;
+}
+
+export interface BindingInit {
+  channel: string;
+  accountId: string;
+  chatId: string;
+  threadId?: string;
+  sessionId: string;
+  activation: ActivationPolicy;
 }
 
 export interface MessageState {
@@ -16,12 +39,15 @@ export interface MessageState {
 }
 
 export interface BridgeState {
+  /// Legacy chat-to-session map; migrated into `bindings` on first touch.
   conversations: Record<string, ConversationState>;
+  bindings: Record<string, BindingState>;
   messages: Record<string, MessageState>;
 }
 
 const EMPTY_STATE: BridgeState = {
   conversations: {},
+  bindings: {},
   messages: {},
 };
 
@@ -31,28 +57,61 @@ export class JsonBridgeStore {
 
   constructor(private readonly filePath: string) {}
 
-  async getOrCreateConversation(key: string, sessionId: string): Promise<ConversationState> {
+  async getOrCreateBinding(key: string, init: BindingInit): Promise<BindingState> {
     const state = await this.load();
-    const existing = state.conversations[key];
+    const existing = state.bindings[key];
     if (existing) {
       return existing;
     }
-    const next: ConversationState = {
-      sessionId,
+    const legacy = state.conversations[key];
+    const next: BindingState = {
+      channel: init.channel,
+      accountId: init.accountId,
+      chatId: init.chatId,
+      ...(init.threadId !== undefined ? { threadId: init.threadId } : {}),
+      sessionId: legacy?.sessionId ?? init.sessionId,
+      generation: 0,
+      activation: init.activation,
+      ...(legacy?.cursor !== undefined ? { cursor: legacy.cursor } : {}),
       updatedAtMs: Date.now(),
     };
-    state.conversations[key] = next;
+    state.bindings[key] = next;
+    delete state.conversations[key];
+    await this.persist();
+    return next;
+  }
+
+  async getBinding(key: string): Promise<BindingState | null> {
+    const state = await this.load();
+    return state.bindings[key] ?? null;
+  }
+
+  async updateBinding(
+    key: string,
+    patch: Partial<Pick<BindingState, "activation" | "sessionId" | "generation" | "cursor">>,
+  ): Promise<BindingState> {
+    const state = await this.load();
+    const existing = state.bindings[key];
+    if (!existing) {
+      throw new Error(`unknown binding: ${key}`);
+    }
+    const next: BindingState = {
+      ...existing,
+      ...patch,
+      updatedAtMs: Date.now(),
+    };
+    state.bindings[key] = next;
     await this.persist();
     return next;
   }
 
   async updateCursor(key: string, cursor: EventCursor | null): Promise<void> {
     const state = await this.load();
-    const existing = state.conversations[key];
+    const existing = state.bindings[key];
     if (!existing) {
       return;
     }
-    state.conversations[key] = {
+    state.bindings[key] = {
       ...existing,
       cursor,
       updatedAtMs: Date.now(),
@@ -110,6 +169,7 @@ export class JsonBridgeStore {
       this.state = structuredClone(EMPTY_STATE);
     }
     this.state.conversations ??= {};
+    this.state.bindings ??= {};
     this.state.messages ??= {};
     return this.state;
   }

@@ -415,11 +415,15 @@ async fn materialize_block(
 ) -> LlmAdapterResult<(am::MessageRole, am::ContentBlockParam)> {
     match &entry.kind {
         ContextEntryKind::Message { role } => {
-            let text = read_text(blobs, &entry.content_ref).await?;
             let role = match role {
                 ContextMessageRole::User => am::MessageRole::User,
                 ContextMessageRole::Assistant => am::MessageRole::Assistant,
             };
+            if let Some(mime) = crate::blob_io::image_media_type(entry.media_type.as_deref()) {
+                let data = crate::blob_io::read_base64(blobs, &entry.content_ref).await?;
+                return Ok((role, am::ContentBlockParam::image_base64(mime, data)));
+            }
+            let text = read_text(blobs, &entry.content_ref).await?;
             Ok((role, am::ContentBlockParam::text(text)))
         }
         ContextEntryKind::ToolResult { call_id, is_error } => {
@@ -2071,5 +2075,47 @@ mod tests {
                 }]
             }])
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn image_message_entry_materializes_as_image_block() {
+        let blobs = InMemoryBlobStore::new();
+        let image_bytes = vec![0xff, 0xd8, 0xff, 0xe0];
+        let content_ref = blobs
+            .put_bytes(image_bytes.clone())
+            .await
+            .expect("store image");
+        let entry = ContextEntry {
+            entry_id: ContextEntryId::new(1),
+            key: None,
+            kind: ContextEntryKind::Message {
+                role: ContextMessageRole::User,
+            },
+            source: ContextEntrySource::RunInput {
+                run_id: RunId::new(1),
+                input_index: 0,
+            },
+            content_ref,
+            media_type: Some("image/jpeg".to_owned()),
+            preview: Some("[image]".to_owned()),
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        };
+
+        let (role, block) = materialize_block(&blobs, &entry)
+            .await
+            .expect("materialize image entry");
+
+        assert_eq!(role, am::MessageRole::User);
+        let value = serde_json::to_value(&block).expect("serialize block");
+        assert_eq!(value["type"], json!("image"));
+        assert_eq!(value["source"]["type"], json!("base64"));
+        assert_eq!(value["source"]["media_type"], json!("image/jpeg"));
+        use base64::Engine as _;
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(value["source"]["data"].as_str().expect("data"))
+            .expect("valid base64");
+        assert_eq!(decoded, image_bytes);
     }
 }

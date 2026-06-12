@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import type { GroupActivation, ReplyToMode } from "./policy.js";
 
 export interface ForgeBridgeConfig {
   endpoint: string;
@@ -8,14 +9,31 @@ export interface ForgeBridgeConfig {
   sessionPrefix: string;
 }
 
+export interface BridgeRuntimeConfig {
+  /// Quiet window that batches rapid consecutive messages into one turn.
+  debounceMs: number;
+  turnMaxBatch: number;
+  turnMaxWaitMs: number;
+  /// Room-event batching toward context/append.
+  roomFlushMs: number;
+  roomFlushMax: number;
+  /// Max room events buffered per chat between flushes; overflow is dropped.
+  roomBudget: number;
+}
+
 export interface TelegramBridgeConfig {
   enabled: boolean;
   botToken: string;
   accountId: string;
   allowedChatIds: string[];
+  /// Senders allowed to run control commands (/activation, /new, /status).
+  allowFrom: string[];
   triggerPrefixes: string[];
-  requireTrigger: boolean;
   mentionNames: string[];
+  groupActivation: GroupActivation;
+  /// Reply-quote behavior in groups (`off` | `first` | `all`). Direct chats
+  /// never quote.
+  replyToMode: ReplyToMode;
 }
 
 export interface WhatsAppBridgeConfig {
@@ -23,14 +41,17 @@ export interface WhatsAppBridgeConfig {
   accountId: string;
   authDir: string;
   allowedJids: string[];
+  allowFrom: string[];
   triggerPrefixes: string[];
-  requireTrigger: boolean;
   mentionNames: string[];
+  groupActivation: GroupActivation;
+  replyToMode: ReplyToMode;
   printQr: boolean;
 }
 
 export interface MessagingBridgeConfig {
   forge: ForgeBridgeConfig;
+  runtime: BridgeRuntimeConfig;
   store: {
     path: string;
   };
@@ -40,6 +61,7 @@ export interface MessagingBridgeConfig {
 
 type PartialConfig = Partial<{
   forge: Partial<ForgeBridgeConfig>;
+  runtime: Partial<BridgeRuntimeConfig>;
   store: Partial<{ path: string }>;
   telegram: Partial<TelegramBridgeConfig>;
   whatsapp: Partial<WhatsAppBridgeConfig>;
@@ -57,6 +79,23 @@ export async function loadBridgeConfig(env: NodeJS.ProcessEnv = process.env): Pr
     eventLimit: parsePositiveInt(env.FORGE_EVENT_LIMIT, fileConfig.forge?.eventLimit ?? 128),
     sessionPrefix: env.BRIDGE_SESSION_PREFIX ?? fileConfig.forge?.sessionPrefix ?? "bridge",
   };
+  const runtime: BridgeRuntimeConfig = {
+    debounceMs: parsePositiveInt(env.BRIDGE_DEBOUNCE_MS, fileConfig.runtime?.debounceMs ?? 500),
+    turnMaxBatch: parsePositiveInt(
+      env.BRIDGE_TURN_MAX_BATCH,
+      fileConfig.runtime?.turnMaxBatch ?? 10,
+    ),
+    turnMaxWaitMs: parsePositiveInt(
+      env.BRIDGE_TURN_MAX_WAIT_MS,
+      fileConfig.runtime?.turnMaxWaitMs ?? 2_500,
+    ),
+    roomFlushMs: parsePositiveInt(env.BRIDGE_ROOM_FLUSH_MS, fileConfig.runtime?.roomFlushMs ?? 30_000),
+    roomFlushMax: parsePositiveInt(
+      env.BRIDGE_ROOM_FLUSH_MAX,
+      fileConfig.runtime?.roomFlushMax ?? 20,
+    ),
+    roomBudget: parsePositiveInt(env.BRIDGE_ROOM_BUDGET, fileConfig.runtime?.roomBudget ?? 50),
+  };
   const telegramToken = env.TELEGRAM_BOT_TOKEN ?? fileConfig.telegram?.botToken ?? "";
   const telegramEnabled =
     parseBoolean(env.TELEGRAM_ENABLED, fileConfig.telegram?.enabled ?? Boolean(telegramToken));
@@ -64,6 +103,7 @@ export async function loadBridgeConfig(env: NodeJS.ProcessEnv = process.env): Pr
 
   const config: MessagingBridgeConfig = {
     forge,
+    runtime,
     store: {
       path: env.BRIDGE_STATE_PATH ?? fileConfig.store?.path ?? ".bridge-state.json",
     },
@@ -74,15 +114,22 @@ export async function loadBridgeConfig(env: NodeJS.ProcessEnv = process.env): Pr
       botToken: requireValue("TELEGRAM_BOT_TOKEN", telegramToken),
       accountId: env.TELEGRAM_ACCOUNT_ID ?? fileConfig.telegram?.accountId ?? "default",
       allowedChatIds: csv(env.TELEGRAM_ALLOWED_CHAT_IDS, fileConfig.telegram?.allowedChatIds),
+      allowFrom: csv(env.TELEGRAM_ALLOW_FROM, fileConfig.telegram?.allowFrom),
       triggerPrefixes: csv(
         env.TELEGRAM_TRIGGER_PREFIXES,
         fileConfig.telegram?.triggerPrefixes ?? ["/ask", "/forge"],
       ),
-      requireTrigger: parseBoolean(
-        env.TELEGRAM_REQUIRE_TRIGGER,
-        fileConfig.telegram?.requireTrigger ?? true,
-      ),
       mentionNames: csv(env.TELEGRAM_MENTION_NAMES, fileConfig.telegram?.mentionNames),
+      groupActivation: parseGroupActivation(
+        "TELEGRAM_GROUP_ACTIVATION",
+        env.TELEGRAM_GROUP_ACTIVATION,
+        fileConfig.telegram?.groupActivation,
+      ),
+      replyToMode: parseReplyToMode(
+        "TELEGRAM_REPLY_TO_MODE",
+        env.TELEGRAM_REPLY_TO_MODE,
+        fileConfig.telegram?.replyToMode,
+      ),
     };
   }
   if (whatsappEnabled) {
@@ -91,15 +138,22 @@ export async function loadBridgeConfig(env: NodeJS.ProcessEnv = process.env): Pr
       accountId: env.WHATSAPP_ACCOUNT_ID ?? fileConfig.whatsapp?.accountId ?? "default",
       authDir: env.WHATSAPP_AUTH_DIR ?? fileConfig.whatsapp?.authDir ?? ".whatsapp-auth",
       allowedJids: csv(env.WHATSAPP_ALLOWED_JIDS, fileConfig.whatsapp?.allowedJids),
+      allowFrom: csv(env.WHATSAPP_ALLOW_FROM, fileConfig.whatsapp?.allowFrom),
       triggerPrefixes: csv(
         env.WHATSAPP_TRIGGER_PREFIXES,
         fileConfig.whatsapp?.triggerPrefixes ?? ["/ask", "/forge"],
       ),
-      requireTrigger: parseBoolean(
-        env.WHATSAPP_REQUIRE_TRIGGER,
-        fileConfig.whatsapp?.requireTrigger ?? true,
-      ),
       mentionNames: csv(env.WHATSAPP_MENTION_NAMES, fileConfig.whatsapp?.mentionNames),
+      groupActivation: parseGroupActivation(
+        "WHATSAPP_GROUP_ACTIVATION",
+        env.WHATSAPP_GROUP_ACTIVATION,
+        fileConfig.whatsapp?.groupActivation,
+      ),
+      replyToMode: parseReplyToMode(
+        "WHATSAPP_REPLY_TO_MODE",
+        env.WHATSAPP_REPLY_TO_MODE,
+        fileConfig.whatsapp?.replyToMode,
+      ),
       printQr: parseBoolean(env.WHATSAPP_PRINT_QR, fileConfig.whatsapp?.printQr ?? true),
     };
   }
@@ -129,6 +183,30 @@ function parseBoolean(value: string | undefined, fallback: boolean): boolean {
     return fallback;
   }
   return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
+}
+
+function parseGroupActivation(
+  name: string,
+  value: string | undefined,
+  fallback: GroupActivation | undefined,
+): GroupActivation {
+  const candidate = (value ?? fallback ?? "mention").toString().trim().toLowerCase();
+  if (candidate === "mention" || candidate === "always" || candidate === "silent") {
+    return candidate;
+  }
+  throw new Error(`${name} must be one of mention, always, silent`);
+}
+
+function parseReplyToMode(
+  name: string,
+  value: string | undefined,
+  fallback: ReplyToMode | undefined,
+): ReplyToMode {
+  const candidate = (value ?? fallback ?? "first").toString().trim().toLowerCase();
+  if (candidate === "off" || candidate === "first" || candidate === "all") {
+    return candidate;
+  }
+  throw new Error(`${name} must be one of off, first, all`);
 }
 
 function requireValue(name: string, value: string): string {

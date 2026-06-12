@@ -4,6 +4,23 @@ use serde_json::Value;
 
 use crate::error::{LlmAdapterError, LlmAdapterResult};
 
+/// Image media types the adapters materialize as provider-native image
+/// parts. Mirrors the gateway's admission allowlist.
+pub fn image_media_type(media_type: Option<&str>) -> Option<&str> {
+    match media_type {
+        Some(media_type @ ("image/jpeg" | "image/png" | "image/webp" | "image/gif")) => {
+            Some(media_type)
+        }
+        _ => None,
+    }
+}
+
+pub async fn read_base64(blobs: &dyn BlobStore, blob_ref: &BlobRef) -> LlmAdapterResult<String> {
+    use base64::Engine as _;
+    let bytes = blobs.read_bytes(blob_ref).await?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
 pub async fn read_text(blobs: &dyn BlobStore, blob_ref: &BlobRef) -> LlmAdapterResult<String> {
     let bytes = blobs.read_bytes(blob_ref).await?;
     String::from_utf8(bytes).map_err(|error| LlmAdapterError::InvalidUtf8 {

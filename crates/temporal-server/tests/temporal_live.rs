@@ -6,7 +6,8 @@ use std::{
 };
 
 use api::{
-    AgentApiErrorKind, AgentApiService, InitializeParams, InputItem, McpServerCreateParams,
+    AgentApiErrorKind, AgentApiService, ContextAppendEntry, ContextAppendParams, InitializeParams,
+    InputItem, McpServerCreateParams,
     McpServerDeleteParams, McpServerListParams, McpServerReadParams, McpServerStatus,
     RemoteMcpApprovalPolicy, RemoteMcpTransport, RunStartParams, RunStatus, SessionConfigInput,
     SessionEventsReadParams, SessionItemView, SessionMcpLinkParams, SessionMcpListParams,
@@ -78,6 +79,17 @@ async fn temporal_live_admission_failures_do_not_poison_workflow() -> anyhow::Re
 
     let activities = fake_worker_activities().await?;
     run_with_live_worker(activities, run_admission_failure_live_client).await
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires local/up.sh or compatible Temporal + Postgres env"]
+async fn temporal_live_context_append_is_idempotent_and_projected() -> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().expect("live test lock");
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+
+    let activities = fake_worker_activities().await?;
+    run_with_live_worker(activities, run_context_append_live_client).await
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -402,6 +414,165 @@ async fn run_missing_session_live_client(
         .await
         .expect_err("missing session run/start should fail");
     assert!(matches!(error.kind, AgentApiErrorKind::NotFound));
+    Ok(())
+}
+
+async fn run_context_append_live_client(
+    client: Client,
+    task_queue: String,
+    session_id: SessionId,
+) -> anyhow::Result<()> {
+    let store = pg_store_from_env().await?;
+    let model = default_model_from_env();
+    let api = GatewayAgentApi::builder(client.clone(), store)
+        .with_task_queue(task_queue)
+        .with_default_model(model.clone())
+        .with_max_steps_per_input(128)
+        .build();
+
+    api.start_session(SessionStartParams {
+        session_id: Some(session_id.as_str().to_owned()),
+        cwd: None,
+        config: Some(SessionConfigInput {
+            model: Some(model_to_api(&model)),
+            ..SessionConfigInput::default()
+        }),
+    })
+    .await?;
+
+    let first_text = "[telegram:group Engineering] Alice (12:01): the deploy looks stuck";
+    let second_text = "[telegram:group Engineering] Bob (12:02): restarting the worker now";
+    let appended = api
+        .append_context(ContextAppendParams {
+            session_id: session_id.as_str().to_owned(),
+            entries: vec![
+                ContextAppendEntry {
+                    key: "channel.room.msg-1".to_owned(),
+                    item: InputItem::Text {
+                        text: first_text.to_owned(),
+                    },
+                },
+                ContextAppendEntry {
+                    key: "channel.room.msg-2".to_owned(),
+                    item: InputItem::Text {
+                        text: second_text.to_owned(),
+                    },
+                },
+            ],
+        })
+        .await?;
+    assert_eq!(
+        appended.result.applied_keys,
+        vec!["channel.room.msg-1", "channel.room.msg-2"]
+    );
+    assert!(appended.result.unchanged_keys.is_empty());
+    let first_revision = appended.result.context_revision;
+
+    // Room events are visible as ordinary user-message context items.
+    let read = api
+        .read_session(SessionReadParams {
+            session_id: session_id.as_str().to_owned(),
+        })
+        .await?;
+    let context_texts: Vec<&str> = read
+        .result
+        .session
+        .active_context
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            SessionItemView::UserMessage { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(context_texts.contains(&first_text));
+    assert!(context_texts.contains(&second_text));
+
+    // Re-sending the same batch is a no-op: keys are the idempotency handle.
+    let replayed = api
+        .append_context(ContextAppendParams {
+            session_id: session_id.as_str().to_owned(),
+            entries: vec![
+                ContextAppendEntry {
+                    key: "channel.room.msg-1".to_owned(),
+                    item: InputItem::Text {
+                        text: first_text.to_owned(),
+                    },
+                },
+                ContextAppendEntry {
+                    key: "channel.room.msg-2".to_owned(),
+                    item: InputItem::Text {
+                        text: second_text.to_owned(),
+                    },
+                },
+            ],
+        })
+        .await?;
+    assert!(replayed.result.applied_keys.is_empty());
+    assert_eq!(
+        replayed.result.unchanged_keys,
+        vec!["channel.room.msg-1", "channel.room.msg-2"]
+    );
+    assert_eq!(replayed.result.context_revision, first_revision);
+
+    // Same key with different content upserts in place.
+    let edited = api
+        .append_context(ContextAppendParams {
+            session_id: session_id.as_str().to_owned(),
+            entries: vec![ContextAppendEntry {
+                key: "channel.room.msg-2".to_owned(),
+                item: InputItem::Text {
+                    text: "[telegram:group Engineering] Bob (12:02): edited message".to_owned(),
+                },
+            }],
+        })
+        .await?;
+    assert_eq!(edited.result.applied_keys, vec!["channel.room.msg-2"]);
+    assert!(edited.result.context_revision > first_revision);
+
+    // Invalid input is rejected at admission with a typed error.
+    let empty = api
+        .append_context(ContextAppendParams {
+            session_id: session_id.as_str().to_owned(),
+            entries: Vec::new(),
+        })
+        .await;
+    assert_eq!(
+        empty.expect_err("empty append must fail").kind,
+        AgentApiErrorKind::InvalidRequest
+    );
+    let blank_item = api
+        .append_context(ContextAppendParams {
+            session_id: session_id.as_str().to_owned(),
+            entries: vec![ContextAppendEntry {
+                key: "channel.room.msg-3".to_owned(),
+                item: InputItem::Text {
+                    text: "   ".to_owned(),
+                },
+            }],
+        })
+        .await;
+    assert_eq!(
+        blank_item.expect_err("blank item must fail").kind,
+        AgentApiErrorKind::InvalidRequest
+    );
+
+    // A run started after the appends completes normally with the room
+    // context present in the session.
+    let run = api
+        .start_run(RunStartParams {
+            submission_id: None,
+            session_id: session_id.as_str().to_owned(),
+            input: vec![InputItem::Text {
+                text: "summarize the room".to_owned(),
+            }],
+            config: None,
+        })
+        .await?;
+    let run = wait_for_terminal_run(&api, &session_id, &run.result.run.id).await?;
+    let output = final_assistant_text(&run).expect("assistant output");
+    assert!(output.contains("Fake agent completed run"));
+
     Ok(())
 }
 

@@ -361,6 +361,23 @@
       ],
       "type": "object"
     },
+    "AgentApiOutcomeOfContextAppendResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/ContextAppendResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
     "AgentApiOutcomeOfContextCompactResponse": {
       "properties": {
         "notifications": {
@@ -2141,6 +2158,67 @@
         }
       ]
     },
+    "ContextAppendEntry": {
+      "properties": {
+        "item": {
+          "$ref": "#/definitions/InputItem"
+        },
+        "key": {
+          "description": "Stable client-chosen context key. Re-sending the same key with the\nsame content is a no-op, so the key doubles as the idempotency handle.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "item"
+      ],
+      "type": "object"
+    },
+    "ContextAppendParams": {
+      "properties": {
+        "entries": {
+          "items": {
+            "$ref": "#/definitions/ContextAppendEntry"
+          },
+          "type": "array"
+        },
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "entries"
+      ],
+      "type": "object"
+    },
+    "ContextAppendResponse": {
+      "properties": {
+        "appliedKeys": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "contextRevision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "unchangedKeys": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "contextRevision",
+        "appliedKeys",
+        "unchangedKeys"
+      ],
+      "type": "object"
+    },
     "ContextCompactParams": {
       "properties": {
         "sessionId": {
@@ -2824,6 +2902,36 @@
             "blobRef"
           ],
           "type": "object"
+        },
+        {
+          "properties": {
+            "blobRef": {
+              "type": "string"
+            },
+            "kind": {
+              "$ref": "#/definitions/MediaKind"
+            },
+            "mime": {
+              "type": "string"
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "const": "media",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "blobRef",
+            "mime",
+            "kind"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -3179,6 +3287,14 @@
         "updatedAtMs"
       ],
       "type": "object"
+    },
+    "MediaKind": {
+      "enum": [
+        "image",
+        "audio",
+        "document"
+      ],
+      "type": "string"
     },
     "ModelConfig": {
       "properties": {

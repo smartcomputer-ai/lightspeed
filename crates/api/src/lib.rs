@@ -27,6 +27,7 @@ pub const METHOD_SESSION_READ: &str = "session/read";
 pub const METHOD_SESSION_EVENTS_READ: &str = "session/events/read";
 pub const METHOD_SESSION_CLOSE: &str = "session/close";
 pub const METHOD_CONTEXT_COMPACT: &str = "context/compact";
+pub const METHOD_CONTEXT_APPEND: &str = "context/append";
 pub const METHOD_RUN_START: &str = "run/start";
 pub const METHOD_RUN_CANCEL: &str = "run/cancel";
 pub const METHOD_PROMPTS_ACTIVE: &str = "prompts/active";
@@ -165,6 +166,11 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: ContextCompactParams,
     ) -> Result<AgentApiOutcome<ContextCompactResponse>, AgentApiError>;
+
+    async fn append_context(
+        &self,
+        params: ContextAppendParams,
+    ) -> Result<AgentApiOutcome<ContextAppendResponse>, AgentApiError>;
 
     async fn start_run(
         &self,
@@ -780,6 +786,30 @@ pub struct ContextCompactParams {
 #[serde(rename_all = "camelCase")]
 pub struct ContextCompactResponse {
     pub session: SessionView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextAppendParams {
+    pub session_id: SessionId,
+    pub entries: Vec<ContextAppendEntry>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextAppendEntry {
+    /// Stable client-chosen context key. Re-sending the same key with the
+    /// same content is a no-op, so the key doubles as the idempotency handle.
+    pub key: String,
+    pub item: InputItem,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextAppendResponse {
+    pub context_revision: u64,
+    pub applied_keys: Vec<String>,
+    pub unchanged_keys: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -2402,8 +2432,27 @@ pub enum RunStatus {
     rename_all_fields = "camelCase"
 )]
 pub enum InputItem {
-    Text { text: String },
-    TextRef { blob_ref: String },
+    Text {
+        text: String,
+    },
+    TextRef {
+        blob_ref: String,
+    },
+    Media {
+        blob_ref: String,
+        mime: String,
+        kind: MediaKind,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum MediaKind {
+    Image,
+    Audio,
+    Document,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -2807,6 +2856,7 @@ api_methods! {
     METHOD_SESSION_EVENTS_READ => read_session_events(SessionEventsReadParams) -> SessionEventsReadResponse,
     METHOD_SESSION_CLOSE => close_session(SessionCloseParams) -> SessionCloseResponse,
     METHOD_CONTEXT_COMPACT => compact_context(ContextCompactParams) -> ContextCompactResponse,
+    METHOD_CONTEXT_APPEND => append_context(ContextAppendParams) -> ContextAppendResponse,
     METHOD_RUN_START => start_run(RunStartParams) -> RunStartResponse,
     METHOD_RUN_CANCEL => cancel_run(RunCancelParams) -> RunCancelResponse,
     METHOD_PROMPTS_ACTIVE => active_prompts(PromptsActiveParams) -> PromptsActiveResponse,
@@ -3123,6 +3173,33 @@ mod tests {
         assert_eq!(
             response.result.expect("result")["result"]["session"]["id"],
             json!("session_1")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_context_append() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_CONTEXT_APPEND.to_owned(),
+                params: Some(json!({
+                    "sessionId": "session_1",
+                    "entries": [
+                        {
+                            "key": "channel.room.batch-1",
+                            "item": { "type": "text", "text": "Alice: hello" }
+                        }
+                    ]
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["appliedKeys"],
+            json!(["channel.room.batch-1"])
         );
     }
 
@@ -3920,6 +3997,21 @@ mod tests {
         ) -> Result<AgentApiOutcome<ContextCompactResponse>, AgentApiError> {
             Ok(AgentApiOutcome::new(ContextCompactResponse {
                 session: test_session(params.session_id, SessionStatus::Idle),
+            }))
+        }
+
+        async fn append_context(
+            &self,
+            params: ContextAppendParams,
+        ) -> Result<AgentApiOutcome<ContextAppendResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(ContextAppendResponse {
+                context_revision: 1,
+                applied_keys: params
+                    .entries
+                    .iter()
+                    .map(|entry| entry.key.clone())
+                    .collect(),
+                unchanged_keys: Vec::new(),
             }))
         }
 

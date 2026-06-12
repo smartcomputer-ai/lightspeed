@@ -1036,7 +1036,54 @@ mod tests {
     }
 
     #[test]
-    fn upsert_context_rejects_user_message_entry() {
+    fn upsert_context_accepts_user_message_entry_and_dedupes_replays() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        open_session(&mut drive);
+        let content_ref = BlobRef::from_bytes(b"persistent user message");
+
+        let action = drive
+            .admit_command(
+                CoreAgentCommand::UpsertContext {
+                    key: ContextEntryKey::new("channel.room.batch-1"),
+                    entry: message_input(ContextMessageRole::User, content_ref.clone()),
+                },
+                20,
+            )
+            .expect("user-message context edit must be accepted");
+        commit_action(&mut drive, action);
+
+        assert_eq!(drive.state().context.entries.len(), 1);
+        let entry = &drive.state().context.entries[0];
+        assert_eq!(
+            entry.kind,
+            ContextEntryKind::Message {
+                role: ContextMessageRole::User,
+            }
+        );
+        assert_eq!(entry.content_ref, content_ref);
+        assert_eq!(entry.source, ContextEntrySource::ContextEdit);
+        let revision = drive.state().context.revision;
+
+        let replay = drive
+            .admit_command(
+                CoreAgentCommand::UpsertContext {
+                    key: ContextEntryKey::new("channel.room.batch-1"),
+                    entry: message_input(ContextMessageRole::User, content_ref),
+                },
+                30,
+            )
+            .expect("identical upsert replay must be admitted as a no-op");
+        assert!(
+            !matches!(replay, CoreAgentAction::AppendEvents { .. }),
+            "identical upsert replay must produce no events, got {replay:?}"
+        );
+        assert_eq!(drive.state().context.entries.len(), 1);
+        assert_eq!(drive.state().context.revision, revision);
+    }
+
+    #[test]
+    fn upsert_context_rejects_assistant_message_entry() {
         let session_id = SessionId::new("session-a");
         let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
         open_session(&mut drive);
@@ -1046,13 +1093,13 @@ mod tests {
                 CoreAgentCommand::UpsertContext {
                     key: ContextEntryKey::new("client.message"),
                     entry: message_input(
-                        ContextMessageRole::User,
-                        BlobRef::from_bytes(b"persistent user message"),
+                        ContextMessageRole::Assistant,
+                        BlobRef::from_bytes(b"forged assistant message"),
                     ),
                 },
                 20,
             )
-            .expect_err("user-message context edit must be rejected");
+            .expect_err("assistant-message context edit must be rejected");
 
         let CoreAgentDriveError::Command(crate::CommandError::Rejected(rejection)) = error else {
             panic!("expected rejected command");

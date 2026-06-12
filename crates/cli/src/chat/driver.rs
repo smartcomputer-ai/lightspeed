@@ -1012,6 +1012,20 @@ fn project_turns(session: &SessionView, settings: &ChatDraftSettings) -> Vec<Cha
                         content: format!("text input ref {blob_ref}"),
                         ref_: Some(blob_ref.clone()),
                     }),
+                    InputItem::Media {
+                        blob_ref,
+                        mime,
+                        name,
+                        ..
+                    } => Some(ChatMessageView {
+                        id: format!("{}:input:{index}", run.id),
+                        role: "user".into(),
+                        content: match name {
+                            Some(name) => format!("media input {name} ({mime})"),
+                            None => format!("media input ({mime})"),
+                        },
+                        ref_: Some(blob_ref.clone()),
+                    }),
                 });
             let assistant = run.items.iter().rev().find_map(|item| match item {
                 SessionItemView::AssistantMessage { id, text } => Some(ChatMessageView {

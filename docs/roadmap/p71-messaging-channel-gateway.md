@@ -2,6 +2,8 @@
 
 **Status**
 - Proposed 2026-06-12.
+- G1 and G2 implemented 2026-06-12; G3 first cut (image input) implemented
+  2026-06-12 (see goal sections for what shipped).
 - Builds on the P70 external integration surface (schema export, TS client,
   idempotent `run/start`, long-poll `session/events/read`), the first-cut
   Telegram/WhatsApp bridge in `interop/messaging/`, and the timers/triggers
@@ -180,14 +182,31 @@ on (batched) group traffic but is visible only when it explicitly sends.
 
 ```text
 DeliveryPolicy = "automatic"            // final assistant text is delivered
-               | "message_tool"         // visible only via message_send
+               | "message_tool"         // visible only via messaging tools
                | "silent"               // never delivered (observe/update)
                | "notify_on_completion" // terse completion notice, for
                                         // background/triggered runs
 ```
 
-Defaults: DMs `automatic`; groups in `mention` mode `automatic`; groups in
-`always` mode `message_tool`.
+Design revision 2026-06-12: `message_tool` is the **target mode for all
+bindings, DMs included**, once G5 lands. Chat is not a document: real
+participants send several short messages, react, edit, and reply-anchor.
+A single final-text blob per run is the wrong shape for the medium, cannot
+happen mid-run, and bypasses outbox admission (rate caps, target policy,
+audit). Under `message_tool`, final assistant output is **internal** — a run
+summary visible to logs/CLI/audit, never delivered to the channel.
+
+`automatic` is demoted to two transitional roles:
+
+- the pre-G5 behavior (what the bridge does today);
+- after G5, a per-binding **fallback**: if a run ends with zero messaging
+  tool calls in a binding that expects a reply (DM, direct mention), the
+  bridge delivers the final text and logs a prompt-contract violation. The
+  violation rate is measurable with `crates/eval`; the fallback is dropped
+  (or left as config) once it is ~zero.
+
+Interim defaults until G5: DMs and `mention`-mode groups `automatic`;
+`always`-mode groups `message_tool`.
 
 ### Channel Message Envelope
 
@@ -245,12 +264,21 @@ Design notes:
 
 Acceptance criteria:
 
-- [ ] DMs from allowed senders get replies with no trigger prefix;
-- [ ] in a group in `mention` mode, a native @mention and a reply to a bot
+- [x] DMs from allowed senders get replies with no trigger prefix;
+- [x] in a group in `mention` mode, a native @mention and a reply to a bot
   message both activate; plain chatter does not;
-- [ ] `/activation` toggles persist across bridge restarts;
-- [ ] a burst of N quick messages produces one run with all N texts;
-- [ ] the bridge never reacts to its own deliveries (loop test).
+- [x] `/activation` toggles persist across bridge restarts;
+- [x] a burst of N quick messages produces one run with all N texts;
+- [x] the bridge never reacts to its own deliveries (loop test).
+
+Implemented 2026-06-12: classification and control parsing in
+`interop/messaging/src/policy.ts`, debounce/room buffering in `batcher.ts`,
+bindings in `store.ts` (legacy conversation state migrates on first touch),
+orchestration in `runtime.ts`, native mention/reply detection in the
+`telegram.ts` (entities + reply-to) and `whatsapp.ts` (`mentionedJid`,
+quoted-author) adapters. Per-chat outbound rate caps are deferred to G4
+outbox admission; loop protection today is own-message filtering plus
+message dedupe. Covered by vitest suites under `interop/messaging/test/`.
 
 ## G2: Room Events Via `context/append`
 
@@ -278,10 +306,25 @@ Design notes:
 
 Acceptance criteria:
 
-- [ ] `context/append` rejects oversized/invalid items at admission;
-- [ ] room events appear in `session/read` as context items with envelope;
-- [ ] a subsequent mention's run can reference earlier unaddressed chatter;
-- [ ] duplicate append with the same idempotency key is a no-op.
+- [x] `context/append` rejects oversized/invalid items at admission (empty
+  items, invalid keys, duplicate keys per batch, >64 entries per call);
+- [x] room events appear in `session/read` as context items with envelope;
+- [x] a subsequent run sees earlier unaddressed chatter (entries are active
+  context; verified structurally in the live test);
+- [x] duplicate append with the same idempotency key is a no-op.
+
+Implemented 2026-06-12: the entry key is the idempotency handle (no separate
+submission id). `crates/engine` now admits `Message { role: User }` entries
+through external context edits on non-reserved keys and skips identical
+upserts as no-ops (`admit.rs`, `context.rs`); assistant-role edits remain
+rejected. The gateway adds `context/append` (`crates/api` method +
+`temporal-server` handler with CAS materialization, unchanged-key pre-check,
+and `wait_for_context_entries_applied`). Contract artifacts and the TS
+client are regenerated. End-to-end coverage in
+`crates/temporal-server/tests/temporal_live.rs`
+(`temporal_live_context_append_is_idempotent_and_projected`); the bridge
+batches room events per chat (flush every 30s / 20 events, budget 50 with
+drop reporting) and drains the buffer before an activating turn.
 
 ## G3: Structured Input Items And Media Blobs
 
@@ -294,6 +337,11 @@ Design notes:
   exact shape to be settled when implementing — the requirement is that
   attribution and timestamps are structured, not string-formatted by the
   bridge;
+- the envelope must expose the **channel message id** to the model: G5's
+  `message_react`/`message_edit`/`replyTo` need ids to target. Today's text
+  envelope omits them (they are hashed into room-entry keys but invisible to
+  the model). Cheap interim before G3: include a short id in the envelope
+  text (`[telegram:group Eng #4123] Alice: ...`);
 - `InputItem::Media { blob_ref, mime, kind: Image | Audio | Document,
   name?, size }`; the bridge downloads media from Telegram/Baileys, uploads
   via `blob/put`, and references it — raw channel payloads stay at the edge,
@@ -306,15 +354,46 @@ Design notes:
   (`cargo run -p api --bin export-schema`) and the TS client picks up the
   new item types.
 
+First cut (2026-06-12): **images in, end to end**; the structured
+`ChannelMessage` item is deferred until G5's react/edit tooling needs
+machine-readable ids. Scope: `InputItem::Media` accepted for images only
+(MIME allowlist, ~10MB cap, per-run count cap; audio/documents get typed
+rejections pointing at G6/later); a media item becomes an ordinary
+`Message { role: User }` context entry whose `media_type` is the image MIME
+and whose blob is the raw bytes — no new engine concept; projections render
+such entries from `preview` instead of decoding the blob; `llm-runtime`
+adapters emit provider-native image parts (base64) for image-MIME message
+entries; the bridge downloads Telegram/WhatsApp photos on user turns and
+attaches them (room-event images buffer as placeholder text); envelope text
+gains the short channel message id (the G5 prerequisite); media in
+`context/append` is rejected for now.
+
 Acceptance criteria:
 
-- [ ] sending a photo with a caption in an allowed chat produces a run whose
+- [x] sending a photo with a caption in an allowed chat produces a run whose
   input contains a media item + text, and the model describes the image
-  (live test, `#[ignore]`);
-- [ ] media over the size limit is rejected at admission with a clear error
-  and the bridge reports it to the chat;
-- [ ] contract export includes the new types; stale artifacts fail
+  (per-provider `#[ignore]` live tests verified against real OpenAI and
+  Anthropic APIs 2026-06-12; plumbing covered by unit tests);
+- [x] media over the size limit is rejected at admission with a clear error
+  (10MB cap via `stat_blob`; bridge logs failed downloads and falls back to
+  text);
+- [x] contract export includes the new types; stale artifacts fail
   `cargo test -p api`.
+
+First cut implemented 2026-06-12: `InputItem::Media` + `MediaKind` in
+`crates/api` (images admitted; audio/document rejected with typed errors);
+gateway maps media to `Message { role: User }` entries with image
+`media_type` and a `[image: name]` preview (`input.rs`), capped at 8 media
+items/run; `context/append` rejects media; `api-projection` renders
+non-text message entries from `preview` instead of decoding the blob;
+typed image parts added to `llm-clients` (OpenAI `input_image`, Anthropic
+`image`/base64 source) and materialized in both `llm-runtime` adapters with
+unit tests plus `*_live_adapter_describes_image_input` live tests; the
+bridge lazily downloads Telegram photos (getFile) and WhatsApp images
+(`downloadMediaMessage`) only for user turns, uploads via `blob/put`, and
+attaches media items — room-event images buffer as `(sent an image)`
+placeholder text; envelopes now carry the channel message id
+(`[telegram:group Eng #4123] ...`).
 
 ## G4: Delivery Outbox
 
@@ -355,36 +434,81 @@ Acceptance criteria:
   window);
 - [ ] per-chat rate cap rejects enqueues over the limit with a typed error.
 
-## G5: `message_send` Tool
+## G5: Messaging Tools
 
-The agent's explicit "speak" action, and the heart of agent-initiated
-messaging.
+The agent's explicit channel vocabulary, and the heart of agent-initiated
+messaging. Design revision 2026-06-12: this is a tool *family*, not a single
+send tool, and it becomes the only delivery path (see DeliveryPolicy).
+
+The tools:
+
+- `message_send { target, text, replyTo?, attachments? }` — send a message.
+  Multiple calls per run are normal (chat-native pacing, mid-run progress
+  updates followed by results).
+- `message_react { target, messageId, emoji }` — react to a channel message.
+  Often the right "ack" for messages that need no text reply.
+- `message_edit { target, messageId, text }` — edit a previously sent
+  message (own messages only; capability-gated per channel).
+- `message_noop { reason? }` — **explicitly decline to reply.** Ends the
+  messaging obligation for the turn without delivering anything; the
+  optional reason is recorded for audit. This is how "ok"/"thanks" after a
+  long exchange ends quietly: deliberate silence is a structured, auditable
+  tool call, not an absent send — and not a sentinel token.
 
 Design notes:
 
-- a built-in tool in `crates/tools` (alongside host/web packages), executed
-  as a worker activity that validates the target, applies outbox admission
-  (rate limits, allowed-target policy), appends the `OutboundMessage`, and
-  returns `{ outboxId, status: "enqueued" }` — **durable-enqueue semantics,
-  not delivery confirmation**; the tool result says the message will be
-  delivered, not that it was;
+- built-in tools in `crates/tools` (alongside host/web packages), executed
+  as worker activities. Send/react/edit validate the target, apply outbox
+  admission (rate limits, allowed-target policy), append the
+  `OutboundMessage`, and return `{ outboxId, status: "enqueued" }` —
+  **durable-enqueue semantics, not delivery confirmation**. `message_noop`
+  writes no outbox row; the tool call in the session log is its record;
+- the **turn contract**: a chat-bound run should end having called at least
+  one messaging tool (send, react, edit, or noop). The system-prompt section
+  (P65 prompt path) states that final output is never shown to the user and
+  is internal notes only. Enforcement is the delivery-policy fallback, not
+  provider-level `tool_choice: required` — forcing a tool call every model
+  turn breaks loop termination and contaminates non-chat work in the same
+  session;
+- fallback semantics (transitional): zero messaging-tool calls in a
+  reply-expecting binding → bridge delivers final text and logs a contract
+  violation. A `message_noop` (or any send/react/edit) suppresses the
+  fallback;
 - targets: `current` (resolved via the session's binding — requires the
   binding, or a session-config `delivery_target`, to be known server-side;
   first cut: the bridge writes the resolved target into session config at
   binding time), or explicit `{ channel, accountId, chatId, threadId? }`
   restricted by a per-session allowed-targets list;
-- `attachments: Vec<BlobRef>` for outbound media; `replyTo` for quoting;
-- sessions in `message_tool` delivery mode get the tool plus a system-prompt
-  section (P65 prompt path) explaining when to speak — judgment lives in the
-  model, enforcement lives in outbox admission;
-- a session without the tool configured simply cannot initiate messages —
+- `attachments` for outbound media (agent-generated charts, files, images).
+  Accepted in two forms: `{ blobRef }` for content already in CAS, and
+  `{ workspacePath }` resolved to a blob ref by the tool activity at enqueue
+  time (committing to CAS if needed) — the model knows file paths from its
+  tools, not hashes. Attachment size/type limits are enforced at outbox
+  admission against per-channel caps; the bridge picks the channel encoding
+  by MIME (photo vs document) and uses the message text as caption for a
+  single attachment. Image *generation* is separate scope: a future
+  provider-backed tool that writes to CAS and returns the blob ref composes
+  with `message_send` without either knowing about the other;
+- `replyTo` for quoting — reply anchoring becomes a model decision,
+  replacing the transport-level `replyToMode` heuristics for tool-delivered
+  messages;
+- react/edit require channel message ids in context — see the G3 envelope
+  requirement;
+- capability gating per channel: Telegram reactions/edits via Bot API;
+  WhatsApp reactions via Baileys; the tool result reports unsupported
+  capabilities as typed errors;
+- a session without the tools configured simply cannot initiate messages —
   the capability is opt-in per session config.
 
 Acceptance criteria:
 
-- [ ] in an ambient (`always` + `message_tool`) group session, the model can
-  read chatter and interject only via the tool; final assistant text is
-  not delivered;
+- [ ] in a `message_tool` binding, the model reads chatter and interjects
+  only via tools; final assistant text is not delivered;
+- [ ] a turn answered with `message_noop` delivers nothing and does not
+  trigger the fallback; a turn with zero messaging-tool calls in a DM
+  delivers the final text and logs a contract violation;
+- [ ] the model can react to a specific message and edit one of its own
+  messages (live test, `#[ignore]`);
 - [ ] cross-chat send: a session bound to chat A sends to allowed chat B via
   explicit target; sending to a non-allowed target fails with a typed
   tool error;
@@ -499,8 +623,10 @@ Acceptance criteria:
    (TypeScript only; immediately useful).
 2. **G2 + G3** — `context/append`, envelope/media input items, image
    support through `llm-runtime`, contract regeneration.
-3. **G4 + G5** — outbox + `message_send` tool + delivery policies; ambient
-   group mode and agent-initiated messages become real.
+3. **G4 + G5** — outbox + messaging tool family (send/react/edit/noop) +
+   delivery policies; ambient group mode and agent-initiated messages become
+   real. Then flip DMs to `message_tool` with the zero-tool-call fallback,
+   measure contract violations, and retire `automatic`.
 4. **G7 interim** — bridge heartbeat (small, after G4/G5 so delivery policy
    applies).
 5. **G6** — audio transcription activity.

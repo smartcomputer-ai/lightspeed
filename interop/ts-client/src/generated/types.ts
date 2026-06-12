@@ -236,7 +236,19 @@ export type InputItem =
   | {
       blobRef: string;
       type: "textRef";
+    }
+  | {
+      blobRef: string;
+      kind: MediaKind;
+      mime: string;
+      name?: string | null;
+      type: "media";
     };
+/**
+ * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * via the `definition` "MediaKind".
+ */
+export type MediaKind = "image" | "audio" | "document";
 /**
  * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
  * via the `definition` "RunStatus".
@@ -1387,6 +1399,23 @@ export interface AgentApiOutcomeOfBlobPutResponse {
 }
 /**
  * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfContextAppendResponse".
+ */
+export interface AgentApiOutcomeOfContextAppendResponse {
+  notifications?: AgentNotification[];
+  result: ContextAppendResponse;
+}
+/**
+ * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * via the `definition` "ContextAppendResponse".
+ */
+export interface ContextAppendResponse {
+  appliedKeys: string[];
+  contextRevision: number;
+  unchangedKeys: string[];
+}
+/**
+ * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfContextCompactResponse".
  */
 export interface AgentApiOutcomeOfContextCompactResponse {
@@ -2167,6 +2196,26 @@ export interface ClientCapabilities {
 export interface ClientInfo {
   name: string;
   version?: string | null;
+}
+/**
+ * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * via the `definition` "ContextAppendEntry".
+ */
+export interface ContextAppendEntry {
+  item: InputItem;
+  /**
+   * Stable client-chosen context key. Re-sending the same key with the
+   * same content is a no-op, so the key doubles as the idempotency handle.
+   */
+  key: string;
+}
+/**
+ * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * via the `definition` "ContextAppendParams".
+ */
+export interface ContextAppendParams {
+  entries: ContextAppendEntry[];
+  sessionId: string;
 }
 /**
  * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema

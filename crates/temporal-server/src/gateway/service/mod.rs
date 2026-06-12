@@ -32,7 +32,7 @@ use oauth_api::{
 };
 use blobs::{get_blob, has_blobs, put_blob, put_blobs};
 use errors::*;
-use input::run_input_from_api;
+use input::{context_entry_input_from_api, run_input_from_api};
 use mcp_api::{
     apply_session_mcp_link, create_mcp_server_record, linked_session_mcp, map_mcp_registry_error,
     mcp_server_view, parse_mcp_server_id, parse_mcp_tool_name, remove_session_mcp_link,
@@ -69,9 +69,10 @@ use api::{
     AuthGrantReadResponse, AuthGrantRevokeParams, AuthGrantRevokeResponse, BlobGetParams,
     BlobGetResponse, BlobHasItem, BlobHasManyParams, BlobHasManyResponse, BlobPutManyParams,
     BlobPutManyResponse, BlobPutParams, BlobPutResponse, ClientCapabilities, CompactionPolicyInput,
-    ContextCompactParams, ContextCompactResponse, ContextConfigInput as ApiContextConfigInput,
+    ContextAppendParams, ContextAppendResponse, ContextCompactParams, ContextCompactResponse,
+    ContextConfigInput as ApiContextConfigInput,
     ContextConfigPatchInput, FieldPatch, GenerationConfig, GenerationConfigPatch, InitializeParams,
-    InitializeResponse, InputItem, McpServerCreateParams, McpServerCreateResponse,
+    InitializeResponse, InputItem, MediaKind, McpServerCreateParams, McpServerCreateResponse,
     McpServerDeleteParams, McpServerDeleteResponse, McpServerListParams, McpServerListResponse,
     McpServerReadParams, McpServerReadResponse, ModelConfig, PromptInstructionView,
     PromptsActiveParams, PromptsActiveResponse, ReasoningEffort, RunCancelParams,
@@ -848,6 +849,96 @@ impl AgentApiService for GatewayAgentApi {
             .wait_for_context_compaction_complete(&session_id, baseline_revision, baseline_failures)
             .await?;
         Ok(AgentApiOutcome::new(ContextCompactResponse { session }))
+    }
+
+    async fn append_context(
+        &self,
+        params: ContextAppendParams,
+    ) -> Result<AgentApiOutcome<ContextAppendResponse>, AgentApiError> {
+        const MAX_CONTEXT_APPEND_ENTRIES: usize = 64;
+
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        if params.entries.is_empty() {
+            return Err(AgentApiError::invalid_request(
+                "context/append requires at least one entry",
+            ));
+        }
+        if params.entries.len() > MAX_CONTEXT_APPEND_ENTRIES {
+            return Err(AgentApiError::invalid_request(format!(
+                "context/append accepts at most {MAX_CONTEXT_APPEND_ENTRIES} entries per call"
+            )));
+        }
+
+        let mut keyed = Vec::with_capacity(params.entries.len());
+        let mut seen_keys = BTreeSet::new();
+        for entry in &params.entries {
+            let key = ContextEntryKey::try_new(entry.key.clone()).map_err(|error| {
+                AgentApiError::invalid_request(format!("invalid context key: {error}"))
+            })?;
+            if !seen_keys.insert(key.clone()) {
+                return Err(AgentApiError::invalid_request(format!(
+                    "duplicate context key in append batch: {key}"
+                )));
+            }
+            let input = context_entry_input_from_api(self.store.as_ref(), &entry.item).await?;
+            keyed.push((key, input));
+        }
+
+        let loaded = self.load_session_state(&session_id).await?;
+        let mut applied_keys = Vec::new();
+        let mut unchanged_keys = Vec::new();
+        let mut pending = Vec::new();
+        for (key, input) in keyed {
+            let unchanged = loaded.state.context.entries.iter().any(|active| {
+                active.key.as_ref() == Some(&key)
+                    && active.kind == input.kind
+                    && active.content_ref == input.content_ref
+                    && active.media_type == input.media_type
+                    && active.preview == input.preview
+                    && active.provider_kind == input.provider_kind
+                    && active.provider_item_id == input.provider_item_id
+                    && active.token_estimate == input.token_estimate
+            });
+            if unchanged {
+                unchanged_keys.push(key.as_str().to_owned());
+            } else {
+                applied_keys.push(key.as_str().to_owned());
+                pending.push((key, input));
+            }
+        }
+        if pending.is_empty() {
+            return Ok(AgentApiOutcome::new(ContextAppendResponse {
+                context_revision: loaded.state.context.revision,
+                applied_keys,
+                unchanged_keys,
+            }));
+        }
+
+        let baseline_failures = self
+            .query_status_optional(&session_id)
+            .await?
+            .map(|status| status.admission_failures.len())
+            .unwrap_or(0);
+        for (key, entry) in &pending {
+            self.submit_core_command(
+                &session_id,
+                CoreAgentCommand::UpsertContext {
+                    key: key.clone(),
+                    entry: entry.clone(),
+                },
+            )
+            .await?;
+        }
+        let context_revision = self
+            .wait_for_context_entries_applied(&session_id, &pending, baseline_failures)
+            .await?;
+        Ok(AgentApiOutcome::new(ContextAppendResponse {
+            context_revision,
+            applied_keys,
+            unchanged_keys,
+        }))
     }
 
     async fn start_run(

@@ -1,6 +1,8 @@
 import {
   DisconnectReason,
+  downloadMediaMessage,
   fetchLatestBaileysVersion,
+  jidNormalizedUser,
   makeWASocket,
   normalizeMessageContent,
   useMultiFileAuthState,
@@ -11,8 +13,16 @@ import {
 import qrcode from "qrcode-terminal";
 import type { WhatsAppBridgeConfig } from "./config.js";
 import { stableHash } from "./ids.js";
-import type { MessagingBridgeRuntime } from "./runtime.js";
-import { extractTriggeredText, splitMessageText } from "./text.js";
+import { shouldQuoteChunk } from "./policy.js";
+import type {
+  ChannelPolicy,
+  InboundMedia,
+  MessagingBridgeRuntime,
+  NormalizedInbound,
+} from "./runtime.js";
+import { splitMessageText } from "./text.js";
+
+const MAX_WHATSAPP_IMAGE_BYTES = 10 * 1024 * 1024;
 
 export interface RunningWhatsAppBridge {
   stop: () => Promise<void>;
@@ -32,6 +42,12 @@ export async function startWhatsAppBridge(
   if (allowedJids.size === 0) {
     console.warn("whatsapp: WHATSAPP_ALLOWED_JIDS is empty; all chats can trigger the bridge");
   }
+
+  const policy: ChannelPolicy = {
+    triggerPrefixes: config.triggerPrefixes,
+    mentionNames: config.mentionNames,
+    groupActivation: config.groupActivation,
+  };
 
   const connect = () => {
     if (stopped) {
@@ -53,7 +69,9 @@ export async function startWhatsAppBridge(
         qrcode.generate(update.qr, { small: true });
       }
       if (update.connection === "open") {
-        console.log(`whatsapp: connected as account ${config.accountId}`);
+        console.log(
+          `whatsapp: connected as account ${config.accountId} (group activation: ${config.groupActivation})`,
+        );
       }
       if (update.connection === "close") {
         const statusCode = (update.lastDisconnect?.error as { output?: { statusCode?: number } })
@@ -74,7 +92,7 @@ export async function startWhatsAppBridge(
         return;
       }
       for (const message of upsert.messages) {
-        await handleWhatsAppMessage(config, runtime, nextSock, allowedJids, message);
+        await handleWhatsAppMessage(config, runtime, policy, nextSock, allowedJids, message);
       }
     });
   };
@@ -95,6 +113,7 @@ export async function startWhatsAppBridge(
 async function handleWhatsAppMessage(
   config: WhatsAppBridgeConfig,
   runtime: MessagingBridgeRuntime,
+  policy: ChannelPolicy,
   sock: WASocket,
   allowedJids: ReadonlySet<string>,
   message: WAMessage,
@@ -111,57 +130,108 @@ async function handleWhatsAppMessage(
     return;
   }
 
-  const rawText = extractWhatsAppText(message);
-  if (!rawText) {
+  const content = normalizeMessageContent(message.message ?? undefined);
+  const rawText = extractWhatsAppText(content);
+  const image = content?.imageMessage ?? null;
+  const imageSize = Number(image?.fileLength ?? 0);
+  const hasImage = Boolean(image) && imageSize <= MAX_WHATSAPP_IMAGE_BYTES;
+  if (!rawText && !hasImage) {
     return;
   }
 
+  const ownJid = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
+  const contextInfo = extractContextInfo(content);
   const isGroup = remoteJid.endsWith("@g.us");
-  const text = extractTriggeredText(rawText, {
-    mentionNames: config.mentionNames,
-    prefixes: config.triggerPrefixes,
-    requireTrigger: config.requireTrigger || isGroup,
-  });
-  if (text === null) {
-    return;
-  }
-  if (!text) {
-    await sock.sendMessage(remoteJid, { text: "Send text after the trigger." }, { quoted: message });
-    return;
-  }
+  const senderJid = message.key.participant
+    ? jidNormalizedUser(message.key.participant)
+    : jidNormalizedUser(remoteJid);
+  const allowFrom = new Set(config.allowFrom);
 
-  const participant = message.key.participant ?? "direct";
   const conversationParts = ["whatsapp", config.accountId, remoteJid];
   const conversationKey = `whatsapp:${stableHash(conversationParts)}`;
   const messageKey = `whatsapp:${stableHash([
     config.accountId,
     remoteJid,
-    participant,
+    message.key.participant ?? "direct",
     messageId,
   ])}`;
 
-  await runtime.handleInboundText(
-    {
-      accountId: config.accountId,
-      conversationKey,
-      conversationParts,
-      messageId,
-      messageKey,
-      provider: "whatsapp",
-      text,
+  const inbound: NormalizedInbound = {
+    provider: "whatsapp",
+    accountId: config.accountId,
+    chatId: remoteJid,
+    conversationKey,
+    conversationParts,
+    messageId,
+    messageKey,
+    senderId: senderJid,
+    senderName: message.pushName?.trim() || senderJid.split("@")[0] || senderJid,
+    timestampMs: Number(message.messageTimestamp ?? 0) * 1000,
+    text: rawText || "(sent an image)",
+    isDirect: !isGroup,
+    chatLabel: isGroup ? remoteJid.split("@")[0] || remoteJid : "dm",
+    mentionedBot: Boolean(
+      ownJid && contextInfo?.mentionedJid?.some((jid) => jidNormalizedUser(jid) === ownJid),
+    ),
+    isReplyToBot: Boolean(
+      contextInfo?.quotedMessage &&
+        ownJid &&
+        contextInfo.participant &&
+        jidNormalizedUser(contextInfo.participant) === ownJid,
+    ),
+    isFromSelf: Boolean(message.key.fromMe),
+    senderAllowed: allowFrom.size > 0 ? allowFrom.has(senderJid) : !isGroup,
+    ...(hasImage
+      ? { fetchMedia: () => downloadWhatsAppImage(message, image?.mimetype ?? null) }
+      : {}),
+  };
+
+  await runtime.handleInbound(inbound, policy, {
+    sendReply: async (replyText) => {
+      const chunks = splitMessageText(replyText, 3_500);
+      for (const [index, chunk] of chunks.entries()) {
+        const quote = shouldQuoteChunk(config.replyToMode, !isGroup, index);
+        await sock.sendMessage(
+          remoteJid,
+          { text: chunk },
+          quote ? { quoted: message } : {},
+        );
+      }
     },
+  });
+}
+
+async function downloadWhatsAppImage(
+  message: WAMessage,
+  mimetype: string | null,
+): Promise<InboundMedia[]> {
+  const buffer = (await downloadMediaMessage(message, "buffer", {})) as Buffer;
+  if (buffer.byteLength > MAX_WHATSAPP_IMAGE_BYTES) {
+    return [];
+  }
+  const mime = (mimetype ?? "image/jpeg").split(";")[0]?.trim() || "image/jpeg";
+  return [
     {
-      sendReply: async (replyText) => {
-        for (const chunk of splitMessageText(replyText, 3_500)) {
-          await sock.sendMessage(remoteJid, { text: chunk }, { quoted: message });
-        }
-      },
+      base64: buffer.toString("base64"),
+      mime,
     },
+  ];
+}
+
+function extractContextInfo(content: proto.IMessage | undefined): proto.IContextInfo | null {
+  if (!content) {
+    return null;
+  }
+  return (
+    content.extendedTextMessage?.contextInfo ??
+    content.imageMessage?.contextInfo ??
+    content.videoMessage?.contextInfo ??
+    content.documentMessage?.contextInfo ??
+    null
   );
 }
 
-function extractWhatsAppText(message: WAMessage): string | null {
-  const content = normalizeMessageContent(message.message ?? undefined);
+function extractWhatsAppText(content: proto.IMessage | undefined): string | null {
   if (!content) {
     return null;
   }

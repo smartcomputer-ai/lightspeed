@@ -14,7 +14,12 @@ const config = await loadBridgeConfig();
 const store = new JsonBridgeStore(config.store.path);
 const client = new ForgeClient(config.forge.endpoint);
 const forge = new ForgeSessionBridge(client, store, config.forge);
-const runtime = new MessagingBridgeRuntime({ forge, store });
+const runtime = new MessagingBridgeRuntime({
+  forge,
+  store,
+  runtime: config.runtime,
+  sessionPrefix: config.forge.sessionPrefix,
+});
 const running: Running[] = [];
 
 if (config.telegram?.enabled) {
@@ -38,5 +43,6 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
 async function shutdown(signal: string): Promise<void> {
   console.log(`bridge: received ${signal}, stopping`);
   await Promise.allSettled(running.map((bridge) => bridge.stop()));
+  await runtime.flush().catch(() => undefined);
   process.exit(0);
 }

@@ -121,6 +121,21 @@
       }
     },
     {
+      "method": "context/append",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/ContextAppendParams"
+        },
+        "type": "ContextAppendParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfContextAppendResponse"
+        },
+        "type": "AgentApiOutcome<ContextAppendResponse>"
+      }
+    },
+    {
       "method": "run/start",
       "params": {
         "schema": {

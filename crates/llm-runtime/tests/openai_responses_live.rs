@@ -130,6 +130,122 @@ async fn store_tool_documents(
     }
 }
 
+/// 32x32 solid red PNG.
+const RED_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAKElEQVR4nO3NsQ0AAAzCMP5/un0CNkuZ41wybXsHAAAAAAAAAAAAxR4yw/wuPL6QkAAAAABJRU5ErkJggg==";
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires OPENAI_API_KEY (costs real money)"]
+async fn openai_responses_live_adapter_describes_image_input() {
+    use base64::Engine as _;
+    let blobs = Arc::new(InMemoryBlobStore::new());
+    let image_bytes = base64::engine::general_purpose::STANDARD
+        .decode(RED_PNG_BASE64)
+        .expect("decode test png");
+    let image_ref = blobs.put_bytes(image_bytes).await.expect("store image");
+    let question_ref = text_blob(
+        &blobs,
+        "What is the dominant color of this image? Reply with one English word in lowercase.",
+    )
+    .await;
+
+    let entries = vec![
+        ContextEntry {
+            key: None,
+            entry_id: ContextEntryId::new(1),
+            kind: ContextEntryKind::Message {
+                role: ContextMessageRole::User,
+            },
+            source: ContextEntrySource::RunInput {
+                run_id: RunId::new(1),
+                input_index: 0,
+            },
+            content_ref: image_ref,
+            media_type: Some("image/png".to_owned()),
+            preview: Some("[image: red.png]".to_owned()),
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        },
+        ContextEntry {
+            key: None,
+            entry_id: ContextEntryId::new(2),
+            kind: ContextEntryKind::Message {
+                role: ContextMessageRole::User,
+            },
+            source: ContextEntrySource::RunInput {
+                run_id: RunId::new(1),
+                input_index: 1,
+            },
+            content_ref: question_ref,
+            media_type: None,
+            preview: None,
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        },
+    ];
+    let adapter = OpenAiResponsesLlmAdapter::new(
+        retrying_openai_responses_client(live_client()),
+        blobs.clone(),
+    );
+    let request = LlmGenerationRequest {
+        session_id: SessionId::new("session-live-image"),
+        run_id: RunId::new(1),
+        turn_id: TurnId::new(1),
+        request: LlmRequest {
+            model: ModelSelection {
+                api_kind: ProviderApiKind::OpenAiResponses,
+                provider_id: "openai".to_string(),
+                model: live_model(),
+            },
+            request_fingerprint: "live-openai-responses-image".to_string(),
+            context: ContextSnapshot {
+                api_kind: ProviderApiKind::OpenAiResponses,
+                context_revision: 0,
+                entries,
+                token_estimate: None,
+            },
+            tools: Vec::new(),
+            tool_choice: None,
+            output_limit: Some(512),
+            provider_response_id: None,
+            compaction: None,
+            params: Some(openai_params(&OpenAiResponsesParams {
+                store: Some(false),
+                stream: Some(false),
+                ..OpenAiResponsesParams::default()
+            })),
+        },
+    };
+
+    let execution = adapter.generate(request).await.expect("generate response");
+
+    assert_eq!(execution.result.status, LlmGenerationStatus::Succeeded);
+    let assistant_ref = execution
+        .result
+        .context_entries
+        .iter()
+        .find(|entry| {
+            matches!(
+                entry.kind,
+                ContextEntryKind::Message {
+                    role: ContextMessageRole::Assistant,
+                }
+            )
+        })
+        .map(|entry| entry.content_ref.clone())
+        .expect("assistant entry");
+    let answer = blobs
+        .read_text(&assistant_ref)
+        .await
+        .expect("assistant text")
+        .to_lowercase();
+    assert!(
+        answer.contains("red"),
+        "expected the model to identify the red image, got: {answer}"
+    );
+}
+
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires OPENAI_API_KEY (costs real money)"]
 async fn openai_responses_live_adapter_generates_result() {
