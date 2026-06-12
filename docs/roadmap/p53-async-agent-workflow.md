@@ -742,7 +742,7 @@ After this refactor lands:
 
 - mark P60 closed as superseded
 - update P47/P50/P51 notes where they refer to effect intents/receipts
-- update `README.md`, `AGENTS.md`, and `spec/01-agent-idea.md`
+- update `README.md`, `AGENTS.md`, and `docs/spec/01-agent-idea.md`
 
 ## Tests To Rewrite
 

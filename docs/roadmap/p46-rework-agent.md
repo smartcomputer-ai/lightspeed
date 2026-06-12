@@ -51,8 +51,8 @@ Implemented so far:
   code; the crate now depends only on current core-contract libraries, with
   `tokio` scoped to async unit tests.
 - Added `crates/forge-agent/README.md` pointing to
-  `spec/04-new-agent-idea.md` and
-  `roadmap/p45-forge-llm-provider-native-rewrite.md` as the current direction.
+  `docs/spec/04-new-agent-idea.md` and
+  `docs/roadmap/p45-forge-llm-provider-native-rewrite.md` as the current direction.
 - Superseded the earlier `raw_provider_response_ref` receipt sketch for P46:
   raw response retention remains an adapter/runner responsibility for the next
   phase, while P46 receipts carry reducer facts and blob-backed context items.
@@ -89,13 +89,13 @@ runner, CLI, Temporal workflow, or real provider/tool adapter.
 
 Authoritative direction:
 
-- `spec/04-new-agent-idea.md`
-- `roadmap/p45-forge-llm-provider-native-rewrite.md`
+- `docs/spec/04-new-agent-idea.md`
+- `docs/roadmap/p45-forge-llm-provider-native-rewrite.md`
 
 Deferred implementation references:
 
-- `roadmap/p43-cas.md`
-- `roadmap/p44-agent-session-store.md`
+- `docs/roadmap/p43-cas.md`
+- `docs/roadmap/p44-agent-session-store.md`
 
 P43/P44 remain good implementation references, but P46 should not implement
 production blob storage, production session storage, or durable store backends.
@@ -1487,7 +1487,7 @@ Contract requirements:
 
 Contract requirements:
 
-- docs point to `spec/04-new-agent-idea.md` and P45 as current direction
+- docs point to `docs/spec/04-new-agent-idea.md` and P45 as current direction
 - roadmap language reflects the single public session transition layer
 - no active roadmap for the next agent phase depends on the old unified
   `forge-llm` abstraction

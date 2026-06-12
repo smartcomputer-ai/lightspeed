@@ -14,9 +14,9 @@ tools, production artifact stores, Temporal workflows, CXDB/Postgres
 persistence, and CLI UI are follow-on phases.
 
 **Source**
-- Spec of record: `spec/04-new-agent-spec.md`
-- Model foundation: `roadmap/p40-new-agent-core.md`
-- Tool execution follow-on: `roadmap/p42-agent-tools.md`
+- Spec of record: `docs/spec/04-new-agent-spec.md`
+- Model foundation: `docs/roadmap/p40-new-agent-core.md`
+- Tool execution follow-on: `docs/roadmap/p42-agent-tools.md`
 
 ## Design Position
 

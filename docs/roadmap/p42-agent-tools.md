@@ -10,7 +10,7 @@ Implemented so far:
 ## Goal
 
 Implement the tool execution SDK layer described by
-`spec/04-new-agent-spec.md`, building on the P41 reducer/decider loop without
+`docs/spec/04-new-agent-spec.md`, building on the P41 reducer/decider loop without
 putting host-specific tools into `forge-agent`.
 
 P41 can plan tool batches and emit `ToolInvoke` effect intents. P42 turns those
@@ -29,8 +29,8 @@ scopes.
 
 ## Spec References
 
-- Spec of record: `spec/04-new-agent-spec.md`
-- Prior phase: `roadmap/p41-agent-loop.md`
+- Spec of record: `docs/spec/04-new-agent-spec.md`
+- Prior phase: `docs/roadmap/p41-agent-loop.md`
 - Conceptual references:
   - `/Users/lukas/dev/tmp/codex/codex-rs/core/src/tools/parallel.rs`
   - `/Users/lukas/dev/tmp/codex/codex-rs/core/src/tools/router.rs`

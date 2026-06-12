@@ -404,7 +404,7 @@ forces the extension points to harden.
 
 ## Deferred Fleet Shape
 
-Fleet and graph work is deferred to `roadmap/p61-fleet-api.md`. For P60, many
+Fleet and graph work is deferred to `docs/roadmap/p61-fleet-api.md`. For P60, many
 running agents means many CoreAgent/Claw sessions. `session_id` remains the
 durable identity exposed by the API.
 

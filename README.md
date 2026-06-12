@@ -59,6 +59,11 @@ We belive running and coordination agents at scale are best managed by durable w
 | `llm-clients` | `crates/llm-clients` | Provider-native OpenAI and Anthropic API clients |
 | `cli` | `crates/cli` | Command-line chat client for the API gateway |
 
+## Project Docs
+
+- `docs/spec/` holds working design notes.
+- `docs/roadmap/` holds implementation plans and historical milestones.
+
 ## Quick Start
 
 Prerequisites:

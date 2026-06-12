@@ -5,7 +5,7 @@
 
 **Goal**
 Implement the new `forge-agent` core model layer described by
-`spec/04-new-agent-spec.md`.
+`docs/spec/04-new-agent-spec.md`.
 
 This phase is intentionally not a full agent. It should create the durable,
 serializable domain vocabulary that later phases use for the loop, tools, CLI,
@@ -30,8 +30,8 @@ the model layer. It should not call an LLM, execute tools, spawn processes, run
 Temporal workflows, or implement hooks/policy.
 
 **Source**
-- Spec of record: `spec/04-new-agent-spec.md`
-- Scratch/context: `spec/04-new-agent-idea.md`
+- Spec of record: `docs/spec/04-new-agent-spec.md`
+- Scratch/context: `docs/spec/04-new-agent-idea.md`
 - Primary conceptual reference: `refs/aos-agent/`
 - Old Forge agent reference: `refs/forge-agent/`
 - Codex reference checkout: `/Users/lukas/dev/tmp/codex/codex-rs/`
@@ -221,7 +221,7 @@ layout in `crates/forge-agent/src/`:
 
 ### In scope
 - Replace the reset crate shell with the new core model modules.
-- Define serializable Rust structs/enums that match `spec/04-new-agent-spec.md`.
+- Define serializable Rust structs/enums that match `docs/spec/04-new-agent-spec.md`.
 - Derive or implement `Clone`, `Debug`, `PartialEq`, `Eq` where practical.
 - Derive `Serialize` and `Deserialize` for persisted or projected records.
 - Use `BTreeMap`/`BTreeSet` for deterministic persisted ordering where order is
@@ -690,9 +690,9 @@ layout in `crates/forge-agent/src/`:
 - `cargo test -p forge-agent` passes with deterministic model tests only.
 
 ## Follow-on Work
-- `roadmap/p41-agent-loop.md`: implement the pure reducer/decider and local
+- `docs/roadmap/p41-agent-loop.md`: implement the pure reducer/decider and local
   stepper over these model types.
-- `roadmap/p42-agent-tools.md`: implement tool registry execution, generic
+- `docs/roadmap/p42-agent-tools.md`: implement tool registry execution, generic
   tool-batch dispatch, and standard host filesystem/shell tools outside the
   core crate.
-- `roadmap/p45-new-cli.md`: implement the CLI projection/control surface.
+- `docs/roadmap/p45-new-cli.md`: implement the CLI projection/control surface.

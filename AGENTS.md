@@ -14,10 +14,10 @@ pipeline runner.
 Use these files as the index:
 
 - `README.md` — current overview, crate map, runtime model, commands.
-- `spec/01-agent-idea.md` — working design notes for the new agent direction.
+- `docs/spec/01-agent-idea.md` — working design notes for the new agent direction.
 - `Cargo.toml` — workspace membership.
 - `interop/` — API contract artifacts, private clients, and bridge packages.
-- `roadmap/` — implementation plans and historical milestones.
+- `docs/roadmap/` — implementation plans and historical milestones.
 
 ## Build & Test
 
@@ -163,7 +163,7 @@ Local commands load a root `.env` file when present. The `.env` file usually exi
 ## Maintenance
 
 - If high-level architecture changes, update `README.md`, this file, and the
-  relevant spec/roadmap docs.
+  relevant docs under `docs/spec/` or `docs/roadmap/`.
 - When a roadmap item is completed or partially completed, mark what changed in
   that roadmap file.
 - When asked how many lines of code, use `cloc $(git ls-files)`.
