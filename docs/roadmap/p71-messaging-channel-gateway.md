@@ -469,7 +469,7 @@ Acceptance criteria:
 
 First cut implemented 2026-06-12: new `crates/messaging` (outbox types,
 `OutboxStore` trait, in-memory store), `crates/store-pg`
-`migrations/005_outbox.sql` + PG impl, gateway `outbox/read` (long-poll,
+`migrations/005_messaging.sql` + PG impl, gateway `outbox/read` (long-poll,
 cursor) and `outbox/ack`, and the bridge `OutboxTailer`
 (`interop/messaging/src/outbox.ts`) with per-channel deliverers (Telegram:
 send/react/edit via Bot API; WhatsApp: send/react/edit via Baileys).
