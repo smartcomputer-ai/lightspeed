@@ -10,7 +10,7 @@
     "forge-messaging-bridge": "./dist/main.js"
   },
   "scripts": {
-    "build:client": "npm --prefix ../../clients/typescript install --ignore-scripts && npm --prefix ../../clients/typescript run build",
+    "build:client": "npm --prefix ../ts-client install --ignore-scripts && npm --prefix ../ts-client run build",
     "dev": "npm run build:client && tsx src/main.ts",
     "typecheck:bridge": "tsc -p tsconfig.json --noEmit",
     "typecheck": "npm run build:client && npm run typecheck:bridge",
@@ -21,7 +21,7 @@
     "check": "npm run build:client && npm run typecheck:bridge && npm run test:bridge && npm run build:bridge"
   },
   "dependencies": {
-    "@forge/agent-client": "file:../../clients/typescript",
+    "@forge/agent-client": "file:../ts-client",
     "baileys": "7.0.0-rc13",
     "dotenv": "^17.2.3",
     "grammy": "^1.43.0",

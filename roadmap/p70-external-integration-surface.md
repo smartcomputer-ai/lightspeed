@@ -88,10 +88,10 @@ Design notes:
   same method set, so the exported contract cannot drift from what the
   server serves;
 - an export binary (`cargo run -p api --bin export-schema`) writes:
-  - `schemas/api.schema.json` — all params/result/view types bundled under
+  - `interop/contract/api.schema.json` — all params/result/view types bundled under
     `$defs`;
-  - `schemas/methods.json` — the method/notification manifest;
-  - `schemas/openrpc.json` — an OpenRPC document assembled from the two.
+  - `interop/contract/methods.json` — the method/notification manifest;
+  - `interop/contract/openrpc.json` — an OpenRPC document assembled from the two.
     OpenRPC is the standard JSON-RPC contract format and feeds the OpenRPC
     Inspector/Playground for free docs, but nothing downstream may depend on
     OpenRPC tooling for codegen — its generator ecosystem is thin;
@@ -122,8 +122,8 @@ definition names templated via `#[schemars(rename = "AgentApiOutcomeOf{T}")]`
 / `FieldPatchOf{T}` to avoid collision-counter names), the `api_methods!`
 macro (replacing ~260 lines of hand-written dispatch), `NOTIFICATION_METHODS`
 with a schema-variant drift test, the `schema_export` module +
-`export-schema` binary, committed `schemas/api.schema.json` (248 definitions)
-/ `methods.json` (51 methods) / `openrpc.json`, and the
+`export-schema` binary, committed `interop/contract/api.schema.json` (248
+definitions) / `methods.json` (51 methods) / `openrpc.json`, and the
 `schema_artifacts` currency + ref-resolution + fixture-validation tests.
 The result envelope on the wire is `AgentApiOutcome<Response>`; manifest and
 schemas describe the envelope, not the bare response type.
@@ -245,8 +245,8 @@ Generated types plus a thin hand-written transport, per language.
 
 Design notes:
 
-- layout: top-level `clients/typescript/` and `clients/python/`, outside the
-  cargo workspace. Private consumption only (path/git/private-registry
+- layout: `interop/ts-client/` and future `interop/python-client/`, outside
+  the cargo workspace. Private consumption only (path/git/private-registry
   installs); no npm/PyPI publishing;
 - types are **generated, never hand-written**: `json-schema-to-typescript`
   for TS, `datamodel-code-generator` (Pydantic v2) for Python — or quicktype
@@ -267,9 +267,8 @@ Design notes:
     instead of re-reading from the start;
 - each client ships a short Temporal-activity usage example (create/reuse
   session, idempotent `run/start`, `awaitRun` with heartbeats);
-- regeneration: `clients/*/generate.sh` (or task runner) from the committed
-  G1 artifacts; CI verifies generated output is current alongside the G1
-  schema diff.
+- regeneration: client-local task runners from the committed G1 artifacts; CI
+  verifies generated output is current alongside the G1 schema diff.
 
 Acceptance criteria:
 
@@ -282,9 +281,9 @@ Acceptance criteria:
   code/data preserved;
 - [ ] CI fails when committed schemas and generated clients drift.
 
-TypeScript first slice implemented 2026-06-11: `clients/typescript/`
+TypeScript first slice implemented 2026-06-11: `interop/ts-client/`
 contains a private ESM package outside the Cargo workspace; `npm run generate`
-reads only `schemas/api.schema.json` and `schemas/methods.json` to produce
+reads only `interop/contract/api.schema.json` and `interop/contract/methods.json` to produce
 `src/generated/types.ts` and the typed method map/wrappers in
 `src/generated/methods.ts`; the hand-written surface is a small `fetch`-based
 JSON-RPC transport, `ForgeRpcError` preserving code/message/data, and helpers
@@ -293,15 +292,18 @@ for generated-submission-id `startRun`, long-poll `readEvents`, and resumable
 submission-id generation, and the long-poll terminal-run loop. Remaining G4
 work: Python client, opt-in gateway smoke tests, and CI drift checks.
 
-Messaging bridge overlay implemented 2026-06-11: `bridges/messaging/` contains
-a private Node package for Telegram and WhatsApp, intentionally outside
-`clients/` because it is an integration process rather than a generated API
-client. It depends on `@forge/agent-client` via
-`file:../../clients/typescript`, maps each chat/thread to a stable Forge
-session, uses stable submission ids for channel message retries, long-polls run
-completion through the JSON-RPC API, and keeps channel state/dedupe in a local
-JSON store. This does not change the gateway contract; channel-specific gaps
-should still be solved in the overlay unless they expose a generic API need.
+Messaging bridge overlay implemented 2026-06-11: `interop/messaging/` contains
+a private Node package for Telegram and WhatsApp. It depends on
+`@forge/agent-client` via `file:../ts-client`, maps each chat/thread to a
+stable Forge session, uses stable submission ids for channel message retries,
+long-polls run completion through the JSON-RPC API, and keeps channel
+state/dedupe in a local JSON store. This does not change the gateway contract;
+channel-specific gaps should still be solved in the overlay unless they expose
+a generic API need.
+
+Layout cleanup implemented 2026-06-12: the committed contract, TypeScript
+client, and messaging bridge moved under a shallow `interop/` subtree:
+`interop/contract/`, `interop/ts-client/`, and `interop/messaging/`.
 
 ## Deployment Notes: Universes
 

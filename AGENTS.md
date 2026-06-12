@@ -16,6 +16,7 @@ Use these files as the index:
 - `README.md` — current overview, crate map, runtime model, commands.
 - `spec/01-agent-idea.md` — working design notes for the new agent direction.
 - `Cargo.toml` — workspace membership.
+- `interop/` — API contract artifacts, private clients, and bridge packages.
 - `roadmap/` — implementation plans and historical milestones.
 
 ## Build & Test
@@ -57,7 +58,7 @@ Additional per-capability live suites exist for both providers under
 `*_prompts_live`, `*_skills_live`).
 
 After changing `api` wire types, regenerate the committed contract artifacts
-under `schemas/` (`cargo test -p api` fails while they are stale):
+under `interop/contract/` (`cargo test -p api` fails while they are stale):
 
 ```bash
 cargo run -p api --bin export-schema

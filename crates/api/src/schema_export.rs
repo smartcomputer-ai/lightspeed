@@ -3,7 +3,7 @@
 //! Renders three artifacts from the method manifest and the schemars-derived
 //! types: a draft-07 JSON Schema bundle of every wire type, a method manifest
 //! document, and an OpenRPC document for docs tooling. The committed copies
-//! under `schemas/` are kept current by `schema_artifacts` integration tests;
+//! under `interop/contract/` are kept current by `schema_artifacts` integration tests;
 //! regenerate them with `cargo run -p api --bin export-schema`.
 
 use std::collections::BTreeMap;

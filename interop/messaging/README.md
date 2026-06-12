@@ -28,7 +28,7 @@ cargo run -p temporal-server
 Install and run the bridge:
 
 ```bash
-cd bridges/messaging
+cd interop/messaging
 npm install
 cp .env.example .env
 npm run dev
@@ -37,10 +37,10 @@ npm run dev
 The package uses a local file dependency:
 
 ```json
-"@forge/agent-client": "file:../../clients/typescript"
+"@forge/agent-client": "file:../ts-client"
 ```
 
-Bridge scripts run `npm --prefix ../../clients/typescript run build` first, so
+Bridge scripts run `npm --prefix ../ts-client run build` first, so
 the local client package export is available even though `dist/` is ignored.
 
 ## Telegram

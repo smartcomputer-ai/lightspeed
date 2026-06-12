@@ -3,7 +3,7 @@
 Private TypeScript client for the Forge JSON-RPC gateway.
 
 The public API types and typed method map are generated from the committed
-contract artifacts in `../../schemas/`. The hand-written code is limited to the
+contract artifacts in `../contract/`. The hand-written code is limited to the
 JSON-RPC transport and small workflow helpers.
 
 ## Install
@@ -12,7 +12,7 @@ For private consumers, install from this repository path or a git subdirectory.
 This package is not published to npm.
 
 ```bash
-npm install /path/to/forge/clients/typescript
+npm install /path/to/forge/interop/ts-client
 ```
 
 ## Use

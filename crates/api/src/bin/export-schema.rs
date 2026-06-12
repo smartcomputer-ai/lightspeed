@@ -1,4 +1,4 @@
-//! Writes the committed wire-contract artifacts under `schemas/`.
+//! Writes the committed wire-contract artifacts under `interop/contract/`.
 //!
 //! Usage: `cargo run -p api --bin export-schema [output-dir]`
 
@@ -8,7 +8,9 @@ fn main() {
     let out_dir = env::args()
         .nth(1)
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../schemas"));
+        .unwrap_or_else(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../interop/contract")
+        });
     fs::create_dir_all(&out_dir).expect("create output directory");
 
     let exported = api::export_schemas();
