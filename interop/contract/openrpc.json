@@ -480,6 +480,40 @@
         ],
         "type": "object"
       },
+      "AgentApiOutcomeOfOutboxAckResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/OutboxAckResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfOutboxReadResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/OutboxReadResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
       "AgentApiOutcomeOfPromptsActiveResponse": {
         "properties": {
           "notifications": {
@@ -3382,6 +3416,264 @@
         ],
         "type": "object"
       },
+      "OutboundAckInput": {
+        "oneOf": [
+          {
+            "properties": {
+              "channelMessageId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "type": {
+                "const": "delivered",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "error": {
+                "type": "string"
+              },
+              "retryable": {
+                "type": "boolean"
+              },
+              "type": {
+                "const": "failed",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "error",
+              "retryable"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "OutboundMessageView": {
+        "properties": {
+          "attempts": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "createdAtMs": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/OutboundOriginView"
+          },
+          "outboxId": {
+            "type": "string"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/OutboundPayloadView"
+          },
+          "runId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "seq": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sessionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "seq",
+          "outboxId",
+          "sessionId",
+          "origin",
+          "payload",
+          "attempts",
+          "createdAtMs"
+        ],
+        "type": "object"
+      },
+      "OutboundOriginView": {
+        "enum": [
+          "toolCall",
+          "finalText",
+          "trigger"
+        ],
+        "type": "string"
+      },
+      "OutboundPayloadView": {
+        "oneOf": [
+          {
+            "properties": {
+              "replyTo": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "text": {
+                "type": "string"
+              },
+              "type": {
+                "const": "send",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "text"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "emoji": {
+                "type": "string"
+              },
+              "messageId": {
+                "type": "string"
+              },
+              "type": {
+                "const": "react",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "messageId",
+              "emoji"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "messageId": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              },
+              "type": {
+                "const": "edit",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "messageId",
+              "text"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "OutboundStatusView": {
+        "enum": [
+          "pending",
+          "delivered",
+          "failed"
+        ],
+        "type": "string"
+      },
+      "OutboxAckParams": {
+        "properties": {
+          "outboxId": {
+            "type": "string"
+          },
+          "result": {
+            "$ref": "#/components/schemas/OutboundAckInput"
+          }
+        },
+        "required": [
+          "outboxId",
+          "result"
+        ],
+        "type": "object"
+      },
+      "OutboxAckResponse": {
+        "properties": {
+          "attempts": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "outboxId": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/OutboundStatusView"
+          }
+        },
+        "required": [
+          "outboxId",
+          "status",
+          "attempts"
+        ],
+        "type": "object"
+      },
+      "OutboxReadParams": {
+        "properties": {
+          "after": {
+            "description": "Return pending entries with `seq` greater than this cursor. Restart\nfrom 0 to re-read undelivered entries after a consumer restart.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "limit": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "waitMs": {
+            "description": "Long-poll wait in milliseconds when no entries are pending.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "OutboxReadResponse": {
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/OutboundMessageView"
+            },
+            "type": "array"
+          },
+          "nextAfter": {
+            "description": "Cursor to pass as `after` on the next read.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "entries",
+          "nextAfter"
+        ],
+        "type": "object"
+      },
       "PrincipalKind": {
         "enum": [
           "user",
@@ -6044,6 +6336,13 @@
               }
             ]
           },
+          "messaging": {
+            "description": "Enables the messaging toolset (message_send/react/edit/noop) for\nsessions bound to a chat channel.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "webFetch": {
             "type": [
               "boolean",
@@ -6065,6 +6364,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/FieldPatchOfHostToolMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "messaging": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FieldPatchOfboolean"
               },
               {
                 "type": "null"
@@ -6977,6 +7286,46 @@
         "name": "result",
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfContextAppendResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "outbox/read",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/OutboxReadParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfOutboxReadResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "outbox/ack",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/OutboxAckParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfOutboxAckResponse"
         }
       }
     },

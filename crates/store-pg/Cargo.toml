@@ -10,6 +10,7 @@ base64 = "0.22"
 engine = { path = "../engine" }
 async-trait = "0.1"
 mcp-registry = { path = "../mcp-registry" }
+messaging = { path = "../messaging" }
 object_store = { version = "0.13.1", features = ["aws"] }
 rand = "0.8"
 serde = { version = "1", features = ["derive"] }

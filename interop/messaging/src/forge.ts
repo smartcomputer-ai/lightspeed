@@ -37,6 +37,10 @@ export interface ForgeReply {
   runId: string;
   sessionId: string;
   text: string;
+  /// True when the run used a messaging tool (send/react/edit/noop). The
+  /// bridge then suppresses final-text delivery: actual sends arrive via the
+  /// outbox tail, and a noop means deliberate silence.
+  messagingToolUsed: boolean;
 }
 
 const CONTEXT_APPEND_BATCH_LIMIT = 64;
@@ -54,10 +58,12 @@ export class ForgeSessionBridge {
     if (this.startedSessions.has(sessionId)) {
       return;
     }
+    // New sessions get the messaging toolset; session/start is idempotent
+    // and the config only applies on creation.
     await this.client.call("session/start", {
       sessionId,
       cwd: this.config.cwd ?? null,
-      config: null,
+      config: { tools: { messaging: true } },
     });
     this.startedSessions.add(sessionId);
   }
@@ -139,8 +145,32 @@ export class ForgeSessionBridge {
       runId: run.id,
       sessionId: turn.sessionId,
       text,
+      messagingToolUsed: runUsedMessagingTool(read.result.session, run.id),
     };
   }
+}
+
+/// True when the run contains at least one successful messaging tool call
+/// (message_send/react/edit/noop). Failed calls do not count, so a turn whose
+/// only send was rejected still falls back to final-text delivery.
+export function runUsedMessagingTool(session: SessionView, runId: string): boolean {
+  const run = session.runs?.find((candidate) => candidate.id === runId);
+  if (!run?.items) {
+    return false;
+  }
+  const messagingCallIds = new Set<string>();
+  for (const item of run.items) {
+    if (item?.type === "toolCall" && item.toolName.startsWith("message_")) {
+      messagingCallIds.add(item.callId);
+    }
+  }
+  if (messagingCallIds.size === 0) {
+    return false;
+  }
+  return run.items.some(
+    (item) =>
+      item?.type === "toolResult" && !item.isError && messagingCallIds.has(item.callId),
+  );
 }
 
 /// Joins every assistant message produced by the run, so multi-message runs

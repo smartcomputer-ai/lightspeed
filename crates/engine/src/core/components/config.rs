@@ -177,6 +177,8 @@ pub struct ToolConfigPatch {
     pub web_fetch: Option<OptionalConfigPatch<bool>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<OptionalConfigPatch<HostToolMode>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub messaging: Option<OptionalConfigPatch<bool>>,
 }
 
 impl ToolConfigPatch {
@@ -184,10 +186,14 @@ impl ToolConfigPatch {
         apply_optional_config_patch(&mut config.web_search, &self.web_search);
         apply_optional_config_patch(&mut config.web_fetch, &self.web_fetch);
         apply_optional_config_patch(&mut config.host, &self.host);
+        apply_optional_config_patch(&mut config.messaging, &self.messaging);
     }
 
     pub fn is_empty(&self) -> bool {
-        self.web_search.is_none() && self.web_fetch.is_none() && self.host.is_none()
+        self.web_search.is_none()
+            && self.web_fetch.is_none()
+            && self.host.is_none()
+            && self.messaging.is_none()
     }
 }
 
@@ -290,6 +296,10 @@ pub struct ToolConfig {
     pub web_fetch: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<HostToolMode>,
+    /// Enables the messaging toolset (message_send/react/edit/noop) for
+    /// sessions bound to a chat channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub messaging: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

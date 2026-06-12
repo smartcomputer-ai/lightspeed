@@ -6,8 +6,10 @@ export type {
   WhatsAppBridgeConfig,
 } from "./config.js";
 export { loadBridgeConfig } from "./config.js";
-export { extractAssistantText, ForgeSessionBridge } from "./forge.js";
+export { extractAssistantText, ForgeSessionBridge, runUsedMessagingTool } from "./forge.js";
 export type { ForgeReply, ForgeRoomEvent, ForgeTurn, ForgeTurnMedia } from "./forge.js";
+export { DeliveryError, OutboxTailer } from "./outbox.js";
+export type { ChannelDeliverer, DeliveryResult, OutboxTailerOptions } from "./outbox.js";
 export { classifyInbound, formatEnvelope, parseControlCommand, shouldQuoteChunk } from "./policy.js";
 export type {
   ActivationPolicy,

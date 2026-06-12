@@ -130,6 +130,9 @@ pub(super) fn apply_tool_config(config: &mut engine::ToolConfig, tools: Option<T
     if let Some(host) = tools.host {
         config.host = Some(host_tool_mode_from_api(host));
     }
+    if let Some(messaging) = tools.messaging {
+        config.messaging = Some(messaging);
+    }
 }
 
 pub(super) fn apply_run_start_config(
@@ -244,6 +247,7 @@ pub(super) fn tool_config_patch_from_api(
         host: patch
             .host
             .map(|patch| optional_patch_from_api_map(patch, host_tool_mode_from_api)),
+        messaging: patch.messaging.map(optional_patch_from_api),
     }
 }
 

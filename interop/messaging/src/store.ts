@@ -86,6 +86,13 @@ export class JsonBridgeStore {
     return state.bindings[key] ?? null;
   }
 
+  async findBindingBySession(sessionId: string): Promise<BindingState | null> {
+    const state = await this.load();
+    return (
+      Object.values(state.bindings).find((binding) => binding.sessionId === sessionId) ?? null
+    );
+  }
+
   async updateBinding(
     key: string,
     patch: Partial<Pick<BindingState, "activation" | "sessionId" | "generation" | "cursor">>,

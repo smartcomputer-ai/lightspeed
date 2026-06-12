@@ -594,6 +594,36 @@ export type McpServerStatus = "active" | "needsAuthConfig" | "unverified" | "dis
 export type RemoteMcpTransport = "streamableHttp" | "sse" | "auto";
 /**
  * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * via the `definition` "OutboundStatusView".
+ */
+export type OutboundStatusView = "pending" | "delivered" | "failed";
+/**
+ * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * via the `definition` "OutboundOriginView".
+ */
+export type OutboundOriginView = "toolCall" | "finalText" | "trigger";
+/**
+ * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * via the `definition` "OutboundPayloadView".
+ */
+export type OutboundPayloadView =
+  | {
+      replyTo?: string | null;
+      text: string;
+      type: "send";
+    }
+  | {
+      emoji: string;
+      messageId: string;
+      type: "react";
+    }
+  | {
+      messageId: string;
+      text: string;
+      type: "edit";
+    };
+/**
+ * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
  * via the `definition` "SkillActivationScope".
  */
 export type SkillActivationScope = "run" | "session";
@@ -687,6 +717,20 @@ export type FieldPatchOfuint32 =
     }
   | {
       op: "clear";
+    };
+/**
+ * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * via the `definition` "OutboundAckInput".
+ */
+export type OutboundAckInput =
+  | {
+      channelMessageId?: string | null;
+      type: "delivered";
+    }
+  | {
+      error: string;
+      retryable: boolean;
+      type: "failed";
     };
 /**
  * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
@@ -1545,6 +1589,56 @@ export interface McpServerReadResponse {
 }
 /**
  * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfOutboxAckResponse".
+ */
+export interface AgentApiOutcomeOfOutboxAckResponse {
+  notifications?: AgentNotification[];
+  result: OutboxAckResponse;
+}
+/**
+ * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * via the `definition` "OutboxAckResponse".
+ */
+export interface OutboxAckResponse {
+  attempts: number;
+  outboxId: string;
+  status: OutboundStatusView;
+}
+/**
+ * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfOutboxReadResponse".
+ */
+export interface AgentApiOutcomeOfOutboxReadResponse {
+  notifications?: AgentNotification[];
+  result: OutboxReadResponse;
+}
+/**
+ * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * via the `definition` "OutboxReadResponse".
+ */
+export interface OutboxReadResponse {
+  entries: OutboundMessageView[];
+  /**
+   * Cursor to pass as `after` on the next read.
+   */
+  nextAfter: number;
+}
+/**
+ * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * via the `definition` "OutboundMessageView".
+ */
+export interface OutboundMessageView {
+  attempts: number;
+  createdAtMs: number;
+  origin: OutboundOriginView;
+  outboxId: string;
+  payload: OutboundPayloadView;
+  runId?: string | null;
+  seq: number;
+  sessionId: string;
+}
+/**
+ * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfPromptsActiveResponse".
  */
 export interface AgentApiOutcomeOfPromptsActiveResponse {
@@ -2288,6 +2382,30 @@ export interface McpServerReadParams {
 }
 /**
  * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * via the `definition` "OutboxAckParams".
+ */
+export interface OutboxAckParams {
+  outboxId: string;
+  result: OutboundAckInput;
+}
+/**
+ * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * via the `definition` "OutboxReadParams".
+ */
+export interface OutboxReadParams {
+  /**
+   * Return pending entries with `seq` greater than this cursor. Restart
+   * from 0 to re-read undelivered entries after a consumer restart.
+   */
+  after?: number | null;
+  limit?: number | null;
+  /**
+   * Long-poll wait in milliseconds when no entries are pending.
+   */
+  waitMs?: number | null;
+}
+/**
+ * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
  * via the `definition` "PromptsActiveParams".
  */
 export interface PromptsActiveParams {
@@ -2366,6 +2484,11 @@ export interface SessionConfigInput {
  */
 export interface ToolConfigInput {
   host?: HostToolMode | null;
+  /**
+   * Enables the messaging toolset (message_send/react/edit/noop) for
+   * sessions bound to a chat channel.
+   */
+  messaging?: boolean | null;
   webFetch?: boolean | null;
   webSearch?: boolean | null;
 }
@@ -2386,6 +2509,7 @@ export interface SessionConfigPatchInput {
  */
 export interface ToolConfigPatchInput {
   host?: FieldPatchOfHostToolMode | null;
+  messaging?: FieldPatchOfboolean | null;
   webFetch?: FieldPatchOfboolean | null;
   webSearch?: FieldPatchOfboolean | null;
 }

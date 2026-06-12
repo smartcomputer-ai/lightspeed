@@ -136,6 +136,36 @@
       }
     },
     {
+      "method": "outbox/read",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/OutboxReadParams"
+        },
+        "type": "OutboxReadParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfOutboxReadResponse"
+        },
+        "type": "AgentApiOutcome<OutboxReadResponse>"
+      }
+    },
+    {
+      "method": "outbox/ack",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/OutboxAckParams"
+        },
+        "type": "OutboxAckParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfOutboxAckResponse"
+        },
+        "type": "AgentApiOutcome<OutboxAckResponse>"
+      }
+    },
+    {
       "method": "run/start",
       "params": {
         "schema": {

@@ -667,6 +667,7 @@ fn web_search_can_be_disabled_in_session_tools_config() {
             web_search: Some(false),
             web_fetch: None,
             host: None,
+            messaging: None,
         }),
     );
 
@@ -685,6 +686,7 @@ fn web_fetch_defaults_on_and_can_be_disabled() {
             web_search: None,
             web_fetch: Some(false),
             host: None,
+            messaging: None,
         }),
     );
 
@@ -704,6 +706,7 @@ fn web_search_rejects_explicit_enable_for_non_openai_responses() {
             web_search: Some(true),
             web_fetch: None,
             host: None,
+            messaging: None,
         }),
     );
 
@@ -733,6 +736,7 @@ fn host_tools_can_be_configured_read_only_or_none() {
             web_search: None,
             web_fetch: None,
             host: Some(api::HostToolMode::ReadOnly),
+            messaging: None,
         }),
     );
 
@@ -744,6 +748,7 @@ fn host_tools_can_be_configured_read_only_or_none() {
             web_search: None,
             web_fetch: None,
             host: Some(api::HostToolMode::None),
+            messaging: None,
         }),
     );
 

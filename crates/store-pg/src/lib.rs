@@ -7,6 +7,7 @@ mod auth;
 mod blob;
 mod mcp;
 mod oauth;
+mod outbox;
 mod object;
 mod providers;
 mod session;
@@ -27,6 +28,7 @@ pub const CORE_SCHEMA_SQL: &str = include_str!("../migrations/001_core.sql");
 pub const VFS_SCHEMA_SQL: &str = include_str!("../migrations/002_vfs.sql");
 pub const MCP_SCHEMA_SQL: &str = include_str!("../migrations/003_mcp.sql");
 pub const AUTH_SCHEMA_SQL: &str = include_str!("../migrations/004_auth.sql");
+pub const OUTBOX_SCHEMA_SQL: &str = include_str!("../migrations/005_outbox.sql");
 
 pub const DEFAULT_INLINE_THRESHOLD_BYTES: usize = 64 * 1024;
 
@@ -249,6 +251,7 @@ impl PgStore {
         pool.execute(VFS_SCHEMA_SQL).await?;
         pool.execute(MCP_SCHEMA_SQL).await?;
         pool.execute(AUTH_SCHEMA_SQL).await?;
+        pool.execute(OUTBOX_SCHEMA_SQL).await?;
         Ok(())
     }
 

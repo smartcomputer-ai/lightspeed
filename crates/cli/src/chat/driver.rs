@@ -1407,6 +1407,7 @@ fn session_start_config(settings: &ChatDraftSettings) -> SessionConfigInput {
             web_search: settings.web_search,
             web_fetch: settings.web_fetch,
             host: settings.host_tools,
+            messaging: None,
         })
     } else {
         None

@@ -11,8 +11,10 @@ import {
   type proto,
 } from "baileys";
 import qrcode from "qrcode-terminal";
+import type { OutboundMessageView } from "@forge/agent-client";
 import type { WhatsAppBridgeConfig } from "./config.js";
 import { stableHash } from "./ids.js";
+import { DeliveryError, type ChannelDeliverer, type DeliveryResult } from "./outbox.js";
 import { shouldQuoteChunk } from "./policy.js";
 import type {
   ChannelPolicy,
@@ -20,12 +22,14 @@ import type {
   MessagingBridgeRuntime,
   NormalizedInbound,
 } from "./runtime.js";
+import type { BindingState } from "./store.js";
 import { splitMessageText } from "./text.js";
 
 const MAX_WHATSAPP_IMAGE_BYTES = 10 * 1024 * 1024;
 
 export interface RunningWhatsAppBridge {
   stop: () => Promise<void>;
+  deliverer: ChannelDeliverer;
 }
 
 export async function startWhatsAppBridge(
@@ -107,7 +111,57 @@ export async function startWhatsAppBridge(
       }
       sock?.end(undefined);
     },
+    deliverer: {
+      channel: "whatsapp",
+      accountId: config.accountId,
+      deliver: async (binding, payload) => {
+        const socket = sock;
+        if (!socket) {
+          throw new DeliveryError("whatsapp socket is not connected", true);
+        }
+        return deliverWhatsAppPayload(socket, binding, payload);
+      },
+    },
   };
+}
+
+async function deliverWhatsAppPayload(
+  sock: WASocket,
+  binding: BindingState,
+  payload: OutboundMessageView["payload"],
+): Promise<DeliveryResult> {
+  const jid = binding.chatId;
+  try {
+    switch (payload.type) {
+      case "send": {
+        let lastId: string | undefined;
+        for (const chunk of splitMessageText(payload.text, 3_500)) {
+          const sent = await sock.sendMessage(jid, { text: chunk });
+          lastId = sent?.key?.id ?? lastId;
+        }
+        return lastId !== undefined ? { channelMessageId: lastId } : {};
+      }
+      case "react": {
+        await sock.sendMessage(jid, {
+          react: {
+            text: payload.emoji,
+            key: { remoteJid: jid, id: payload.messageId, fromMe: false },
+          },
+        });
+        return {};
+      }
+      case "edit": {
+        await sock.sendMessage(jid, {
+          text: payload.text,
+          edit: { remoteJid: jid, id: payload.messageId, fromMe: true },
+        });
+        return { channelMessageId: payload.messageId };
+      }
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new DeliveryError(`whatsapp delivery failed: ${message}`, true);
+  }
 }
 
 async function handleWhatsAppMessage(

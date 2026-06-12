@@ -3,7 +3,9 @@
 **Status**
 - Proposed 2026-06-12.
 - G1 and G2 implemented 2026-06-12; G3 first cut (image input) implemented
-  2026-06-12 (see goal sections for what shipped).
+  2026-06-12; G4 and G5 first cut (outbox, messaging toolset, tools-first
+  delivery with final-text fallback) implemented 2026-06-12 (see goal
+  sections for what shipped).
 - Builds on the P70 external integration surface (schema export, TS client,
   idempotent `run/start`, long-poll `session/events/read`), the first-cut
   Telegram/WhatsApp bridge in `interop/messaging/`, and the timers/triggers
@@ -426,13 +428,29 @@ Design notes:
 
 Acceptance criteria:
 
-- [ ] an outbox entry written while the bridge is down is delivered after
-  the bridge restarts;
-- [ ] duplicate delivery is prevented by ack + lease semantics under a
-  crash-between-send-and-ack test (at-least-once with idempotent channel
-  send where the channel allows it; document the residual duplicate
-  window);
-- [ ] per-chat rate cap rejects enqueues over the limit with a typed error.
+- [x] an outbox entry written while the bridge is down is delivered after
+  the bridge restarts (pending entries stay visible until acked; the bridge
+  cursor restarts at 0);
+- [x] at-least-once delivery: the first cut uses a single-consumer
+  pending-read + ack model instead of leases — a crash between channel send
+  and ack redelivers on restart (residual duplicate window, documented);
+  retryable failures re-pend up to 5 attempts, then park as `failed`;
+- [x] rate cap rejects enqueues over the limit with a typed tool error
+  (per-session 30/minute at tool admission; per-chat granularity arrives
+  with explicit targets).
+
+First cut implemented 2026-06-12: new `crates/messaging` (outbox types,
+`OutboxStore` trait, in-memory store), `crates/store-pg`
+`migrations/005_outbox.sql` + PG impl, gateway `outbox/read` (long-poll,
+cursor) and `outbox/ack`, and the bridge `OutboxTailer`
+(`interop/messaging/src/outbox.ts`) with per-channel deliverers (Telegram:
+send/react/edit via Bot API; WhatsApp: send/react/edit via Baileys).
+Verified live against Temporal + Postgres
+(`temporal_live_outbox_enqueue_read_ack_round_trip`). Deferred from the G4
+spec: lease semantics (single consumer assumed), explicit targets/account
+filters on `outbox/read`, attachments on outbound payloads, and
+gateway-side automatic delivery (the bridge still owns the final-text
+fallback).
 
 ## G5: Messaging Tools
 
@@ -502,18 +520,35 @@ Design notes:
 
 Acceptance criteria:
 
-- [ ] in a `message_tool` binding, the model reads chatter and interjects
-  only via tools; final assistant text is not delivered;
-- [ ] a turn answered with `message_noop` delivers nothing and does not
-  trigger the fallback; a turn with zero messaging-tool calls in a DM
-  delivers the final text and logs a contract violation;
+- [x] when a run uses messaging tools, final assistant text is not
+  delivered — sends arrive via the outbox tail (covered by bridge unit
+  tests on the suppression flip);
+- [x] a turn answered with `message_noop` delivers nothing and suppresses
+  the fallback; a turn with zero successful messaging-tool calls delivers
+  the final text as the **default fallback** (not logged as a violation —
+  design revision per 2026-06-12 discussion: fallback is normal behavior,
+  and the instruction prompting lives in the tool descriptions);
 - [ ] the model can react to a specific message and edit one of its own
-  messages (live test, `#[ignore]`);
-- [ ] cross-chat send: a session bound to chat A sends to allowed chat B via
-  explicit target; sending to a non-allowed target fails with a typed
-  tool error;
-- [ ] tool result returns immediately even with the bridge offline; the
-  message delivers when the bridge returns.
+  messages end-to-end (deliverers implemented for both channels; needs a
+  manual smoke test with a live model choosing the tools);
+- [ ] cross-chat send via explicit target — deliberately deferred; the
+  first cut is current-binding only (the bridge resolves session →
+  binding, the tools carry no addressing);
+- [x] tool result returns immediately even with the bridge offline
+  (durable-enqueue semantics; messaging-only batches skip VFS/runtime
+  setup entirely).
+
+First cut implemented 2026-06-12: messaging toolset in
+`crates/tools/src/messaging/` (four function-tool bundles whose
+descriptions carry the turn contract, plus `MessagingToolExecutor` with the
+rate cap), enabled per session via `tools.messaging: true` in session
+config (`ToolConfigInput`/engine `ToolConfig`/`ToolsetConfig`), executed in
+`SessionTools::invoke_batch` (worker) against the PG outbox. The bridge
+enables the toolset at `session/start`, detects messaging-tool usage from
+run items (`runUsedMessagingTool`), and applies the tools-first flip with
+final-text fallback uniformly across bindings — the per-binding
+`DeliveryPolicy` enum is deferred until a binding actually needs a
+different mode.
 
 ## G6: Audio Transcription Preprocessing
 

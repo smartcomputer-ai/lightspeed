@@ -3,12 +3,15 @@ import type { Message } from "grammy/types";
 import type { TelegramBridgeConfig } from "./config.js";
 import { stableHash } from "./ids.js";
 import { shouldQuoteChunk, type ReplyToMode } from "./policy.js";
+import type { OutboundMessageView } from "@forge/agent-client";
+import { DeliveryError, type ChannelDeliverer, type DeliveryResult } from "./outbox.js";
 import type {
   ChannelPolicy,
   InboundMedia,
   MessagingBridgeRuntime,
   NormalizedInbound,
 } from "./runtime.js";
+import type { BindingState } from "./store.js";
 import { splitMessageText } from "./text.js";
 
 /// Telegram bot file downloads are capped at 20MB; the gateway caps images
@@ -17,6 +20,7 @@ const MAX_TELEGRAM_IMAGE_BYTES = 10 * 1024 * 1024;
 
 export interface RunningBridge {
   stop: () => Promise<void>;
+  deliverer: ChannelDeliverer;
 }
 
 export async function startTelegramBridge(
@@ -122,7 +126,65 @@ export async function startTelegramBridge(
       await bot.stop();
       await polling;
     },
+    deliverer: {
+      channel: "telegram",
+      accountId: config.accountId,
+      deliver: (binding, payload) => deliverTelegramPayload(bot, binding, payload),
+    },
   };
+}
+
+async function deliverTelegramPayload(
+  bot: Bot,
+  binding: BindingState,
+  payload: OutboundMessageView["payload"],
+): Promise<DeliveryResult> {
+  const chatId = binding.chatId;
+  const threadId = binding.threadId !== undefined ? Number(binding.threadId) : undefined;
+  try {
+    switch (payload.type) {
+      case "send": {
+        const chunks = splitMessageText(payload.text, 4_000);
+        let lastMessageId: number | undefined;
+        for (const [index, chunk] of chunks.entries()) {
+          const sent = await bot.api.sendMessage(chatId, chunk, {
+            ...(threadId !== undefined && Number.isFinite(threadId)
+              ? { message_thread_id: threadId }
+              : {}),
+            ...(index === 0 && payload.replyTo !== undefined && payload.replyTo !== null
+              ? { reply_parameters: { message_id: Number(payload.replyTo) } }
+              : {}),
+          });
+          lastMessageId = sent.message_id;
+        }
+        return lastMessageId !== undefined
+          ? { channelMessageId: String(lastMessageId) }
+          : {};
+      }
+      case "react": {
+        await bot.api.setMessageReaction(chatId, Number(payload.messageId), [
+          { type: "emoji", emoji: payload.emoji as never },
+        ]);
+        return {};
+      }
+      case "edit": {
+        await bot.api.editMessageText(chatId, Number(payload.messageId), payload.text);
+        return { channelMessageId: payload.messageId };
+      }
+    }
+  } catch (error) {
+    throw asDeliveryError(error);
+  }
+}
+
+function asDeliveryError(error: unknown): DeliveryError {
+  const message = error instanceof Error ? error.message : String(error);
+  // Telegram 4xx responses (bad message id, no permission, unsupported
+  // reaction) will not succeed on retry; transport errors might.
+  const retryable = !/400|bad request|message to react|message can't|not found|forbidden/i.test(
+    message,
+  );
+  return new DeliveryError(`telegram delivery failed: ${message}`, retryable);
 }
 
 async function downloadTelegramPhoto(

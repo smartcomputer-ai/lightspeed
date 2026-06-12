@@ -26,6 +26,24 @@ the answered batch (the question), and only on the first chunk of a long
 reply; direct chats never quote. Configure per channel with
 `*_REPLY_TO_MODE` (`off` | `first` | `all`, default `first`).
 
+## Messaging tools and the outbox (P71 G4/G5)
+
+Sessions the bridge creates get the messaging toolset
+(`message_send`, `message_react`, `message_edit`, `message_noop`). The model
+speaks by calling tools: sends/reactions/edits land as durable outbox rows
+on the gateway, and the bridge tails `outbox/read`, resolves each entry's
+session to its chat binding, delivers through the channel API, and acks.
+This also means a Forge session can message the chat mid-run or from a run
+the user never started.
+
+When a run uses **no** messaging tool, the bridge falls back to delivering
+the final assistant text — that is the default for plain Q&A, not an error.
+`message_noop` is the explicit "no reply needed" so a closing "thanks" ends
+quietly. Delivery is at-least-once: a bridge crash between channel send and
+ack redelivers on restart; retryable failures are retried up to 5 attempts,
+then parked for inspection. Outbound sends are rate-capped per session
+(30/minute) at tool admission.
+
 Per-chat activation is persisted in `.bridge-state.json` and toggled at
 runtime with `/activation`:
 

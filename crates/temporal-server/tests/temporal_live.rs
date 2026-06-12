@@ -94,6 +94,17 @@ async fn temporal_live_context_append_is_idempotent_and_projected() -> anyhow::R
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires local/up.sh or compatible Temporal + Postgres env"]
+async fn temporal_live_outbox_enqueue_read_ack_round_trip() -> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().expect("live test lock");
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+
+    let activities = fake_worker_activities().await?;
+    run_with_live_worker(activities, run_outbox_live_client).await
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires local/up.sh or compatible Temporal + Postgres env"]
 async fn temporal_live_mcp_registry_and_session_links_materialize() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().expect("live test lock");
     let _ = dotenvy::dotenv();
@@ -414,6 +425,109 @@ async fn run_missing_session_live_client(
         .await
         .expect_err("missing session run/start should fail");
     assert!(matches!(error.kind, AgentApiErrorKind::NotFound));
+    Ok(())
+}
+
+async fn run_outbox_live_client(
+    client: Client,
+    task_queue: String,
+    session_id: SessionId,
+) -> anyhow::Result<()> {
+    use messaging::{EnqueueOutboundMessage, OutboundOrigin, OutboundPayload, OutboxStore};
+
+    let store = pg_store_from_env().await?;
+    store.initialize().await?;
+    let model = default_model_from_env();
+    let api = GatewayAgentApi::builder(client.clone(), store.clone())
+        .with_task_queue(task_queue)
+        .with_default_model(model.clone())
+        .build();
+
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_millis() as i64;
+    let enqueue = |text: &str| EnqueueOutboundMessage {
+        session_id: session_id.clone(),
+        run_id: Some(engine::RunId::new(1)),
+        origin: OutboundOrigin::ToolCall,
+        payload: OutboundPayload::Send {
+            text: text.to_owned(),
+            reply_to: None,
+        },
+        created_at_ms: now_ms,
+    };
+    let first = OutboxStore::enqueue(store.as_ref(), enqueue("first message")).await?;
+    let second = OutboxStore::enqueue(store.as_ref(), enqueue("second message")).await?;
+
+    // Read pending after the first entry's predecessor: both visible.
+    let page = api
+        .read_outbox(api::OutboxReadParams {
+            after: Some(first.seq.saturating_sub(1)),
+            limit: Some(16),
+            wait_ms: Some(1_000),
+        })
+        .await?;
+    let read: Vec<&str> = page
+        .result
+        .entries
+        .iter()
+        .map(|entry| entry.outbox_id.as_str())
+        .collect();
+    assert!(read.contains(&first.outbox_id.as_str()));
+    assert!(read.contains(&second.outbox_id.as_str()));
+    assert!(page.result.next_after >= second.seq);
+
+    // Delivered entries disappear from pending reads.
+    let acked = api
+        .ack_outbox(api::OutboxAckParams {
+            outbox_id: first.outbox_id.clone(),
+            result: api::OutboundAckInput::Delivered {
+                channel_message_id: Some("tg-100".to_owned()),
+            },
+        })
+        .await?;
+    assert_eq!(acked.result.status, api::OutboundStatusView::Delivered);
+
+    let page = api
+        .read_outbox(api::OutboxReadParams {
+            after: Some(first.seq.saturating_sub(1)),
+            limit: Some(16),
+            wait_ms: None,
+        })
+        .await?;
+    assert!(
+        page.result
+            .entries
+            .iter()
+            .all(|entry| entry.outbox_id != first.outbox_id)
+    );
+
+    // Retryable failure keeps the entry pending with attempts counted.
+    let failed = api
+        .ack_outbox(api::OutboxAckParams {
+            outbox_id: second.outbox_id.clone(),
+            result: api::OutboundAckInput::Failed {
+                error: "bridge offline".to_owned(),
+                retryable: true,
+            },
+        })
+        .await?;
+    assert_eq!(failed.result.status, api::OutboundStatusView::Pending);
+    assert_eq!(failed.result.attempts, 1);
+
+    let unknown = api
+        .ack_outbox(api::OutboxAckParams {
+            outbox_id: "outbox_missing".to_owned(),
+            result: api::OutboundAckInput::Delivered {
+                channel_message_id: None,
+            },
+        })
+        .await;
+    assert_eq!(
+        unknown.expect_err("missing outbox id fails").kind,
+        AgentApiErrorKind::NotFound
+    );
+
     Ok(())
 }
 

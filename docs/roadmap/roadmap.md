@@ -10,7 +10,7 @@
 - remote MCP registry/linking ([P68 proposed](p68-remote-mcp-registry-linking.md))
 - generic auth/token broker ([P69 proposed](p69-generic-auth-token-broker.md))
 - external integration surface: api schema, ts/py clients, idempotent runs, long-poll events ([P70 proposed](p70-external-integration-surface.md))
-- messaging channel gateway: activation policy, room context, delivery outbox, message_send tool, media input ([P71 G1/G2 done](p71-messaging-channel-gateway.md))
+- messaging channel gateway: activation policy, room context, delivery outbox, messaging tools, media input ([P71 G1–G5 first cuts done](p71-messaging-channel-gateway.md))
 - (go live)
 - timers/schedules/cron
 - vms/sandboxes

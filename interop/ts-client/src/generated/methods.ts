@@ -14,6 +14,8 @@ export const METHODS = [
   "session/close",
   "context/compact",
   "context/append",
+  "outbox/read",
+  "outbox/ack",
   "run/start",
   "run/cancel",
   "prompts/active",
@@ -108,6 +110,14 @@ export interface MethodMap {
   "context/append": {
     params: Api.ContextAppendParams;
     result: Api.AgentApiOutcomeOfContextAppendResponse;
+  };
+  "outbox/read": {
+    params: Api.OutboxReadParams;
+    result: Api.AgentApiOutcomeOfOutboxReadResponse;
+  };
+  "outbox/ack": {
+    params: Api.OutboxAckParams;
+    result: Api.AgentApiOutcomeOfOutboxAckResponse;
   };
   "run/start": {
     params: Api.RunStartParams;
@@ -317,6 +327,12 @@ export const rpc = {
   },
   contextAppend(client: RpcCaller, params: Api.ContextAppendParams): Promise<Api.AgentApiOutcomeOfContextAppendResponse> {
     return client.call("context/append", params);
+  },
+  outboxRead(client: RpcCaller, params: Api.OutboxReadParams): Promise<Api.AgentApiOutcomeOfOutboxReadResponse> {
+    return client.call("outbox/read", params);
+  },
+  outboxAck(client: RpcCaller, params: Api.OutboxAckParams): Promise<Api.AgentApiOutcomeOfOutboxAckResponse> {
+    return client.call("outbox/ack", params);
   },
   runStart(client: RpcCaller, params: Api.RunStartParams): Promise<Api.AgentApiOutcomeOfRunStartResponse> {
     return client.call("run/start", params);

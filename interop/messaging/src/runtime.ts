@@ -303,7 +303,17 @@ export class MessagingBridgeRuntime {
         text,
         media,
       });
-      await first.sendReply(reply.text);
+      if (reply.messagingToolUsed) {
+        // The run spoke (or deliberately stayed quiet) via messaging tools;
+        // deliveries arrive through the outbox tail. Final text is internal.
+        this.log(
+          `bridge: ${reply.runId} used messaging tools; final text not delivered in ${key}`,
+        );
+      } else {
+        // Default fallback: no messaging tool was used, so the final
+        // assistant text is the reply.
+        await first.sendReply(reply.text);
+      }
       for (const turn of batch) {
         await this.store.markMessageDone(turn.message.messageKey, reply.text);
       }
@@ -348,10 +358,8 @@ export class MessagingBridgeRuntime {
 }
 
 function renderTurnText(batch: PendingTurn[]): string {
-  const first = batch[0];
-  if (batch.length === 1 && first && first.message.isDirect) {
-    return first.text;
-  }
+  // Every turn carries the envelope, including single DMs: the #id markers
+  // are what make message_react / message_edit / reply_to targetable.
   return batch
     .map((turn) =>
       formatEnvelope({

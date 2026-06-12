@@ -1972,6 +1972,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 
 [[package]]
+name = "messaging"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "engine",
+ "serde",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
 name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3653,6 +3664,7 @@ dependencies = [
  "base64",
  "engine",
  "mcp-registry",
+ "messaging",
  "object_store",
  "rand 0.8.6",
  "serde",
@@ -3785,6 +3797,7 @@ dependencies = [
  "llm-clients",
  "llm-runtime",
  "mcp-registry",
+ "messaging",
  "serde",
  "serde_json",
  "store-pg",
@@ -4298,6 +4311,7 @@ dependencies = [
  "glob",
  "host-client",
  "host-protocol",
+ "messaging",
  "regex",
  "reqwest",
  "serde",

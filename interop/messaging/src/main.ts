@@ -3,6 +3,7 @@ import "dotenv/config";
 import { ForgeClient } from "@forge/agent-client";
 import { loadBridgeConfig } from "./config.js";
 import { ForgeSessionBridge } from "./forge.js";
+import { OutboxTailer } from "./outbox.js";
 import { MessagingBridgeRuntime } from "./runtime.js";
 import { JsonBridgeStore } from "./store.js";
 import { startTelegramBridge, type RunningBridge } from "./telegram.js";
@@ -34,6 +35,13 @@ if (running.length === 0) {
   throw new Error("No bridge is enabled. Set TELEGRAM_BOT_TOKEN or WHATSAPP_ENABLED=true.");
 }
 
+const outbox = new OutboxTailer({
+  client,
+  store,
+  deliverers: running.map((bridge) => bridge.deliverer),
+});
+outbox.start();
+
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, () => {
     void shutdown(signal);
@@ -42,6 +50,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
 
 async function shutdown(signal: string): Promise<void> {
   console.log(`bridge: received ${signal}, stopping`);
+  await outbox.stop().catch(() => undefined);
   await Promise.allSettled(running.map((bridge) => bridge.stop()));
   await runtime.flush().catch(() => undefined);
   process.exit(0);

@@ -2,16 +2,19 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use engine::{
-    CoreAgentIoError, CoreAgentTools, ProviderApiKind, ToolCallStatus, ToolInvocationBatchRequest,
-    ToolInvocationBatchResult, ToolInvocationResult,
+    CoreAgentIoError, CoreAgentTools, ProviderApiKind, SessionId, ToolCallStatus,
+    ToolInvocationBatchRequest, ToolInvocationBatchResult, ToolInvocationResult,
     storage::{BlobStore, BlobStoreError},
 };
+use messaging::OutboxStore;
+use serde_json::Value;
 use store_pg::PgStore;
 use tools::{
     host::{
         HostToolContext, InlineHostToolRuntime,
         fs::{FsPath, MountedVfsFileSystem},
     },
+    messaging::{MessagingToolExecutor, is_messaging_tool},
     runtime::{ToolCatalog, ToolTarget},
     toolset::{ToolsetConfig, ToolsetEnvironment, resolve_toolset},
     web::fetch::WebFetchToolConfig,
@@ -23,6 +26,7 @@ pub struct SessionTools {
     blobs: Arc<dyn BlobStore>,
     workspace_store: Arc<dyn VfsWorkspaceStore>,
     mount_store: Arc<dyn VfsMountStore>,
+    messaging: Option<MessagingToolExecutor>,
 }
 
 impl SessionTools {
@@ -35,14 +39,88 @@ impl SessionTools {
             blobs,
             workspace_store,
             mount_store,
+            messaging: None,
         }
+    }
+
+    pub fn with_messaging_outbox(mut self, outbox: Arc<dyn OutboxStore>) -> Self {
+        self.messaging = Some(MessagingToolExecutor::new(outbox));
+        self
     }
 
     pub fn from_pg_store(store: Arc<PgStore>) -> Self {
         let blobs: Arc<dyn BlobStore> = store.clone();
         let workspace_store: Arc<dyn VfsWorkspaceStore> = store.clone();
-        let mount_store: Arc<dyn VfsMountStore> = store;
-        Self::new(blobs, workspace_store, mount_store)
+        let mount_store: Arc<dyn VfsMountStore> = store.clone();
+        let outbox: Arc<dyn OutboxStore> = store;
+        Self::new(blobs, workspace_store, mount_store).with_messaging_outbox(outbox)
+    }
+
+    async fn invoke_messaging_call(
+        &self,
+        session_id: &SessionId,
+        run_id: engine::RunId,
+        call: &engine::ToolInvocationRequest,
+    ) -> Result<ToolInvocationResult, CoreAgentIoError> {
+        let Some(executor) = &self.messaging else {
+            return failed_result(
+                self.blobs.as_ref(),
+                call.call_id.clone(),
+                "messaging tools are not configured on this runtime",
+            )
+            .await;
+        };
+        let arguments: Value = match self.blobs.read_bytes(&call.arguments_ref).await {
+            Ok(bytes) => match serde_json::from_slice(&bytes) {
+                Ok(arguments) => arguments,
+                Err(error) => {
+                    return failed_result(
+                        self.blobs.as_ref(),
+                        call.call_id.clone(),
+                        format!("invalid JSON tool arguments: {error}"),
+                    )
+                    .await;
+                }
+            },
+            Err(error) => {
+                return failed_result(
+                    self.blobs.as_ref(),
+                    call.call_id.clone(),
+                    format!("read tool arguments: {error}"),
+                )
+                .await;
+            }
+        };
+        match executor
+            .invoke(session_id, run_id, &call.tool_name, arguments)
+            .await
+        {
+            Ok(output) => {
+                let output_bytes = serde_json::to_vec(&output.output_json)
+                    .map_err(|error| io_error(format!("encode tool output: {error}")))?;
+                let output_ref = self
+                    .blobs
+                    .put_bytes(output_bytes)
+                    .await
+                    .map_err(map_blob_error)?;
+                let visible_ref = self
+                    .blobs
+                    .put_bytes(output.model_visible_text.into_bytes())
+                    .await
+                    .map_err(map_blob_error)?;
+                Ok(ToolInvocationResult {
+                    call_id: call.call_id.clone(),
+                    status: ToolCallStatus::Succeeded,
+                    output_ref: Some(output_ref),
+                    model_visible_output_ref: Some(visible_ref),
+                    error_ref: None,
+                    effects: output.effects,
+                })
+            }
+            Err(error) => {
+                failed_result(self.blobs.as_ref(), call.call_id.clone(), error.to_string()).await
+            }
+        }
     }
 
     fn runtime_for_mounts(
@@ -94,17 +172,65 @@ impl CoreAgentTools for SessionTools {
         &self,
         request: ToolInvocationBatchRequest,
     ) -> Result<ToolInvocationBatchResult, CoreAgentIoError> {
+        let has_non_messaging = request
+            .calls
+            .iter()
+            .any(|call| !is_messaging_tool(&call.tool_name));
+        if !has_non_messaging {
+            // Messaging-only batches skip VFS/runtime setup entirely.
+            let mut results = Vec::with_capacity(request.calls.len());
+            for call in &request.calls {
+                results.push(
+                    self.invoke_messaging_call(&request.session_id, request.run_id, call)
+                        .await?,
+                );
+            }
+            return Ok(ToolInvocationBatchResult {
+                run_id: request.run_id,
+                turn_id: request.turn_id,
+                batch_id: request.batch_id,
+                results,
+            });
+        }
+
         let mounts = self
             .mount_store
             .list_mounts(&request.session_id)
             .await
             .map_err(map_catalog_error)?;
-        if mounts.is_empty() {
-            let runtime = self.targetless_runtime()?;
-            return invoke_without_mounts(self.blobs.as_ref(), runtime, request).await;
+        let no_mounts = mounts.is_empty();
+        let runtime = if no_mounts {
+            self.targetless_runtime()?
+        } else {
+            self.runtime_for_mounts(mounts)?
+        };
+
+        let mut results = Vec::with_capacity(request.calls.len());
+        for call in &request.calls {
+            if is_messaging_tool(&call.tool_name) {
+                results.push(
+                    self.invoke_messaging_call(&request.session_id, request.run_id, call)
+                        .await?,
+                );
+            } else if no_mounts && call.execution_target.is_some() {
+                results.push(
+                    failed_result(
+                        self.blobs.as_ref(),
+                        call.call_id.clone(),
+                        "session has no VFS mounts configured",
+                    )
+                    .await?,
+                );
+            } else {
+                results.push(runtime.invoke_call(call).await?);
+            }
         }
-        let runtime = self.runtime_for_mounts(mounts)?;
-        runtime.invoke_batch(request).await
+        Ok(ToolInvocationBatchResult {
+            run_id: request.run_id,
+            turn_id: request.turn_id,
+            batch_id: request.batch_id,
+            results,
+        })
     }
 }
 
@@ -118,29 +244,6 @@ fn mounted_vfs_cwd(mounts: &[VfsMountRecord]) -> Result<FsPath, CoreAgentIoError
         "/"
     };
     FsPath::new(cwd).map_err(io_error)
-}
-
-async fn invoke_without_mounts(
-    blobs: &dyn BlobStore,
-    runtime: InlineHostToolRuntime,
-    request: ToolInvocationBatchRequest,
-) -> Result<ToolInvocationBatchResult, CoreAgentIoError> {
-    let mut results = Vec::with_capacity(request.calls.len());
-    for call in request.calls {
-        if call.execution_target.is_none() {
-            results.push(runtime.invoke_call(&call).await?);
-        } else {
-            results.push(
-                failed_result(blobs, call.call_id, "session has no VFS mounts configured").await?,
-            );
-        }
-    }
-    Ok(ToolInvocationBatchResult {
-        run_id: request.run_id,
-        turn_id: request.turn_id,
-        batch_id: request.batch_id,
-        results,
-    })
 }
 
 async fn failed_result(
@@ -407,6 +510,84 @@ mod tests {
             .await
             .expect("output");
         assert!(output.contains("hello"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn messaging_tools_enqueue_outbox_rows_without_mounts() {
+        use messaging::{InMemoryOutboxStore, OutboundPayload, ReadPendingOutbound};
+
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let catalog = Arc::new(TestCatalog::default());
+        let outbox = Arc::new(InMemoryOutboxStore::new());
+        let tools = SessionTools::new(blobs.clone(), catalog.clone(), catalog)
+            .with_messaging_outbox(outbox.clone());
+        let send_args = blobs
+            .put_bytes(br#"{"text":"hello from the agent","reply_to":"4123"}"#.to_vec())
+            .await
+            .expect("arguments");
+        let noop_args = blobs
+            .put_bytes(br#"{"reason":"nothing to add"}"#.to_vec())
+            .await
+            .expect("arguments");
+
+        let result = tools
+            .invoke_batch(ToolInvocationBatchRequest {
+                session_id: SessionId::new("session_1"),
+                run_id: RunId::new(9),
+                turn_id: TurnId::new(1),
+                batch_id: ToolBatchId::new(1),
+                calls: vec![
+                    engine::ToolInvocationRequest {
+                        call_id: ToolCallId::new("call_send"),
+                        tool_name: ToolName::new("message_send"),
+                        arguments_ref: send_args,
+                        execution_target: None,
+                    },
+                    engine::ToolInvocationRequest {
+                        call_id: ToolCallId::new("call_noop"),
+                        tool_name: ToolName::new("message_noop"),
+                        arguments_ref: noop_args,
+                        execution_target: None,
+                    },
+                ],
+            })
+            .await
+            .expect("invoke");
+
+        assert_eq!(result.results.len(), 2);
+        assert!(
+            result
+                .results
+                .iter()
+                .all(|call| call.status == ToolCallStatus::Succeeded)
+        );
+        let visible = blobs
+            .read_text(
+                result.results[0]
+                    .model_visible_output_ref
+                    .as_ref()
+                    .expect("visible ref"),
+            )
+            .await
+            .expect("visible text");
+        assert!(visible.contains("Enqueued"));
+
+        let pending = outbox
+            .read_pending(ReadPendingOutbound {
+                after_seq: 0,
+                limit: 10,
+            })
+            .await
+            .expect("read pending");
+        assert_eq!(pending.len(), 1, "noop must not enqueue");
+        assert_eq!(pending[0].run_id, Some(RunId::new(9)));
+        assert_eq!(
+            pending[0].payload,
+            OutboundPayload::Send {
+                text: "hello from the agent".to_owned(),
+                reply_to: Some("4123".to_owned()),
+            }
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

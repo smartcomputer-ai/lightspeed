@@ -287,14 +287,17 @@ async fn materialize_input_items(
     let mut input: Vec<oai::ResponseInputItem> = Vec::with_capacity(entries.len());
     for item in entries {
         let next = materialize_input_item(blobs, item).await?;
-        // Consecutive same-role messages (for example an image entry plus
-        // its caption) fold into one message with multiple content parts —
-        // the canonical Responses input shape.
+        // Consecutive same-role USER messages (for example an image entry
+        // plus its caption) fold into one message with multiple content
+        // parts — the canonical Responses input shape. Assistant history is
+        // never folded: assistant-role input items require `output_text`
+        // parts, not `input_text`, so they stay as plain text messages.
         match (input.last_mut(), next) {
             (
                 Some(oai::ResponseInputItem::Message(previous)),
                 oai::ResponseInputItem::Message(message),
-            ) if previous.role == message.role
+            ) if previous.role == oai::MessageRole::User
+                && message.role == oai::MessageRole::User
                 && previous.extra.is_empty()
                 && message.extra.is_empty() =>
             {
@@ -808,7 +811,16 @@ async fn assistant_context_entry(
         .filter_map(|content| content.text.as_deref())
         .collect::<Vec<_>>()
         .join("");
-    let text = if text.is_empty() {
+    // Fall back to the response-wide output text only when this is the
+    // single message item; with multiple message items (gpt-5.5 sometimes
+    // emits a trailing empty one) the whole-response fallback would
+    // duplicate the other item's text.
+    let message_items = response
+        .output
+        .iter()
+        .filter(|candidate| candidate.r#type == "message")
+        .count();
+    let text = if text.is_empty() && message_items == 1 {
         response.output_text()
     } else {
         text
@@ -2344,6 +2356,130 @@ mod tests {
         assert_eq!(value["content"][0]["type"], json!("input_image"));
         assert_eq!(value["content"][1]["type"], json!("input_text"));
         assert_eq!(value["content"][1]["text"], json!("what is in this picture?"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn empty_trailing_message_item_does_not_duplicate_assistant_text() {
+        // gpt-5.5 sometimes emits a second message item with an empty text
+        // part; the whole-response output_text fallback must not turn it
+        // into a duplicate assistant entry.
+        let raw_json = json!({
+            "id": "resp_double",
+            "status": "completed",
+            "output": [
+                {
+                    "id": "msg_1",
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{ "type": "output_text", "text": "Hi — what can I help with?" }]
+                },
+                {
+                    "id": "msg_2",
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{ "type": "output_text", "text": "" }]
+                }
+            ],
+            "usage": { "input_tokens": 1, "output_tokens": 1, "total_tokens": 2 }
+        });
+        let response = ApiResponse {
+            parsed: serde_json::from_value(raw_json.clone()).expect("response"),
+            raw_json,
+            status: 200,
+            headers: HeaderSnapshot::default(),
+        };
+        let blobs = InMemoryBlobStore::new();
+        let request = generation_request_fixture();
+
+        let result = result_from_response(&blobs, &request, &response)
+            .await
+            .expect("result");
+
+        let assistant_entries: Vec<_> = result
+            .context_entries
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    entry.kind,
+                    ContextEntryKind::Message {
+                        role: ContextMessageRole::Assistant,
+                    }
+                )
+            })
+            .collect();
+        assert_eq!(
+            assistant_entries.len(),
+            1,
+            "empty message item must not duplicate the assistant text"
+        );
+        assert_eq!(
+            assistant_entries[0].preview.as_deref(),
+            Some("Hi — what can I help with?")
+        );
+    }
+
+    fn generation_request_fixture() -> LlmGenerationRequest {
+        LlmGenerationRequest {
+            session_id: SessionId::new("session-test"),
+            run_id: RunId::new(1),
+            turn_id: TurnId::new(1),
+            request: LlmRequest {
+                model: model(),
+                request_fingerprint: "test".to_string(),
+                context: ContextSnapshot {
+                    api_kind: ProviderApiKind::OpenAiResponses,
+                    context_revision: 0,
+                    entries: Vec::new(),
+                    token_estimate: None,
+                },
+                tools: Vec::new(),
+                tool_choice: None,
+                output_limit: None,
+                provider_response_id: None,
+                compaction: None,
+                params: None,
+            },
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn consecutive_assistant_entries_do_not_fold_into_parts() {
+        let blobs = InMemoryBlobStore::new();
+        let first_ref = blobs.insert_text("first assistant message").await;
+        let second_ref = blobs.insert_text("second assistant message").await;
+
+        let entry = |id: u64, content_ref: BlobRef| ContextEntry {
+            entry_id: ContextEntryId::new(id),
+            key: None,
+            kind: ContextEntryKind::Message {
+                role: ContextMessageRole::Assistant,
+            },
+            source: ContextEntrySource::AssistantOutput {
+                run_id: RunId::new(1),
+                turn_id: TurnId::new(1),
+            },
+            content_ref,
+            media_type: None,
+            preview: None,
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        };
+        let entries = vec![entry(1, first_ref), entry(2, second_ref)];
+
+        let input = materialize_input_items(&blobs, &entries)
+            .await
+            .expect("materialize entries");
+
+        // Assistant input items must stay as plain text messages: folding
+        // them into parts would produce `input_text` under an assistant
+        // role, which the Responses API rejects.
+        assert_eq!(input.len(), 2, "assistant messages must not fold");
+        for item in &input {
+            let value = serde_json::to_value(item).expect("serialize");
+            assert_eq!(value["role"], json!("assistant"));
+            assert!(value["content"].is_string(), "expected plain text content");
+        }
     }
 
     #[tokio::test(flavor = "current_thread")]

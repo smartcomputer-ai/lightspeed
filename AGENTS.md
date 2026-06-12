@@ -35,6 +35,7 @@ cargo test -p tools
 cargo test -p store-fs
 cargo test -p store-pg
 cargo test -p mcp-registry
+cargo test -p messaging
 cargo test -p auth-registry
 cargo test -p llm-runtime
 cargo test -p llm-clients
@@ -96,6 +97,8 @@ cargo run -p cli -- chat --api-url http://127.0.0.1:18080/rpc --session session_
   store adapters.
 - `crates/store-pg/` — PostgreSQL-backed session store, CAS catalog, MCP server
   catalog, and AEAD-encrypted auth grant/secret storage.
+- `crates/messaging/` — channel-neutral outbound message types and the
+  delivery outbox store trait backing the messaging tools and bridges (P71).
 - `crates/mcp-registry/` — provider-independent remote MCP server catalog DTOs,
   validation, and store traits.
 - `crates/auth-registry/` — generic auth grant/secret/provider records,

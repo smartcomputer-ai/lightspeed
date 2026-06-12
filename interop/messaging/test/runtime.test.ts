@@ -16,6 +16,7 @@ interface ForgeCall {
 class FakeForge {
   readonly calls: ForgeCall[] = [];
   failTurns = false;
+  messagingToolUsed = false;
 
   async appendRoomEvents(sessionId: string, events: readonly ForgeRoomEvent[]): Promise<void> {
     this.calls.push({ kind: "room", sessionId, texts: events.map((event) => event.text) });
@@ -36,6 +37,7 @@ class FakeForge {
       runId: "run_1",
       sessionId: turn.sessionId,
       text: `echo: ${turn.text}`,
+      messagingToolUsed: this.messagingToolUsed,
     };
   }
 }
@@ -167,7 +169,10 @@ describe("MessagingBridgeRuntime", () => {
 
     const turns = forge.calls.filter((call) => call.kind === "turn");
     expect(turns).toHaveLength(1);
-    expect(turns[0]?.texts[0]).toBe("once");
+    // DMs carry the envelope too: the #id markers make react/edit/reply_to
+    // targetable.
+    expect(turns[0]?.texts[0]).toContain("once");
+    expect(turns[0]?.texts[0]).toContain("#dup-1");
   });
 
   it("persists /activation changes and applies them to later messages", async () => {
@@ -243,6 +248,20 @@ describe("MessagingBridgeRuntime", () => {
     expect(turns).toHaveLength(1);
     expect(turns[0]?.mediaMimes).toEqual(["image/jpeg"]);
     expect(downloads).toBe(1);
+  });
+
+  it("suppresses final-text delivery when the run used messaging tools", async () => {
+    forge.messagingToolUsed = true;
+    await runtime.handleInbound(
+      inbound({ isDirect: true, text: "send it via the tool" }),
+      policy,
+      io(),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await runtime.flush();
+
+    expect(forge.calls.filter((call) => call.kind === "turn")).toHaveLength(1);
+    expect(replies).toHaveLength(0);
   });
 
   it("reports run failures back to the chat and records the error", async () => {
