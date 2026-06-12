@@ -14,6 +14,7 @@ import qrcode from "qrcode-terminal";
 import type { OutboundMessageView } from "@forge/agent-client";
 import type { WhatsAppBridgeConfig } from "./config.js";
 import { stableHash } from "./ids.js";
+import { renderWhatsAppText } from "./markdown.js";
 import { documentByteLimit, documentMime } from "./media.js";
 import { DeliveryError, type ChannelDeliverer, type DeliveryResult } from "./outbox.js";
 import { shouldQuoteChunk } from "./policy.js";
@@ -137,7 +138,7 @@ async function deliverWhatsAppPayload(
       case "send": {
         let lastId: string | undefined;
         for (const chunk of splitMessageText(payload.text, 3_500)) {
-          const sent = await sock.sendMessage(jid, { text: chunk });
+          const sent = await sock.sendMessage(jid, { text: renderWhatsAppText(chunk) });
           lastId = sent?.key?.id ?? lastId;
         }
         return lastId !== undefined ? { channelMessageId: lastId } : {};
@@ -153,7 +154,7 @@ async function deliverWhatsAppPayload(
       }
       case "edit": {
         await sock.sendMessage(jid, {
-          text: payload.text,
+          text: renderWhatsAppText(payload.text),
           edit: { remoteJid: jid, id: payload.messageId, fromMe: true },
         });
         return { channelMessageId: payload.messageId };
@@ -264,7 +265,7 @@ async function handleWhatsAppMessage(
         const quote = shouldQuoteChunk(config.replyToMode, !isGroup, index);
         await sock.sendMessage(
           remoteJid,
-          { text: chunk },
+          { text: renderWhatsAppText(chunk) },
           quote ? { quoted: message } : {},
         );
       }

@@ -151,6 +151,12 @@ While a turn is running the bridge shows a typing indicator in the chat
 (Telegram `sendChatAction`, WhatsApp `composing` presence), refreshed until
 the run completes.
 
+Outbound text is markdown from the model; the bridge renders it per channel
+(`src/markdown.ts`): Telegram gets the `parse_mode=HTML` subset with a
+plain-text fallback if Telegram rejects the entities, WhatsApp gets its
+native inline syntax (`*bold*`, `_italic_`). Headings, lists, and tables
+downconvert to plain text shapes.
+
 ## Verify
 
 ```bash

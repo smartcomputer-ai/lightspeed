@@ -11,6 +11,7 @@ import type {
   MessagingBridgeRuntime,
   NormalizedInbound,
 } from "./runtime.js";
+import { renderTelegramHtml } from "./markdown.js";
 import { documentByteLimit, documentMime } from "./media.js";
 import type { BindingState } from "./store.js";
 import { splitMessageText } from "./text.js";
@@ -167,14 +168,19 @@ async function deliverTelegramPayload(
         const chunks = splitMessageText(payload.text, 4_000);
         let lastMessageId: number | undefined;
         for (const [index, chunk] of chunks.entries()) {
-          const sent = await bot.api.sendMessage(chatId, chunk, {
+          const options = {
             ...(threadId !== undefined && Number.isFinite(threadId)
               ? { message_thread_id: threadId }
               : {}),
             ...(index === 0 && payload.replyTo !== undefined && payload.replyTo !== null
               ? { reply_parameters: { message_id: Number(payload.replyTo) } }
               : {}),
-          });
+          };
+          const sent = await sendWithFormatting(
+            (text, parseMode) =>
+              bot.api.sendMessage(chatId, text, { ...options, ...parseMode }),
+            chunk,
+          );
           lastMessageId = sent.message_id;
         }
         return lastMessageId !== undefined
@@ -188,12 +194,35 @@ async function deliverTelegramPayload(
         return {};
       }
       case "edit": {
-        await bot.api.editMessageText(chatId, Number(payload.messageId), payload.text);
+        await sendWithFormatting(
+          (text, parseMode) =>
+            bot.api.editMessageText(chatId, Number(payload.messageId), text, { ...parseMode }),
+          payload.text,
+        );
         return { channelMessageId: payload.messageId };
       }
     }
   } catch (error) {
     throw asDeliveryError(error);
+  }
+}
+
+/// Sends markdown as Telegram HTML; if Telegram rejects the entities (the
+/// converter produced something its parser dislikes), falls back to the raw
+/// text so formatting never blocks delivery.
+async function sendWithFormatting<T>(
+  send: (text: string, parseMode: { parse_mode?: "HTML" }) => Promise<T>,
+  markdown: string,
+): Promise<T> {
+  try {
+    return await send(renderTelegramHtml(markdown), { parse_mode: "HTML" });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!/parse entities/i.test(message)) {
+      throw error;
+    }
+    console.warn(`telegram: HTML formatting rejected, sending plain text: ${message}`);
+    return send(markdown, {});
   }
 }
 
@@ -315,14 +344,12 @@ async function sendTelegramReply(
 ): Promise<void> {
   const chunks = splitMessageText(text, 4_000);
   for (const [index, chunk] of chunks.entries()) {
-    if (shouldQuoteChunk(replyToMode, isDirect, index)) {
-      await ctx.reply(chunk, {
-        reply_parameters: {
-          message_id: replyToMessageId,
-        },
-      });
-    } else {
-      await ctx.reply(chunk);
-    }
+    const options = shouldQuoteChunk(replyToMode, isDirect, index)
+      ? { reply_parameters: { message_id: replyToMessageId } }
+      : {};
+    await sendWithFormatting(
+      (chunkText, parseMode) => ctx.reply(chunkText, { ...options, ...parseMode }),
+      chunk,
+    );
   }
 }
