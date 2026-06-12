@@ -7,7 +7,7 @@
   `RegistryTokenBroker` with typed `AuthBrokerError` kinds, in-memory test
   adapters); `store-pg` `auth_secrets`/`auth_grants` tables with AES-256-GCM
   encryption (AAD = universe/secret id/kind, `FORGE_SECRETS_MASTER_KEY`
-  config; `dev/local/` exports a well-known dev-only default key);
+  config; `local/` exports a well-known dev-only default key);
   `auth/grants/import|list|read|revoke` JSON-RPC + `forge auth grant` CLI; `llm-runtime` `SecretResolver` with OpenAI Responses `authorization`
   injection and redacted persisted request blobs; worker
   `BrokerSecretResolver` wiring; and P68 link-time grant validation

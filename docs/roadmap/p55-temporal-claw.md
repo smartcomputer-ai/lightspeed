@@ -307,7 +307,7 @@ FORGE_CHAT_MODEL=<existing default>
 Document:
 
 ```bash
-dev/local/up.sh
+local/up.sh
 cargo run -p claw --bin claw-worker
 cargo run -p claw --bin claw-submit --session session_1 "hello"
 ```
@@ -347,7 +347,7 @@ Acceptance:
 
 - `cargo test` continues to pass
 - `cargo test -p claw` passes without live services
-- ignored live test passes against `dev/local` stack
+- ignored live test passes against `local` stack
 
 Implementation note: the ignored live Temporal/Postgres integration test is
 present but is not run by default.

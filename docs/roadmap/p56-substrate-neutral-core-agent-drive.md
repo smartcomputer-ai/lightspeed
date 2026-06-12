@@ -354,4 +354,4 @@ Add or preserve tests for:
   `agent-local`.
 - `cargo test -p agent-core`, `cargo test -p agent-local`, and
   `cargo test -p claw` pass.
-- The ignored Temporal fake live test passes against `dev/local`.
+- The ignored Temporal fake live test passes against `local`.

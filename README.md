@@ -100,7 +100,7 @@ The hosted path runs three pieces locally:
 From the repository root:
 
 ```bash
-dev/local/up.sh
+local/up.sh
 ```
 
 This starts Postgres on `localhost:15432`, MinIO on `localhost:29000`,
@@ -109,7 +109,7 @@ Temporal on `localhost:7233`, and the Temporal UI on `http://localhost:8233`.
 Each shell that runs Forge commands should load the local environment:
 
 ```bash
-source dev/local/env.sh
+source local/env.sh
 ```
 
 ### 2. Run The Server
@@ -117,7 +117,7 @@ source dev/local/env.sh
 Open a first shell:
 
 ```bash
-source dev/local/env.sh
+source local/env.sh
 
 # export OPENAI_API_KEY=...  # omit this if it is already in .env
 
@@ -144,12 +144,12 @@ cargo run -p temporal-server -- gateway
 Open another shell:
 
 ```bash
-source dev/local/env.sh
+source local/env.sh
 cargo run -p cli -- chat --new
 ```
 
 That starts an interactive TUI session. `FORGE_API_URL` is exported by
-`dev/local/env.sh`, so you do not need to pass `--api-url`.
+`local/env.sh`, so you do not need to pass `--api-url`.
 
 For OpenAI-backed chat, the CLI sends typed session/run configuration through
 the API. Use `--model ...` on a command, or set `FORGE_CHAT_MODEL`, if you want
@@ -230,13 +230,13 @@ Snapshot mounts are read-only; workspace mounts can be read-only or read-write.
 ### Stop Or Reset Local Infra
 
 ```bash
-dev/local/down.sh
+local/down.sh
 ```
 
 To reset persisted local state while keeping containers available:
 
 ```bash
-dev/local/reset.sh
+local/reset.sh
 ```
 
 ## Runtime Model

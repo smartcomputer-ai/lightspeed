@@ -1,6 +1,7 @@
-# Forge Local Dev
+# Forge Local Environment
 
-This directory contains a local Docker environment for the PostgreSQL session/CAS store.
+This directory contains the local Docker environment for Forge: Postgres,
+pgAdmin, MinIO, and Temporal.
 
 ## Services
 
@@ -14,19 +15,19 @@ This directory contains a local Docker environment for the PostgreSQL session/CA
 ## Start
 
 ```bash
-dev/local/up.sh
+local/up.sh
 ```
 
 ## Stop
 
 ```bash
-dev/local/down.sh
+local/down.sh
 ```
 
 To also remove volumes:
 
 ```bash
-dev/local/down.sh -v
+local/down.sh -v
 ```
 
 ## Reset
@@ -34,22 +35,22 @@ dev/local/down.sh -v
 Reset the database, apply the `store-pg` schema, and clear the MinIO prefix:
 
 ```bash
-dev/local/reset.sh
+local/reset.sh
 ```
 
 Individual helpers:
 
 ```bash
-dev/local/pg-reset.sh
-dev/local/pg-migrate.sh
-dev/local/minio-ensure.sh
-dev/local/minio-reset.sh
+local/pg-reset.sh
+local/pg-migrate.sh
+local/minio-ensure.sh
+local/minio-reset.sh
 ```
 
 Run the `store-pg` live integration tests against this stack:
 
 ```bash
-source dev/local/env.sh
+source local/env.sh
 cargo test -p store-pg --test store_pg_live -- --ignored
 ```
 
@@ -58,7 +59,7 @@ cargo test -p store-pg --test store_pg_live -- --ignored
 Export local settings into the current shell:
 
 ```bash
-source dev/local/env.sh
+source local/env.sh
 ```
 
 Equivalent values:
@@ -85,7 +86,7 @@ export AWS_SECRET_ACCESS_KEY=minioadmin
 Run the Temporal-backed hosted runtime against the local stack:
 
 ```bash
-source dev/local/env.sh
+source local/env.sh
 cargo run -p temporal-server
 ```
 
@@ -93,12 +94,12 @@ With no subcommand, the `server` binary runs the JSON-RPC gateway and Temporal
 worker in one process. For split-role runs, use two shells:
 
 ```bash
-source dev/local/env.sh
+source local/env.sh
 cargo run -p temporal-server -- worker
 ```
 
 ```bash
-source dev/local/env.sh
+source local/env.sh
 cargo run -p temporal-server -- gateway
 ```
 
@@ -106,7 +107,7 @@ Then chat through the regular CLI over the gateway transport from another
 shell:
 
 ```bash
-source dev/local/env.sh
+source local/env.sh
 cargo run -p cli -- chat --session session_1 "hello"
 ```
 
@@ -116,14 +117,14 @@ omit the message to open the interactive TUI.
 Run the fake hosted-agent live integration test against the same stack:
 
 ```bash
-source dev/local/env.sh
+source local/env.sh
 cargo test -p temporal-server --test temporal_live temporal_live_session_start_then_run_start_completes_fake_runs -- --ignored --nocapture
 ```
 
 Run only the OpenAI-backed hosted-agent live test:
 
 ```bash
-source dev/local/env.sh
+source local/env.sh
 export OPENAI_API_KEY=...
 cargo test -p temporal-server --test temporal_live temporal_live_session_start_then_run_start_completes_openai_run -- --ignored --nocapture
 ```

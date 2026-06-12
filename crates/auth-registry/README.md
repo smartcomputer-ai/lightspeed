@@ -74,7 +74,7 @@ token), `auth/clients/create` (client secret), and `auth/providers/create`
 
 ```bash
 cargo test -p auth-registry
-# encrypted store impl (needs dev/local infra):
+# encrypted store impl (needs local infra):
 cargo test -p store-pg --test store_pg_live -- --ignored
 ```
 
@@ -86,12 +86,12 @@ for testing.
 
 ```bash
 # 0. once: infra + env, gateway in its own terminal
-dev/local/up.sh && source dev/local/env.sh
+local/up.sh && source local/env.sh
 cargo run -p temporal-server        
 
 # separate terminal, env.sh sourced
 # 1. register the authenticated MCP server
-source dev/local/env.sh
+source local/env.sh
 cargo run -q -p cli -- mcp server add https://mcpplaygroundonline.com/mcp-auth-server \
   --id playground --label playground --auth-policy required-bearer
 
@@ -197,8 +197,8 @@ broker's automatic refresh path.
 
 ```bash
 # 0. infra + schema, env in every terminal; gateway in its own terminal
-dev/local/up.sh && source dev/local/env.sh
-dev/local/pg-migrate.sh
+local/up.sh && source local/env.sh
+local/pg-migrate.sh
 cargo run -p temporal-server        # separate terminal, env.sh sourced
 
 # 1. register the MCP server under id gh

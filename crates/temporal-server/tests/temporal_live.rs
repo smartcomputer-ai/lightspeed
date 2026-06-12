@@ -37,7 +37,7 @@ use temporalio_sdk_core::{CoreRuntime, RuntimeOptions};
 static LIVE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/local/up.sh or compatible Temporal + Postgres env"]
+#[ignore = "requires local/up.sh or compatible Temporal + Postgres env"]
 async fn temporal_live_session_start_then_run_start_completes_fake_runs() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().expect("live test lock");
     let _ = dotenvy::dotenv();
@@ -48,7 +48,7 @@ async fn temporal_live_session_start_then_run_start_completes_fake_runs() -> any
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/local/up.sh or compatible Temporal + Postgres env"]
+#[ignore = "requires local/up.sh or compatible Temporal + Postgres env"]
 async fn temporal_live_continue_as_new_completes_later_fake_run() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().expect("live test lock");
     let _ = dotenvy::dotenv();
@@ -59,7 +59,7 @@ async fn temporal_live_continue_as_new_completes_later_fake_run() -> anyhow::Res
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/local/up.sh or compatible Temporal + Postgres env"]
+#[ignore = "requires local/up.sh or compatible Temporal + Postgres env"]
 async fn temporal_live_run_start_missing_session_returns_not_found() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().expect("live test lock");
     let _ = dotenvy::dotenv();
@@ -70,7 +70,7 @@ async fn temporal_live_run_start_missing_session_returns_not_found() -> anyhow::
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/local/up.sh or compatible Temporal + Postgres env"]
+#[ignore = "requires local/up.sh or compatible Temporal + Postgres env"]
 async fn temporal_live_admission_failures_do_not_poison_workflow() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().expect("live test lock");
     let _ = dotenvy::dotenv();
@@ -81,7 +81,7 @@ async fn temporal_live_admission_failures_do_not_poison_workflow() -> anyhow::Re
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/local/up.sh or compatible Temporal + Postgres env"]
+#[ignore = "requires local/up.sh or compatible Temporal + Postgres env"]
 async fn temporal_live_mcp_registry_and_session_links_materialize() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().expect("live test lock");
     let _ = dotenvy::dotenv();
@@ -92,7 +92,7 @@ async fn temporal_live_mcp_registry_and_session_links_materialize() -> anyhow::R
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires dev/local/up.sh, Postgres, Temporal, and OPENAI_API_KEY (costs real money)"]
+#[ignore = "requires local/up.sh, Postgres, Temporal, and OPENAI_API_KEY (costs real money)"]
 async fn temporal_live_session_start_then_run_start_completes_openai_run() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().expect("live test lock");
     let _ = dotenvy::dotenv();
