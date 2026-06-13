@@ -27,6 +27,9 @@ pub const METHOD_SESSION_READ: &str = "session/read";
 pub const METHOD_SESSION_EVENTS_READ: &str = "session/events/read";
 pub const METHOD_SESSION_CLOSE: &str = "session/close";
 pub const METHOD_CONTEXT_COMPACT: &str = "context/compact";
+pub const METHOD_CONTEXT_APPEND: &str = "context/append";
+pub const METHOD_OUTBOX_READ: &str = "outbox/read";
+pub const METHOD_OUTBOX_ACK: &str = "outbox/ack";
 pub const METHOD_RUN_START: &str = "run/start";
 pub const METHOD_RUN_CANCEL: &str = "run/cancel";
 pub const METHOD_PROMPTS_ACTIVE: &str = "prompts/active";
@@ -165,6 +168,21 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: ContextCompactParams,
     ) -> Result<AgentApiOutcome<ContextCompactResponse>, AgentApiError>;
+
+    async fn append_context(
+        &self,
+        params: ContextAppendParams,
+    ) -> Result<AgentApiOutcome<ContextAppendResponse>, AgentApiError>;
+
+    async fn read_outbox(
+        &self,
+        params: OutboxReadParams,
+    ) -> Result<AgentApiOutcome<OutboxReadResponse>, AgentApiError>;
+
+    async fn ack_outbox(
+        &self,
+        params: OutboxAckParams,
+    ) -> Result<AgentApiOutcome<OutboxAckResponse>, AgentApiError>;
 
     async fn start_run(
         &self,
@@ -550,6 +568,10 @@ pub struct ToolConfigInput {
     pub web_fetch: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<HostToolMode>,
+    /// Enables the messaging toolset (message_send/react/edit/noop) for
+    /// sessions bound to a chat channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub messaging: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -635,6 +657,8 @@ pub struct ToolConfigPatchInput {
     pub web_fetch: Option<FieldPatch<bool>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<FieldPatch<HostToolMode>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub messaging: Option<FieldPatch<bool>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -780,6 +804,136 @@ pub struct ContextCompactParams {
 #[serde(rename_all = "camelCase")]
 pub struct ContextCompactResponse {
     pub session: SessionView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextAppendParams {
+    pub session_id: SessionId,
+    pub entries: Vec<ContextAppendEntry>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextAppendEntry {
+    /// Stable client-chosen context key. Re-sending the same key with the
+    /// same content is a no-op, so the key doubles as the idempotency handle.
+    pub key: String,
+    pub item: InputItem,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextAppendResponse {
+    pub context_revision: u64,
+    pub applied_keys: Vec<String>,
+    pub unchanged_keys: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OutboxReadParams {
+    /// Return pending entries with `seq` greater than this cursor. Restart
+    /// from 0 to re-read undelivered entries after a consumer restart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+    /// Long-poll wait in milliseconds when no entries are pending.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_ms: Option<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OutboxReadResponse {
+    pub entries: Vec<OutboundMessageView>,
+    /// Cursor to pass as `after` on the next read.
+    pub next_after: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OutboundMessageView {
+    pub seq: u64,
+    pub outbox_id: String,
+    pub session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    pub origin: OutboundOriginView,
+    pub payload: OutboundPayloadView,
+    pub attempts: u32,
+    pub created_at_ms: i64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum OutboundOriginView {
+    ToolCall,
+    FinalText,
+    Trigger,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum OutboundPayloadView {
+    Send {
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reply_to: Option<String>,
+    },
+    React {
+        message_id: String,
+        emoji: String,
+    },
+    Edit {
+        message_id: String,
+        text: String,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OutboxAckParams {
+    pub outbox_id: String,
+    pub result: OutboundAckInput,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum OutboundAckInput {
+    Delivered {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        channel_message_id: Option<String>,
+    },
+    Failed {
+        error: String,
+        retryable: bool,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OutboxAckResponse {
+    pub outbox_id: String,
+    pub status: OutboundStatusView,
+    pub attempts: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum OutboundStatusView {
+    Pending,
+    Delivered,
+    Failed,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -2402,8 +2556,27 @@ pub enum RunStatus {
     rename_all_fields = "camelCase"
 )]
 pub enum InputItem {
-    Text { text: String },
-    TextRef { blob_ref: String },
+    Text {
+        text: String,
+    },
+    TextRef {
+        blob_ref: String,
+    },
+    Media {
+        blob_ref: String,
+        mime: String,
+        kind: MediaKind,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum MediaKind {
+    Image,
+    Audio,
+    Document,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -2807,6 +2980,9 @@ api_methods! {
     METHOD_SESSION_EVENTS_READ => read_session_events(SessionEventsReadParams) -> SessionEventsReadResponse,
     METHOD_SESSION_CLOSE => close_session(SessionCloseParams) -> SessionCloseResponse,
     METHOD_CONTEXT_COMPACT => compact_context(ContextCompactParams) -> ContextCompactResponse,
+    METHOD_CONTEXT_APPEND => append_context(ContextAppendParams) -> ContextAppendResponse,
+    METHOD_OUTBOX_READ => read_outbox(OutboxReadParams) -> OutboxReadResponse,
+    METHOD_OUTBOX_ACK => ack_outbox(OutboxAckParams) -> OutboxAckResponse,
     METHOD_RUN_START => start_run(RunStartParams) -> RunStartResponse,
     METHOD_RUN_CANCEL => cancel_run(RunCancelParams) -> RunCancelResponse,
     METHOD_PROMPTS_ACTIVE => active_prompts(PromptsActiveParams) -> PromptsActiveResponse,
@@ -3123,6 +3299,68 @@ mod tests {
         assert_eq!(
             response.result.expect("result")["result"]["session"]["id"],
             json!("session_1")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_context_append() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_CONTEXT_APPEND.to_owned(),
+                params: Some(json!({
+                    "sessionId": "session_1",
+                    "entries": [
+                        {
+                            "key": "channel.room.batch-1",
+                            "item": { "type": "text", "text": "Alice: hello" }
+                        }
+                    ]
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["appliedKeys"],
+            json!(["channel.room.batch-1"])
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_outbox_read_and_ack() {
+        let read = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_OUTBOX_READ.to_owned(),
+                params: Some(json!({ "after": 7, "waitMs": 100 })),
+            },
+        )
+        .await;
+        assert!(read.error.is_none());
+        let read = read.result.expect("result");
+        assert_eq!(read["result"]["nextAfter"], json!(8));
+        assert_eq!(read["result"]["entries"][0]["payload"]["type"], json!("send"));
+
+        let ack = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(2),
+                method: METHOD_OUTBOX_ACK.to_owned(),
+                params: Some(json!({
+                    "outboxId": "outbox_1",
+                    "result": { "type": "delivered", "channelMessageId": "42" }
+                })),
+            },
+        )
+        .await;
+        assert!(ack.error.is_none());
+        assert_eq!(
+            ack.result.expect("result")["result"]["status"],
+            json!("delivered")
         );
     }
 
@@ -3920,6 +4158,59 @@ mod tests {
         ) -> Result<AgentApiOutcome<ContextCompactResponse>, AgentApiError> {
             Ok(AgentApiOutcome::new(ContextCompactResponse {
                 session: test_session(params.session_id, SessionStatus::Idle),
+            }))
+        }
+
+        async fn append_context(
+            &self,
+            params: ContextAppendParams,
+        ) -> Result<AgentApiOutcome<ContextAppendResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(ContextAppendResponse {
+                context_revision: 1,
+                applied_keys: params
+                    .entries
+                    .iter()
+                    .map(|entry| entry.key.clone())
+                    .collect(),
+                unchanged_keys: Vec::new(),
+            }))
+        }
+
+        async fn read_outbox(
+            &self,
+            params: OutboxReadParams,
+        ) -> Result<AgentApiOutcome<OutboxReadResponse>, AgentApiError> {
+            let after = params.after.unwrap_or(0);
+            Ok(AgentApiOutcome::new(OutboxReadResponse {
+                entries: vec![OutboundMessageView {
+                    seq: after + 1,
+                    outbox_id: "outbox_1".to_owned(),
+                    session_id: "session_1".to_owned(),
+                    run_id: Some("run_1".to_owned()),
+                    origin: OutboundOriginView::ToolCall,
+                    payload: OutboundPayloadView::Send {
+                        text: "hello".to_owned(),
+                        reply_to: None,
+                    },
+                    attempts: 0,
+                    created_at_ms: 1,
+                }],
+                next_after: after + 1,
+            }))
+        }
+
+        async fn ack_outbox(
+            &self,
+            params: OutboxAckParams,
+        ) -> Result<AgentApiOutcome<OutboxAckResponse>, AgentApiError> {
+            let status = match params.result {
+                OutboundAckInput::Delivered { .. } => OutboundStatusView::Delivered,
+                OutboundAckInput::Failed { .. } => OutboundStatusView::Failed,
+            };
+            Ok(AgentApiOutcome::new(OutboxAckResponse {
+                outbox_id: params.outbox_id,
+                status,
+                attempts: 1,
             }))
         }
 

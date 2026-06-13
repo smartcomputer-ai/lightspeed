@@ -284,11 +284,44 @@ async fn materialize_input_items(
     blobs: &dyn BlobStore,
     entries: &[ContextEntry],
 ) -> LlmAdapterResult<Vec<oai::ResponseInputItem>> {
-    let mut input = Vec::with_capacity(entries.len());
+    let mut input: Vec<oai::ResponseInputItem> = Vec::with_capacity(entries.len());
     for item in entries {
-        input.push(materialize_input_item(blobs, item).await?);
+        let next = materialize_input_item(blobs, item).await?;
+        // Consecutive same-role USER messages (for example an image entry
+        // plus its caption) fold into one message with multiple content
+        // parts — the canonical Responses input shape. Assistant history is
+        // never folded: assistant-role input items require `output_text`
+        // parts, not `input_text`, so they stay as plain text messages.
+        match (input.last_mut(), next) {
+            (
+                Some(oai::ResponseInputItem::Message(previous)),
+                oai::ResponseInputItem::Message(message),
+            ) if previous.role == oai::MessageRole::User
+                && message.role == oai::MessageRole::User
+                && previous.extra.is_empty()
+                && message.extra.is_empty() =>
+            {
+                let mut parts = input_message_parts(std::mem::replace(
+                    &mut previous.content,
+                    oai::InputMessageContent::Parts(Vec::new()),
+                ));
+                parts.extend(input_message_parts(message.content));
+                previous.content = oai::InputMessageContent::Parts(parts);
+            }
+            (_, next) => input.push(next),
+        }
     }
     Ok(input)
+}
+
+fn input_message_parts(content: oai::InputMessageContent) -> Vec<oai::InputContent> {
+    match content {
+        oai::InputMessageContent::Text(text) => vec![oai::InputContent::InputText {
+            r#type: oai::InputContentType::InputText,
+            text,
+        }],
+        oai::InputMessageContent::Parts(parts) => parts,
+    }
 }
 
 async fn materialize_input_item(
@@ -303,12 +336,57 @@ async fn materialize_input_item(
 
     match &item.kind {
         ContextEntryKind::Message { role } => {
+            let role = match role {
+                ContextMessageRole::User => oai::MessageRole::User,
+                ContextMessageRole::Assistant => oai::MessageRole::Assistant,
+            };
+            if let Some(mime) = crate::blob_io::image_media_type(item.media_type.as_deref()) {
+                let data = crate::blob_io::read_base64(blobs, &item.content_ref).await?;
+                return Ok(oai::ResponseInputItem::Message(oai::InputMessage {
+                    role,
+                    content: oai::InputMessageContent::Parts(vec![
+                        oai::InputContent::InputImage {
+                            r#type: oai::InputImageContentType::InputImage,
+                            image_url: format!("data:{mime};base64,{data}"),
+                            detail: None,
+                        },
+                    ]),
+                    extra: Default::default(),
+                }));
+            }
+            if let Some(document) =
+                crate::blob_io::document_entry(item.media_type.as_deref(), item.preview.as_deref())
+            {
+                let part = if document.is_pdf {
+                    let data = crate::blob_io::read_base64(blobs, &item.content_ref).await?;
+                    oai::InputContent::InputFile {
+                        r#type: oai::InputFileContentType::InputFile,
+                        filename: Some(document.name.unwrap_or_else(|| "document.pdf".to_owned())),
+                        file_data: Some(format!("data:{};base64,{data}", document.mime)),
+                        file_id: None,
+                    }
+                } else {
+                    // The Responses API takes files as PDF only; text-based
+                    // documents are inlined with their name as a header.
+                    let text = read_text(blobs, &item.content_ref).await?;
+                    let header = match document.name {
+                        Some(name) => format!("[document: {name}]"),
+                        None => "[document]".to_owned(),
+                    };
+                    oai::InputContent::InputText {
+                        r#type: oai::InputContentType::InputText,
+                        text: format!("{header}\n{text}"),
+                    }
+                };
+                return Ok(oai::ResponseInputItem::Message(oai::InputMessage {
+                    role,
+                    content: oai::InputMessageContent::Parts(vec![part]),
+                    extra: Default::default(),
+                }));
+            }
             let text = read_text(blobs, &item.content_ref).await?;
             Ok(oai::ResponseInputItem::Message(oai::InputMessage {
-                role: match role {
-                    ContextMessageRole::User => oai::MessageRole::User,
-                    ContextMessageRole::Assistant => oai::MessageRole::Assistant,
-                },
+                role,
                 content: oai::InputMessageContent::Text(text),
                 extra: Default::default(),
             }))
@@ -763,7 +841,16 @@ async fn assistant_context_entry(
         .filter_map(|content| content.text.as_deref())
         .collect::<Vec<_>>()
         .join("");
-    let text = if text.is_empty() {
+    // Fall back to the response-wide output text only when this is the
+    // single message item; with multiple message items (gpt-5.5 sometimes
+    // emits a trailing empty one) the whole-response fallback would
+    // duplicate the other item's text.
+    let message_items = response
+        .output
+        .iter()
+        .filter(|candidate| candidate.r#type == "message")
+        .count();
+    let text = if text.is_empty() && message_items == 1 {
         response.output_text()
     } else {
         text
@@ -2256,5 +2343,289 @@ mod tests {
             .expect("failure text");
         assert!(failure.contains("invalid_request_error"));
         assert!(failure.contains("The requested model is unavailable."));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn consecutive_user_entries_fold_into_one_message_with_parts() {
+        let blobs = InMemoryBlobStore::new();
+        let image_ref = blobs
+            .put_bytes(vec![0x89, 0x50, 0x4e, 0x47])
+            .await
+            .expect("store image");
+        let caption_ref = blobs.insert_text("what is in this picture?").await;
+
+        let entry = |id: u64, content_ref: BlobRef, media_type: Option<&str>| ContextEntry {
+            entry_id: ContextEntryId::new(id),
+            key: None,
+            kind: ContextEntryKind::Message {
+                role: ContextMessageRole::User,
+            },
+            source: ContextEntrySource::RunInput {
+                run_id: RunId::new(1),
+                input_index: id as u32 - 1,
+            },
+            content_ref,
+            media_type: media_type.map(str::to_owned),
+            preview: None,
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        };
+        let entries = vec![
+            entry(1, image_ref, Some("image/png")),
+            entry(2, caption_ref, None),
+        ];
+
+        let input = materialize_input_items(&blobs, &entries)
+            .await
+            .expect("materialize entries");
+
+        assert_eq!(input.len(), 1, "expected one folded message, got {input:?}");
+        let value = serde_json::to_value(&input[0]).expect("serialize message");
+        assert_eq!(value["role"], json!("user"));
+        assert_eq!(value["content"][0]["type"], json!("input_image"));
+        assert_eq!(value["content"][1]["type"], json!("input_text"));
+        assert_eq!(value["content"][1]["text"], json!("what is in this picture?"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pdf_document_entry_materializes_as_input_file_part() {
+        let blobs = InMemoryBlobStore::new();
+        let pdf_ref = blobs
+            .put_bytes(b"%PDF-1.4 fake".to_vec())
+            .await
+            .expect("store pdf");
+
+        let entries = vec![ContextEntry {
+            entry_id: ContextEntryId::new(1),
+            key: None,
+            kind: ContextEntryKind::Message {
+                role: ContextMessageRole::User,
+            },
+            source: ContextEntrySource::RunInput {
+                run_id: RunId::new(1),
+                input_index: 0,
+            },
+            content_ref: pdf_ref,
+            media_type: Some("application/pdf".to_owned()),
+            preview: Some("[document: offer.pdf]".to_owned()),
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        }];
+
+        let input = materialize_input_items(&blobs, &entries)
+            .await
+            .expect("materialize entries");
+
+        let value = serde_json::to_value(&input[0]).expect("serialize message");
+        assert_eq!(value["content"][0]["type"], json!("input_file"));
+        assert_eq!(value["content"][0]["filename"], json!("offer.pdf"));
+        let file_data = value["content"][0]["file_data"].as_str().expect("file data");
+        assert!(file_data.starts_with("data:application/pdf;base64,"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn markdown_document_entry_inlines_text_with_header() {
+        let blobs = InMemoryBlobStore::new();
+        let doc_ref = blobs.insert_text("# Notes\nhello").await;
+
+        let entries = vec![ContextEntry {
+            entry_id: ContextEntryId::new(1),
+            key: None,
+            kind: ContextEntryKind::Message {
+                role: ContextMessageRole::User,
+            },
+            source: ContextEntrySource::RunInput {
+                run_id: RunId::new(1),
+                input_index: 0,
+            },
+            content_ref: doc_ref,
+            media_type: Some("text/markdown".to_owned()),
+            preview: Some("[document: notes.md]".to_owned()),
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        }];
+
+        let input = materialize_input_items(&blobs, &entries)
+            .await
+            .expect("materialize entries");
+
+        let value = serde_json::to_value(&input[0]).expect("serialize message");
+        assert_eq!(value["content"][0]["type"], json!("input_text"));
+        assert_eq!(
+            value["content"][0]["text"],
+            json!("[document: notes.md]\n# Notes\nhello")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn empty_trailing_message_item_does_not_duplicate_assistant_text() {
+        // gpt-5.5 sometimes emits a second message item with an empty text
+        // part; the whole-response output_text fallback must not turn it
+        // into a duplicate assistant entry.
+        let raw_json = json!({
+            "id": "resp_double",
+            "status": "completed",
+            "output": [
+                {
+                    "id": "msg_1",
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{ "type": "output_text", "text": "Hi — what can I help with?" }]
+                },
+                {
+                    "id": "msg_2",
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{ "type": "output_text", "text": "" }]
+                }
+            ],
+            "usage": { "input_tokens": 1, "output_tokens": 1, "total_tokens": 2 }
+        });
+        let response = ApiResponse {
+            parsed: serde_json::from_value(raw_json.clone()).expect("response"),
+            raw_json,
+            status: 200,
+            headers: HeaderSnapshot::default(),
+        };
+        let blobs = InMemoryBlobStore::new();
+        let request = generation_request_fixture();
+
+        let result = result_from_response(&blobs, &request, &response)
+            .await
+            .expect("result");
+
+        let assistant_entries: Vec<_> = result
+            .context_entries
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    entry.kind,
+                    ContextEntryKind::Message {
+                        role: ContextMessageRole::Assistant,
+                    }
+                )
+            })
+            .collect();
+        assert_eq!(
+            assistant_entries.len(),
+            1,
+            "empty message item must not duplicate the assistant text"
+        );
+        assert_eq!(
+            assistant_entries[0].preview.as_deref(),
+            Some("Hi — what can I help with?")
+        );
+    }
+
+    fn generation_request_fixture() -> LlmGenerationRequest {
+        LlmGenerationRequest {
+            session_id: SessionId::new("session-test"),
+            run_id: RunId::new(1),
+            turn_id: TurnId::new(1),
+            request: LlmRequest {
+                model: model(),
+                request_fingerprint: "test".to_string(),
+                context: ContextSnapshot {
+                    api_kind: ProviderApiKind::OpenAiResponses,
+                    context_revision: 0,
+                    entries: Vec::new(),
+                    token_estimate: None,
+                },
+                tools: Vec::new(),
+                tool_choice: None,
+                output_limit: None,
+                provider_response_id: None,
+                compaction: None,
+                params: None,
+            },
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn consecutive_assistant_entries_do_not_fold_into_parts() {
+        let blobs = InMemoryBlobStore::new();
+        let first_ref = blobs.insert_text("first assistant message").await;
+        let second_ref = blobs.insert_text("second assistant message").await;
+
+        let entry = |id: u64, content_ref: BlobRef| ContextEntry {
+            entry_id: ContextEntryId::new(id),
+            key: None,
+            kind: ContextEntryKind::Message {
+                role: ContextMessageRole::Assistant,
+            },
+            source: ContextEntrySource::AssistantOutput {
+                run_id: RunId::new(1),
+                turn_id: TurnId::new(1),
+            },
+            content_ref,
+            media_type: None,
+            preview: None,
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        };
+        let entries = vec![entry(1, first_ref), entry(2, second_ref)];
+
+        let input = materialize_input_items(&blobs, &entries)
+            .await
+            .expect("materialize entries");
+
+        // Assistant input items must stay as plain text messages: folding
+        // them into parts would produce `input_text` under an assistant
+        // role, which the Responses API rejects.
+        assert_eq!(input.len(), 2, "assistant messages must not fold");
+        for item in &input {
+            let value = serde_json::to_value(item).expect("serialize");
+            assert_eq!(value["role"], json!("assistant"));
+            assert!(value["content"].is_string(), "expected plain text content");
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn image_message_entry_materializes_as_input_image_part() {
+        let blobs = InMemoryBlobStore::new();
+        let image_bytes = vec![0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+        let content_ref = blobs
+            .put_bytes(image_bytes.clone())
+            .await
+            .expect("store image");
+        let entry = ContextEntry {
+            entry_id: ContextEntryId::new(1),
+            key: None,
+            kind: ContextEntryKind::Message {
+                role: ContextMessageRole::User,
+            },
+            source: ContextEntrySource::RunInput {
+                run_id: RunId::new(1),
+                input_index: 0,
+            },
+            content_ref,
+            media_type: Some("image/png".to_owned()),
+            preview: Some("[image: photo.png]".to_owned()),
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        };
+
+        let item = materialize_input_item(&blobs, &entry)
+            .await
+            .expect("materialize image entry");
+
+        let value = serde_json::to_value(&item).expect("serialize input item");
+        assert_eq!(value["role"], json!("user"));
+        assert_eq!(value["content"][0]["type"], json!("input_image"));
+        let url = value["content"][0]["image_url"]
+            .as_str()
+            .expect("image url");
+        assert!(url.starts_with("data:image/png;base64,"));
+        use base64::Engine as _;
+        let encoded = url.strip_prefix("data:image/png;base64,").expect("prefix");
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .expect("valid base64");
+        assert_eq!(decoded, image_bytes);
     }
 }

@@ -32,7 +32,7 @@ use oauth_api::{
 };
 use blobs::{get_blob, has_blobs, put_blob, put_blobs};
 use errors::*;
-use input::run_input_from_api;
+use input::{context_entry_input_from_api, run_input_from_api};
 use mcp_api::{
     apply_session_mcp_link, create_mcp_server_record, linked_session_mcp, map_mcp_registry_error,
     mcp_server_view, parse_mcp_server_id, parse_mcp_tool_name, remove_session_mcp_link,
@@ -69,11 +69,15 @@ use api::{
     AuthGrantReadResponse, AuthGrantRevokeParams, AuthGrantRevokeResponse, BlobGetParams,
     BlobGetResponse, BlobHasItem, BlobHasManyParams, BlobHasManyResponse, BlobPutManyParams,
     BlobPutManyResponse, BlobPutParams, BlobPutResponse, ClientCapabilities, CompactionPolicyInput,
-    ContextCompactParams, ContextCompactResponse, ContextConfigInput as ApiContextConfigInput,
+    ContextAppendParams, ContextAppendResponse, ContextCompactParams, ContextCompactResponse,
+    ContextConfigInput as ApiContextConfigInput,
     ContextConfigPatchInput, FieldPatch, GenerationConfig, GenerationConfigPatch, InitializeParams,
-    InitializeResponse, InputItem, McpServerCreateParams, McpServerCreateResponse,
+    InitializeResponse, InputItem, MediaKind, McpServerCreateParams, McpServerCreateResponse,
     McpServerDeleteParams, McpServerDeleteResponse, McpServerListParams, McpServerListResponse,
-    McpServerReadParams, McpServerReadResponse, ModelConfig, PromptInstructionView,
+    McpServerReadParams, McpServerReadResponse, ModelConfig, OutboundAckInput,
+    OutboundMessageView, OutboundOriginView, OutboundPayloadView, OutboundStatusView,
+    OutboxAckParams, OutboxAckResponse, OutboxReadParams, OutboxReadResponse,
+    PromptInstructionView,
     PromptsActiveParams, PromptsActiveResponse, ReasoningEffort, RunCancelParams,
     RunCancelResponse, RunDefaultsConfig, RunDefaultsPatch, RunLimitsConfig, RunStartConfig,
     RunStartParams, RunStartResponse, RunView, ServerCapabilities, ServerInfo, SessionCloseParams,
@@ -102,6 +106,8 @@ use api_projection::{
 };
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use messaging::{MessagingError, OutboundPayload, OutboxStore, ReadPendingOutbound};
+
 use engine::{
     BlobRef, CommandCodec, CompactionPolicy, ContextConfigPatch, ContextEntry, ContextEntryInput,
     ContextEntryKey, ContextEntryKind, ContextMessageRole, CoreAgentCommand, CoreAgentStatus,
@@ -411,6 +417,9 @@ impl GatewayAgentApi {
         }
         if effective_web_fetch_enabled(session_config) {
             config.web_fetch = WebFetchToolConfig::enabled();
+        }
+        if session_config.tools.messaging.unwrap_or(false) {
+            config.messaging = tools::messaging::MessagingToolsetConfig::enabled();
         }
         config
     }
@@ -848,6 +857,156 @@ impl AgentApiService for GatewayAgentApi {
             .wait_for_context_compaction_complete(&session_id, baseline_revision, baseline_failures)
             .await?;
         Ok(AgentApiOutcome::new(ContextCompactResponse { session }))
+    }
+
+    async fn append_context(
+        &self,
+        params: ContextAppendParams,
+    ) -> Result<AgentApiOutcome<ContextAppendResponse>, AgentApiError> {
+        const MAX_CONTEXT_APPEND_ENTRIES: usize = 64;
+
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        if params.entries.is_empty() {
+            return Err(AgentApiError::invalid_request(
+                "context/append requires at least one entry",
+            ));
+        }
+        if params.entries.len() > MAX_CONTEXT_APPEND_ENTRIES {
+            return Err(AgentApiError::invalid_request(format!(
+                "context/append accepts at most {MAX_CONTEXT_APPEND_ENTRIES} entries per call"
+            )));
+        }
+
+        let mut keyed = Vec::with_capacity(params.entries.len());
+        let mut seen_keys = BTreeSet::new();
+        for entry in &params.entries {
+            let key = ContextEntryKey::try_new(entry.key.clone()).map_err(|error| {
+                AgentApiError::invalid_request(format!("invalid context key: {error}"))
+            })?;
+            if !seen_keys.insert(key.clone()) {
+                return Err(AgentApiError::invalid_request(format!(
+                    "duplicate context key in append batch: {key}"
+                )));
+            }
+            let input = context_entry_input_from_api(self.store.as_ref(), &entry.item).await?;
+            keyed.push((key, input));
+        }
+
+        let loaded = self.load_session_state(&session_id).await?;
+        let mut applied_keys = Vec::new();
+        let mut unchanged_keys = Vec::new();
+        let mut pending = Vec::new();
+        for (key, input) in keyed {
+            let unchanged = loaded.state.context.entries.iter().any(|active| {
+                active.key.as_ref() == Some(&key)
+                    && active.kind == input.kind
+                    && active.content_ref == input.content_ref
+                    && active.media_type == input.media_type
+                    && active.preview == input.preview
+                    && active.provider_kind == input.provider_kind
+                    && active.provider_item_id == input.provider_item_id
+                    && active.token_estimate == input.token_estimate
+            });
+            if unchanged {
+                unchanged_keys.push(key.as_str().to_owned());
+            } else {
+                applied_keys.push(key.as_str().to_owned());
+                pending.push((key, input));
+            }
+        }
+        if pending.is_empty() {
+            return Ok(AgentApiOutcome::new(ContextAppendResponse {
+                context_revision: loaded.state.context.revision,
+                applied_keys,
+                unchanged_keys,
+            }));
+        }
+
+        let baseline_failures = self
+            .query_status_optional(&session_id)
+            .await?
+            .map(|status| status.admission_failures.len())
+            .unwrap_or(0);
+        for (key, entry) in &pending {
+            self.submit_core_command(
+                &session_id,
+                CoreAgentCommand::UpsertContext {
+                    key: key.clone(),
+                    entry: entry.clone(),
+                },
+            )
+            .await?;
+        }
+        let context_revision = self
+            .wait_for_context_entries_applied(&session_id, &pending, baseline_failures)
+            .await?;
+        Ok(AgentApiOutcome::new(ContextAppendResponse {
+            context_revision,
+            applied_keys,
+            unchanged_keys,
+        }))
+    }
+
+    async fn read_outbox(
+        &self,
+        params: OutboxReadParams,
+    ) -> Result<AgentApiOutcome<OutboxReadResponse>, AgentApiError> {
+        let after = params.after.unwrap_or(0);
+        let limit = params.limit.unwrap_or(64).clamp(1, 256) as usize;
+        let wait = Duration::from_millis(u64::from(params.wait_ms.unwrap_or(0)))
+            .min(self.events_wait_cap);
+        let deadline = Instant::now() + wait;
+        loop {
+            let entries = OutboxStore::read_pending(
+                self.store.as_ref(),
+                ReadPendingOutbound {
+                    after_seq: after,
+                    limit,
+                },
+            )
+            .await
+            .map_err(map_messaging_error)?;
+            if !entries.is_empty() || Instant::now() >= deadline {
+                let next_after = entries.last().map(|entry| entry.seq).unwrap_or(after);
+                let entries = entries
+                    .into_iter()
+                    .map(outbound_message_view)
+                    .collect::<Vec<_>>();
+                return Ok(AgentApiOutcome::new(OutboxReadResponse {
+                    entries,
+                    next_after,
+                }));
+            }
+            tokio::time::sleep(self.poll_interval.min(Duration::from_millis(250))).await;
+        }
+    }
+
+    async fn ack_outbox(
+        &self,
+        params: OutboxAckParams,
+    ) -> Result<AgentApiOutcome<OutboxAckResponse>, AgentApiError> {
+        let ack = match params.result {
+            OutboundAckInput::Delivered { channel_message_id } => {
+                messaging::OutboundAck::Delivered { channel_message_id }
+            }
+            OutboundAckInput::Failed { error, retryable } => {
+                messaging::OutboundAck::Failed { error, retryable }
+            }
+        };
+        let updated = OutboxStore::ack(self.store.as_ref(), &params.outbox_id, ack)
+            .await
+            .map_err(map_messaging_error)?;
+        Ok(AgentApiOutcome::new(OutboxAckResponse {
+            outbox_id: updated.outbox_id,
+            status: match updated.status {
+                messaging::OutboundStatus::Pending => OutboundStatusView::Pending,
+                messaging::OutboundStatus::Delivered => OutboundStatusView::Delivered,
+                messaging::OutboundStatus::Failed => OutboundStatusView::Failed,
+            },
+            attempts: updated.attempts,
+        }))
     }
 
     async fn start_run(
@@ -1899,3 +2058,41 @@ impl GatewayAgentApi {
 }
 #[cfg(test)]
 mod tests;
+
+
+fn outbound_message_view(message: messaging::OutboundMessage) -> OutboundMessageView {
+    OutboundMessageView {
+        seq: message.seq,
+        outbox_id: message.outbox_id,
+        session_id: message.session_id.as_str().to_owned(),
+        run_id: message.run_id.map(api_run_id),
+        origin: match message.origin {
+            messaging::OutboundOrigin::ToolCall => OutboundOriginView::ToolCall,
+            messaging::OutboundOrigin::FinalText => OutboundOriginView::FinalText,
+            messaging::OutboundOrigin::Trigger => OutboundOriginView::Trigger,
+        },
+        payload: match message.payload {
+            OutboundPayload::Send { text, reply_to } => OutboundPayloadView::Send { text, reply_to },
+            OutboundPayload::React { message_id, emoji } => {
+                OutboundPayloadView::React { message_id, emoji }
+            }
+            OutboundPayload::Edit { message_id, text } => {
+                OutboundPayloadView::Edit { message_id, text }
+            }
+        },
+        attempts: message.attempts,
+        created_at_ms: message.created_at_ms,
+    }
+}
+
+fn map_messaging_error(error: MessagingError) -> AgentApiError {
+    match error {
+        MessagingError::NotFound { outbox_id } => {
+            AgentApiError::not_found(format!("outbox message not found: {outbox_id}"))
+        }
+        MessagingError::InvalidInput { message } | MessagingError::RateLimited { message } => {
+            AgentApiError::invalid_request(message)
+        }
+        MessagingError::Store { message } => AgentApiError::internal(message),
+    }
+}

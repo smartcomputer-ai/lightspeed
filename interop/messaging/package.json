@@ -1,0 +1,41 @@
+{
+  "name": "@forge/messaging-bridge",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Telegram and WhatsApp bridge for Forge sessions.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "forge-messaging-bridge": "./dist/main.js"
+  },
+  "scripts": {
+    "build:client": "npm --prefix ../ts-client install --ignore-scripts && npm --prefix ../ts-client run build",
+    "dev": "npm run build:client && tsx src/main.ts",
+    "typecheck:bridge": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "npm run build:client && npm run typecheck:bridge",
+    "build:bridge": "tsc -p tsconfig.build.json",
+    "build": "npm run build:client && npm run build:bridge",
+    "test:bridge": "vitest run",
+    "test": "npm run build:client && npm run test:bridge",
+    "check": "npm run build:client && npm run typecheck:bridge && npm run test:bridge && npm run build:bridge"
+  },
+  "dependencies": {
+    "@forge/agent-client": "file:../ts-client",
+    "baileys": "7.0.0-rc13",
+    "dotenv": "^17.2.3",
+    "grammy": "^1.43.0",
+    "marked": "^18.0.5",
+    "qrcode-terminal": "^0.12.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/qrcode-terminal": "^0.12.2",
+    "tsx": "^4.20.6",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

@@ -420,6 +420,8 @@ pub enum MessageParamContent {
 #[serde(untagged)]
 pub enum ContentBlockParam {
     Text(TextBlockParam),
+    Image(ImageBlockParam),
+    Document(DocumentBlockParam),
     ToolUse(ToolUseBlockParam),
     ToolResult(ToolResultBlockParam),
     Thinking(ThinkingBlockParam),
@@ -436,6 +438,94 @@ impl ContentBlockParam {
             extra: BTreeMap::new(),
         })
     }
+
+    pub fn image_base64(media_type: impl Into<String>, data: impl Into<String>) -> Self {
+        Self::Image(ImageBlockParam {
+            r#type: "image".to_string(),
+            source: ImageSourceParam {
+                r#type: "base64".to_string(),
+                media_type: media_type.into(),
+                data: data.into(),
+            },
+            cache_control: None,
+            extra: BTreeMap::new(),
+        })
+    }
+
+    /// A base64 document block (PDF).
+    pub fn document_base64(
+        media_type: impl Into<String>,
+        data: impl Into<String>,
+        title: Option<String>,
+    ) -> Self {
+        Self::Document(DocumentBlockParam {
+            r#type: "document".to_string(),
+            source: DocumentSourceParam {
+                r#type: "base64".to_string(),
+                media_type: media_type.into(),
+                data: data.into(),
+            },
+            title,
+            cache_control: None,
+            extra: BTreeMap::new(),
+        })
+    }
+
+    /// A plain-text document block; the API requires `text/plain` for text
+    /// sources, so markdown/CSV content is carried as plain text.
+    pub fn document_text(data: impl Into<String>, title: Option<String>) -> Self {
+        Self::Document(DocumentBlockParam {
+            r#type: "document".to_string(),
+            source: DocumentSourceParam {
+                r#type: "text".to_string(),
+                media_type: "text/plain".to_string(),
+                data: data.into(),
+            },
+            title,
+            cache_control: None,
+            extra: BTreeMap::new(),
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DocumentBlockParam {
+    #[serde(rename = "type")]
+    pub r#type: String,
+    pub source: DocumentSourceParam,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_control: Option<Value>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DocumentSourceParam {
+    #[serde(rename = "type")]
+    pub r#type: String,
+    pub media_type: String,
+    pub data: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ImageBlockParam {
+    #[serde(rename = "type")]
+    pub r#type: String,
+    pub source: ImageSourceParam,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_control: Option<Value>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ImageSourceParam {
+    #[serde(rename = "type")]
+    pub r#type: String,
+    pub media_type: String,
+    pub data: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

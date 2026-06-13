@@ -667,6 +667,7 @@ fn web_search_can_be_disabled_in_session_tools_config() {
             web_search: Some(false),
             web_fetch: None,
             host: None,
+            messaging: None,
         }),
     );
 
@@ -685,6 +686,7 @@ fn web_fetch_defaults_on_and_can_be_disabled() {
             web_search: None,
             web_fetch: Some(false),
             host: None,
+            messaging: None,
         }),
     );
 
@@ -704,6 +706,7 @@ fn web_search_rejects_explicit_enable_for_non_openai_responses() {
             web_search: Some(true),
             web_fetch: None,
             host: None,
+            messaging: None,
         }),
     );
 
@@ -733,6 +736,7 @@ fn host_tools_can_be_configured_read_only_or_none() {
             web_search: None,
             web_fetch: None,
             host: Some(api::HostToolMode::ReadOnly),
+            messaging: None,
         }),
     );
 
@@ -744,10 +748,239 @@ fn host_tools_can_be_configured_read_only_or_none() {
             web_search: None,
             web_fetch: None,
             host: Some(api::HostToolMode::None),
+            messaging: None,
         }),
     );
 
     assert_eq!(effective_host_tool_mode(&config), HostToolMode::None);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn context_entry_input_from_api_stores_text_as_user_message() {
+    let store = engine::storage::InMemoryBlobStore::new();
+
+    let entry = context_entry_input_from_api(
+        &store,
+        &InputItem::Text {
+            text: " [telegram] Alice (12:01): hi ".to_owned(),
+        },
+    )
+    .await
+    .expect("entry");
+
+    assert_eq!(
+        entry.kind,
+        engine::ContextEntryKind::Message {
+            role: engine::ContextMessageRole::User,
+        }
+    );
+    assert_eq!(entry.media_type.as_deref(), Some("text/plain"));
+    assert_eq!(
+        store
+            .read_text(&entry.content_ref)
+            .await
+            .expect("stored text"),
+        "[telegram] Alice (12:01): hi"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn context_entry_input_from_api_rejects_empty_text() {
+    let store = engine::storage::InMemoryBlobStore::new();
+
+    let error = context_entry_input_from_api(
+        &store,
+        &InputItem::Text {
+            text: "   ".to_owned(),
+        },
+    )
+    .await
+    .expect_err("empty text must be rejected");
+
+    assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn context_entry_input_from_api_preserves_text_ref() {
+    let store = engine::storage::InMemoryBlobStore::new();
+    let blob_ref = store.insert_text("buffered room chatter").await;
+
+    let entry = context_entry_input_from_api(
+        &store,
+        &InputItem::TextRef {
+            blob_ref: blob_ref.as_str().to_owned(),
+        },
+    )
+    .await
+    .expect("entry");
+
+    assert_eq!(entry.content_ref, blob_ref);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn run_input_from_api_maps_image_media_to_user_message_entry() {
+    let store = engine::storage::InMemoryBlobStore::new();
+    let blob_ref = store
+        .put_bytes(vec![0x89, 0x50, 0x4e, 0x47])
+        .await
+        .expect("store image");
+
+    let input = run_input_from_api(
+        &store,
+        &[
+            InputItem::Text {
+                text: "what is this?".to_owned(),
+            },
+            InputItem::Media {
+                blob_ref: blob_ref.as_str().to_owned(),
+                mime: "image/png".to_owned(),
+                kind: api::MediaKind::Image,
+                name: Some("photo.png".to_owned()),
+            },
+        ],
+    )
+    .await
+    .expect("input");
+
+    assert_eq!(input.len(), 2);
+    let media = &input[1];
+    assert_eq!(
+        media.kind,
+        engine::ContextEntryKind::Message {
+            role: engine::ContextMessageRole::User,
+        }
+    );
+    assert_eq!(media.content_ref, blob_ref);
+    assert_eq!(media.media_type.as_deref(), Some("image/png"));
+    assert_eq!(media.preview.as_deref(), Some("[image: photo.png]"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn run_input_from_api_maps_document_media_to_user_message_entry() {
+    let store = engine::storage::InMemoryBlobStore::new();
+    let pdf_ref = store
+        .put_bytes(b"%PDF-1.4 fake".to_vec())
+        .await
+        .expect("store pdf");
+    let md_ref = store
+        .put_bytes(b"# Notes".to_vec())
+        .await
+        .expect("store markdown");
+
+    let input = run_input_from_api(
+        &store,
+        &[
+            InputItem::Media {
+                blob_ref: pdf_ref.as_str().to_owned(),
+                mime: "application/pdf".to_owned(),
+                kind: api::MediaKind::Document,
+                name: Some("offer.pdf".to_owned()),
+            },
+            InputItem::Media {
+                blob_ref: md_ref.as_str().to_owned(),
+                mime: "text/markdown".to_owned(),
+                kind: api::MediaKind::Document,
+                name: Some("notes.md".to_owned()),
+            },
+        ],
+    )
+    .await
+    .expect("input");
+
+    assert_eq!(input.len(), 2);
+    assert_eq!(input[0].media_type.as_deref(), Some("application/pdf"));
+    assert_eq!(input[0].preview.as_deref(), Some("[document: offer.pdf]"));
+    assert_eq!(input[1].media_type.as_deref(), Some("text/markdown"));
+    assert_eq!(input[1].preview.as_deref(), Some("[document: notes.md]"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn run_input_from_api_rejects_unsupported_document_media() {
+    let store = engine::storage::InMemoryBlobStore::new();
+    let blob_ref = store.put_bytes(vec![1, 2, 3]).await.expect("store blob");
+
+    let docx = run_input_from_api(
+        &store,
+        &[InputItem::Media {
+            blob_ref: blob_ref.as_str().to_owned(),
+            mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                .to_owned(),
+            kind: api::MediaKind::Document,
+            name: None,
+        }],
+    )
+    .await
+    .expect_err("docx must be rejected");
+    assert_eq!(docx.kind, AgentApiErrorKind::InvalidRequest);
+
+    // Text documents must decode as UTF-8 at admission.
+    let binary_ref = store
+        .put_bytes(vec![0xff, 0xfe, 0x00])
+        .await
+        .expect("store binary blob");
+    let binary = run_input_from_api(
+        &store,
+        &[InputItem::Media {
+            blob_ref: binary_ref.as_str().to_owned(),
+            mime: "text/plain".to_owned(),
+            kind: api::MediaKind::Document,
+            name: None,
+        }],
+    )
+    .await
+    .expect_err("non-UTF-8 text document must be rejected");
+    assert_eq!(binary.kind, AgentApiErrorKind::InvalidRequest);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn run_input_from_api_rejects_unsupported_media() {
+    let store = engine::storage::InMemoryBlobStore::new();
+    let blob_ref = store.put_bytes(vec![1, 2, 3]).await.expect("store blob");
+
+    let audio = run_input_from_api(
+        &store,
+        &[InputItem::Media {
+            blob_ref: blob_ref.as_str().to_owned(),
+            mime: "audio/ogg".to_owned(),
+            kind: api::MediaKind::Audio,
+            name: None,
+        }],
+    )
+    .await
+    .expect_err("audio must be rejected");
+    assert_eq!(audio.kind, AgentApiErrorKind::InvalidRequest);
+
+    let bad_mime = run_input_from_api(
+        &store,
+        &[InputItem::Media {
+            blob_ref: blob_ref.as_str().to_owned(),
+            mime: "image/tiff".to_owned(),
+            kind: api::MediaKind::Image,
+            name: None,
+        }],
+    )
+    .await
+    .expect_err("unsupported image mime must be rejected");
+    assert_eq!(bad_mime.kind, AgentApiErrorKind::InvalidRequest);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn context_entry_input_from_api_rejects_media() {
+    let store = engine::storage::InMemoryBlobStore::new();
+    let blob_ref = store.put_bytes(vec![1, 2, 3]).await.expect("store blob");
+
+    let error = context_entry_input_from_api(
+        &store,
+        &InputItem::Media {
+            blob_ref: blob_ref.as_str().to_owned(),
+            mime: "image/png".to_owned(),
+            kind: api::MediaKind::Image,
+            name: None,
+        },
+    )
+    .await
+    .expect_err("media must be rejected in context/append");
+    assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
 }
 
 #[tokio::test(flavor = "current_thread")]

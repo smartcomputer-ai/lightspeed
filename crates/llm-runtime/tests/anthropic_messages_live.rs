@@ -260,6 +260,159 @@ async fn anthropic_messages_live_adapter_generates_result() {
     );
 }
 
+/// 32x32 solid red PNG.
+const RED_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAKElEQVR4nO3NsQ0AAAzCMP5/un0CNkuZ41wybXsHAAAAAAAAAAAAxR4yw/wuPL6QkAAAAABJRU5ErkJggg==";
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ANTHROPIC_API_KEY (costs real money)"]
+async fn anthropic_messages_live_adapter_describes_image_input() {
+    use base64::Engine as _;
+    let blobs = Arc::new(InMemoryBlobStore::new());
+    let image_bytes = base64::engine::general_purpose::STANDARD
+        .decode(RED_PNG_BASE64)
+        .expect("decode test png");
+    let image_ref = blobs.put_bytes(image_bytes).await.expect("store image");
+    let question_ref = text_blob(
+        &blobs,
+        "What is the dominant color of this image? Reply with one English word in lowercase.",
+    )
+    .await;
+
+    let mut image_entry = user_entry(1, image_ref);
+    image_entry.media_type = Some("image/png".to_owned());
+    image_entry.preview = Some("[image: red.png]".to_owned());
+    let question_entry = user_entry(2, question_ref);
+
+    let adapter = AnthropicMessagesLlmAdapter::new(
+        retrying_anthropic_messages_client(live_client()),
+        blobs.clone(),
+    );
+    let request = generation_request(
+        1,
+        intent_request(
+            "live-anthropic-messages-image",
+            vec![image_entry, question_entry],
+        ),
+    );
+
+    let execution = adapter.generate(request).await.expect("generate message");
+
+    assert_eq!(execution.result.status, LlmGenerationStatus::Succeeded);
+    let assistant_ref = execution
+        .result
+        .context_entries
+        .iter()
+        .find(|entry| {
+            matches!(
+                entry.kind,
+                ContextEntryKind::Message {
+                    role: ContextMessageRole::Assistant,
+                }
+            )
+        })
+        .map(|entry| entry.content_ref.clone())
+        .expect("assistant entry");
+    let answer = blobs
+        .read_text(&assistant_ref)
+        .await
+        .expect("assistant text")
+        .to_lowercase();
+    assert!(
+        answer.contains("red"),
+        "expected the model to identify the red image, got: {answer}"
+    );
+}
+
+/// A minimal one-page PDF with correct xref offsets carrying `text`.
+fn minimal_pdf(text: &str) -> Vec<u8> {
+    let content = format!("BT /F1 24 Tf 72 700 Td ({text}) Tj ET");
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R \
+         /Resources << /Font << /F1 5 0 R >> >> >>"
+            .to_string(),
+        format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string(),
+    ];
+    let mut pdf = String::from("%PDF-1.4\n");
+    let mut offsets = Vec::new();
+    for (index, object) in objects.iter().enumerate() {
+        offsets.push(pdf.len());
+        pdf.push_str(&format!("{} 0 obj\n{object}\nendobj\n", index + 1));
+    }
+    let xref_offset = pdf.len();
+    pdf.push_str(&format!("xref\n0 {}\n", objects.len() + 1));
+    pdf.push_str("0000000000 65535 f \n");
+    for offset in offsets {
+        pdf.push_str(&format!("{offset:010} 00000 n \n"));
+    }
+    pdf.push_str(&format!(
+        "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n",
+        objects.len() + 1
+    ));
+    pdf.into_bytes()
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ANTHROPIC_API_KEY (costs real money)"]
+async fn anthropic_messages_live_adapter_reads_pdf_document_input() {
+    let blobs = Arc::new(InMemoryBlobStore::new());
+    let pdf_ref = blobs
+        .put_bytes(minimal_pdf("The magic word is tangerine"))
+        .await
+        .expect("store pdf");
+    let question_ref = text_blob(
+        &blobs,
+        "What is the magic word in the attached document? Reply with one English word in lowercase.",
+    )
+    .await;
+
+    let mut pdf_entry = user_entry(1, pdf_ref);
+    pdf_entry.media_type = Some("application/pdf".to_owned());
+    pdf_entry.preview = Some("[document: magic.pdf]".to_owned());
+    let question_entry = user_entry(2, question_ref);
+
+    let adapter = AnthropicMessagesLlmAdapter::new(
+        retrying_anthropic_messages_client(live_client()),
+        blobs.clone(),
+    );
+    let request = generation_request(
+        1,
+        intent_request(
+            "live-anthropic-messages-pdf",
+            vec![pdf_entry, question_entry],
+        ),
+    );
+
+    let execution = adapter.generate(request).await.expect("generate message");
+
+    assert_eq!(execution.result.status, LlmGenerationStatus::Succeeded);
+    let assistant_ref = execution
+        .result
+        .context_entries
+        .iter()
+        .find(|entry| {
+            matches!(
+                entry.kind,
+                ContextEntryKind::Message {
+                    role: ContextMessageRole::Assistant,
+                }
+            )
+        })
+        .map(|entry| entry.content_ref.clone())
+        .expect("assistant entry");
+    let answer = blobs
+        .read_text(&assistant_ref)
+        .await
+        .expect("assistant text")
+        .to_lowercase();
+    assert!(
+        answer.contains("tangerine"),
+        "expected the model to read the PDF magic word, got: {answer}"
+    );
+}
+
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ANTHROPIC_API_KEY (costs real money)"]
 async fn anthropic_messages_live_adapter_runs_tool_round_trip() {

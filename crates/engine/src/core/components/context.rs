@@ -510,6 +510,16 @@ pub(crate) fn context_prefix_replacement_is_noop(
     active == *entries
 }
 
+pub(crate) fn context_upsert_is_noop(
+    state: &CoreAgentState,
+    key: &ContextEntryKey,
+    entry: &ContextEntryInput,
+) -> bool {
+    current_key_entry(state, key)
+        .map(|active| context_entry_input_from_active(active) == *entry)
+        .unwrap_or(false)
+}
+
 pub(crate) fn validate_context_key_exists(
     state: &CoreAgentState,
     key: &ContextEntryKey,
@@ -603,6 +613,9 @@ fn validate_external_context_edit_entry(
 
     match &entry.kind {
         ContextEntryKind::ProviderOpaque => Ok(()),
+        ContextEntryKind::Message {
+            role: ContextMessageRole::User,
+        } => Ok(()),
         ContextEntryKind::Instructions => Err(DomainError::InvariantViolation(format!(
             "instruction context entry requires an {}* key, got {}",
             INSTRUCTIONS_KEY_PREFIX, key

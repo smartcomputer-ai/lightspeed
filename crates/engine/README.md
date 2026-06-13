@@ -11,9 +11,9 @@ runtimes, workflow activities, adapter crates, and storage packages.
 
 Current architecture direction:
 
-- `../../spec/01-agent-idea.md`
-- `../../roadmap/p53-async-agent-workflow.md`
-- `../../roadmap/p54-composable-agent-kernel.md`
+- `../../docs/spec/01-agent-idea.md`
+- `../../docs/roadmap/p53-async-agent-workflow.md`
+- `../../docs/roadmap/p54-composable-agent-kernel.md`
 
 Local verification:
 

@@ -7,6 +7,7 @@ use engine::{ProviderApiKind, ToolName, ToolSpec};
 use crate::{
     error::{ToolError, ToolResult},
     host::tools::{HostTool, HostToolOperation, HostToolSurface},
+    messaging::{MessagingToolsetConfig, messaging_tool_bindings, messaging_tool_bundles},
     runtime::{ToolCatalog, ToolDocument, ToolExecutionMode, ToolSpecBundle, ToolTarget},
     web::fetch::{WebFetchToolConfig, web_fetch_tool_binding, web_fetch_tool_bundle},
     web::search::{
@@ -20,6 +21,7 @@ pub struct ToolsetConfig {
     pub host: HostToolsetConfig,
     pub openai_web_search: OpenAiResponsesWebSearchConfig,
     pub web_fetch: WebFetchToolConfig,
+    pub messaging: MessagingToolsetConfig,
 }
 
 impl ToolsetConfig {
@@ -28,6 +30,7 @@ impl ToolsetConfig {
             host: HostToolsetConfig::disabled(),
             openai_web_search: OpenAiResponsesWebSearchConfig::default(),
             web_fetch: WebFetchToolConfig::default(),
+            messaging: MessagingToolsetConfig::default(),
         }
     }
 
@@ -320,6 +323,10 @@ pub fn resolve_toolset(
         builder.add_web_fetch(bundle);
     }
 
+    if config.messaging.enabled {
+        builder.add_messaging(messaging_tool_bundles(&config.messaging)?);
+    }
+
     Ok(builder.finish())
 }
 
@@ -378,6 +385,15 @@ impl ToolsetBuilder {
         self.add_bundle(bundle);
         self.catalog
             .insert(web_fetch_tool_binding(ToolExecutionMode::Inline));
+    }
+
+    fn add_messaging(&mut self, bundles: Vec<ToolSpecBundle>) {
+        for bundle in bundles {
+            self.add_bundle(bundle);
+        }
+        for binding in messaging_tool_bindings(ToolExecutionMode::Inline) {
+            self.catalog.insert(binding);
+        }
     }
 
     fn add_bundle(&mut self, bundle: ToolSpecBundle) {

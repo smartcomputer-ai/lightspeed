@@ -44,7 +44,7 @@ We belive running and coordination agents at scale are best managed by durable w
 | Crate | Path | Purpose |
 |-------|------|---------|
 | `engine` | `crates/engine` | Deterministic session kernel plus built-in CoreAgent: dynamic session log storage, CoreAgent command/event/state models, planning, codecs, and the substrate-neutral drive machine |
-| `api` | `crates/api` | Client-facing session/run/item API types, views, notifications, and the exported wire-contract schemas under `schemas/` |
+| `api` | `crates/api` | Client-facing session/run/item API types, views, notifications, and the exported wire-contract artifacts under `interop/contract/` |
 | `api-projection` | `crates/api-projection` | Shared CoreAgent-to-`api` projection helpers for local and workflow-backed gateways |
 | `temporal-workflow` | `crates/temporal-workflow` | Temporal workflow, signals, queries, and activity request/response DTOs |
 | `temporal-server` | `crates/temporal-server` | Hosted runtime binary and modules for the Temporal worker, HTTP/JSON-RPC gateway, and combined local/small-deployment mode |
@@ -58,6 +58,11 @@ We belive running and coordination agents at scale are best managed by durable w
 | `llm-runtime` | `crates/llm-runtime` | CoreAgent LLM runtime over provider-native clients |
 | `llm-clients` | `crates/llm-clients` | Provider-native OpenAI and Anthropic API clients |
 | `cli` | `crates/cli` | Command-line chat client for the API gateway |
+
+## Project Docs
+
+- `docs/spec/` holds working design notes.
+- `docs/roadmap/` holds implementation plans and historical milestones.
 
 ## Quick Start
 
@@ -95,7 +100,7 @@ The hosted path runs three pieces locally:
 From the repository root:
 
 ```bash
-dev/local/up.sh
+local/up.sh
 ```
 
 This starts Postgres on `localhost:15432`, MinIO on `localhost:29000`,
@@ -104,7 +109,7 @@ Temporal on `localhost:7233`, and the Temporal UI on `http://localhost:8233`.
 Each shell that runs Forge commands should load the local environment:
 
 ```bash
-source dev/local/env.sh
+source local/env.sh
 ```
 
 ### 2. Run The Server
@@ -112,7 +117,7 @@ source dev/local/env.sh
 Open a first shell:
 
 ```bash
-source dev/local/env.sh
+source local/env.sh
 
 # export OPENAI_API_KEY=...  # omit this if it is already in .env
 
@@ -139,12 +144,12 @@ cargo run -p temporal-server -- gateway
 Open another shell:
 
 ```bash
-source dev/local/env.sh
+source local/env.sh
 cargo run -p cli -- chat --new
 ```
 
 That starts an interactive TUI session. `FORGE_API_URL` is exported by
-`dev/local/env.sh`, so you do not need to pass `--api-url`.
+`local/env.sh`, so you do not need to pass `--api-url`.
 
 For OpenAI-backed chat, the CLI sends typed session/run configuration through
 the API. Use `--model ...` on a command, or set `FORGE_CHAT_MODEL`, if you want
@@ -225,13 +230,13 @@ Snapshot mounts are read-only; workspace mounts can be read-only or read-write.
 ### Stop Or Reset Local Infra
 
 ```bash
-dev/local/down.sh
+local/down.sh
 ```
 
 To reset persisted local state while keeping containers available:
 
 ```bash
-dev/local/reset.sh
+local/reset.sh
 ```
 
 ## Runtime Model
@@ -281,7 +286,7 @@ cargo test -p llm-clients -- --ignored
 
 ## Wire Contract Schemas
 
-`schemas/` holds the committed machine-readable contract of the JSON-RPC
+`interop/contract/` holds the committed machine-readable contract of the JSON-RPC
 gateway, generated from the `api` crate's types via schemars:
 
 - `api.schema.json` — draft-07 JSON Schema bundle of every wire type;
@@ -297,6 +302,10 @@ cargo run -p api --bin export-schema
 ```
 
 `cargo test -p api` fails while the committed artifacts are stale.
+
+Interop packages that consume this contract live under `interop/`, including
+the private TypeScript client in `interop/ts-client/` and the messaging bridge
+in `interop/messaging/`.
 
 ## Environment Variables
 

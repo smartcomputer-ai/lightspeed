@@ -6,6 +6,7 @@
 
 pub mod error;
 pub mod host;
+pub mod messaging;
 pub mod prompts;
 pub mod runtime;
 pub mod skills;

@@ -14,9 +14,11 @@ pipeline runner.
 Use these files as the index:
 
 - `README.md` — current overview, crate map, runtime model, commands.
-- `spec/01-agent-idea.md` — working design notes for the new agent direction.
+- `docs/spec/01-agent-idea.md` — working design notes for the new agent direction.
 - `Cargo.toml` — workspace membership.
-- `roadmap/` — implementation plans and historical milestones.
+- `interop/` — API contract artifacts, private clients, and bridge packages.
+- `local/` — local Docker stack, environment exports, and reset helpers.
+- `docs/roadmap/` — implementation plans and historical milestones.
 
 ## Build & Test
 
@@ -33,6 +35,7 @@ cargo test -p tools
 cargo test -p store-fs
 cargo test -p store-pg
 cargo test -p mcp-registry
+cargo test -p messaging
 cargo test -p auth-registry
 cargo test -p llm-runtime
 cargo test -p llm-clients
@@ -57,7 +60,7 @@ Additional per-capability live suites exist for both providers under
 `*_prompts_live`, `*_skills_live`).
 
 After changing `api` wire types, regenerate the committed contract artifacts
-under `schemas/` (`cargo test -p api` fails while they are stale):
+under `interop/contract/` (`cargo test -p api` fails while they are stale):
 
 ```bash
 cargo run -p api --bin export-schema
@@ -94,6 +97,8 @@ cargo run -p cli -- chat --api-url http://127.0.0.1:18080/rpc --session session_
   store adapters.
 - `crates/store-pg/` — PostgreSQL-backed session store, CAS catalog, MCP server
   catalog, and AEAD-encrypted auth grant/secret storage.
+- `crates/messaging/` — channel-neutral outbound message types and the
+  delivery outbox store trait backing the messaging tools and bridges (P71).
 - `crates/mcp-registry/` — provider-independent remote MCP server catalog DTOs,
   validation, and store traits.
 - `crates/auth-registry/` — generic auth grant/secret/provider records,
@@ -162,7 +167,7 @@ Local commands load a root `.env` file when present. The `.env` file usually exi
 ## Maintenance
 
 - If high-level architecture changes, update `README.md`, this file, and the
-  relevant spec/roadmap docs.
+  relevant docs under `docs/spec/` or `docs/roadmap/`.
 - When a roadmap item is completed or partially completed, mark what changed in
   that roadmap file.
 - When asked how many lines of code, use `cloc $(git ls-files)`.
