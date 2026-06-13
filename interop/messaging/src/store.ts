@@ -3,20 +3,14 @@ import path from "node:path";
 import type { EventCursor } from "@lightspeed/agent-client";
 import type { ActivationPolicy } from "./policy.js";
 
-export interface ConversationState {
-  sessionId: string;
-  cursor?: EventCursor | null;
-  updatedAtMs: number;
-}
-
 export interface BindingState {
   channel: string;
   accountId: string;
   chatId: string;
   threadId?: string;
   sessionId: string;
-  /// Bumped by `/new`; folded into the derived session id.
-  generation: number;
+  /// Recipe applied when the bound session was created (null = default).
+  recipe?: string | null;
   activation: ActivationPolicy;
   cursor?: EventCursor | null;
   updatedAtMs: number;
@@ -28,6 +22,7 @@ export interface BindingInit {
   chatId: string;
   threadId?: string;
   sessionId: string;
+  recipe?: string | null;
   activation: ActivationPolicy;
 }
 
@@ -39,14 +34,11 @@ export interface MessageState {
 }
 
 export interface BridgeState {
-  /// Legacy chat-to-session map; migrated into `bindings` on first touch.
-  conversations: Record<string, ConversationState>;
   bindings: Record<string, BindingState>;
   messages: Record<string, MessageState>;
 }
 
 const EMPTY_STATE: BridgeState = {
-  conversations: {},
   bindings: {},
   messages: {},
 };
@@ -63,20 +55,17 @@ export class JsonBridgeStore {
     if (existing) {
       return existing;
     }
-    const legacy = state.conversations[key];
     const next: BindingState = {
       channel: init.channel,
       accountId: init.accountId,
       chatId: init.chatId,
       ...(init.threadId !== undefined ? { threadId: init.threadId } : {}),
-      sessionId: legacy?.sessionId ?? init.sessionId,
-      generation: 0,
+      sessionId: init.sessionId,
+      recipe: init.recipe ?? null,
       activation: init.activation,
-      ...(legacy?.cursor !== undefined ? { cursor: legacy.cursor } : {}),
       updatedAtMs: Date.now(),
     };
     state.bindings[key] = next;
-    delete state.conversations[key];
     await this.persist();
     return next;
   }
@@ -95,7 +84,7 @@ export class JsonBridgeStore {
 
   async updateBinding(
     key: string,
-    patch: Partial<Pick<BindingState, "activation" | "sessionId" | "generation" | "cursor">>,
+    patch: Partial<Pick<BindingState, "activation" | "sessionId" | "cursor">>,
   ): Promise<BindingState> {
     const state = await this.load();
     const existing = state.bindings[key];
@@ -175,7 +164,6 @@ export class JsonBridgeStore {
     } catch {
       this.state = structuredClone(EMPTY_STATE);
     }
-    this.state.conversations ??= {};
     this.state.bindings ??= {};
     this.state.messages ??= {};
     return this.state;

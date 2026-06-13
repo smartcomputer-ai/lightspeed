@@ -12,7 +12,8 @@ import {
 } from "baileys";
 import qrcode from "qrcode-terminal";
 import type { OutboundMessageView } from "@lightspeed/agent-client";
-import type { WhatsAppBridgeConfig } from "./config.js";
+import { resolveInboundAccess, type WhatsAppBridgeConfig } from "./config.js";
+import type { BridgeRouting } from "./telegram.js";
 import { stableHash } from "./ids.js";
 import { renderWhatsAppText } from "./markdown.js";
 import { documentByteLimit, documentMime } from "./media.js";
@@ -37,6 +38,7 @@ export interface RunningWhatsAppBridge {
 export async function startWhatsAppBridge(
   config: WhatsAppBridgeConfig,
   runtime: MessagingBridgeRuntime,
+  routing: BridgeRouting,
 ): Promise<RunningWhatsAppBridge> {
   const { state, saveCreds } = await useMultiFileAuthState(config.authDir);
   const { version } = await fetchLatestBaileysVersion();
@@ -47,6 +49,9 @@ export async function startWhatsAppBridge(
 
   if (allowedJids.size === 0) {
     console.warn("whatsapp: WHATSAPP_ALLOWED_JIDS is empty; all chats can trigger the bridge");
+  }
+  if (config.allowFrom.length === 0) {
+    console.warn("whatsapp: WHATSAPP_ALLOW_FROM is empty; any sender in an allowed chat can chat");
   }
 
   const policy: ChannelPolicy = {
@@ -98,7 +103,15 @@ export async function startWhatsAppBridge(
         return;
       }
       for (const message of upsert.messages) {
-        await handleWhatsAppMessage(config, runtime, policy, nextSock, allowedJids, message);
+        await handleWhatsAppMessage(
+          config,
+          runtime,
+          policy,
+          routing,
+          nextSock,
+          allowedJids,
+          message,
+        );
       }
     });
   };
@@ -170,6 +183,7 @@ async function handleWhatsAppMessage(
   config: WhatsAppBridgeConfig,
   runtime: MessagingBridgeRuntime,
   policy: ChannelPolicy,
+  routing: BridgeRouting,
   sock: WASocket,
   allowedJids: ReadonlySet<string>,
   message: WAMessage,
@@ -208,7 +222,19 @@ async function handleWhatsAppMessage(
   const senderJid = message.key.participant
     ? jidNormalizedUser(message.key.participant)
     : jidNormalizedUser(remoteJid);
-  const allowFrom = new Set(config.allowFrom);
+  const senderPhone = senderJid.split("@")[0];
+  const senderHandles = senderPhone ? [senderJid, senderPhone] : [senderJid];
+  const access = resolveInboundAccess(
+    {
+      channel: "whatsapp",
+      handles: senderHandles,
+      chatId: remoteJid,
+      scope: isGroup ? "group" : "direct",
+    },
+    config,
+    routing.bindings,
+    routing.recipes,
+  );
 
   const conversationParts = ["whatsapp", config.accountId, remoteJid];
   const conversationKey = `whatsapp:${stableHash(conversationParts)}`;
@@ -247,7 +273,11 @@ async function handleWhatsAppMessage(
         jidNormalizedUser(contextInfo.participant) === ownJid,
     ),
     isFromSelf: Boolean(message.key.fromMe),
-    senderAllowed: allowFrom.size > 0 ? allowFrom.has(senderJid) : !isGroup,
+    turnAllowed: access.turnAllowed,
+    controlAllowed: access.controlAllowed,
+    recipe: access.recipe,
+    recipeName: access.recipeName,
+    sessionKey: access.sessionKey,
     ...(hasImage
       ? { fetchMedia: () => downloadWhatsAppImage(message, image?.mimetype ?? null) }
       : hasDocument

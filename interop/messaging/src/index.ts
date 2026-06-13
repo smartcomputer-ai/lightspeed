@@ -1,11 +1,29 @@
 export type {
+  BindingMatch,
+  BindingQuery,
+  BindingRule,
+  BindingScope,
   BridgeRuntimeConfig,
+  ChannelAccessConfig,
+  InboundAccess,
   LightspeedBridgeConfig,
   MessagingBridgeConfig,
+  RecipeMcpLink,
+  RecipeMount,
+  ResolvedBinding,
+  SessionRecipe,
   TelegramBridgeConfig,
   WhatsAppBridgeConfig,
 } from "./config.js";
-export { loadBridgeConfig } from "./config.js";
+export {
+  handleDenied,
+  handleMatches,
+  loadBridgeConfig,
+  parseBindings,
+  parseRecipes,
+  resolveBinding,
+  resolveInboundAccess,
+} from "./config.js";
 export { extractAssistantText, LightspeedSessionBridge, runUsedMessagingTool } from "./lightspeed.js";
 export type { LightspeedReply, LightspeedRoomEvent, LightspeedTurn, LightspeedTurnMedia } from "./lightspeed.js";
 export { DeliveryError, OutboxTailer } from "./outbox.js";
@@ -32,9 +50,9 @@ export type {
   NormalizedInbound,
 } from "./runtime.js";
 export { JsonBridgeStore } from "./store.js";
-export type { BindingInit, BindingState, BridgeState, ConversationState, MessageState } from "./store.js";
+export type { BindingInit, BindingState, BridgeState, MessageState } from "./store.js";
 export { startTelegramBridge } from "./telegram.js";
-export type { RunningBridge } from "./telegram.js";
+export type { BridgeRouting, RunningBridge } from "./telegram.js";
 export { startWhatsAppBridge } from "./whatsapp.js";
 export type { RunningWhatsAppBridge } from "./whatsapp.js";
 export { extractTriggeredText, splitMessageText } from "./text.js";

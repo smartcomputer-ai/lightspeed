@@ -6,11 +6,14 @@ export type GroupActivation = Exclude<ActivationPolicy, "dm">;
 
 export type ControlCommand =
   | { kind: "activation"; mode: GroupActivation }
-  | { kind: "new" }
   | { kind: "status" };
 
 export type Classification =
   | { kind: "drop"; reason: string }
+  /// The sender is not on the channel's turn allowlist. `notify` is true when
+  /// the bridge should reply with an authorization error (direct chats) and
+  /// false when it should drop silently (group members).
+  | { kind: "denied"; notify: boolean }
   | { kind: "control"; command: ControlCommand }
   | { kind: "userTurn"; text: string }
   | { kind: "roomEvent"; text: string };
@@ -21,7 +24,10 @@ export interface ClassifyInput {
   isFromSelf: boolean;
   mentionedBot: boolean;
   isReplyToBot: boolean;
-  senderAllowed: boolean;
+  /// Sender is allowed to run a turn at all (channel turn allowlist).
+  turnAllowed: boolean;
+  /// Sender is allowed to run control commands (control allowlist).
+  controlAllowed: boolean;
 }
 
 export interface ClassifyOptions {
@@ -42,9 +48,6 @@ export function parseControlCommand(text: string): ControlCommand | null {
     // `/activation` without a valid mode reports usage via status.
     return { kind: "status" };
   }
-  if (/^\/new(?:@[\w_]+)?$/i.test(trimmed)) {
-    return { kind: "new" };
-  }
   if (/^\/status(?:@[\w_]+)?$/i.test(trimmed)) {
     return { kind: "status" };
   }
@@ -64,8 +67,17 @@ export function classifyInbound(
   }
 
   const control = parseControlCommand(text);
-  if (control && message.senderAllowed) {
+  if (control && message.controlAllowed) {
+    // Control senders may toggle activation/status even if they are not on the
+    // turn allowlist.
     return { kind: "control", command: control };
+  }
+
+  // Turn gate: senders absent from the channel allowlist cannot chat or seed
+  // room context. Direct chats get an explicit error; group members are
+  // dropped silently to avoid replying to every outsider message.
+  if (!message.turnAllowed) {
+    return { kind: "denied", notify: message.isDirect };
   }
 
   // Explicit trigger prefixes always address the bot, in every activation

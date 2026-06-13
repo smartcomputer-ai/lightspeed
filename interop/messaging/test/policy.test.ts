@@ -14,7 +14,8 @@ const baseMessage: ClassifyInput = {
   isFromSelf: false,
   mentionedBot: false,
   isReplyToBot: false,
-  senderAllowed: false,
+  turnAllowed: true,
+  controlAllowed: false,
 };
 
 const baseOptions: ClassifyOptions = {
@@ -81,13 +82,47 @@ describe("classifyInbound", () => {
     ).toEqual({ kind: "userTurn", text: "are you there" });
   });
 
-  it("routes control commands only for allowed senders", () => {
+  it("routes control commands only for control-allowed senders", () => {
     expect(
-      classifyInbound({ ...baseMessage, text: "/activation always", senderAllowed: true }, baseOptions),
+      classifyInbound({ ...baseMessage, text: "/activation always", controlAllowed: true }, baseOptions),
     ).toEqual({ kind: "control", command: { kind: "activation", mode: "always" } });
     expect(
       classifyInbound({ ...baseMessage, text: "/activation always" }, baseOptions),
     ).toEqual({ kind: "roomEvent", text: "/activation always" });
+  });
+
+  it("lets control-allowed senders run control even when not turn-allowed", () => {
+    expect(
+      classifyInbound(
+        { ...baseMessage, text: "/status", turnAllowed: false, controlAllowed: true },
+        baseOptions,
+      ),
+    ).toEqual({ kind: "control", command: { kind: "status" } });
+  });
+
+  it("denies a direct turn from a sender off the turn allowlist, with notify", () => {
+    expect(
+      classifyInbound(
+        { ...baseMessage, isDirect: true, turnAllowed: false },
+        { ...baseOptions, activation: "dm" },
+      ),
+    ).toEqual({ kind: "denied", notify: true });
+  });
+
+  it("denies a group turn silently from a sender off the turn allowlist", () => {
+    expect(
+      classifyInbound(
+        { ...baseMessage, mentionedBot: true, turnAllowed: false },
+        baseOptions,
+      ),
+    ).toEqual({ kind: "denied", notify: false });
+    // Even a trigger prefix cannot bypass the turn gate.
+    expect(
+      classifyInbound(
+        { ...baseMessage, text: "/ask hi", turnAllowed: false },
+        baseOptions,
+      ),
+    ).toEqual({ kind: "denied", notify: false });
   });
 
   it("drops empty messages", () => {
@@ -110,8 +145,7 @@ describe("parseControlCommand", () => {
     });
   });
 
-  it("parses /new and /status", () => {
-    expect(parseControlCommand("/new")).toEqual({ kind: "new" });
+  it("parses /status", () => {
     expect(parseControlCommand("/status")).toEqual({ kind: "status" });
   });
 

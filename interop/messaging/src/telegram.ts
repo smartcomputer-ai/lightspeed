@@ -1,6 +1,11 @@
 import { Bot, type Context } from "grammy";
 import type { Message } from "grammy/types";
-import type { TelegramBridgeConfig } from "./config.js";
+import {
+  resolveInboundAccess,
+  type BindingRule,
+  type SessionRecipe,
+  type TelegramBridgeConfig,
+} from "./config.js";
 import { stableHash } from "./ids.js";
 import { shouldQuoteChunk, type ReplyToMode } from "./policy.js";
 import type { OutboundMessageView } from "@lightspeed/agent-client";
@@ -25,18 +30,26 @@ export interface RunningBridge {
   deliverer: ChannelDeliverer;
 }
 
+export interface BridgeRouting {
+  bindings: readonly BindingRule[];
+  recipes: Record<string, SessionRecipe>;
+}
+
 export async function startTelegramBridge(
   config: TelegramBridgeConfig,
   runtime: MessagingBridgeRuntime,
+  routing: BridgeRouting,
 ): Promise<RunningBridge> {
   const bot = new Bot(config.botToken);
   const me = await bot.api.getMe();
   const botUsername = me.username ?? null;
   const allowedChatIds = new Set(config.allowedChatIds.map(String));
-  const allowFrom = new Set(config.allowFrom.map(String));
 
   if (allowedChatIds.size === 0) {
     console.warn("telegram: TELEGRAM_ALLOWED_CHAT_IDS is empty; all chats can trigger the bridge");
+  }
+  if (config.allowFrom.length === 0) {
+    console.warn("telegram: TELEGRAM_ALLOW_FROM is empty; any sender in an allowed chat can chat");
   }
 
   const policy: ChannelPolicy = {
@@ -69,6 +82,19 @@ export async function startTelegramBridge(
 
     const isDirect = message.chat.type === "private";
     const senderId = message.from ? String(message.from.id) : "unknown";
+    const senderUsername = message.from?.username ?? null;
+    const senderHandles = senderUsername ? [senderId, senderUsername] : [senderId];
+    const access = resolveInboundAccess(
+      {
+        channel: "telegram",
+        handles: senderHandles,
+        chatId,
+        scope: isDirect ? "direct" : "group",
+      },
+      config,
+      routing.bindings,
+      routing.recipes,
+    );
     const threadId = message.message_thread_id;
     const conversationParts = ["telegram", config.accountId, chatId, threadId ?? "main"];
     const conversationKey = `telegram:${stableHash(conversationParts)}`;
@@ -101,9 +127,11 @@ export async function startTelegramBridge(
       mentionedBot: messageMentionsBot(message, me.id, botUsername),
       isReplyToBot: message.reply_to_message?.from?.id === me.id,
       isFromSelf: message.from?.id === me.id,
-      // With no explicit allowFrom, direct chats in the chat allowlist are
-      // trusted for control commands; group members are not.
-      senderAllowed: allowFrom.size > 0 ? allowFrom.has(senderId) : isDirect,
+      turnAllowed: access.turnAllowed,
+      controlAllowed: access.controlAllowed,
+      recipe: access.recipe,
+      recipeName: access.recipeName,
+      sessionKey: access.sessionKey,
       ...(hasPhoto
         ? { fetchMedia: () => downloadTelegramPhoto(ctx, config.botToken, message) }
         : hasDocument
