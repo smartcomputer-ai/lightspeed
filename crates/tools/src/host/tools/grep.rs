@@ -191,7 +191,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn invoke_grep_applies_case_insensitive_matching() {
         let fs = InMemoryFileSystem::full_access();
-        fs.write_file(&FsPath::new("/file.txt").unwrap(), b"Forge\n".to_vec())
+        fs.write_file(&FsPath::new("/file.txt").unwrap(), b"Lightspeed\n".to_vec())
             .await
             .expect("write file");
         let ctx = context(Arc::new(fs));
@@ -199,7 +199,7 @@ mod tests {
         let result = invoke_grep(
             &ctx,
             GrepArgs {
-                pattern: "forge".to_string(),
+                pattern: "lightspeed".to_string(),
                 path: Some(FsPath::root()),
                 include: None,
                 case_sensitive: false,

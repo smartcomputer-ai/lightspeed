@@ -28,5 +28,5 @@ serde_json = "1"
 tempfile = "3"
 
 [[bin]]
-name = "forge"
+name = "lightspeed"
 path = "src/main.rs"

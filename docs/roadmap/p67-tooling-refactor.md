@@ -7,7 +7,7 @@
 
 ## Goal
 
-Forge now models tools around one concept:
+Lightspeed now models tools around one concept:
 
 ```text
 active session tools = the set of tools included in the next model request
@@ -423,7 +423,7 @@ Gateway/API:
 Runtime:
 
 - [x] client-effect tool invocation still dispatches by `tool_name`;
-- [x] remote MCP specs do not create Forge tool batches;
+- [x] remote MCP specs do not create Lightspeed tool batches;
 - [x] provider-native and remote MCP compatibility checks fail clearly for
   unsupported provider API kinds.
 

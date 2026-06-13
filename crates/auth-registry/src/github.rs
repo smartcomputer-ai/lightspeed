@@ -407,7 +407,7 @@ impl HttpGitHubApiClient {
         let http = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .timeout(std::time::Duration::from_secs(30))
-            .user_agent("forge-auth-registry")
+            .user_agent("lightspeed-auth-registry")
             .build()
             .map_err(|error| GitHubAppError::Http {
                 status: None,
@@ -692,7 +692,7 @@ mod tests {
             .expect("put app key");
         providers
             .create_auth_provider(CreateAuthProviderRecord {
-                provider_id: AuthProviderId::new("forge-github"),
+                provider_id: AuthProviderId::new("lightspeed-github"),
                 display_name: None,
                 config: AuthProviderConfig::GitHubApp(GitHubAppConfig {
                     app_id: "12345".to_owned(),
@@ -707,7 +707,7 @@ mod tests {
         grants
             .create_grant(CreateAuthGrantRecord {
                 grant_id: AuthGrantId::new("authgrant_install"),
-                provider_id: "forge-github".to_owned(),
+                provider_id: "lightspeed-github".to_owned(),
                 provider_kind: AuthProviderKind::GitHubApp,
                 principal: PrincipalRef::universe_default(),
                 display_name: None,

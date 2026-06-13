@@ -4,7 +4,7 @@
 .DS_Store
 node_modules/
 .store/
-.forge/
+.lightspeed/
 .aos/
 notes-world/
 .playwright-mcp/

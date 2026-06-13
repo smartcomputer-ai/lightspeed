@@ -31,7 +31,7 @@ pub const MESSAGE_EDIT_TOOL_NAME: &str = "message_edit";
 pub const MESSAGE_NOOP_TOOL_NAME: &str = "message_noop";
 
 pub const MESSAGING_LOGICAL_ID_PREFIX: &str = "messaging.";
-pub const MESSAGING_ACTIVITY_TYPE: &str = "forge.messaging";
+pub const MESSAGING_ACTIVITY_TYPE: &str = "lightspeed.messaging";
 
 /// Default per-session enqueue cap per minute, enforced at outbox admission.
 pub const DEFAULT_MESSAGES_PER_MINUTE: u32 = 30;

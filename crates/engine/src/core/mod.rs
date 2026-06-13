@@ -1,6 +1,6 @@
-//! Built-in Forge CoreAgent domain.
+//! Built-in Lightspeed CoreAgent domain.
 //!
-//! This module contains the closed agent composition that Forge ships by
+//! This module contains the closed agent composition that Lightspeed ships by
 //! default. The lower-level `session` module owns the extensible event-log
 //! primitives; CoreAgent is just one domain built on top of them.
 

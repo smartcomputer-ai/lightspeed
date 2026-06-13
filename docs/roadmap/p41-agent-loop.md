@@ -4,7 +4,7 @@
 - Complete (2026-05-05)
 
 **Goal**
-Implement the first executable Forge-native agent loop on top of the p40 core
+Implement the first executable Lightspeed-native agent loop on top of the p40 core
 model. This phase turns scoped journal events plus bounded `SessionState` into
 next effect intents, and settles receipts back into state and journal events.
 
@@ -20,7 +20,7 @@ persistence, and CLI UI are follow-on phases.
 
 ## Design Position
 
-Forge uses a journaled, ref-backed, snapshot-driven loop:
+Lightspeed uses a journaled, ref-backed, snapshot-driven loop:
 
 ```text
 input -> journal event -> reduce bounded state -> decide effect intents
@@ -371,7 +371,7 @@ Required test flows:
 
 ## Acceptance
 
-- `cargo test -p forge-agent` passes with deterministic tests only.
+- `cargo test -p lightspeed-agent` passes with deterministic tests only.
 - The loop is executable with fake LLM/tool executors.
 - No real provider, host tool, MCP server, Temporal worker, CXDB, Postgres, S3,
   or CLI UI is required.

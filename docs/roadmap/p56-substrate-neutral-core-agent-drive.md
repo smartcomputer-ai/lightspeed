@@ -124,7 +124,7 @@ The exact names are open, but the semantics are not:
 The shared invariant becomes:
 
 ```text
-Only committed Forge session entries mutate CoreAgentState.
+Only committed Lightspeed session entries mutate CoreAgentState.
 ```
 
 This is stricter than the current local `WorkflowEventBuffer` behavior and

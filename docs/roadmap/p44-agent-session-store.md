@@ -6,7 +6,7 @@
 ## Goal
 
 Make the session store the durable event-sourced persistence boundary for the
-first Forge agent runtime.
+first Lightspeed agent runtime.
 
 This phase intentionally keeps the model small:
 
@@ -89,7 +89,7 @@ pub struct AgentHandle(String);
 ```
 
 `AgentHandle` is not an agent definition catalog. It is a stable grouping key
-such as `forge.default`, `factory.reviewer`, or a host-defined id.
+such as `lightspeed.default`, `factory.reviewer`, or a host-defined id.
 
 ### Session position
 
@@ -581,7 +581,7 @@ object if we have a concrete need for shared or forked histories.
 - `SessionState` tracks `reduced_to: SessionPosition`.
 - The in-memory stepper can create, append, replay, and resume a single linear
   session event log without durable session-state snapshots.
-- `cargo test -p forge-agent` passes.
+- `cargo test -p lightspeed-agent` passes.
 
 ## Completed
 
@@ -600,4 +600,4 @@ object if we have a concrete need for shared or forked histories.
   the session store, and reduce committed entries.
 - Removed durable session-state snapshot persistence from the first-cut core;
   resume replays the session log from the beginning.
-- Verified with `cargo test -p forge-agent`.
+- Verified with `cargo test -p lightspeed-agent`.

@@ -28,7 +28,7 @@ use crate::chat::session::{new_session_id, new_submission_id, validate_session_i
 
 #[derive(Args, Debug, Clone)]
 pub(crate) struct ChatArgs {
-    /// Session ID to open or create through the configured Forge API.
+    /// Session ID to open or create through the configured Lightspeed API.
     #[arg(long)]
     session: Option<String>,
     /// Start with a fresh session ID.
@@ -37,29 +37,29 @@ pub(crate) struct ChatArgs {
     /// Provider ID for the model adapter.
     #[arg(
         long,
-        env = "FORGE_CHAT_PROVIDER",
+        env = "LIGHTSPEED_CHAT_PROVIDER",
         default_value = crate::chat::protocol::DEFAULT_CHAT_PROVIDER
     )]
     provider: String,
     /// Provider API kind.
     #[arg(
         long = "api-kind",
-        env = "FORGE_CHAT_API_KIND",
+        env = "LIGHTSPEED_CHAT_API_KIND",
         default_value = crate::chat::protocol::DEFAULT_CHAT_API_KIND
     )]
     api_kind: String,
     /// Model name.
     #[arg(
         long,
-        env = "FORGE_CHAT_MODEL",
+        env = "LIGHTSPEED_CHAT_MODEL",
         default_value = crate::chat::protocol::DEFAULT_CHAT_MODEL
     )]
     model: String,
     /// Reasoning effort: low, medium, high, or none.
-    #[arg(long, env = "FORGE_CHAT_REASONING_EFFORT", default_value = "high")]
+    #[arg(long, env = "LIGHTSPEED_CHAT_REASONING_EFFORT", default_value = "high")]
     effort: Option<String>,
     /// Max output token limit.
-    #[arg(long, env = "FORGE_CHAT_MAX_TOKENS")]
+    #[arg(long, env = "LIGHTSPEED_CHAT_MAX_TOKENS")]
     max_tokens: Option<u32>,
     /// Disable OpenAI Responses hosted web search for this session.
     #[arg(long = "no-web-search")]
@@ -80,7 +80,7 @@ pub(crate) struct ChatArgs {
     #[arg(long = "mount-path", default_value = "/workspace")]
     mount_path: String,
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
     api_url: String,
     /// Show full completed tool call arguments and results in the TUI.
     #[arg(long)]
@@ -311,19 +311,19 @@ impl ChatSessionDriver {
             ChatCommand::NewSession => self.new_session().await,
             ChatCommand::SteerRun { .. } => Ok(vec![ChatEvent::Error(ChatErrorView {
                 message:
-                    "steering an active run is not implemented by the current Forge API boundary"
+                    "steering an active run is not implemented by the current Lightspeed API boundary"
                         .into(),
                 action: Some("wait for the run to finish and submit a follow-up message".into()),
             })]),
             ChatCommand::InterruptRun { .. } => Ok(vec![ChatEvent::Error(ChatErrorView {
-                message: "interrupt is not implemented by the current Forge API boundary".into(),
+                message: "interrupt is not implemented by the current Lightspeed API boundary".into(),
                 action: Some(
                     "cancel support belongs at the API boundary and will be added there".into(),
                 ),
             })]),
             ChatCommand::PauseSession | ChatCommand::ResumeSession => {
                 Ok(vec![ChatEvent::Error(ChatErrorView {
-                    message: "pause/resume is not implemented for Forge API sessions".into(),
+                    message: "pause/resume is not implemented for Lightspeed API sessions".into(),
                     action: None,
                 })])
             }
@@ -1663,7 +1663,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn project_tool_chains_preserves_forge_tool_call_details() {
+    fn project_tool_chains_preserves_lightspeed_tool_call_details() {
         let run = api::RunView {
             id: "run_7".into(),
             status: api::RunStatus::Running,
@@ -1846,7 +1846,7 @@ mod tests {
         let response = api::SkillListResponse {
             catalog_ref: Some("sha256:catalog".into()),
             skills: vec![api::SkillListItem {
-                skill_id: "forge:review".into(),
+                skill_id: "lightspeed:review".into(),
                 name: "Review".into(),
                 description: "Review repository changes.".into(),
                 short_description: Some("review diffs".into()),
@@ -1858,7 +1858,7 @@ mod tests {
         let rendered = format_skill_list(&response);
 
         assert!(rendered.contains("catalogRef sha256:catalog"));
-        assert!(rendered.contains("- forge:review [active enabled] Review"));
+        assert!(rendered.contains("- lightspeed:review [active enabled] Review"));
         assert!(rendered.contains("Review repository changes."));
         assert!(rendered.contains("short review diffs"));
     }
@@ -1868,7 +1868,7 @@ mod tests {
         let response = api::SkillActiveResponse {
             catalog_ref: Some("sha256:catalog".into()),
             activations: vec![api::SkillActivationView {
-                skill_id: "forge:review".into(),
+                skill_id: "lightspeed:review".into(),
                 name: Some("Review".into()),
                 description: Some("Review repository changes.".into()),
                 short_description: None,
@@ -1884,7 +1884,7 @@ mod tests {
 
         assert!(rendered.contains("active 1"));
         assert!(
-            rendered.contains("- forge:review [session directContext:sha256:skill-doc] Review")
+            rendered.contains("- lightspeed:review [session directContext:sha256:skill-doc] Review")
         );
         assert!(rendered.contains("catalogRef sha256:catalog"));
     }
@@ -1982,7 +1982,7 @@ mod tests {
     }
 
     #[test]
-    fn run_seq_from_id_reads_forge_api_run_ids() {
+    fn run_seq_from_id_reads_lightspeed_api_run_ids() {
         assert_eq!(run_seq_from_id("run_42"), 42);
         assert_eq!(run_seq_from_id("other"), 0);
     }

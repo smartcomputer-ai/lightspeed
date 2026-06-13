@@ -45,7 +45,7 @@ pub enum McpOAuthError {
     #[error(
         "authorization server {issuer} offers no usable client identification \
          (no CIMD support, no registration endpoint); register a client manually \
-         with `forge auth client add --id {client_id}`"
+         with `lightspeed auth client add --id {client_id}`"
     )]
     NoClientIdentification { issuer: String, client_id: String },
 
@@ -324,7 +324,7 @@ impl McpOAuthDriver {
 
     /// Return the `mcp:<server_id>` client record, discovering and creating
     /// it on first use. Existing records are reused without any network
-    /// traffic; delete the client (`forge auth client remove`) to force
+    /// traffic; delete the client (`lightspeed auth client remove`) to force
     /// re-discovery.
     pub async fn ensure_client(
         &self,
@@ -488,7 +488,7 @@ impl McpOAuthDriver {
         scopes: &[String],
     ) -> Result<ClientIdentification, McpOAuthError> {
         let mut body = serde_json::json!({
-            "client_name": "Forge",
+            "client_name": "Lightspeed",
             "redirect_uris": [redirect_uri],
             "grant_types": ["authorization_code", "refresh_token"],
             "response_types": ["code"],
@@ -846,7 +846,7 @@ mod tests {
         }
     }
 
-    const REDIRECT: &str = "https://forge.example.com/auth/callback";
+    const REDIRECT: &str = "https://lightspeed.example.com/auth/callback";
 
     #[tokio::test]
     async fn ensure_client_discovers_and_registers_via_dcr() {
@@ -945,7 +945,7 @@ mod tests {
             ),
         ]));
         let cimd = CimdConfig {
-            client_id_url: "https://forge.example.com/auth/client-metadata.json".to_owned(),
+            client_id_url: "https://lightspeed.example.com/auth/client-metadata.json".to_owned(),
         };
 
         let record = harness
@@ -975,7 +975,7 @@ mod tests {
             .with_post_response(Ok(serde_json::json!({"client_id": "dcr-client-3"}))),
         );
         let cimd = CimdConfig {
-            client_id_url: "https://forge.example.com/auth/client-metadata.json".to_owned(),
+            client_id_url: "https://lightspeed.example.com/auth/client-metadata.json".to_owned(),
         };
 
         let record = harness

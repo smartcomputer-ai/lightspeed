@@ -6,13 +6,13 @@
   prompts, and P67–P69 MCP/auth.
 - Motivated by the first private deployment: the gateway runs on owned infra,
   reachable over a private network (for example Tailscale, no public IP), and
-  private Python/TypeScript Temporal workflows orchestrate Forge sessions as
+  private Python/TypeScript Temporal workflows orchestrate Lightspeed sessions as
   one step in larger workflow systems.
 
 ## Goal
 
-Make Forge consumable from an external, polyglot workflow ecosystem without
-adding anything to Forge that knows about that ecosystem:
+Make Lightspeed consumable from an external, polyglot workflow ecosystem without
+adding anything to Lightspeed that knows about that ecosystem:
 
 - a machine-readable API contract exported from the Rust types (schemars),
   with generated TypeScript and Python clients;
@@ -22,8 +22,8 @@ adding anything to Forge that knows about that ecosystem:
   result" is one clean call loop instead of tight polling.
 
 The external integration story is: external workflow -> activity ->
-JSON-RPC over the private network -> Forge gateway -> Forge's own Temporal.
-Forge's use of Temporal stays an implementation detail behind `api`.
+JSON-RPC over the private network -> Lightspeed gateway -> Lightspeed's own Temporal.
+Lightspeed's use of Temporal stays an implementation detail behind `api`.
 
 ## Design Position: Integrate Via The API, Not Workflow-To-Workflow
 
@@ -286,7 +286,7 @@ contains a private ESM package outside the Cargo workspace; `npm run generate`
 reads only `interop/contract/api.schema.json` and `interop/contract/methods.json` to produce
 `src/generated/types.ts` and the typed method map/wrappers in
 `src/generated/methods.ts`; the hand-written surface is a small `fetch`-based
-JSON-RPC transport, `ForgeRpcError` preserving code/message/data, and helpers
+JSON-RPC transport, `LightspeedRpcError` preserving code/message/data, and helpers
 for generated-submission-id `startRun`, long-poll `readEvents`, and resumable
 `awaitRun`. Unit tests cover request envelopes, typed JSON-RPC errors,
 submission-id generation, and the long-poll terminal-run loop. Remaining G4
@@ -294,8 +294,8 @@ work: Python client, opt-in gateway smoke tests, and CI drift checks.
 
 Messaging bridge overlay implemented 2026-06-11: `interop/messaging/` contains
 a private Node package for Telegram and WhatsApp. It depends on
-`@forge/agent-client` via `file:../ts-client`, maps each chat/thread to a
-stable Forge session, uses stable submission ids for channel message retries,
+`@lightspeed/agent-client` via `file:../ts-client`, maps each chat/thread to a
+stable Lightspeed session, uses stable submission ids for channel message retries,
 long-polls run completion through the JSON-RPC API, and keeps channel
 state/dedupe in a local JSON store. This does not change the gateway contract;
 channel-specific gaps should still be solved in the overlay unless they expose
@@ -312,15 +312,15 @@ and the G4 clients carry no universe parameter: a client selects a universe by
 selecting a gateway base URL.
 
 - One universe per gateway+worker deployment, bound at startup via
-  `FORGE_PG_UNIVERSE_ID`. This is a deliberate invariant, not a limitation:
+  `LIGHTSPEED_PG_UNIVERSE_ID`. This is a deliberate invariant, not a limitation:
   P69's auth/store isolation holds "by construction" because every store and
   broker is instantiated universe-bound. Multi-universe workers would convert
   that guarantee into per-call discipline (universe ids threaded through
   workflow args, activity DTOs, and every store access) and are deferred until
   fleet/multi-tenancy makes many universes real.
 - The default Temporal task queue derives from the universe:
-  `forge-universe-{FORGE_PG_UNIVERSE_ID}` (`FORGE_TASK_QUEUE` remains as an
-  explicit override), replacing the static `forge-agent` default. Workflow
+  `lightspeed-universe-{LIGHTSPEED_PG_UNIVERSE_ID}` (`LIGHTSPEED_TASK_QUEUE` remains as an
+  explicit override), replacing the static `lightspeed-agent` default. Workflow
   IDs are bare session ids with no universe prefix, so queue-per-universe is
   the mechanism that keeps one deployment's workers from picking up another
   universe's sessions against the wrong store; deriving the queue from the

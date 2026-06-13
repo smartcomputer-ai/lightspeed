@@ -5,7 +5,7 @@
 
 **Progress**
 - Added `agents/claw` with a Temporal worker, Signal-With-Start submitter,
-  workflow, activities, fake LLM/tool loop, and Postgres-backed Forge storage.
+  workflow, activities, fake LLM/tool loop, and Postgres-backed Lightspeed storage.
 - Extended the local dev stack with Temporal defaults and Claw environment
   variables.
 - Added focused tests for workflow queueing, max-step failure, CoreCommand
@@ -21,11 +21,11 @@ Add the first "claw" personal-assistant agent under `agents/claw/`.
 
 This first version should prove the production execution model we want:
 
-- one long-lived Temporal workflow chain owns one Forge session
+- one long-lived Temporal workflow chain owns one Lightspeed session
 - external inputs arrive through Temporal signals
 - CoreAgent admits inputs into its existing run queue
 - the workflow drives CoreAgent to quiescence through Temporal activities
-- Forge session log/CAS remains the user-facing durable agent history
+- Lightspeed session log/CAS remains the user-facing durable agent history
 - Temporal history remains the workflow execution history
 
 WhatsApp, calendar, email, host filesystem tools, and hosted API gateways are
@@ -33,7 +33,7 @@ out of scope for P55.
 
 ## Decision
 
-Use one Temporal workflow chain per Forge session.
+Use one Temporal workflow chain per Lightspeed session.
 
 ```text
 session_id=session_abc
@@ -45,14 +45,14 @@ workflow is already running, Temporal appends the signal to the current run's
 history. If it is not running, Temporal starts the workflow and delivers the
 signal atomically.
 
-Do not create several independent workflows for the same Forge session. The
-Temporal workflow id is the Forge session id, so a Claw workflow owns the Forge
+Do not create several independent workflows for the same Lightspeed session. The
+Temporal workflow id is the Lightspeed session id, so a Claw workflow owns the Lightspeed
 session whose id equals its workflow id. `SessionStore::append` `expected_head`
 checks remain the second guard against accidental rogue writers.
 
 `Continue-As-New` is intentionally deferred from the first implementation cut.
 The P55 design should not block future continue-as-new support: keep workflow
-state serializable and keep the Forge session log/CAS as the external durable
+state serializable and keep the Lightspeed session log/CAS as the external durable
 history, but do not implement run rollover yet.
 
 ## Temporal Signal Model
@@ -83,7 +83,7 @@ CoreAgentState.runs.completed
 
 The workflow-local `pending_admissions` queue covers only the gap between
 "Temporal signal received" and "command admitted into CoreAgent". After a
-command is admitted and appended, the source of truth is the Forge session log
+command is admitted and appended, the source of truth is the Lightspeed session log
 and the reduced `CoreAgentState`.
 
 Text input is a convenience admission, not the only signal shape. Advanced
@@ -102,7 +102,7 @@ Add `agents/claw` to the Rust workspace.
 Provide two binaries:
 
 - `claw-worker`: registers the workflow and activities on task queue
-  `forge-claw`.
+  `lightspeed-claw`.
 - `claw-submit`: submits one text-run admission via Signal-With-Start, polls
   workflow query status, and reads the completed output blob from Postgres.
 
@@ -174,7 +174,7 @@ first cut.
 
 Do not include `universe_id` in `ClawSessionArgs` or workflow signals. P55
 assumes one configured PgStore universe per Claw worker deployment. The
-Temporal workflow id is the Forge `session_id`; `universe_id` is storage
+Temporal workflow id is the Lightspeed `session_id`; `universe_id` is storage
 tenancy loaded from worker/activity configuration.
 
 ## Core Loop
@@ -225,7 +225,7 @@ loop:
     break
 ```
 
-Only committed Forge events may mutate `CoreAgentState`.
+Only committed Lightspeed events may mutate `CoreAgentState`.
 
 The workflow code must not perform provider calls, filesystem operations,
 network I/O, Postgres I/O, or wall-clock reads. Use Temporal workflow time for
@@ -242,10 +242,10 @@ First activity set:
 - `tool_invoke_batch`
 - `read_blob`
 
-Use `store-pg` as the only P55 Forge session/CAS backend. The workflow and
+Use `store-pg` as the only P55 Lightspeed session/CAS backend. The workflow and
 activities should not depend on filesystem stores.
 
-Activities construct `PgStoreConfig` from environment. `FORGE_PG_UNIVERSE_ID`
+Activities construct `PgStoreConfig` from environment. `LIGHTSPEED_PG_UNIVERSE_ID`
 must be stable across worker restarts; generating a new universe id on startup
 would make existing sessions and blobs invisible to the worker. `BlobRef`
 values are interpreted only within this configured universe.
@@ -296,12 +296,12 @@ deprecated `temporalio/auto-setup`.
 Default environment:
 
 ```text
-FORGE_CLAW_TASK_QUEUE=forge-claw
-FORGE_CLAW_POSTGRES_URL=${FORGE_TEST_POSTGRES_URL}
-FORGE_PG_UNIVERSE_ID=00000000-0000-0000-0000-000000000001
-FORGE_CLAW_LLM=fake
-FORGE_CHAT_PROVIDER=openai
-FORGE_CHAT_MODEL=<existing default>
+LIGHTSPEED_CLAW_TASK_QUEUE=lightspeed-claw
+LIGHTSPEED_CLAW_POSTGRES_URL=${LIGHTSPEED_TEST_POSTGRES_URL}
+LIGHTSPEED_PG_UNIVERSE_ID=00000000-0000-0000-0000-000000000001
+LIGHTSPEED_CLAW_LLM=fake
+LIGHTSPEED_CHAT_PROVIDER=openai
+LIGHTSPEED_CHAT_MODEL=<existing default>
 ```
 
 Document:
@@ -362,4 +362,4 @@ present but is not run by default.
 - multi-user authorization
 - hosted gateway/API service
 - Python bridge
-- using Temporal history as the Forge session log
+- using Temporal history as the Lightspeed session log

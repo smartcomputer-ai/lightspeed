@@ -9,7 +9,7 @@
 
 ## Goal
 
-Add a prompt management layer that lets Forge assemble effective session
+Add a prompt management layer that lets Lightspeed assemble effective session
 instructions from editable, inspectable sources such as VFS prompt files and
 runtime defaults.
 
@@ -25,7 +25,7 @@ The engine remains deterministic. It sees only immutable blob refs and context
 events. It does not read files, watch directories, resolve prompt roots, or
 assemble prompt text.
 
-This gives Forge:
+This gives Lightspeed:
 
 - an editable prompt surface in VFS workspaces,
 - deterministic prompt assembly and source ordering,
@@ -35,7 +35,7 @@ This gives Forge:
 
 ## Current State
 
-Forge's live instructions path is context-entry based:
+Lightspeed's live instructions path is context-entry based:
 
 - `temporal-workflow` opens a session and upserts default instructions as
   `instructions.000.default`.
@@ -112,7 +112,7 @@ Use a small convention first, not a full manifest.
 For each writable workspace mount, discover prompt roots:
 
 ```text
-<mount>/.forge/prompts
+<mount>/.lightspeed/prompts
 <mount>/.agents/prompts
 ```
 
@@ -369,7 +369,7 @@ which provider paths actually receive instruction entries.
 
 ### G2: VFS Prompt Roots
 
-- Discover `.forge/prompts` and `.agents/prompts` under workspace mounts.
+- Discover `.lightspeed/prompts` and `.agents/prompts` under workspace mounts.
 - Resolve mounted snapshot/workspace roots.
 - Read `instructions.md` and `instructions.d/*.md`.
 - Record workspace id, revision, snapshot ref, path, content ref, and size.

@@ -45,7 +45,7 @@ async fn pg_live_sessions_are_isolated_by_universe() {
 
     left.create_session(CreateSession {
         session_id: session_id.clone(),
-        agent_handle: AgentHandle::new("forge.default"),
+        agent_handle: AgentHandle::new("lightspeed.default"),
         created_at_ms: 1,
     })
     .await
@@ -75,7 +75,7 @@ async fn pg_live_sessions_are_isolated_by_universe() {
     right
         .create_session(CreateSession {
             session_id: session_id.clone(),
-            agent_handle: AgentHandle::new("forge.default"),
+            agent_handle: AgentHandle::new("lightspeed.default"),
             created_at_ms: 20,
         })
         .await
@@ -156,7 +156,7 @@ async fn pg_live_records_session_roots_and_blob_edges() {
     store
         .create_session(CreateSession {
             session_id: session_id.clone(),
-            agent_handle: AgentHandle::new("forge.default"),
+            agent_handle: AgentHandle::new("lightspeed.default"),
             created_at_ms: 1,
         })
         .await
@@ -659,7 +659,7 @@ async fn pg_live_auth_flows_are_one_time_use() {
             principal: PrincipalRef::universe_default(),
             state_hash: state_hash(state),
             pkce_verifier_secret: SecretId::new("authsec_pkce_live"),
-            redirect_uri: "https://forge.example.com/auth/callback".to_owned(),
+            redirect_uri: "https://lightspeed.example.com/auth/callback".to_owned(),
             scopes: vec!["contacts.read".to_owned()],
             audience: Some("https://crm.example.com/mcp".to_owned()),
             expires_at_ms: 10_000,
@@ -724,7 +724,7 @@ async fn pg_live_auth_flows_are_one_time_use() {
             principal: PrincipalRef::universe_default(),
             state_hash: state_hash("state-live-2"),
             pkce_verifier_secret: SecretId::new("authsec_pkce_live2"),
-            redirect_uri: "https://forge.example.com/auth/callback".to_owned(),
+            redirect_uri: "https://lightspeed.example.com/auth/callback".to_owned(),
             scopes: Vec::new(),
             audience: Some("https://crm.example.com/mcp".to_owned()),
             expires_at_ms: 50,
@@ -826,7 +826,7 @@ async fn pg_live_auth_providers_crud_and_credential_fk() {
     };
 
     let store = live_store("auth-providers", 1024).await;
-    let provider_id = AuthProviderId::new("forge-github");
+    let provider_id = AuthProviderId::new("lightspeed-github");
     let key_secret = SecretId::new("authsec_github_key_live");
     store
         .put_secret(PutSecretRecord {
@@ -841,7 +841,7 @@ async fn pg_live_auth_providers_crud_and_credential_fk() {
     let created = store
         .create_auth_provider(CreateAuthProviderRecord {
             provider_id: provider_id.clone(),
-            display_name: Some("Forge GitHub App".to_owned()),
+            display_name: Some("Lightspeed GitHub App".to_owned()),
             config: AuthProviderConfig::GitHubApp(GitHubAppConfig {
                 app_id: "12345".to_owned(),
                 api_base_url: "https://api.github.com".to_owned(),
@@ -918,7 +918,7 @@ async fn pg_live_grant_metadata_round_trips() {
     let created = store
         .create_grant(CreateAuthGrantRecord {
             grant_id: grant_id.clone(),
-            provider_id: "forge-github".to_owned(),
+            provider_id: "lightspeed-github".to_owned(),
             provider_kind: AuthProviderKind::GitHubApp,
             principal: PrincipalRef::universe_default(),
             display_name: None,
@@ -963,8 +963,8 @@ fn create_oauth_client_record(client_id: &OAuthClientId) -> CreateOAuthClientRec
 }
 
 async fn live_store(test_name: &str, inline_threshold_bytes: usize) -> PgStore {
-    let database_url = env_or_dotenv_var("FORGE_TEST_POSTGRES_URL").expect(
-        "FORGE_TEST_POSTGRES_URL must be set in env or root .env to run store-pg live tests; run local/up.sh and source local/env.sh",
+    let database_url = env_or_dotenv_var("LIGHTSPEED_TEST_POSTGRES_URL").expect(
+        "LIGHTSPEED_TEST_POSTGRES_URL must be set in env or root .env to run store-pg live tests; run local/up.sh and source local/env.sh",
     );
     let pool = PgPoolOptions::new()
         .max_connections(2)
@@ -974,7 +974,7 @@ async fn live_store(test_name: &str, inline_threshold_bytes: usize) -> PgStore {
     migrate_once(&pool).await;
 
     let prefix =
-        env_or_dotenv_var("FORGE_OBJECT_STORE_PREFIX").unwrap_or_else(|_| "forge".to_string());
+        env_or_dotenv_var("LIGHTSPEED_OBJECT_STORE_PREFIX").unwrap_or_else(|_| "lightspeed".to_string());
     let config = PgStoreConfig::new(Uuid::new_v4())
         .with_inline_threshold_bytes(inline_threshold_bytes)
         .with_object_prefix(format!("{}/tests/{}", prefix.trim_matches('/'), test_name))
@@ -1002,20 +1002,20 @@ async fn migrate_once(pool: &PgPool) {
 }
 
 fn live_object_store() -> Arc<dyn ObjectStore> {
-    let endpoint = env_or_dotenv_var("FORGE_OBJECT_STORE_ENDPOINT")
+    let endpoint = env_or_dotenv_var("LIGHTSPEED_OBJECT_STORE_ENDPOINT")
         .unwrap_or_else(|_| "http://localhost:29000".to_string());
     let bucket =
-        env_or_dotenv_var("FORGE_OBJECT_STORE_BUCKET").unwrap_or_else(|_| "forge-dev".to_string());
+        env_or_dotenv_var("LIGHTSPEED_OBJECT_STORE_BUCKET").unwrap_or_else(|_| "lightspeed-dev".to_string());
     let region =
-        env_or_dotenv_var("FORGE_OBJECT_STORE_REGION").unwrap_or_else(|_| "us-east-1".to_string());
+        env_or_dotenv_var("LIGHTSPEED_OBJECT_STORE_REGION").unwrap_or_else(|_| "us-east-1".to_string());
     let access_key =
         env_or_dotenv_var("AWS_ACCESS_KEY_ID").unwrap_or_else(|_| "minioadmin".to_string());
     let secret_key =
         env_or_dotenv_var("AWS_SECRET_ACCESS_KEY").unwrap_or_else(|_| "minioadmin".to_string());
-    let force_path_style = env_or_dotenv_var("FORGE_OBJECT_STORE_FORCE_PATH_STYLE")
+    let force_path_style = env_or_dotenv_var("LIGHTSPEED_OBJECT_STORE_FORCE_PATH_STYLE")
         .unwrap_or_else(|_| "true".to_string())
         .parse::<bool>()
-        .expect("FORGE_OBJECT_STORE_FORCE_PATH_STYLE must be true or false");
+        .expect("LIGHTSPEED_OBJECT_STORE_FORCE_PATH_STYLE must be true or false");
 
     let store = AmazonS3Builder::new()
         .with_bucket_name(bucket)
@@ -1035,7 +1035,7 @@ fn open_event(at_ms: u64) -> DynamicUncommittedSessionEvent {
         observed_at_ms: at_ms,
         joins: DynamicJoins::default(),
         event: DynamicEvent::new(
-            "forge.test.lifecycle.closed",
+            "lightspeed.test.lifecycle.closed",
             1,
             serde_json::Value::Object(Default::default()),
         ),

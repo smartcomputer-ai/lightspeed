@@ -3,10 +3,10 @@
 //! This crate keeps durable filesystem I/O outside `engine` while
 //! implementing the core storage contracts.
 //!
-//! Project-backed stores use `.forge` by convention:
+//! Project-backed stores use `.lightspeed` by convention:
 //!
 //! ```text
-//! .forge/
+//! .lightspeed/
 //!   cas/
 //!     sha256/<prefix>/<digest>.bin
 //!   sessions/
@@ -41,7 +41,7 @@ pub use blob::FsBlobStore;
 pub use session::FsSessionStore;
 pub use vfs::FsVfsCatalogStore;
 
-pub const FORGE_DIR: &str = ".forge";
+pub const LIGHTSPEED_DIR: &str = ".lightspeed";
 
 #[derive(Clone)]
 pub struct FsStore {
@@ -69,11 +69,11 @@ impl FsStore {
     }
 
     pub fn for_project(project_root: impl AsRef<Path>) -> Self {
-        Self::new(forge_dir(project_root))
+        Self::new(lightspeed_dir(project_root))
     }
 
     pub async fn open_project(project_root: impl AsRef<Path>) -> io::Result<Self> {
-        Self::open(forge_dir(project_root)).await
+        Self::open(lightspeed_dir(project_root)).await
     }
 
     pub fn root(&self) -> &Path {
@@ -104,8 +104,8 @@ async fn ensure_layout(root: &Path) -> io::Result<()> {
     Ok(())
 }
 
-pub fn forge_dir(project_root: impl AsRef<Path>) -> PathBuf {
-    project_root.as_ref().join(FORGE_DIR)
+pub fn lightspeed_dir(project_root: impl AsRef<Path>) -> PathBuf {
+    project_root.as_ref().join(LIGHTSPEED_DIR)
 }
 
 fn sessions_dir(root: &Path) -> PathBuf {
@@ -187,14 +187,14 @@ mod tests {
     use super::*;
 
     #[tokio::test(flavor = "current_thread")]
-    async fn open_project_uses_dot_forge_layout() {
+    async fn open_project_uses_dot_lightspeed_layout() {
         let temp_dir = tempfile::tempdir().expect("temp dir");
         let store = FsStore::open_project(temp_dir.path())
             .await
             .expect("open project store");
 
-        assert_eq!(store.root(), temp_dir.path().join(FORGE_DIR).as_path());
-        assert!(temp_dir.path().join(FORGE_DIR).join("cas").is_dir());
-        assert!(temp_dir.path().join(FORGE_DIR).join("sessions").is_dir());
+        assert_eq!(store.root(), temp_dir.path().join(LIGHTSPEED_DIR).as_path());
+        assert!(temp_dir.path().join(LIGHTSPEED_DIR).join("cas").is_dir());
+        assert!(temp_dir.path().join(LIGHTSPEED_DIR).join("sessions").is_dir());
     }
 }

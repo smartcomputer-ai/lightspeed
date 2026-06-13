@@ -5,7 +5,7 @@ use thiserror::Error;
 
 use crate::path::{VfsPath, VfsPathError};
 
-pub const VFS_SNAPSHOT_SCHEMA_VERSION: &str = "forge.vfs.snapshot.v1";
+pub const VFS_SNAPSHOT_SCHEMA_VERSION: &str = "lightspeed.vfs.snapshot.v1";
 
 #[derive(Debug, Error)]
 pub enum VfsError {

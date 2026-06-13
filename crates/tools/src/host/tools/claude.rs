@@ -56,7 +56,7 @@ pub(super) fn input_schema(operation: HostToolOperation) -> ToolResult<Value> {
                 ("limit", nullable_integer("The number of lines to read.")),
                 (
                     "pages",
-                    nullable_string("Page range for PDF files. Ignored by Forge host tools."),
+                    nullable_string("Page range for PDF files. Ignored by Lightspeed host tools."),
                 ),
             ],
             ["file_path"],
@@ -184,11 +184,11 @@ pub(super) fn input_schema(operation: HostToolOperation) -> ToolResult<Value> {
                 ),
                 (
                     "run_in_background",
-                    optional_boolean("Parsed but not supported by Forge host tools."),
+                    optional_boolean("Parsed but not supported by Lightspeed host tools."),
                 ),
                 (
                     "dangerouslyDisableSandbox",
-                    optional_boolean("Parsed but not supported by Forge host tools."),
+                    optional_boolean("Parsed but not supported by Lightspeed host tools."),
                 ),
             ],
             ["command"],

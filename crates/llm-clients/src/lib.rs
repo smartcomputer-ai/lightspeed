@@ -1,6 +1,6 @@
-//! Provider-native LLM API client primitives for Forge.
+//! Provider-native LLM API client primitives for Lightspeed.
 //!
-//! `llm-clients` is intentionally lower-level than the Forge agent. It owns
+//! `llm-clients` is intentionally lower-level than the Lightspeed agent. It owns
 //! provider HTTP transport, native API request/response modules, stream parsing,
 //! and provider error classification. It does not define sessions, tools,
 //! context windows, CAS refs, or a provider-neutral model message abstraction.

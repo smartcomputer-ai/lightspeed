@@ -36,11 +36,11 @@ impl FsVfsCatalogStore {
     }
 
     pub fn for_project(project_root: impl AsRef<Path>) -> Self {
-        Self::new(crate::forge_dir(project_root))
+        Self::new(crate::lightspeed_dir(project_root))
     }
 
     pub async fn open_project(project_root: impl AsRef<Path>) -> io::Result<Self> {
-        Self::open(crate::forge_dir(project_root)).await
+        Self::open(crate::lightspeed_dir(project_root)).await
     }
 
     pub fn root(&self) -> &Path {

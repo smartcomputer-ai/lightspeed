@@ -11,7 +11,7 @@ import {
   type proto,
 } from "baileys";
 import qrcode from "qrcode-terminal";
-import type { OutboundMessageView } from "@forge/agent-client";
+import type { OutboundMessageView } from "@lightspeed/agent-client";
 import type { WhatsAppBridgeConfig } from "./config.js";
 import { stableHash } from "./ids.js";
 import { renderWhatsAppText } from "./markdown.js";

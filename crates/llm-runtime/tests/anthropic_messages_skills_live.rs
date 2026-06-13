@@ -237,7 +237,7 @@ async fn anthropic_messages_live_selects_and_activates_the_matching_skill() {
     sessions
         .create_session(CreateSession {
             session_id: session_id.clone(),
-            agent_handle: AgentHandle::new("forge.live-anthropic-skills"),
+            agent_handle: AgentHandle::new("lightspeed.live-anthropic-skills"),
             created_at_ms: 1,
         })
         .await
@@ -356,7 +356,7 @@ async fn anthropic_messages_live_selects_and_activates_the_matching_skill() {
 
     let input_ref = blobs
         .put_bytes(
-            b"Use the Forge skill catalog. Read exactly one SKILL.md: the skill relevant to a matrix migration hidden live activation marker. Then reply exactly MARKER=<the marker from that skill>. Do not use deployment or invoice skills."
+            b"Use the Lightspeed skill catalog. Read exactly one SKILL.md: the skill relevant to a matrix migration hidden live activation marker. Then reply exactly MARKER=<the marker from that skill>. Do not use deployment or invoice skills."
                 .to_vec(),
         )
         .await

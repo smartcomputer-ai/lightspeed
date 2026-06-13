@@ -1,13 +1,13 @@
 export type {
   BridgeRuntimeConfig,
-  ForgeBridgeConfig,
+  LightspeedBridgeConfig,
   MessagingBridgeConfig,
   TelegramBridgeConfig,
   WhatsAppBridgeConfig,
 } from "./config.js";
 export { loadBridgeConfig } from "./config.js";
-export { extractAssistantText, ForgeSessionBridge, runUsedMessagingTool } from "./forge.js";
-export type { ForgeReply, ForgeRoomEvent, ForgeTurn, ForgeTurnMedia } from "./forge.js";
+export { extractAssistantText, LightspeedSessionBridge, runUsedMessagingTool } from "./lightspeed.js";
+export type { LightspeedReply, LightspeedRoomEvent, LightspeedTurn, LightspeedTurnMedia } from "./lightspeed.js";
 export { DeliveryError, OutboxTailer } from "./outbox.js";
 export type { ChannelDeliverer, DeliveryResult, OutboxTailerOptions } from "./outbox.js";
 export { classifyInbound, formatEnvelope, parseControlCommand, shouldQuoteChunk } from "./policy.js";

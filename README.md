@@ -1,6 +1,6 @@
-# Forge
+# Lightspeed
 
-Forge is a hosted agent product in progress, built around a deterministic,
+Lightspeed is a hosted agent product in progress, built around a deterministic,
 event-sourced engine and a Temporal-backed runtime.
 
 The current focus is a small deterministic loop that can plan an agent session, record domain events, rebuild state by replaying a session log, and emit substrate-neutral actions for LLM/tool work.
@@ -84,7 +84,7 @@ cargo build
 cargo test
 ```
 
-## Run Forge Locally
+## Run Lightspeed Locally
 
 The hosted path runs three pieces locally:
 
@@ -106,7 +106,7 @@ local/up.sh
 This starts Postgres on `localhost:15432`, MinIO on `localhost:29000`,
 Temporal on `localhost:7233`, and the Temporal UI on `http://localhost:8233`.
 
-Each shell that runs Forge commands should load the local environment:
+Each shell that runs Lightspeed commands should load the local environment:
 
 ```bash
 source local/env.sh
@@ -148,11 +148,11 @@ source local/env.sh
 cargo run -p cli -- chat --new
 ```
 
-That starts an interactive TUI session. `FORGE_API_URL` is exported by
+That starts an interactive TUI session. `LIGHTSPEED_API_URL` is exported by
 `local/env.sh`, so you do not need to pass `--api-url`.
 
 For OpenAI-backed chat, the CLI sends typed session/run configuration through
-the API. Use `--model ...` on a command, or set `FORGE_CHAT_MODEL`, if you want
+the API. Use `--model ...` on a command, or set `LIGHTSPEED_CHAT_MODEL`, if you want
 a specific model.
 
 To send one message and exit:
@@ -186,10 +186,10 @@ workspace from that snapshot, mounts it at `/workspace`, and starts the chat
 session with `/workspace` as the working directory. Use `--mount-path` to pick
 a different VFS mount path.
 
-The `cli` package builds the `forge` binary, so installed usage is equivalent:
+The `cli` package builds the `lightspeed` binary, so installed usage is equivalent:
 
 ```bash
-forge chat --new
+lightspeed chat --new
 ```
 
 To upload a local directory as a CAS-backed VFS snapshot:
@@ -319,15 +319,15 @@ the same variables directly in your shell.
 | `ANTHROPIC_API_KEY` | Anthropic provider authentication |
 | `OPENAI_BASE_URL` | Override OpenAI API endpoint |
 | `ANTHROPIC_BASE_URL` | Override Anthropic API endpoint |
-| `FORGE_CHAT_PROVIDER` | Default chat provider ID |
-| `FORGE_CHAT_API_KIND` | Default chat provider API kind |
-| `FORGE_CHAT_MODEL` | Default chat model |
-| `FORGE_CHAT_REASONING_EFFORT` | Default reasoning effort (OpenAI reasoning / Anthropic thinking) |
-| `FORGE_CHAT_MAX_TOKENS` | Default max output token setting for chat runs |
-| `FORGE_API_URL` | CLI JSON-RPC gateway URL |
-| `FORGE_POSTGRES_URL` | PostgreSQL session/CAS database URL |
-| `FORGE_PG_UNIVERSE_ID` | Hosted store universe UUID |
-| `FORGE_TASK_QUEUE` | Temporal task queue override; defaults to `forge-universe-{FORGE_PG_UNIVERSE_ID}` |
-| `FORGE_OBJECT_STORE_ENDPOINT` | S3-compatible object store endpoint |
+| `LIGHTSPEED_CHAT_PROVIDER` | Default chat provider ID |
+| `LIGHTSPEED_CHAT_API_KIND` | Default chat provider API kind |
+| `LIGHTSPEED_CHAT_MODEL` | Default chat model |
+| `LIGHTSPEED_CHAT_REASONING_EFFORT` | Default reasoning effort (OpenAI reasoning / Anthropic thinking) |
+| `LIGHTSPEED_CHAT_MAX_TOKENS` | Default max output token setting for chat runs |
+| `LIGHTSPEED_API_URL` | CLI JSON-RPC gateway URL |
+| `LIGHTSPEED_POSTGRES_URL` | PostgreSQL session/CAS database URL |
+| `LIGHTSPEED_PG_UNIVERSE_ID` | Hosted store universe UUID |
+| `LIGHTSPEED_TASK_QUEUE` | Temporal task queue override; defaults to `lightspeed-universe-{LIGHTSPEED_PG_UNIVERSE_ID}` |
+| `LIGHTSPEED_OBJECT_STORE_ENDPOINT` | S3-compatible object store endpoint |
 | `RUST_LOG` | Server log filter. Defaults to app/Temporal info and dependency warnings; use `temporal_server=debug,temporal_workflow=debug` for more detail |
-| `FORGE_LOG_FORMAT` | Server log format: `compact` (default), `pretty`, or `json` |
+| `LIGHTSPEED_LOG_FORMAT` | Server log format: `compact` (default), `pretty`, or `json` |

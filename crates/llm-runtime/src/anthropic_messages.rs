@@ -1888,7 +1888,7 @@ mod tests {
             "type": "server_tool_use",
             "id": "srvtoolu_1",
             "name": "web_search",
-            "input": { "query": "forge agent runtime" }
+            "input": { "query": "lightspeed agent runtime" }
         });
         let web_search_result = json!({
             "type": "web_search_tool_result",
@@ -2084,7 +2084,7 @@ mod tests {
                 "role": "user",
                 "content": [{
                     "type": "text",
-                    "text": "Forge loaded skill (skill:deploy-review):\n\n# Deploy Review\n\nCheck rollout scope."
+                    "text": "Lightspeed loaded skill (skill:deploy-review):\n\n# Deploy Review\n\nCheck rollout scope."
                 }]
             }])
         );

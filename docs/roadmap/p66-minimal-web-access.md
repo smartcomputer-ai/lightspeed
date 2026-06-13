@@ -4,7 +4,7 @@
 - First cut implemented.
 - First cut is deliberately two pieces:
   1. OpenAI Responses provider-native `web_search`.
-  2. A Forge-owned, guarded, recorded `web_fetch` function tool.
+  2. A Lightspeed-owned, guarded, recorded `web_fetch` function tool.
 - Start with provider-native OpenAI Responses web search and stop there before
   adding fetch. Provider-neutral search providers, arbitrary HTTP requests,
   browser automation, authenticated fetches, and MCP-based provider plugins are
@@ -26,7 +26,7 @@
   changes update VFS state only; configured tools remain a static session
   toolset and execution fails clearly if the required backing is absent.
 - As of 2026-06-08, G2 is implemented as a standard targetless `web_fetch`
-  function tool in `tools::web::fetch`, with Forge-owned URL/DNS guardrails,
+  function tool in `tools::web::fetch`, with Lightspeed-owned URL/DNS guardrails,
   bounded GET-only fetching, redirect checks, text extraction, untrusted
   wrapping, and normal recorded tool-result output. Sessions default `web_fetch`
   on and can disable it independently from hosted `web_search`.
@@ -34,14 +34,14 @@
 ## Goal
 
 Give the agent enough web access to answer current-information questions and
-inspect cited pages without turning Forge into a generic HTTP client.
+inspect cited pages without turning Lightspeed into a generic HTTP client.
 
 The minimum useful cut is:
 
 - let OpenAI Responses models use their hosted `web_search` tool;
 - preserve OpenAI web-search output items and sources for auditability;
 - add a narrow `web_fetch(url)` tool for fetching a specific page through
-  Forge-owned network guardrails.
+  Lightspeed-owned network guardrails.
 
 The engine remains deterministic. It plans tool/request data and records
 results, but it does not perform network I/O, call providers, resolve DNS, or
@@ -53,12 +53,12 @@ Codex is the closest model for the first piece. Its normal path is a hosted
 OpenAI Responses tool with `type: "web_search"`, cached/live mode controlled by
 `external_web_access`, optional domain/location/context-size settings, and
 `web_search_call` output preservation. Codex also has a separate standalone
-search endpoint path, but that is not the right first cut for Forge.
+search endpoint path, but that is not the right first cut for Lightspeed.
 
 OpenClaw is the better reference for the second piece. It splits provider
 search from guarded page fetch, with provider plugins for search and a separate
 `web_fetch` tool that owns URL validation, SSRF policy, redirects, byte limits,
-content extraction, caching, and untrusted-content wrapping. Forge should copy
+content extraction, caching, and untrusted-content wrapping. Lightspeed should copy
 the split, not the full provider/plugin system yet.
 
 OpenAI's current Responses docs recommend the GA `web_search` tool for new
@@ -89,19 +89,19 @@ https://developers.openai.com/api/docs/guides/tools-web-search
 
 ## Design Position
 
-Provider-native search and Forge-managed fetch are different capabilities.
+Provider-native search and Lightspeed-managed fetch are different capabilities.
 
 Provider-native search is a hosted model/provider tool. The model sees and
-chooses the tool inside the OpenAI Responses request. Forge should pass through
+chooses the tool inside the OpenAI Responses request. Lightspeed should pass through
 the exact provider-native tool JSON and record the provider's output items.
 
-Forge-managed fetch is a local/runtime side effect. It should be a normal
+Lightspeed-managed fetch is a local/runtime side effect. It should be a normal
 function tool with a client effect, dispatched through the existing tool
 runtime path and recorded as a tool result. It is useful when the model already
 has a URL and needs the page body.
 
 MCP belongs later at provider boundaries, not in the first safety substrate. The
-first guarded fetch implementation should be owned by Forge so network policy,
+first guarded fetch implementation should be owned by Lightspeed so network policy,
 trace shape, result recording, and hosted safety behavior are consistent.
 
 ## G1: OpenAI Responses Native Web Search
@@ -138,13 +138,13 @@ The `native_tool_ref` blob should contain the OpenAI tool JSON, for example:
 
 Mode semantics:
 
-| Forge mode | OpenAI lowering |
+| Lightspeed mode | OpenAI lowering |
 |---|---|
 | `disabled` | omit the tool |
 | `cached` | include `{ "type": "web_search", "external_web_access": false }` |
 | `live` | include `{ "type": "web_search", "external_web_access": true }` |
 
-Even though OpenAI defaults live access to true when the field is omitted, Forge
+Even though OpenAI defaults live access to true when the field is omitted, Lightspeed
 should send an explicit value when a mode is configured. That makes the planned
 request self-explanatory in CAS and traces.
 
@@ -173,7 +173,7 @@ pub enum WebSearchContextSize {
 }
 ```
 
-OpenAI Responses sessions default to `cached` at the Forge API/config layer,
+OpenAI Responses sessions default to `cached` at the Lightspeed API/config layer,
 matching Codex's conservative baseline. Explicit `tools.webSearch = false`
 disables the provider-native search tool for a session.
 
@@ -191,7 +191,7 @@ crates/tools/src/web/
 
 The builder should produce a `ToolSpecBundle` with:
 
-- stable Forge tool key such as `web_search`;
+- stable Lightspeed tool key such as `web_search`;
 - `ProviderNativeToolExecution::ProviderHosted`;
 - `ToolParallelism::ParallelSafe`;
 - `ToolTargetRequirement::None`;
@@ -199,7 +199,7 @@ The builder should produce a `ToolSpecBundle` with:
 
 The active tool profile then controls whether the hosted tool is visible on a
 turn. This keeps search in the same model-facing tool surface as the rest of
-Forge's tool planning and avoids adding a hidden provider-specific side channel.
+Lightspeed's tool planning and avoids adding a hidden provider-specific side channel.
 
 OpenAI Responses request materialization already accepts `oai::Tool::Raw`
 through provider-native tool specs. G1 should preserve that path and add only
@@ -234,7 +234,7 @@ provider_item_id = item.id
 content_ref = raw output item JSON
 ```
 
-Do not turn it into a Forge tool call and do not schedule a client effect. The
+Do not turn it into a Lightspeed tool call and do not schedule a client effect. The
 provider already executed it.
 
 The runtime already stores the full raw OpenAI response separately. The

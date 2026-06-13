@@ -1,7 +1,7 @@
 import { Context } from "@temporalio/activity";
-import { ForgeClient, type EventCursor } from "@forge/agent-client";
+import { LightspeedClient, type EventCursor } from "@lightspeed/agent-client";
 
-export interface RunForgeStepInput {
+export interface RunLightspeedStepInput {
   endpoint: string;
   sessionId: string;
   prompt: string;
@@ -9,23 +9,23 @@ export interface RunForgeStepInput {
   after?: EventCursor | null;
 }
 
-export async function runForgeStep(input: RunForgeStepInput) {
+export async function runLightspeedStep(input: RunLightspeedStepInput) {
   const activity = Context.current();
-  const forge = new ForgeClient(input.endpoint);
+  const lightspeed = new LightspeedClient(input.endpoint);
 
-  const session = await forge.call("session/start", {
+  const session = await lightspeed.call("session/start", {
     sessionId: input.sessionId,
     cwd: null,
     config: null,
   });
 
-  const run = await forge.startRun(
+  const run = await lightspeed.startRun(
     session.result.session.id,
     [{ type: "text", text: input.prompt }],
     { submissionId: input.submissionId },
   );
 
-  return forge.awaitRun(session.result.session.id, run.result.run.id, {
+  return lightspeed.awaitRun(session.result.session.id, run.result.run.id, {
     after: input.after ?? null,
     waitMs: 30_000,
     heartbeat: (cursor) => activity.heartbeat({ cursor }),

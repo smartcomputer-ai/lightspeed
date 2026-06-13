@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import type { GroupActivation, ReplyToMode } from "./policy.js";
 
-export interface ForgeBridgeConfig {
+export interface LightspeedBridgeConfig {
   endpoint: string;
   cwd?: string | null;
   waitMs: number;
@@ -50,7 +50,7 @@ export interface WhatsAppBridgeConfig {
 }
 
 export interface MessagingBridgeConfig {
-  forge: ForgeBridgeConfig;
+  lightspeed: LightspeedBridgeConfig;
   runtime: BridgeRuntimeConfig;
   store: {
     path: string;
@@ -60,7 +60,7 @@ export interface MessagingBridgeConfig {
 }
 
 type PartialConfig = Partial<{
-  forge: Partial<ForgeBridgeConfig>;
+  lightspeed: Partial<LightspeedBridgeConfig>;
   runtime: Partial<BridgeRuntimeConfig>;
   store: Partial<{ path: string }>;
   telegram: Partial<TelegramBridgeConfig>;
@@ -69,15 +69,15 @@ type PartialConfig = Partial<{
 
 export async function loadBridgeConfig(env: NodeJS.ProcessEnv = process.env): Promise<MessagingBridgeConfig> {
   const fileConfig = env.BRIDGE_CONFIG ? await readJsonConfig(env.BRIDGE_CONFIG) : {};
-  const forge = {
+  const lightspeed = {
     endpoint:
-      env.FORGE_API_URL ??
-      fileConfig.forge?.endpoint ??
+      env.LIGHTSPEED_API_URL ??
+      fileConfig.lightspeed?.endpoint ??
       "http://127.0.0.1:18080/rpc",
-    cwd: env.FORGE_CWD ?? fileConfig.forge?.cwd ?? null,
-    waitMs: parsePositiveInt(env.FORGE_WAIT_MS, fileConfig.forge?.waitMs ?? 30_000),
-    eventLimit: parsePositiveInt(env.FORGE_EVENT_LIMIT, fileConfig.forge?.eventLimit ?? 128),
-    sessionPrefix: env.BRIDGE_SESSION_PREFIX ?? fileConfig.forge?.sessionPrefix ?? "bridge",
+    cwd: env.LIGHTSPEED_CWD ?? fileConfig.lightspeed?.cwd ?? null,
+    waitMs: parsePositiveInt(env.LIGHTSPEED_WAIT_MS, fileConfig.lightspeed?.waitMs ?? 30_000),
+    eventLimit: parsePositiveInt(env.LIGHTSPEED_EVENT_LIMIT, fileConfig.lightspeed?.eventLimit ?? 128),
+    sessionPrefix: env.BRIDGE_SESSION_PREFIX ?? fileConfig.lightspeed?.sessionPrefix ?? "bridge",
   };
   const runtime: BridgeRuntimeConfig = {
     debounceMs: parsePositiveInt(env.BRIDGE_DEBOUNCE_MS, fileConfig.runtime?.debounceMs ?? 500),
@@ -102,7 +102,7 @@ export async function loadBridgeConfig(env: NodeJS.ProcessEnv = process.env): Pr
   const whatsappEnabled = parseBoolean(env.WHATSAPP_ENABLED, fileConfig.whatsapp?.enabled ?? false);
 
   const config: MessagingBridgeConfig = {
-    forge,
+    lightspeed,
     runtime,
     store: {
       path: env.BRIDGE_STATE_PATH ?? fileConfig.store?.path ?? ".bridge-state.json",
@@ -117,7 +117,7 @@ export async function loadBridgeConfig(env: NodeJS.ProcessEnv = process.env): Pr
       allowFrom: csv(env.TELEGRAM_ALLOW_FROM, fileConfig.telegram?.allowFrom),
       triggerPrefixes: csv(
         env.TELEGRAM_TRIGGER_PREFIXES,
-        fileConfig.telegram?.triggerPrefixes ?? ["/ask", "/forge"],
+        fileConfig.telegram?.triggerPrefixes ?? ["/ask", "/lightspeed"],
       ),
       mentionNames: csv(env.TELEGRAM_MENTION_NAMES, fileConfig.telegram?.mentionNames),
       groupActivation: parseGroupActivation(
@@ -141,7 +141,7 @@ export async function loadBridgeConfig(env: NodeJS.ProcessEnv = process.env): Pr
       allowFrom: csv(env.WHATSAPP_ALLOW_FROM, fileConfig.whatsapp?.allowFrom),
       triggerPrefixes: csv(
         env.WHATSAPP_TRIGGER_PREFIXES,
-        fileConfig.whatsapp?.triggerPrefixes ?? ["/ask", "/forge"],
+        fileConfig.whatsapp?.triggerPrefixes ?? ["/ask", "/lightspeed"],
       ),
       mentionNames: csv(env.WHATSAPP_MENTION_NAMES, fileConfig.whatsapp?.mentionNames),
       groupActivation: parseGroupActivation(

@@ -14,7 +14,7 @@
   proposal in `p101-timers-schedules-and-triggers.md`.
 - Inspired by OpenClaw's channel gateway (activation modes, ambient room
   context, queue discipline, tool-based outbound messaging), adapted to
-  Forge's deterministic engine and hosted runtime.
+  Lightspeed's deterministic engine and hosted runtime.
 - Naming note: some older docs (`p63-skills.md`,
   `p101-timers-schedules-and-triggers.md`) reference "P71 prompt management";
   that work shipped as P65. This document claims the unused P71 slot.
@@ -22,7 +22,7 @@
 ## Goal
 
 Evolve `interop/messaging` from a slash-command request/reply adapter into a
-**session-bound channel gateway**, and give Forge the missing primitives so an
+**session-bound channel gateway**, and give Lightspeed the missing primitives so an
 agent session can participate in chats the way a person does:
 
 - **Listening** — ingest allowed Telegram/WhatsApp traffic continuously.
@@ -33,7 +33,7 @@ agent session can participate in chats the way a person does:
   expressed through an explicit send tool, not prompt tokens.
 - **Speaking** — a durable, channel-neutral delivery outbox through which
   final replies, agent-initiated tool sends, and (later) trigger
-  announcements all reach channels. A Forge session can initiate messages
+  announcements all reach channels. A Lightspeed session can initiate messages
   without waiting for an inbound chat message.
 - **Media** — images, documents, and voice notes enter sessions as
   CAS-blob-backed input items; audio is transcribed server-side.
@@ -51,7 +51,7 @@ ambient group presence or agent-initiated messages. Inbound handling, turn
 policy, and outbound delivery become three independent layers that meet at
 the session log.
 
-**The Forge session transcript is the source of truth.** Channels attach to
+**The Lightspeed session transcript is the source of truth.** Channels attach to
 sessions through bindings. Telegram and WhatsApp do not mirror each other;
 they are independent delivery surfaces for the same or different sessions.
 
@@ -72,7 +72,7 @@ a worker activity that appends a durable outbox row. The engine sees a normal
 tool call and result. Channel connections (grammY, Baileys) stay in the
 bridge process; the gateway gains only channel-neutral methods
 (`context/append`, `outbox/read`, `outbox/ack`), preserving the P70 rule that
-the bridge adds no channel-specific endpoints to Forge.
+the bridge adds no channel-specific endpoints to Lightspeed.
 
 **Worker never calls the bridge.** Tool execution must not depend on bridge
 liveness or reachability. The outbox decouples them: the tool durably
@@ -106,8 +106,8 @@ Channel-side mechanisms worth adopting or adapting
   suppress delivery via an explicit decision, with delivery destination
   separate from execution.
 
-Differences for Forge: OpenClaw is a single process, so its in-memory event
-queues and direct channel sends are acceptable there; Forge's worker and
+Differences for Lightspeed: OpenClaw is a single process, so its in-memory event
+queues and direct channel sends are acceptable there; Lightspeed's worker and
 bridge are separate processes with a durable store between them, hence the
 outbox. OpenClaw's token contracts (`HEARTBEAT_OK`, `NO_REPLY`) are replaced
 by delivery policy plus the send tool.
@@ -120,7 +120,7 @@ by delivery policy plus the send tool.
   native mention or reply-to-bot detection.
 - `interop/messaging/src/runtime.ts`: per-conversation promise queue,
   message dedupe via `.bridge-state.json`.
-- `interop/messaging/src/forge.ts`: `session/start` → `run/start`
+- `interop/messaging/src/lightspeed.ts`: `session/start` → `run/start`
   (idempotent `submissionId`) → `awaitRun` long-poll → `session/read` →
   extract latest assistant text → reply. One inbound message, one run, one
   outbound message; multi-message runs lose output; nothing can reach the
@@ -252,7 +252,7 @@ Design notes:
 - DM and group activation per `ActivationPolicy`; Telegram mention detection
   via message entities + bot username; WhatsApp via `mentionedJid` in
   context info and quoted-message author (reply-to-bot), not text prefixes;
-- trigger prefixes (`/ask`, `/forge`) remain as an explicit-address fallback
+- trigger prefixes (`/ask`, `/lightspeed`) remain as an explicit-address fallback
   and for `silent`-mode escape hatches;
 - debounce: a quiet window (default 500ms, configurable) batches rapid
   consecutive messages from the same chat into one UserTurn; the existing
@@ -632,7 +632,7 @@ Acceptance criteria:
 
 ## Non-Goals
 
-- No channel connections (grammY/Baileys/webhooks) inside Forge crates; the
+- No channel connections (grammY/Baileys/webhooks) inside Lightspeed crates; the
   bridge process owns transports. The gateway gains only channel-neutral
   methods.
 - No universal chat message model in the engine; envelopes and media are
@@ -671,7 +671,7 @@ Acceptance criteria:
   binding-level option once session lifecycle exists.
 - **Session lifecycle:** permanent per-chat sessions grow without bound and
   lean entirely on compaction. Daily/idle reset with `/new` exists in
-  OpenClaw; Forge needs a position (likely bridge-side rebinding first,
+  OpenClaw; Lightspeed needs a position (likely bridge-side rebinding first,
   engine-side session forking later).
 - **Mid-run steering:** the engine has `RequestRunSteering` but the gateway
   does not expose it. Without it, messages arriving mid-run queue as

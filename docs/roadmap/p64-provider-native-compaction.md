@@ -4,7 +4,7 @@
 - In progress.
 - Depends on P50/P53 provider-native request materialization and P62 CAS-backed
   blob retention.
-- Follows P63's context-entry direction: canonical Forge context such as
+- Follows P63's context-entry direction: canonical Lightspeed context such as
   instructions, skill catalog entries, and active skill activations lives as
   explicit context entries and must be preserved independently from compacted
   conversation history.
@@ -19,21 +19,21 @@
   API projection emits compaction requested/finished events plus debug
   provider context items.
 - Remaining work is broader integration coverage, live verification against
-  OpenAI, and the deferred Forge-managed fallback mode for providers without
+  OpenAI, and the deferred Lightspeed-managed fallback mode for providers without
   native compaction.
 
 ## Goal
 
-Make compaction a first-class context-management capability while keeping Forge
+Make compaction a first-class context-management capability while keeping Lightspeed
 provider-native and deterministic.
 
 The default path should be provider API triggered compaction. For OpenAI
 Responses, ordinary `/responses` calls should opt into server-side compaction
-through provider-native `context_management` configuration. Forge should record
+through provider-native `context_management` configuration. Lightspeed should record
 the opaque compaction item returned by the provider and use it to shrink the
 next active context window.
 
-Standalone provider-native compaction and Forge-managed summarization are
+Standalone provider-native compaction and Lightspeed-managed summarization are
 separate explicit policy modes, not the primary design and not implicit
 runtime fallbacks from provider-triggered compaction.
 
@@ -41,14 +41,14 @@ Priority order:
 
 1. Provider-triggered compaction during normal generation.
 2. Explicit standalone provider-native compaction.
-3. Forge-managed summarization or deterministic pruning for providers without
+3. Lightspeed-managed summarization or deterministic pruning for providers without
    native compaction support.
 
 Policy selection should be pinned after configuration resolution. If a session
-or run selects `ProviderTriggered`, Forge should either execute
+or run selects `ProviderTriggered`, Lightspeed should either execute
 provider-triggered compaction or reject clearly when the selected provider API
 cannot support it. It should not silently fall back to standalone compaction,
-Forge-managed summarization, or deterministic pruning. `None` in configuration
+Lightspeed-managed summarization, or deterministic pruning. `None` in configuration
 means "inherit/default", not "try multiple strategies".
 
 ## Context
@@ -60,7 +60,7 @@ OpenAI Responses now supports native compaction in two useful modes:
   `compact_threshold`.
 - Standalone compaction through `POST /responses/compact`.
 
-The server-side mode is the important default for Forge. The model request
+The server-side mode is the important default for Lightspeed. The model request
 crosses a rendered-token threshold, OpenAI runs compaction inside the same
 provider operation, and the response includes an encrypted opaque compaction
 item. That item is provider-native state, not a human summary. For stateless
@@ -72,7 +72,7 @@ manually prune the provider-side chain.
 Reference:
 https://developers.openai.com/api/docs/guides/compaction
 
-Forge already has several pieces this needs:
+Lightspeed already has several pieces this needs:
 
 - `ContextEntryKind::ProviderOpaque`
 - blob-backed raw/native context items
@@ -89,7 +89,7 @@ returned compaction output items become `ProviderOpaque` context entries, and
 eligible superseded entries are pruned with a `ProviderCompacted` reason.
 The provider-standalone policy now exists for OpenAI Responses as an explicit
 manual/API or idle high-watermark path. Remaining work is to broaden
-integration coverage, run live verification, and implement Forge-managed
+integration coverage, run live verification, and implement Lightspeed-managed
 fallback only when there is a concrete use case.
 
 ## Non-Goals
@@ -100,7 +100,7 @@ fallback only when there is a concrete use case.
   provider service.
 - Do not put provider-specific JSON parsing into reducer logic beyond compact
   metadata required for deterministic branching.
-- Do not rely on compaction output to preserve canonical Forge context such as
+- Do not rely on compaction output to preserve canonical Lightspeed context such as
   instructions, skill catalogs, or active skill bodies.
 - Do not use compaction to rewrite the event log. Compaction changes active
   context state; the durable session log remains the audit history.
@@ -118,7 +118,7 @@ Compaction is a context-window operation, not a generic agent subroutine.
   compaction,
 - which active context entries are eligible to prune after a recorded
   compaction item,
-- which context entries must be retained because they are canonical Forge
+- which context entries must be retained because they are canonical Lightspeed
   context or unconsumed inputs.
 
 Runtime adapters should own side effects and provider-specific materialization:
@@ -138,7 +138,7 @@ should only validate and arrange active context entries.
 
 This is the normal mode for OpenAI Responses.
 
-Forge sends a normal generation request with provider-native compaction
+Lightspeed sends a normal generation request with provider-native compaction
 configuration:
 
 ```json
@@ -156,7 +156,7 @@ OpenAI decides whether the rendered request crosses the threshold. If it does,
 the provider runs compaction as part of the response operation and returns an
 opaque compaction output item.
 
-Forge then:
+Lightspeed then:
 
 - stores the native output item JSON in CAS,
 - records it as `ContextEntryKind::ProviderOpaque`,
@@ -174,7 +174,7 @@ transient stream metadata.
 ### Standalone Provider-Native Compaction
 
 This is the controlled fallback for providers that expose a native compaction
-endpoint but do not trigger compaction inside normal generation, or when Forge
+endpoint but do not trigger compaction inside normal generation, or when Lightspeed
 wants to compact while idle.
 
 For OpenAI Responses, this means `POST /responses/compact`.
@@ -190,20 +190,20 @@ This path is useful for manual compaction commands, idle-time maintenance, or
 recovering from context pressure before starting the next turn. It should not
 be the default path for normal OpenAI Responses generations.
 
-Forge implements this for OpenAI Responses behind the explicit
+Lightspeed implements this for OpenAI Responses behind the explicit
 `ProviderStandalone` policy. Core records a pending compaction request with a
 trigger (`manual` or `highWatermark`), emits substrate-neutral
 `CompactContext`, and only runtime/worker adapters perform the provider call.
 The result appends provider-opaque compaction context and the existing
 deterministic provider-compaction prune step removes superseded active entries.
 
-### Forge-Managed Fallback Compaction
+### Lightspeed-Managed Fallback Compaction
 
 This is the last resort.
 
-For providers without native compaction, Forge may run a specialized summary
+For providers without native compaction, Lightspeed may run a specialized summary
 generation or deterministic pruning policy. The output should be recorded as
-Forge semantic context, not provider-native opaque state.
+Lightspeed semantic context, not provider-native opaque state.
 
 This fallback must be explicitly marked as lower fidelity than native
 compaction because it cannot preserve encrypted reasoning or other provider
@@ -228,7 +228,7 @@ pub enum CompactionPolicy {
         compact_threshold_tokens: Option<u32>,
         target_tokens: Option<u32>,
     },
-    ForgeManaged {
+    LightspeedManaged {
         compact_threshold_tokens: Option<u32>,
         target_tokens: Option<u32>,
     },
@@ -236,7 +236,7 @@ pub enum CompactionPolicy {
 ```
 
 The exact shape can differ, but it should keep the distinction between
-provider-triggered, provider-standalone, and Forge-managed fallback explicit.
+provider-triggered, provider-standalone, and Lightspeed-managed fallback explicit.
 `compact_threshold_tokens` is intentionally optional: for `ProviderTriggered`,
 `None` means use the provider's default server-side threshold and omit
 `compact_threshold` from the provider request; for `ProviderStandalone`,
@@ -265,7 +265,7 @@ Provider-triggered compaction does not require a new CoreAgent action before
 generation. It is part of the ordinary `GenerateLlm` action.
 
 Standalone provider compaction does require a new substrate-neutral action if
-Forge supports it as an idle/pre-turn operation:
+Lightspeed supports it as an idle/pre-turn operation:
 
 ```rust
 CoreAgentAction::CompactContext {
@@ -301,7 +301,7 @@ Add stable provider-kind constants for:
 
 - `openai.responses.compaction`
 - future provider-native compaction item families
-- Forge-managed summary entries if needed
+- Lightspeed-managed summary entries if needed
 
 Do not add a semantic `ContextEntryKind::CompactionSummary` for opaque native
 items. A native compaction item is not a summary.
@@ -310,7 +310,7 @@ items. A native compaction item is not a summary.
 
 Recording a compaction item is not enough. Active context must shrink.
 
-After a native compaction item is committed, Forge should prune eligible
+After a native compaction item is committed, Lightspeed should prune eligible
 entries that the provider compaction item supersedes. For OpenAI stateless
 input-array chaining, this means the next provider request can keep:
 
@@ -360,14 +360,14 @@ steering entries.
 
 ### Next-Turn Input Shape
 
-Provider-native compaction is not a replacement for current Forge canonical
+Provider-native compaction is not a replacement for current Lightspeed canonical
 context. A follow-up request after provider-triggered compaction should not
 send "just the compaction item".
 
 For OpenAI stateless input-array chaining, the next rendered request should
 contain:
 
-1. current canonical Forge context:
+1. current canonical Lightspeed context:
    - stable keyed instructions rendered through the top-level OpenAI
      `instructions` field,
    - current skill catalog entries rendered as developer messages,
@@ -379,7 +379,7 @@ contain:
 4. the new user input for the next turn.
 
 Entries before the latest compaction item are only retained when they are
-canonical Forge context or protected by a run/tool invariant. The compaction
+canonical Lightspeed context or protected by a run/tool invariant. The compaction
 item supersedes old provider conversation state; it does not supersede
 current instructions, skill catalog, active skill bodies, environment/context
 updates, or other pinned runtime context.
@@ -387,7 +387,7 @@ updates, or other pinned runtime context.
 The useful Codex precedent is: process the compacted transcript, keep the
 provider compaction item and selected real user messages, drop stale
 developer/context messages and old assistant/tool/reasoning artifacts, then
-reinject the current canonical context from live session state. Forge should
+reinject the current canonical context from live session state. Lightspeed should
 use the same principle, adapted to `ContextEntryKind`:
 
 - keep `Instructions`, `SkillCatalog`, active `SkillActivation`, unconsumed
@@ -396,7 +396,7 @@ use the same principle, adapted to `ContextEntryKind`:
 - remove old `Message`, `ReasoningState`, `ToolCall`, `ToolResult`, and older
   provider-native conversation items before the latest compaction item when no
   invariant protects them;
-- never trust opaque provider compaction output to preserve Forge-owned
+- never trust opaque provider compaction output to preserve Lightspeed-owned
   canonical context.
 
 ## OpenAI Responses Runtime Work
@@ -438,7 +438,7 @@ drive emits GenerateLlm
 
 The context pruning step should be deterministic and planned by core after the
 generation result is committed. It should not require the worker to decide
-which Forge context entries to remove.
+which Lightspeed context entries to remove.
 
 Standalone compaction now uses a dedicated activity:
 
@@ -512,7 +512,7 @@ Live tests:
 - A follow-up turn verifies that earlier input items can be dropped while the
   model still retains the prior task state.
 - Existing standalone `/responses/compact` live test remains as a fallback
-  contract test, not the primary Forge behavior test.
+  contract test, not the primary Lightspeed behavior test.
 
 ## Milestones
 
@@ -565,17 +565,17 @@ Live tests:
 - [x] Trigger standalone compaction from idle context high-watermark pressure.
 - [x] Wire OpenAI `/responses/compact` through runtime/workflow/worker and
   in-process runner.
-- [ ] Add Forge-managed summary fallback for providers without native compaction.
+- [ ] Add Lightspeed-managed summary fallback for providers without native compaction.
 
 ## Open Questions
 
-- What default `compact_threshold_tokens` should Forge use per model family?
+- What default `compact_threshold_tokens` should Lightspeed use per model family?
 - Should compaction policy live in `ContextConfig`, provider request defaults,
   or both?
 - Should server-side native compaction pruning happen immediately after the
   turn or at the next turn planning boundary?
 - How should provider-native compaction interact with `previous_response_id`
-  chaining if Forge enables it later?
+  chaining if Lightspeed enables it later?
 - Should active context retain a compact debug marker for removed ranges, or is
   the event log enough?
 - Do we need a separate public compaction activity view, or are context rewrite

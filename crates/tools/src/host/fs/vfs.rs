@@ -169,7 +169,7 @@ struct ResolvedMount {
     inner_path: FsPath,
 }
 
-const VFS_WORKSPACE_COMMIT_EFFECT_KIND: &str = "forge.vfs.workspace_commit.v1";
+const VFS_WORKSPACE_COMMIT_EFFECT_KIND: &str = "lightspeed.vfs.workspace_commit.v1";
 
 #[derive(Clone, Default)]
 struct ToolEffectLog {

@@ -27,17 +27,17 @@
   against the P69 grant store — grant existence, `Active` status,
   provider-kind/auth-policy compatibility, and audience coverage of the
   server URL; universe equality holds by construction. Static bearer grants
-  work end to end (`forge auth grant import` -> `forge mcp link
+  work end to end (`lightspeed auth grant import` -> `lightspeed mcp link
   --auth-grant-id` -> runtime injection).
-- OAuth grants landed with P69 G2-G4 (2026-06-10): `forge auth login
+- OAuth grants landed with P69 G2-G4 (2026-06-10): `lightspeed auth login
   mcp:<server_id>` discovers the server's authorization setup from its
   catalog OAuth policy (PRM/AS metadata, CIMD or DCR client registration)
-  and mints a linkable `mcp_oauth` grant; `forge mcp server add` now accepts
+  and mints a linkable `mcp_oauth` grant; `lightspeed mcp server add` now accepts
   `--auth-policy optional-oauth|required-oauth` with `--oauth-resource`,
   `--oauth-scope`, `--oauth-metadata-url`, and
   `--oauth-authorization-server`.
 - Still pending: Anthropic provider lowering and principal-policy checks
-  (deferred until Forge has user identity).
+  (deferred until Lightspeed has user identity).
 - Still pending: `mcp/servers/update` (listed in the API surface but not
   implemented). G3 metadata discovery needs it for auth-policy writes and
   status transitions such as `unverified -> active`; until then catalog edits
@@ -53,14 +53,14 @@
 
 ## Goal
 
-Add a universe-scoped remote MCP server catalog so Forge can configure remote
+Add a universe-scoped remote MCP server catalog so Lightspeed can configure remote
 MCP servers once and attach them to sessions as model-facing tools.
 
 The first product flow is no-auth/public MCP:
 
 ```text
-forge mcp server add https://echo.example.com/mcp --id echo --label echo
-  -> Forge stores a sanitized MCP server catalog record in the universe
+lightspeed mcp server add https://echo.example.com/mcp --id echo --label echo
+  -> Lightspeed stores a sanitized MCP server catalog record in the universe
   -> user links MCP server "echo" to a session tool set
   -> gateway materializes ToolKind::RemoteMcp(RemoteMcpToolSpec)
   -> P67 lowers that active tool to provider-native MCP request fields
@@ -70,9 +70,9 @@ For authenticated servers, P68 records MCP-specific auth requirements and uses
 auth handles produced by P69:
 
 ```text
-forge auth login mcp:crm
+lightspeed auth login mcp:crm
   -> P69 stores the OAuth/static credential grant
-forge mcp link --session session_1 crm --auth-grant authgrant_123
+lightspeed mcp link --session session_1 crm --auth-grant authgrant_123
   -> P68 validates the grant handle belongs to the universe/server
   -> P68 materializes auth_ref into RemoteMcpToolSpec
 ```
@@ -143,9 +143,9 @@ link either omits auth for public servers or names the auth handle to use.
 - Do not implement token refresh or a runtime token broker in P68.
 - Do not make `engine` perform MCP HTTP discovery, tool listing, OAuth, token
   lookup, or secret resolution.
-- Do not implement a Forge-hosted MCP bridge/client runtime.
+- Do not implement a Lightspeed-hosted MCP bridge/client runtime.
 - Do not implement private/on-prem tunnels.
-- Do not convert discovered MCP tools into Forge function tools.
+- Do not convert discovered MCP tools into Lightspeed function tools.
 - Do not require every MCP server to use OAuth.
 - Do not silently attach a universe-level auth grant to a session.
 
@@ -227,7 +227,7 @@ secrets. Those are P69 records.
 User or admin adds a server:
 
 ```bash
-forge mcp server add https://crm.example.com/mcp --id crm --label crm
+lightspeed mcp server add https://crm.example.com/mcp --id crm --label crm
 ```
 
 The gateway/control plane should:
@@ -319,14 +319,14 @@ resolved `RemoteMcpToolSpec`, not a mutable catalog pointer.
 Candidate commands:
 
 ```bash
-forge mcp server add https://crm.example.com/mcp --id crm --label crm
-forge mcp server list
-forge mcp server read crm
-forge mcp server remove crm
+lightspeed mcp server add https://crm.example.com/mcp --id crm --label crm
+lightspeed mcp server list
+lightspeed mcp server read crm
+lightspeed mcp server remove crm
 
-forge mcp link --session session_1 crm --tool-id mcp_crm
-forge mcp link --session session_1 crm --tool-id mcp_crm --auth-grant authgrant_123
-forge chat --new --mcp crm
+lightspeed mcp link --session session_1 crm --tool-id mcp_crm
+lightspeed mcp link --session session_1 crm --tool-id mcp_crm --auth-grant authgrant_123
+lightspeed chat --new --mcp crm
 ```
 
 Auth commands belong to P69. P68 may provide MCP-specific convenience wrappers
@@ -354,7 +354,7 @@ crates/cli/src/mcp.rs
 
 If a new shared crate becomes necessary, keep it narrow, for example
 `mcp-registry` for DTOs and traits used by both gateway and CLI. Do not create
-a general Forge MCP client/runtime crate in P68; Forge is still not executing
+a general Lightspeed MCP client/runtime crate in P68; Lightspeed is still not executing
 MCP tool calls in this milestone.
 
 ## Security And Policy
@@ -407,7 +407,7 @@ Acceptance criteria:
 - [x] the gateway validates universe (by construction), server compatibility
   (grant kind vs auth policy, audience coverage), grant status, and auth
   requirement before committing session state; principal policy is deferred
-  until Forge has user identity;
+  until Lightspeed has user identity;
 - [x] linked session state contains `auth_ref: SecretRef { namespace:
   "auth_grant", id: ... }`;
 - [x] no secret values or OAuth protocol records are stored in P68 tables or

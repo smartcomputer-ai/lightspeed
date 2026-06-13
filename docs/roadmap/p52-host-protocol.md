@@ -27,7 +27,7 @@ Define the substrate protocol used to talk to a host execution target.
 
 P52 should get the protocol boundary right before we build rich sandbox
 provisioning, host inventory, SSH attachment, or hosted controller services.
-The first implementation should be enough to back Forge's existing host
+The first implementation should be enough to back Lightspeed's existing host
 filesystem and process tools through a remote target, and to obtain the first
 externally hosted target through a minimal controller protocol.
 
@@ -55,11 +55,11 @@ several ways:
 
 - an in-guest daemon inside a VM/container
 - a host-side daemon that controls VMs externally
-- a provider API client that never starts a Forge binary in the guest
+- a provider API client that never starts a Lightspeed binary in the guest
 - an SSH adapter
 - a virtual filesystem adapter with no process capability
 
-Forge host tools should continue to depend on capabilities:
+Lightspeed host tools should continue to depend on capabilities:
 
 ```rust
 pub struct HostToolContext {
@@ -156,14 +156,14 @@ Leave these out of P52:
 - MCP surface
 - high-level agent tools such as grep, glob, edit, or apply_patch
 
-The existing Forge host tools already implement grep, glob, edit, and
+The existing Lightspeed host tools already implement grep, glob, edit, and
 apply_patch over `FileSystem`. The protocol should expose the substrate, not
 duplicate every agent-facing tool.
 
 ## `host-protocol` Crate Shape
 
 `host-protocol` should be a pure types crate. It should not open sockets, own
-retry policy, run commands, access filesystems, or depend on Forge agent crates.
+retry policy, run commands, access filesystems, or depend on Lightspeed agent crates.
 
 Target shape:
 
@@ -351,7 +351,7 @@ fs/remove
 fs/copy
 ```
 
-Paths should be serialized as Forge logical filesystem paths, using the same
+Paths should be serialized as Lightspeed logical filesystem paths, using the same
 slash-normalized semantics as `FsPath`. The remote provider decides how those
 logical paths map to its backing storage. A local path on the runtime host must
 not leak into the protocol unless that path is intentionally part of the target
@@ -376,7 +376,7 @@ process/exited
 process/closed
 ```
 
-The first adapter can implement Forge's `run_process` by starting a process and
+The first adapter can implement Lightspeed's `run_process` by starting a process and
 reading until exit, timeout, or `yield_time_ms`. `write_process_stdin` maps to
 `process/write` plus a follow-up read.
 
@@ -385,7 +385,7 @@ Output chunks should carry monotonic sequence numbers so clients can recover
 from missed notifications by polling `process/read`.
 
 PTY support can be part of the protocol shape but does not need to be exposed
-through the first Forge `ProcessExecutor` adapter unless the host tool surface
+through the first Lightspeed `ProcessExecutor` adapter unless the host tool surface
 adds PTY parameters.
 
 ## Client Shape
@@ -404,14 +404,14 @@ It is acceptable for consumers to use only one side of the client. Keeping one
 crate avoids splitting shared transport, auth, error mapping, version
 negotiation, and connection-spec handling too early.
 
-The Forge-specific adapter should live in `agent-tools`:
+The Lightspeed-specific adapter should live in `agent-tools`:
 
 - `RemoteHostFileSystem` implements `FileSystem` over `host-client`
 - `RemoteProcessExecutor` implements `ProcessExecutor` over `host-client`
 - a helper builds a `HostToolContext` from a remote connection and blob store
 - `HostToolTargets` can then map `host:<id>` to that context
 
-This keeps the reusable protocol client separate from Forge's current host tool
+This keeps the reusable protocol client separate from Lightspeed's current host tool
 trait names, while still making integration straightforward.
 
 ## Relationship to P51
@@ -513,7 +513,7 @@ controller or SDK layer later.
 ### [ ] G6. Document Provider Implementations
 
 - Document how a Codex-style exec server maps to `host-protocol`.
-- Document how Fabric/smolvm maps to `host-protocol` without an in-guest Forge
+- Document how Fabric/smolvm maps to `host-protocol` without an in-guest Lightspeed
   binary.
 - Document how future control-plane provisioning returns a connection spec that
   can become a `host:<id>` target.

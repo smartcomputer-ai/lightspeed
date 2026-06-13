@@ -29,7 +29,7 @@ use super::{
 
 pub const WEB_FETCH_TOOL_NAME: &str = "web_fetch";
 pub const WEB_FETCH_LOGICAL_ID: &str = "web.fetch";
-pub const WEB_FETCH_ACTIVITY_TYPE: &str = "forge.web.fetch";
+pub const WEB_FETCH_ACTIVITY_TYPE: &str = "lightspeed.web.fetch";
 
 const DEFAULT_MAX_CHARS: u32 = 20_000;
 const MAX_MAX_CHARS: u32 = 20_000;

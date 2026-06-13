@@ -151,7 +151,7 @@ pub fn conventional_vfs_skill_root_specs(mounts: &[VfsMountRecord]) -> Vec<VfsSk
             push_spec(
                 &mut specs,
                 &mut seen,
-                workspace_skill_root(&mount.mount_path, ".forge/skills"),
+                workspace_skill_root(&mount.mount_path, ".lightspeed/skills"),
             );
             push_spec(
                 &mut specs,
@@ -386,7 +386,7 @@ mod tests {
         let snapshot = create_inline_snapshot(
             blobs.as_ref(),
             CreateInlineSnapshotRequest::new(vec![skill_file(
-                ".forge/skills/review/SKILL.md",
+                ".lightspeed/skills/review/SKILL.md",
                 "review",
                 "Use when reviewing workspace skills.",
             )]),
@@ -419,7 +419,7 @@ mod tests {
             mounts,
             vec![VfsSkillRootSpec::new(
                 "project",
-                VfsPath::parse("/workspace/.forge/skills").unwrap(),
+                VfsPath::parse("/workspace/.lightspeed/skills").unwrap(),
                 SkillTrustLevel::Project,
                 SkillScope::Global,
             )],
@@ -453,7 +453,7 @@ mod tests {
                 ..
             } if resolved_workspace_id == &workspace_id
                 && source_mount_path.as_str() == "/workspace"
-                && skill_doc_path.as_str() == "/workspace/.forge/skills/review/SKILL.md"
+                && skill_doc_path.as_str() == "/workspace/.lightspeed/skills/review/SKILL.md"
         ));
     }
 

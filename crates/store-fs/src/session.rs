@@ -35,11 +35,11 @@ impl FsSessionStore {
     }
 
     pub fn for_project(project_root: impl AsRef<Path>) -> Self {
-        Self::new(crate::forge_dir(project_root))
+        Self::new(crate::lightspeed_dir(project_root))
     }
 
     pub async fn open_project(project_root: impl AsRef<Path>) -> io::Result<Self> {
-        Self::open(crate::forge_dir(project_root)).await
+        Self::open(crate::lightspeed_dir(project_root)).await
     }
 
     pub fn root(&self) -> &Path {
@@ -419,7 +419,7 @@ mod tests {
             observed_at_ms: at_ms,
             joins: DynamicJoins::default(),
             event: DynamicEvent::new(
-                "forge.test.lifecycle.closed",
+                "lightspeed.test.lifecycle.closed",
                 1,
                 serde_json::Value::Object(Default::default()),
             ),
@@ -433,7 +433,7 @@ mod tests {
             .await
             .expect("open store");
         let session_id = SessionId::new("session-a");
-        let agent_handle = AgentHandle::new("forge.default");
+        let agent_handle = AgentHandle::new("lightspeed.default");
 
         store
             .create_session(CreateSession {
@@ -498,7 +498,7 @@ mod tests {
             .await
             .expect("open store");
         let session_id = SessionId::new("session-a");
-        let agent_handle = AgentHandle::new("forge.default");
+        let agent_handle = AgentHandle::new("lightspeed.default");
 
         store
             .create_session(CreateSession {

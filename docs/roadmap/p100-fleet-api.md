@@ -70,9 +70,9 @@ metadata
 Initial type:
 
 ```text
-type_id = forge.claw
+type_id = lightspeed.claw
 runtime_kind = temporal.claw
-interface = forge.claw interface from P60
+interface = lightspeed.claw interface from P60
 ```
 
 Do not turn the type registry into a marketplace. It can start as a static
@@ -96,7 +96,7 @@ tags
 metadata
 ```
 
-For `forge.claw`, the first implementation can map one agent node to one Claw
+For `lightspeed.claw`, the first implementation can map one agent node to one Claw
 session. Later, a node can own multiple sessions when one logical agent needs
 separate conversations, tasks, or memory scopes.
 
@@ -136,31 +136,31 @@ methods.
 Candidate queries:
 
 ```text
-forge.agent.types.list
-forge.agent.type.read
-forge.agent.list
-forge.agent.read
-forge.agent.links.list
+lightspeed.agent.types.list
+lightspeed.agent.type.read
+lightspeed.agent.list
+lightspeed.agent.read
+lightspeed.agent.links.list
 ```
 
 Candidate commands:
 
 ```text
-forge.agent.create
-forge.agent.update_metadata
-forge.agent.archive
-forge.agent.links.upsert
-forge.agent.links.delete
+lightspeed.agent.create
+lightspeed.agent.update_metadata
+lightspeed.agent.archive
+lightspeed.agent.links.upsert
+lightspeed.agent.links.delete
 ```
 
 Candidate events:
 
 ```text
-forge.agent.created
-forge.agent.metadata_updated
-forge.agent.archived
-forge.agent.link_upserted
-forge.agent.link_deleted
+lightspeed.agent.created
+lightspeed.agent.metadata_updated
+lightspeed.agent.archived
+lightspeed.agent.link_upserted
+lightspeed.agent.link_deleted
 ```
 
 ## Routing
@@ -192,10 +192,10 @@ their own state.
 Agent creation may compile a template or manifest into ordinary P60 commands:
 
 ```text
-forge.session.start
-forge.core.config.update
-forge.core.tools.set_registry
-forge.core.tools.select_profile
+lightspeed.session.start
+lightspeed.core.config.update
+lightspeed.core.tools.set_registry
+lightspeed.core.tools.select_profile
 ```
 
 The running session's effective configuration is still read through queries
@@ -215,8 +215,8 @@ against replayed session state.
 
 ### G1: Static Type Discovery
 
-- Expose a static `forge.agent.types.list` query.
-- Include only `forge.claw` at first.
+- Expose a static `lightspeed.agent.types.list` query.
+- Include only `lightspeed.claw` at first.
 - Reuse the P60 interface descriptor for the type.
 
 ### G2: Agent Node Registry

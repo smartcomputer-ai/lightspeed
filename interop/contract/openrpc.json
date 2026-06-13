@@ -7105,7 +7105,7 @@
   },
   "info": {
     "description": "JSON-RPC 2.0 over HTTP POST /rpc. Results are wrapped in the AgentApiOutcome envelope; session events are consumed via session/events/read cursor pagination.",
-    "title": "Forge Agent API",
+    "title": "Lightspeed Agent API",
     "version": "0.1.0"
   },
   "methods": [

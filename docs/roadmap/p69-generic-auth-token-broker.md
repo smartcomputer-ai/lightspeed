@@ -6,9 +6,9 @@
   store traits, `SecretValue` redacted wrapper, `TokenAudience`,
   `RegistryTokenBroker` with typed `AuthBrokerError` kinds, in-memory test
   adapters); `store-pg` `auth_secrets`/`auth_grants` tables with AES-256-GCM
-  encryption (AAD = universe/secret id/kind, `FORGE_SECRETS_MASTER_KEY`
+  encryption (AAD = universe/secret id/kind, `LIGHTSPEED_SECRETS_MASTER_KEY`
   config; `local/` exports a well-known dev-only default key);
-  `auth/grants/import|list|read|revoke` JSON-RPC + `forge auth grant` CLI; `llm-runtime` `SecretResolver` with OpenAI Responses `authorization`
+  `auth/grants/import|list|read|revoke` JSON-RPC + `lightspeed auth grant` CLI; `llm-runtime` `SecretResolver` with OpenAI Responses `authorization`
   injection and redacted persisted request blobs; worker
   `BrokerSecretResolver` wiring; and P68 link-time grant validation
   (status/kind/audience).
@@ -25,14 +25,14 @@
   token on transient refresh failures. `store-pg` migration 004 adds
   `auth_clients`, `auth_flows`, and `auth_grants.oauth_client_id`. The
   gateway hosts `GET /auth/callback` (public base URL via
-  `FORGE_PUBLIC_BASE_URL`, default `http://{bind}`) plus
+  `LIGHTSPEED_PUBLIC_BASE_URL`, default `http://{bind}`) plus
   `auth/clients/create|list|read|delete` and `auth/flows/start|status`;
-  the CLI gained `forge auth client add|list|read|remove` and
-  `forge auth login <client>` with status polling.
+  the CLI gained `lightspeed auth client add|list|read|remove` and
+  `lightspeed auth login <client>` with status polling.
 - G4 implemented on 2026-06-10: `auth-registry::mcp_oauth` driver with PRM
   (RFC 9728) and AS metadata (RFC 8414/OIDC) discovery, CIMD + DCR + manual
   client identification, lazy `mcp:<server_id>` client upsert triggered by
-  `auth/flows/start` (`forge auth login mcp:<server>`), and the
+  `auth/flows/start` (`lightspeed auth login mcp:<server>`), and the
   gateway-served CIMD document at `/auth/client-metadata.json`.
 - G5 mint slice implemented on 2026-06-10: generic `auth_providers` table
   (typed `AuthProviderConfig` enum over `config_json`, credential secret FK
@@ -40,16 +40,16 @@
   (app JWT signing, on-demand installation token minting with in-process
   caching, live installation listing/verification),
   `auth/providers/*` + `auth/github/installations/*` API, and
-  `forge auth github` CLI. Token leases remain deferred until a VM/sandbox
+  `lightspeed auth github` CLI. Token leases remain deferred until a VM/sandbox
   consumer exists.
 - G6 implemented on 2026-06-11: stored LLM provider API keys as
   `model_api_key` rows in `auth_providers` (no new table, no grant artifact),
   resolved at provider-send time inside the LLM activity with fallback to
-  env-configured keys; `forge auth model add|list|remove` CLI.
+  env-configured keys; `lightspeed auth model add|list|remove` CLI.
 - G7 grant-backed slice implemented on 2026-06-11: scheme-aware per-request
   auth in `llm-clients`, `model_oauth` provider rows binding grants,
   `TokenAudience::ModelProvider` broker resolution (refresh included), and
-  `forge auth model bind`. Loopback-redirect flow and provider login presets
+  `lightspeed auth model bind`. Loopback-redirect flow and provider login presets
   stay deferred.
 - G1 deliberately deferred `AuthProviderRecord`, `AuthFlowRecord`, and token
   leases; G2 landed `AuthFlowRecord` and OAuth client records; G5 landed
@@ -74,7 +74,7 @@ runtime tokens to consumers such as:
 - VMs and sandboxes that need temporary repository/API access;
 - future hosted connectors.
 
-The core product rule is: durable secrets stay in Forge's encrypted store, and
+The core product rule is: durable secrets stay in Lightspeed's encrypted store, and
 runtimes receive only the shortest-lived token or lease needed for the current
 operation.
 
@@ -157,7 +157,7 @@ pub enum PrincipalKind {
 }
 ```
 
-Forge has no user identity system yet: the gateway is unauthenticated and
+Lightspeed has no user identity system yet: the gateway is unauthenticated and
 universe-bound. Until identity exists, flows and grants default to
 `PrincipalKind::UniverseDefault` (or a CLI-supplied id), and principal-policy
 enforcement in P68 linking is deferred. The record shape is kept now so adding
@@ -211,7 +211,7 @@ pub enum AuthProviderKind {
 
 `McpOAuth` supports remote MCP servers that require OAuth bearer tokens.
 
-`GitHubApp` is the preferred repository automation path. Forge stores the app
+`GitHubApp` is the preferred repository automation path. Lightspeed stores the app
 private key as a secret, records installation ids, and mints short-lived
 installation access tokens on demand.
 
@@ -489,7 +489,7 @@ Generic flow:
 8. Refresh or require reauth as needed.
 
 OAuth helper crates are appropriate for protocol mechanics, but all persisted
-state and redaction rules remain Forge-owned.
+state and redaction rules remain Lightspeed-owned.
 
 Callback topology: the default is a gateway-hosted callback endpoint
 (`/auth/callback` on the existing HTTP server) with the CLI polling
@@ -590,16 +590,16 @@ to a trusted runtime boundary.
 Candidate commands:
 
 ```bash
-forge auth provider list
-forge auth provider add static-bearer --id mcp-crm
-forge auth login mcp:crm --scope contacts.read
-forge auth status authgrant_123
-forge auth revoke authgrant_123
+lightspeed auth provider list
+lightspeed auth provider add static-bearer --id mcp-crm
+lightspeed auth login mcp:crm --scope contacts.read
+lightspeed auth status authgrant_123
+lightspeed auth revoke authgrant_123
 
-forge auth github app add --id forge-github
-forge auth github app installation list
-forge auth github app installation grant --installation-id 12345
-forge auth github login
+lightspeed auth github app add --id lightspeed-github
+lightspeed auth github app installation list
+lightspeed auth github app installation grant --installation-id 12345
+lightspeed auth github login
 ```
 
 MCP-specific convenience wrappers may live in P68 later, but generic auth should
@@ -665,7 +665,7 @@ Minimum rules:
   activity inputs/results, heartbeats), engine events, CAS blobs, persisted
   provider request blobs, or API responses;
 - in-memory token values use wrapper types that redact `Debug`/`Display`
-  output (`secrecy`/`zeroize`-style; a minimal Forge-owned wrapper is fine
+  output (`secrecy`/`zeroize`-style; a minimal Lightspeed-owned wrapper is fine
   first);
 - provider errors indicating invalid, expired, or insufficient scopes should
   update grant status when observable.
@@ -674,7 +674,7 @@ Two boundaries deserve explicit naming:
 
 - **Token egress to model providers.** In direct remote MCP (P67), the
   resolved token is injected into the provider request and handed to
-  OpenAI/Anthropic, who connect to the MCP server on Forge's behalf. The
+  OpenAI/Anthropic, who connect to the MCP server on Lightspeed's behalf. The
   user's grant transits a third party. This is inherent to provider-hosted
   MCP; policy may later add a per-grant or per-link consent bit ("allowed to
   be sent to model providers").
@@ -726,7 +726,7 @@ Acceptance criteria:
 - [x] provider drivers can supply authorization/token endpoint metadata
   (manually configured `OAuthClientRecord`s; discovery arrives with G4);
 - [x] CLI/API can start an authorization flow (`auth/flows/start`,
-  `forge auth login`);
+  `lightspeed auth login`);
 - [x] callback completes the flow and stores encrypted token material
   (gateway `GET /auth/callback`; flows are one-time-use, a second callback
   with the same state fails, expired flows cannot complete);
@@ -774,7 +774,7 @@ Driver notes:
   URL, no per-AS registration state); the driver should support CIMD alongside
   DCR and manual client config;
 - `McpOAuth` provider records use the `mcp:<server_id>` provider-id convention
-  and are upserted lazily by `forge auth login mcp:<server_id>` from the P68
+  and are upserted lazily by `lightspeed auth login mcp:<server_id>` from the P68
   catalog record plus discovered metadata; P68 registration does not create
   auth providers.
 
@@ -802,7 +802,7 @@ Acceptance criteria:
   https base URL — the gateway serves the document at
   `/auth/client-metadata.json`; DCR requests a public PKCE client and
   encrypts any issued secret; existing `mcp:<server_id>` records are reused
-  without network traffic, so `forge auth client add --id mcp:<server_id>`
+  without network traffic, so `lightspeed auth client add --id mcp:<server_id>`
   is the manual path);
 - [x] P68 can validate and link MCP-compatible grants by auth handle (since
   G1; OAuth-minted grants carry kind `mcp_oauth`, provider id
@@ -811,7 +811,7 @@ Acceptance criteria:
 Implemented 2026-06-10: `auth-registry::mcp_oauth` (`McpOAuthDriver`,
 `McpOAuthTarget`, `OAuthMetadataClient` trait + reqwest impl, typed
 `McpOAuthError` kinds), gateway lazy upsert in `auth/flows/start` when the
-client id is `mcp:<server_id>` (so `forge auth login mcp:<server>` needs no
+client id is `mcp:<server_id>` (so `lightspeed auth login mcp:<server>` needs no
 new CLI surface), and the CIMD document route. Deferred: persisting DCR
 `registration_access_token`/`registration_client_uri` (registration
 management is not implemented, so re-registration is the recovery path) and
@@ -852,10 +852,10 @@ trait + reqwest impl, typed `GitHubAppError` kinds, RFC 3339 parsing),
 `TokenAudience::GitHubApi`, broker `GitHubAppRuntime`,
 `auth/providers/create|list|read|delete` +
 `auth/github/installations/list|grant` JSON-RPC (the private key is the third
-deliberate inbound-plaintext path), and `forge auth github app
-add|list|read|remove` + `forge auth github installation list|grant` CLI.
+deliberate inbound-plaintext path), and `lightspeed auth github app
+add|list|read|remove` + `lightspeed auth github installation list|grant` CLI.
 Installation listing/verification calls GitHub live with the app JWT, so
-grants are created against verified installations. No Forge consumer spends
+grants are created against verified installations. No Lightspeed consumer spends
 GitHub tokens yet (no repo tools); the broker path is unit-tested against a
 mocked GitHub API.
 
@@ -915,7 +915,7 @@ Acceptance criteria:
 
 - [x] LLM API keys can be registered as `model_api_key` provider rows with the
   key encrypted in `auth_secrets` (`auth/providers/create` with the
-  `modelApiKey` config + `forge auth model add|list|remove`; the key is a
+  `modelApiKey` config + `lightspeed auth model add|list|remove`; the key is a
   deliberate inbound-plaintext path, encrypted on receipt, never returned);
 - [x] generation and compaction calls resolve the stored key for the
   request's `provider_id` at send time and fall back to the env-configured
@@ -977,13 +977,13 @@ Acceptance criteria (grant-backed resolution slice):
   audience-less binding);
 - [x] `auth/providers/create` accepts the `modelOAuth` config (no credential;
   the gateway validates the grant exists and is active before committing the
-  row) and `forge auth model bind <provider> --grant <id> [--audience <url>]`
+  row) and `lightspeed auth model bind <provider> --grant <id> [--audience <url>]`
   creates the binding.
 
 Implemented 2026-06-11 (slices 1+2 of the G7 plan). With a provider that
 allows custom OAuth clients, the full path works today:
-`forge auth client add` -> `forge auth login <client>` (gateway callback) ->
-`forge auth model bind <provider> --grant <grant_id>`.
+`lightspeed auth client add` -> `lightspeed auth login <client>` (gateway callback) ->
+`lightspeed auth model bind <provider> --grant <grant_id>`.
 
 Deferred to a concrete provider-login decision: the loopback-redirect flow
 (provider-fixed client ids use localhost redirect URIs the gateway callback

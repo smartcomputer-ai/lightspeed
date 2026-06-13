@@ -1,6 +1,6 @@
-import type { SessionView } from "@forge/agent-client";
+import type { SessionView } from "@lightspeed/agent-client";
 import { describe, expect, it } from "vitest";
-import { extractAssistantText } from "../src/forge.js";
+import { extractAssistantText } from "../src/lightspeed.js";
 
 function sessionFixture(): SessionView {
   return {

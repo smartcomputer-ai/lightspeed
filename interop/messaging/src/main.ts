@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import "dotenv/config";
-import { ForgeClient } from "@forge/agent-client";
+import { LightspeedClient } from "@lightspeed/agent-client";
 import { loadBridgeConfig } from "./config.js";
-import { ForgeSessionBridge } from "./forge.js";
+import { LightspeedSessionBridge } from "./lightspeed.js";
 import { OutboxTailer } from "./outbox.js";
 import { MessagingBridgeRuntime } from "./runtime.js";
 import { JsonBridgeStore } from "./store.js";
@@ -13,13 +13,13 @@ type Running = RunningBridge | RunningWhatsAppBridge;
 
 const config = await loadBridgeConfig();
 const store = new JsonBridgeStore(config.store.path);
-const client = new ForgeClient(config.forge.endpoint);
-const forge = new ForgeSessionBridge(client, store, config.forge);
+const client = new LightspeedClient(config.lightspeed.endpoint);
+const lightspeed = new LightspeedSessionBridge(client, store, config.lightspeed);
 const runtime = new MessagingBridgeRuntime({
-  forge,
+  lightspeed,
   store,
   runtime: config.runtime,
-  sessionPrefix: config.forge.sessionPrefix,
+  sessionPrefix: config.lightspeed.sessionPrefix,
 });
 const running: Running[] = [];
 

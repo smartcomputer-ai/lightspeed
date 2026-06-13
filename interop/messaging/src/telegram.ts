@@ -3,7 +3,7 @@ import type { Message } from "grammy/types";
 import type { TelegramBridgeConfig } from "./config.js";
 import { stableHash } from "./ids.js";
 import { shouldQuoteChunk, type ReplyToMode } from "./policy.js";
-import type { OutboundMessageView } from "@forge/agent-client";
+import type { OutboundMessageView } from "@lightspeed/agent-client";
 import { DeliveryError, type ChannelDeliverer, type DeliveryResult } from "./outbox.js";
 import type {
   ChannelPolicy,

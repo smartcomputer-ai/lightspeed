@@ -2,7 +2,7 @@
 //! connector: the engine session carries a `RemoteMcp` tool spec, the adapter
 //! lowers it into the request-level `mcp_servers` field, and the connector's
 //! `mcp_tool_use`/`mcp_tool_result` blocks come back as provider-opaque
-//! context without any Forge tool events.
+//! context without any Lightspeed tool events.
 
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
@@ -23,7 +23,7 @@ mod support;
 use support::retrying_anthropic_messages_client;
 
 const MCP_ECHO_SERVER_URL: &str = "https://mcpplaygroundonline.com/mcp-echo-server";
-const MCP_ECHO_MARKER: &str = "FORGE-ANTHROPIC-MCP-ECHO-LIVE-4217";
+const MCP_ECHO_MARKER: &str = "LIGHTSPEED-ANTHROPIC-MCP-ECHO-LIVE-4217";
 const MCP_CLIENT_BETA_HEADER: &str = "mcp-client-2025-04-04";
 
 fn live_model() -> String {
@@ -100,7 +100,7 @@ async fn anthropic_messages_live_core_session_uses_no_auth_remote_mcp_echo() {
     sessions
         .create_session(CreateSession {
             session_id: session_id.clone(),
-            agent_handle: AgentHandle::new("forge.live-anthropic-mcp"),
+            agent_handle: AgentHandle::new("lightspeed.live-anthropic-mcp"),
             created_at_ms: 1,
         })
         .await
@@ -194,7 +194,7 @@ async fn anthropic_messages_live_core_session_uses_no_auth_remote_mcp_echo() {
             .emitted_entries
             .iter()
             .any(|entry| matches!(entry.event.kind, CoreAgentEventKind::Tool(_))),
-        "direct remote MCP must not create Forge tool events"
+        "direct remote MCP must not create Lightspeed tool events"
     );
 
     let mcp_items = mcp_context_items(blobs.as_ref(), &outcome.emitted_entries).await;

@@ -10,10 +10,10 @@
   lowers to provider `tools[]` entries with `type: "mcp"`, `auth_ref` is
   rejected clearly until token brokering exists, and OpenAI `mcp_list_tools`,
   `mcp_call`, and `mcp_approval_request` output items are preserved as
-  provider-opaque context entries without creating Forge tool batches.
+  provider-opaque context entries without creating Lightspeed tool batches.
 - Implemented OpenAI `mcp_call` display projection: API provider-context items
   now expose a compact MCP tool-call summary, and the CLI/TUI renders those as
-  MCP tool-call rows without scheduling Forge tool batches.
+  MCP tool-call rows without scheduling Lightspeed tool batches.
 - Implemented 2026-06-10 (with P69 G1): OpenAI runtime auth injection via the
   `llm-runtime` `SecretResolver` boundary and redacted persisted provider
   request blobs (`authorization: "<redacted>"`); generation fails clearly
@@ -24,14 +24,14 @@
   `p67-tooling-refactor.md`; profile selection has been removed.
 - Direct provider-hosted MCP only: the model provider connects to public remote
   MCP servers during the model call.
-- No Forge MCP bridge, no local/on-prem tunnel support, no Forge-hosted MCP
+- No Lightspeed MCP bridge, no local/on-prem tunnel support, no Lightspeed-hosted MCP
   client runtime, and no arbitrary REST wrapping in this milestone.
 - Builds on P49 tool packages, P50 provider-native request materialization,
   P64 provider-opaque context preservation, and P66's pattern for hosted tools.
 
 ## Goal
 
-Let a Forge session expose remote MCP servers to supported provider APIs while
+Let a Lightspeed session expose remote MCP servers to supported provider APIs while
 preserving the event-sourced capability state that explains why a model saw
 those servers.
 
@@ -50,7 +50,7 @@ I/O.
 
 ## Design Position
 
-Direct remote MCP is a configured model-facing capability, not a Forge-executed
+Direct remote MCP is a configured model-facing capability, not a Lightspeed-executed
 function tool.
 
 It is close to a VFS mount in one respect: a session has an attached external
@@ -62,7 +62,7 @@ that turn.
 Configured MCP servers are **capability state**. Provider-returned MCP items
 such as OpenAI `mcp_list_tools` / `mcp_call` and Anthropic MCP tool use/result
 blocks are **context observations**. Do not model provider-discovered MCP tools
-as Forge `ToolSpec`s in the first cut.
+as Lightspeed `ToolSpec`s in the first cut.
 
 Use a `ToolKind::RemoteMcp` variant in the active session tool map, not a
 standalone MCP subsystem in `engine`:
@@ -76,7 +76,7 @@ pub enum ToolKind {
 ```
 
 `RemoteMcp` means "remote MCP server exposed through a provider-hosted MCP
-client." Forge owns configuration and audit state. The model provider owns
+client." Lightspeed owns configuration and audit state. The model provider owns
 discovery and execution for direct MCP calls.
 
 P68 owns the universe-scoped MCP registry and session linking. P69 owns
@@ -86,8 +86,8 @@ P69.
 
 ## Non-Goals
 
-- Do not build a Forge MCP bridge/client runtime in P67.
-- Do not convert discovered MCP tools into Forge function tools.
+- Do not build a Lightspeed MCP bridge/client runtime in P67.
+- Do not convert discovered MCP tools into Lightspeed function tools.
 - Do not support private/on-prem MCP servers or tunnels in P67.
 - Do not wrap arbitrary REST APIs as MCP in P67.
 - Do not add MCP server discovery, marketplace search, or dynamic install.
@@ -306,7 +306,7 @@ before provider I/O. If auth is optional and absent, omit provider auth fields.
 
 ## Output Recording
 
-Provider-hosted MCP execution must not become a Forge client-effect tool batch.
+Provider-hosted MCP execution must not become a Lightspeed client-effect tool batch.
 
 Record provider-returned MCP observations as provider-opaque context entries:
 
@@ -415,7 +415,7 @@ crates/llm-runtime/src/secrets.rs
 
 Do not add a production MCP transport/client crate in P67. Non-secret MCP
 metadata/preflight checks belong outside engine in P68; OAuth/token work belongs
-to P69; actual Forge-executed MCP calls belong to a later bridge milestone.
+to P69; actual Lightspeed-executed MCP calls belong to a later bridge milestone.
 
 ## G1: OpenAI Responses Direct Remote MCP
 
@@ -435,7 +435,7 @@ Acceptance criteria:
   provider-opaque context.
 - [x] OpenAI `mcp_call` provider context items expose display summaries for
   client rendering.
-- [x] No Forge tool batch is scheduled for provider-executed MCP calls.
+- [x] No Lightspeed tool batch is scheduled for provider-executed MCP calls.
 
 Tests:
 
@@ -471,8 +471,8 @@ Tests:
 
 ## Future Work
 
-- Forge-hosted MCP bridge that discovers MCP tools and exposes them as ordinary
-  Forge function tools.
+- Lightspeed-hosted MCP bridge that discovers MCP tools and exposes them as ordinary
+  Lightspeed function tools.
 - Secure tunnel support for private/on-prem MCP servers.
 - Connector-specific product UX and OAuth flows.
 - MCP server health checks and preflight list-tools validation outside engine.

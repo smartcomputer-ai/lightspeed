@@ -393,7 +393,7 @@ async fn openai_responses_live_adapter_reads_pdf_document_input() {
 #[ignore = "requires OPENAI_API_KEY (costs real money)"]
 async fn openai_responses_live_adapter_generates_result() {
     let blobs = Arc::new(InMemoryBlobStore::new());
-    let input_ref = text_blob(&blobs, "Reply with exactly these two words: forge adapter").await;
+    let input_ref = text_blob(&blobs, "Reply with exactly these two words: lightspeed adapter").await;
     let context_entry = ContextEntry {
         key: None,
         entry_id: ContextEntryId::new(1),
@@ -485,8 +485,8 @@ async fn openai_responses_live_adapter_generates_result() {
         .await
         .expect("assistant text");
     assert!(
-        assistant_text.to_lowercase().contains("forge"),
-        "expected assistant output to contain forge, got {assistant_text:?}"
+        assistant_text.to_lowercase().contains("lightspeed"),
+        "expected assistant output to contain lightspeed, got {assistant_text:?}"
     );
 
     let provider_request = blobs
@@ -511,7 +511,7 @@ async fn openai_responses_live_adapter_generates_result() {
 #[ignore = "requires OPENAI_API_KEY (costs real money)"]
 async fn openai_responses_live_adapter_captures_provider_triggered_compaction() {
     let blobs = Arc::new(InMemoryBlobStore::new());
-    let repeated_context = "Forge is testing OpenAI Responses provider-triggered compaction with encrypted native context state. This sentence is repeated to exceed the minimum compact threshold.";
+    let repeated_context = "Lightspeed is testing OpenAI Responses provider-triggered compaction with encrypted native context state. This sentence is repeated to exceed the minimum compact threshold.";
     let input_text = std::iter::repeat(repeated_context)
         .take(300)
         .collect::<Vec<_>>()

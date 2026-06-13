@@ -24,7 +24,7 @@ enum SkillsCommand {
 #[derive(Args, Debug, Clone)]
 struct SkillsListArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
     api_url: String,
     /// Emit the skill list as JSON.
     #[arg(long)]
@@ -37,7 +37,7 @@ struct SkillsListArgs {
 #[derive(Args, Debug, Clone)]
 struct SkillsActiveArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
     api_url: String,
     /// Emit active skills as JSON.
     #[arg(long)]
@@ -50,7 +50,7 @@ struct SkillsActiveArgs {
 #[derive(Args, Debug, Clone)]
 struct SkillsActivateArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
     api_url: String,
     /// Emit activation result as JSON.
     #[arg(long)]
@@ -68,7 +68,7 @@ struct SkillsActivateArgs {
 #[derive(Args, Debug, Clone)]
 struct SkillsDeactivateArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
     api_url: String,
     /// Emit deactivation result as JSON.
     #[arg(long)]

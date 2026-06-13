@@ -4,7 +4,7 @@
  */
 
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ToolKindView".
  */
 export type ToolKindView =
@@ -34,22 +34,22 @@ export type ToolKindView =
       type: "remoteMcp";
     };
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ProviderNativeToolExecutionView".
  */
 export type ProviderNativeToolExecutionView = "providerHosted" | "clientEffect";
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "RemoteMcpApprovalPolicy".
  */
 export type RemoteMcpApprovalPolicy = "providerDefault" | "always" | "never";
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ToolParallelismView".
  */
 export type ToolParallelismView = "exclusive" | "parallelSafe";
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ToolTargetRequirementView".
  */
 export type ToolTargetRequirementView =
@@ -65,7 +65,7 @@ export type ToolTargetRequirementView =
       type: "required";
     };
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentNotification".
  */
 export type AgentNotification =
@@ -118,7 +118,7 @@ export type AgentNotification =
       };
     };
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionItemView".
  */
 export type SessionItemView =
@@ -165,22 +165,22 @@ export type SessionItemView =
       type: "providerContext";
     };
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ToolItemStatus".
  */
 export type ToolItemStatus = "requested" | "running" | "succeeded" | "failed" | "unavailable";
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ToolCallDisplayGroup".
  */
 export type ToolCallDisplayGroup = "explore" | "edit" | "execute" | "other";
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "TokenEstimateQualityView".
  */
 export type TokenEstimateQualityView = "exact" | "providerCounted" | "estimated";
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "CompactionPolicyInput".
  */
 export type CompactionPolicyInput =
@@ -197,12 +197,12 @@ export type CompactionPolicyInput =
       target_tokens?: number | null;
     };
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ReasoningEffort".
  */
 export type ReasoningEffort = "none" | "low" | "medium" | "high";
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ToolChoiceModeConfig".
  */
 export type ToolChoiceModeConfig =
@@ -220,12 +220,12 @@ export type ToolChoiceModeConfig =
       type: "specific";
     };
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "HostToolMode".
  */
 export type HostToolMode = "none" | "readOnly" | "edit";
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "InputItem".
  */
 export type InputItem =
@@ -245,27 +245,27 @@ export type InputItem =
       type: "media";
     };
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "MediaKind".
  */
 export type MediaKind = "image" | "audio" | "document";
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "RunStatus".
  */
 export type RunStatus = "queued" | "running" | "cancelling" | "completed" | "failed" | "cancelled";
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionStatus".
  */
 export type SessionStatus = "notLoaded" | "idle" | "active" | "closed" | "error";
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "VfsMountAccess".
  */
 export type VfsMountAccess = "readOnly" | "readWrite";
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "VfsMountSourceView".
  */
 export type VfsMountSourceView =
@@ -280,7 +280,7 @@ export type VfsMountSourceView =
       workspaceId: string;
     };
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionEventKindView".
  */
 export type SessionEventKindView =
@@ -456,7 +456,7 @@ export type SessionEventKindView =
       type: "toolBatchCompleted";
     };
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ContextEntryKindView".
  */
 export type ContextEntryKindView =
@@ -491,12 +491,12 @@ export type ContextEntryKindView =
       type: "providerOpaque";
     };
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ContextMessageRoleView".
  */
 export type ContextMessageRoleView = "user" | "assistant";
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthProviderKind".
  */
 export type AuthProviderKind =
@@ -509,22 +509,22 @@ export type AuthProviderKind =
   | "modelApiKey"
   | "modelOAuth";
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "TokenEndpointAuthMethod".
  */
 export type TokenEndpointAuthMethod = "clientSecretBasic" | "clientSecretPost" | "none";
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthFlowStatus".
  */
 export type AuthFlowStatus = "pending" | "completed" | "failed" | "expired";
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "PrincipalKind".
  */
 export type PrincipalKind = "user" | "serviceAccount" | "universeDefault";
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthGrantStatus".
  */
 export type AuthGrantStatus = "active" | "needsReauth" | "revoked" | "failed";
@@ -532,7 +532,7 @@ export type AuthGrantStatus = "active" | "needsReauth" | "revoked" | "failed";
  * Non-secret, provider-specific configuration. New providers add a
  * variant, not a table.
  *
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthProviderConfigView".
  */
 export type AuthProviderConfigView =
@@ -550,12 +550,12 @@ export type AuthProviderConfigView =
       type: "modelOAuth";
     };
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthProviderStatus".
  */
 export type AuthProviderStatus = "active" | "needsConfiguration" | "disabled";
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "McpServerAuthPolicy".
  */
 export type McpServerAuthPolicy =
@@ -583,27 +583,27 @@ export type McpServerAuthPolicy =
       type: "requiredOAuth";
     };
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "McpServerStatus".
  */
 export type McpServerStatus = "active" | "needsAuthConfig" | "unverified" | "disabled";
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "RemoteMcpTransport".
  */
 export type RemoteMcpTransport = "streamableHttp" | "sse" | "auto";
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "OutboundStatusView".
  */
 export type OutboundStatusView = "pending" | "delivered" | "failed";
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "OutboundOriginView".
  */
 export type OutboundOriginView = "toolCall" | "finalText" | "trigger";
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "OutboundPayloadView".
  */
 export type OutboundPayloadView =
@@ -623,12 +623,12 @@ export type OutboundPayloadView =
       type: "edit";
     };
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SkillActivationScope".
  */
 export type SkillActivationScope = "run" | "session";
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SkillActivationSource".
  */
 export type SkillActivationSource =
@@ -641,7 +641,7 @@ export type SkillActivationSource =
       type: "directContext";
     };
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthProviderConfigInput".
  */
 export type AuthProviderConfigInput =
@@ -659,7 +659,7 @@ export type AuthProviderConfigInput =
       type: "modelOAuth";
     };
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "FieldPatchOfCompactionPolicyInput".
  */
 export type FieldPatchOfCompactionPolicyInput =
@@ -671,7 +671,7 @@ export type FieldPatchOfCompactionPolicyInput =
       op: "clear";
     };
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "FieldPatchOfHostToolMode".
  */
 export type FieldPatchOfHostToolMode =
@@ -683,7 +683,7 @@ export type FieldPatchOfHostToolMode =
       op: "clear";
     };
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "FieldPatchOfToolChoiceConfig".
  */
 export type FieldPatchOfToolChoiceConfig =
@@ -695,7 +695,7 @@ export type FieldPatchOfToolChoiceConfig =
       op: "clear";
     };
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "FieldPatchOfboolean".
  */
 export type FieldPatchOfboolean =
@@ -707,7 +707,7 @@ export type FieldPatchOfboolean =
       op: "clear";
     };
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "FieldPatchOfuint32".
  */
 export type FieldPatchOfuint32 =
@@ -719,7 +719,7 @@ export type FieldPatchOfuint32 =
       op: "clear";
     };
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "OutboundAckInput".
  */
 export type OutboundAckInput =
@@ -733,7 +733,7 @@ export type OutboundAckInput =
       type: "failed";
     };
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionToolsUpdateInput".
  */
 export type SessionToolsUpdateInput =
@@ -747,7 +747,7 @@ export type SessionToolsUpdateInput =
       upsert?: ToolView[];
     };
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "VfsMountSourceInput".
  */
 export type VfsMountSourceInput =
@@ -761,13 +761,13 @@ export type VfsMountSourceInput =
     };
 
 /**
- * All JSON-RPC wire types of the Forge agent API.
+ * All JSON-RPC wire types of the Lightspeed agent API.
  */
-export interface ForgeAgentAPI {
+export interface LightspeedAgentAPI {
   [k: string]: unknown;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ActiveToolsView".
  */
 export interface ActiveToolsView {
@@ -775,7 +775,7 @@ export interface ActiveToolsView {
   tools?: ToolView[];
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ToolView".
  */
 export interface ToolView {
@@ -785,7 +785,7 @@ export interface ToolView {
   toolId: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SecretRefView".
  */
 export interface SecretRefView {
@@ -793,7 +793,7 @@ export interface SecretRefView {
   namespace: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfAuthClientCreateResponse".
  */
 export interface AgentApiOutcomeOfAuthClientCreateResponse {
@@ -801,7 +801,7 @@ export interface AgentApiOutcomeOfAuthClientCreateResponse {
   result: AuthClientCreateResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionView".
  */
 export interface SessionView {
@@ -818,7 +818,7 @@ export interface SessionView {
   vfsMounts?: VfsMountView[];
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ContextView".
  */
 export interface ContextView {
@@ -826,7 +826,7 @@ export interface ContextView {
   revision: number;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ProviderContextDisplayView".
  */
 export interface ProviderContextDisplayView {
@@ -839,7 +839,7 @@ export interface ProviderContextDisplayView {
   toolName: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ToolCallDisplayView".
  */
 export interface ToolCallDisplayView {
@@ -849,7 +849,7 @@ export interface ToolCallDisplayView {
   verb: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "TokenEstimateView".
  */
 export interface TokenEstimateView {
@@ -857,7 +857,7 @@ export interface TokenEstimateView {
   tokens: number;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionConfigView".
  */
 export interface SessionConfigView {
@@ -868,14 +868,14 @@ export interface SessionConfigView {
   tools: ToolConfigView;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ContextConfigInput".
  */
 export interface ContextConfigInput {
   compaction?: CompactionPolicyInput | null;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "GenerationConfig".
  */
 export interface GenerationConfig {
@@ -884,7 +884,7 @@ export interface GenerationConfig {
   toolChoice?: ToolChoiceConfig | null;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ToolChoiceConfig".
  */
 export interface ToolChoiceConfig {
@@ -892,7 +892,7 @@ export interface ToolChoiceConfig {
   mode: ToolChoiceModeConfig;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ModelConfig".
  */
 export interface ModelConfig {
@@ -901,7 +901,7 @@ export interface ModelConfig {
   providerId: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "RunDefaultsConfig".
  */
 export interface RunDefaultsConfig {
@@ -909,7 +909,7 @@ export interface RunDefaultsConfig {
   maxTurns?: number | null;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ToolConfigView".
  */
 export interface ToolConfigView {
@@ -918,7 +918,7 @@ export interface ToolConfigView {
   webSearch: boolean;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "RunView".
  */
 export interface RunView {
@@ -929,7 +929,7 @@ export interface RunView {
   toolBatches?: ToolBatchView[];
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ToolBatchView".
  */
 export interface ToolBatchView {
@@ -939,7 +939,7 @@ export interface ToolBatchView {
   turnId: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ToolCallView".
  */
 export interface ToolCallView {
@@ -954,7 +954,7 @@ export interface ToolCallView {
   toolName: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ToolEffectView".
  */
 export interface ToolEffectView {
@@ -964,7 +964,7 @@ export interface ToolEffectView {
   kind: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "VfsMountView".
  */
 export interface VfsMountView {
@@ -973,7 +973,7 @@ export interface VfsMountView {
   source: VfsMountSourceView;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionEventView".
  */
 export interface SessionEventView {
@@ -984,14 +984,14 @@ export interface SessionEventView {
   sessionId: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "EventCursor".
  */
 export interface EventCursor {
   seq: number;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "EventJoinsView".
  */
 export interface EventJoinsView {
@@ -1003,7 +1003,7 @@ export interface EventJoinsView {
   turnId?: string | null;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ContextEntryInputView".
  */
 export interface ContextEntryInputView {
@@ -1016,7 +1016,7 @@ export interface ContextEntryInputView {
   tokenEstimate?: TokenEstimateView | null;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ToolExecutionTargetView".
  */
 export interface ToolExecutionTargetView {
@@ -1024,7 +1024,7 @@ export interface ToolExecutionTargetView {
   namespace: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ToolCallEventView".
  */
 export interface ToolCallEventView {
@@ -1035,14 +1035,14 @@ export interface ToolCallEventView {
   toolName: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthClientCreateResponse".
  */
 export interface AuthClientCreateResponse {
   client: OAuthClientView;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "OAuthClientView".
  */
 export interface OAuthClientView {
@@ -1061,7 +1061,7 @@ export interface OAuthClientView {
   updatedAtMs: number;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfAuthClientDeleteResponse".
  */
 export interface AgentApiOutcomeOfAuthClientDeleteResponse {
@@ -1069,14 +1069,14 @@ export interface AgentApiOutcomeOfAuthClientDeleteResponse {
   result: AuthClientDeleteResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthClientDeleteResponse".
  */
 export interface AuthClientDeleteResponse {
   client: OAuthClientView;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfAuthClientListResponse".
  */
 export interface AgentApiOutcomeOfAuthClientListResponse {
@@ -1084,14 +1084,14 @@ export interface AgentApiOutcomeOfAuthClientListResponse {
   result: AuthClientListResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthClientListResponse".
  */
 export interface AuthClientListResponse {
   clients?: OAuthClientView[];
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfAuthClientReadResponse".
  */
 export interface AgentApiOutcomeOfAuthClientReadResponse {
@@ -1099,14 +1099,14 @@ export interface AgentApiOutcomeOfAuthClientReadResponse {
   result: AuthClientReadResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthClientReadResponse".
  */
 export interface AuthClientReadResponse {
   client: OAuthClientView;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfAuthFlowStartResponse".
  */
 export interface AgentApiOutcomeOfAuthFlowStartResponse {
@@ -1114,7 +1114,7 @@ export interface AgentApiOutcomeOfAuthFlowStartResponse {
   result: AuthFlowStartResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthFlowStartResponse".
  */
 export interface AuthFlowStartResponse {
@@ -1127,7 +1127,7 @@ export interface AuthFlowStartResponse {
   flowId: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfAuthFlowStatusResponse".
  */
 export interface AgentApiOutcomeOfAuthFlowStatusResponse {
@@ -1135,14 +1135,14 @@ export interface AgentApiOutcomeOfAuthFlowStatusResponse {
   result: AuthFlowStatusResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthFlowStatusResponse".
  */
 export interface AuthFlowStatusResponse {
   flow: AuthFlowView;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthFlowView".
  */
 export interface AuthFlowView {
@@ -1157,7 +1157,7 @@ export interface AuthFlowView {
   updatedAtMs: number;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfAuthGitHubInstallationGrantResponse".
  */
 export interface AgentApiOutcomeOfAuthGitHubInstallationGrantResponse {
@@ -1165,14 +1165,14 @@ export interface AgentApiOutcomeOfAuthGitHubInstallationGrantResponse {
   result: AuthGitHubInstallationGrantResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthGitHubInstallationGrantResponse".
  */
 export interface AuthGitHubInstallationGrantResponse {
   grant: AuthGrantView;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthGrantView".
  */
 export interface AuthGrantView {
@@ -1199,7 +1199,7 @@ export interface AuthGrantView {
   updatedAtMs: number;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "PrincipalRefView".
  */
 export interface PrincipalRefView {
@@ -1207,7 +1207,7 @@ export interface PrincipalRefView {
   kind?: PrincipalKind & string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfAuthGitHubInstallationListResponse".
  */
 export interface AgentApiOutcomeOfAuthGitHubInstallationListResponse {
@@ -1215,14 +1215,14 @@ export interface AgentApiOutcomeOfAuthGitHubInstallationListResponse {
   result: AuthGitHubInstallationListResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthGitHubInstallationListResponse".
  */
 export interface AuthGitHubInstallationListResponse {
   installations?: GitHubInstallationView[];
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "GitHubInstallationView".
  */
 export interface GitHubInstallationView {
@@ -1237,7 +1237,7 @@ export interface GitHubInstallationView {
   repositorySelection?: string | null;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfAuthGrantImportResponse".
  */
 export interface AgentApiOutcomeOfAuthGrantImportResponse {
@@ -1245,14 +1245,14 @@ export interface AgentApiOutcomeOfAuthGrantImportResponse {
   result: AuthGrantImportResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthGrantImportResponse".
  */
 export interface AuthGrantImportResponse {
   grant: AuthGrantView;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfAuthGrantListResponse".
  */
 export interface AgentApiOutcomeOfAuthGrantListResponse {
@@ -1260,14 +1260,14 @@ export interface AgentApiOutcomeOfAuthGrantListResponse {
   result: AuthGrantListResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthGrantListResponse".
  */
 export interface AuthGrantListResponse {
   grants?: AuthGrantView[];
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfAuthGrantReadResponse".
  */
 export interface AgentApiOutcomeOfAuthGrantReadResponse {
@@ -1275,14 +1275,14 @@ export interface AgentApiOutcomeOfAuthGrantReadResponse {
   result: AuthGrantReadResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthGrantReadResponse".
  */
 export interface AuthGrantReadResponse {
   grant: AuthGrantView;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfAuthGrantRevokeResponse".
  */
 export interface AgentApiOutcomeOfAuthGrantRevokeResponse {
@@ -1290,14 +1290,14 @@ export interface AgentApiOutcomeOfAuthGrantRevokeResponse {
   result: AuthGrantRevokeResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthGrantRevokeResponse".
  */
 export interface AuthGrantRevokeResponse {
   grant: AuthGrantView;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfAuthProviderCreateResponse".
  */
 export interface AgentApiOutcomeOfAuthProviderCreateResponse {
@@ -1305,14 +1305,14 @@ export interface AgentApiOutcomeOfAuthProviderCreateResponse {
   result: AuthProviderCreateResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthProviderCreateResponse".
  */
 export interface AuthProviderCreateResponse {
   provider: AuthProviderView;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthProviderView".
  */
 export interface AuthProviderView {
@@ -1326,7 +1326,7 @@ export interface AuthProviderView {
   updatedAtMs: number;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfAuthProviderDeleteResponse".
  */
 export interface AgentApiOutcomeOfAuthProviderDeleteResponse {
@@ -1334,14 +1334,14 @@ export interface AgentApiOutcomeOfAuthProviderDeleteResponse {
   result: AuthProviderDeleteResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthProviderDeleteResponse".
  */
 export interface AuthProviderDeleteResponse {
   provider: AuthProviderView;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfAuthProviderListResponse".
  */
 export interface AgentApiOutcomeOfAuthProviderListResponse {
@@ -1349,14 +1349,14 @@ export interface AgentApiOutcomeOfAuthProviderListResponse {
   result: AuthProviderListResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthProviderListResponse".
  */
 export interface AuthProviderListResponse {
   providers?: AuthProviderView[];
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfAuthProviderReadResponse".
  */
 export interface AgentApiOutcomeOfAuthProviderReadResponse {
@@ -1364,14 +1364,14 @@ export interface AgentApiOutcomeOfAuthProviderReadResponse {
   result: AuthProviderReadResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthProviderReadResponse".
  */
 export interface AuthProviderReadResponse {
   provider: AuthProviderView;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfBlobGetResponse".
  */
 export interface AgentApiOutcomeOfBlobGetResponse {
@@ -1379,7 +1379,7 @@ export interface AgentApiOutcomeOfBlobGetResponse {
   result: BlobGetResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "BlobGetResponse".
  */
 export interface BlobGetResponse {
@@ -1388,7 +1388,7 @@ export interface BlobGetResponse {
   bytesBase64: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfBlobHasManyResponse".
  */
 export interface AgentApiOutcomeOfBlobHasManyResponse {
@@ -1396,14 +1396,14 @@ export interface AgentApiOutcomeOfBlobHasManyResponse {
   result: BlobHasManyResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "BlobHasManyResponse".
  */
 export interface BlobHasManyResponse {
   blobs?: BlobHasItem[];
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "BlobHasItem".
  */
 export interface BlobHasItem {
@@ -1411,7 +1411,7 @@ export interface BlobHasItem {
   exists: boolean;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfBlobPutManyResponse".
  */
 export interface AgentApiOutcomeOfBlobPutManyResponse {
@@ -1419,14 +1419,14 @@ export interface AgentApiOutcomeOfBlobPutManyResponse {
   result: BlobPutManyResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "BlobPutManyResponse".
  */
 export interface BlobPutManyResponse {
   blobs?: BlobPutResponse[];
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "BlobPutResponse".
  */
 export interface BlobPutResponse {
@@ -1434,7 +1434,7 @@ export interface BlobPutResponse {
   bytes: number;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfBlobPutResponse".
  */
 export interface AgentApiOutcomeOfBlobPutResponse {
@@ -1442,7 +1442,7 @@ export interface AgentApiOutcomeOfBlobPutResponse {
   result: BlobPutResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfContextAppendResponse".
  */
 export interface AgentApiOutcomeOfContextAppendResponse {
@@ -1450,7 +1450,7 @@ export interface AgentApiOutcomeOfContextAppendResponse {
   result: ContextAppendResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ContextAppendResponse".
  */
 export interface ContextAppendResponse {
@@ -1459,7 +1459,7 @@ export interface ContextAppendResponse {
   unchangedKeys: string[];
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfContextCompactResponse".
  */
 export interface AgentApiOutcomeOfContextCompactResponse {
@@ -1467,14 +1467,14 @@ export interface AgentApiOutcomeOfContextCompactResponse {
   result: ContextCompactResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ContextCompactResponse".
  */
 export interface ContextCompactResponse {
   session: SessionView;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfInitializeResponse".
  */
 export interface AgentApiOutcomeOfInitializeResponse {
@@ -1482,7 +1482,7 @@ export interface AgentApiOutcomeOfInitializeResponse {
   result: InitializeResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "InitializeResponse".
  */
 export interface InitializeResponse {
@@ -1491,7 +1491,7 @@ export interface InitializeResponse {
   serverInfo: ServerInfo;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ServerCapabilities".
  */
 export interface ServerCapabilities {
@@ -1501,7 +1501,7 @@ export interface ServerCapabilities {
   notifications: boolean;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ServerInfo".
  */
 export interface ServerInfo {
@@ -1509,7 +1509,7 @@ export interface ServerInfo {
   version: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfMcpServerCreateResponse".
  */
 export interface AgentApiOutcomeOfMcpServerCreateResponse {
@@ -1517,14 +1517,14 @@ export interface AgentApiOutcomeOfMcpServerCreateResponse {
   result: McpServerCreateResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "McpServerCreateResponse".
  */
 export interface McpServerCreateResponse {
   server: McpServerView;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "McpServerView".
  */
 export interface McpServerView {
@@ -1543,7 +1543,7 @@ export interface McpServerView {
   updatedAtMs: number;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfMcpServerDeleteResponse".
  */
 export interface AgentApiOutcomeOfMcpServerDeleteResponse {
@@ -1551,14 +1551,14 @@ export interface AgentApiOutcomeOfMcpServerDeleteResponse {
   result: McpServerDeleteResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "McpServerDeleteResponse".
  */
 export interface McpServerDeleteResponse {
   server: McpServerView;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfMcpServerListResponse".
  */
 export interface AgentApiOutcomeOfMcpServerListResponse {
@@ -1566,14 +1566,14 @@ export interface AgentApiOutcomeOfMcpServerListResponse {
   result: McpServerListResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "McpServerListResponse".
  */
 export interface McpServerListResponse {
   servers?: McpServerView[];
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfMcpServerReadResponse".
  */
 export interface AgentApiOutcomeOfMcpServerReadResponse {
@@ -1581,14 +1581,14 @@ export interface AgentApiOutcomeOfMcpServerReadResponse {
   result: McpServerReadResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "McpServerReadResponse".
  */
 export interface McpServerReadResponse {
   server: McpServerView;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfOutboxAckResponse".
  */
 export interface AgentApiOutcomeOfOutboxAckResponse {
@@ -1596,7 +1596,7 @@ export interface AgentApiOutcomeOfOutboxAckResponse {
   result: OutboxAckResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "OutboxAckResponse".
  */
 export interface OutboxAckResponse {
@@ -1605,7 +1605,7 @@ export interface OutboxAckResponse {
   status: OutboundStatusView;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfOutboxReadResponse".
  */
 export interface AgentApiOutcomeOfOutboxReadResponse {
@@ -1613,7 +1613,7 @@ export interface AgentApiOutcomeOfOutboxReadResponse {
   result: OutboxReadResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "OutboxReadResponse".
  */
 export interface OutboxReadResponse {
@@ -1624,7 +1624,7 @@ export interface OutboxReadResponse {
   nextAfter: number;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "OutboundMessageView".
  */
 export interface OutboundMessageView {
@@ -1638,7 +1638,7 @@ export interface OutboundMessageView {
   sessionId: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfPromptsActiveResponse".
  */
 export interface AgentApiOutcomeOfPromptsActiveResponse {
@@ -1646,7 +1646,7 @@ export interface AgentApiOutcomeOfPromptsActiveResponse {
   result: PromptsActiveResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "PromptsActiveResponse".
  */
 export interface PromptsActiveResponse {
@@ -1655,7 +1655,7 @@ export interface PromptsActiveResponse {
   reportRef?: string | null;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "PromptInstructionView".
  */
 export interface PromptInstructionView {
@@ -1665,7 +1665,7 @@ export interface PromptInstructionView {
   preview?: string | null;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfRunCancelResponse".
  */
 export interface AgentApiOutcomeOfRunCancelResponse {
@@ -1673,14 +1673,14 @@ export interface AgentApiOutcomeOfRunCancelResponse {
   result: RunCancelResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "RunCancelResponse".
  */
 export interface RunCancelResponse {
   run: RunView;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfRunStartResponse".
  */
 export interface AgentApiOutcomeOfRunStartResponse {
@@ -1688,14 +1688,14 @@ export interface AgentApiOutcomeOfRunStartResponse {
   result: RunStartResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "RunStartResponse".
  */
 export interface RunStartResponse {
   run: RunView;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfSessionCloseResponse".
  */
 export interface AgentApiOutcomeOfSessionCloseResponse {
@@ -1703,14 +1703,14 @@ export interface AgentApiOutcomeOfSessionCloseResponse {
   result: SessionCloseResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionCloseResponse".
  */
 export interface SessionCloseResponse {
   session: SessionView;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfSessionEventsReadResponse".
  */
 export interface AgentApiOutcomeOfSessionEventsReadResponse {
@@ -1718,7 +1718,7 @@ export interface AgentApiOutcomeOfSessionEventsReadResponse {
   result: SessionEventsReadResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionEventsReadResponse".
  */
 export interface SessionEventsReadResponse {
@@ -1729,7 +1729,7 @@ export interface SessionEventsReadResponse {
   nextCursor?: EventCursor | null;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "EventLogGap".
  */
 export interface EventLogGap {
@@ -1738,7 +1738,7 @@ export interface EventLogGap {
   retainedAfter?: EventCursor | null;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfSessionMcpLinkResponse".
  */
 export interface AgentApiOutcomeOfSessionMcpLinkResponse {
@@ -1746,7 +1746,7 @@ export interface AgentApiOutcomeOfSessionMcpLinkResponse {
   result: SessionMcpLinkResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionMcpLinkResponse".
  */
 export interface SessionMcpLinkResponse {
@@ -1755,7 +1755,7 @@ export interface SessionMcpLinkResponse {
   session: SessionView;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionMcpLinkView".
  */
 export interface SessionMcpLinkView {
@@ -1768,7 +1768,7 @@ export interface SessionMcpLinkView {
   toolId: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfSessionMcpListResponse".
  */
 export interface AgentApiOutcomeOfSessionMcpListResponse {
@@ -1776,14 +1776,14 @@ export interface AgentApiOutcomeOfSessionMcpListResponse {
   result: SessionMcpListResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionMcpListResponse".
  */
 export interface SessionMcpListResponse {
   links?: SessionMcpLinkView[];
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfSessionMcpUnlinkResponse".
  */
 export interface AgentApiOutcomeOfSessionMcpUnlinkResponse {
@@ -1791,7 +1791,7 @@ export interface AgentApiOutcomeOfSessionMcpUnlinkResponse {
   result: SessionMcpUnlinkResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionMcpUnlinkResponse".
  */
 export interface SessionMcpUnlinkResponse {
@@ -1800,7 +1800,7 @@ export interface SessionMcpUnlinkResponse {
   toolId: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfSessionReadResponse".
  */
 export interface AgentApiOutcomeOfSessionReadResponse {
@@ -1808,14 +1808,14 @@ export interface AgentApiOutcomeOfSessionReadResponse {
   result: SessionReadResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionReadResponse".
  */
 export interface SessionReadResponse {
   session: SessionView;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfSessionStartResponse".
  */
 export interface AgentApiOutcomeOfSessionStartResponse {
@@ -1823,14 +1823,14 @@ export interface AgentApiOutcomeOfSessionStartResponse {
   result: SessionStartResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionStartResponse".
  */
 export interface SessionStartResponse {
   session: SessionView;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfSessionToolsUpdateResponse".
  */
 export interface AgentApiOutcomeOfSessionToolsUpdateResponse {
@@ -1838,14 +1838,14 @@ export interface AgentApiOutcomeOfSessionToolsUpdateResponse {
   result: SessionToolsUpdateResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionToolsUpdateResponse".
  */
 export interface SessionToolsUpdateResponse {
   session: SessionView;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfSessionUpdateResponse".
  */
 export interface AgentApiOutcomeOfSessionUpdateResponse {
@@ -1853,14 +1853,14 @@ export interface AgentApiOutcomeOfSessionUpdateResponse {
   result: SessionUpdateResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionUpdateResponse".
  */
 export interface SessionUpdateResponse {
   session: SessionView;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfSkillActivateResponse".
  */
 export interface AgentApiOutcomeOfSkillActivateResponse {
@@ -1868,7 +1868,7 @@ export interface AgentApiOutcomeOfSkillActivateResponse {
   result: SkillActivateResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SkillActivateResponse".
  */
 export interface SkillActivateResponse {
@@ -1876,7 +1876,7 @@ export interface SkillActivateResponse {
   active?: SkillActivationView[];
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SkillActivationView".
  */
 export interface SkillActivationView {
@@ -1889,7 +1889,7 @@ export interface SkillActivationView {
   source: SkillActivationSource;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfSkillActiveResponse".
  */
 export interface AgentApiOutcomeOfSkillActiveResponse {
@@ -1897,7 +1897,7 @@ export interface AgentApiOutcomeOfSkillActiveResponse {
   result: SkillActiveResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SkillActiveResponse".
  */
 export interface SkillActiveResponse {
@@ -1905,7 +1905,7 @@ export interface SkillActiveResponse {
   catalogRef?: string | null;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfSkillDeactivateResponse".
  */
 export interface AgentApiOutcomeOfSkillDeactivateResponse {
@@ -1913,7 +1913,7 @@ export interface AgentApiOutcomeOfSkillDeactivateResponse {
   result: SkillDeactivateResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SkillDeactivateResponse".
  */
 export interface SkillDeactivateResponse {
@@ -1921,7 +1921,7 @@ export interface SkillDeactivateResponse {
   skillId: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfSkillListResponse".
  */
 export interface AgentApiOutcomeOfSkillListResponse {
@@ -1929,7 +1929,7 @@ export interface AgentApiOutcomeOfSkillListResponse {
   result: SkillListResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SkillListResponse".
  */
 export interface SkillListResponse {
@@ -1937,7 +1937,7 @@ export interface SkillListResponse {
   skills?: SkillListItem[];
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SkillListItem".
  */
 export interface SkillListItem {
@@ -1949,7 +1949,7 @@ export interface SkillListItem {
   skillId: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfVfsMountDeleteResponse".
  */
 export interface AgentApiOutcomeOfVfsMountDeleteResponse {
@@ -1957,7 +1957,7 @@ export interface AgentApiOutcomeOfVfsMountDeleteResponse {
   result: VfsMountDeleteResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "VfsMountDeleteResponse".
  */
 export interface VfsMountDeleteResponse {
@@ -1965,7 +1965,7 @@ export interface VfsMountDeleteResponse {
   session: SessionView;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfVfsMountListResponse".
  */
 export interface AgentApiOutcomeOfVfsMountListResponse {
@@ -1973,14 +1973,14 @@ export interface AgentApiOutcomeOfVfsMountListResponse {
   result: VfsMountListResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "VfsMountListResponse".
  */
 export interface VfsMountListResponse {
   mounts?: VfsMountView[];
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfVfsMountPutResponse".
  */
 export interface AgentApiOutcomeOfVfsMountPutResponse {
@@ -1988,7 +1988,7 @@ export interface AgentApiOutcomeOfVfsMountPutResponse {
   result: VfsMountPutResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "VfsMountPutResponse".
  */
 export interface VfsMountPutResponse {
@@ -1996,7 +1996,7 @@ export interface VfsMountPutResponse {
   session: SessionView;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfVfsSnapshotCommitResponse".
  */
 export interface AgentApiOutcomeOfVfsSnapshotCommitResponse {
@@ -2004,7 +2004,7 @@ export interface AgentApiOutcomeOfVfsSnapshotCommitResponse {
   result: VfsSnapshotCommitResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "VfsSnapshotCommitResponse".
  */
 export interface VfsSnapshotCommitResponse {
@@ -2013,7 +2013,7 @@ export interface VfsSnapshotCommitResponse {
   snapshotRef: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfVfsSnapshotReadResponse".
  */
 export interface AgentApiOutcomeOfVfsSnapshotReadResponse {
@@ -2021,7 +2021,7 @@ export interface AgentApiOutcomeOfVfsSnapshotReadResponse {
   result: VfsSnapshotReadResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "VfsSnapshotReadResponse".
  */
 export interface VfsSnapshotReadResponse {
@@ -2031,7 +2031,7 @@ export interface VfsSnapshotReadResponse {
   snapshotRef: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfVfsWorkspaceCreateResponse".
  */
 export interface AgentApiOutcomeOfVfsWorkspaceCreateResponse {
@@ -2039,14 +2039,14 @@ export interface AgentApiOutcomeOfVfsWorkspaceCreateResponse {
   result: VfsWorkspaceCreateResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "VfsWorkspaceCreateResponse".
  */
 export interface VfsWorkspaceCreateResponse {
   workspace: VfsWorkspaceView;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "VfsWorkspaceView".
  */
 export interface VfsWorkspaceView {
@@ -2056,7 +2056,7 @@ export interface VfsWorkspaceView {
   workspaceId: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfVfsWorkspaceDeleteResponse".
  */
 export interface AgentApiOutcomeOfVfsWorkspaceDeleteResponse {
@@ -2064,14 +2064,14 @@ export interface AgentApiOutcomeOfVfsWorkspaceDeleteResponse {
   result: VfsWorkspaceDeleteResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "VfsWorkspaceDeleteResponse".
  */
 export interface VfsWorkspaceDeleteResponse {
   workspace: VfsWorkspaceView;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfVfsWorkspaceReadResponse".
  */
 export interface AgentApiOutcomeOfVfsWorkspaceReadResponse {
@@ -2079,14 +2079,14 @@ export interface AgentApiOutcomeOfVfsWorkspaceReadResponse {
   result: VfsWorkspaceReadResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "VfsWorkspaceReadResponse".
  */
 export interface VfsWorkspaceReadResponse {
   workspace: VfsWorkspaceView;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfVfsWorkspaceUpdateResponse".
  */
 export interface AgentApiOutcomeOfVfsWorkspaceUpdateResponse {
@@ -2094,7 +2094,7 @@ export interface AgentApiOutcomeOfVfsWorkspaceUpdateResponse {
   result: VfsWorkspaceUpdateResponse;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "VfsWorkspaceUpdateResponse".
  */
 export interface VfsWorkspaceUpdateResponse {
@@ -2106,7 +2106,7 @@ export interface VfsWorkspaceUpdateResponse {
  * encrypted on receipt and never returned by any method. `Debug` output
  * redacts it; request logging must never echo these params.
  *
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthClientCreateParams".
  */
 export interface AuthClientCreateParams {
@@ -2123,26 +2123,26 @@ export interface AuthClientCreateParams {
   tokenEndpointAuthMethod?: TokenEndpointAuthMethod | null;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthClientDeleteParams".
  */
 export interface AuthClientDeleteParams {
   clientId: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthClientListParams".
  */
 export interface AuthClientListParams {}
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthClientReadParams".
  */
 export interface AuthClientReadParams {
   clientId: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthFlowStartParams".
  */
 export interface AuthFlowStartParams {
@@ -2151,14 +2151,14 @@ export interface AuthFlowStartParams {
   scopes?: string[] | null;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthFlowStatusParams".
  */
 export interface AuthFlowStatusParams {
   flowId: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthGitHubInstallationGrantParams".
  */
 export interface AuthGitHubInstallationGrantParams {
@@ -2168,7 +2168,7 @@ export interface AuthGitHubInstallationGrantParams {
   providerId: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthGitHubInstallationListParams".
  */
 export interface AuthGitHubInstallationListParams {
@@ -2180,7 +2180,7 @@ export interface AuthGitHubInstallationListParams {
  * never returned by any method. `Debug` output redacts the token; request
  * logging must never echo these params.
  *
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthGrantImportParams".
  */
 export interface AuthGrantImportParams {
@@ -2194,21 +2194,21 @@ export interface AuthGrantImportParams {
   token: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthGrantListParams".
  */
 export interface AuthGrantListParams {
   status?: AuthGrantStatus | null;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthGrantReadParams".
  */
 export interface AuthGrantReadParams {
   grantId: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthGrantRevokeParams".
  */
 export interface AuthGrantRevokeParams {
@@ -2220,7 +2220,7 @@ export interface AuthGrantRevokeParams {
  * on receipt and never returned by any method. `Debug` output redacts it;
  * request logging must never echo these params.
  *
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthProviderCreateParams".
  */
 export interface AuthProviderCreateParams {
@@ -2230,61 +2230,61 @@ export interface AuthProviderCreateParams {
   providerId?: string | null;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthProviderDeleteParams".
  */
 export interface AuthProviderDeleteParams {
   providerId: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthProviderListParams".
  */
 export interface AuthProviderListParams {}
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthProviderReadParams".
  */
 export interface AuthProviderReadParams {
   providerId: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "BlobGetParams".
  */
 export interface BlobGetParams {
   blobRef: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "BlobHasManyParams".
  */
 export interface BlobHasManyParams {
   blobRefs?: string[];
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "BlobPutManyParams".
  */
 export interface BlobPutManyParams {
   blobs?: BlobPutParams[];
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "BlobPutParams".
  */
 export interface BlobPutParams {
   bytesBase64: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ClientCapabilities".
  */
 export interface ClientCapabilities {
   experimentalApi?: boolean;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ClientInfo".
  */
 export interface ClientInfo {
@@ -2292,7 +2292,7 @@ export interface ClientInfo {
   version?: string | null;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ContextAppendEntry".
  */
 export interface ContextAppendEntry {
@@ -2304,7 +2304,7 @@ export interface ContextAppendEntry {
   key: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ContextAppendParams".
  */
 export interface ContextAppendParams {
@@ -2312,21 +2312,21 @@ export interface ContextAppendParams {
   sessionId: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ContextCompactParams".
  */
 export interface ContextCompactParams {
   sessionId: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ContextConfigPatchInput".
  */
 export interface ContextConfigPatchInput {
   compaction?: FieldPatchOfCompactionPolicyInput | null;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "GenerationConfigPatch".
  */
 export interface GenerationConfigPatch {
@@ -2335,7 +2335,7 @@ export interface GenerationConfigPatch {
   toolChoice?: FieldPatchOfToolChoiceConfig | null;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "InitializeParams".
  */
 export interface InitializeParams {
@@ -2343,7 +2343,7 @@ export interface InitializeParams {
   clientInfo?: ClientInfo | null;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "McpServerCreateParams".
  */
 export interface McpServerCreateParams {
@@ -2360,28 +2360,28 @@ export interface McpServerCreateParams {
   transport?: RemoteMcpTransport & string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "McpServerDeleteParams".
  */
 export interface McpServerDeleteParams {
   serverId: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "McpServerListParams".
  */
 export interface McpServerListParams {
   status?: McpServerStatus | null;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "McpServerReadParams".
  */
 export interface McpServerReadParams {
   serverId: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "OutboxAckParams".
  */
 export interface OutboxAckParams {
@@ -2389,7 +2389,7 @@ export interface OutboxAckParams {
   result: OutboundAckInput;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "OutboxReadParams".
  */
 export interface OutboxReadParams {
@@ -2405,14 +2405,14 @@ export interface OutboxReadParams {
   waitMs?: number | null;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "PromptsActiveParams".
  */
 export interface PromptsActiveParams {
   sessionId: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "RunCancelParams".
  */
 export interface RunCancelParams {
@@ -2420,7 +2420,7 @@ export interface RunCancelParams {
   sessionId: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "RunDefaultsPatch".
  */
 export interface RunDefaultsPatch {
@@ -2428,7 +2428,7 @@ export interface RunDefaultsPatch {
   maxTurns?: FieldPatchOfuint32 | null;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "RunLimitsConfig".
  */
 export interface RunLimitsConfig {
@@ -2436,7 +2436,7 @@ export interface RunLimitsConfig {
   maxTurns?: number | null;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "RunStartConfig".
  */
 export interface RunStartConfig {
@@ -2445,7 +2445,7 @@ export interface RunStartConfig {
   model?: ModelConfig | null;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "RunStartParams".
  */
 export interface RunStartParams {
@@ -2461,14 +2461,14 @@ export interface RunStartParams {
   submissionId?: string | null;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionCloseParams".
  */
 export interface SessionCloseParams {
   sessionId: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionConfigInput".
  */
 export interface SessionConfigInput {
@@ -2479,7 +2479,7 @@ export interface SessionConfigInput {
   tools?: ToolConfigInput | null;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ToolConfigInput".
  */
 export interface ToolConfigInput {
@@ -2493,7 +2493,7 @@ export interface ToolConfigInput {
   webSearch?: boolean | null;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionConfigPatchInput".
  */
 export interface SessionConfigPatchInput {
@@ -2504,7 +2504,7 @@ export interface SessionConfigPatchInput {
   tools?: ToolConfigPatchInput | null;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ToolConfigPatchInput".
  */
 export interface ToolConfigPatchInput {
@@ -2514,7 +2514,7 @@ export interface ToolConfigPatchInput {
   webSearch?: FieldPatchOfboolean | null;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionEventsReadParams".
  */
 export interface SessionEventsReadParams {
@@ -2530,7 +2530,7 @@ export interface SessionEventsReadParams {
   waitMs?: number | null;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionMcpLinkParams".
  */
 export interface SessionMcpLinkParams {
@@ -2544,14 +2544,14 @@ export interface SessionMcpLinkParams {
   toolId?: string | null;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionMcpListParams".
  */
 export interface SessionMcpListParams {
   sessionId: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionMcpUnlinkParams".
  */
 export interface SessionMcpUnlinkParams {
@@ -2559,14 +2559,14 @@ export interface SessionMcpUnlinkParams {
   toolId: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionReadParams".
  */
 export interface SessionReadParams {
   sessionId: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionStartParams".
  */
 export interface SessionStartParams {
@@ -2575,7 +2575,7 @@ export interface SessionStartParams {
   sessionId?: string | null;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionToolsUpdateParams".
  */
 export interface SessionToolsUpdateParams {
@@ -2584,7 +2584,7 @@ export interface SessionToolsUpdateParams {
   update: SessionToolsUpdateInput;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionUpdateParams".
  */
 export interface SessionUpdateParams {
@@ -2593,7 +2593,7 @@ export interface SessionUpdateParams {
   sessionId: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SkillActivateParams".
  */
 export interface SkillActivateParams {
@@ -2602,14 +2602,14 @@ export interface SkillActivateParams {
   skillId: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SkillActiveParams".
  */
 export interface SkillActiveParams {
   sessionId: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SkillDeactivateParams".
  */
 export interface SkillDeactivateParams {
@@ -2617,14 +2617,14 @@ export interface SkillDeactivateParams {
   skillId: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SkillListParams".
  */
 export interface SkillListParams {
   sessionId: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "VfsMountDeleteParams".
  */
 export interface VfsMountDeleteParams {
@@ -2632,14 +2632,14 @@ export interface VfsMountDeleteParams {
   sessionId: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "VfsMountListParams".
  */
 export interface VfsMountListParams {
   sessionId: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "VfsMountPutParams".
  */
 export interface VfsMountPutParams {
@@ -2649,21 +2649,21 @@ export interface VfsMountPutParams {
   source: VfsMountSourceInput;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "VfsSnapshotCommitParams".
  */
 export interface VfsSnapshotCommitParams {
   manifest: unknown;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "VfsSnapshotReadParams".
  */
 export interface VfsSnapshotReadParams {
   snapshotRef: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "VfsWorkspaceCreateParams".
  */
 export interface VfsWorkspaceCreateParams {
@@ -2672,21 +2672,21 @@ export interface VfsWorkspaceCreateParams {
   workspaceId?: string | null;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "VfsWorkspaceDeleteParams".
  */
 export interface VfsWorkspaceDeleteParams {
   workspaceId: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "VfsWorkspaceReadParams".
  */
 export interface VfsWorkspaceReadParams {
   workspaceId: string;
 }
 /**
- * This interface was referenced by `ForgeAgentAPI`'s JSON-Schema
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "VfsWorkspaceUpdateParams".
  */
 export interface VfsWorkspaceUpdateParams {

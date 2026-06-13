@@ -8,7 +8,7 @@
 Do not replace the public `agent-api` surface with a meta
 `interface/read` + `command/send` + `query/read` protocol right now.
 
-Forge's current product direction is a single configurable agent, not a
+Lightspeed's current product direction is a single configurable agent, not a
 general extensible agent SDK. The public API should therefore stay
 product-shaped and typed:
 
@@ -26,7 +26,7 @@ This does not reject the internal architecture. `agent-core` can remain
 deterministic, event-sourced, substrate-neutral, and internally dynamic through
 `kind + version + payload` envelopes. The decision is only about the public
 client boundary: clients should not have to speak a meta command/query API
-until Forge has concrete pressure from a second public agent shape or a real
+until Lightspeed has concrete pressure from a second public agent shape or a real
 cross-language SDK use case.
 
 For now, support multiple configured agents through typed session creation and
@@ -63,7 +63,7 @@ events expose committed history
 interface describes commands, queries, events, and JSON Schemas
 ```
 
-Forge should be product-shaped first and SDK-capable underneath. CoreAgent
+Lightspeed should be product-shaped first and SDK-capable underneath. CoreAgent
 remains the flagship agent composition. Claw remains the first Temporal-backed
 runtime for that composition. The API and storage boundaries should keep enough
 room for later custom compositions, Python/Pydantic-authored schemas, skills,
@@ -99,7 +99,7 @@ concepts. Those are useful product views, but they are not the narrow waist of
 the system. P54 already moved the kernel in a more general direction: the
 session log stores dynamic event envelopes, and typed Rust domains use codecs
 over those envelopes. The public API should align with that direction without
-turning Forge into a fully open programmable substrate before one excellent
+turning Lightspeed into a fully open programmable substrate before one excellent
 agent exists.
 
 ## Design Position
@@ -167,12 +167,12 @@ Example shape:
 
 ```json
 {
-  "schemaVersion": "forge.interface.v1",
-  "type": "forge.claw",
+  "schemaVersion": "lightspeed.interface.v1",
+  "type": "lightspeed.claw",
   "version": "0.1.0",
   "commands": [
     {
-      "kind": "forge.run.start",
+      "kind": "lightspeed.run.start",
       "version": 1,
       "description": "Submit input to an opened session and wait for the resulting run.",
       "paramsSchema": { "$ref": "#/$defs/RunStartParams" },
@@ -181,7 +181,7 @@ Example shape:
   ],
   "queries": [
     {
-      "kind": "forge.session.view",
+      "kind": "lightspeed.session.view",
       "version": 1,
       "description": "Read a projected session view.",
       "paramsSchema": { "$ref": "#/$defs/SessionReadParams" },
@@ -190,7 +190,7 @@ Example shape:
   ],
   "events": [
     {
-      "kind": "forge.core.run.started",
+      "kind": "lightspeed.core.run.started",
       "version": 1,
       "payloadSchema": { "$ref": "#/$defs/CoreRunStarted" }
     }
@@ -214,7 +214,7 @@ Transport shape:
 {
   "target": { "id": "session_123" },
   "command": {
-    "kind": "forge.run.start",
+    "kind": "lightspeed.run.start",
     "version": 1,
     "payload": {}
   },
@@ -226,15 +226,15 @@ Transport shape:
 For the current CoreAgent/Claw path, commands include:
 
 ```text
-forge.session.start
-forge.run.start
-forge.core.config.update
-forge.core.tools.set_registry
-forge.core.tools.select_profile
-forge.core.tools.set_default_target
-forge.core.run.steer
-forge.core.run.cancel
-forge.session.close
+lightspeed.session.start
+lightspeed.run.start
+lightspeed.core.config.update
+lightspeed.core.tools.set_registry
+lightspeed.core.tools.select_profile
+lightspeed.core.tools.set_default_target
+lightspeed.core.run.steer
+lightspeed.core.run.cancel
+lightspeed.session.close
 ```
 
 The first cut may expose only the subset needed by Claw and the CLI. Trusted
@@ -251,7 +251,7 @@ Transport shape:
 {
   "target": { "id": "session_123" },
   "query": {
-    "kind": "forge.session.view",
+    "kind": "lightspeed.session.view",
     "version": 1,
     "params": {}
   }
@@ -265,15 +265,15 @@ running agent.
 Examples:
 
 ```text
-forge.session.view
-forge.run.view
-forge.transcript.view
-forge.session.events_view
-forge.core.state
-forge.core.config
-forge.core.tooling
-forge.core.runs
-forge.claw.status
+lightspeed.session.view
+lightspeed.run.view
+lightspeed.transcript.view
+lightspeed.session.events_view
+lightspeed.core.state
+lightspeed.core.config
+lightspeed.core.tooling
+lightspeed.core.runs
+lightspeed.claw.status
 ```
 
 ### Events
@@ -293,7 +293,7 @@ event { kind, version, payload }
 Projected event views, if needed by a UI, are queries:
 
 ```text
-query/read forge.session.events_view
+query/read lightspeed.session.events_view
 ```
 
 Do not use a `raw | view` flag. Raw history and projected event views are
@@ -312,31 +312,31 @@ Use raw queries when the response is already a stable domain contract and does
 not require blob reads, aggregation, or UI shaping:
 
 ```text
-forge.core.state      -> CoreAgentState
-forge.core.config     -> SessionConfig
-forge.core.tooling    -> ToolingState
-forge.core.runs       -> RunQueueState
-forge.claw.status     -> ClawSessionStatus
+lightspeed.core.state      -> CoreAgentState
+lightspeed.core.config     -> SessionConfig
+lightspeed.core.tooling    -> ToolingState
+lightspeed.core.runs       -> RunQueueState
+lightspeed.claw.status     -> ClawSessionStatus
 events/read           -> DynamicSessionEntry page
 ```
 
 Use views when the response is a projection:
 
 ```text
-forge.session.view
+lightspeed.session.view
   combines session record, lifecycle state, cwd metadata, model summary, and
   run summaries.
 
-forge.run.view
+lightspeed.run.view
   reconstructs a run-facing transcript from context events.
 
-forge.transcript.view
+lightspeed.transcript.view
   dereferences blob-backed messages/tool output into readable items.
 
-forge.session.events_view
+lightspeed.session.events_view
   maps CoreAgent event internals into client-friendly event variants.
 
-forge.tool_call.view
+lightspeed.tool_call.view
   reads argument/output blobs and adds display metadata.
 ```
 
@@ -362,8 +362,8 @@ configure future modules such as memory/MCP/skills
 Effective configuration is read by queries:
 
 ```text
-forge.core.config
-forge.core.tooling
+lightspeed.core.config
+lightspeed.core.tooling
 future module-specific config queries
 ```
 
@@ -373,7 +373,7 @@ It should not be a second durable truth model after the session exists.
 
 ## Product First, SDK-Capable Underneath
 
-Forge should not currently optimize for a fully open programmable substrate.
+Lightspeed should not currently optimize for a fully open programmable substrate.
 The first version should focus on a complete CoreAgent/Claw runtime.
 
 Keep generic:
@@ -410,12 +410,12 @@ durable identity exposed by the API.
 
 ## Claw First Cut
 
-Claw should publish the `forge.claw` interface from gateway/worker code, not
+Claw should publish the `lightspeed.claw` interface from gateway/worker code, not
 from each Temporal workflow instance.
 
 Claw runtime responsibilities remain:
 
-- one long-lived Temporal workflow chain owns one Forge session,
+- one long-lived Temporal workflow chain owns one Lightspeed session,
 - signals admit work into the workflow,
 - activities perform storage, LLM, and tool side effects,
 - Pg session log/CAS remains the durable history,
@@ -426,21 +426,21 @@ The first published interface should cover:
 Commands:
 
 ```text
-forge.session.start
-forge.run.start
+lightspeed.session.start
+lightspeed.run.start
 ```
 
 Queries:
 
 ```text
-forge.session.view
-forge.run.view
-forge.transcript.view
-forge.session.events_view
-forge.core.config
-forge.core.tooling
-forge.core.runs
-forge.claw.status
+lightspeed.session.view
+lightspeed.run.view
+lightspeed.transcript.view
+lightspeed.session.events_view
+lightspeed.core.config
+lightspeed.core.tooling
+lightspeed.core.runs
+lightspeed.claw.status
 ```
 
 Events:
@@ -470,10 +470,10 @@ The existing methods can be temporarily reimplemented as wrappers during the
 transition:
 
 ```text
-session/start        -> command/send forge.session.start
-run/start            -> command/send forge.run.start
-session/read         -> query/read forge.session.view
-session/events/read  -> query/read forge.session.events_view
+session/start        -> command/send lightspeed.session.start
+run/start            -> command/send lightspeed.run.start
+session/read         -> query/read lightspeed.session.view
+session/events/read  -> query/read lightspeed.session.events_view
 ```
 
 However, P60 does not require backward compatibility. If keeping wrappers slows
@@ -527,14 +527,14 @@ events/read
 - Implement named queries:
 
 ```text
-forge.session.view
-forge.run.view
-forge.transcript.view
-forge.session.events_view
-forge.core.config
-forge.core.tooling
-forge.core.runs
-forge.claw.status
+lightspeed.session.view
+lightspeed.run.view
+lightspeed.transcript.view
+lightspeed.session.events_view
+lightspeed.core.config
+lightspeed.core.tooling
+lightspeed.core.runs
+lightspeed.claw.status
 ```
 
 - Move old `session/read` and `session/events/read` behavior behind query
@@ -546,13 +546,13 @@ forge.claw.status
 - Implement named commands:
 
 ```text
-forge.session.start
-forge.run.start
-forge.core.config.update
-forge.core.tools.set_registry
-forge.core.tools.select_profile
-forge.core.tools.set_default_target
-forge.session.close
+lightspeed.session.start
+lightspeed.run.start
+lightspeed.core.config.update
+lightspeed.core.tools.set_registry
+lightspeed.core.tools.select_profile
+lightspeed.core.tools.set_default_target
+lightspeed.session.close
 ```
 
 - Start with the subset required for current CLI/Claw flows.
@@ -593,7 +593,7 @@ forge.session.close
   CoreAgent state queries remain an advanced/internal interface at first?
 - Which extension/config commands should be public in the first Claw interface
   versus internal-only?
-- Which event kinds should be considered public in `forge.claw` v1?
+- Which event kinds should be considered public in `lightspeed.claw` v1?
 
 ## Success Criteria
 

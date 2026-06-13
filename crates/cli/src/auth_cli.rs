@@ -48,7 +48,7 @@ enum AuthModelCommand {
 #[derive(Args, Debug, Clone)]
 struct AuthModelBindArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
     api_url: String,
     /// Emit the created provider as JSON.
     #[arg(long)]
@@ -56,7 +56,7 @@ struct AuthModelBindArgs {
     /// Model provider id from the session model selection (e.g. "openai",
     /// "anthropic"). Stored as the `model:<provider_id>` auth provider row.
     provider_id: String,
-    /// Grant id to bind (e.g. from `forge auth login`).
+    /// Grant id to bind (e.g. from `lightspeed auth login`).
     #[arg(long = "grant")]
     grant_id: String,
     /// Audience URL requested from the broker, typically the provider API
@@ -72,7 +72,7 @@ struct AuthModelBindArgs {
 #[command(group(ArgGroup::new("api_key_source").required(true)))]
 struct AuthModelAddArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
     api_url: String,
     /// Emit the created provider as JSON.
     #[arg(long)]
@@ -109,7 +109,7 @@ impl std::fmt::Debug for AuthModelAddArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthModelListArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
     api_url: String,
     /// Emit providers as JSON.
     #[arg(long)]
@@ -119,7 +119,7 @@ struct AuthModelListArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthModelRemoveArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
     api_url: String,
     /// Emit the removed provider as JSON.
     #[arg(long)]
@@ -165,7 +165,7 @@ enum AuthGithubAppCommand {
 #[command(group(ArgGroup::new("private_key_source").required(true)))]
 struct AuthGithubAppAddArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
     api_url: String,
     /// Emit the created provider as JSON.
     #[arg(long)]
@@ -210,7 +210,7 @@ impl std::fmt::Debug for AuthGithubAppAddArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthGithubAppListArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
     api_url: String,
     /// Emit providers as JSON.
     #[arg(long)]
@@ -220,7 +220,7 @@ struct AuthGithubAppListArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthGithubAppReadArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
     api_url: String,
     /// Emit the provider as JSON.
     #[arg(long)]
@@ -232,7 +232,7 @@ struct AuthGithubAppReadArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthGithubAppRemoveArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
     api_url: String,
     /// Emit the removed provider as JSON.
     #[arg(long)]
@@ -258,7 +258,7 @@ enum AuthGithubInstallationCommand {
 #[derive(Args, Debug, Clone)]
 struct AuthGithubInstallationListArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
     api_url: String,
     /// Emit installations as JSON.
     #[arg(long)]
@@ -271,7 +271,7 @@ struct AuthGithubInstallationListArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthGithubInstallationGrantArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
     api_url: String,
     /// Emit the grant as JSON.
     #[arg(long)]
@@ -312,7 +312,7 @@ enum AuthGrantCommand {
 #[command(group(ArgGroup::new("token_source").required(true)))]
 struct AuthGrantImportArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
     api_url: String,
     /// Emit the imported grant as JSON.
     #[arg(long)]
@@ -366,7 +366,7 @@ impl std::fmt::Debug for AuthGrantImportArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthGrantListArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
     api_url: String,
     /// Emit grants as JSON.
     #[arg(long)]
@@ -379,7 +379,7 @@ struct AuthGrantListArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthGrantReadArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
     api_url: String,
     /// Emit the grant as JSON.
     #[arg(long)]
@@ -391,7 +391,7 @@ struct AuthGrantReadArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthGrantRevokeArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
     api_url: String,
     /// Emit the revoked grant as JSON.
     #[arg(long)]
@@ -441,7 +441,7 @@ enum AuthClientCommand {
 #[command(group(ArgGroup::new("client_secret_source")))]
 struct AuthClientAddArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
     api_url: String,
     /// Emit the created client as JSON.
     #[arg(long)]
@@ -510,7 +510,7 @@ impl std::fmt::Debug for AuthClientAddArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthClientListArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
     api_url: String,
     /// Emit clients as JSON.
     #[arg(long)]
@@ -520,7 +520,7 @@ struct AuthClientListArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthClientReadArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
     api_url: String,
     /// Emit the client as JSON.
     #[arg(long)]
@@ -532,7 +532,7 @@ struct AuthClientReadArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthClientRemoveArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
     api_url: String,
     /// Emit the removed client as JSON.
     #[arg(long)]
@@ -544,7 +544,7 @@ struct AuthClientRemoveArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthLoginArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
     api_url: String,
     /// Emit the final flow status as JSON.
     #[arg(long)]

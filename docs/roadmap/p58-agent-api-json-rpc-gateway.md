@@ -6,7 +6,7 @@
 **Progress**
 - Added transport-neutral JSON-RPC dispatch helpers to `agent-api`.
 - Added `claw-gateway`, an HTTP JSON-RPC gateway over `ClawAgentApi`.
-- Added `--api-url` / `FORGE_AGENT_API_URL` to the CLI chat command so the
+- Added `--api-url` / `LIGHTSPEED_AGENT_API_URL` to the CLI chat command so the
   existing CLI can target a Temporal-backed gateway.
 
 ## Goal

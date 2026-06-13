@@ -10,35 +10,35 @@ use uuid::Uuid;
 pub fn default_model_from_env() -> ModelSelection {
     ModelSelection {
         api_kind: ProviderApiKind::OpenAiResponses,
-        provider_id: env::var("FORGE_CHAT_PROVIDER").unwrap_or_else(|_| "openai".to_owned()),
-        model: env::var("FORGE_CHAT_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_owned()),
+        provider_id: env::var("LIGHTSPEED_CHAT_PROVIDER").unwrap_or_else(|_| "openai".to_owned()),
+        model: env::var("LIGHTSPEED_CHAT_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_owned()),
     }
 }
 
 fn universe_id_from_env() -> anyhow::Result<Uuid> {
-    let universe_id = env::var("FORGE_PG_UNIVERSE_ID")
-        .map_err(|_| anyhow::anyhow!("FORGE_PG_UNIVERSE_ID must be set"))?;
+    let universe_id = env::var("LIGHTSPEED_PG_UNIVERSE_ID")
+        .map_err(|_| anyhow::anyhow!("LIGHTSPEED_PG_UNIVERSE_ID must be set"))?;
     Uuid::parse_str(&universe_id)
-        .map_err(|error| anyhow::anyhow!("invalid FORGE_PG_UNIVERSE_ID: {error}"))
+        .map_err(|error| anyhow::anyhow!("invalid LIGHTSPEED_PG_UNIVERSE_ID: {error}"))
 }
 
 /// Resolve the Temporal task queue for this deployment: an explicit
-/// `FORGE_TASK_QUEUE` wins, otherwise the queue derives from the bound
-/// universe (`forge-universe-{FORGE_PG_UNIVERSE_ID}`) so two universe
+/// `LIGHTSPEED_TASK_QUEUE` wins, otherwise the queue derives from the bound
+/// universe (`lightspeed-universe-{LIGHTSPEED_PG_UNIVERSE_ID}`) so two universe
 /// deployments sharing a Temporal namespace can never pick up each other's
 /// sessions by accident.
 pub fn task_queue_from_env() -> anyhow::Result<String> {
-    if let Some(task_queue) = optional_env("FORGE_TASK_QUEUE") {
+    if let Some(task_queue) = optional_env("LIGHTSPEED_TASK_QUEUE") {
         return Ok(task_queue);
     }
-    Ok(format!("forge-universe-{}", universe_id_from_env()?))
+    Ok(format!("lightspeed-universe-{}", universe_id_from_env()?))
 }
 
 pub async fn pg_store_from_env() -> anyhow::Result<Arc<PgStore>> {
-    let database_url = env::var("FORGE_POSTGRES_URL")
-        .or_else(|_| env::var("FORGE_TEST_POSTGRES_URL"))
+    let database_url = env::var("LIGHTSPEED_POSTGRES_URL")
+        .or_else(|_| env::var("LIGHTSPEED_TEST_POSTGRES_URL"))
         .map_err(|_| {
-            anyhow::anyhow!("FORGE_POSTGRES_URL or FORGE_TEST_POSTGRES_URL must be set")
+            anyhow::anyhow!("LIGHTSPEED_POSTGRES_URL or LIGHTSPEED_TEST_POSTGRES_URL must be set")
         })?;
     let universe_id = universe_id_from_env()?;
     let config = pg_store_config_from_env(universe_id)?;
@@ -54,12 +54,12 @@ pub async fn pg_store_from_env() -> anyhow::Result<Arc<PgStore>> {
 
 fn pg_store_config_from_env(universe_id: Uuid) -> anyhow::Result<PgStoreConfig> {
     let mut config = PgStoreConfig::new(universe_id);
-    if let Ok(prefix) = env::var("FORGE_OBJECT_STORE_PREFIX") {
+    if let Ok(prefix) = env::var("LIGHTSPEED_OBJECT_STORE_PREFIX") {
         config = config.with_object_prefix(prefix);
     }
-    if let Some(master_key) = optional_env("FORGE_SECRETS_MASTER_KEY") {
+    if let Some(master_key) = optional_env("LIGHTSPEED_SECRETS_MASTER_KEY") {
         let master_key = SecretsMasterKey::from_base64(&master_key)
-            .map_err(|error| anyhow::anyhow!("invalid FORGE_SECRETS_MASTER_KEY: {error}"))?;
+            .map_err(|error| anyhow::anyhow!("invalid LIGHTSPEED_SECRETS_MASTER_KEY: {error}"))?;
         config = config.with_secrets_master_key(master_key);
     }
     Ok(config)
@@ -67,18 +67,18 @@ fn pg_store_config_from_env(universe_id: Uuid) -> anyhow::Result<PgStoreConfig> 
 
 fn object_store_config_from_env() -> anyhow::Result<Option<S3ObjectStoreConfig>> {
     let object_env_present = [
-        "FORGE_OBJECT_STORE_BUCKET",
-        "FORGE_OBJECT_STORE_ENDPOINT",
-        "FORGE_OBJECT_STORE_REGION",
-        "FORGE_OBJECT_STORE_PREFIX",
-        "FORGE_OBJECT_STORE_FORCE_PATH_STYLE",
+        "LIGHTSPEED_OBJECT_STORE_BUCKET",
+        "LIGHTSPEED_OBJECT_STORE_ENDPOINT",
+        "LIGHTSPEED_OBJECT_STORE_REGION",
+        "LIGHTSPEED_OBJECT_STORE_PREFIX",
+        "LIGHTSPEED_OBJECT_STORE_FORCE_PATH_STYLE",
     ]
     .into_iter()
     .any(|key| env::var_os(key).is_some());
-    let Some(bucket) = optional_env("FORGE_OBJECT_STORE_BUCKET") else {
+    let Some(bucket) = optional_env("LIGHTSPEED_OBJECT_STORE_BUCKET") else {
         return if object_env_present {
             Err(anyhow::anyhow!(
-                "FORGE_OBJECT_STORE_BUCKET must be set when object store env is configured"
+                "LIGHTSPEED_OBJECT_STORE_BUCKET must be set when object store env is configured"
             ))
         } else {
             Ok(None)
@@ -86,11 +86,11 @@ fn object_store_config_from_env() -> anyhow::Result<Option<S3ObjectStoreConfig>>
     };
 
     let mut config = S3ObjectStoreConfig::new(bucket);
-    if let Some(endpoint) = optional_env("FORGE_OBJECT_STORE_ENDPOINT") {
+    if let Some(endpoint) = optional_env("LIGHTSPEED_OBJECT_STORE_ENDPOINT") {
         config = config.with_endpoint(endpoint);
     }
     config = config.with_region(
-        optional_env("FORGE_OBJECT_STORE_REGION").unwrap_or_else(|| "us-east-1".to_owned()),
+        optional_env("LIGHTSPEED_OBJECT_STORE_REGION").unwrap_or_else(|| "us-east-1".to_owned()),
     );
     if let Some(access_key_id) = optional_env("AWS_ACCESS_KEY_ID") {
         config = config.with_access_key_id(access_key_id);
@@ -98,10 +98,10 @@ fn object_store_config_from_env() -> anyhow::Result<Option<S3ObjectStoreConfig>>
     if let Some(secret_access_key) = optional_env("AWS_SECRET_ACCESS_KEY") {
         config = config.with_secret_access_key(secret_access_key);
     }
-    if let Some(force_path_style) = optional_env("FORGE_OBJECT_STORE_FORCE_PATH_STYLE") {
+    if let Some(force_path_style) = optional_env("LIGHTSPEED_OBJECT_STORE_FORCE_PATH_STYLE") {
         config =
             config.with_force_path_style(force_path_style.parse::<bool>().map_err(|error| {
-                anyhow::anyhow!("invalid FORGE_OBJECT_STORE_FORCE_PATH_STYLE: {error}")
+                anyhow::anyhow!("invalid LIGHTSPEED_OBJECT_STORE_FORCE_PATH_STYLE: {error}")
             })?);
     }
     Ok(Some(config))

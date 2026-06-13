@@ -1,6 +1,6 @@
 # eval
 
-Prompt-level eval harness for Forge agent workflows.
+Prompt-level eval harness for Lightspeed agent workflows.
 
 ## Commands
 

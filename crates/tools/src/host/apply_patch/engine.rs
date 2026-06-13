@@ -1,6 +1,6 @@
 //! Apply-patch filesystem application engine.
 //!
-//! Adapted from Codex's `codex-apply-patch` application logic, with Forge's
+//! Adapted from Codex's `codex-apply-patch` application logic, with Lightspeed's
 //! `FileSystem` trait replacing Codex's local executor filesystem.
 
 use std::path::Path;

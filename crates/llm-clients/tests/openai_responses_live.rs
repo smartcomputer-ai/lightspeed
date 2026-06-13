@@ -102,7 +102,7 @@ async fn openai_responses_live_create_text() {
     let client = live_client();
     let request = CreateResponseRequest::text(
         live_model(),
-        "Reply with exactly these two words: forge transport",
+        "Reply with exactly these two words: lightspeed transport",
     );
 
     let response = openai_responses_create(&client, request)
@@ -117,7 +117,7 @@ async fn openai_responses_live_create_text() {
             .parsed
             .output_text()
             .to_lowercase()
-            .contains("forge"),
+            .contains("lightspeed"),
         "expected visible text output, got {:?}",
         response.parsed.output
     );
@@ -219,7 +219,7 @@ async fn openai_responses_live_list_input_items() {
 #[ignore = "requires OPENAI_API_KEY (costs real money)"]
 async fn openai_responses_live_manual_history_input_items() {
     let client = live_client();
-    let phrase = "forge-manual-history-7319";
+    let phrase = "lightspeed-manual-history-7319";
     let request = CreateResponseRequest {
         model: Some(live_model()),
         input: Some(ResponseInput::Items(vec![
@@ -253,7 +253,7 @@ async fn openai_responses_live_manual_history_input_items() {
 #[ignore = "requires OPENAI_API_KEY (costs real money)"]
 async fn openai_responses_live_previous_response_id_history() {
     let client = live_client();
-    let phrase = "forge-linked-history-8642";
+    let phrase = "lightspeed-linked-history-8642";
     let mut first = CreateResponseRequest::text(
         live_model(),
         format!(
@@ -355,7 +355,7 @@ async fn openai_responses_live_compact_response() {
     let client = live_client();
     let request = CompactResponseRequest::text(
         live_model(),
-        "Summarize this short context for future continuation: Forge is rewriting llm-clients as provider-native API wrappers.",
+        "Summarize this short context for future continuation: Lightspeed is rewriting llm-clients as provider-native API wrappers.",
     );
 
     let compacted = openai_responses_compact(&client, request)
@@ -427,7 +427,7 @@ async fn openai_responses_live_forced_function_call() {
 async fn openai_responses_live_invalid_model_classifies_provider_error() {
     let client = live_client();
     let request = CreateResponseRequest::text(
-        "definitely-not-a-real-openai-model-for-forge-tests",
+        "definitely-not-a-real-openai-model-for-lightspeed-tests",
         "hello",
     );
 

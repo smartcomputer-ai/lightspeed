@@ -42,7 +42,7 @@ enum McpServerCommand {
 #[derive(Args, Debug, Clone)]
 struct McpServerAddArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
     api_url: String,
     /// Emit the created server as JSON.
     #[arg(long)]
@@ -173,7 +173,7 @@ fn auth_policy_from_args(args: &McpServerAddArgs) -> Result<api::McpServerAuthPo
 #[derive(Args, Debug, Clone)]
 struct McpServerListArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
     api_url: String,
     /// Emit servers as JSON.
     #[arg(long)]
@@ -186,7 +186,7 @@ struct McpServerListArgs {
 #[derive(Args, Debug, Clone)]
 struct McpServerReadArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
     api_url: String,
     /// Emit the server as JSON.
     #[arg(long)]
@@ -198,7 +198,7 @@ struct McpServerReadArgs {
 #[derive(Args, Debug, Clone)]
 struct McpServerDeleteArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
     api_url: String,
     /// Emit the deleted server as JSON.
     #[arg(long)]
@@ -210,7 +210,7 @@ struct McpServerDeleteArgs {
 #[derive(Args, Debug, Clone)]
 struct McpLinkArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
     api_url: String,
     /// Emit the link response as JSON.
     #[arg(long)]
@@ -246,7 +246,7 @@ struct McpLinkArgs {
 #[derive(Args, Debug, Clone)]
 struct McpUnlinkArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
     api_url: String,
     /// Emit the unlink response as JSON.
     #[arg(long)]
@@ -261,7 +261,7 @@ struct McpUnlinkArgs {
 #[derive(Args, Debug, Clone)]
 struct McpListArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "FORGE_API_URL")]
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
     api_url: String,
     /// Emit links as JSON.
     #[arg(long)]

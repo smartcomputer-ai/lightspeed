@@ -44,7 +44,7 @@ mod tests {
     #[test]
     fn dynamic_event_round_trips_as_language_neutral_envelope() {
         let event = DynamicEvent::new(
-            "forge.run.started",
+            "lightspeed.run.started",
             1,
             json!({
                 "run_id": 1,
@@ -57,7 +57,7 @@ mod tests {
         assert_eq!(
             value,
             json!({
-                "kind": "forge.run.started",
+                "kind": "lightspeed.run.started",
                 "version": 1,
                 "payload": {
                     "run_id": 1,

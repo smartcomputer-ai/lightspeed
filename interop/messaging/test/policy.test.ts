@@ -19,9 +19,9 @@ const baseMessage: ClassifyInput = {
 
 const baseOptions: ClassifyOptions = {
   activation: "mention",
-  triggerPrefixes: ["/ask", "/forge"],
-  mentionNames: ["forge"],
-  botUsername: "forge_bot",
+  triggerPrefixes: ["/ask", "/lightspeed"],
+  mentionNames: ["lightspeed"],
+  botUsername: "lightspeed_bot",
 };
 
 describe("classifyInbound", () => {
@@ -40,7 +40,7 @@ describe("classifyInbound", () => {
   it("activates on a native mention in mention mode and strips it", () => {
     expect(
       classifyInbound(
-        { ...baseMessage, text: "@forge_bot what is up", mentionedBot: true },
+        { ...baseMessage, text: "@lightspeed_bot what is up", mentionedBot: true },
         baseOptions,
       ),
     ).toEqual({ kind: "userTurn", text: "what is up" });
@@ -104,7 +104,7 @@ describe("parseControlCommand", () => {
       kind: "activation",
       mode: "mention",
     });
-    expect(parseControlCommand("/activation@forge_bot silent")).toEqual({
+    expect(parseControlCommand("/activation@lightspeed_bot silent")).toEqual({
       kind: "activation",
       mode: "silent",
     });

@@ -145,7 +145,7 @@ impl ListSelectionView {
                 vec![
                     ListSelectionRow::new(
                         "no skills",
-                        "mount a workspace containing .forge/skills or .agents/skills",
+                        "mount a workspace containing .lightspeed/skills or .agents/skills",
                         PickerSelection::Skill {
                             skill_id: String::new(),
                             scope,
@@ -504,7 +504,7 @@ mod tests {
     fn skill_picker_confirms_enabled_skill() {
         let mut picker = ListSelectionView::skills(
             &[api::SkillListItem {
-                skill_id: "forge:review".into(),
+                skill_id: "lightspeed:review".into(),
                 name: "Review".into(),
                 description: "Review diffs".into(),
                 short_description: None,
@@ -517,7 +517,7 @@ mod tests {
         assert_eq!(
             picker.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
             ListSelectionAction::Selected(PickerSelection::Skill {
-                skill_id: "forge:review".into(),
+                skill_id: "lightspeed:review".into(),
                 scope: api::SkillActivationScope::Session,
             })
         );
@@ -527,7 +527,7 @@ mod tests {
     fn skill_picker_rejects_disabled_skill() {
         let mut picker = ListSelectionView::skills(
             &[api::SkillListItem {
-                skill_id: "forge:review".into(),
+                skill_id: "lightspeed:review".into(),
                 name: "Review".into(),
                 description: "Review diffs".into(),
                 short_description: None,

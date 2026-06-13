@@ -9,7 +9,7 @@
 
 ## 1. Context
 
-Forge's current direction is a single configurable agent, not a general agent
+Lightspeed's current direction is a single configurable agent, not a general agent
 SDK or fleet runtime. The public client boundary should stay product-shaped and
 typed:
 
@@ -24,7 +24,7 @@ run/cancel
 ```
 
 For now, multiple "agents" should be represented as multiple sessions of the
-same Forge/CoreAgent/hosted workflow shape with different configuration: model,
+same Lightspeed/CoreAgent/hosted workflow shape with different configuration: model,
 instructions, tool profile, workspace, and host targets. We should add concrete
 typed API methods when the product needs them, rather than introducing a generic
 command/query/interface layer.
@@ -64,7 +64,7 @@ There is also an ownership or permission structure, because agents can create or
 ## 3. Agent Types and Agent Implementations
 
 A future fleet may need to support different types of agents with different
-capabilities. Do not build this catalog while Forge has only one public agent
+capabilities. Do not build this catalog while Lightspeed has only one public agent
 shape.
 
 An agent type refers to the code and structure of a specific agent
@@ -96,7 +96,7 @@ within the realm of what that agent type allows to be configured.
 
 The agent implementation itself is partly fixed in code. Some parts are hard-coded or defined by the agent type. But other parts are configurable. The manifest or definition describes the current configuration of that specific agent instance.
 
-This is one of the key challenges if Forge becomes an SDK: we would need to
+This is one of the key challenges if Lightspeed becomes an SDK: we would need to
 standardize the agent definition surface somewhat, while also allowing new
 agent implementations to extend it.
 
@@ -157,7 +157,7 @@ The API surface is what can be done with the agent. For example:
 
 It may be that the API surface is itself part of the definition of the agent. Some API calls invoke the agent, some configure it, some query its state, and some modify the graph around it.
 
-This is not how the current Forge API is designed. It is a possible future
+This is not how the current Lightspeed API is designed. It is a possible future
 shape, and it should only be introduced after the typed product API cannot carry
 the real workflows anymore.
 
@@ -242,7 +242,7 @@ There is also the question of ownership. If agent A spawns agent B, does agent A
 
 ## 9. The Agent Graph
 
-A future fleet system may become a graph. The current Forge product is still a
+A future fleet system may become a graph. The current Lightspeed product is still a
 set of durable sessions, not a graph of logical agents.
 
 The graph consists of:
@@ -370,7 +370,7 @@ Instead of using a traditional workflow engine as the primary abstraction, the s
 
 Temporal provides the long-running execution foundation, but the agent graph provides the workflow structure.
 
-If Forge becomes an SDK/fleet product, the main challenge will be defining the
+If Lightspeed becomes an SDK/fleet product, the main challenge will be defining the
 minimal, extensible surfaces needed for this system:
 
 * Agent types.

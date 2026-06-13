@@ -28,7 +28,7 @@ pub const CORE_SCHEMA_SQL: &str = include_str!("../migrations/001_core.sql");
 pub const VFS_SCHEMA_SQL: &str = include_str!("../migrations/002_vfs.sql");
 pub const MCP_SCHEMA_SQL: &str = include_str!("../migrations/003_mcp.sql");
 pub const AUTH_SCHEMA_SQL: &str = include_str!("../migrations/004_auth.sql");
-pub const MESSAGING_SCHEMA_SQL: &str = include_str!("../migrations/004_messaging.sql");
+pub const MESSAGING_SCHEMA_SQL: &str = include_str!("../migrations/005_messaging.sql");
 
 pub const DEFAULT_INLINE_THRESHOLD_BYTES: usize = 64 * 1024;
 

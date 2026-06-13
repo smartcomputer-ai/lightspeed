@@ -1,14 +1,14 @@
-export { ForgeRpcError, ForgeTransportError, forgeRpcErrorKind } from "./errors.js";
-export type { ForgeRpcErrorKind, JsonRpcErrorPayload } from "./errors.js";
+export { LightspeedRpcError, LightspeedTransportError, lightspeedRpcErrorKind } from "./errors.js";
+export type { LightspeedRpcErrorKind, JsonRpcErrorPayload } from "./errors.js";
 export {
-  ForgeClient,
+  LightspeedClient,
   generateSubmissionId,
 } from "./client.js";
 export type {
   AwaitRunOptions,
   AwaitRunResult,
   CallOptions,
-  ForgeClientOptions,
+  LightspeedClientOptions,
   ReadEventsOptions,
   RequestId,
   RunTerminalState,

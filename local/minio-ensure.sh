@@ -6,6 +6,6 @@ source "${SCRIPT_DIR}/common.sh"
 
 compose run --rm --no-deps \
   -e MC_HOST_local="http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@minio:9000" \
-  mc mb --ignore-existing "local/${FORGE_OBJECT_STORE_BUCKET}"
+  mc mb --ignore-existing "local/${LIGHTSPEED_OBJECT_STORE_BUCKET}"
 
-echo "bucket ensured: ${FORGE_OBJECT_STORE_BUCKET}"
+echo "bucket ensured: ${LIGHTSPEED_OBJECT_STORE_BUCKET}"

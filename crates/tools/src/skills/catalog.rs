@@ -19,9 +19,9 @@ use crate::{
     },
 };
 
-const SOURCE_FINGERPRINT_SCHEMA_VERSION: &str = "forge.skills.catalog.source_fingerprint.v1";
-const HOST_ROOT_FINGERPRINT_SCHEMA_VERSION: &str = "forge.skills.catalog.host_root.v1";
-const PARSER_VERSION: &str = "forge.skills.frontmatter_parser.v1";
+const SOURCE_FINGERPRINT_SCHEMA_VERSION: &str = "lightspeed.skills.catalog.source_fingerprint.v1";
+const HOST_ROOT_FINGERPRINT_SCHEMA_VERSION: &str = "lightspeed.skills.catalog.host_root.v1";
+const PARSER_VERSION: &str = "lightspeed.skills.frontmatter_parser.v1";
 
 pub struct SkillCatalogRootInput<'a> {
     pub root: SkillCatalogRoot,
@@ -906,14 +906,14 @@ mod tests {
     #[tokio::test]
     async fn workspace_root_fingerprint_uses_workspace_head() {
         let fs = skill_fs(&[(
-            "/workspace/.forge/skills/review/SKILL.md",
+            "/workspace/.lightspeed/skills/review/SKILL.md",
             skill_doc("review", "Use when reviewing."),
         )])
         .await;
         let blobs = InMemoryBlobStore::new();
         let root = |head: &[u8]| SkillCatalogRoot {
             root_id: "workspace".to_owned(),
-            root_path: FsPath::new("/workspace/.forge/skills").unwrap(),
+            root_path: FsPath::new("/workspace/.lightspeed/skills").unwrap(),
             source: SkillCatalogRootSource::MountedWorkspace {
                 workspace_id: VfsWorkspaceId::new("workspace-1"),
                 workspace_head_ref: BlobRef::from_bytes(head),

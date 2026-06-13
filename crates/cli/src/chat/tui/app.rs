@@ -577,7 +577,7 @@ mod tests {
             .map(ToString::to_string)
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(history_text.contains("Hello from Forge Chat."));
+        assert!(history_text.contains("Hello from Lightspeed Chat."));
         assert!(history_text.contains("Simulated assistant response."));
 
         let backend = TestBackend::new(80, 16);
@@ -699,20 +699,20 @@ mod tests {
             }
         );
 
-        app.submit_local_text("/skill forge:review session".into());
+        app.submit_local_text("/skill lightspeed:review session".into());
         assert_eq!(
             command_rx.try_recv().expect("activate command"),
             ChatCommand::ActivateSkill {
-                skill_id: "forge:review".into(),
+                skill_id: "lightspeed:review".into(),
                 scope: SkillActivationScope::Session,
             }
         );
 
-        app.submit_local_text("/skill-off forge:review".into());
+        app.submit_local_text("/skill-off lightspeed:review".into());
         assert_eq!(
             command_rx.try_recv().expect("deactivate command"),
             ChatCommand::DeactivateSkill {
-                skill_id: "forge:review".into(),
+                skill_id: "lightspeed:review".into(),
             }
         );
     }
@@ -737,7 +737,7 @@ mod tests {
                 session_id: app.options.session_id.clone(),
                 catalog_ref: Some("sha256:catalog".into()),
                 skills: vec![api::SkillListItem {
-                    skill_id: "forge:review".into(),
+                    skill_id: "lightspeed:review".into(),
                     name: "Review".into(),
                     description: "Review diffs".into(),
                     short_description: Some("review changes".into()),
@@ -757,7 +757,7 @@ mod tests {
         assert_eq!(
             command_rx.try_recv().expect("activate command"),
             ChatCommand::ActivateSkill {
-                skill_id: "forge:review".into(),
+                skill_id: "lightspeed:review".into(),
                 scope: SkillActivationScope::Session,
             }
         );
@@ -1032,7 +1032,7 @@ mod tests {
                     user: Some(ChatMessageView {
                         id: "p3a-user".into(),
                         role: "user".into(),
-                        content: "Hello from Forge Chat.".into(),
+                        content: "Hello from Lightspeed Chat.".into(),
                         ref_: None,
                     }),
                     assistant_reasoning: None,

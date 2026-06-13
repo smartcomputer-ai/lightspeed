@@ -6,7 +6,7 @@ Note: `CLAUDE.md` is a symlink to `AGENTS.md`.
 
 ## Project Shape
 
-Forge is moving toward a single hosted agent product built around a
+Lightspeed is moving toward a single hosted agent product built around a
 deterministic, event-sourced engine and a Temporal-backed runtime. The current
 direction is product-first, not a general agent SDK or an Attractor/factory
 pipeline runner.
@@ -147,10 +147,10 @@ Local commands load a root `.env` file when present. The `.env` file usually exi
 | `ANTHROPIC_API_KEY` | Anthropic provider authentication |
 | `OPENAI_BASE_URL` | Override OpenAI API endpoint |
 | `ANTHROPIC_BASE_URL` | Override Anthropic API endpoint |
-| `FORGE_CHAT_PROVIDER` | Default chat provider ID |
-| `FORGE_CHAT_MODEL` | Default chat model |
-| `FORGE_SECRETS_MASTER_KEY` | Base64 32-byte AES key for the encrypted secret store |
-| `FORGE_PUBLIC_BASE_URL` | Externally reachable gateway base URL for the OAuth callback (defaults to `http://{bind}`) |
+| `LIGHTSPEED_CHAT_PROVIDER` | Default chat provider ID |
+| `LIGHTSPEED_CHAT_MODEL` | Default chat model |
+| `LIGHTSPEED_SECRETS_MASTER_KEY` | Base64 32-byte AES key for the encrypted secret store |
+| `LIGHTSPEED_PUBLIC_BASE_URL` | Externally reachable gateway base URL for the OAuth callback (defaults to `http://{bind}`) |
 
 ## Test Rules
 

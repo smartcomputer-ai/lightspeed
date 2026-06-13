@@ -52,7 +52,7 @@ pub(crate) fn is_oauth_provider_kind(kind: AuthProviderKind) -> bool {
 /// the secret store and is referenced here by id.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OAuthClientRecord {
-    /// Forge catalog id for this client configuration.
+    /// Lightspeed catalog id for this client configuration.
     pub client_id: OAuthClientId,
     /// Logical provider id recorded on grants minted through this client.
     pub provider_id: String,
@@ -842,7 +842,7 @@ mod tests {
 
         let url = build_authorization_url(
             &client,
-            "https://forge.example.com/auth/callback",
+            "https://lightspeed.example.com/auth/callback",
             &["repo".to_owned(), "read:user".to_owned()],
             "state-123",
             "challenge-456",
@@ -852,7 +852,7 @@ mod tests {
         assert!(url.starts_with("https://github.com/login/oauth/authorize?"));
         assert!(url.contains("response_type=code"));
         assert!(url.contains("client_id=Iv1.abc123"));
-        assert!(url.contains("redirect_uri=https%3A%2F%2Fforge.example.com%2Fauth%2Fcallback"));
+        assert!(url.contains("redirect_uri=https%3A%2F%2Flightspeed.example.com%2Fauth%2Fcallback"));
         assert!(url.contains("state=state-123"));
         assert!(url.contains("code_challenge=challenge-456"));
         assert!(url.contains("code_challenge_method=S256"));
@@ -870,7 +870,7 @@ mod tests {
             principal: PrincipalRef::universe_default(),
             state_hash: state_hash("state-123"),
             pkce_verifier_secret: SecretId::new("authsec_pkce"),
-            redirect_uri: "https://forge.example.com/auth/callback".to_owned(),
+            redirect_uri: "https://lightspeed.example.com/auth/callback".to_owned(),
             scopes: Vec::new(),
             audience: None,
             expires_at_ms: 100,
@@ -899,7 +899,7 @@ mod tests {
             auth_method: TokenEndpointAuthMethod::ClientSecretBasic,
             grant: OAuthTokenGrant::AuthorizationCode {
                 code: SecretValue::new("code-1"),
-                redirect_uri: "https://forge.example.com/auth/callback".to_owned(),
+                redirect_uri: "https://lightspeed.example.com/auth/callback".to_owned(),
                 code_verifier: SecretValue::new("verifier-1"),
             },
             resource: Some("https://crm.example.com/mcp".to_owned()),

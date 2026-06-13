@@ -14,7 +14,7 @@ import type {
   MethodResult,
   RpcCaller,
 } from "./generated/methods.js";
-import { ForgeRpcError, ForgeTransportError, type JsonRpcErrorPayload } from "./errors.js";
+import { LightspeedRpcError, LightspeedTransportError, type JsonRpcErrorPayload } from "./errors.js";
 
 export type RequestId = number | string;
 
@@ -23,7 +23,7 @@ export interface CallOptions {
   signal?: AbortSignal;
 }
 
-export interface ForgeClientOptions {
+export interface LightspeedClientOptions {
   endpoint: string | URL;
   fetch?: typeof fetch;
   headers?: HeadersInit | (() => HeadersInit | Promise<HeadersInit>);
@@ -81,21 +81,21 @@ export interface AwaitRunResult {
   page: AgentApiOutcomeOfSessionEventsReadResponse;
 }
 
-export class ForgeClient implements RpcCaller {
+export class LightspeedClient implements RpcCaller {
   private readonly endpoint: string;
   private readonly fetchImpl: typeof fetch;
-  private readonly headers: ForgeClientOptions["headers"];
+  private readonly headers: LightspeedClientOptions["headers"];
   private readonly requestId: (() => RequestId) | undefined;
   private nextNumericRequestId = 1;
 
   constructor(endpoint: string | URL);
-  constructor(options: ForgeClientOptions);
-  constructor(options: string | URL | ForgeClientOptions) {
+  constructor(options: LightspeedClientOptions);
+  constructor(options: string | URL | LightspeedClientOptions) {
     const resolved =
       typeof options === "string" || options instanceof URL ? { endpoint: options } : options;
     const fetchImpl = resolved.fetch ?? globalThis.fetch;
     if (!fetchImpl) {
-      throw new ForgeTransportError("ForgeClient requires a fetch implementation");
+      throw new LightspeedTransportError("LightspeedClient requires a fetch implementation");
     }
     this.endpoint = resolved.endpoint.toString();
     this.fetchImpl = fetchImpl;
@@ -123,31 +123,31 @@ export class ForgeClient implements RpcCaller {
     try {
       response = await this.fetchImpl(this.endpoint, init);
     } catch (error) {
-      throw new ForgeTransportError(`Forge API request failed: ${errorMessage(error)}`);
+      throw new LightspeedTransportError(`Lightspeed API request failed: ${errorMessage(error)}`);
     }
 
     const body = await readJson(response);
     if (!response.ok) {
-      throw new ForgeTransportError(`Forge API request failed with HTTP ${response.status}`, {
+      throw new LightspeedTransportError(`Lightspeed API request failed with HTTP ${response.status}`, {
         status: response.status,
         body,
       });
     }
     if (!isRecord(body)) {
-      throw new ForgeTransportError("Forge API response was not a JSON object", { body });
+      throw new LightspeedTransportError("Lightspeed API response was not a JSON object", { body });
     }
 
     const rpcResponse = body as JsonRpcResponse;
     if (rpcResponse.id !== undefined && rpcResponse.id !== id) {
-      throw new ForgeTransportError("Forge API response id did not match the request id", {
+      throw new LightspeedTransportError("Lightspeed API response id did not match the request id", {
         body,
       });
     }
     if (rpcResponse.error) {
-      throw new ForgeRpcError(rpcResponse.error);
+      throw new LightspeedRpcError(rpcResponse.error);
     }
     if (!("result" in rpcResponse)) {
-      throw new ForgeTransportError("Forge API response was missing result", { body });
+      throw new LightspeedTransportError("Lightspeed API response was missing result", { body });
     }
     return rpcResponse.result as MethodResult<M>;
   }
@@ -287,7 +287,7 @@ async function readJson(response: Response): Promise<unknown> {
   try {
     return JSON.parse(text) as unknown;
   } catch (error) {
-    throw new ForgeTransportError(`Forge API response was not valid JSON: ${errorMessage(error)}`, {
+    throw new LightspeedTransportError(`Lightspeed API response was not valid JSON: ${errorMessage(error)}`, {
       status: response.status,
       body: text,
     });

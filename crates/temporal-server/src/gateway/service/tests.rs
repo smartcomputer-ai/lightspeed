@@ -1425,8 +1425,8 @@ fn oauth_redirect_uris_normalize_trailing_slashes() {
         "http://127.0.0.1:18080/auth/callback"
     );
     assert_eq!(
-        oauth_api::oauth_redirect_uri("https://forge.example.com/"),
-        "https://forge.example.com/auth/callback"
+        oauth_api::oauth_redirect_uri("https://lightspeed.example.com/"),
+        "https://lightspeed.example.com/auth/callback"
     );
 }
 
@@ -1463,24 +1463,24 @@ fn mcp_oauth_targets_come_from_oauth_policies_only() {
 fn cimd_config_requires_a_public_https_base_url() {
     assert!(oauth_api::cimd_config("http://127.0.0.1:18080").is_none());
 
-    let cimd = oauth_api::cimd_config("https://forge.example.com/").expect("cimd config");
+    let cimd = oauth_api::cimd_config("https://lightspeed.example.com/").expect("cimd config");
     assert_eq!(
         cimd.client_id_url,
-        "https://forge.example.com/auth/client-metadata.json"
+        "https://lightspeed.example.com/auth/client-metadata.json"
     );
 }
 
 #[test]
 fn cimd_documents_declare_a_public_pkce_client() {
-    let document = oauth_api::cimd_document("https://forge.example.com");
+    let document = oauth_api::cimd_document("https://lightspeed.example.com");
 
     assert_eq!(
         document["client_id"],
-        "https://forge.example.com/auth/client-metadata.json"
+        "https://lightspeed.example.com/auth/client-metadata.json"
     );
     assert_eq!(
         document["redirect_uris"][0],
-        "https://forge.example.com/auth/callback"
+        "https://lightspeed.example.com/auth/callback"
     );
     assert_eq!(document["token_endpoint_auth_method"], "none");
     assert_eq!(document["grant_types"][0], "authorization_code");

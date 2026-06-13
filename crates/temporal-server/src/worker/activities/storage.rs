@@ -25,7 +25,7 @@ pub(super) async fn create_or_load_session(
         .sessions
         .create_session(CreateSession {
             session_id: request.session_id.clone(),
-            agent_handle: AgentHandle::new("forge.agent"),
+            agent_handle: AgentHandle::new("lightspeed.agent"),
             created_at_ms: request.observed_at_ms,
         })
         .await
@@ -184,7 +184,7 @@ mod tests {
                 .into_iter()
                 .map(|(key, value)| (key.to_owned(), value.to_owned()))
                 .collect::<BTreeMap<_, _>>(),
-            event: DynamicEvent::new("forge.test.event", 1, payload),
+            event: DynamicEvent::new("lightspeed.test.event", 1, payload),
         }
     }
 
@@ -193,7 +193,7 @@ mod tests {
         store
             .create_session(CreateSession {
                 session_id: session_id.clone(),
-                agent_handle: AgentHandle::new("forge.test"),
+                agent_handle: AgentHandle::new("lightspeed.test"),
                 created_at_ms: 1,
             })
             .await

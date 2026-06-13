@@ -1,4 +1,4 @@
--- Core PostgreSQL schema for Forge sessions and content-addressed storage.
+-- Core PostgreSQL schema for Lightspeed sessions and content-addressed storage.
 --
 -- Design notes:
 -- - Postgres is the source of truth for session logs and CAS metadata.
@@ -186,7 +186,7 @@ CREATE INDEX IF NOT EXISTS cas_blob_edges_child_digest_idx
 COMMENT ON TABLE universes IS
     'Tenant/project/workspace boundary; sessions and CAS are shared within one universe.';
 COMMENT ON TABLE sessions IS
-    'One row per Forge session; head_seq is updated transactionally with event appends.';
+    'One row per Lightspeed session; head_seq is updated transactionally with event appends.';
 COMMENT ON TABLE session_events IS
     'Append-only dynamic session entries stored as canonical JSONB with generated query columns.';
 COMMENT ON TABLE cas_blobs IS

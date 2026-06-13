@@ -1,6 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { EventCursor } from "@forge/agent-client";
+import type { EventCursor } from "@lightspeed/agent-client";
 import type { ActivationPolicy } from "./policy.js";
 
 export interface ConversationState {

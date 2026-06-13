@@ -4,7 +4,7 @@
 
 Implemented so far:
 
-- G1-G5 are implemented in `forge-agent`.
+- G1-G5 are implemented in `lightspeed-agent`.
 - `BlobRef` is the public model reference and serializes as a plain
   `sha256:<64hex>` string.
 - `storage::BlobStore` is the byte substrate with in-memory test support.
@@ -146,7 +146,7 @@ artifact metadata.
 
 ## Target Module Shape
 
-Planned `crates/forge-agent/src/` changes:
+Planned `crates/lightspeed-agent/src/` changes:
 
 - `model/common/blobs.rs`
   - replace `ArtifactRef` with transparent-string `BlobRef`
@@ -188,14 +188,14 @@ Pieces to borrow later:
   storage or a packed object range.
 - Small-blob packing as a backend optimization invisible above `BlobStore`.
 
-Pieces not to copy directly into `forge-agent` core:
+Pieces not to copy directly into `lightspeed-agent` core:
 
 - AOS world/universe-specific checkpoint metadata.
 - AOS blob put/get workflow effects.
 - Synchronous wrappers around async object-store operations.
 - Host/process/workspace-specific tool code.
 
-Forge should keep CAS as runner/storage infrastructure. The deterministic core
+Lightspeed should keep CAS as runner/storage infrastructure. The deterministic core
 should mostly see `BlobRef` values in events, receipts, snapshots, and semantic
 records.
 
@@ -304,8 +304,8 @@ Implementation:
 Acceptance:
 
 - `rg "ArtifactRef|ArtifactStore|ArtifactWrite|artifact store"` returns no
-  public SDK usage in `crates/forge-agent/src`.
-- `cargo test -p forge-agent` passes.
+  public SDK usage in `crates/lightspeed-agent/src`.
+- `cargo test -p lightspeed-agent` passes.
 
 Implementation:
 
