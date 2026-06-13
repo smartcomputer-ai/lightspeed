@@ -250,8 +250,8 @@ mod tests {
 
     fn create_request() -> CreateAuthProviderRecord {
         CreateAuthProviderRecord {
-            provider_id: AuthProviderId::new("forge-github"),
-            display_name: Some("Forge GitHub App".to_owned()),
+            provider_id: AuthProviderId::new("lightspeed-github"),
+            display_name: Some("Lightspeed GitHub App".to_owned()),
             config: github_config(),
             credential_secret: Some(SecretId::new("authsec_key")),
             status: AuthProviderStatus::Active,

@@ -4,14 +4,14 @@
 
 Implemented so far:
 
-- G1-G9 are implemented in `forge-agent`.
-- `cargo test -p forge-agent` passes with deterministic unit coverage.
+- G1-G9 are implemented in `lightspeed-agent`.
+- `cargo test -p lightspeed-agent` passes with deterministic unit coverage.
 
 ## Goal
 
 Implement the tool execution SDK layer described by
 `docs/spec/04-new-agent-spec.md`, building on the P41 reducer/decider loop without
-putting host-specific tools into `forge-agent`.
+putting host-specific tools into `lightspeed-agent`.
 
 P41 can plan tool batches and emit `ToolInvoke` effect intents. P42 turns those
 intents into an open, runner-friendly dispatch contract:
@@ -22,7 +22,7 @@ runtime driver executes request(s) -> terminal receipt
 receipt -> journal -> reducer -> next LLM turn
 ```
 
-The key design constraint is that `forge-agent` must not bake Tokio task
+The key design constraint is that `lightspeed-agent` must not bake Tokio task
 semantics into the core tool contract. Local runners may use Tokio, but Temporal
 runners must use Temporal activity futures, selectors, timers, and cancellation
 scopes.
@@ -79,7 +79,7 @@ yield window with a process/session handle and an output snapshot. The
 underlying process continues in a process manager, and the model can call a
 follow-up polling/interaction tool later.
 
-Forge should use the same concept:
+Lightspeed should use the same concept:
 
 - normal tool receipts mean the logical call is complete
 - long-running tools can return a "still running" receipt with a durable handle
@@ -104,7 +104,7 @@ Forge should use the same concept:
 
 ### Out of scope
 
-- Real shell/filesystem/process tools in `forge-agent`.
+- Real shell/filesystem/process tools in `lightspeed-agent`.
 - Full permission, approval, sandbox, or policy framework.
 - MCP client implementation beyond generic request/handler contracts.
 - Production Temporal workflow implementation.
@@ -114,7 +114,7 @@ Forge should use the same concept:
 
 ## Target Module Shape
 
-Planned `crates/forge-agent/src/` additions:
+Planned `crates/lightspeed-agent/src/` additions:
 
 - `tools/mod.rs`
   - public SDK surface and re-exports
@@ -204,7 +204,7 @@ Implementation:
 - Added `ToolArtifactStore`, `ToolArtifactWrite`, and
   `InMemoryToolArtifactStore`.
 - Dispatcher loads argument refs before validation.
-- Synthetic tool errors use deterministic `forge://tool-error/{call_id}` refs.
+- Synthetic tool errors use deterministic `lightspeed://tool-error/{call_id}` refs.
 
 ## Priority 1: Dispatch Semantics
 
@@ -361,15 +361,15 @@ Required tests:
 
 ## Acceptance
 
-- `cargo test -p forge-agent` passes.
-- `forge-agent` exposes an open tool-handler SDK.
+- `cargo test -p lightspeed-agent` passes.
+- `lightspeed-agent` exposes an open tool-handler SDK.
 - Tool implementations can be provided by runners or external crates.
 - The shared dispatcher is runtime-neutral and Temporal-compatible.
 - Local/test runtime can dispatch parallel tool groups asynchronously.
 - Terminal receipts remain the only authoritative reducer transition.
 - Long-running tools use resumable/background receipts plus explicit follow-up
   tools, not implicit partial LLM context injection.
-- Host shell/filesystem/process tools remain outside `forge-agent`.
+- Host shell/filesystem/process tools remain outside `lightspeed-agent`.
 
 ## Suggested Order
 

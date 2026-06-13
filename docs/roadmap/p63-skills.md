@@ -20,7 +20,7 @@
 - Active `SkillActivation` records now anchor either to an existing tool result
   or to a direct context blob, rather than requiring every activation to carry
   a separate `context_ref`.
-- The finalized Forge approach is documented: generic file-surface discovery,
+- The finalized Lightspeed approach is documented: generic file-surface discovery,
   semantic catalog snapshots, tool-result/direct activation anchors, explicit
   catalog refresh boundaries, and provider-specific OpenAI/Anthropic context
   lowering.
@@ -52,7 +52,7 @@
 - Gateway unit tests cover skill list/active response projection, direct
   activation replacement, deactivation removal, and VFS-backed direct skill
   body reads.
-- First-cut CLI skill commands are implemented under `forge skills`.
+- First-cut CLI skill commands are implemented under `lightspeed skills`.
 - First-cut TUI chat slash commands are implemented: `/skills`,
   `/skills-active`, `/skill` picker, `/skill <id> [run|session]`, and
   `/skill-off <id>`.
@@ -65,11 +65,11 @@
 
 ## Goal
 
-Add skills as a first-class product capability for Forge without turning the
+Add skills as a first-class product capability for Lightspeed without turning the
 deterministic engine into a filesystem scanner, shell runner, or plugin host.
 
 A skill is a reusable bundle of agent instructions and optional resources. In
-Forge, skills should be:
+Lightspeed, skills should be:
 
 - discoverable from product, user, repo, and host-target sources,
 - available from immutable CAS/VFS snapshots or editable VFS workspaces,
@@ -95,12 +95,12 @@ metadata in initial context
   -> referenced scripts/references/assets loaded or executed as needed
 ```
 
-Forge has a different runtime shape. It runs through a deterministic,
+Lightspeed has a different runtime shape. It runs through a deterministic,
 event-sourced engine and a Temporal-backed runtime. It may coordinate VM or
 sandbox targets through host abstractions, but the core agent should not assume
 it owns a Unix process or local filesystem.
 
-Therefore Forge should implement skills as a runtime/catalog/context feature
+Therefore Lightspeed should implement skills as a runtime/catalog/context feature
 over CAS and host targets, not as engine-local process state.
 
 ## Non-Goals
@@ -291,7 +291,7 @@ Claude Code activation paths:
 
 ## Design Position
 
-Forge should support the Agent Skills pattern, but with stricter runtime
+Lightspeed should support the Agent Skills pattern, but with stricter runtime
 boundaries:
 
 - Discovery happens in gateway/worker/runtime services.
@@ -313,9 +313,9 @@ Skills are not a new deterministic engine module in v1. They are a product
 feature implemented by runtime services, VFS mounts, ordinary filesystem tools,
 and CoreAgent context mechanisms.
 
-## Finalized Forge Approach
+## Finalized Lightspeed Approach
 
-Forge should implement skills as a runtime-owned capability over generic file
+Lightspeed should implement skills as a runtime-owned capability over generic file
 surfaces, with the deterministic engine recording only pinned refs and
 request-planning state.
 
@@ -389,11 +389,11 @@ provider-native materialization.
 
 ## Skill Sources
 
-Forge should support these source categories:
+Lightspeed should support these source categories:
 
 ### Product/System Skills
 
-Bundled with Forge or installed by the hosted product.
+Bundled with Lightspeed or installed by the hosted product.
 
 Storage:
 
@@ -419,13 +419,13 @@ Skills stored in the project checkout of a host target.
 Candidate roots:
 
 ```text
-.forge/skills/
+.lightspeed/skills/
 .agents/skills/
 .codex/skills/
 .claude/skills/
 ```
 
-Support `.forge/skills` as the native Forge location. Support `.agents/skills`
+Support `.lightspeed/skills` as the native Lightspeed location. Support `.agents/skills`
 for compatibility with the broader Agent Skills convention. Support Codex and
 Claude roots when compatibility mode is enabled.
 
@@ -439,7 +439,7 @@ author new ones with ordinary workspace write tools.
 Skills can also live in configured writable VFS workspaces, for example:
 
 ```text
-/workspace/.forge/skills/
+/workspace/.lightspeed/skills/
 /workspace/.agents/skills/
 /skills/drafts/
 ```
@@ -468,7 +468,7 @@ Skills already installed inside a mounted VM/sandbox, such as:
 ~/.agents/skills/
 ~/.codex/skills/
 ~/.claude/skills/
-/etc/forge/skills/
+/etc/lightspeed/skills/
 ```
 
 These are target-scoped. The same skill path on two VMs is two different skill
@@ -486,9 +486,9 @@ or exposing host skills through a VFS mount, but it is not the default model.
 Defer distribution and install mechanics. The data model should leave room for
 plugin and MCP-backed sources, but v1 should not implement a plugin marketplace.
 
-## Native Forge Skill Layout
+## Native Lightspeed Skill Layout
 
-Forge should accept the common `SKILL.md` layout:
+Lightspeed should accept the common `SKILL.md` layout:
 
 ```text
 skill-name/
@@ -510,7 +510,7 @@ description: Use when reviewing deployment diffs and rollout risk.
 Optional native metadata file:
 
 ```text
-agents/forge.yaml
+agents/lightspeed.yaml
 ```
 
 First-cut fields:
@@ -640,7 +640,7 @@ head changes.
 `source_mount_path`, `skill_dir_path`, and `skill_doc_path` are paths inside
 the mounted VFS view, for example `/skills/system/openai-docs` and
 `/skills/system/openai-docs/SKILL.md`, or
-`/workspace/.forge/skills/deploy-review/SKILL.md`.
+`/workspace/.lightspeed/skills/deploy-review/SKILL.md`.
 
 `HostFilesystem` entries are paths on the selected target filesystem. The
 catalog should show the target along with the path so the model reads the file
@@ -661,7 +661,7 @@ The runtime should build a per-session or per-run catalog snapshot:
 
 ```rust
 pub struct SkillCatalogSnapshot {
-    pub schema_version: String, // "forge.skills.catalog.v1"
+    pub schema_version: String, // "lightspeed.skills.catalog.v1"
     pub target: Option<ToolExecutionTarget>,
     pub skills: Vec<SkillMetadata>,
     pub warnings: Vec<SkillLoadWarning>,
@@ -685,7 +685,7 @@ catalog cache entry outside core state:
 
 ```rust
 pub struct SkillCatalogBuildRecord {
-    pub schema_version: String, // "forge.skills.catalog.build.v1"
+    pub schema_version: String, // "lightspeed.skills.catalog.build.v1"
     pub catalog_ref: BlobRef,
     pub source_fingerprint: SkillCatalogSourceFingerprint,
 }
@@ -739,7 +739,7 @@ the rebuilt semantic catalog has a new `catalog_ref`.
 For host roots, `root_fingerprint` should be computed by the runtime from the
 host filesystem data used for cataloging. The authoritative form is a hash of
 candidate skill paths plus the bytes of catalog-relevant files such as
-`SKILL.md` frontmatter and `agents/forge.yaml`. A cheaper stat-based
+`SKILL.md` frontmatter and `agents/lightspeed.yaml`. A cheaper stat-based
 fingerprint can be used only as a preliminary "maybe changed" signal; content
 hashes are the deterministic basis for deciding whether the catalog inputs
 changed. The rebuilt `catalog_ref` decides whether the semantic catalog
@@ -753,7 +753,7 @@ Activation still pins the exact full body bytes when the skill is loaded.
 
 ### Skill State And Context Items
 
-Forge needs a skill context lane that is neither `instructions_ref` nor normal
+Lightspeed needs a skill context lane that is neither `instructions_ref` nor normal
 user history. Keep this lane skill-specific in v1 instead of abstracting it as
 generic runtime context.
 
@@ -860,7 +860,7 @@ Skill headers are read during runtime catalog discovery, not inside `engine`.
 
 Discovery reads each candidate `SKILL.md` enough to parse YAML frontmatter
 (`name`, `description`, and optional short description) and reads optional
-metadata such as `agents/forge.yaml` or compatible `agents/openai.yaml`.
+metadata such as `agents/lightspeed.yaml` or compatible `agents/openai.yaml`.
 For CAS/VFS snapshot sources this should happen through VFS snapshot reads and
 the blob store. For writable workspace sources it should happen through the VFS
 workspace mount at a recorded workspace head. For host-target sources it should
@@ -1036,7 +1036,7 @@ ambiguity in projection rather than silently picking one.
 
 ## Target Scoping
 
-Forge already has `ToolExecutionTarget`:
+Lightspeed already has `ToolExecutionTarget`:
 
 ```rust
 pub struct ToolExecutionTarget {
@@ -1074,7 +1074,7 @@ A model-visible skill list should show target scope when ambiguity matters:
 
 The current core default target machinery is useful for explicit activation
 helpers and future materialization requests. If an optional
-`forge.skill.activate` helper is added, it can use
+`lightspeed.skill.activate` helper is added, it can use
 `ToolTargetRequirement::Optional { namespace: "host" }` so the active default
 host target is attached to the tool call when present.
 
@@ -1102,7 +1102,7 @@ Examples:
   deploy-review/SKILL.md
   release-notes/SKILL.md
 
-/workspace/.forge/skills/
+/workspace/.lightspeed/skills/
   draft-skill/SKILL.md
   draft-skill/references/example.md
 
@@ -1136,8 +1136,8 @@ records the workspace head observed during refresh:
 ```text
 workspace_id       = vfsws_...
 source_mount_path  = /workspace
-skill_dir_path     = /workspace/.forge/skills/draft-skill
-skill_doc_path     = /workspace/.forge/skills/draft-skill/SKILL.md
+skill_dir_path     = /workspace/.lightspeed/skills/draft-skill
+skill_doc_path     = /workspace/.lightspeed/skills/draft-skill/SKILL.md
 build input       = WorkspaceRoot { workspace_head_ref = sha256:... }
 ```
 
@@ -1154,7 +1154,7 @@ adapter can synthesize parent directories for listing.
 
 Published/system/org/user skill mounts should be read-only. Editable skill
 roots should live under writable workspace mounts, for example
-`/workspace/.forge/skills` or a dedicated writable `/skills/drafts` mount.
+`/workspace/.lightspeed/skills` or a dedicated writable `/skills/drafts` mount.
 Mutating tools must still fail on read-only skill mounts.
 
 ## Discovery
@@ -1211,7 +1211,7 @@ When a skill is relevant, read its `SKILL.md` before following its workflow.
 Do not inject all `SKILL.md` bodies by default.
 
 Use a hard budget. Codex currently uses an 8k char default or 2% of the context
-window; Forge can start with the same rule.
+window; Lightspeed can start with the same rule.
 
 If the catalog exceeds budget:
 
@@ -1299,7 +1299,7 @@ Therefore model-selected skill activation can initially key off:
 If the read is partial, treat it as an ordinary file read, or record a partial
 read observation, but do not claim the full skill body was activated. To record
 the exact workspace head used by a workspace-backed `read_file`, add a narrow
-VFS read-provenance effect such as `forge.vfs.read_file.v1` containing
+VFS read-provenance effect such as `lightspeed.vfs.read_file.v1` containing
 `workspace_id`, `workspace_head_ref`, `mount_path`, and resolved path. Snapshot
 reads can similarly include `snapshot_ref` when useful. The activation record
 should reuse that tool result/effect data instead of inventing a separate
@@ -1309,7 +1309,7 @@ pinned by the existing tool result refs. If runtime/API/UI flow preloads a
 skill body without a model tool call, store that provider-neutral body as a
 blob and record `SkillActivationSource::DirectContext { context_ref }`.
 
-`forge.skill.activate` is optional in v1. It is useful as an API/runtime helper
+`lightspeed.skill.activate` is optional in v1. It is useful as an API/runtime helper
 for explicit UI activation or resolving by name, and could later host approval
 workflows if product policy needs them. It should not be required for
 model-selected skills. The normal path for model-selected skills is
@@ -1495,7 +1495,7 @@ Current v1 behavior:
 - `session/read` projection includes historical skill context items and skill
   events; richer active skill projection can be added when clients need it.
 - Chat clients expose these APIs incrementally: the standalone CLI has
-  `forge skills ...`, and the interactive TUI has text slash commands. `/skills`
+  `lightspeed skills ...`, and the interactive TUI has text slash commands. `/skills`
   and `/skills-active` report results as local system transcript messages;
   `/skill` opens a picker backed by `skills/list`.
 
@@ -1574,14 +1574,14 @@ Compatibility config:
 
 ```rust
 pub struct SkillCompatibilityConfig {
-    pub forge: bool,
+    pub lightspeed: bool,
     pub agents: bool,
     pub codex: bool,
     pub claude: bool,
 }
 ```
 
-Native Forge roots should be on by default for Forge sessions. Codex/Claude
+Native Lightspeed roots should be on by default for Lightspeed sessions. Codex/Claude
 compatibility roots should be opt-in or product-configured to avoid surprising
 tool behavior.
 
@@ -1603,7 +1603,7 @@ Script-backed skills require:
 - an interpreter such as `bash`, `python3`, or `node` if the script depends on
   one.
 
-Forge should make this explicit when a selected skill has scripts but the
+Lightspeed should make this explicit when a selected skill has scripts but the
 current target cannot run them:
 
 ```text
@@ -1611,7 +1611,7 @@ This skill has scripts but target host:vm-123 has no process capability.
 Loaded instructions only; script execution unavailable.
 ```
 
-Do not execute shell snippets embedded inside `SKILL.md` by default. If Forge
+Do not execute shell snippets embedded inside `SKILL.md` by default. If Lightspeed
 later supports dynamic skill rendering, represent it as an explicit trusted
 renderer step with policy, target, timeout, and recorded output.
 
@@ -1705,7 +1705,7 @@ Editable skill source root
        skill_doc_path
      }
   -> SkillCatalogBuildRecord input records workspace_head_ref at refresh
-  -> model edits /workspace/.forge/skills/<skill>/... with VFS tools
+  -> model edits /workspace/.lightspeed/skills/<skill>/... with VFS tools
   -> catalog refresh makes new/edited skills selectable
   -> activation reads and pins exact SKILL.md body from the workspace
 ```
@@ -1768,7 +1768,7 @@ Essential.
 - Add skill metadata structs outside `engine`.
 - Use discriminated location/source structs rather than many optional fields.
 - Parse `SKILL.md` YAML frontmatter.
-- Parse optional `agents/forge.yaml`.
+- Parse optional `agents/lightspeed.yaml`.
 - Accept compatible Codex `agents/openai.yaml` fields where straightforward.
 - Add validation tests for names, descriptions, malformed YAML, and missing
   fields.
@@ -1857,7 +1857,7 @@ Useful, but can follow the core path.
 - Add `skills/deactivate` to remove active activations when clients need it.
 
 First-cut implementation status: explicit activation and deactivation are
-implemented through `skills/activate`, `skills/deactivate`, `forge skills`, and
+implemented through `skills/activate`, `skills/deactivate`, `lightspeed skills`, and
 TUI slash commands. Activation reads and pins the cataloged `SKILL.md` body as
 direct context, while deactivation removes active activations without changing
 history.
@@ -1881,7 +1881,7 @@ Deferred follow-up. Needs more product validation.
 Deferred follow-up. Broader target-scoped layer.
 
 - Discover skills through a selected `ToolExecutionTarget`.
-- Support `.forge/skills` and `.agents/skills` first.
+- Support `.lightspeed/skills` and `.agents/skills` first.
 - Add Codex/Claude compatibility roots behind config.
 - Catalog host skill roots through the target filesystem abstraction and pin
   observed metadata/body bytes when read.
@@ -1913,7 +1913,7 @@ Product surface.
 
 - Implemented first-cut `api`/gateway JSON-RPC methods: `skills/list`,
   `skills/active`, `skills/activate`, and `skills/deactivate`.
-- Implemented first-cut CLI commands under `forge skills`.
+- Implemented first-cut CLI commands under `lightspeed skills`.
 - Implemented first-cut TUI chat slash commands for listing, activating, and
   deactivating skills.
 - Deferred: richer active catalog/activation projection through `session/read`.
@@ -1923,7 +1923,7 @@ Product surface.
 
 Core tests for G0-G4:
 
-- parse valid Forge skill,
+- parse valid Lightspeed skill,
 - reject invalid frontmatter,
 - tolerate optional metadata read failures with warnings,
 - enforce size/depth limits,
@@ -1983,12 +1983,12 @@ Deferred expanded-phase tests:
 
 ## Open Questions
 
-- Should Forge support Claude `paths` conditional activation in v1?
+- Should Lightspeed support Claude `paths` conditional activation in v1?
   Recommendation: not initially. Add after target file-change signals exist.
-- Should Forge execute shell expansions in `SKILL.md`?
+- Should Lightspeed execute shell expansions in `SKILL.md`?
   Recommendation: no for v1. Add only as an explicit trusted renderer.
-- Should native Forge metadata live in `agents/forge.yaml` or `forge.yaml`?
-  Recommendation: `agents/forge.yaml` to stay parallel with
+- Should native Lightspeed metadata live in `agents/lightspeed.yaml` or `lightspeed.yaml`?
+  Recommendation: `agents/lightspeed.yaml` to stay parallel with
   `agents/openai.yaml`.
 - Should Codex and Claude compatibility roots be enabled by default?
   Recommendation: enable `.agents/skills`; make `.codex/skills` and

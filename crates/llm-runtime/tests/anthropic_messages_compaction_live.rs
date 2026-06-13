@@ -26,7 +26,7 @@ mod support;
 
 use support::retrying_anthropic_messages_client;
 
-const LIVE_MARKER: &str = "FORGE-ANTHROPIC-COMPACTION-LIVE-4217";
+const LIVE_MARKER: &str = "LIGHTSPEED-ANTHROPIC-COMPACTION-LIVE-4217";
 
 fn live_model() -> String {
     env_or_dotenv_var("ANTHROPIC_MESSAGES_MODEL")
@@ -251,7 +251,7 @@ async fn anthropic_messages_live_high_watermark_standalone_compaction() {
 
     let context_ref = store_anthropic_raw_message(
         blobs.as_ref(),
-        "Summarize this short context for future continuation: Forge is testing idle \
+        "Summarize this short context for future continuation: Lightspeed is testing idle \
          high-watermark standalone compaction on the Anthropic Messages adapter.",
     )
     .await;
@@ -305,7 +305,7 @@ async fn live_runner(session_id: &SessionId) -> (SessionRunner, Arc<InMemoryBlob
     sessions
         .create_session(CreateSession {
             session_id: session_id.clone(),
-            agent_handle: AgentHandle::new("forge.live-anthropic-compaction"),
+            agent_handle: AgentHandle::new("lightspeed.live-anthropic-compaction"),
             created_at_ms: 1,
         })
         .await

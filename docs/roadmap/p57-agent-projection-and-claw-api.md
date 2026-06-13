@@ -146,7 +146,7 @@ capabilities.local_execution = false
 Start `ClawSessionWorkflow` with workflow id equal to the session id.
 
 No admission signal is required for a plain session start. The workflow should
-initialize the Forge session, open CoreAgent, install default Claw instructions,
+initialize the Lightspeed session, open CoreAgent, install default Claw instructions,
 and install the fake tool registry/profile exactly as it does today.
 
 Return a projected `SessionView`.
@@ -171,11 +171,11 @@ the existing `claw-submit` binary.
 
 ### read_session
 
-Read or load the Forge session from Pg, replay/project CoreAgent state, and
+Read or load the Lightspeed session from Pg, replay/project CoreAgent state, and
 return `SessionView`.
 
 If the workflow is running, the gateway may query `ClawSessionStatus` to expose
-workflow-local error/pending-admission state. The Forge session log remains the
+workflow-local error/pending-admission state. The Lightspeed session log remains the
 source of truth for durable history.
 
 ### read_session_events

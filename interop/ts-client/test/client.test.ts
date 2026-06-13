@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  ForgeClient,
-  ForgeRpcError,
+  LightspeedClient,
+  LightspeedRpcError,
   type EventCursor,
   type SessionEventView,
 } from "../src/index.js";
@@ -18,7 +18,7 @@ function decodeBody(init: RequestInit | undefined): Record<string, unknown> {
   return JSON.parse(init?.body as string) as Record<string, unknown>;
 }
 
-describe("ForgeClient", () => {
+describe("LightspeedClient", () => {
   it("posts typed JSON-RPC calls and returns the result envelope", async () => {
     const requests: Array<{ url: string; body: Record<string, unknown>; headers: Headers }> = [];
     const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -43,7 +43,7 @@ describe("ForgeClient", () => {
       });
     }) as unknown as typeof fetch;
 
-    const client = new ForgeClient({
+    const client = new LightspeedClient({
       endpoint: "http://127.0.0.1:18080/rpc",
       fetch: fetchImpl,
       requestId: () => 42,
@@ -83,8 +83,8 @@ describe("ForgeClient", () => {
         },
       }),
     ) as unknown as typeof fetch;
-    const client = new ForgeClient({
-      endpoint: "http://forge.local/rpc",
+    const client = new LightspeedClient({
+      endpoint: "http://lightspeed.local/rpc",
       fetch: fetchImpl,
       requestId: () => "req_1",
     });
@@ -96,11 +96,11 @@ describe("ForgeClient", () => {
         submissionId: "sub_1",
       }),
     ).rejects.toMatchObject({
-      name: "ForgeRpcError",
+      name: "LightspeedRpcError",
       code: -32009,
       kind: "conflict",
       data: { submissionId: "sub_1" },
-    } satisfies Partial<ForgeRpcError>);
+    } satisfies Partial<LightspeedRpcError>);
   });
 
   it("generates submission ids for startRun unless the caller supplies one", async () => {
@@ -123,7 +123,7 @@ describe("ForgeClient", () => {
         },
       });
     }) as unknown as typeof fetch;
-    const client = new ForgeClient({ endpoint: "http://forge.local/rpc", fetch: fetchImpl });
+    const client = new LightspeedClient({ endpoint: "http://lightspeed.local/rpc", fetch: fetchImpl });
 
     await client.startRun("session_1", [{ type: "text", text: "hello" }]);
     await client.startRun("session_1", [{ type: "text", text: "hello again" }], {
@@ -191,7 +191,7 @@ describe("ForgeClient", () => {
       expect(page).toBeDefined();
       return jsonResponse({ id: requests.length, result: page });
     }) as unknown as typeof fetch;
-    const client = new ForgeClient({ endpoint: "http://forge.local/rpc", fetch: fetchImpl });
+    const client = new LightspeedClient({ endpoint: "http://lightspeed.local/rpc", fetch: fetchImpl });
     const heartbeat = vi.fn();
     const onEvent = vi.fn();
 

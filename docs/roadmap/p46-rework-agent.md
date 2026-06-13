@@ -7,24 +7,24 @@
 
 Implemented so far:
 
-- First model contract slice is implemented under `crates/forge-agent/src/model/`.
+- First model contract slice is implemented under `crates/lightspeed-agent/src/model/`.
 - Added model files for ids, blobs, config, provider compatibility, session log
   envelopes, commands, fact events, effects/receipts, bounded state, context,
   turns, and tooling.
-- Restored logical storage contracts under `crates/forge-agent/src/storage/`
+- Restored logical storage contracts under `crates/lightspeed-agent/src/storage/`
   for blobs and session event logs, backed by in-memory helpers.
-- Added `crates/forge-agent/src/transition.rs` with pure command admission,
+- Added `crates/lightspeed-agent/src/transition.rs` with pure command admission,
   projection, shared event proposals, and the raw policy decision contract.
-- Added `crates/forge-agent/src/admit.rs` with first-cut `CoreAdmitCommand`
+- Added `crates/lightspeed-agent/src/admit.rs` with first-cut `CoreAdmitCommand`
   behavior for open/config-change/request-run/steer/cancel/close and effect
   receipt recording.
-- Added `crates/forge-agent/src/apply.rs` with first-cut `CoreApplyEvent`
+- Added `crates/lightspeed-agent/src/apply.rs` with first-cut `CoreApplyEvent`
   replay behavior for lifecycle, run queue/start/steer/cancel/terminal events,
   turn-start events, context item recording, active window planning, and
   compaction state updates, turn request planning, LLM generation intent
   recording, effect receipt settlement, generation-pending turn state, and turn
   completion from settled generation receipts.
-- Added `crates/forge-agent/src/policy.rs` with first-cut `CoreRunPolicy`
+- Added `crates/lightspeed-agent/src/policy.rs` with first-cut `CoreRunPolicy`
   queue-to-start, cancel-finalization, and run terminalization behavior, plus
   `CoreTurnPolicy` turn-start, provider-native request planning, and LLM
   generation intent batch behavior, plus generation receipt settlement into
@@ -47,27 +47,27 @@ Implemented so far:
 - String id newtypes now validate construction and serde deserialization;
   general ids use a portable ASCII token shape, and provider-facing `ToolName`
   uses the stricter provider-safe shape.
-- Pruned stale `forge-agent` dependencies left over from runner/provider-era
+- Pruned stale `lightspeed-agent` dependencies left over from runner/provider-era
   code; the crate now depends only on current core-contract libraries, with
   `tokio` scoped to async unit tests.
-- Added `crates/forge-agent/README.md` pointing to
+- Added `crates/lightspeed-agent/README.md` pointing to
   `docs/spec/04-new-agent-idea.md` and
-  `docs/roadmap/p45-forge-llm-provider-native-rewrite.md` as the current direction.
+  `docs/roadmap/p45-lightspeed-llm-provider-native-rewrite.md` as the current direction.
 - Superseded the earlier `raw_provider_response_ref` receipt sketch for P46:
   raw response retention remains an adapter/runner responsibility for the next
   phase, while P46 receipts carry reducer facts and blob-backed context items.
 - No runner, adapter, full policy loop, or dedicated test-harness module was
   introduced.
-- `cargo check -p forge-agent` and `cargo test -p forge-agent` pass.
+- `cargo check -p lightspeed-agent` and `cargo test -p lightspeed-agent` pass.
 
 ## Goal
 
-Rebuild `forge-agent` as a first-principles core SDK for a real Forge-native
+Rebuild `lightspeed-agent` as a first-principles core SDK for a real Lightspeed-native
 agent.
 
-This is no longer a refactor of the old agent loop. The old Forge agent and the
+This is no longer a refactor of the old agent loop. The old Lightspeed agent and the
 AOS agent contain useful ideas, but P46 should reset the crate around the
-primitives Forge now needs after the provider-native `forge-llm` rewrite:
+primitives Lightspeed now needs after the provider-native `lightspeed-llm` rewrite:
 
 - durable session identity and a linear event log
 - command admission separated from committed facts
@@ -80,7 +80,7 @@ primitives Forge now needs after the provider-native `forge-llm` rewrite:
 - deterministic kernel APIs that can later run under Temporal
 
 The first cut should be serious enough that later phases can build the real
-agent loop on top of it. It should leave a compiling `forge-agent` crate with
+agent loop on top of it. It should leave a compiling `lightspeed-agent` crate with
 stable, serializable core types and pure state-transition contracts. It should
 not try to ship production storage backends, test harnesses, a production
 runner, CLI, Temporal workflow, or real provider/tool adapter.
@@ -90,7 +90,7 @@ runner, CLI, Temporal workflow, or real provider/tool adapter.
 Authoritative direction:
 
 - `docs/spec/04-new-agent-idea.md`
-- `docs/roadmap/p45-forge-llm-provider-native-rewrite.md`
+- `docs/roadmap/p45-lightspeed-llm-provider-native-rewrite.md`
 
 Deferred implementation references:
 
@@ -104,17 +104,17 @@ Conceptual references only:
 
 - `refs/aos-agent/`
 - `refs/aos-cli/src/chat/`
-- `refs/forge-agent-old/`
+- `refs/lightspeed-agent-old/`
 - `/Users/lukas/dev/tmp/codex/codex-rs/`
 
 Do not copy any of these architectures wholesale. Use them to check vocabulary,
-edge cases, and implementation experience, then build the Forge core directly.
+edge cases, and implementation experience, then build the Lightspeed core directly.
 
 ## Design Position
 
 ### Core SDK, not runner
 
-`forge-agent` should define the deterministic domain core:
+`lightspeed-agent` should define the deterministic domain core:
 
 - model records
 - command and event contracts
@@ -174,8 +174,8 @@ Only committed EffectEvent::IntentCreated entries may cause external execution.
 
 ### Provider-native, not common-message native
 
-P45 made `forge-llm` a provider API client crate. P46 must not rebuild a fake
-unified message model in `forge-agent`.
+P45 made `lightspeed-llm` a provider API client crate. P46 must not rebuild a fake
+unified message model in `lightspeed-agent`.
 
 The agent owns:
 
@@ -305,7 +305,7 @@ decision, not a separate planner subsystem.
 
 ### In scope
 
-- Recreate the `forge-agent` crate source around a pure-contract module layout.
+- Recreate the `lightspeed-agent` crate source around a pure-contract module layout.
 - Define serializable domain primitives and public SDK contracts.
 - Add id newtypes and replay-derived cursor records.
 - Add `BlobRef` as a model-facing reference type and a logical blob-store
@@ -356,7 +356,7 @@ policy modules can sit beside `model/` at the crate root unless a clearer
 boundary emerges.
 
 ```text
-crates/forge-agent/src/
+crates/lightspeed-agent/src/
   lib.rs
   transition.rs
   admit.rs
@@ -386,7 +386,7 @@ Rules:
 - Root modules are data-only or pure transition contracts.
 - No Tokio, Temporal, store, or test-harness types appear in the public core
   contracts.
-- `forge-llm` native client types may be used by later adapters, but durable
+- `lightspeed-llm` native client types may be used by later adapters, but durable
   event/state records should not embed provider client structs directly.
 
 ## Core Primitive Set
@@ -817,7 +817,7 @@ pub struct OpenAiCompletionsRequest {
 ```
 
 The executor loads immutable item and tool content blobs referenced by the
-provider-specific plan, materializes the matching `forge-llm` native request in
+provider-specific plan, materializes the matching `lightspeed-llm` native request in
 memory, and calls the matching provider client. The executor may materialize a
 request blob for audit or debugging, but that is not the primary execution
 contract.
@@ -1185,7 +1185,7 @@ contracts before moving on.
 
 Contract requirements:
 
-- crate docs state that `forge-agent` is the deterministic core SDK
+- crate docs state that `lightspeed-agent` is the deterministic core SDK
 - the public transition layer is session-scoped
 - no `kernel/`, `testing/`, runner, adapter, or tool-execution module is
   introduced in the first slice
@@ -1238,13 +1238,13 @@ Contract requirements:
 
 ### P46.5 Session transition traits
 
-- Implemented in `crates/forge-agent/src/transition.rs`.
+- Implemented in `crates/lightspeed-agent/src/transition.rs`.
 - First `CoreAdmitCommand` implementation added in
-  `crates/forge-agent/src/admit.rs` for opening sessions, updating config,
+  `crates/lightspeed-agent/src/admit.rs` for opening sessions, updating config,
   queuing run requests, steering/cancelling active runs, and closing idle
   sessions. It also admits runner effect receipts when they match an existing
   pending effect intent.
-- First `CoreApplyEvent` implementation added in `crates/forge-agent/src/apply.rs`
+- First `CoreApplyEvent` implementation added in `crates/lightspeed-agent/src/apply.rs`
   for lifecycle events, run queue/start/steer/cancel/terminal events, turn-start
   events, turn request planning, LLM generation intent recording,
   generation-requested turn markers, effect receipt settlement, turn completion
@@ -1278,9 +1278,9 @@ Contract requirements:
 
 ### P46.6 Policy pipeline contract
 
-- Raw policy contract implemented in `crates/forge-agent/src/transition.rs`.
+- Raw policy contract implemented in `crates/lightspeed-agent/src/transition.rs`.
 - First coordinator behavior implemented as `PolicyPipeline` in
-  `crates/forge-agent/src/policy.rs`.
+  `crates/lightspeed-agent/src/policy.rs`.
 - Add the raw policy trait and a shared `SessionEventProposal` type.
 - Define policy layer ordering as:
   `CoreRunPolicy -> CoreToolPolicy -> CoreContextPolicy -> CoreTurnPolicy`.
@@ -1310,7 +1310,7 @@ Contract requirements:
 ### P46.7 Core run policy contract
 
 - First queue-to-start behavior implemented in
-  `crates/forge-agent/src/policy.rs`.
+  `crates/lightspeed-agent/src/policy.rs`.
 - It owns run-level progress decisions at the session layer:
   start queued work, promote follow-ups, route steering/cancellation, mark runs
   terminal from committed turn/effect state, and enforce single-active-run
@@ -1341,8 +1341,8 @@ Contract requirements:
 
 ### P46.8 Core turn policy contract
 
-- First turn-frame behavior implemented in `crates/forge-agent/src/policy.rs`
-  and `crates/forge-agent/src/apply.rs`.
+- First turn-frame behavior implemented in `crates/lightspeed-agent/src/policy.rs`
+  and `crates/lightspeed-agent/src/apply.rs`.
 - It owns turn planning as policy behavior:
   start a durable turn frame, then later build `LlmRequest`, record
   turn-planned facts, and propose LLM generation intents.
@@ -1395,7 +1395,7 @@ Contract requirements:
 ### P46.9 Core tool policy contract
 
 - First tool-batch handoff behavior implemented in
-  `crates/forge-agent/src/policy.rs`, `crates/forge-agent/src/apply.rs`, and
+  `crates/lightspeed-agent/src/policy.rs`, `crates/lightspeed-agent/src/apply.rs`, and
   the model event/tool records.
 - It owns tool-call follow-up decisions:
   turn LLM generation facts into active run-level tool batch state, represent
@@ -1445,8 +1445,8 @@ Contract requirements:
 
 ### P46.10 Core context policy contract
 
-- First context behavior implemented in `crates/forge-agent/src/policy.rs`
-  and `crates/forge-agent/src/apply.rs`.
+- First context behavior implemented in `crates/lightspeed-agent/src/policy.rs`
+  and `crates/lightspeed-agent/src/apply.rs`.
 - It owns context item/window and compaction decisions:
   token-count needs, active-window replacement records, provider-managed
   compaction observations, client-managed compaction effects, and provider API
@@ -1480,7 +1480,7 @@ Contract requirements:
 
 - Do a final naming and module-boundary pass across models, events, effects,
   state, and policy contracts.
-- Update `crates/forge-agent/README.md` if it exists or add one if useful.
+- Update `crates/lightspeed-agent/README.md` if it exists or add one if useful.
 - Mark earlier roadmap assumptions that conflict with P46 as historical context
   or superseded where needed.
 - Do not update old archived specs unless the change is directly relevant.
@@ -1490,7 +1490,7 @@ Contract requirements:
 - docs point to `docs/spec/04-new-agent-idea.md` and P45 as current direction
 - roadmap language reflects the single public session transition layer
 - no active roadmap for the next agent phase depends on the old unified
-  `forge-llm` abstraction
+  `lightspeed-llm` abstraction
 
 ## Designs Rejected
 
@@ -1503,11 +1503,11 @@ should be direct and provider-native from the start.
 ### Copy AOS agent contracts wholesale
 
 Rejected because AOS was trying to solve a broader world/workflow/runtime
-problem. Forge should lift event-sourcing lessons, id discipline, and context
+problem. Lightspeed should lift event-sourcing lessons, id discipline, and context
 management ideas without importing AIR, world governance, host schemas, or AOS
 runtime assumptions.
 
-### Recreate a unified provider message model in `forge-agent`
+### Recreate a unified provider message model in `lightspeed-agent`
 
 Rejected because it would undo the main P45 design decision. The agent can
 normalize a few generation facts, but native requests/responses must stay
@@ -1541,7 +1541,7 @@ after the pure contracts settle.
 
 ## Done When
 
-- `forge-agent` has a coherent `model/` contract layout.
+- `lightspeed-agent` has a coherent `model/` contract layout.
 - Core records are serializable and use `BlobRef` for large payloads.
 - Commands are separate from committed events.
 - The committed event model is fact-oriented.
@@ -1565,7 +1565,7 @@ after the pure contracts settle.
 - Tooling records model registry/profile/call/result data without host
   execution.
 - No production store, runner, adapter, or test harness module is introduced.
-- `cargo check -p forge-agent` and `cargo test -p forge-agent` pass once the
+- `cargo check -p lightspeed-agent` and `cargo test -p lightspeed-agent` pass once the
   contracts are implemented.
-- `rg "AgentEvent|ArtifactRef|JournalStore|InputEvent|DeciderOutcome|ProviderAdapter|forge_llm::Client|ContentPart|ToolDefinition" crates/forge-agent`
+- `rg "AgentEvent|ArtifactRef|JournalStore|InputEvent|DeciderOutcome|ProviderAdapter|lightspeed_llm::Client|ContentPart|ToolDefinition" crates/lightspeed-agent`
   finds no old public model surface.

@@ -1,4 +1,4 @@
-# Contributing to Forge
+# Contributing to Lightspeed
 
 Thank you for your interest in contributing!
 

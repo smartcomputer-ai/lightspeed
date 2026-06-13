@@ -1,4 +1,4 @@
-//! LLM runtime adapters for Forge-native agent sessions.
+//! LLM runtime adapters for Lightspeed-native agent sessions.
 //!
 //! This crate connects `engine` LLM request records to provider-native
 //! `llm-clients` clients without making the deterministic agent core depend on

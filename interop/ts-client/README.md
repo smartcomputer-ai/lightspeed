@@ -1,6 +1,6 @@
-# Forge TypeScript Client
+# Lightspeed TypeScript Client
 
-Private TypeScript client for the Forge JSON-RPC gateway.
+Private TypeScript client for the Lightspeed JSON-RPC gateway.
 
 The public API types and typed method map are generated from the committed
 contract artifacts in `../contract/`. The hand-written code is limited to the
@@ -12,34 +12,34 @@ For private consumers, install from this repository path or a git subdirectory.
 This package is not published to npm.
 
 ```bash
-npm install /path/to/forge/interop/ts-client
+npm install /path/to/lightspeed/interop/ts-client
 ```
 
 ## Use
 
 ```ts
-import { ForgeClient } from "@forge/agent-client";
+import { LightspeedClient } from "@lightspeed/agent-client";
 
-const forge = new ForgeClient("http://127.0.0.1:18080/rpc");
+const lightspeed = new LightspeedClient("http://127.0.0.1:18080/rpc");
 
-const session = await forge.call("session/start", {
+const session = await lightspeed.call("session/start", {
   sessionId: "session_123",
   cwd: null,
   config: null,
 });
 
-const run = await forge.startRun(
+const run = await lightspeed.startRun(
   session.result.session.id,
   [{ type: "text", text: "summarize this repository" }],
 );
 
-const terminal = await forge.awaitRun(session.result.session.id, run.result.run.id);
+const terminal = await lightspeed.awaitRun(session.result.session.id, run.result.run.id);
 
 console.log(terminal.state.status, terminal.cursor);
 ```
 
 Raw calls return the full `AgentApiOutcome<...>` envelope, including any
-notifications. JSON-RPC failures throw `ForgeRpcError` with `code`, `message`,
+notifications. JSON-RPC failures throw `LightspeedRpcError` with `code`, `message`,
 `kind`, and raw `data` preserved.
 
 ## Regenerate

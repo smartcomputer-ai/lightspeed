@@ -20,14 +20,14 @@
 Replace the current generic effect intent/dispatch/receipt lifecycle in
 `agent-core` with an async agent workflow model.
 
-Forge should keep the durable agent session log and deterministic reducer, but
+Lightspeed should keep the durable agent session log and deterministic reducer, but
 it should stop acting as a substrate-neutral effect scheduler. The core agent
 logic should be able to interleave ordinary Rust branching with awaited LLM and
 tool calls, matching the programming model we want when running inside
 Temporal.
 
 Local mode is allowed to have weaker crash semantics. If a process crashes
-after an LLM or tool call but before the corresponding Forge domain events are
+after an LLM or tool call but before the corresponding Lightspeed domain events are
 recorded, local mode may repeat that work. Production users who need stronger
 semantics should run the workflow in Temporal or another durable workflow
 substrate.
@@ -39,7 +39,7 @@ effect event model.
 
 Keep:
 
-- event-sourced Forge session log
+- event-sourced Lightspeed session log
 - synchronous deterministic reducer
 - replayable `SessionState`
 - provider-native LLM request planning
@@ -95,7 +95,7 @@ if generation.facts.tool_calls.is_empty() {
 The important invariant is:
 
 ```text
-Only committed Forge events mutate Forge session state.
+Only committed Lightspeed events mutate Lightspeed session state.
 ```
 
 The workflow may perform async work between committed event batches. The
@@ -124,7 +124,7 @@ runtime dependency traits:
 
 Custom agent compositions can use whatever I/O shape they want: direct function
 calls, local traits, Temporal activity stubs, Python services, connector SDKs,
-or application-specific dependency structs. They do not need to adopt a Forge
+or application-specific dependency structs. They do not need to adopt a Lightspeed
 `AgentPorts` abstraction.
 
 Temporal CoreAgent implementations may implement these two traits with activity
@@ -144,7 +144,7 @@ runner records receipt
 policy branches on settled receipt
 ```
 
-That shape is useful only if Forge itself wants to own durable effect dispatch.
+That shape is useful only if Lightspeed itself wants to own durable effect dispatch.
 But the intended production substrate is Temporal, and Temporal already owns:
 
 - activity scheduling
@@ -155,7 +155,7 @@ But the intended production substrate is Temporal, and Temporal already owns:
 - workflow crash recovery
 - command/history matching
 
-Keeping a second generic effect lifecycle in Forge duplicates those concerns and
+Keeping a second generic effect lifecycle in Lightspeed duplicates those concerns and
 makes extension expensive. Every new side effect needs a new core effect
 variant, receipt variant, validation branch, pending-state rule, projection
 case, and runner path.
@@ -189,7 +189,7 @@ agent workflow
   -> execute llm_generate activity
   -> branch on recorded activity result
   -> execute tool_invoke_batch activity or fan out tool_invoke activities
-  -> append Forge domain events
+  -> append Lightspeed domain events
 ```
 
 Activity implementations can reuse the same provider/tool adapters used by
@@ -202,21 +202,21 @@ local mode. The difference is where the call is made:
 - Temporal records the result in workflow history
 - replay returns the same result to workflow logic without repeating the call
 
-The Forge session log remains the client-facing domain history. Temporal
+The Lightspeed session log remains the client-facing domain history. Temporal
 history remains the workflow execution history. They do not need to use the
 same schema.
 
 P53 does not require choosing the final Temporal storage shape. Acceptable
 future implementations include:
 
-- the workflow appends Forge session events to a session store through a
+- the workflow appends Lightspeed session events to a session store through a
   dedicated append activity
 - the workflow owns session events in workflow state and exposes them through
   queries/signals plus an API gateway projection
 - a hosted runtime writes projections from workflow progress to an external
   readable store
 
-The key point is that Forge no longer models provider/tool execution as a
+The key point is that Lightspeed no longer models provider/tool execution as a
 generic durable outbox inside `agent-core`.
 
 ### Local Mode
@@ -474,7 +474,7 @@ when implementing.
 The minimum required durable facts are:
 
 - the planned request, if we want the exact provider request replayable in the
-  Forge log
+  Lightspeed log
 - generated context items and reducer facts
 - tool calls observed from the generation
 - tool invocation results

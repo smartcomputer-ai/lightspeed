@@ -43,12 +43,12 @@
 
 ## Goal
 
-Refactor Forge from one closed core agent into a composable
+Refactor Lightspeed from one closed core agent into a composable
 session/event kernel plus reusable agent modules.
 
-`CoreAgent` should become Forge's built-in LLM/tool agent composition, not the
+`CoreAgent` should become Lightspeed's built-in LLM/tool agent composition, not the
 only shape the SDK can express. Users should be able to build their own final
-agent composition in Rust or Python while reusing Forge's session log, reducer
+agent composition in Rust or Python while reusing Lightspeed's session log, reducer
 helpers, context planning, LLM request planning, tool routing, host tooling,
 skills, MCP integration, and API projection utilities.
 
@@ -60,7 +60,7 @@ the current `SessionCommand`, `SessionEventKind`, `SessionState`, and
 
 The fundamental abstraction is a session event log.
 
-A Forge session log is a durable transcript and state-transition history for an
+A Lightspeed session log is a durable transcript and state-transition history for an
 agent session. It records semantic agent facts such as admitted input, planned
 context, model requests, assistant output, observed tool calls, tool results,
 configuration changes, skill changes, MCP server availability, and run
@@ -74,7 +74,7 @@ Use a layered architecture:
 
 ```text
 session           generic session log, envelopes, storage, replay, testing
-core-agent        Forge's built-in context/LLM/tool agent modules
+core-agent        Lightspeed's built-in context/LLM/tool agent modules
 agent-modules     optional memory, MCP, skills, browser, approval, eval modules
 agent-python      Python bridge for dynamic/user-owned compositions
 user-agent        app-owned final command/event/state/workflow composition
@@ -148,7 +148,7 @@ language bridges.
 
 ## CoreAgent As Modules
 
-The current Forge agent should be rebuilt as `CoreAgent`, a reusable built-in
+The current Lightspeed agent should be rebuilt as `CoreAgent`, a reusable built-in
 agent composition made from smaller modules.
 
 Current CoreAgent components:
@@ -258,7 +258,7 @@ pub struct MyState {
 }
 ```
 
-Forge should provide helper composition patterns, but it should not hide the
+Lightspeed should provide helper composition patterns, but it should not hide the
 final enum ownership. That is the Rust-friendly extensibility model:
 application-owned closed enums with reusable module variants.
 
@@ -283,7 +283,7 @@ plan for Python as a first-class composition language, but do not block the
 Rust kernel cleanup on Python packaging or callbacks.
 
 Python users should be able to define final agent commands, events, state, and
-workflow logic in Python while reusing Rust Forge modules where useful.
+workflow logic in Python while reusing Rust Lightspeed modules where useful.
 
 The Python bridge should not require Python to implement Rust generic traits or
 Rust enum variants. The FFI boundary should use versioned dynamic envelopes:
@@ -310,9 +310,9 @@ values instead of large inline JSON.
 Event kinds must be namespaced and versioned:
 
 ```text
-forge.run.started@1
-forge.context.items_recorded@1
-forge.tool.call_completed@1
+lightspeed.run.started@1
+lightspeed.context.items_recorded@1
+lightspeed.tool.call_completed@1
 my.memory.fact_recorded@1
 my.browser.page_loaded@1
 ```
@@ -338,7 +338,7 @@ class MyAgent:
         ...
 ```
 
-The Python final composition owns the final schema. Rust Forge supplies:
+The Python final composition owns the final schema. Rust Lightspeed supplies:
 
 - the session store and blob store bindings
 - dynamic event envelopes
@@ -359,7 +359,7 @@ Support two bridge modes, in this order.
 
 Preferred first Python target.
 
-Python owns the workflow and final composition. Rust exposes Forge kernel and
+Python owns the workflow and final composition. Rust exposes Lightspeed kernel and
 core agent modules through a Python package, likely implemented with PyO3.
 
 ```text
@@ -532,7 +532,7 @@ as richer views when an application provides a projector.
 
 ### [deferred] G5: Add Python Package Skeleton
 
-- Add an `agent-python` or `forge-py` package using PyO3 or a similar binding
+- Add an `agent-python` or `lightspeed-py` package using PyO3 or a similar binding
   layer.
 - Expose dynamic envelopes, session ids, positions, session store access,
   blob-store access, replay helpers, and selected core agent planning helpers.

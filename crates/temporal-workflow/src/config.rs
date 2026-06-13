@@ -3,7 +3,7 @@ use std::time::Duration;
 use engine::{ContextConfig, ModelSelection, RunConfig, SessionConfig, TurnConfig};
 use temporalio_sdk::ActivityOptions;
 
-pub const DEFAULT_TASK_QUEUE: &str = "forge-agent";
+pub const DEFAULT_TASK_QUEUE: &str = "lightspeed-agent";
 pub const DEFAULT_TEMPORAL_TARGET: &str = "http://localhost:7233";
 pub const DEFAULT_TEMPORAL_NAMESPACE: &str = "default";
 pub const DEFAULT_MODEL: &str = "gpt-5.5";
@@ -38,7 +38,7 @@ pub fn default_session_config(model: ModelSelection) -> SessionConfig {
 }
 
 pub fn default_instructions() -> &'static str {
-    "You are Forge, a concise personal assistant. Use available tools when useful, then answer plainly."
+    "You are Lightspeed, a concise personal assistant. Use available tools when useful, then answer plainly."
 }
 
 pub fn activity_options() -> ActivityOptions {

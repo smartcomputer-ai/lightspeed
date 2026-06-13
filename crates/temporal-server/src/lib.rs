@@ -1,4 +1,4 @@
-//! Hosted Forge runtime.
+//! Hosted Lightspeed runtime.
 //!
 //! This crate owns the process-facing Temporal gateway and worker wiring. The
 //! deterministic workflow contract remains in `temporal-workflow`.

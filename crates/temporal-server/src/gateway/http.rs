@@ -74,7 +74,7 @@ pub fn gateway_router(api: Arc<GatewayAgentApi>, max_request_body_bytes: usize) 
 }
 
 /// Client ID Metadata Document (draft-ietf-oauth-client-id-metadata-document):
-/// authorization servers fetch this to resolve Forge's CIMD client id.
+/// authorization servers fetch this to resolve Lightspeed's CIMD client id.
 async fn cimd_document(State(api): State<Arc<GatewayAgentApi>>) -> Json<serde_json::Value> {
     Json(api.cimd_document())
 }
@@ -116,7 +116,7 @@ async fn oauth_callback(
             callback_page(
                 "Authorization complete",
                 &format!(
-                    "Forge stored the credential as grant {}. You can close this window.",
+                    "Lightspeed stored the credential as grant {}. You can close this window.",
                     html_escape(&grant_id)
                 ),
             ),

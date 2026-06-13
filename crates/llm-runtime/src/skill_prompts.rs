@@ -19,9 +19,9 @@ pub(crate) async fn read_skill_catalog(
 }
 
 pub(crate) fn skill_catalog_text(catalog: &SkillCatalogSnapshot) -> String {
-    let mut text = String::from("Forge skill catalog:\n\n");
+    let mut text = String::from("Lightspeed skill catalog:\n\n");
     if catalog.skills.is_empty() {
-        text.push_str("No Forge skills are currently available.");
+        text.push_str("No Lightspeed skills are currently available.");
         return text;
     }
 
@@ -61,5 +61,5 @@ fn skill_doc_path(location: &SkillLocation) -> &str {
 }
 
 pub(crate) fn skill_activation_text(skill_id: &SkillId, text: String) -> String {
-    format!("Forge loaded skill ({skill_id}):\n\n{text}")
+    format!("Lightspeed loaded skill ({skill_id}):\n\n{text}")
 }

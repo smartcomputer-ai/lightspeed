@@ -1818,12 +1818,12 @@ mod tests {
             json!([
                 {
                     "role": "developer",
-                    "content": "Forge skill catalog:\n\nWhen a skill is relevant, read its SKILL.md through the available file tool before following it.\n\n- deploy-review (skill:deploy-review)\n  description: Review deployment risk.\n  skill_doc_path: /skills/deploy-review/SKILL.md\n  target: host:vm-1\n"
+                    "content": "Lightspeed skill catalog:\n\nWhen a skill is relevant, read its SKILL.md through the available file tool before following it.\n\n- deploy-review (skill:deploy-review)\n  description: Review deployment risk.\n  skill_doc_path: /skills/deploy-review/SKILL.md\n  target: host:vm-1\n"
                 },
                 { "role": "user", "content": "Review this rollout." },
                 {
                     "role": "developer",
-                    "content": "Forge loaded skill (skill:deploy-review):\n\n# Deploy Review\n\nCheck rollout scope, blast radius, and rollback plan."
+                    "content": "Lightspeed loaded skill (skill:deploy-review):\n\n# Deploy Review\n\nCheck rollout scope, blast radius, and rollback plan."
                 }
             ])
         );
@@ -2182,7 +2182,7 @@ mod tests {
             "status": "completed",
             "action": {
                 "type": "search",
-                "query": "Forge P66 web search",
+                "query": "Lightspeed P66 web search",
                 "sources": [{
                     "url": "https://example.com/source",
                     "title": "Example"
@@ -2242,16 +2242,16 @@ mod tests {
             "id": "mcp_1",
             "type": "mcp_call",
             "approval_request_id": null,
-            "arguments": "{\"data\":\"FORGE-MCP-ECHO\"}",
+            "arguments": "{\"data\":\"LIGHTSPEED-MCP-ECHO\"}",
             "error": null,
             "name": "echo",
-            "output": "{\"data\":\"FORGE-MCP-ECHO\"}",
+            "output": "{\"data\":\"LIGHTSPEED-MCP-ECHO\"}",
             "server_label": "echo"
         });
         let approval_item = json!({
             "id": "mcpr_1",
             "type": "mcp_approval_request",
-            "arguments": "{\"data\":\"FORGE-MCP-ECHO\"}",
+            "arguments": "{\"data\":\"LIGHTSPEED-MCP-ECHO\"}",
             "name": "echo",
             "server_label": "echo"
         });

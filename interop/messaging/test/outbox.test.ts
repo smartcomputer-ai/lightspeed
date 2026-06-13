@@ -1,9 +1,9 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { OutboundMessageView, SessionView } from "@forge/agent-client";
+import type { OutboundMessageView, SessionView } from "@lightspeed/agent-client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { runUsedMessagingTool } from "../src/forge.js";
+import { runUsedMessagingTool } from "../src/lightspeed.js";
 import {
   DeliveryError,
   OutboxTailer,

@@ -4,8 +4,8 @@ use vfs::{VfsPath, VfsWorkspaceId};
 
 use crate::host::fs::FsPath;
 
-pub const SKILL_CATALOG_SCHEMA_VERSION: &str = "forge.skills.catalog.v1";
-pub const SKILL_CATALOG_BUILD_SCHEMA_VERSION: &str = "forge.skills.catalog.build.v1";
+pub const SKILL_CATALOG_SCHEMA_VERSION: &str = "lightspeed.skills.catalog.v1";
+pub const SKILL_CATALOG_BUILD_SCHEMA_VERSION: &str = "lightspeed.skills.catalog.build.v1";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SkillCatalogSnapshot {

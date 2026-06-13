@@ -1,5 +1,5 @@
 {
-  "kind": "forge.core.lifecycle.closed",
+  "kind": "lightspeed.core.lifecycle.closed",
   "version": 1,
   "payload": {
     "kind": {

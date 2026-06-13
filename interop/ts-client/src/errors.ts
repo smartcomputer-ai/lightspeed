@@ -4,7 +4,7 @@ export interface JsonRpcErrorPayload {
   data?: unknown;
 }
 
-export type ForgeRpcErrorKind =
+export type LightspeedRpcErrorKind =
   | "invalid_request"
   | "method_not_found"
   | "not_found"
@@ -13,7 +13,7 @@ export type ForgeRpcErrorKind =
   | "internal"
   | "unknown";
 
-export function forgeRpcErrorKind(code: number): ForgeRpcErrorKind {
+export function lightspeedRpcErrorKind(code: number): LightspeedRpcErrorKind {
   switch (code) {
     case -32602:
       return "invalid_request";
@@ -32,30 +32,30 @@ export function forgeRpcErrorKind(code: number): ForgeRpcErrorKind {
   }
 }
 
-export class ForgeRpcError extends Error {
+export class LightspeedRpcError extends Error {
   readonly code: number;
   readonly data: unknown | undefined;
-  readonly kind: ForgeRpcErrorKind;
+  readonly kind: LightspeedRpcErrorKind;
   readonly payload: JsonRpcErrorPayload;
 
   constructor(payload: JsonRpcErrorPayload) {
     super(payload.message);
-    this.name = "ForgeRpcError";
+    this.name = "LightspeedRpcError";
     this.code = payload.code;
     this.data = payload.data;
-    this.kind = forgeRpcErrorKind(payload.code);
+    this.kind = lightspeedRpcErrorKind(payload.code);
     this.payload = payload;
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }
 
-export class ForgeTransportError extends Error {
+export class LightspeedTransportError extends Error {
   readonly status: number | undefined;
   readonly body: unknown | undefined;
 
   constructor(message: string, options: { status?: number; body?: unknown } = {}) {
     super(message);
-    this.name = "ForgeTransportError";
+    this.name = "LightspeedTransportError";
     this.status = options.status;
     this.body = options.body;
     Object.setPrototypeOf(this, new.target.prototype);

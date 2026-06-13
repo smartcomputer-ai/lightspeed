@@ -24,7 +24,7 @@
 
 Add the smallest durable model needed for host-targeted tool execution.
 
-Forge should support agents that run tools against a default target such as the
+Lightspeed should support agents that run tools against a default target such as the
 local host, a session sandbox, or a remote VM/container. Longer term, one agent
 session should be able to use several targets at the same time, but the first
 cut should keep the common one-target case simple.

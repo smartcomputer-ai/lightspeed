@@ -1,6 +1,6 @@
 # auth-registry
 
-Generic auth grant, secret, and token-broker substrate for Forge (P69).
+Generic auth grant, secret, and token-broker substrate for Lightspeed (P69).
 
 The crate defines the provider-independent records and traits; persistence and
 encryption live in store adapters (`store-pg` stores secrets AES-256-GCM
@@ -43,7 +43,7 @@ execution — never in the engine or the session log.
   documents and the deployment has a public https URL) or dynamic client
   registration (RFC 7591), and lazily upserts the result as an
   `mcp:<server_id>` client record. Existing records are reused without
-  network traffic; manual `forge auth client add --id mcp:<server_id>` always
+  network traffic; manual `lightspeed auth client add --id mcp:<server_id>` always
   wins.
 - `providers` — the generic `AuthProviderRecord`: one record shape for every
   provider kind, with non-secret config decoded into the typed
@@ -125,7 +125,7 @@ holds only ciphertext.
 Works against any standard authorization server with a manually configured
 client (a GitHub OAuth app is the cheapest real one; set its callback URL to
 `http://127.0.0.1:18080/auth/callback` for local dev). For OAuth-protected
-MCP servers, prefer `forge auth login mcp:<server>` below — it discovers and
+MCP servers, prefer `lightspeed auth login mcp:<server>` below — it discovers and
 registers the client automatically where the AS allows it.
 
 ```bash
@@ -175,7 +175,7 @@ cargo run -q -p cli -- mcp link --session s1 --auth-grant-id <grant id> crm
 ```
 
 To force re-discovery (for example after the server changes authorization
-servers), remove the client: `forge auth client remove mcp:crm`. If the AS
+servers), remove the client: `lightspeed auth client remove mcp:crm`. If the AS
 supports neither CIMD nor dynamic registration, login fails with instructions
 to register manually — see the verified walkthrough below.
 
@@ -240,23 +240,23 @@ refresh token.
 
 ## GitHub App installation access (G5)
 
-Unlike OAuth there is no flow and no stored access token: Forge holds the
+Unlike OAuth there is no flow and no stored access token: Lightspeed holds the
 app's private key encrypted and the broker mints ~1 hour installation tokens
 on demand (app JWT -> token exchange), caching them only in process memory.
 A grant with kind `github_app` represents the installation itself.
 
 ```bash
 # 1. register the app: key validated (must parse as RSA PEM), stored encrypted
-cargo run -q -p cli -- auth github app add --id forge-github \
-  --app-id 12345 --private-key-file forge-github.pem
+cargo run -q -p cli -- auth github app add --id lightspeed-github \
+  --app-id 12345 --private-key-file lightspeed-github.pem
 
 # 2. see where the app is installed (live, signed with the app JWT)
-cargo run -q -p cli -- auth github installation list --app forge-github
+cargo run -q -p cli -- auth github installation list --app lightspeed-github
 
 # 3. record an installation as a grant (verified live; captures account,
 #    permissions, and repository selection as non-secret grant metadata)
 cargo run -q -p cli -- auth github installation grant \
-  --app forge-github --installation-id 678
+  --app lightspeed-github --installation-id 678
 
 # 4. inspect: no token values, metadata shows the installation facts
 cargo run -q -p cli -- auth grant list
@@ -265,6 +265,6 @@ cargo run -q -p cli -- auth grant list
 Runtime consumers resolve the grant through the broker
 (`TokenAudience::GitHubApi`), which signs the JWT and mints per call. If
 GitHub rejects the app credentials (key revoked) the grant turns `failed`;
-if the app was uninstalled it turns `needs_reauth`. There is no Forge
+if the app was uninstalled it turns `needs_reauth`. There is no Lightspeed
 consumer of GitHub tokens yet (repo tools arrive later); token leases for
 VMs/sandboxes are deferred until that boundary exists.

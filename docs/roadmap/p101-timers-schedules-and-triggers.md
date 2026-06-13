@@ -2,14 +2,14 @@
 
 **Status**
 - Proposed
-- Builds on the current Forge session/run API, the Temporal-backed workflow
+- Builds on the current Lightspeed session/run API, the Temporal-backed workflow
   runtime, P62 CAS/VFS, P70 fleet concepts, and P71 prompt management.
-- Inspired by OpenClaw's cron and heartbeat systems, but intended for Forge's
+- Inspired by OpenClaw's cron and heartbeat systems, but intended for Lightspeed's
   deterministic engine and hosted product architecture.
 
 ## Goal
 
-Add a first-class trigger system for Forge agents.
+Add a first-class trigger system for Lightspeed agents.
 
 The first trigger types should cover:
 
@@ -35,7 +35,7 @@ configuration, and any explicitly selected context.
 
 ## Background
 
-Forge is already oriented around durable sessions and asynchronous hosted runs:
+Lightspeed is already oriented around durable sessions and asynchronous hosted runs:
 
 - `README.md` describes the runtime model: clients start/open sessions through
   `api`, runtimes admit input as CoreAgent commands, the core emits append/LLM
@@ -49,18 +49,18 @@ Forge is already oriented around durable sessions and asynchronous hosted runs:
   validated, then a `CoreAgentCommand::RequestRun` is encoded as a workflow
   admission and signaled to Temporal.
 - `crates/temporal-workflow/src/workflow.rs` runs `AgentSessionWorkflow`,
-  keeps a tiny workflow-local pending admission queue, replays committed Forge
+  keeps a tiny workflow-local pending admission queue, replays committed Lightspeed
   session events into `CoreAgentState`, and drives the core to quiescence.
 - `crates/engine` remains deterministic and must not perform wall-clock reads,
   provider calls, host filesystem access, network I/O, or scheduler work.
 
-This gives Forge the low-level machinery needed to execute scheduled work once
+This gives Lightspeed the low-level machinery needed to execute scheduled work once
 someone submits a run. What is missing is the product/runtime layer that owns:
 
 - durable trigger definitions,
 - schedule calculation,
 - trigger fire reservation and retry,
-- mapping trigger firings to Forge sessions/runs,
+- mapping trigger firings to Lightspeed sessions/runs,
 - delivery behavior,
 - trigger observability,
 - update/reload semantics,
@@ -228,7 +228,7 @@ For `sessionTarget: "main"`:
 The system-event queue itself is in-memory and intentionally small. This means
 cron definitions and job state are durable, but an already-enqueued event can be
 lost on process crash if it was marked successful before heartbeat consumed it.
-Forge should avoid this gap by representing trigger firings durably, even when
+Lightspeed should avoid this gap by representing trigger firings durably, even when
 delivery is delayed.
 
 ### Isolated Cron Agent-Turn Path
@@ -284,9 +284,9 @@ OpenClaw does not inject cron content in one uniform way:
 - System prompt modes and prompt sections live in:
   `/Users/lukas/dev/tmp/openclaw/src/agents/system-prompt.ts`
 
-This matters for Forge. Timer payloads should be ordinary run input or explicit
+This matters for Lightspeed. Timer payloads should be ordinary run input or explicit
 runtime instructions, not hidden mutations of a session's historical chat
-messages. Provider-level instructions should still come from Forge's compiled
+messages. Provider-level instructions should still come from Lightspeed's compiled
 session config / P71 prompt management path.
 
 ### Heartbeat And `HEARTBEAT.md`
@@ -327,7 +327,7 @@ cron jobs, but they are not where schedules persist.
 
 ## Problem Statement
 
-Forge currently has no product-level trigger store or scheduler.
+Lightspeed currently has no product-level trigger store or scheduler.
 
 The current system can execute a run once a client submits it through
 `run/start`, but it cannot yet answer:
@@ -345,7 +345,7 @@ The current system can execute a run once a client submits it through
 - How does a webhook or VFS watch reuse the same routing model as a timer?
 - How does the user inspect, pause, run-now, or delete recurring work?
 
-Forge needs this as a runtime/API feature. The deterministic engine should not
+Lightspeed needs this as a runtime/API feature. The deterministic engine should not
 become a scheduler.
 
 ## Non-Goals
@@ -362,13 +362,13 @@ become a scheduler.
   implement a simpler scheduler. Temporal should own production durability.
 - Do not implement a full connector/event-ingestion system in the first timer
   milestone.
-- Do not require OpenClaw's exact `main` / `isolated` names if Forge lands on
+- Do not require OpenClaw's exact `main` / `isolated` names if Lightspeed lands on
   clearer terminology.
 
 ## Design Position
 
 Triggers are a hosted runtime and API concern that compile down to ordinary
-Forge session/run admissions.
+Lightspeed session/run admissions.
 
 Target shape:
 
@@ -380,16 +380,16 @@ trigger definition
   -> session routing policy
   -> CAS input materialization
   -> CoreAgentCommand::RequestRun admission
-  -> existing Forge session workflow
+  -> existing Lightspeed session workflow
 ```
 
 The engine should see the same thing it sees today: a run request with an input
 blob and run configuration. It may later record trigger provenance on run
 metadata, but it should not own timing.
 
-For hosted timer sources, Forge should prefer Temporal Schedules as the durable
-clock. Forge should still keep its own trigger definitions and firing history
-as product state. Temporal Schedules should wake Forge with stable ids; Forge
+For hosted timer sources, Lightspeed should prefer Temporal Schedules as the durable
+clock. Lightspeed should still keep its own trigger definitions and firing history
+as product state. Temporal Schedules should wake Lightspeed with stable ids; Lightspeed
 should resolve prompts, routing, permissions, delivery, and run admission.
 
 ## Core Concepts
@@ -493,7 +493,7 @@ history.
 
 ### Routing
 
-Forge should support at least four routing modes:
+Lightspeed should support at least four routing modes:
 
 ```rust
 enum TriggerRouting {
@@ -519,7 +519,7 @@ Interpretation:
 OpenClaw's `"isolated"` maps mostly to `FreshEphemeralSession`.
 OpenClaw's `"current"` and `session:<id>` map to `ExplicitSession` or
 `StableTriggerSession` depending product semantics. OpenClaw's `"main"` maps to
-`MainSession`, but Forge should avoid a non-durable in-memory event queue.
+`MainSession`, but Lightspeed should avoid a non-durable in-memory event queue.
 
 ### Payload
 
@@ -676,9 +676,9 @@ The store should support:
   fire times from Temporal Schedule descriptions in hosted mode.
 
 For local development, a filesystem or SQLite store is acceptable. For hosted
-Forge, use Postgres through `store-pg`.
+Lightspeed, use Postgres through `store-pg`.
 
-The store should not be the Forge session log. It is a sibling durable product
+The store should not be the Lightspeed session log. It is a sibling durable product
 store, like a catalog of schedules and their firing history.
 
 ## Runtime Architecture
@@ -701,7 +701,7 @@ This is useful for tests and local demos, but it has weaker crash semantics.
 
 ### Hosted Temporal Schedules
 
-Hosted Forge should use Temporal Schedules as the preferred durable timer
+Hosted Lightspeed should use Temporal Schedules as the preferred durable timer
 substrate for recurring timer sources.
 
 Temporal Schedules are not only deploy-time/static cron declarations. They are
@@ -725,13 +725,13 @@ Recommended hosted shape:
 
 ```text
 trigger/create
-  -> write Forge TriggerDefinition in Postgres
-  -> create Temporal Schedule with id forge-trigger:<trigger_id>
+  -> write Lightspeed TriggerDefinition in Postgres
+  -> create Temporal Schedule with id lightspeed-trigger:<trigger_id>
   -> Temporal Schedule action starts TriggerFireWorkflow(trigger_id)
 
 Temporal Schedule fires
   -> TriggerFireWorkflow(trigger_id)
-  -> reserve durable Forge TriggerFiring in Postgres
+  -> reserve durable Lightspeed TriggerFiring in Postgres
   -> resolve trigger revision, route, prompt/input, delivery policy
   -> materialize input to CAS
   -> submit CoreAgentCommand::RequestRun to AgentSessionWorkflow
@@ -749,26 +749,26 @@ The Temporal Schedule should contain stable routing data only:
 - minimal search attributes/memo for operations.
 
 It should not contain full prompt text, VFS prompt material, user memory, large
-payloads, or delivery logic. Those belong in Forge's trigger store, CAS, VFS,
+payloads, or delivery logic. Those belong in Lightspeed's trigger store, CAS, VFS,
 and prompt management layer.
 
 Trigger updates should mirror to Temporal:
 
 ```text
 trigger/update
-  -> update Forge TriggerDefinition revision
+  -> update Lightspeed TriggerDefinition revision
   -> update Temporal Schedule spec/action if timer settings changed
 
 trigger/pause
-  -> mark Forge trigger paused
+  -> mark Lightspeed trigger paused
   -> pause Temporal Schedule with note
 
 trigger/resume
-  -> mark Forge trigger active
+  -> mark Lightspeed trigger active
   -> unpause Temporal Schedule
 
 trigger/delete
-  -> tombstone Forge trigger
+  -> tombstone Lightspeed trigger
   -> delete or pause Temporal Schedule
 ```
 
@@ -777,13 +777,13 @@ workflow decides a schedule should change, the workflow should not call the
 Temporal Schedule API directly. It should either:
 
 - call an activity such as `apply_trigger_update`, and that activity updates
-  Forge Postgres plus the Temporal Schedule; or
+  Lightspeed Postgres plus the Temporal Schedule; or
 - emit/propose a trigger update that the gateway or trigger manager applies.
 
-This keeps workflow replay deterministic and gives Forge one idempotent place
+This keeps workflow replay deterministic and gives Lightspeed one idempotent place
 to enforce permissions, revision checks, and audit logging.
 
-One-shot future work should be represented in Forge as a trigger/firing for
+One-shot future work should be represented in Lightspeed as a trigger/firing for
 product visibility. The Temporal substrate can use either:
 
 - workflow `startDelay` for a single future `TriggerFireWorkflow`, or
@@ -812,11 +812,11 @@ Use this fallback only when:
 - Temporal Schedule support is unavailable in the chosen SDK/runtime,
 - a trigger source is not time-based,
 - the product needs bulk reconciliation,
-- Temporal Schedule objects drift from Forge trigger definitions and need
+- Temporal Schedule objects drift from Lightspeed trigger definitions and need
   repair.
 
-Forge should still keep reconciliation logic even when using Temporal
-Schedules, because Forge's trigger store is the product source of truth.
+Lightspeed should still keep reconciliation logic even when using Temporal
+Schedules, because Lightspeed's trigger store is the product source of truth.
 
 ## Session Interaction
 
@@ -833,7 +833,7 @@ Trigger execution should use existing session/run mechanics:
 
 This avoids a second agent execution path.
 
-Forge may later add run provenance:
+Lightspeed may later add run provenance:
 
 ```rust
 RunProvenance::Trigger {
@@ -960,14 +960,14 @@ prompt material.
 ### Phase 3: Hosted Temporal Runtime
 
 - Add `TriggerFireWorkflow` as the workflow started by Temporal Schedules.
-- Add Temporal Schedule create/update/pause/resume/delete mirroring from Forge
+- Add Temporal Schedule create/update/pause/resume/delete mirroring from Lightspeed
   trigger definitions.
-- Keep Forge Postgres trigger definitions and firing records as the product
+- Keep Lightspeed Postgres trigger definitions and firing records as the product
   source of truth.
 - Implement durable firing reservation and completion through activities.
 - Handle crash recovery and stale leases.
 - Add concurrency and overlap policy.
-- Add reconciliation for Temporal Schedule objects that drift from Forge
+- Add reconciliation for Temporal Schedule objects that drift from Lightspeed
   trigger definitions.
 - Add live ignored tests against local Temporal/Postgres.
 
@@ -1022,5 +1022,5 @@ prompt material.
   scheduled work.
 - Hosted timer sources use Temporal Schedules by default, with a documented
   scanner workflow fallback.
-- Temporal Schedule ids map cleanly to Forge trigger ids and can be reconciled.
+- Temporal Schedule ids map cleanly to Lightspeed trigger ids and can be reconciled.
 - External trigger sources can reuse the same firing pipeline after timers land.

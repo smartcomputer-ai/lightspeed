@@ -32,7 +32,7 @@ async fn runner() -> (
     sessions
         .create_session(CreateSession {
             session_id: session_id.clone(),
-            agent_handle: AgentHandle::new("forge.agent"),
+            agent_handle: AgentHandle::new("lightspeed.agent"),
             created_at_ms: 1,
         })
         .await
@@ -140,7 +140,7 @@ fn core_command_admission_uses_core_agent_codec_shape() {
         run_config: default_run_config(),
     };
     let dynamic = codec.encode_command(&command).expect("encode command");
-    assert_eq!(dynamic.kind, "forge.core.command");
+    assert_eq!(dynamic.kind, "lightspeed.core.command");
     assert_eq!(
         codec.decode_command(&dynamic).expect("decode command"),
         command

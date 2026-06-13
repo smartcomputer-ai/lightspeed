@@ -383,30 +383,30 @@ mod tests {
             })
         );
         assert_eq!(
-            parse_slash_command("/skill forge:review").unwrap(),
+            parse_slash_command("/skill lightspeed:review").unwrap(),
             Some(SlashCommand::SkillActivate {
-                skill_id: "forge:review".into(),
+                skill_id: "lightspeed:review".into(),
                 scope: SlashSkillScope::Run,
             })
         );
         assert_eq!(
-            parse_slash_command("/skill forge:review session").unwrap(),
+            parse_slash_command("/skill lightspeed:review session").unwrap(),
             Some(SlashCommand::SkillActivate {
-                skill_id: "forge:review".into(),
+                skill_id: "lightspeed:review".into(),
                 scope: SlashSkillScope::Session,
             })
         );
         assert_eq!(
-            parse_slash_command("/skill forge:review --scope session").unwrap(),
+            parse_slash_command("/skill lightspeed:review --scope session").unwrap(),
             Some(SlashCommand::SkillActivate {
-                skill_id: "forge:review".into(),
+                skill_id: "lightspeed:review".into(),
                 scope: SlashSkillScope::Session,
             })
         );
         assert_eq!(
-            parse_slash_command("/skill-off forge:review").unwrap(),
+            parse_slash_command("/skill-off lightspeed:review").unwrap(),
             Some(SlashCommand::SkillDeactivate {
-                skill_id: "forge:review".into(),
+                skill_id: "lightspeed:review".into(),
             })
         );
     }

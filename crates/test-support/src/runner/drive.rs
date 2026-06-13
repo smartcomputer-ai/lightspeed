@@ -1029,7 +1029,7 @@ mod tests {
         sessions
             .create_session(CreateSession {
                 session_id: session_id.clone(),
-                agent_handle: AgentHandle::new("forge.default"),
+                agent_handle: AgentHandle::new("lightspeed.default"),
                 created_at_ms: 1,
             })
             .await
@@ -1125,7 +1125,7 @@ mod tests {
         sessions
             .create_session(CreateSession {
                 session_id: session_id.clone(),
-                agent_handle: AgentHandle::new("forge.default"),
+                agent_handle: AgentHandle::new("lightspeed.default"),
                 created_at_ms: 1,
             })
             .await
@@ -1223,7 +1223,7 @@ mod tests {
         sessions
             .create_session(CreateSession {
                 session_id: session_id.clone(),
-                agent_handle: AgentHandle::new("forge.default"),
+                agent_handle: AgentHandle::new("lightspeed.default"),
                 created_at_ms: 1,
             })
             .await
@@ -1232,12 +1232,12 @@ mod tests {
             blobs.as_ref(),
             CreateInlineSnapshotRequest::new(vec![
                 InlineFile::new(
-                    ".forge/prompts/instructions.md",
+                    ".lightspeed/prompts/instructions.md",
                     b"Keep replies concise.\n".to_vec(),
                 )
                 .unwrap(),
                 InlineFile::new(
-                    ".forge/prompts/instructions.d/010-style.md",
+                    ".lightspeed/prompts/instructions.d/010-style.md",
                     b"Prefer concrete file references.\n".to_vec(),
                 )
                 .unwrap(),
@@ -1317,8 +1317,8 @@ mod tests {
         assert_eq!(
             first_report_paths,
             vec![
-                "/workspace/.forge/prompts/instructions.d/010-style.md",
-                "/workspace/.forge/prompts/instructions.md",
+                "/workspace/.lightspeed/prompts/instructions.d/010-style.md",
+                "/workspace/.lightspeed/prompts/instructions.md",
             ]
         );
         assert!(first_report.sources.iter().all(|source| source.published));
@@ -1349,7 +1349,7 @@ mod tests {
             blobs.as_ref(),
             CreateInlineSnapshotRequest::new(vec![
                 InlineFile::new(
-                    ".forge/prompts/instructions.d/020-focus.md",
+                    ".lightspeed/prompts/instructions.d/020-focus.md",
                     b"Mention tradeoffs explicitly.\n".to_vec(),
                 )
                 .unwrap(),
@@ -1427,7 +1427,7 @@ mod tests {
         sessions
             .create_session(CreateSession {
                 session_id: session_id.clone(),
-                agent_handle: AgentHandle::new("forge.default"),
+                agent_handle: AgentHandle::new("lightspeed.default"),
                 created_at_ms: 1,
             })
             .await
@@ -1565,7 +1565,7 @@ mod tests {
         sessions
             .create_session(CreateSession {
                 session_id: session_id.clone(),
-                agent_handle: AgentHandle::new("forge.default"),
+                agent_handle: AgentHandle::new("lightspeed.default"),
                 created_at_ms: 1,
             })
             .await

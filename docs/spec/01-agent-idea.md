@@ -1,6 +1,6 @@
 # New Agent
 
-I want to completely rewrite and redesign the current forge agent. The goal is to build an agent that can run on Temporal.
+I want to completely rewrite and redesign the current lightspeed agent. The goal is to build an agent that can run on Temporal.
 
 The last few weeks, I worked on a different project that, called "agent os" or AOS. It's a very different system, but the core idea is that it is all event sourced. You can read the specs here: refs/aos-spec/
 
@@ -8,9 +8,9 @@ I copied the relevant code over from the old repo:
 - refs/aos-agent/
 - refs/aos-cli/ (see esp. refs/aos-cli/src/chat/)
 
-That agent is _conceptually_ further along than the forge agent.
+That agent is _conceptually_ further along than the lightspeed agent.
 
-Because we want to start from scratch, I reset the forge agent crate (crates/forge-agent/). The old version, that we used to have, currently is here: refs/forge-agent/ there is some good stuff in there too. Note that crates/forge-attractor/ is currently not buildig due to that, which is fine for now. We will later have to redesign attractor too.
+Because we want to start from scratch, I reset the lightspeed agent crate (crates/lightspeed-agent/). The old version, that we used to have, currently is here: refs/lightspeed-agent/ there is some good stuff in there too. Note that crates/lightspeed-attractor/ is currently not buildig due to that, which is fine for now. We will later have to redesign attractor too.
 
 ## How to build an agent
 
@@ -59,8 +59,8 @@ Codex app-server lessons to copy:
 - Speak JSON-RPC-like request/response/notification messages at the transport
   boundary, even when an in-process client uses the same service directly.
 - Project internal execution details into a client-facing view instead of
-  exposing reducer or provider internals. Codex uses thread/turn/item; Forge
-  should expose the same shape with Forge vocabulary: session/run/item.
+  exposing reducer or provider internals. Codex uses thread/turn/item; Lightspeed
+  should expose the same shape with Lightspeed vocabulary: session/run/item.
 - Serialize requests by logical scope where needed, especially per session.
 - Let server notifications carry state deltas/events for rich clients while
   still allowing simple clients to call `session/read`.

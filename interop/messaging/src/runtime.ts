@@ -1,6 +1,6 @@
 import { RoomBuffer, TurnDebouncer } from "./batcher.js";
 import type { BridgeRuntimeConfig } from "./config.js";
-import type { ForgeSessionBridge } from "./forge.js";
+import type { LightspeedSessionBridge } from "./lightspeed.js";
 import { stableHash, stableSessionId } from "./ids.js";
 import {
   classifyInbound,
@@ -56,7 +56,7 @@ export interface HandleInboundOptions {
 }
 
 export interface MessagingBridgeRuntimeOptions {
-  forge: ForgeSessionBridge;
+  lightspeed: LightspeedSessionBridge;
   store: JsonBridgeStore;
   runtime: BridgeRuntimeConfig;
   sessionPrefix: string;
@@ -101,7 +101,7 @@ function startTypingLoop(
 }
 
 export class MessagingBridgeRuntime {
-  private readonly forge: ForgeSessionBridge;
+  private readonly lightspeed: LightspeedSessionBridge;
   private readonly store: JsonBridgeStore;
   private readonly config: BridgeRuntimeConfig;
   private readonly sessionPrefix: string;
@@ -112,7 +112,7 @@ export class MessagingBridgeRuntime {
   private readonly rooms: RoomBuffer;
 
   constructor(options: MessagingBridgeRuntimeOptions) {
-    this.forge = options.forge;
+    this.lightspeed = options.lightspeed;
     this.store = options.store;
     this.config = options.runtime;
     this.sessionPrefix = options.sessionPrefix;
@@ -145,7 +145,7 @@ export class MessagingBridgeRuntime {
                 ...events.slice(1),
               ]
             : events;
-        await this.forge.appendRoomEvents(binding.sessionId, flushed);
+        await this.lightspeed.appendRoomEvents(binding.sessionId, flushed);
         this.log(`bridge: appended ${events.length} room event(s) for ${key}`);
       },
     });
@@ -330,7 +330,7 @@ export class MessagingBridgeRuntime {
           );
         }
       }
-      const reply = await this.forge.submitTurn({
+      const reply = await this.lightspeed.submitTurn({
         provider: first.message.provider,
         accountId: first.message.accountId,
         conversationKey: key,
@@ -356,7 +356,7 @@ export class MessagingBridgeRuntime {
       this.log(`bridge: answered ${first.message.provider} batch of ${batch.length} in ${key}`);
     } catch (error) {
       const errorText = error instanceof Error ? error.message : String(error);
-      const userText = `Forge could not answer this message: ${errorText}`;
+      const userText = `Lightspeed could not answer this message: ${errorText}`;
       try {
         await first.sendReply(userText);
         for (const turn of batch) {

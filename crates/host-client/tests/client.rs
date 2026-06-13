@@ -162,7 +162,7 @@ async fn controller_client_sends_typed_initialize_request() {
     let response = client
         .initialize(&ControllerInitializeParams {
             protocol_version: CURRENT_PROTOCOL_VERSION,
-            client_name: "forge-test".to_owned(),
+            client_name: "lightspeed-test".to_owned(),
         })
         .await
         .expect("response");
@@ -172,5 +172,5 @@ async fn controller_client_sends_typed_initialize_request() {
 
     let transport = client.into_rpc().into_inner();
     assert_eq!(transport.sent[0]["method"], "controller/initialize");
-    assert_eq!(transport.sent[0]["params"]["clientName"], "forge-test");
+    assert_eq!(transport.sent[0]["params"]["clientName"], "lightspeed-test");
 }

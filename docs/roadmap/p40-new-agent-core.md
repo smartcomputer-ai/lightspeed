@@ -4,7 +4,7 @@
 - Complete (2026-05-05)
 
 **Goal**
-Implement the new `forge-agent` core model layer described by
+Implement the new `lightspeed-agent` core model layer described by
 `docs/spec/04-new-agent-spec.md`.
 
 This phase is intentionally not a full agent. It should create the durable,
@@ -25,7 +25,7 @@ Temporal, and persistence surfaces:
 - projection item records
 - deterministic helper functions and invariants
 
-The output should be a compiling `forge-agent` crate with focused unit tests for
+The output should be a compiling `lightspeed-agent` crate with focused unit tests for
 the model layer. It should not call an LLM, execute tools, spawn processes, run
 Temporal workflows, or implement hooks/policy.
 
@@ -33,21 +33,21 @@ Temporal workflows, or implement hooks/policy.
 - Spec of record: `docs/spec/04-new-agent-spec.md`
 - Scratch/context: `docs/spec/04-new-agent-idea.md`
 - Primary conceptual reference: `refs/aos-agent/`
-- Old Forge agent reference: `refs/forge-agent/`
+- Old Lightspeed agent reference: `refs/lightspeed-agent/`
 - Codex reference checkout: `/Users/lukas/dev/tmp/codex/codex-rs/`
 
 **Design Position**
-Forge should lift concepts from AOS and other agents, not copy their runtime
+Lightspeed should lift concepts from AOS and other agents, not copy their runtime
 stack:
 
 - Do not import AOS AIR, WASM, world, governance, or `AirSchema` machinery.
-- Do not rebuild the old Forge session loop.
+- Do not rebuild the old Lightspeed session loop.
 - Do not vendor Codex protocol types directly.
 - Keep the core deterministic, serializable, and Temporal-agnostic.
-- Keep `forge-agent` as an agent core SDK. Host shell/filesystem/process
+- Keep `lightspeed-agent` as an agent core SDK. Host shell/filesystem/process
   execution is tool-package/runner-specific and must not be hardcoded into the
   core crate.
-- Model Forge as journaled, ref-backed, and snapshot-driven: journal + CAS
+- Model Lightspeed as journaled, ref-backed, and snapshot-driven: journal + CAS
   artifacts + bounded session state. The journal is scoped to agent/session
   events; it is not a fully generic event store.
 - Use explicit ids for persisted identity. `SubmissionId` is the external
@@ -62,7 +62,7 @@ stack:
 - `refs/aos-agent/src/contracts/ids.rs`
   - `SessionId`, `RunId`, `ToolBatchId` shape.
   - Sequence-backed child ids.
-  - Forge additions: `TurnId`, `EffectId`, `SubmissionId`, `ToolCallId`,
+  - Lightspeed additions: `TurnId`, `EffectId`, `SubmissionId`, `ToolCallId`,
     `ProjectionItemId`, and `ArtifactRef`.
 - `refs/aos-agent/src/helpers/ids.rs`
   - Deterministic allocation from state counters.
@@ -75,7 +75,7 @@ stack:
   - Host command applicability should not be lifted into core model rules.
 - `refs/aos-agent/src/contracts/config.rs`
   - Provider/model/reasoning/run override model.
-  - Forge additions: context/token settings, loop limits, profile ids,
+  - Lightspeed additions: context/token settings, loop limits, profile ids,
     persistence mode references where needed.
 - `refs/aos-agent/src/contracts/state.rs`
   - `SessionState`, `RunState`, `RunRecord`, `RunCause`, `RunOutcome`.
@@ -83,7 +83,7 @@ stack:
   - Staged tool follow-up turn shape.
 - `refs/aos-agent/src/contracts/events.rs`
   - Input events, lifecycle events, effect receipt/stream frame separation.
-  - Forge should split these into its own `AgentEvent` families.
+  - Lightspeed should split these into its own `AgentEvent` families.
 - `refs/aos-agent/src/contracts/turn.rs`
   - `TurnInputLane`, `TurnInput`, priorities, budget, prerequisites,
     `TurnPlan`, and `TurnReport`.
@@ -91,19 +91,19 @@ stack:
 - `refs/aos-agent/src/contracts/context.rs`
   - Transcript ranges, active window items, provider compatibility metadata,
     context pressure, token count quality, compaction operation state, and
-    compaction records. Forge keeps full transcript/compaction history out of
+    compaction records. Lightspeed keeps full transcript/compaction history out of
     active session state.
 - `refs/aos-agent/src/contracts/tooling.rs`
   - Tool specs, tool mappers/executors as data, parallelism hints, runtime
     context, observed/planned tool calls, and profile builders.
-  - Forge should use open mapper/executor ids and handler bindings instead of
+  - Lightspeed should use open mapper/executor ids and handler bindings instead of
     AOS host-specific mapper names.
 - `refs/aos-agent/src/contracts/batch.rs`
   - Per-call `ToolCallStatus`, active tool batch, execution groups, pending
     effect set, result refs, and settlement state.
 - `refs/aos-agent/src/contracts/host.rs`
   - Defer host command/status vocabulary to runner/tool packages outside
-    `forge-agent`.
+    `lightspeed-agent`.
 
 ### AOS helpers to study but not implement fully in p40
 - `refs/aos-agent/src/helpers/turn.rs`
@@ -116,36 +116,36 @@ stack:
   - Use for batch state invariants and execution group terminology. Actual tool
     effect emission and receipt settlement are p42.
 
-### Old Forge agent concepts to lift now
-- `refs/forge-agent/src/turn.rs`
+### Old Lightspeed agent concepts to lift now
+- `refs/lightspeed-agent/src/turn.rs`
   - User, assistant, tool-results, system, and steering transcript categories.
   - Convert to artifact-backed records instead of embedding full bodies in all
     state.
-- `refs/forge-agent/src/events.rs`
+- `refs/lightspeed-agent/src/events.rs`
   - Human-facing event projection ergonomics and stable event helper style.
   - Do not keep the old `EventKind` as authoritative core state.
-- `refs/forge-agent/src/config.rs`
+- `refs/lightspeed-agent/src/config.rs`
   - Turn/tool loop limits, command timeouts, subagent depth, thread key, and
     CXDB persistence mode vocabulary.
   - Remove `tool_hook_strict` from first-cut core. Hooks are deferred.
-- `refs/forge-agent/src/session/types.rs`
+- `refs/lightspeed-agent/src/session/types.rs`
   - `SubmitOptions`, `SubmitResult`, `SessionCheckpoint`,
     `SessionPersistenceSnapshot`, and subagent handle/result shapes.
   - Recast as run input/config overrides, transcript lineage, snapshot refs,
     and subagent status records.
-- `refs/forge-agent/src/session/persistence.rs`
+- `refs/lightspeed-agent/src/session/persistence.rs`
   - Typed persistence family names and idempotency-key thinking.
   - P40 should define refs and record payload shapes, not CXDB write paths.
-- `refs/forge-agent/src/tools/registry.rs`
+- `refs/lightspeed-agent/src/tools/registry.rs`
   - Tool registry API ergonomics and output limit config.
   - Hook types in this file should not be lifted into first-cut core.
-- `refs/forge-agent/src/patch/`
+- `refs/lightspeed-agent/src/patch/`
   - Patch data model is useful for future host tools, but p40 only needs
     artifact/projection refs for patches.
 
 ### Codex concepts to lift now
 - Protocol queue identity and event correlation:
-  - Forge `SubmissionId` plus optional `CorrelationId` on submissions,
+  - Lightspeed `SubmissionId` plus optional `CorrelationId` on submissions,
     effects, and projection items.
 - Resolved turn context snapshot:
   - provider/model/reasoning
@@ -174,7 +174,7 @@ stack:
 ## Target Module Layout
 
 The exact files can change, but p40 should leave a coherent public module
-layout in `crates/forge-agent/src/`:
+layout in `crates/lightspeed-agent/src/`:
 
 - `lib.rs`
   - public module exports and high-level crate docs.
@@ -232,7 +232,7 @@ layout in `crates/forge-agent/src/`:
 - Add agent definition/version records but do not model owner or tenant in p40.
 - Add scoped journal event sequence and ref-backed payload conventions.
 - Add serde round-trip and invariant unit tests.
-- Update `crates/forge-agent/README.md` to point at spec/04 and the new module
+- Update `crates/lightspeed-agent/README.md` to point at spec/04 and the new module
   map if it still references the legacy spec/02 implementation.
 
 ### Out of scope
@@ -256,13 +256,13 @@ layout in `crates/forge-agent/src/`:
   - Keep public exports narrow but usable for later phases.
   - Ensure the crate still builds with no live services.
 - Files:
-  - `crates/forge-agent/src/lib.rs`
-  - `crates/forge-agent/README.md`
+  - `crates/lightspeed-agent/src/lib.rs`
+  - `crates/lightspeed-agent/README.md`
 - DoD:
-  - `cargo test -p forge-agent` compiles the new module skeleton.
+  - `cargo test -p lightspeed-agent` compiles the new module skeleton.
   - README no longer describes the removed legacy implementation as current.
 - Completed:
-  - Added the public `forge-agent` module skeleton for the spec/04 core model.
+  - Added the public `lightspeed-agent` module skeleton for the spec/04 core model.
   - Updated the crate README to describe the new module map and deferred
     extension surfaces.
 
@@ -278,8 +278,8 @@ layout in `crates/forge-agent/src/`:
   - Add allocation helpers for run, turn, tool batch, effect, and projection
     item ids.
 - Files:
-  - `crates/forge-agent/src/ids.rs`
-  - `crates/forge-agent/src/refs.rs`
+  - `crates/lightspeed-agent/src/ids.rs`
+  - `crates/lightspeed-agent/src/refs.rs`
 - DoD:
   - IDs are explicit in events/state/effects.
   - No durable identity depends on vector position.
@@ -304,10 +304,10 @@ layout in `crates/forge-agent/src/`:
     create explicit revision/version boundaries.
   - Do not model tenant or owner in p40.
 - Files:
-  - `crates/forge-agent/src/agent.rs`
-  - `crates/forge-agent/src/ids.rs`
-  - `crates/forge-agent/src/config.rs`
-  - `crates/forge-agent/src/state.rs`
+  - `crates/lightspeed-agent/src/agent.rs`
+  - `crates/lightspeed-agent/src/ids.rs`
+  - `crates/lightspeed-agent/src/config.rs`
+  - `crates/lightspeed-agent/src/state.rs`
 - DoD:
   - Agent definitions and versions serde round-trip.
   - Agent versions are usable without live providers or tools.
@@ -335,9 +335,9 @@ layout in `crates/forge-agent/src/`:
   - Exclude hook/policy config from first-cut core except optional opaque future
     extension refs if the spec requires placeholders.
 - Files:
-  - `crates/forge-agent/src/lifecycle.rs`
-  - `crates/forge-agent/src/config.rs`
-  - `crates/forge-agent/src/error.rs`
+  - `crates/lightspeed-agent/src/lifecycle.rs`
+  - `crates/lightspeed-agent/src/config.rs`
+  - `crates/lightspeed-agent/src/error.rs`
 - DoD:
   - Invalid lifecycle transitions fail with typed model errors.
   - Config structs are serde round-trippable.
@@ -362,9 +362,9 @@ layout in `crates/forge-agent/src/`:
     summary state.
   - Model provider-native artifacts explicitly with compatibility metadata.
 - Files:
-  - `crates/forge-agent/src/transcript.rs`
-  - `crates/forge-agent/src/context.rs`
-  - `crates/forge-agent/src/refs.rs`
+  - `crates/lightspeed-agent/src/transcript.rs`
+  - `crates/lightspeed-agent/src/context.rs`
+  - `crates/lightspeed-agent/src/refs.rs`
 - DoD:
   - Large text/output bodies can be represented by refs with optional previews.
   - Compaction records preserve source range and replacement refs outside the
@@ -393,8 +393,8 @@ layout in `crates/forge-agent/src/`:
   - Include extension refs only as future placeholders, not executable hooks or
     policies.
 - Files:
-  - `crates/forge-agent/src/turn.rs`
-  - `crates/forge-agent/src/context.rs`
+  - `crates/lightspeed-agent/src/turn.rs`
+  - `crates/lightspeed-agent/src/context.rs`
 - DoD:
   - Later effect adapters can execute from a resolved context without reading
     mutable process-global state.
@@ -416,12 +416,12 @@ layout in `crates/forge-agent/src/`:
     `ToolParallelismHint`, `ToolProfile`, and `ToolRuntimeContext`.
   - Define observed tool calls, planned tool calls, execution groups, per-call
     status, and active tool batch state.
-  - Preserve provider call ids and normalized Forge call ids separately.
+  - Preserve provider call ids and normalized Lightspeed call ids separately.
   - Represent unknown/unavailable tools as planned ignored/failed calls that can
     become model-visible tool results later.
 - Files:
-  - `crates/forge-agent/src/tooling.rs`
-  - `crates/forge-agent/src/batch.rs`
+  - `crates/lightspeed-agent/src/tooling.rs`
+  - `crates/lightspeed-agent/src/batch.rs`
 - DoD:
   - The model can represent observed, accepted, ignored, pending, succeeded,
     failed, and cancelled calls.
@@ -431,7 +431,7 @@ layout in `crates/forge-agent/src/`:
   - Added `ToolSpec`, `ToolExecutorKind`, `ToolMapperKind`,
     `ToolParallelismHint`, `ToolProfile`, `ToolRegistry`, and
     `ToolRuntimeContext`.
-  - Added observed and planned tool-call records that preserve normalized Forge
+  - Added observed and planned tool-call records that preserve normalized Lightspeed
     call ids separately from provider call ids.
   - Added unavailable planned-call representation for unknown/unavailable tools
     without dispatching them.
@@ -454,8 +454,8 @@ layout in `crates/forge-agent/src/`:
   - Do not model artifact store put/get as agent effects. Artifact bytes are
     runner/adapter infrastructure; effects and receipts carry refs.
 - Files:
-  - `crates/forge-agent/src/events.rs`
-  - `crates/forge-agent/src/effects.rs`
+  - `crates/lightspeed-agent/src/events.rs`
+  - `crates/lightspeed-agent/src/effects.rs`
 - DoD:
   - Every effect has an `EffectId` idempotency key.
   - Receipt records can settle an effect without requiring runner-specific
@@ -484,9 +484,9 @@ layout in `crates/forge-agent/src/`:
     core effect model.
   - Keep `ArtifactRef` records and artifact/CAS storage contracts.
 - Files:
-  - `crates/forge-agent/src/events.rs`
-  - `crates/forge-agent/src/effects.rs`
-  - `crates/forge-agent/src/refs.rs`
+  - `crates/lightspeed-agent/src/events.rs`
+  - `crates/lightspeed-agent/src/effects.rs`
+  - `crates/lightspeed-agent/src/refs.rs`
 - DoD:
   - Journal events are small and ref-backed.
   - Effects do not represent artifact store CRUD.
@@ -509,8 +509,8 @@ layout in `crates/forge-agent/src/`:
   - Keep old filesystem-revert semantics out of rollback records. Rollback is
     model-context only unless a later external tool effect says otherwise.
 - Files:
-  - `crates/forge-agent/src/state.rs`
-  - `crates/forge-agent/src/subagent.rs`
+  - `crates/lightspeed-agent/src/state.rs`
+  - `crates/lightspeed-agent/src/subagent.rs`
 - DoD:
   - State can represent a new session, active run, waiting run, completed run,
     interrupted run, forked session, and rewritten transcript.
@@ -542,10 +542,10 @@ layout in `crates/forge-agent/src/`:
   - Replace completed run/tool-batch history in active state with compact
     summaries and refs needed for next-step decisions.
 - Files:
-  - `crates/forge-agent/src/state.rs`
-  - `crates/forge-agent/src/batch.rs`
-  - `crates/forge-agent/src/transcript.rs`
-  - `crates/forge-agent/src/projection.rs`
+  - `crates/lightspeed-agent/src/state.rs`
+  - `crates/lightspeed-agent/src/batch.rs`
+  - `crates/lightspeed-agent/src/transcript.rs`
+  - `crates/lightspeed-agent/src/projection.rs`
 - DoD:
   - Active state remains bounded across long sessions.
   - UIs can reconstruct history from journal/projection records plus artifacts.
@@ -566,7 +566,7 @@ layout in `crates/forge-agent/src/`:
   - Include user, assistant, reasoning, tool, patch, compaction, warning, and
     status item kinds.
 - Files:
-  - `crates/forge-agent/src/projection.rs`
+  - `crates/lightspeed-agent/src/projection.rs`
 - DoD:
   - Projection records carry enough ids to join back to session/run/turn/effect
     or tool-call state.
@@ -585,9 +585,9 @@ layout in `crates/forge-agent/src/`:
     timestamps.
   - Keep full bodies in artifacts/CAS.
 - Files:
-  - `crates/forge-agent/src/transcript.rs`
-  - `crates/forge-agent/src/projection.rs`
-  - `crates/forge-agent/src/events.rs`
+  - `crates/lightspeed-agent/src/transcript.rs`
+  - `crates/lightspeed-agent/src/projection.rs`
+  - `crates/lightspeed-agent/src/events.rs`
 - DoD:
   - A CLI/web UI can page transcript items and fetch artifact bodies without
     reading Temporal workflow state.
@@ -607,16 +607,16 @@ layout in `crates/forge-agent/src/`:
   - Assert transition errors, id allocation, and tool-batch terminal status
     helpers.
 - Files:
-  - `crates/forge-agent/src/**/*.rs`
+  - `crates/lightspeed-agent/src/**/*.rs`
 - DoD:
-  - `cargo test -p forge-agent` passes.
+  - `cargo test -p lightspeed-agent` passes.
   - Tests do not require CXDB, Temporal, CLI binaries, or live LLM keys.
   - Tests fail loudly on broken invariants instead of skipping.
 - Completed:
   - Added focused unit coverage across agent, ids, refs, lifecycle, config,
     transcript, context, turn, tooling, batch, effects, events, state,
     subagent, and projection modules.
-  - Verified `cargo test -p forge-agent` passes with deterministic model tests.
+  - Verified `cargo test -p lightspeed-agent` passes with deterministic model tests.
 
 ## Priority 1: Shape for Later Phases
 
@@ -626,9 +626,9 @@ layout in `crates/forge-agent/src/`:
     `apply(event, state) -> state/events` and `decide(state) -> intents`.
   - Add no full loop behavior in p40.
 - Files:
-  - `crates/forge-agent/src/state.rs`
-  - `crates/forge-agent/src/events.rs`
-  - `crates/forge-agent/src/effects.rs`
+  - `crates/lightspeed-agent/src/state.rs`
+  - `crates/lightspeed-agent/src/events.rs`
+  - `crates/lightspeed-agent/src/effects.rs`
 - DoD:
   - p41 can implement the loop without renaming core model concepts.
 - Completed:
@@ -639,12 +639,12 @@ layout in `crates/forge-agent/src/`:
 - Work:
   - Keep typed family constants for future CXDB records if useful.
   - Do not implement CXDB writes.
-  - Align names with `forge.agent.runtime.v2` where still relevant, but do not
+  - Align names with `lightspeed.agent.runtime.v2` where still relevant, but do not
     duplicate CXDB DAG fields inside payload structs.
 - Files:
-  - `crates/forge-agent/src/refs.rs`
-  - `crates/forge-agent/src/events.rs`
-  - `crates/forge-agent/src/transcript.rs`
+  - `crates/lightspeed-agent/src/refs.rs`
+  - `crates/lightspeed-agent/src/events.rs`
+  - `crates/lightspeed-agent/src/transcript.rs`
 - DoD:
   - Future persistence can map records to CXDB without changing event/state
     identity fields.
@@ -658,8 +658,8 @@ layout in `crates/forge-agent/src/`:
     future SDK extension surfaces.
   - Mention likely future extension points without adding executable APIs.
 - Files:
-  - `crates/forge-agent/src/lib.rs`
-  - `crates/forge-agent/README.md`
+  - `crates/lightspeed-agent/src/lib.rs`
+  - `crates/lightspeed-agent/README.md`
 - DoD:
   - The codebase does not accidentally imply hooks/policy are supported in the
     first cut.
@@ -669,7 +669,7 @@ layout in `crates/forge-agent/src/`:
     hook/policy/approval/sandbox extension surfaces.
 
 ## Acceptance
-- `crates/forge-agent` exposes the new core model layer from spec/04.
+- `crates/lightspeed-agent` exposes the new core model layer from spec/04.
 - The model can represent:
   - agent definitions and immutable agent versions
   - session/run/turn lifecycle
@@ -684,10 +684,10 @@ layout in `crates/forge-agent/src/`:
 - Artifact refs are core model primitives, but artifact store put/get is
   adapter/storage infrastructure, not an agent effect family.
 - No LLM, tool, MCP, Temporal, CXDB, or CLI execution is implemented.
-- Host shell/filesystem/process support is not part of `forge-agent`; it belongs
+- Host shell/filesystem/process support is not part of `lightspeed-agent`; it belongs
   in runner/tool-package follow-on work.
 - Hook/policy/approval/sandbox concepts are documented as deferred.
-- `cargo test -p forge-agent` passes with deterministic model tests only.
+- `cargo test -p lightspeed-agent` passes with deterministic model tests only.
 
 ## Follow-on Work
 - `docs/roadmap/p41-agent-loop.md`: implement the pure reducer/decider and local

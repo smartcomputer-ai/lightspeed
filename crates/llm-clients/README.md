@@ -1,6 +1,6 @@
 # llm-clients
 
-Provider-native LLM API client primitives for Forge.
+Provider-native LLM API client primitives for Lightspeed.
 
 This crate is being rebuilt around native provider API kinds:
 

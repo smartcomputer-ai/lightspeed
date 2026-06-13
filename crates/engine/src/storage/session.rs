@@ -303,7 +303,7 @@ mod tests {
             observed_at_ms: at_ms,
             joins: DynamicJoins::default(),
             event: DynamicEvent::new(
-                "forge.test.lifecycle.closed",
+                "lightspeed.test.lifecycle.closed",
                 1,
                 serde_json::Value::Object(Default::default()),
             ),
@@ -317,7 +317,7 @@ mod tests {
         store
             .create_session(CreateSession {
                 session_id: session_id.clone(),
-                agent_handle: AgentHandle::new("forge.default"),
+                agent_handle: AgentHandle::new("lightspeed.default"),
                 created_at_ms: 1,
             })
             .await
@@ -347,7 +347,7 @@ mod tests {
         store
             .create_session(CreateSession {
                 session_id: session_id.clone(),
-                agent_handle: AgentHandle::new("forge.default"),
+                agent_handle: AgentHandle::new("lightspeed.default"),
                 created_at_ms: 1,
             })
             .await
@@ -387,7 +387,7 @@ mod tests {
         store
             .create_session(CreateSession {
                 session_id: session_id.clone(),
-                agent_handle: AgentHandle::new("forge.default"),
+                agent_handle: AgentHandle::new("lightspeed.default"),
                 created_at_ms: 1,
             })
             .await
@@ -396,7 +396,7 @@ mod tests {
         let duplicate = store
             .create_session(CreateSession {
                 session_id: session_id.clone(),
-                agent_handle: AgentHandle::new("forge.default"),
+                agent_handle: AgentHandle::new("lightspeed.default"),
                 created_at_ms: 2,
             })
             .await

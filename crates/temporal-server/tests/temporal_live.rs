@@ -134,7 +134,7 @@ where
     F: FnOnce(Client, String, SessionId) -> Fut,
     Fut: Future<Output = anyhow::Result<()>>,
 {
-    let task_queue = format!("forge-agent-live-{}", uuid::Uuid::new_v4().simple());
+    let task_queue = format!("lightspeed-agent-live-{}", uuid::Uuid::new_v4().simple());
     let session_id = SessionId::new(format!("session_live_{}", uuid::Uuid::new_v4().simple()));
     let temporal_target =
         env::var("TEMPORAL_ADDRESS").unwrap_or_else(|_| DEFAULT_TEMPORAL_TARGET.to_owned());
@@ -205,7 +205,7 @@ async fn run_fake_live_client(
         .build();
 
     let initialized = api.initialize(InitializeParams::default()).await?;
-    assert_eq!(initialized.result.server_info.name, "forge-agent");
+    assert_eq!(initialized.result.server_info.name, "lightspeed-agent");
     assert!(initialized.result.capabilities.history_read);
     assert!(initialized.result.capabilities.event_log);
 
@@ -718,7 +718,7 @@ async fn run_admission_failure_live_client(
         .signal(
             AgentSessionWorkflow::submit_admission,
             AgentAdmission {
-                command: DynamicCommand::new("forge.core.command", 999, serde_json::json!({})),
+                command: DynamicCommand::new("lightspeed.core.command", 999, serde_json::json!({})),
             },
             WorkflowSignalOptions::default(),
         )
@@ -1058,14 +1058,14 @@ async fn wait_for_session_status(
 }
 
 fn require_storage_live_env() -> anyhow::Result<()> {
-    if env::var("FORGE_POSTGRES_URL")
-        .or_else(|_| env::var("FORGE_TEST_POSTGRES_URL"))
+    if env::var("LIGHTSPEED_POSTGRES_URL")
+        .or_else(|_| env::var("LIGHTSPEED_TEST_POSTGRES_URL"))
         .is_err()
     {
-        anyhow::bail!("temporal live test requires FORGE_POSTGRES_URL or FORGE_TEST_POSTGRES_URL");
+        anyhow::bail!("temporal live test requires LIGHTSPEED_POSTGRES_URL or LIGHTSPEED_TEST_POSTGRES_URL");
     }
-    if env::var("FORGE_PG_UNIVERSE_ID").is_err() {
-        anyhow::bail!("temporal live test requires FORGE_PG_UNIVERSE_ID");
+    if env::var("LIGHTSPEED_PG_UNIVERSE_ID").is_err() {
+        anyhow::bail!("temporal live test requires LIGHTSPEED_PG_UNIVERSE_ID");
     }
     Ok(())
 }
@@ -1084,10 +1084,10 @@ fn openai_live_model() -> ModelSelection {
     ModelSelection {
         api_kind: ProviderApiKind::OpenAiResponses,
         provider_id: "openai".to_owned(),
-        model: env::var("FORGE_OPENAI_MODEL")
+        model: env::var("LIGHTSPEED_OPENAI_MODEL")
             .or_else(|_| env::var("OPENAI_RESPONSES_MODEL"))
             .or_else(|_| env::var("OPENAI_LIVE_MODEL"))
-            .or_else(|_| env::var("FORGE_CHAT_MODEL"))
+            .or_else(|_| env::var("LIGHTSPEED_CHAT_MODEL"))
             .unwrap_or_else(|_| "gpt-5.5".to_owned()),
     }
 }

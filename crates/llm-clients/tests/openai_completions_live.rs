@@ -196,7 +196,7 @@ async fn openai_completions_live_forced_function_call() {
 async fn openai_completions_live_invalid_model_classifies_provider_error() {
     let client = live_client();
     let request = CreateCompletionRequest::user_text(
-        "definitely-not-a-real-openai-model-for-forge-tests",
+        "definitely-not-a-real-openai-model-for-lightspeed-tests",
         "hello",
     );
 

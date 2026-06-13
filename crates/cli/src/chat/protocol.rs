@@ -31,13 +31,13 @@ pub(crate) enum ReasoningEffort {
 impl Default for ChatDraftSettings {
     fn default() -> Self {
         Self {
-            provider: std::env::var("FORGE_CHAT_PROVIDER")
+            provider: std::env::var("LIGHTSPEED_CHAT_PROVIDER")
                 .unwrap_or_else(|_| DEFAULT_CHAT_PROVIDER.into()),
-            api_kind: std::env::var("FORGE_CHAT_API_KIND")
+            api_kind: std::env::var("LIGHTSPEED_CHAT_API_KIND")
                 .unwrap_or_else(|_| DEFAULT_CHAT_API_KIND.into()),
-            model: std::env::var("FORGE_CHAT_MODEL").unwrap_or_else(|_| DEFAULT_CHAT_MODEL.into()),
+            model: std::env::var("LIGHTSPEED_CHAT_MODEL").unwrap_or_else(|_| DEFAULT_CHAT_MODEL.into()),
             reasoning_effort: default_reasoning_effort_from_env(),
-            max_tokens: std::env::var("FORGE_CHAT_MAX_TOKENS")
+            max_tokens: std::env::var("LIGHTSPEED_CHAT_MAX_TOKENS")
                 .ok()
                 .and_then(|value| value.parse::<u32>().ok()),
             web_search: None,
@@ -48,7 +48,7 @@ impl Default for ChatDraftSettings {
 }
 
 fn default_reasoning_effort_from_env() -> Option<ReasoningEffort> {
-    match std::env::var("FORGE_CHAT_REASONING_EFFORT") {
+    match std::env::var("LIGHTSPEED_CHAT_REASONING_EFFORT") {
         Ok(value) => parse_reasoning_effort(&value).unwrap_or(Some(DEFAULT_CHAT_REASONING_EFFORT)),
         Err(_) => Some(DEFAULT_CHAT_REASONING_EFFORT),
     }

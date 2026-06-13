@@ -823,7 +823,7 @@
     "item/completed",
     "error"
   ],
-  "protocolVersion": "forge.agent.api.v1",
+  "protocolVersion": "lightspeed.agent.api.v1",
   "transport": {
     "endpoint": "/rpc",
     "kind": "http-json-rpc",

@@ -43,7 +43,7 @@ const CASES_ROOT: &str = "crates/eval/cases";
 const DEFAULT_MODEL: &str = "gpt-5.5";
 const DEFAULT_PROVIDER_ID: &str = "openai";
 const EVAL_INSTRUCTIONS: &str = "\
-You are running inside the Forge agent eval harness.
+You are running inside the Lightspeed agent eval harness.
 Use the registered tools when the prompt asks for filesystem work.
 Do not claim a file or tool action succeeded unless the corresponding tool result shows it.
 Keep final answers concise and follow exact-answer instructions literally.";
@@ -52,7 +52,7 @@ Keep final answers concise and follow exact-answer instructions literally.";
 #[command(
     name = "eval",
     version,
-    about = "Run prompt-level Forge agent tool evals"
+    about = "Run prompt-level Lightspeed agent tool evals"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -455,7 +455,7 @@ impl EvalRuntime {
         self.sessions
             .create_session(CreateSession {
                 session_id: session_id.clone(),
-                agent_handle: AgentHandle::new("forge.eval"),
+                agent_handle: AgentHandle::new("lightspeed.eval"),
                 created_at_ms: 1,
             })
             .await
@@ -1102,7 +1102,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn canonical_tool_id_accepts_forge_names_and_legacy_aos_fs_names() {
+    fn canonical_tool_id_accepts_lightspeed_names_and_legacy_aos_fs_names() {
         assert_eq!(canonical_tool_id("read_file"), "host.read_file");
         assert_eq!(canonical_tool_id("host.read_file"), "host.read_file");
         assert_eq!(canonical_tool_id("host.fs.read_file"), "host.read_file");

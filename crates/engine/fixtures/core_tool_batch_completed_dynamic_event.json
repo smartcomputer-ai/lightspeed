@@ -1,5 +1,5 @@
 {
-  "kind": "forge.core.tool.batch_completed",
+  "kind": "lightspeed.core.tool.batch_completed",
   "version": 1,
   "payload": {
     "kind": {

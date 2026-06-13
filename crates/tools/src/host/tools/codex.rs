@@ -1,6 +1,6 @@
 //! Codex-like host tool surface.
 //!
-//! This currently shares canonical Forge schemas and argument decoding while
+//! This currently shares canonical Lightspeed schemas and argument decoding while
 //! keeping a separate logical surface for dispatch and future Codex drift.
 
 use serde_json::Value;

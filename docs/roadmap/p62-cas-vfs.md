@@ -22,7 +22,7 @@ Add a CAS-backed virtual filesystem layer that can represent immutable file
 tree snapshots and writable working trees independently of any local worker
 filesystem, VM, or sandbox.
 
-The first driver is skills: Forge should be able to snapshot skill directories
+The first driver is skills: Lightspeed should be able to snapshot skill directories
 into CAS, expose those snapshots to the model as a filesystem, and materialize
 them into a host target when scripts or conventional process tools need real
 paths. The same VFS layer should also support writable filesystem tools for
@@ -40,7 +40,7 @@ The VFS should be generic enough to also support:
 
 ## Context
 
-Forge's current runtime stores large context, tool documents, provider-native
+Lightspeed's current runtime stores large context, tool documents, provider-native
 items, and run inputs in CAS. That is sufficient for single blobs, but not for
 directory-shaped resources. Skills, templates, examples, and bundled assets are
 tree-shaped. A skill may contain:
@@ -53,8 +53,8 @@ skill-name/
   assets/
 ```
 
-If Forge only stores `SKILL.md` as one blob, references and scripts lose their
-relative path identity. If Forge leaves the directory only in a VM or worker
+If Lightspeed only stores `SKILL.md` as one blob, references and scripts lose their
+relative path identity. If Lightspeed leaves the directory only in a VM or worker
 filesystem, replay and hosted durability depend on mutable external state.
 
 The missing abstraction is a stable, content-addressed filesystem tree.
@@ -129,7 +129,7 @@ First-cut manifest shape:
 
 ```rust
 pub struct VfsSnapshotManifest {
-    pub schema_version: String, // "forge.vfs.snapshot.v1"
+    pub schema_version: String, // "lightspeed.vfs.snapshot.v1"
     pub root: VfsDirectory,
     pub totals: VfsTotals,
 }
@@ -350,7 +350,7 @@ target. It is required when a process must open files by path:
 ```text
 CAS snapshot
   -> host target "vm-123"
-  -> /tmp/forge/vfs/<snapshot-digest>/
+  -> /tmp/lightspeed/vfs/<snapshot-digest>/
 ```
 
 Materialization must be target-scoped. A path on one VM is not meaningful for
@@ -428,7 +428,7 @@ Existing filesystem tools should then work over VFS:
 - `glob`
 - `list_dir`
 
-If Forge adds explicit metadata, directory-create, remove, or copy tools, those
+If Lightspeed adds explicit metadata, directory-create, remove, or copy tools, those
 should use the same VFS filesystem adapter rather than a separate path.
 
 `run_process` and `write_process_stdin` remain host/process tools, not VFS
@@ -533,7 +533,7 @@ Local CLI materialization must still enforce safe destination rules:
 
 ### Host Target Snapshot/Materialization
 
-Host targets are the later but important path. Defer this work until Forge has
+Host targets are the later but important path. Defer this work until Lightspeed has
 real VM host targets and a stable host filesystem protocol; do not implement it
 by treating the gateway or worker's local filesystem as a stand-in for a VM.
 
@@ -759,12 +759,12 @@ gateway/CAS remains the authority for blobs and manifests.
   `vfs/snapshot/read`, including manifest shape validation, referenced-blob
   existence and size checks, and a larger configurable gateway request body
   limit for local uploads.
-- Done: reusable CLI snapshot upload flow plus `forge vfs snapshot <dir>`.
+- Done: reusable CLI snapshot upload flow plus `lightspeed vfs snapshot <dir>`.
   The CLI scans a local directory, skips symlinks, computes content digests,
   checks existing CAS refs with `blob/has_many`, uploads missing unique blobs
   with batched `blob/put_many`, and commits a VFS manifest by ref.
 - Done: reusable CLI materialization flow plus
-  `forge vfs materialize <snapshot-ref> <dest>`. The CLI reads the snapshot
+  `lightspeed vfs materialize <snapshot-ref> <dest>`. The CLI reads the snapshot
   manifest, downloads blobs through `blob/get`, skips local files whose digest
   already matches, writes only below the selected destination, refuses
   destination symlink traversal, and applies executable bits conservatively.
@@ -775,7 +775,7 @@ gateway/CAS remains the authority for blobs and manifests.
   mounted paths, sources, access modes, workspace heads, and revisions.
 - Done: add explicit CLI commands for workspace create/read/update/delete and
   session mount put/delete/list.
-- Done: add `forge chat --mount <dir>`, which snapshots a local directory,
+- Done: add `lightspeed chat --mount <dir>`, which snapshots a local directory,
   creates a writable workspace, mounts it at `/workspace` by default, and starts
   the chat against that VFS cwd.
 - Done: hosted worker tool execution can load session VFS mounts and run the

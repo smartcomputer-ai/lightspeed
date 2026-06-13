@@ -87,7 +87,7 @@ fn initialize_params_match_fixture() {
     assert_round_trip(
         InitializeParams {
             protocol_version: CURRENT_PROTOCOL_VERSION,
-            client_name: "forge-test".to_owned(),
+            client_name: "lightspeed-test".to_owned(),
             scope: HostScope::Session {
                 session_id: "sandbox-123".to_owned(),
             },
@@ -160,7 +160,7 @@ fn controller_initialize_params_match_fixture() {
     assert_round_trip(
         ControllerInitializeParams {
             protocol_version: CURRENT_PROTOCOL_VERSION,
-            client_name: "forge-test".to_owned(),
+            client_name: "lightspeed-test".to_owned(),
         },
         fixture("controller_initialize_params"),
     );
@@ -174,7 +174,7 @@ fn create_target_params_match_provider_fixture() {
                 provider_type: "smolvm".to_owned(),
                 spec: json!({
                     "cpus": 2,
-                    "image": "forge-dev"
+                    "image": "lightspeed-dev"
                 }),
             },
         },
@@ -218,7 +218,7 @@ fn list_targets_response_matches_fixture() {
 fn ready_target_summary() -> HostTargetSummary {
     HostTargetSummary {
         target_id: HostTargetId::new("sandbox-123"),
-        display_name: Some("forge dev".to_owned()),
+        display_name: Some("lightspeed dev".to_owned()),
         status: HostTargetStatus::Ready,
         scope: HostScope::Session {
             session_id: "sandbox-123".to_owned(),

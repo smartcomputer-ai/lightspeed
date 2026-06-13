@@ -217,7 +217,7 @@ pub(super) fn cimd_document(public_base_url: &str) -> serde_json::Value {
     let base = public_base_url.trim_end_matches('/');
     serde_json::json!({
         "client_id": cimd_client_id_url(public_base_url),
-        "client_name": "Forge",
+        "client_name": "Lightspeed",
         "client_uri": base,
         "redirect_uris": [oauth_redirect_uri(public_base_url)],
         "grant_types": ["authorization_code", "refresh_token"],

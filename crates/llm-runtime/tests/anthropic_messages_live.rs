@@ -188,7 +188,7 @@ fn weather_tool_spec(schema_ref: BlobRef, description_ref: BlobRef) -> engine::T
 #[ignore = "requires ANTHROPIC_API_KEY (costs real money)"]
 async fn anthropic_messages_live_adapter_generates_result() {
     let blobs = Arc::new(InMemoryBlobStore::new());
-    let input_ref = text_blob(&blobs, "Reply with exactly these two words: forge adapter").await;
+    let input_ref = text_blob(&blobs, "Reply with exactly these two words: lightspeed adapter").await;
     let adapter = AnthropicMessagesLlmAdapter::new(
         retrying_anthropic_messages_client(live_client()),
         blobs.clone(),
@@ -238,8 +238,8 @@ async fn anthropic_messages_live_adapter_generates_result() {
         .await
         .expect("assistant text");
     assert!(
-        assistant_text.to_lowercase().contains("forge"),
-        "expected assistant output to contain forge, got {assistant_text:?}"
+        assistant_text.to_lowercase().contains("lightspeed"),
+        "expected assistant output to contain lightspeed, got {assistant_text:?}"
     );
 
     let provider_request = blobs

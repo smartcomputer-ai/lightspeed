@@ -1,4 +1,4 @@
-import type { ForgeClient, OutboundMessageView } from "@forge/agent-client";
+import type { LightspeedClient, OutboundMessageView } from "@lightspeed/agent-client";
 import type { BindingState, JsonBridgeStore } from "./store.js";
 
 export interface DeliveryResult {
@@ -23,7 +23,7 @@ export interface ChannelDeliverer {
 }
 
 export interface OutboxTailerOptions {
-  client: Pick<ForgeClient, "call">;
+  client: Pick<LightspeedClient, "call">;
   store: JsonBridgeStore;
   deliverers: readonly ChannelDeliverer[];
   waitMs?: number;
@@ -35,7 +35,7 @@ export interface OutboxTailerOptions {
 /// delivers through the matching channel adapter. Single consumer: the
 /// cursor restarts at 0 on bridge restart, which re-reads unacked entries.
 export class OutboxTailer {
-  private readonly client: Pick<ForgeClient, "call">;
+  private readonly client: Pick<LightspeedClient, "call">;
   private readonly store: JsonBridgeStore;
   private readonly deliverers: readonly ChannelDeliverer[];
   private readonly waitMs: number;

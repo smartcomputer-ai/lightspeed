@@ -2,29 +2,29 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { ForgeReply, ForgeRoomEvent, ForgeSessionBridge, ForgeTurn } from "../src/forge.js";
+import type { LightspeedReply, LightspeedRoomEvent, LightspeedSessionBridge, LightspeedTurn } from "../src/lightspeed.js";
 import { MessagingBridgeRuntime, type ChannelPolicy, type NormalizedInbound } from "../src/runtime.js";
 import { JsonBridgeStore } from "../src/store.js";
 
-interface ForgeCall {
+interface LightspeedCall {
   kind: "turn" | "room";
   sessionId: string;
   texts: string[];
   mediaMimes?: string[];
 }
 
-class FakeForge {
-  readonly calls: ForgeCall[] = [];
+class FakeLightspeed {
+  readonly calls: LightspeedCall[] = [];
   failTurns = false;
   messagingToolUsed = false;
 
-  async appendRoomEvents(sessionId: string, events: readonly ForgeRoomEvent[]): Promise<void> {
+  async appendRoomEvents(sessionId: string, events: readonly LightspeedRoomEvent[]): Promise<void> {
     this.calls.push({ kind: "room", sessionId, texts: events.map((event) => event.text) });
   }
 
-  async submitTurn(turn: ForgeTurn): Promise<ForgeReply> {
+  async submitTurn(turn: LightspeedTurn): Promise<LightspeedReply> {
     if (this.failTurns) {
-      throw new Error("forge unavailable");
+      throw new Error("lightspeed unavailable");
     }
     this.calls.push({
       kind: "turn",
@@ -45,19 +45,19 @@ class FakeForge {
 const policy: ChannelPolicy = {
   triggerPrefixes: ["/ask"],
   mentionNames: [],
-  botUsername: "forge_bot",
+  botUsername: "lightspeed_bot",
   groupActivation: "mention",
 };
 
 let dir: string;
 let store: JsonBridgeStore;
-let forge: FakeForge;
+let lightspeed: FakeLightspeed;
 let runtime: MessagingBridgeRuntime;
 let replies: string[];
 
 function makeRuntime(): MessagingBridgeRuntime {
   return new MessagingBridgeRuntime({
-    forge: forge as unknown as ForgeSessionBridge,
+    lightspeed: lightspeed as unknown as LightspeedSessionBridge,
     store,
     sessionPrefix: "test",
     log: () => undefined,
@@ -75,7 +75,7 @@ function makeRuntime(): MessagingBridgeRuntime {
 beforeEach(async () => {
   dir = await mkdtemp(path.join(tmpdir(), "bridge-test-"));
   store = new JsonBridgeStore(path.join(dir, "state.json"));
-  forge = new FakeForge();
+  lightspeed = new FakeLightspeed();
   runtime = makeRuntime();
   replies = [];
 });
@@ -126,7 +126,7 @@ describe("MessagingBridgeRuntime", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     await runtime.flush();
 
-    const turns = forge.calls.filter((call) => call.kind === "turn");
+    const turns = lightspeed.calls.filter((call) => call.kind === "turn");
     expect(turns).toHaveLength(1);
     const text = turns[0]?.texts[0] ?? "";
     expect(text).toContain("first");
@@ -139,18 +139,18 @@ describe("MessagingBridgeRuntime", () => {
     await runtime.handleInbound(inbound({ text: "chatter one" }), policy, io());
     await runtime.handleInbound(inbound({ text: "chatter two" }), policy, io());
     await runtime.handleInbound(
-      inbound({ text: "@forge_bot summarize", mentionedBot: true }),
+      inbound({ text: "@lightspeed_bot summarize", mentionedBot: true }),
       policy,
       io(),
     );
     await new Promise((resolve) => setTimeout(resolve, 50));
     await runtime.flush();
 
-    expect(forge.calls.map((call) => call.kind)).toEqual(["room", "turn"]);
-    const room = forge.calls[0];
+    expect(lightspeed.calls.map((call) => call.kind)).toEqual(["room", "turn"]);
+    const room = lightspeed.calls[0];
     expect(room?.texts.join("\n")).toContain("chatter one");
     expect(room?.texts.join("\n")).toContain("chatter two");
-    const turn = forge.calls[1];
+    const turn = lightspeed.calls[1];
     expect(turn?.texts[0]).toContain("summarize");
     expect(turn?.sessionId).toBe(room?.sessionId);
   });
@@ -167,7 +167,7 @@ describe("MessagingBridgeRuntime", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     await runtime.flush();
 
-    const turns = forge.calls.filter((call) => call.kind === "turn");
+    const turns = lightspeed.calls.filter((call) => call.kind === "turn");
     expect(turns).toHaveLength(1);
     // DMs carry the envelope too: the #id markers make react/edit/reply_to
     // targetable.
@@ -189,7 +189,7 @@ describe("MessagingBridgeRuntime", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     await second.flush();
 
-    const turns = forge.calls.filter((call) => call.kind === "turn");
+    const turns = lightspeed.calls.filter((call) => call.kind === "turn");
     expect(turns).toHaveLength(1);
     expect(turns[0]?.texts[0]).toContain("no mention needed");
   });
@@ -212,7 +212,7 @@ describe("MessagingBridgeRuntime", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     await runtime.flush();
 
-    const turns = forge.calls.filter((call) => call.kind === "turn");
+    const turns = lightspeed.calls.filter((call) => call.kind === "turn");
     expect(turns).toHaveLength(2);
     expect(turns[0]?.sessionId).not.toBe(turns[1]?.sessionId);
   });
@@ -244,7 +244,7 @@ describe("MessagingBridgeRuntime", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     await runtime.flush();
 
-    const turns = forge.calls.filter((call) => call.kind === "turn");
+    const turns = lightspeed.calls.filter((call) => call.kind === "turn");
     expect(turns).toHaveLength(1);
     expect(turns[0]?.mediaMimes).toEqual(["image/jpeg"]);
     expect(downloads).toBe(1);
@@ -266,7 +266,7 @@ describe("MessagingBridgeRuntime", () => {
   });
 
   it("suppresses final-text delivery when the run used messaging tools", async () => {
-    forge.messagingToolUsed = true;
+    lightspeed.messagingToolUsed = true;
     await runtime.handleInbound(
       inbound({ isDirect: true, text: "send it via the tool" }),
       policy,
@@ -275,18 +275,18 @@ describe("MessagingBridgeRuntime", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     await runtime.flush();
 
-    expect(forge.calls.filter((call) => call.kind === "turn")).toHaveLength(1);
+    expect(lightspeed.calls.filter((call) => call.kind === "turn")).toHaveLength(1);
     expect(replies).toHaveLength(0);
   });
 
   it("reports run failures back to the chat and records the error", async () => {
-    forge.failTurns = true;
+    lightspeed.failTurns = true;
     const message = inbound({ isDirect: true, text: "boom" });
     await runtime.handleInbound(message, policy, io());
     await new Promise((resolve) => setTimeout(resolve, 50));
     await runtime.flush();
 
-    expect(replies[0]).toContain("Forge could not answer");
+    expect(replies[0]).toContain("Lightspeed could not answer");
     // The message is marked done (not retried forever).
     expect(await store.beginMessage(message.messageKey)).toBe("duplicate");
   });

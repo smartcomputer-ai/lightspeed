@@ -1,14 +1,14 @@
-name: ${COMPOSE_PROJECT_NAME:-forge-dev}
+name: ${COMPOSE_PROJECT_NAME:-lightspeed-dev}
 
 services:
   postgres:
     image: ${POSTGRES_IMAGE:-postgres:17}
-    container_name: ${POSTGRES_CONTAINER_NAME:-forge-postgres}
+    container_name: ${POSTGRES_CONTAINER_NAME:-lightspeed-postgres}
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-forge}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-forge}
-      POSTGRES_DB: ${POSTGRES_DB:-forge}
+      POSTGRES_USER: ${POSTGRES_USER:-lightspeed}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lightspeed}
+      POSTGRES_DB: ${POSTGRES_DB:-lightspeed}
     ports:
       - "${POSTGRES_PORT:-15432}:5432"
     volumes:
@@ -21,7 +21,7 @@ services:
 
   pgadmin:
     image: ${PGADMIN_IMAGE:-dpage/pgadmin4:8}
-    container_name: ${PGADMIN_CONTAINER_NAME:-forge-pgadmin}
+    container_name: ${PGADMIN_CONTAINER_NAME:-lightspeed-pgadmin}
     depends_on:
       postgres:
         condition: service_healthy
@@ -31,8 +31,8 @@ services:
       PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
       # Required by the image even in desktop mode. Avoid special-use TLDs
       # like .local; newer email validation rejects them.
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@forge.dev}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-forge}
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@lightspeed.dev}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-lightspeed}
     ports:
       - "${PGADMIN_PORT:-15080}:80"
     volumes:
@@ -40,7 +40,7 @@ services:
 
   minio:
     image: ${MINIO_IMAGE:-quay.io/minio/minio}
-    container_name: ${MINIO_CONTAINER_NAME:-forge-minio}
+    container_name: ${MINIO_CONTAINER_NAME:-lightspeed-minio}
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
@@ -60,7 +60,7 @@ services:
 
   temporal:
     image: ${TEMPORAL_IMAGE:-temporalio/admin-tools:latest}
-    container_name: ${TEMPORAL_CONTAINER_NAME:-forge-temporal}
+    container_name: ${TEMPORAL_CONTAINER_NAME:-lightspeed-temporal}
     restart: unless-stopped
     command:
       [

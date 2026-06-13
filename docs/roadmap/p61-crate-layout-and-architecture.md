@@ -19,13 +19,13 @@
 - `agent-local` has been removed as a runtime. Its runner-only pieces now live
   in `test-support`, which intentionally exposes no `AgentApiService`.
 - The CLI is API-first and requires a gateway URL via `--api-url` or
-  `FORGE_API_URL`.
+  `LIGHTSPEED_API_URL`.
 - The API now has typed session/run generation config inputs, the CLI sends
   draft settings through `run/start`, and gateway `run/start` returns after
   run acceptance/start instead of waiting for final completion.
 - The engine's built-in domain module has moved from `src/core_agent` to
-  `src/core`, and dynamic envelope kinds now use the `forge.core.*` namespace
-  without backwards compatibility for the old `forge.core_agent.*` names.
+  `src/core`, and dynamic envelope kinds now use the `lightspeed.core.*` namespace
+  without backwards compatibility for the old `lightspeed.core_agent.*` names.
 - Workflow admission now wraps a single encoded CoreAgent command. Gateway owns
   `run/start` input CAS writes and `CoreAgentCommand::RequestRun` construction;
   the old workflow-local text-run admission variant has been removed.
@@ -34,7 +34,7 @@
 
 **Decision, 2026-05-30**
 
-Forge is pivoting from a general agent SDK posture toward a single hosted agent
+Lightspeed is pivoting from a general agent SDK posture toward a single hosted agent
 product built around a Temporal-backed runtime. The deterministic event-sourced
 core still matters, but it should be treated as the product's engine rather
 than a public SDK kernel.

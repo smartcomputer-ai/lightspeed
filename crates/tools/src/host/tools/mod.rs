@@ -136,15 +136,15 @@ impl HostTool {
 
     pub const fn activity_type(self) -> &'static str {
         match self.operation {
-            HostToolOperation::ReadFile => "forge.host.read_file",
-            HostToolOperation::WriteFile => "forge.host.write_file",
-            HostToolOperation::EditFile => "forge.host.edit_file",
-            HostToolOperation::ApplyPatch => "forge.host.apply_patch",
-            HostToolOperation::Grep => "forge.host.grep",
-            HostToolOperation::Glob => "forge.host.glob",
-            HostToolOperation::ListDir => "forge.host.list_dir",
-            HostToolOperation::RunProcess => "forge.host.run_process",
-            HostToolOperation::WriteProcessStdin => "forge.host.write_process_stdin",
+            HostToolOperation::ReadFile => "lightspeed.host.read_file",
+            HostToolOperation::WriteFile => "lightspeed.host.write_file",
+            HostToolOperation::EditFile => "lightspeed.host.edit_file",
+            HostToolOperation::ApplyPatch => "lightspeed.host.apply_patch",
+            HostToolOperation::Grep => "lightspeed.host.grep",
+            HostToolOperation::Glob => "lightspeed.host.glob",
+            HostToolOperation::ListDir => "lightspeed.host.list_dir",
+            HostToolOperation::RunProcess => "lightspeed.host.run_process",
+            HostToolOperation::WriteProcessStdin => "lightspeed.host.write_process_stdin",
         }
     }
 

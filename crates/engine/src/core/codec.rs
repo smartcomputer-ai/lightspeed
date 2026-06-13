@@ -6,7 +6,7 @@ use crate::{
     session::{DynamicJoins, DynamicSessionEntry, DynamicUncommittedSessionEvent},
 };
 
-const CORE_AGENT_COMMAND_KIND: &str = "forge.core.command";
+const CORE_AGENT_COMMAND_KIND: &str = "lightspeed.core.command";
 const CORE_AGENT_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -154,84 +154,84 @@ fn ensure_core_agent_event_envelope(kind: &str, version: u32) -> Result<(), Code
 fn is_core_agent_event_envelope_kind(kind: &str) -> bool {
     matches!(
         kind,
-        "forge.core.lifecycle.opened"
-            | "forge.core.lifecycle.config_changed"
-            | "forge.core.lifecycle.closed"
-            | "forge.core.run.accepted"
-            | "forge.core.run.started"
-            | "forge.core.run.steering_accepted"
-            | "forge.core.run.cancellation_requested"
-            | "forge.core.run.completed"
-            | "forge.core.run.failed"
-            | "forge.core.run.cancelled"
-            | "forge.core.turn.started"
-            | "forge.core.turn.planned"
-            | "forge.core.turn.generation_requested"
-            | "forge.core.turn.generation_completed"
-            | "forge.core.turn.completed"
-            | "forge.core.context.entries_applied"
-            | "forge.core.context.entries_removed"
-            | "forge.core.context.keys_removed"
-            | "forge.core.context.key_prefix_replaced"
-            | "forge.core.context.state_replaced"
-            | "forge.core.context.compaction_requested"
-            | "forge.core.context.compaction_finished"
-            | "forge.core.tool_config.tools_replaced"
-            | "forge.core.tool_config.tools_patched"
-            | "forge.core.tool_config.default_target_set"
-            | "forge.core.tool_config.default_target_cleared"
-            | "forge.core.tool.batch_started"
-            | "forge.core.tool.call_started"
-            | "forge.core.tool.call_completed"
-            | "forge.core.tool.batch_completed"
+        "lightspeed.core.lifecycle.opened"
+            | "lightspeed.core.lifecycle.config_changed"
+            | "lightspeed.core.lifecycle.closed"
+            | "lightspeed.core.run.accepted"
+            | "lightspeed.core.run.started"
+            | "lightspeed.core.run.steering_accepted"
+            | "lightspeed.core.run.cancellation_requested"
+            | "lightspeed.core.run.completed"
+            | "lightspeed.core.run.failed"
+            | "lightspeed.core.run.cancelled"
+            | "lightspeed.core.turn.started"
+            | "lightspeed.core.turn.planned"
+            | "lightspeed.core.turn.generation_requested"
+            | "lightspeed.core.turn.generation_completed"
+            | "lightspeed.core.turn.completed"
+            | "lightspeed.core.context.entries_applied"
+            | "lightspeed.core.context.entries_removed"
+            | "lightspeed.core.context.keys_removed"
+            | "lightspeed.core.context.key_prefix_replaced"
+            | "lightspeed.core.context.state_replaced"
+            | "lightspeed.core.context.compaction_requested"
+            | "lightspeed.core.context.compaction_finished"
+            | "lightspeed.core.tool_config.tools_replaced"
+            | "lightspeed.core.tool_config.tools_patched"
+            | "lightspeed.core.tool_config.default_target_set"
+            | "lightspeed.core.tool_config.default_target_cleared"
+            | "lightspeed.core.tool.batch_started"
+            | "lightspeed.core.tool.call_started"
+            | "lightspeed.core.tool.call_completed"
+            | "lightspeed.core.tool.batch_completed"
     )
 }
 
 fn core_agent_event_envelope_kind(event: &CoreAgentEvent) -> &'static str {
     match &event.kind {
         CoreAgentEventKind::Lifecycle(event) => match event {
-            CoreAgentLifecycleEvent::Opened { .. } => "forge.core.lifecycle.opened",
-            CoreAgentLifecycleEvent::ConfigChanged { .. } => "forge.core.lifecycle.config_changed",
-            CoreAgentLifecycleEvent::Closed => "forge.core.lifecycle.closed",
+            CoreAgentLifecycleEvent::Opened { .. } => "lightspeed.core.lifecycle.opened",
+            CoreAgentLifecycleEvent::ConfigChanged { .. } => "lightspeed.core.lifecycle.config_changed",
+            CoreAgentLifecycleEvent::Closed => "lightspeed.core.lifecycle.closed",
         },
         CoreAgentEventKind::Run(event) => match event {
-            RunEvent::Accepted { .. } => "forge.core.run.accepted",
-            RunEvent::Started { .. } => "forge.core.run.started",
-            RunEvent::SteeringAccepted { .. } => "forge.core.run.steering_accepted",
-            RunEvent::CancellationRequested { .. } => "forge.core.run.cancellation_requested",
-            RunEvent::Completed { .. } => "forge.core.run.completed",
-            RunEvent::Failed { .. } => "forge.core.run.failed",
-            RunEvent::Cancelled { .. } => "forge.core.run.cancelled",
+            RunEvent::Accepted { .. } => "lightspeed.core.run.accepted",
+            RunEvent::Started { .. } => "lightspeed.core.run.started",
+            RunEvent::SteeringAccepted { .. } => "lightspeed.core.run.steering_accepted",
+            RunEvent::CancellationRequested { .. } => "lightspeed.core.run.cancellation_requested",
+            RunEvent::Completed { .. } => "lightspeed.core.run.completed",
+            RunEvent::Failed { .. } => "lightspeed.core.run.failed",
+            RunEvent::Cancelled { .. } => "lightspeed.core.run.cancelled",
         },
         CoreAgentEventKind::Turn(event) => match event {
-            TurnEvent::Started { .. } => "forge.core.turn.started",
-            TurnEvent::Planned { .. } => "forge.core.turn.planned",
-            TurnEvent::GenerationRequested { .. } => "forge.core.turn.generation_requested",
-            TurnEvent::GenerationCompleted { .. } => "forge.core.turn.generation_completed",
-            TurnEvent::Completed { .. } => "forge.core.turn.completed",
+            TurnEvent::Started { .. } => "lightspeed.core.turn.started",
+            TurnEvent::Planned { .. } => "lightspeed.core.turn.planned",
+            TurnEvent::GenerationRequested { .. } => "lightspeed.core.turn.generation_requested",
+            TurnEvent::GenerationCompleted { .. } => "lightspeed.core.turn.generation_completed",
+            TurnEvent::Completed { .. } => "lightspeed.core.turn.completed",
         },
         CoreAgentEventKind::Context(event) => match event {
-            ContextEvent::EntriesApplied { .. } => "forge.core.context.entries_applied",
-            ContextEvent::EntriesRemoved { .. } => "forge.core.context.entries_removed",
-            ContextEvent::KeysRemoved { .. } => "forge.core.context.keys_removed",
-            ContextEvent::KeyPrefixReplaced { .. } => "forge.core.context.key_prefix_replaced",
-            ContextEvent::StateReplaced { .. } => "forge.core.context.state_replaced",
-            ContextEvent::CompactionRequested { .. } => "forge.core.context.compaction_requested",
-            ContextEvent::CompactionFinished { .. } => "forge.core.context.compaction_finished",
+            ContextEvent::EntriesApplied { .. } => "lightspeed.core.context.entries_applied",
+            ContextEvent::EntriesRemoved { .. } => "lightspeed.core.context.entries_removed",
+            ContextEvent::KeysRemoved { .. } => "lightspeed.core.context.keys_removed",
+            ContextEvent::KeyPrefixReplaced { .. } => "lightspeed.core.context.key_prefix_replaced",
+            ContextEvent::StateReplaced { .. } => "lightspeed.core.context.state_replaced",
+            ContextEvent::CompactionRequested { .. } => "lightspeed.core.context.compaction_requested",
+            ContextEvent::CompactionFinished { .. } => "lightspeed.core.context.compaction_finished",
         },
         CoreAgentEventKind::ToolConfig(event) => match event {
-            ToolConfigEvent::ToolsReplaced { .. } => "forge.core.tool_config.tools_replaced",
-            ToolConfigEvent::ToolsPatched { .. } => "forge.core.tool_config.tools_patched",
-            ToolConfigEvent::DefaultTargetSet { .. } => "forge.core.tool_config.default_target_set",
+            ToolConfigEvent::ToolsReplaced { .. } => "lightspeed.core.tool_config.tools_replaced",
+            ToolConfigEvent::ToolsPatched { .. } => "lightspeed.core.tool_config.tools_patched",
+            ToolConfigEvent::DefaultTargetSet { .. } => "lightspeed.core.tool_config.default_target_set",
             ToolConfigEvent::DefaultTargetCleared { .. } => {
-                "forge.core.tool_config.default_target_cleared"
+                "lightspeed.core.tool_config.default_target_cleared"
             }
         },
         CoreAgentEventKind::Tool(event) => match event {
-            ToolEvent::BatchStarted { .. } => "forge.core.tool.batch_started",
-            ToolEvent::CallStarted { .. } => "forge.core.tool.call_started",
-            ToolEvent::CallCompleted { .. } => "forge.core.tool.call_completed",
-            ToolEvent::BatchCompleted { .. } => "forge.core.tool.batch_completed",
+            ToolEvent::BatchStarted { .. } => "lightspeed.core.tool.batch_started",
+            ToolEvent::CallStarted { .. } => "lightspeed.core.tool.call_started",
+            ToolEvent::CallCompleted { .. } => "lightspeed.core.tool.call_completed",
+            ToolEvent::BatchCompleted { .. } => "lightspeed.core.tool.batch_completed",
         },
     }
 }
@@ -301,7 +301,7 @@ mod tests {
         };
 
         let encoded = codec.encode_event(&event).expect("encode event");
-        assert_eq!(encoded.kind, "forge.core.lifecycle.closed");
+        assert_eq!(encoded.kind, "lightspeed.core.lifecycle.closed");
         assert_eq!(encoded.version, CORE_AGENT_SCHEMA_VERSION);
 
         assert_eq!(codec.decode_event(&encoded).expect("decode event"), event);
@@ -311,12 +311,12 @@ mod tests {
     fn old_core_agent_dynamic_envelope_names_are_unsupported() {
         let codec = CoreAgentCodec;
         let old_command = crate::DynamicCommand::new(
-            "forge.core_agent.command",
+            "lightspeed.core_agent.command",
             CORE_AGENT_SCHEMA_VERSION,
             serde_json::json!("close_session"),
         );
         let old_event = DynamicEvent::new(
-            "forge.core_agent.lifecycle.closed",
+            "lightspeed.core_agent.lifecycle.closed",
             CORE_AGENT_SCHEMA_VERSION,
             serde_json::json!({
                 "kind": {

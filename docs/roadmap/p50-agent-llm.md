@@ -4,7 +4,7 @@
 - In progress
 
 **Progress**
-- Added `crates/forge-agent-llm` to the workspace.
+- Added `crates/lightspeed-agent-llm` to the workspace.
 - Added the thin adapter crate shape:
   `error`, `executor`, `receipt`, `blob_io`, `openai_responses`,
   `openai_completions`, `anthropic_messages`, and `testing`.
@@ -19,45 +19,45 @@
   returns failed token-count/compaction receipts for unsupported paths, and
   leaves non-LLM effects dispatched for another executor.
 - Implemented the OpenAI Responses generation path:
-  - materializes `forge-agent::OpenAiResponsesRequest` into
-    `forge_llm::openai::responses::CreateResponseRequest`
+  - materializes `lightspeed-agent::OpenAiResponsesRequest` into
+    `lightspeed_llm::openai::responses::CreateResponseRequest`
   - loads instructions, context items, tool schemas, descriptions, and provider
     options from `BlobStore`
   - maps function tools, provider-native tools, tool choice, reasoning, text,
     metadata, truncation, context management, and extra request fields
-  - calls a provider seam implemented by `forge_llm::openai::responses::Client`
+  - calls a provider seam implemented by `lightspeed_llm::openai::responses::Client`
   - stores provider request and raw provider response JSON blobs
   - extracts reducer facts: provider response id, finish reason, usage, token
     estimate, assistant context items, and observed tool calls
 - Added deterministic tests for exact OpenAI Responses request JSON and
   end-to-end effect execution through a fake OpenAI Responses API.
 - Added an ignored OpenAI Responses live smoke test for the agent adapter under
-  `crates/forge-agent-llm/tests/`, matching the `forge-llm` env/root `.env`
+  `crates/lightspeed-agent-llm/tests/`, matching the `lightspeed-llm` env/root `.env`
   pattern and failing loudly when explicitly run without credentials.
 - Added the local runtime crate with an inline effect router that composes
   LLM and host-tool executors for local SDK use.
 - Added a local cross-crate runtime test that drives a full
   LLM -> host tool -> LLM loop using fake OpenAI Responses and real
-  `forge-agent-tools` host filesystem tools.
+  `lightspeed-agent-tools` host filesystem tools.
 
 ## Goal
 
-Create `forge-agent-llm`, the LLM effect adapter crate that connects
-`forge-agent` LLM effect intents to the provider-native `forge-llm` clients.
+Create `lightspeed-agent-llm`, the LLM effect adapter crate that connects
+`lightspeed-agent` LLM effect intents to the provider-native `lightspeed-llm` clients.
 
-This crate should make real LLM effects possible without making `forge-agent`
+This crate should make real LLM effects possible without making `lightspeed-agent`
 depend on provider clients, credentials, HTTP, or provider execution policy.
 
 ## Design Position
 
-`forge-agent` plans provider-native `LlmRequest` values and records normalized
-reducer-facing receipts. `forge-llm` owns provider API clients. The adapter
+`lightspeed-agent` plans provider-native `LlmRequest` values and records normalized
+reducer-facing receipts. `lightspeed-llm` owns provider API clients. The adapter
 between them should stay thin:
 
 ```text
 AgentEffectIntent::LlmGenerate
   -> load blob-backed provider input
-  -> materialize provider-native forge-llm request
+  -> materialize provider-native lightspeed-llm request
   -> call matching provider API
   -> store raw/native response blobs where needed
   -> extract reducer facts
@@ -128,7 +128,7 @@ later. Context items should follow the same rule. The actual payloads still
 stay behind `BlobRef`; only the compact metadata needed to load and materialize
 provider input is copied.
 
-The request planner in `forge-agent` now:
+The request planner in `lightspeed-agent` now:
 
 - keeps `ContextState.active_window: Option<ContextWindow>` as the current
   selected id window
@@ -139,7 +139,7 @@ The request planner in `forge-agent` now:
 - copies the selected `ContextItem` values into `ResolvedContextWindow`
 - includes the resolved item metadata in the `request_fingerprint`
 
-`forge-agent-llm` materializes provider input directly from the resolved items
+`lightspeed-agent-llm` materializes provider input directly from the resolved items
 in the request. It does not need `SessionState`, retained-item lookup, or a
 side-channel context provider.
 
@@ -160,7 +160,7 @@ depend on full replayed state.
 Add:
 
 ```text
-crates/forge-agent-llm/
+crates/lightspeed-agent-llm/
   Cargo.toml
   src/lib.rs
   src/error.rs
@@ -223,17 +223,17 @@ Recommended order:
 
 ## Dependencies
 
-- Depends on `forge-agent` and `forge-llm`.
+- Depends on `lightspeed-agent` and `lightspeed-llm`.
 - Consumed by local/process runners and future Temporal activities.
 - Informs P60 outbox rules for non-idempotent or retry-sensitive provider calls.
 
 ## Done When
 
-- `forge-agent-llm` builds as a workspace crate.
+- `lightspeed-agent-llm` builds as a workspace crate.
 - At least one provider API kind can execute `LlmGenerate` from a committed
   `LlmRequest` and return a valid `AgentEffectReceipt`.
 - Provider request materialization and receipt extraction are covered by
   deterministic tests.
 - Raw/native provider outputs are retained through `BlobStore` where needed.
-- `forge-agent` still does not depend on `forge-llm`.
-- `cargo check -p forge-agent-llm` and `cargo test -p forge-agent-llm` pass.
+- `lightspeed-agent` still does not depend on `lightspeed-llm`.
+- `cargo check -p lightspeed-agent-llm` and `cargo test -p lightspeed-agent-llm` pass.

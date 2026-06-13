@@ -5,7 +5,7 @@ describe("extractTriggeredText", () => {
   it("extracts slash command text", () => {
     expect(
       extractTriggeredText("/ask summarize this", {
-        prefixes: ["/ask", "/forge"],
+        prefixes: ["/ask", "/lightspeed"],
         requireTrigger: true,
       }),
     ).toBe("summarize this");
@@ -13,8 +13,8 @@ describe("extractTriggeredText", () => {
 
   it("extracts bot-addressed slash command text", () => {
     expect(
-      extractTriggeredText("/ask@ForgeFamilyBot summarize this", {
-        botUsername: "ForgeFamilyBot",
+      extractTriggeredText("/ask@LightspeedFamilyBot summarize this", {
+        botUsername: "LightspeedFamilyBot",
         prefixes: ["/ask"],
         requireTrigger: true,
       }),
@@ -23,8 +23,8 @@ describe("extractTriggeredText", () => {
 
   it("extracts mention-triggered text", () => {
     expect(
-      extractTriggeredText("@forge: what changed?", {
-        mentionNames: ["forge"],
+      extractTriggeredText("@lightspeed: what changed?", {
+        mentionNames: ["lightspeed"],
         prefixes: ["/ask"],
         requireTrigger: true,
       }),

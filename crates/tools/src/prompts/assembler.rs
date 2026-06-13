@@ -855,15 +855,15 @@ mod tests {
     async fn builds_prompt_instructions_from_conventional_files() {
         let fs = prompt_fs(&[
             (
-                "/workspace/.forge/prompts/instructions.md",
+                "/workspace/.lightspeed/prompts/instructions.md",
                 "Base\r\nrules\n",
             ),
             (
-                "/workspace/.forge/prompts/instructions.d/020-style.md",
+                "/workspace/.lightspeed/prompts/instructions.d/020-style.md",
                 "Style rules\n",
             ),
             (
-                "/workspace/.forge/prompts/instructions.d/010-safety.md",
+                "/workspace/.lightspeed/prompts/instructions.d/010-safety.md",
                 "Safety rules\n",
             ),
         ])
@@ -871,7 +871,7 @@ mod tests {
         let blobs = Arc::new(InMemoryBlobStore::new());
         let build = build_prompt_instructions(
             blobs.as_ref(),
-            &[root_input(&fs, "/workspace/.forge/prompts", "project")],
+            &[root_input(&fs, "/workspace/.lightspeed/prompts", "project")],
             PromptAssemblyLimits::default(),
         )
         .await
@@ -910,7 +910,7 @@ mod tests {
     async fn empty_prompt_roots_build_report_without_instruction_entries() {
         let fs = prompt_fs(&[]).await;
         fs.create_directory(
-            &FsPath::new("/workspace/.forge/prompts").unwrap(),
+            &FsPath::new("/workspace/.lightspeed/prompts").unwrap(),
             CreateDirectoryOptions::recursive(),
         )
         .await
@@ -919,7 +919,7 @@ mod tests {
 
         let build = build_prompt_instructions(
             &blobs,
-            &[root_input(&fs, "/workspace/.forge/prompts", "project")],
+            &[root_input(&fs, "/workspace/.lightspeed/prompts", "project")],
             PromptAssemblyLimits::default(),
         )
         .await
@@ -931,12 +931,12 @@ mod tests {
 
     #[tokio::test]
     async fn oversized_sources_are_reported_without_publishing_truncated_blobs() {
-        let fs = prompt_fs(&[("/workspace/.forge/prompts/instructions.md", "abcdef")]).await;
+        let fs = prompt_fs(&[("/workspace/.lightspeed/prompts/instructions.md", "abcdef")]).await;
         let blobs = InMemoryBlobStore::new();
 
         let build = build_prompt_instructions(
             &blobs,
-            &[root_input(&fs, "/workspace/.forge/prompts", "project")],
+            &[root_input(&fs, "/workspace/.lightspeed/prompts", "project")],
             PromptAssemblyLimits {
                 max_source_chars: 3,
                 max_total_chars: 100,
@@ -956,12 +956,12 @@ mod tests {
 
     #[tokio::test]
     async fn publication_replaces_prompt_prefix_and_clears_missing_sources() {
-        let fs = prompt_fs(&[("/workspace/.forge/prompts/instructions.md", "first")]).await;
+        let fs = prompt_fs(&[("/workspace/.lightspeed/prompts/instructions.md", "first")]).await;
         let blobs = InMemoryBlobStore::new();
         let publication = prepare_prompt_instructions_publication(
             &blobs,
             &CoreAgentState::new(),
-            &[root_input(&fs, "/workspace/.forge/prompts", "project")],
+            &[root_input(&fs, "/workspace/.lightspeed/prompts", "project")],
             PromptAssemblyLimits::default(),
         )
         .await
@@ -988,7 +988,7 @@ mod tests {
         let empty_fs = prompt_fs(&[]).await;
         empty_fs
             .create_directory(
-                &FsPath::new("/workspace/.forge/prompts").unwrap(),
+                &FsPath::new("/workspace/.lightspeed/prompts").unwrap(),
                 CreateDirectoryOptions::recursive(),
             )
             .await
@@ -999,7 +999,7 @@ mod tests {
             &state,
             &[root_input(
                 &empty_fs,
-                "/workspace/.forge/prompts",
+                "/workspace/.lightspeed/prompts",
                 "project",
             )],
             PromptAssemblyLimits::default(),

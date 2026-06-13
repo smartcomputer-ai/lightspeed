@@ -3,7 +3,7 @@
     "providerType": "smolvm",
     "spec": {
       "cpus": 2,
-      "image": "forge-dev"
+      "image": "lightspeed-dev"
     },
     "type": "provider"
   }

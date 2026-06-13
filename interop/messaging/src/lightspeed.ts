@@ -1,23 +1,23 @@
 import {
-  ForgeClient,
+  LightspeedClient,
   type EventCursor,
   type InputItem,
   type RunStatus,
   type SessionItemView,
   type SessionView,
-} from "@forge/agent-client";
-import type { ForgeBridgeConfig } from "./config.js";
+} from "@lightspeed/agent-client";
+import type { LightspeedBridgeConfig } from "./config.js";
 import { stableSubmissionId } from "./ids.js";
 import { mediaKindForMime } from "./media.js";
 import type { JsonBridgeStore } from "./store.js";
 
-export interface ForgeTurnMedia {
+export interface LightspeedTurnMedia {
   base64: string;
   mime: string;
   name?: string;
 }
 
-export interface ForgeTurn {
+export interface LightspeedTurn {
   provider: string;
   accountId: string;
   conversationKey: string;
@@ -25,15 +25,15 @@ export interface ForgeTurn {
   /// Stable parts identifying this turn batch for submission idempotency.
   submissionParts: readonly unknown[];
   text: string;
-  media?: readonly ForgeTurnMedia[];
+  media?: readonly LightspeedTurnMedia[];
 }
 
-export interface ForgeRoomEvent {
+export interface LightspeedRoomEvent {
   key: string;
   text: string;
 }
 
-export interface ForgeReply {
+export interface LightspeedReply {
   cursor: EventCursor | null;
   runId: string;
   sessionId: string;
@@ -46,13 +46,13 @@ export interface ForgeReply {
 
 const CONTEXT_APPEND_BATCH_LIMIT = 64;
 
-export class ForgeSessionBridge {
+export class LightspeedSessionBridge {
   private readonly startedSessions = new Set<string>();
 
   constructor(
-    private readonly client: ForgeClient,
+    private readonly client: LightspeedClient,
     private readonly store: JsonBridgeStore,
-    private readonly config: ForgeBridgeConfig,
+    private readonly config: LightspeedBridgeConfig,
   ) {}
 
   async ensureSession(sessionId: string): Promise<void> {
@@ -71,7 +71,7 @@ export class ForgeSessionBridge {
 
   /// Appends unaddressed room chatter as session context without starting a
   /// run. Idempotent per entry key, so channel redelivery is harmless.
-  async appendRoomEvents(sessionId: string, events: readonly ForgeRoomEvent[]): Promise<void> {
+  async appendRoomEvents(sessionId: string, events: readonly LightspeedRoomEvent[]): Promise<void> {
     if (events.length === 0) {
       return;
     }
@@ -88,7 +88,7 @@ export class ForgeSessionBridge {
     }
   }
 
-  async submitTurn(turn: ForgeTurn): Promise<ForgeReply> {
+  async submitTurn(turn: LightspeedTurn): Promise<LightspeedReply> {
     await this.ensureSession(turn.sessionId);
 
     const input: InputItem[] = [{ type: "text", text: turn.text }];
@@ -126,21 +126,21 @@ export class ForgeSessionBridge {
       cursor = awaited.cursor;
       await this.store.updateCursor(turn.conversationKey, cursor);
       if (awaited.state.status === "failed") {
-        throw new Error(`Forge run failed: ${awaited.state.message}`);
+        throw new Error(`Lightspeed run failed: ${awaited.state.message}`);
       }
       if (awaited.state.status === "cancelled") {
-        throw new Error("Forge run was cancelled");
+        throw new Error("Lightspeed run was cancelled");
       }
     } else if (terminalStatus === "failed") {
-      throw new Error("Forge run failed");
+      throw new Error("Lightspeed run failed");
     } else if (terminalStatus === "cancelled") {
-      throw new Error("Forge run was cancelled");
+      throw new Error("Lightspeed run was cancelled");
     }
 
     const read = await this.client.call("session/read", { sessionId: turn.sessionId });
     const text =
       extractAssistantText(read.result.session, run.id) ??
-      "Forge completed the run, but no assistant text was available.";
+      "Lightspeed completed the run, but no assistant text was available.";
     return {
       cursor,
       runId: run.id,

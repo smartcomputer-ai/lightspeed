@@ -16,7 +16,7 @@ use tracing_subscriber::{EnvFilter, fmt};
 #[derive(Debug, Parser)]
 #[command(
     name = "server",
-    about = "Run the Forge hosted runtime",
+    about = "Run the Lightspeed hosted runtime",
     after_help = "When no command is supplied, server runs `both`."
 )]
 struct Cli {
@@ -36,8 +36,8 @@ enum Command {
 
 #[derive(Clone, Debug, Args)]
 struct TemporalArgs {
-    /// Temporal task queue. Defaults to forge-universe-{FORGE_PG_UNIVERSE_ID}.
-    #[arg(long, env = "FORGE_TASK_QUEUE")]
+    /// Temporal task queue. Defaults to lightspeed-universe-{LIGHTSPEED_PG_UNIVERSE_ID}.
+    #[arg(long, env = "LIGHTSPEED_TASK_QUEUE")]
     task_queue: Option<String>,
 
     #[arg(long, env = "TEMPORAL_ADDRESS", default_value = DEFAULT_TEMPORAL_TARGET)]
@@ -49,7 +49,7 @@ struct TemporalArgs {
 
 #[derive(Clone, Debug, Args)]
 struct GatewayArgs {
-    #[arg(long, env = "FORGE_GATEWAY_BIND", default_value = DEFAULT_GATEWAY_BIND)]
+    #[arg(long, env = "LIGHTSPEED_GATEWAY_BIND", default_value = DEFAULT_GATEWAY_BIND)]
     bind: SocketAddr,
 
     #[command(flatten)]
@@ -57,14 +57,14 @@ struct GatewayArgs {
 
     #[arg(
         long,
-        env = "FORGE_GATEWAY_MAX_REQUEST_BODY_BYTES",
+        env = "LIGHTSPEED_GATEWAY_MAX_REQUEST_BODY_BYTES",
         default_value_t = DEFAULT_MAX_REQUEST_BODY_BYTES
     )]
     max_request_body_bytes: usize,
 
     /// Externally reachable base URL for the OAuth callback. Defaults to
     /// http://{bind}.
-    #[arg(long, env = "FORGE_PUBLIC_BASE_URL")]
+    #[arg(long, env = "LIGHTSPEED_PUBLIC_BASE_URL")]
     public_base_url: Option<String>,
 }
 
@@ -76,7 +76,7 @@ struct WorkerArgs {
 
 #[derive(Clone, Debug, Args)]
 struct BothArgs {
-    #[arg(long, env = "FORGE_GATEWAY_BIND", default_value = DEFAULT_GATEWAY_BIND)]
+    #[arg(long, env = "LIGHTSPEED_GATEWAY_BIND", default_value = DEFAULT_GATEWAY_BIND)]
     bind: SocketAddr,
 
     #[command(flatten)]
@@ -84,21 +84,21 @@ struct BothArgs {
 
     #[arg(
         long,
-        env = "FORGE_GATEWAY_MAX_REQUEST_BODY_BYTES",
+        env = "LIGHTSPEED_GATEWAY_MAX_REQUEST_BODY_BYTES",
         default_value_t = DEFAULT_MAX_REQUEST_BODY_BYTES
     )]
     max_request_body_bytes: usize,
 
     /// Externally reachable base URL for the OAuth callback. Defaults to
     /// http://{bind}.
-    #[arg(long, env = "FORGE_PUBLIC_BASE_URL")]
+    #[arg(long, env = "LIGHTSPEED_PUBLIC_BASE_URL")]
     public_base_url: Option<String>,
 }
 
 impl TemporalArgs {
     fn from_env() -> Self {
         Self {
-            task_queue: env::var("FORGE_TASK_QUEUE").ok(),
+            task_queue: env::var("LIGHTSPEED_TASK_QUEUE").ok(),
             temporal_target: env::var("TEMPORAL_ADDRESS")
                 .unwrap_or_else(|_| DEFAULT_TEMPORAL_TARGET.to_owned()),
             namespace: env::var("TEMPORAL_NAMESPACE")
@@ -116,16 +116,16 @@ impl TemporalArgs {
 
 impl BothArgs {
     fn from_env() -> anyhow::Result<Self> {
-        let bind = env::var("FORGE_GATEWAY_BIND")
+        let bind = env::var("LIGHTSPEED_GATEWAY_BIND")
             .unwrap_or_else(|_| DEFAULT_GATEWAY_BIND.to_owned())
             .parse()
-            .with_context(|| "invalid FORGE_GATEWAY_BIND")?;
-        let max_request_body_bytes = env::var("FORGE_GATEWAY_MAX_REQUEST_BODY_BYTES")
+            .with_context(|| "invalid LIGHTSPEED_GATEWAY_BIND")?;
+        let max_request_body_bytes = env::var("LIGHTSPEED_GATEWAY_MAX_REQUEST_BODY_BYTES")
             .ok()
             .map(|value| {
                 value
                     .parse()
-                    .with_context(|| "invalid FORGE_GATEWAY_MAX_REQUEST_BODY_BYTES")
+                    .with_context(|| "invalid LIGHTSPEED_GATEWAY_MAX_REQUEST_BODY_BYTES")
             })
             .transpose()?
             .unwrap_or(DEFAULT_MAX_REQUEST_BODY_BYTES);
@@ -133,7 +133,7 @@ impl BothArgs {
             bind,
             temporal: TemporalArgs::from_env(),
             max_request_body_bytes,
-            public_base_url: env::var("FORGE_PUBLIC_BASE_URL")
+            public_base_url: env::var("LIGHTSPEED_PUBLIC_BASE_URL")
                 .ok()
                 .filter(|value| !value.is_empty()),
         })
@@ -246,7 +246,7 @@ fn init_logging() -> anyhow::Result<()> {
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         EnvFilter::new("warn,temporal_server=info,temporal_workflow=info,temporalio_sdk_core=info")
     });
-    match env::var("FORGE_LOG_FORMAT")
+    match env::var("LIGHTSPEED_LOG_FORMAT")
         .unwrap_or_else(|_| "compact".to_owned())
         .as_str()
     {
@@ -266,7 +266,7 @@ fn init_logging() -> anyhow::Result<()> {
             .try_init()
             .map_err(|error| anyhow::anyhow!("{error}"))?,
         other => anyhow::bail!(
-            "invalid FORGE_LOG_FORMAT={other:?}; expected one of: compact, pretty, json"
+            "invalid LIGHTSPEED_LOG_FORMAT={other:?}; expected one of: compact, pretty, json"
         ),
     }
     Ok(())

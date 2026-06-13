@@ -5,7 +5,7 @@
 
 Implemented so far:
 
-- Added `crates/forge-agent/src/runner/` as the substrate-neutral runner core.
+- Added `crates/lightspeed-agent/src/runner/` as the substrate-neutral runner core.
 - Added `SessionRunner` in `runner/drive.rs` to replay session state from
   `SessionStore`, admit a command, append/apply committed events, run
   `PolicyPipeline`, hand created effects to an executor, and drive until
@@ -40,7 +40,7 @@ Implemented so far:
 - Decided that session stream creation stays with storage/substrate runners.
   `SessionRunner` assumes the session record already exists and treats
   `SessionCommand::OpenSession` as the first domain command in that stream.
-- `cargo check -p forge-agent` and `cargo test -p forge-agent` pass.
+- `cargo check -p lightspeed-agent` and `cargo test -p lightspeed-agent` pass.
 
 ## Goal
 
@@ -125,5 +125,5 @@ contract change is needed for runner batching; the work is in `runner/drive.rs`.
 - The effect handoff boundary is stable enough for a process runner and
   Temporal runner to share.
 - No process, Temporal, provider, host-tool, or CLI implementation leaks into
-  `forge-agent`.
-- `cargo check -p forge-agent` and `cargo test -p forge-agent` pass.
+  `lightspeed-agent`.
+- `cargo check -p lightspeed-agent` and `cargo test -p lightspeed-agent` pass.

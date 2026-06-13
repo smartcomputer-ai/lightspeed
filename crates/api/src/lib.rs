@@ -1,4 +1,4 @@
-//! Client-facing API contracts for Forge agents.
+//! Client-facing API contracts for Lightspeed agents.
 //!
 //! This crate is intentionally independent of `engine` core types. Hosts
 //! can implement these contracts from a local event-log runner, a Temporal
@@ -17,7 +17,7 @@ use thiserror::Error;
 mod schema_export;
 pub use schema_export::{ExportedSchemas, export_schemas};
 
-pub const PROTOCOL_VERSION: &str = "forge.agent.api.v1";
+pub const PROTOCOL_VERSION: &str = "lightspeed.agent.api.v1";
 
 pub const METHOD_INITIALIZE: &str = "initialize";
 pub const METHOD_SESSION_START: &str = "session/start";
@@ -3142,7 +3142,7 @@ mod tests {
     #[test]
     fn auth_provider_create_params_redact_credential_in_debug_output() {
         let params: AuthProviderCreateParams = serde_json::from_value(json!({
-            "providerId": "forge-github",
+            "providerId": "lightspeed-github",
             "config": {"type": "githubApp", "appId": "12345"},
             "credential": "-----BEGIN RSA PRIVATE KEY-----\nsuper-secret-key"
         }))
@@ -3634,7 +3634,7 @@ mod tests {
                 method: METHOD_VFS_SNAPSHOT_COMMIT.to_owned(),
                 params: Some(json!({
                     "manifest": {
-                        "schema_version": "forge.vfs.snapshot.v1",
+                        "schema_version": "lightspeed.vfs.snapshot.v1",
                         "root": { "entries": {} },
                         "totals": { "files": 0, "bytes": 0 }
                     }
@@ -4251,7 +4251,7 @@ mod tests {
                 }],
                 report_ref: Some(format!("sha256:{}", "5".repeat(64))),
                 report: Some(json!({
-                    "schema_version": "forge.prompts.instructions.report.v1",
+                    "schema_version": "lightspeed.prompts.instructions.report.v1",
                     "total_chars": 42
                 })),
             }))
@@ -4378,7 +4378,7 @@ mod tests {
             Ok(AgentApiOutcome::new(VfsSnapshotReadResponse {
                 snapshot_ref: params.snapshot_ref,
                 manifest: json!({
-                    "schema_version": "forge.vfs.snapshot.v1",
+                    "schema_version": "lightspeed.vfs.snapshot.v1",
                     "root": { "entries": {} },
                     "totals": { "files": 0, "bytes": 0 }
                 }),
@@ -4684,7 +4684,7 @@ mod tests {
         ) -> Result<AgentApiOutcome<AuthProviderCreateResponse>, AgentApiError> {
             Ok(AgentApiOutcome::new(AuthProviderCreateResponse {
                 provider: test_auth_provider(
-                    params.provider_id.unwrap_or_else(|| "forge-github".to_owned()),
+                    params.provider_id.unwrap_or_else(|| "lightspeed-github".to_owned()),
                 ),
             }))
         }
@@ -4694,7 +4694,7 @@ mod tests {
             _params: AuthProviderListParams,
         ) -> Result<AgentApiOutcome<AuthProviderListResponse>, AgentApiError> {
             Ok(AgentApiOutcome::new(AuthProviderListResponse {
-                providers: vec![test_auth_provider("forge-github".to_owned())],
+                providers: vec![test_auth_provider("lightspeed-github".to_owned())],
             }))
         }
 

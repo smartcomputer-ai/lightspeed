@@ -12,8 +12,8 @@ use crate::{
 const INSTRUCTIONS_KEY_PREFIX: &str = "instructions.";
 pub const SKILL_CATALOG_CONTEXT_KEY: &str = "skills.catalog";
 pub const SKILL_ACTIVATION_CONTEXT_KEY_PREFIX: &str = "skills.activation.";
-pub const SKILL_ACTIVATION_PROVIDER_KIND_RUN: &str = "forge.skill.activation.run";
-pub const SKILL_ACTIVATION_PROVIDER_KIND_SESSION: &str = "forge.skill.activation.session";
+pub const SKILL_ACTIVATION_PROVIDER_KIND_RUN: &str = "lightspeed.skill.activation.run";
+pub const SKILL_ACTIVATION_PROVIDER_KIND_SESSION: &str = "lightspeed.skill.activation.session";
 pub const OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND: &str = "openai.responses.compaction";
 pub const OPENAI_RESPONSES_WEB_SEARCH_CALL_PROVIDER_KIND: &str = "openai.responses.web_search_call";
 pub const OPENAI_RESPONSES_MCP_LIST_TOOLS_PROVIDER_KIND: &str = "openai.responses.mcp_list_tools";
@@ -150,7 +150,7 @@ pub struct ContextEntry {
     pub kind: ContextEntryKind,
     /// Provenance for deterministic planning, projection grouping, and audit.
     pub source: ContextEntrySource,
-    /// CAS ref for the provider-native or Forge-native payload.
+    /// CAS ref for the provider-native or Lightspeed-native payload.
     pub content_ref: BlobRef,
     /// Optional MIME hint for renderers that need to distinguish text, JSON, files, etc.
     pub media_type: Option<String>,

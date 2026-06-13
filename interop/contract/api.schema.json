@@ -7102,6 +7102,6 @@
       "type": "object"
     }
   },
-  "description": "All JSON-RPC wire types of the Forge agent API.",
-  "title": "Forge Agent API"
+  "description": "All JSON-RPC wire types of the Lightspeed agent API.",
+  "title": "Lightspeed Agent API"
 }

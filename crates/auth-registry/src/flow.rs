@@ -488,7 +488,7 @@ mod tests {
     fn start_request() -> StartAuthFlow {
         StartAuthFlow {
             client_id: OAuthClientId::new("crm"),
-            redirect_uri: "https://forge.example.com/auth/callback".to_owned(),
+            redirect_uri: "https://lightspeed.example.com/auth/callback".to_owned(),
             scopes: None,
             audience: None,
             principal: PrincipalRef::universe_default(),

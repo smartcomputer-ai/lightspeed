@@ -17,7 +17,7 @@ mod support;
 
 use support::retrying_openai_responses_client;
 
-const LIVE_MARKER: &str = "FORGE-COMPACTION-LIVE-87421";
+const LIVE_MARKER: &str = "LIGHTSPEED-COMPACTION-LIVE-87421";
 
 fn live_compaction_model() -> String {
     env_or_dotenv_var("OPENAI_RESPONSES_COMPACTION_MODEL")
@@ -100,7 +100,7 @@ async fn openai_responses_live_engine_prunes_and_reuses_provider_compaction() {
     sessions
         .create_session(CreateSession {
             session_id: session_id.clone(),
-            agent_handle: AgentHandle::new("forge.live-compaction"),
+            agent_handle: AgentHandle::new("lightspeed.live-compaction"),
             created_at_ms: 1,
         })
         .await
@@ -238,7 +238,7 @@ async fn openai_responses_live_manual_standalone_compaction() {
 
     let context_ref = store_openai_raw_message(
         blobs.as_ref(),
-        "Summarize this short context for future continuation: Forge is testing manual standalone compaction.",
+        "Summarize this short context for future continuation: Lightspeed is testing manual standalone compaction.",
     )
     .await;
     let seed = runner
@@ -319,7 +319,7 @@ async fn openai_responses_live_high_watermark_standalone_compaction() {
 
     let context_ref = store_openai_raw_message(
         blobs.as_ref(),
-        "Summarize this short context for future continuation: Forge is testing idle high-watermark standalone compaction.",
+        "Summarize this short context for future continuation: Lightspeed is testing idle high-watermark standalone compaction.",
     )
     .await;
     let compacted = runner
@@ -372,7 +372,7 @@ async fn live_runner(session_id: &SessionId) -> (SessionRunner, Arc<InMemoryBlob
     sessions
         .create_session(CreateSession {
             session_id: session_id.clone(),
-            agent_handle: AgentHandle::new("forge.live-compaction"),
+            agent_handle: AgentHandle::new("lightspeed.live-compaction"),
             created_at_ms: 1,
         })
         .await

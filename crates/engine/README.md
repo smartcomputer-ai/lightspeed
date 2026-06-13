@@ -1,6 +1,6 @@
 # engine
 
-`engine` is the deterministic Forge-native agent engine. It defines the
+`engine` is the deterministic Lightspeed-native agent engine. It defines the
 session-scoped command, event, state, context, tooling, admission, projection,
 planning, workflow helpers, and the substrate-neutral CoreAgent drive machine
 used by local and Temporal substrates.

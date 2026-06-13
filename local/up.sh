@@ -18,13 +18,13 @@ done
 
 echo "Checking pgAdmin..."
 for _ in {1..30}; do
-  if [[ "$(docker inspect -f '{{.State.Running}} {{.State.Restarting}}' "${PGADMIN_CONTAINER_NAME:-forge-pgadmin}" 2>/dev/null)" == "true false" ]]; then
+  if [[ "$(docker inspect -f '{{.State.Running}} {{.State.Restarting}}' "${PGADMIN_CONTAINER_NAME:-lightspeed-pgadmin}" 2>/dev/null)" == "true false" ]]; then
     break
   fi
   sleep 1
 done
 
-if [[ "$(docker inspect -f '{{.State.Running}} {{.State.Restarting}}' "${PGADMIN_CONTAINER_NAME:-forge-pgadmin}" 2>/dev/null)" != "true false" ]]; then
+if [[ "$(docker inspect -f '{{.State.Running}} {{.State.Restarting}}' "${PGADMIN_CONTAINER_NAME:-lightspeed-pgadmin}" 2>/dev/null)" != "true false" ]]; then
   echo "pgAdmin did not start cleanly. Recent logs:" >&2
   compose logs --tail=80 pgadmin >&2
   exit 1
@@ -46,15 +46,15 @@ fi
 
 cat <<EOF
 
-Forge local infra is up.
+Lightspeed local infra is up.
 
 Postgres:
-  url:     ${FORGE_TEST_POSTGRES_URL}
+  url:     ${LIGHTSPEED_TEST_POSTGRES_URL}
   pgAdmin: http://localhost:${PGADMIN_PORT}
 
 Blobstore:
-  bucket:        ${FORGE_OBJECT_STORE_BUCKET}
-  S3 endpoint:   ${FORGE_OBJECT_STORE_ENDPOINT}
+  bucket:        ${LIGHTSPEED_OBJECT_STORE_BUCKET}
+  S3 endpoint:   ${LIGHTSPEED_OBJECT_STORE_ENDPOINT}
   MinIO console: http://localhost:${MINIO_CONSOLE_PORT}
 
 Temporal:

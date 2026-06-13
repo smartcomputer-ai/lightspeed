@@ -4,7 +4,7 @@
 - In progress
 
 **Progress**
-- Scaffolded `crates/forge-agent-tools` and added it to the workspace.
+- Scaffolded `crates/lightspeed-agent-tools` and added it to the workspace.
 - Reworked the crate around optional tool packages. The first package is now
   `host`, not a top-level workspace/filesystem design.
 - Added `runtime::{ToolTarget, ToolCatalog, ToolBinding}` plus
@@ -36,11 +36,11 @@
 - Added generic filesystem-backed `invoke_glob` and `invoke_grep` operations
   with recursive traversal, result limits, include filtering, and tests.
 - Ported the core Codex apply-patch parser, hunk matcher, and filesystem
-  application engine into `src/host/apply_patch/`, adapted to Forge `FileSystem`;
+  application engine into `src/host/apply_patch/`, adapted to Lightspeed `FileSystem`;
   added `invoke_apply_patch` and tests for add/update/delete/move/error paths.
 - Added provider-aware session toolset composition in `src/toolset.rs`.
   `ToolsetConfig` composes host tools and provider-native tools into one
-  `ResolvedToolset` containing the Forge `ToolRegistry`, schema/description
+  `ResolvedToolset` containing the Lightspeed `ToolRegistry`, schema/description
   documents, invocation `ToolCatalog`, and provider request defaults patches.
 - Added a Claude Code-like host tool surface for `Read`, `Write`, `Edit`,
   `Glob`, `Grep`, and `Bash`. The surface owns Claude-shaped schemas and JSON
@@ -59,7 +59,7 @@
   dispatcher can use the same resolved toolset without changing tool modules.
 
 **Design correction**
-- `forge-agent-tools` should not be a filesystem/process crate. It should be an
+- `lightspeed-agent-tools` should not be a filesystem/process crate. It should be an
   optional tool package crate. Host filesystem/process interaction is the first
   package under `host`.
 - The host package should not make "workspace" the foundation. A workspace is a
@@ -70,28 +70,28 @@
   descriptions, schemas, typed args/results, JSON decoding, model-visible output
   shaping, and concrete invocation should be centered on the tool module/package,
   not split across top-level `ops`, `schema`, `registry`, and `toolsets` modules.
-- Tool invocation dispatch is a profile/catalog concern. The Forge core persists
+- Tool invocation dispatch is a profile/catalog concern. The Lightspeed core persists
   tool specs and `ToolInvocationIntent` values; the tools crate supplies a
   sidecar `ToolCatalog` that maps a visible `ToolName` to a logical tool and
   activity type.
 
 ## Goal
 
-Create `forge-agent-tools`, the standard optional tool package crate for Forge
+Create `lightspeed-agent-tools`, the standard optional tool package crate for Lightspeed
 coding agents.
 
 This crate owns model-visible tool contracts and optional concrete tool
-packages for common agent use cases. It depends on `forge-agent`, but keeps
+packages for common agent use cases. It depends on `lightspeed-agent`, but keeps
 local filesystem, abstract filesystem, process behavior, and other tool
 substrates out of the deterministic core crate.
 
-`forge-agent-tools` is optional infrastructure. Agent implementations can ignore
+`lightspeed-agent-tools` is optional infrastructure. Agent implementations can ignore
 it entirely and provide their own `ToolRegistry`, schemas, and `ToolInvoke`
 execution path.
 
 ## Design Position
 
-The Forge core should see tools as durable data:
+The Lightspeed core should see tools as durable data:
 
 - tool name
 - JSON schema refs
@@ -99,7 +99,7 @@ The Forge core should see tools as durable data:
 - `ToolInvoke` effect intents with `arguments_ref`
 - `ToolInvocationReceipt` values
 
-`forge-agent-tools` should own optional agent tool packages:
+`lightspeed-agent-tools` should own optional agent tool packages:
 
 - typed args and result records
 - JSON schemas and descriptions
@@ -159,7 +159,7 @@ Move the target API away from `src/workspace/` and away from top-level
 filesystem/process assumptions:
 
 ```text
-crates/forge-agent-tools/
+crates/lightspeed-agent-tools/
   Cargo.toml
   src/lib.rs
   src/error.rs
@@ -204,7 +204,7 @@ crates/forge-agent-tools/
 
 `runtime` is package-neutral and owns catalog/profile assembly types.
 `toolset` is the session composition layer that combines provider-native tools
-and concrete packages into a single Forge tool registry plus runtime catalog.
+and concrete packages into a single Lightspeed tool registry plus runtime catalog.
 `host` is the first concrete package and owns host filesystem/process
 capabilities, concrete tools, surface definitions, and inline effect execution.
 There should be no top-level `ops`, `schema`, `registry`, or `toolsets` split.
@@ -222,7 +222,7 @@ let resolved = resolve_toolset(
     &config,
 )?;
 
-resolved.registry      // durable Forge model-facing data
+resolved.registry      // durable Lightspeed model-facing data
 resolved.documents     // schema/description blobs to store
 resolved.catalog       // host-side invocation bindings
 resolved.provider_request_defaults_patch // provider request defaults to merge
@@ -334,7 +334,7 @@ pub trait FileSystem: Send + Sync {
 ```
 
 This should remain close to Codex's `ExecutorFileSystem` operation shape, but
-Forge should not copy Codex's per-call sandbox context. The filesystem
+Lightspeed should not copy Codex's per-call sandbox context. The filesystem
 implementation is already the enforcement boundary.
 
 `FsPath` should accept both relative and absolute paths. This is the main
@@ -345,7 +345,7 @@ Initial `FsPath` rules:
 - preserve logical slash-separated paths at the capability boundary
 - reject empty paths and NUL bytes
 - normalize `.` and collapsible internal `..` segments where possible
-- allow absolute paths such as `/Users/lukas/dev/forge/Cargo.toml`
+- allow absolute paths such as `/Users/lukas/dev/lightspeed/Cargo.toml`
 - allow relative paths such as `src/lib.rs`
 - allow relative paths with leading `..` until they are resolved against `cwd`
   or a scoped filesystem root
@@ -387,7 +387,7 @@ Claude Code `Bash` may accept shell-shaped arguments, but their tool adapters
 must resolve those arguments to argv before calling `ProcessExecutor`.
 
 Process execution is a separate trust boundary from filesystem tools. For the
-initial Forge agent tools design, granting shell/process execution should be
+initial Lightspeed agent tools design, granting shell/process execution should be
 treated as granting full authority over whatever substrate the process executor
 can reach. Do not claim read-only filesystem safety while also exposing an
 unconstrained local shell. A read-only or scoped process mode requires a
@@ -458,7 +458,7 @@ Examples:
 - `ReadOnlyFileSystem<T>` and `ScopedFileSystem<T>` are policy wrappers over
   another filesystem.
 
-Codex's sandbox modes remain useful reference material, but Forge should not
+Codex's sandbox modes remain useful reference material, but Lightspeed should not
 copy Codex's sandbox configuration model into the filesystem trait.
 
 ## Standard Filesystem Implementations
@@ -483,7 +483,7 @@ Future implementations should fit without new tool code:
 
 - `PostgresFileSystem`: logical tree in Postgres.
 - `S3FileSystem`: bucket/prefix-backed object tree.
-- `CxdbFileSystem`: content-addressed/versioned Forge workspace tree.
+- `CxdbFileSystem`: content-addressed/versioned Lightspeed workspace tree.
 - `ContainerFileSystem`: filesystem view inside a container/VM.
 - `ActivityFileSystem`: Temporal activity-backed filesystem operations.
 - `RemoteFileSystem`: remote execution server or worker protocol.
@@ -518,10 +518,10 @@ search primitives up front.
 
 ## Session Toolsets
 
-Use the existing `forge-agent` `ToolRegistry` and `ToolProfile` model. Do not
+Use the existing `lightspeed-agent` `ToolRegistry` and `ToolProfile` model. Do not
 add a second durable selection mechanism. The tools crate may keep a sidecar
 `ToolCatalog` for invocation dispatch, because that catalog is runner-side
-metadata rather than Forge session state.
+metadata rather than Lightspeed session state.
 
 Compose a session from a small explicit config:
 
@@ -547,7 +547,7 @@ Configuration intent:
   provider-default names for the selected target. OpenAI currently resolves to
   canonical names; Anthropic resolves to Claude Code-like names and omits host
   operations that surface cannot represent yet.
-- `HostToolPresentation::Canonical`: expose direct filesystem tools using Forge
+- `HostToolPresentation::Canonical`: expose direct filesystem tools using Lightspeed
   canonical names:
   `read_file`, `grep`, `glob`, `list_dir`, and write tools when the filesystem
   policy permits writes.
@@ -558,7 +558,7 @@ Configuration intent:
   tools:
   `Read`, `Write`, `Edit`, `Glob`, `Grep`, and `Bash` when supported. These
   tools use Claude-shaped model-visible arguments but dispatch through the same
-  canonical Forge operations.
+  canonical Lightspeed operations.
 - `HostToolsetConfig::from_operations`: allow callers to select an exact host
   tool set for a specific model, provider, runner, product surface, or eval.
 - `OpenAiResponsesWebSearchConfig`: exposes provider-native OpenAI Responses
@@ -693,11 +693,11 @@ tooling and effect-adapter separation:
 - `refs/aos-agent/src/tools/supported/host_fs_apply_patch.rs`
 - `refs/aos-agent/src/tools/supported/host_exec.rs`
 
-Do not copy AOS-specific world/session assumptions into Forge.
+Do not copy AOS-specific world/session assumptions into Lightspeed.
 
 ## Vendor/Port Scope
 
-Vendor/port these Codex pieces as adapted Forge code:
+Vendor/port these Codex pieces as adapted Lightspeed code:
 
 - `codex-apply-patch`
   - primary `apply_patch` parser, engine, invocation shape, shell/heredoc
@@ -710,12 +710,12 @@ Vendor/port these Codex pieces as adapted Forge code:
 - `codex-utils-absolute-path`
   - path normalization, absolute path wrapper behavior, home expansion, and
     symlink-preserving canonicalization ideas
-  - adapt into Forge `FsPath`/local host mapping rather than exposing Codex
+  - adapt into Lightspeed `FsPath`/local host mapping rather than exposing Codex
     names
 - `codex-utils-output-truncation`
   - text/output truncation behavior for model-visible tool results; port the
     small text helpers and tests, replacing Codex protocol-specific content item
-    types with Forge receipt/blob handling
+    types with Lightspeed receipt/blob handling
 
 Port selected files or behavior, not whole crates:
 
@@ -723,11 +723,11 @@ Port selected files or behavior, not whole crates:
   - copy/adapt JSON schema helpers and model-facing tool builders for
     `exec_command`, `write_stdin`, `list_dir`, and `apply_patch`
   - do not import unrelated Codex tool packages such as web search, images,
-    MCP, agents, plugins, code mode, or goals into `forge-agent-tools`
+    MCP, agents, plugins, code mode, or goals into `lightspeed-agent-tools`
 - `codex-shell-command`
   - useful later for shell parsing, command summarization, and dangerous command
     classification
-  - defer until Forge adds approval/process policy for execution, because the
+  - defer until Lightspeed adds approval/process policy for execution, because the
     dependency and behavior surface is larger than the first local executor
     needs
 
@@ -747,7 +747,7 @@ Use as references only for now:
   `codex-shell-escalation`, `codex-arg0`
   - useful substrate references, but too tied to Codex's CLI, platform helpers,
     approval model, and remote exec-server lifecycle for the first
-    `forge-agent-tools` pass
+    `lightspeed-agent-tools` pass
 
 ## Patch Tool Reference Split
 
@@ -776,14 +776,14 @@ reference for matching/edit behavior worth comparing against Codex:
 - ambiguity detection
 - edit-style replacement helpers
 
-The Forge implementation should start from Codex-compatible patch behavior and
+The Lightspeed implementation should start from Codex-compatible patch behavior and
 only borrow `fabric-host` ideas where they demonstrably improve reliability
 without diverging from the tool behavior coding models already expect.
 
 Implementation plan: vendor/port Codex's `codex-apply-patch` crate as the
-baseline `apply_patch` implementation inside `forge-agent-tools`, with
+baseline `apply_patch` implementation inside `lightspeed-agent-tools`, with
 Apache-2.0 attribution/notice requirements preserved and modified files marked
-as adapted for Forge.
+as adapted for Lightspeed.
 
 Target adapted module shape:
 
@@ -802,7 +802,7 @@ matching, shell/heredoc detection, output shape, and add/delete/update/move
 semantics. Adapt only the edges:
 
 - replace `codex_exec_server::ExecutorFileSystem` with `FileSystem`
-- replace `codex_utils_absolute_path::AbsolutePathBuf` with Forge `FsPath`
+- replace `codex_utils_absolute_path::AbsolutePathBuf` with Lightspeed `FsPath`
   plus local host path mapping
 - remove Codex-specific approval, sandbox, Guardian, and protocol event
   plumbing from the copied engine
@@ -859,14 +859,14 @@ Start conservative in builders, but keep the foundation general:
 
 ## Dependencies
 
-- Depends on P47 runner/effect contracts in `forge-agent`.
+- Depends on P47 runner/effect contracts in `lightspeed-agent`.
 - Provides standard tool packages consumed by in-process/process runners.
 - Informs P60 outbox rules for non-idempotent write/process tools.
 
 ## Done When
 
-- `forge-agent-tools` builds as a workspace crate.
-- The crate is optional: `forge-agent` and `forge-agent-llm` do not depend on
+- `lightspeed-agent-tools` builds as a workspace crate.
+- The crate is optional: `lightspeed-agent` and `lightspeed-agent-llm` do not depend on
   it.
 - It exports a standard agent tool package.
 - The internal API is no longer workspace-rooted at the foundation.
@@ -881,6 +881,6 @@ Start conservative in builders, but keep the foundation general:
   deterministic unit tests.
 - Tool outputs and errors use `BlobStore` where appropriate.
 - The implementation does not add local filesystem/process dependencies to
-  `forge-agent`.
-- `cargo check -p forge-agent-tools` and `cargo test -p forge-agent-tools`
+  `lightspeed-agent`.
+- `cargo check -p lightspeed-agent-tools` and `cargo test -p lightspeed-agent-tools`
   pass.

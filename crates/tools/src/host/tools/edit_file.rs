@@ -111,7 +111,7 @@ mod tests {
             EditFileArgs {
                 path: FsPath::new("file.txt").expect("path"),
                 old_string: "world".to_string(),
-                new_string: "forge".to_string(),
+                new_string: "lightspeed".to_string(),
                 replace_all: false,
             },
         )
@@ -123,7 +123,7 @@ mod tests {
             fs.read_file_text(&FsPath::new("/workspace/file.txt").unwrap())
                 .await
                 .expect("read file"),
-            "hello forge\n"
+            "hello lightspeed\n"
         );
     }
 

@@ -1,6 +1,6 @@
-# Forge Local Environment
+# Lightspeed Local Environment
 
-This directory contains the local Docker environment for Forge: Postgres,
+This directory contains the local Docker environment for Lightspeed: Postgres,
 pgAdmin, MinIO, and Temporal.
 
 ## Services
@@ -65,17 +65,17 @@ source local/env.sh
 Equivalent values:
 
 ```bash
-export FORGE_TEST_POSTGRES_URL=postgres://forge:forge@localhost:15432/forge
-export FORGE_PG_UNIVERSE_ID=00000000-0000-0000-0000-000000000001
-export FORGE_POSTGRES_URL=${FORGE_TEST_POSTGRES_URL}
-export FORGE_TASK_QUEUE=forge-agent
-export FORGE_API_URL=http://127.0.0.1:18080/rpc
+export LIGHTSPEED_TEST_POSTGRES_URL=postgres://lightspeed:lightspeed@localhost:15432/lightspeed
+export LIGHTSPEED_PG_UNIVERSE_ID=00000000-0000-0000-0000-000000000001
+export LIGHTSPEED_POSTGRES_URL=${LIGHTSPEED_TEST_POSTGRES_URL}
+export LIGHTSPEED_TASK_QUEUE=lightspeed-agent
+export LIGHTSPEED_API_URL=http://127.0.0.1:18080/rpc
 
-export FORGE_OBJECT_STORE_BUCKET=forge-dev
-export FORGE_OBJECT_STORE_ENDPOINT=http://localhost:29000
-export FORGE_OBJECT_STORE_REGION=us-east-1
-export FORGE_OBJECT_STORE_PREFIX=forge
-export FORGE_OBJECT_STORE_FORCE_PATH_STYLE=true
+export LIGHTSPEED_OBJECT_STORE_BUCKET=lightspeed-dev
+export LIGHTSPEED_OBJECT_STORE_ENDPOINT=http://localhost:29000
+export LIGHTSPEED_OBJECT_STORE_REGION=us-east-1
+export LIGHTSPEED_OBJECT_STORE_PREFIX=lightspeed
+export LIGHTSPEED_OBJECT_STORE_FORCE_PATH_STYLE=true
 
 export AWS_ACCESS_KEY_ID=minioadmin
 export AWS_SECRET_ACCESS_KEY=minioadmin
@@ -129,7 +129,7 @@ export OPENAI_API_KEY=...
 cargo test -p temporal-server --test temporal_live temporal_live_session_start_then_run_start_completes_openai_run -- --ignored --nocapture
 ```
 
-Set `FORGE_OPENAI_MODEL`, `OPENAI_RESPONSES_MODEL`, or
+Set `LIGHTSPEED_OPENAI_MODEL`, `OPENAI_RESPONSES_MODEL`, or
 `OPENAI_LIVE_MODEL` to override the default live-test model.
 
 pgAdmin runs in desktop mode for local dev, so the browser UI does not require
@@ -138,17 +138,17 @@ a login.
 To register the local database in pgAdmin:
 
 ```text
-Name:                 Forge Local
+Name:                 Lightspeed Local
 Host name/address:    postgres
 Port:                 5432
-Maintenance database: forge
-Username:             forge
-Password:             forge
+Maintenance database: lightspeed
+Username:             lightspeed
+Password:             lightspeed
 ```
 
 Use `postgres` as the host inside pgAdmin because pgAdmin runs in the Docker
 network. From the host machine, use `localhost:15432` instead:
 
 ```text
-postgres://forge:forge@localhost:15432/forge
+postgres://lightspeed:lightspeed@localhost:15432/lightspeed
 ```

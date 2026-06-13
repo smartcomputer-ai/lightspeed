@@ -33,7 +33,7 @@
       "processTerminate": true
     },
     "defaultCwd": "/workspace",
-    "displayName": "forge dev",
+    "displayName": "lightspeed dev",
     "metadata": {
       "provider": "smolvm"
     },

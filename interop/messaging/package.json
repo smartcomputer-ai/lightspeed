@@ -1,13 +1,13 @@
 {
-  "name": "@forge/messaging-bridge",
+  "name": "@lightspeed/messaging-bridge",
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Telegram and WhatsApp bridge for Forge sessions.",
+  "description": "Telegram and WhatsApp bridge for Lightspeed sessions.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "forge-messaging-bridge": "./dist/main.js"
+    "lightspeed-messaging-bridge": "./dist/main.js"
   },
   "scripts": {
     "build:client": "npm --prefix ../ts-client install --ignore-scripts && npm --prefix ../ts-client run build",
@@ -21,7 +21,7 @@
     "check": "npm run build:client && npm run typecheck:bridge && npm run test:bridge && npm run build:bridge"
   },
   "dependencies": {
-    "@forge/agent-client": "file:../ts-client",
+    "@lightspeed/agent-client": "file:../ts-client",
     "baileys": "7.0.0-rc13",
     "dotenv": "^17.2.3",
     "grammy": "^1.43.0",

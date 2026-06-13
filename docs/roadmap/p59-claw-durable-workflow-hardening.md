@@ -53,7 +53,7 @@ P59 keeps that architecture and focuses on operational correctness:
 - LLM session compaction or context pruning.
 - Streaming notifications, SSE, WebSockets, or token streams.
 - Multi-tenant auth or hosted gateway policy.
-- Replacing Pg/CAS as the Forge session-log source of truth.
+- Replacing Pg/CAS as the Lightspeed session-log source of truth.
 - Changing the `agent-api` client-facing DTO model unless required to express
   clear error semantics.
 
@@ -74,7 +74,7 @@ correctness items.
 
 Temporal may retry `append_events` after Pg has already committed the batch but
 before Temporal records the activity result. The current append path can then
-see `ExpectedHeadMismatch` and fail the workflow even though the Forge session
+see `ExpectedHeadMismatch` and fail the workflow even though the Lightspeed session
 log is correct.
 
 Target behavior:
@@ -146,7 +146,7 @@ Rules:
 - Do not continue-as-new while an LLM/tool activity is in flight.
 - Do not continue-as-new while `pending_admissions` is non-empty unless the
   admissions are explicitly carried into the new run args.
-- Keep the Forge session log as the recovery source, not workflow-local state.
+- Keep the Lightspeed session log as the recovery source, not workflow-local state.
 
 Tests:
 
@@ -179,7 +179,7 @@ Decision to make:
 
 Chosen target:
 
-- `agent-api::run/start` requires an existing Forge session.
+- `agent-api::run/start` requires an existing Lightspeed session.
 - `ClawAgentApi::open_or_start_session` remains a convenience helper.
 - `session/start` remains session creation only; it does not carry initial run
   submissions.
@@ -189,7 +189,7 @@ Chosen target:
 Implemented:
 
 - `ClawAgentApi::start_run` no longer uses Signal-With-Start. It loads the
-  existing Forge session to obtain run config, then signals the existing
+  existing Lightspeed session to obtain run config, then signals the existing
   workflow.
 - Missing sessions now fail before a signal is sent, preserving `NotFound`
   semantics.

@@ -132,7 +132,7 @@ pub fn conventional_vfs_prompt_root_specs(mounts: &[VfsMountRecord]) -> Vec<VfsP
             push_spec(
                 &mut specs,
                 &mut seen,
-                workspace_prompt_root(&mount.mount_path, ".forge/prompts"),
+                workspace_prompt_root(&mount.mount_path, ".lightspeed/prompts"),
             );
             push_spec(
                 &mut specs,
@@ -279,7 +279,7 @@ mod tests {
             blobs.as_ref(),
             CreateInlineSnapshotRequest::new(vec![
                 InlineFile::new(
-                    ".forge/prompts/instructions.md",
+                    ".lightspeed/prompts/instructions.md",
                     b"Project instructions\n".to_vec(),
                 )
                 .unwrap(),
@@ -342,7 +342,7 @@ mod tests {
             } if source_workspace_id == &workspace_id
                 && *workspace_revision == 0
                 && source_mount_path.as_str() == "/workspace"
-                && prompt_file_path.as_str() == "/workspace/.forge/prompts/instructions.md"
+                && prompt_file_path.as_str() == "/workspace/.lightspeed/prompts/instructions.md"
         ));
         assert!(build.report.sources[0].writable);
     }
@@ -374,7 +374,7 @@ mod tests {
                 .iter()
                 .map(|root| root.root_path.as_str())
                 .collect::<Vec<_>>(),
-            vec!["/workspace/.forge/prompts", "/workspace/.agents/prompts"]
+            vec!["/workspace/.lightspeed/prompts", "/workspace/.agents/prompts"]
         );
     }
 

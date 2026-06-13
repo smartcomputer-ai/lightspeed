@@ -26,7 +26,7 @@ impl PgStore {
     fn secrets_cipher(&self) -> Result<(Aes256Gcm, &'static str), AuthRegistryError> {
         let Some(key) = &self.config.secrets_master_key else {
             return Err(AuthRegistryError::Store {
-                message: "secrets master key is not configured; set FORGE_SECRETS_MASTER_KEY"
+                message: "secrets master key is not configured; set LIGHTSPEED_SECRETS_MASTER_KEY"
                     .to_owned(),
             });
         };

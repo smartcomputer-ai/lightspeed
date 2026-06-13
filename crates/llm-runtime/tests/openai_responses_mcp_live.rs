@@ -18,7 +18,7 @@ mod support;
 use support::retrying_openai_responses_client;
 
 const MCP_ECHO_SERVER_URL: &str = "https://mcpplaygroundonline.com/mcp-echo-server";
-const MCP_ECHO_MARKER: &str = "FORGE-MCP-ECHO-LIVE-7392";
+const MCP_ECHO_MARKER: &str = "LIGHTSPEED-MCP-ECHO-LIVE-7392";
 
 fn live_model() -> String {
     env_or_dotenv_var("OPENAI_RESPONSES_MODEL")
@@ -100,7 +100,7 @@ async fn openai_responses_live_core_session_uses_no_auth_remote_mcp_echo() {
     sessions
         .create_session(CreateSession {
             session_id: session_id.clone(),
-            agent_handle: AgentHandle::new("forge.live-mcp"),
+            agent_handle: AgentHandle::new("lightspeed.live-mcp"),
             created_at_ms: 1,
         })
         .await
@@ -194,7 +194,7 @@ async fn openai_responses_live_core_session_uses_no_auth_remote_mcp_echo() {
             .emitted_entries
             .iter()
             .any(|entry| matches!(entry.event.kind, CoreAgentEventKind::Tool(_))),
-        "direct remote MCP must not create Forge tool events"
+        "direct remote MCP must not create Lightspeed tool events"
     );
 
     let mcp_calls = mcp_call_items(blobs.as_ref(), &outcome.emitted_entries).await;

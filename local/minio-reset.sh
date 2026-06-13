@@ -6,9 +6,9 @@ source "${SCRIPT_DIR}/common.sh"
 
 "${SCRIPT_DIR}/minio-ensure.sh"
 
-TARGET="local/${FORGE_OBJECT_STORE_BUCKET}"
-if [[ -n "${FORGE_OBJECT_STORE_PREFIX}" ]]; then
-  TARGET="${TARGET}/${FORGE_OBJECT_STORE_PREFIX#/}"
+TARGET="local/${LIGHTSPEED_OBJECT_STORE_BUCKET}"
+if [[ -n "${LIGHTSPEED_OBJECT_STORE_PREFIX}" ]]; then
+  TARGET="${TARGET}/${LIGHTSPEED_OBJECT_STORE_PREFIX#/}"
 fi
 
 compose run --rm --no-deps \

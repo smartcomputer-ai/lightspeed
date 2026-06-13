@@ -46,7 +46,7 @@ pub enum PrincipalKind {
     UniverseDefault,
 }
 
-/// Who a grant was issued to. Forge has no user identity yet, so the default
+/// Who a grant was issued to. Lightspeed has no user identity yet, so the default
 /// principal is `UniverseDefault` with no id; the shape exists so adding
 /// identity later is a data migration, not a redesign.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

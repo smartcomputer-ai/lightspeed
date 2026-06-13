@@ -63,8 +63,8 @@ pub fn export_schemas() -> ExportedSchemas {
 
     let schema_bundle = json!({
         "$schema": "http://json-schema.org/draft-07/schema#",
-        "title": "Forge Agent API",
-        "description": "All JSON-RPC wire types of the Forge agent API.",
+        "title": "Lightspeed Agent API",
+        "description": "All JSON-RPC wire types of the Lightspeed agent API.",
         "definitions": definitions,
     });
 
@@ -83,7 +83,7 @@ pub fn export_schemas() -> ExportedSchemas {
     let mut openrpc = json!({
         "openrpc": "1.3.2",
         "info": {
-            "title": "Forge Agent API",
+            "title": "Lightspeed Agent API",
             "version": env!("CARGO_PKG_VERSION"),
             "description":
                 "JSON-RPC 2.0 over HTTP POST /rpc. Results are wrapped in the \

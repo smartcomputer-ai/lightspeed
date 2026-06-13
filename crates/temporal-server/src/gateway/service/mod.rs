@@ -539,7 +539,7 @@ impl AgentApiService for GatewayAgentApi {
         Ok(AgentApiOutcome::new(InitializeResponse {
             protocol_version: api::PROTOCOL_VERSION.to_owned(),
             server_info: ServerInfo {
-                name: "forge-agent".to_owned(),
+                name: "lightspeed-agent".to_owned(),
                 version: env!("CARGO_PKG_VERSION").to_owned(),
             },
             capabilities: ServerCapabilities {

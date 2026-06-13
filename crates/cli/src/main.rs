@@ -10,7 +10,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
-#[command(name = "forge", version, about = "Forge command-line tools")]
+#[command(name = "lightspeed", version, about = "Lightspeed command-line tools")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -18,7 +18,7 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Chat through a Forge API gateway.
+    /// Chat through a Lightspeed API gateway.
     Chat(chat::ChatArgs),
     /// Work with CAS-backed VFS snapshots.
     Vfs(vfs_cli::VfsArgs),
@@ -50,7 +50,7 @@ mod tests {
     #[test]
     fn chat_parse_accepts_model_and_workdir_options() {
         let cli = Cli::try_parse_from([
-            "forge",
+            "lightspeed",
             "chat",
             "--new",
             "--provider",
@@ -72,7 +72,7 @@ mod tests {
     #[test]
     fn chat_parse_accepts_remote_api_url() {
         let cli = Cli::try_parse_from([
-            "forge",
+            "lightspeed",
             "chat",
             "--new",
             "--api-url",
@@ -86,7 +86,7 @@ mod tests {
     #[test]
     fn chat_parse_accepts_mount_options() {
         let cli = Cli::try_parse_from([
-            "forge",
+            "lightspeed",
             "chat",
             "--new",
             "--api-url",
@@ -104,7 +104,7 @@ mod tests {
     #[test]
     fn vfs_snapshot_parse_accepts_directory_and_api_options() {
         let cli = Cli::try_parse_from([
-            "forge",
+            "lightspeed",
             "vfs",
             "snapshot",
             "--api-url",
@@ -120,7 +120,7 @@ mod tests {
     #[test]
     fn vfs_materialize_parse_accepts_snapshot_ref_and_destination() {
         let cli = Cli::try_parse_from([
-            "forge",
+            "lightspeed",
             "vfs",
             "materialize",
             "--api-url",
@@ -135,7 +135,7 @@ mod tests {
     #[test]
     fn vfs_workspace_create_parse_accepts_snapshot_ref() {
         let cli = Cli::try_parse_from([
-            "forge",
+            "lightspeed",
             "vfs",
             "workspace",
             "create",
@@ -152,7 +152,7 @@ mod tests {
     #[test]
     fn vfs_workspace_read_parse_accepts_workspace_id() {
         let cli = Cli::try_parse_from([
-            "forge",
+            "lightspeed",
             "vfs",
             "workspace",
             "read",
@@ -167,7 +167,7 @@ mod tests {
     #[test]
     fn vfs_workspace_update_parse_accepts_expected_revision_and_snapshot_ref() {
         let cli = Cli::try_parse_from([
-            "forge",
+            "lightspeed",
             "vfs",
             "workspace",
             "update",
@@ -185,7 +185,7 @@ mod tests {
     #[test]
     fn vfs_workspace_update_parse_allows_omitted_expected_revision() {
         let cli = Cli::try_parse_from([
-            "forge",
+            "lightspeed",
             "vfs",
             "workspace",
             "update",
@@ -201,7 +201,7 @@ mod tests {
     #[test]
     fn vfs_workspace_delete_parse_accepts_workspace_id() {
         let cli = Cli::try_parse_from([
-            "forge",
+            "lightspeed",
             "vfs",
             "workspace",
             "delete",
@@ -216,7 +216,7 @@ mod tests {
     #[test]
     fn vfs_mount_put_parse_accepts_workspace_mount() {
         let cli = Cli::try_parse_from([
-            "forge",
+            "lightspeed",
             "vfs",
             "mount",
             "put",
@@ -237,7 +237,7 @@ mod tests {
     #[test]
     fn vfs_mount_delete_parse_accepts_session_and_path() {
         let cli = Cli::try_parse_from([
-            "forge",
+            "lightspeed",
             "vfs",
             "mount",
             "delete",
@@ -255,7 +255,7 @@ mod tests {
     #[test]
     fn skills_list_parse_accepts_session() {
         let cli = Cli::try_parse_from([
-            "forge",
+            "lightspeed",
             "skills",
             "list",
             "--api-url",
@@ -270,7 +270,7 @@ mod tests {
     #[test]
     fn skills_active_parse_accepts_json() {
         let cli = Cli::try_parse_from([
-            "forge",
+            "lightspeed",
             "skills",
             "active",
             "--api-url",
@@ -286,7 +286,7 @@ mod tests {
     #[test]
     fn skills_activate_parse_accepts_scope() {
         let cli = Cli::try_parse_from([
-            "forge",
+            "lightspeed",
             "skills",
             "activate",
             "--api-url",
@@ -304,7 +304,7 @@ mod tests {
     #[test]
     fn skills_deactivate_parse_accepts_skill_id() {
         let cli = Cli::try_parse_from([
-            "forge",
+            "lightspeed",
             "skills",
             "deactivate",
             "--api-url",
@@ -320,7 +320,7 @@ mod tests {
     #[test]
     fn mcp_server_add_parse_accepts_registry_options() {
         let cli = Cli::try_parse_from([
-            "forge",
+            "lightspeed",
             "mcp",
             "server",
             "add",
@@ -343,7 +343,7 @@ mod tests {
     #[test]
     fn auth_grant_import_parse_accepts_token_env() {
         let cli = Cli::try_parse_from([
-            "forge",
+            "lightspeed",
             "auth",
             "grant",
             "import",
@@ -363,7 +363,7 @@ mod tests {
     #[test]
     fn auth_grant_import_requires_a_token_source() {
         let result = Cli::try_parse_from([
-            "forge",
+            "lightspeed",
             "auth",
             "grant",
             "import",
@@ -376,7 +376,7 @@ mod tests {
     #[test]
     fn auth_client_add_parse_accepts_endpoints_and_secret_env() {
         let cli = Cli::try_parse_from([
-            "forge",
+            "lightspeed",
             "auth",
             "client",
             "add",
@@ -404,7 +404,7 @@ mod tests {
     #[test]
     fn auth_client_add_rejects_multiple_secret_sources() {
         let result = Cli::try_parse_from([
-            "forge",
+            "lightspeed",
             "auth",
             "client",
             "add",
@@ -427,7 +427,7 @@ mod tests {
     #[test]
     fn mcp_server_add_parse_accepts_oauth_policy_metadata() {
         let cli = Cli::try_parse_from([
-            "forge",
+            "lightspeed",
             "mcp",
             "server",
             "add",
@@ -452,7 +452,7 @@ mod tests {
     #[test]
     fn auth_github_app_add_parse_requires_a_key_source() {
         let parsed = Cli::try_parse_from([
-            "forge",
+            "lightspeed",
             "auth",
             "github",
             "app",
@@ -460,7 +460,7 @@ mod tests {
             "--api-url",
             "http://127.0.0.1:18080/rpc",
             "--id",
-            "forge-github",
+            "lightspeed-github",
             "--app-id",
             "12345",
             "--private-key-env",
@@ -470,7 +470,7 @@ mod tests {
         assert!(matches!(parsed.command, Command::Auth(_)));
 
         let missing_key = Cli::try_parse_from([
-            "forge",
+            "lightspeed",
             "auth",
             "github",
             "app",
@@ -486,7 +486,7 @@ mod tests {
     #[test]
     fn auth_github_installation_grant_parse_accepts_app_and_id() {
         let parsed = Cli::try_parse_from([
-            "forge",
+            "lightspeed",
             "auth",
             "github",
             "installation",
@@ -494,7 +494,7 @@ mod tests {
             "--api-url",
             "http://127.0.0.1:18080/rpc",
             "--app",
-            "forge-github",
+            "lightspeed-github",
             "--installation-id",
             "678",
         ])
@@ -505,7 +505,7 @@ mod tests {
     #[test]
     fn auth_login_parse_accepts_mcp_server_client_ids() {
         let cli = Cli::try_parse_from([
-            "forge",
+            "lightspeed",
             "auth",
             "login",
             "--api-url",
@@ -519,7 +519,7 @@ mod tests {
     #[test]
     fn auth_login_parse_accepts_client_and_overrides() {
         let cli = Cli::try_parse_from([
-            "forge",
+            "lightspeed",
             "auth",
             "login",
             "--api-url",
@@ -538,7 +538,7 @@ mod tests {
     #[test]
     fn mcp_link_parse_accepts_session_and_server() {
         let cli = Cli::try_parse_from([
-            "forge",
+            "lightspeed",
             "mcp",
             "link",
             "--api-url",

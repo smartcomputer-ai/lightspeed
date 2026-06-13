@@ -1,4 +1,4 @@
-//! Canonical Forge host tool surface.
+//! Canonical Lightspeed host tool surface.
 
 use serde_json::Value;
 

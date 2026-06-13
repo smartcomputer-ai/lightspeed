@@ -1,4 +1,4 @@
-//! Forge-native agent core contracts.
+//! Lightspeed-native agent core contracts.
 //!
 //! This crate defines extensible session-log primitives plus the built-in
 //! CoreAgent domain: command/event/state vocabulary, provider-native LLM/tool

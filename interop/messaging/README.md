@@ -1,9 +1,9 @@
-# Forge Messaging Bridge
+# Lightspeed Messaging Bridge
 
-Telegram and WhatsApp channel gateway for Forge sessions (P71 G1/G2).
+Telegram and WhatsApp channel gateway for Lightspeed sessions (P71 G1/G2).
 
 This is an overlay service: it does not add channel-specific endpoints to the
-Forge gateway. It binds each chat/thread to a stable Forge session, classifies
+Lightspeed gateway. It binds each chat/thread to a stable Lightspeed session, classifies
 inbound traffic, submits addressed messages as runs, appends unaddressed group
 chatter as session context, and sends assistant replies back to the channel.
 
@@ -33,7 +33,7 @@ Sessions the bridge creates get the messaging toolset
 speaks by calling tools: sends/reactions/edits land as durable outbox rows
 on the gateway, and the bridge tails `outbox/read`, resolves each entry's
 session to its chat binding, delivers through the channel API, and acks.
-This also means a Forge session can message the chat mid-run or from a run
+This also means a Lightspeed session can message the chat mid-run or from a run
 the user never started.
 
 When a run uses **no** messaging tool, the bridge falls back to delivering
@@ -59,7 +59,7 @@ runtime with `/activation`:
 - `src/batcher.ts` — turn debouncing and room-event buffering/budgets.
 - `src/runtime.ts` — orchestration: bindings, dedupe, per-conversation
   serialization, control commands.
-- `src/forge.ts` — `session/start`, `context/append`, `run/start`, awaitRun,
+- `src/lightspeed.ts` — `session/start`, `context/append`, `run/start`, awaitRun,
   and reply extraction (all assistant messages of a run).
 - `src/store.ts` — bindings (chat → session, activation, cursor) plus message
   dedupe records in `.bridge-state.json`.
@@ -69,7 +69,7 @@ runtime with `/activation`:
 
 ## Setup
 
-Start the Forge gateway first:
+Start the Lightspeed gateway first:
 
 ```bash
 cargo run -p temporal-server
@@ -87,7 +87,7 @@ npm run dev
 The package uses a local file dependency:
 
 ```json
-"@forge/agent-client": "file:../ts-client"
+"@lightspeed/agent-client": "file:../ts-client"
 ```
 
 Bridge scripts run `npm --prefix ../ts-client run build` first, so
