@@ -78,7 +78,7 @@ export class LightspeedSessionBridge {
       await this.client.call("vfs/mount/put", {
         sessionId,
         mountPath: mount.mountPath,
-        source: mount.source as VfsMountSourceInput,
+        source: mountSourceInput(mount.source),
         access: mount.access,
       });
     }
@@ -197,6 +197,13 @@ export function sessionStartConfig(recipe?: SessionRecipe | null): SessionConfig
       messaging: tools.messaging ?? true,
     },
   };
+}
+
+function mountSourceInput(source: SessionRecipe["mounts"][number]["source"]): VfsMountSourceInput {
+  if ("workspaceId" in source) {
+    return { type: "workspace", workspaceId: source.workspaceId };
+  }
+  return { type: "snapshot", snapshotRef: source.snapshotRef };
 }
 
 /// True when the run contains at least one successful messaging tool call

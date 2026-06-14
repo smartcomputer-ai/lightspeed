@@ -143,7 +143,7 @@ describe("LightspeedSessionBridge.ensureSession", () => {
     expect(client.calls[1]?.params).toMatchObject({
       sessionId: "session_x",
       mountPath: "/workspace",
-      source: { workspaceId: "ws-1" },
+      source: { type: "workspace", workspaceId: "ws-1" },
       access: "readWrite",
     });
     expect(client.calls[2]?.params).toMatchObject({
