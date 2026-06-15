@@ -582,7 +582,9 @@ different mode.
 ## G6: Audio Transcription Preprocessing
 
 Voice notes are first-class input; transcription is a hosted-runtime
-concern.
+concern. The generalized design now lives in
+[P72: Audio Transcription Preprocessing](p72-audio-transcription-preprocessing.md);
+this section remains as the P71 messaging-channel acceptance slice.
 
 Design notes:
 

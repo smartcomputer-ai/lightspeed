@@ -14,6 +14,7 @@
     - authetication/password/allowlists
     - session binding & consistency (what about /new)
     - cross session knowledge
+- [ ] audio transcription preprocessing ([P72 proposed](p72-audio-transcription-preprocessing.md))
 - (go live)
 - timers/schedules/cron
 - vms/sandboxes
