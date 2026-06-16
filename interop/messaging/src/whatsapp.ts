@@ -16,7 +16,7 @@ import { resolveInboundAccess, type WhatsAppBridgeConfig } from "./config.js";
 import type { BridgeRouting } from "./telegram.js";
 import { stableHash } from "./ids.js";
 import { renderWhatsAppText } from "./markdown.js";
-import { documentByteLimit, documentMime } from "./media.js";
+import { audioMime, documentByteLimit, documentMime, MAX_AUDIO_BYTES } from "./media.js";
 import { DeliveryError, type ChannelDeliverer, type DeliveryResult } from "./outbox.js";
 import { shouldQuoteChunk } from "./policy.js";
 import type {
@@ -212,7 +212,13 @@ async function handleWhatsAppMessage(
   const hasDocument =
     documentMimeType !== null &&
     Number(document?.fileLength ?? 0) <= documentByteLimit(documentMimeType);
-  if (!rawText && !hasImage && !hasDocument) {
+  const audio = content?.audioMessage ?? null;
+  const audioMimeType = audio
+    ? audioMime(null, audio.mimetype ?? (audio.ptt ? "audio/ogg" : null))
+    : null;
+  const hasAudio =
+    audioMimeType !== null && Number(audio?.fileLength ?? 0) <= MAX_AUDIO_BYTES;
+  if (!rawText && !hasImage && !hasDocument && !hasAudio) {
     return;
   }
 
@@ -244,6 +250,18 @@ async function handleWhatsAppMessage(
     message.key.participant ?? "direct",
     messageId,
   ])}`;
+  const fetchMedia = hasImage
+    ? () => downloadWhatsAppImage(message, image?.mimetype ?? null)
+    : hasDocument
+      ? () => downloadWhatsAppDocument(message, documentMimeType, document?.fileName ?? null)
+      : hasAudio
+        ? () =>
+            downloadWhatsAppAudio(
+              message,
+              audioMimeType,
+              audio?.ptt ? "voice.ogg" : "audio",
+            )
+        : undefined;
 
   const inbound: NormalizedInbound = {
     provider: "whatsapp",
@@ -260,7 +278,11 @@ async function handleWhatsAppMessage(
       rawText ||
       (hasDocument
         ? `(sent a file: ${document?.fileName ?? "document"})`
-        : "(sent an image)"),
+        : hasAudio
+          ? audio?.ptt
+            ? "(sent a voice note)"
+            : "(sent audio)"
+          : "(sent an image)"),
     isDirect: !isGroup,
     chatLabel: isGroup ? remoteJid.split("@")[0] || remoteJid : "dm",
     mentionedBot: Boolean(
@@ -278,14 +300,7 @@ async function handleWhatsAppMessage(
     recipe: access.recipe,
     recipeName: access.recipeName,
     sessionKey: access.sessionKey,
-    ...(hasImage
-      ? { fetchMedia: () => downloadWhatsAppImage(message, image?.mimetype ?? null) }
-      : hasDocument
-        ? {
-            fetchMedia: () =>
-              downloadWhatsAppDocument(message, documentMimeType, document?.fileName ?? null),
-          }
-        : {}),
+    ...(fetchMedia ? { fetchMedia } : {}),
   };
 
   await runtime.handleInbound(inbound, policy, {
@@ -341,6 +356,24 @@ async function downloadWhatsAppDocument(
   ];
 }
 
+async function downloadWhatsAppAudio(
+  message: WAMessage,
+  mime: string,
+  name: string,
+): Promise<InboundMedia[]> {
+  const buffer = (await downloadMediaMessage(message, "buffer", {})) as Buffer;
+  if (buffer.byteLength > MAX_AUDIO_BYTES) {
+    return [];
+  }
+  return [
+    {
+      base64: buffer.toString("base64"),
+      mime,
+      name,
+    },
+  ];
+}
+
 function extractContextInfo(content: proto.IMessage | undefined): proto.IContextInfo | null {
   if (!content) {
     return null;
@@ -350,6 +383,7 @@ function extractContextInfo(content: proto.IMessage | undefined): proto.IContext
     content.imageMessage?.contextInfo ??
     content.videoMessage?.contextInfo ??
     content.documentMessage?.contextInfo ??
+    content.audioMessage?.contextInfo ??
     null
   );
 }

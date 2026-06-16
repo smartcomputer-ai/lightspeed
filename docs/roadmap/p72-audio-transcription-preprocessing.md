@@ -177,7 +177,19 @@ projection needs it.
 
 ## Implementation Slices
 
-### G1: Gateway And Bridge Admission
+### [x] G1: Gateway And Bridge Admission
+
+Completed 2026-06-16:
+
+- Gateway `run/start` accepts bounded audio media for `audio/mpeg`,
+  `audio/mp4`, `audio/wav`, `audio/webm`, and `audio/ogg`, with blob
+  existence and byte-cap checks.
+- `context/append` media rejection remains unchanged.
+- Telegram and WhatsApp adapters pass addressed voice/audio messages through
+  the existing lazy media download path; unaddressed room-event audio remains
+  placeholder text.
+- No API wire shape changed, so committed contract artifacts were not
+  regenerated.
 
 - Accept `MediaKind::Audio` in `run/start` with an audio MIME allowlist and
   byte cap.

@@ -17,7 +17,7 @@ import type {
   NormalizedInbound,
 } from "./runtime.js";
 import { renderTelegramHtml } from "./markdown.js";
-import { documentByteLimit, documentMime } from "./media.js";
+import { audioMime, documentByteLimit, documentMime, MAX_AUDIO_BYTES } from "./media.js";
 import type { BindingState } from "./store.js";
 import { splitMessageText } from "./text.js";
 
@@ -76,7 +76,17 @@ export async function startTelegramBridge(
       ? documentMime(message.document.file_name, message.document.mime_type)
       : null;
     const hasDocument = documentMimeType !== null;
-    if (!text && !hasPhoto && !hasDocument) {
+    const voiceMimeType = message.voice
+      ? audioMime("voice.ogg", message.voice.mime_type)
+      : null;
+    const hasVoice =
+      voiceMimeType !== null && (message.voice?.file_size ?? 0) <= MAX_AUDIO_BYTES;
+    const audioMimeType = message.audio
+      ? audioMime(message.audio.file_name, message.audio.mime_type)
+      : null;
+    const hasAudio =
+      audioMimeType !== null && (message.audio?.file_size ?? 0) <= MAX_AUDIO_BYTES;
+    if (!text && !hasPhoto && !hasDocument && !hasVoice && !hasAudio) {
       return;
     }
 
@@ -104,6 +114,29 @@ export async function startTelegramBridge(
       threadId ?? "main",
       message.message_id,
     ])}`;
+    const fetchMedia = hasPhoto
+      ? () => downloadTelegramPhoto(ctx, config.botToken, message)
+      : hasDocument
+        ? () => downloadTelegramDocument(ctx, config.botToken, message, documentMimeType)
+        : hasVoice
+          ? () =>
+              downloadTelegramAudioFile(
+                ctx,
+                config.botToken,
+                message.voice?.file_id,
+                voiceMimeType,
+                "voice.ogg",
+              )
+          : hasAudio
+            ? () =>
+                downloadTelegramAudioFile(
+                  ctx,
+                  config.botToken,
+                  message.audio?.file_id,
+                  audioMimeType,
+                  message.audio?.file_name ?? "audio",
+                )
+            : undefined;
 
     const inbound: NormalizedInbound = {
       provider: "telegram",
@@ -121,7 +154,11 @@ export async function startTelegramBridge(
         text ||
         (hasDocument
           ? `(sent a file: ${message.document?.file_name ?? "document"})`
-          : "(sent an image)"),
+          : hasVoice
+            ? "(sent a voice note)"
+            : hasAudio
+              ? `(sent audio: ${message.audio?.file_name ?? "audio"})`
+              : "(sent an image)"),
       isDirect,
       chatLabel: isDirect ? "dm" : (message.chat.title ?? chatId),
       mentionedBot: messageMentionsBot(message, me.id, botUsername),
@@ -132,14 +169,7 @@ export async function startTelegramBridge(
       recipe: access.recipe,
       recipeName: access.recipeName,
       sessionKey: access.sessionKey,
-      ...(hasPhoto
-        ? { fetchMedia: () => downloadTelegramPhoto(ctx, config.botToken, message) }
-        : hasDocument
-          ? {
-              fetchMedia: () =>
-                downloadTelegramDocument(ctx, config.botToken, message, documentMimeType),
-            }
-          : {}),
+      ...(fetchMedia ? { fetchMedia } : {}),
     };
 
     await runtime.handleInbound(inbound, policy, {
@@ -157,6 +187,8 @@ export async function startTelegramBridge(
   bot.on("message:text", handleMessage);
   bot.on("message:photo", handleMessage);
   bot.on("message:document", handleMessage);
+  bot.on("message:voice", handleMessage);
+  bot.on("message:audio", handleMessage);
 
   const polling = bot.start({ allowed_updates: ["message"] }).catch((error) => {
     console.error("telegram: polling stopped", error);
@@ -330,6 +362,37 @@ async function downloadTelegramDocument(
       base64: bytes.toString("base64"),
       mime,
       name: document.file_name ?? file.file_path.split("/").at(-1) ?? "document",
+    },
+  ];
+}
+
+async function downloadTelegramAudioFile(
+  ctx: Context,
+  botToken: string,
+  fileId: string | undefined,
+  mime: string,
+  name: string,
+): Promise<InboundMedia[]> {
+  if (!fileId) {
+    return [];
+  }
+  const file = await ctx.api.getFile(fileId);
+  if (!file.file_path) {
+    return [];
+  }
+  const response = await fetch(`https://api.telegram.org/file/bot${botToken}/${file.file_path}`);
+  if (!response.ok) {
+    throw new Error(`telegram file download failed: ${response.status}`);
+  }
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (bytes.byteLength > MAX_AUDIO_BYTES) {
+    return [];
+  }
+  return [
+    {
+      base64: bytes.toString("base64"),
+      mime,
+      name,
     },
   ];
 }

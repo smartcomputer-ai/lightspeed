@@ -933,6 +933,32 @@ async fn run_input_from_api_rejects_unsupported_document_media() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn run_input_from_api_maps_audio_media_to_user_message_entry() {
+    let store = engine::storage::InMemoryBlobStore::new();
+    let blob_ref = store
+        .put_bytes(b"OggS fake voice note".to_vec())
+        .await
+        .expect("store audio");
+
+    let input = run_input_from_api(
+        &store,
+        &[InputItem::Media {
+            blob_ref: blob_ref.as_str().to_owned(),
+            mime: "audio/ogg".to_owned(),
+            kind: api::MediaKind::Audio,
+            name: Some("voice.ogg".to_owned()),
+        }],
+    )
+    .await
+    .expect("input");
+
+    assert_eq!(input.len(), 1);
+    assert_eq!(input[0].content_ref, blob_ref);
+    assert_eq!(input[0].media_type.as_deref(), Some("audio/ogg"));
+    assert_eq!(input[0].preview.as_deref(), Some("[audio: voice.ogg]"));
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn run_input_from_api_rejects_unsupported_media() {
     let store = engine::storage::InMemoryBlobStore::new();
     let blob_ref = store.put_bytes(vec![1, 2, 3]).await.expect("store blob");
@@ -941,13 +967,13 @@ async fn run_input_from_api_rejects_unsupported_media() {
         &store,
         &[InputItem::Media {
             blob_ref: blob_ref.as_str().to_owned(),
-            mime: "audio/ogg".to_owned(),
+            mime: "audio/aac".to_owned(),
             kind: api::MediaKind::Audio,
             name: None,
         }],
     )
     .await
-    .expect_err("audio must be rejected");
+    .expect_err("unsupported audio mime must be rejected");
     assert_eq!(audio.kind, AgentApiErrorKind::InvalidRequest);
 
     let bad_mime = run_input_from_api(
@@ -962,6 +988,29 @@ async fn run_input_from_api_rejects_unsupported_media() {
     .await
     .expect_err("unsupported image mime must be rejected");
     assert_eq!(bad_mime.kind, AgentApiErrorKind::InvalidRequest);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn run_input_from_api_rejects_audio_over_byte_cap() {
+    let store = engine::storage::InMemoryBlobStore::new();
+    let blob_ref = store
+        .put_bytes(vec![0; 25 * 1024 * 1024 + 1])
+        .await
+        .expect("store large audio");
+
+    let error = run_input_from_api(
+        &store,
+        &[InputItem::Media {
+            blob_ref: blob_ref.as_str().to_owned(),
+            mime: "audio/ogg".to_owned(),
+            kind: api::MediaKind::Audio,
+            name: None,
+        }],
+    )
+    .await
+    .expect_err("oversized audio must be rejected");
+
+    assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
 }
 
 #[tokio::test(flavor = "current_thread")]

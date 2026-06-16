@@ -2,11 +2,21 @@ use super::*;
 
 /// P71 G3: images and documents, bounded per run.
 const ALLOWED_IMAGE_MIMES: &[&str] = &["image/jpeg", "image/png", "image/webp", "image/gif"];
+/// P72 G1: bounded audio blobs are accepted at admission, then rewritten by
+/// workflow preprocessing before core planning.
+const ALLOWED_AUDIO_MIMES: &[&str] = &[
+    "audio/mpeg",
+    "audio/mp4",
+    "audio/wav",
+    "audio/webm",
+    "audio/ogg",
+];
 /// PDF is the only document type both providers accept natively; the text
 /// MIMEs are inlined as text by the llm-runtime adapters.
 const PDF_MIME: &str = "application/pdf";
 const TEXT_DOCUMENT_MIMES: &[&str] = &["text/plain", "text/markdown", "text/csv", "application/json"];
 const MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
+const MAX_AUDIO_BYTES: u64 = 25 * 1024 * 1024;
 const MAX_PDF_BYTES: u64 = 10 * 1024 * 1024;
 /// Text documents land in model context verbatim; keep them small.
 const MAX_TEXT_DOCUMENT_BYTES: u64 = 1024 * 1024;
@@ -85,9 +95,13 @@ async fn media_message_input(
             ("image", MAX_IMAGE_BYTES)
         }
         MediaKind::Audio => {
-            return Err(AgentApiError::invalid_request(
-                "audio media input is not supported yet (P71 G6 transcription)",
-            ));
+            if !ALLOWED_AUDIO_MIMES.contains(&mime.as_str()) {
+                return Err(AgentApiError::invalid_request(format!(
+                    "unsupported audio mime type {mime}; allowed: {}",
+                    ALLOWED_AUDIO_MIMES.join(", ")
+                )));
+            }
+            ("audio", MAX_AUDIO_BYTES)
         }
         MediaKind::Document if mime == PDF_MIME => ("document", MAX_PDF_BYTES),
         MediaKind::Document if TEXT_DOCUMENT_MIMES.contains(&mime.as_str()) => {
@@ -188,5 +202,5 @@ pub(super) fn user_message_input(content_ref: BlobRef) -> ContextEntryInput {
     }
 }
 pub(super) fn empty_run_input_error() -> AgentApiError {
-    AgentApiError::invalid_request("run/start input must contain at least one non-empty text item")
+    AgentApiError::invalid_request("run/start input must contain at least one non-empty item")
 }
