@@ -71,10 +71,10 @@ Separate two different quantities:
 
 So the resolution to the confusion: we keep sending all active items to the
 provider (correct, bounded by the window). What we stop doing is **durably
-recording a fresh snapshot of that list in every event**. The request stays
-`O(context)` when materialized; only its *persistence* changes from
-"inline snapshot per turn" to "a single CAS ref per turn". Compaction bounds the
-materialized request; P74 bounds the log.
+recording a fresh snapshot of that list in every event** (and in reduced state).
+The request stays `O(context)` when materialized; it is just no longer
+*persisted* anywhere — it is built transiently at generation time and discarded.
+Compaction bounds the materialized request; P74 bounds the log.
 
 Concretely, the dominant term to kill is the repeated `ContextSnapshot.entries`
 + `tools` lists inside `turn.planned`. Everything else in `LlmRequest` is small
@@ -93,113 +93,154 @@ and constant-ish per turn.
   is re-snapshotted each turn — exactly the sessions P73's incident came from.
 
 The original instinct (a self-contained, replayable, auditable planned request)
-is still right. The change is *where* that self-contained artifact lives: in CAS
-addressed by one ref, not inline in every event.
+turns out to be the thing to drop. The request does not need to be *persisted* at
+all: the active set is already reconstructable from the durable context events
+the reducer replays anyway, so the planned request can be rebuilt on demand and
+otherwise built transiently at generation time.
 
-## Options
+## Sizing — Why The List Must Leave The Durable Log
 
-### Option A — Compact event + request in CAS (recommended)
+A `ContextEntry` serializes to roughly 300–450 bytes of JSON (dominated by its
+`sha256:` `content_ref`, plus `kind`/`source`/`preview`/`token_estimate`); a
+`ToolSpec` to roughly 200–350 bytes. So one full active-set snapshot is on the
+order of:
 
-Stop embedding `LlmRequest` in `turn.planned`. Write the canonical
-provider-neutral `LlmRequest` to CAS and record a compact event:
+| active set | one full list |
+|---|---|
+| 20 entries / 10 tools | ~8–12 KB |
+| 50 entries / 20 tools | ~19–29 KB |
+| 150 entries / 40 tools | ~52–80 KB |
 
-```json
-{
-  "turn_id": 48,
-  "run_id": 19,
-  "request_ref": "sha256:...",
-  "request_fingerprint": "...",
-  "context_revision": 123,
-  "toolset_revision": 9
-}
-```
+Re-recording that **inline in every `turn.planned`** gives durable-log growth of
+`O(N·T)`:
 
-- The reducer does not invent `request_ref`. The engine emits a logical
-  "request planned" fact; the runtime writes the materialized request to CAS and
-  the workflow records the returned ref (mirroring how other bulky artifacts are
-  produced by activities and recorded as refs in P73).
-- Per-turn event drops to a handful of small fields. Log growth becomes
-  `O(T)` tiny events plus `O(distinct requests)` CAS blobs, instead of
-  `O(N·T)` inline metadata.
-- CAS dedup helps further: when the active set and tool catalog are unchanged
-  between turns, the materialized request differs only by small fields, and the
-  large manifests it references can themselves be CAS-deduped.
-- Replay rebuilds logical state from compact events; it does not need the full
-  request inline. Debugging/audit fetches the request from CAS by ref.
+| active set | T=500 turns | T=2000 turns |
+|---|---|---|
+| 20 / 10 | ~0.8–6 MB | ~15–24 MB |
+| 50 / 20 | ~9–14 MB | ~36–56 MB |
+| 150 / 40 | ~25–39 MB | ~100–155 MB |
 
-This is the smallest change that kills the dominant growth term.
+The incident hit ~1.1 MB at 537 events; these projections show why the curve is
+the real problem, not that one session. The dominant term is the repeated list.
 
-### Option B — Option A plus a manifest layer
+### Where the list can live, and the cost of each
 
-On top of A, store the context entry list and tool catalog as their own CAS
-*manifests* (`context_manifest_ref`, `toolset_manifest_ref` + hashes), and have
-the request reference the manifests rather than re-listing entries. Turns that
-share an unchanged active set share one manifest blob by hash.
+There are three logs/stores in play, and they age very differently:
 
-- Pro: strongest dedup. Across a stretch of turns with a stable active set and
-  catalog, the metadata list is stored once, not once per distinct request.
-- Con: more moving parts (two manifest types, hashes, revision tracking).
-- This is a refinement of A, not a different direction. Ship A first; add
-  manifests only if metrics show per-request blobs still dominate.
+| store | lifetime | scanned at bootstrap? |
+|---|---|---|
+| durable `session_events` | forever (append-only audit) | **yes — replayed** |
+| reduced `CoreAgentState` | carried across continue-as-new | yes (it *is* bootstrap output) |
+| Temporal workflow history | **reset by continue-as-new** | no |
+| CAS | forever, content-addressed | only on-demand fetch |
 
-### Option C — Generation materialization cursor (the original P73 sketch)
+The key asymmetry: **Temporal history is the only place that gets garbage-
+collected for free**, via continue-as-new. Data that lives only as transient
+activity input/output there is bounded by the continue-as-new interval, not by
+total session length.
 
-The version originally proposed in P73: a `GenerationMaterializationCursor`
-carried in workflow state, plus a `prepare_generation` activity that, given a
-base cursor and a target session position, reads persisted context/tool
-*deltas*, applies only materialization-relevant patches
-(`entries_applied`/`entries_removed`/`state_replaced`/`tools_patched`/…),
-reconstructs the target manifests, verifies their hashes against the workflow's
-expected hashes, builds the request, and writes it to CAS.
+## Decision
 
-- Pro: never materializes the full list in the hot path; rebuilds incrementally
-  from the previous cursor; strongest theoretical efficiency.
-- Con: the delta-apply step is a **second, partial reducer living inside an
-  activity**. It must enumerate exactly the materialization-relevant context/
-  tool event variants and stay consistent with the real reducer forever. Add a
-  new context event variant and forget to teach the materializer, and you
-  silently build a wrong request (caught only by the hash check, which then
-  fails the turn). For a determinism-critical engine this is a sharp,
-  long-lived maintenance edge.
-- Con: hash-verification + cursor threading is significant surface area for a
-  benefit that A+B largely already deliver via CAS dedup.
+Get the list out of the durable log *and* out of reduced state entirely. Do not
+persist the materialized request anywhere — not inline, not as a CAS blob.
 
-### Recommendation
+- **`turn.planned` records only**: `turn_id`, `run_id`, `request_fingerprint`,
+  `context_revision`, `toolset_revision`. No entry list, no tool list, no CAS
+  ref. Per-turn durable cost is a fixed handful of bytes → `O(T)` total, with
+  **zero CAS churn**.
+- **The reducer stops storing the request in `CoreAgentState`.** Today
+  `apply_event` stores `active_turn.request = Some(request.clone())`
+  (`turn.rs:294`) after validating it against the active context the reducer
+  already maintains. Replace that with: validate `context_revision ==
+  state.context.revision` (a cheap integer check that subsumes the current
+  list-equality check at `validate_request_matches_active_context`), and store
+  only `request_fingerprint` + revisions in `TurnState`. The reducer already
+  knows the active set from the durable context events
+  (`EntriesApplied`/`EntriesRemoved`/`StateReplaced`) it replays — the request's
+  copy was always redundant *to the reducer*.
+- **The request is built transiently at generation time.** The workflow already
+  holds the reduced active set in `CoreAgentState.context.entries` (metadata +
+  `content_ref`, the bounded thing P73 carries). It passes that list as input to
+  the generation activity, which materializes the wire `LlmRequest` in memory,
+  calls the provider, and returns compact facts. The full list exists only as
+  activity input — i.e. only in Temporal history, which continue-as-new resets.
+  It never lands in the durable log, in reduced state, or in CAS.
+- **Audit/debug rebuilds on demand.** The full provider-neutral `LlmRequest` for
+  any past turn is a pure function of the durable context events up to its
+  `context_revision` plus the small recorded fields. No stored artifact is
+  needed to reconstruct it.
 
-Do **Option A** now. It removes the dominant `O(N·T)` term, requires no second
-reducer, and composes with P73 (workflow owns logical state; runtime/CAS own the
-bulky request). Treat **Option B** as a follow-up if per-request CAS blobs become
-the next bottleneck. Treat **Option C** as explicitly deferred: adopt it only if
-profiling shows that re-materializing the full request per turn (even with CAS
-dedup) is too expensive, and only with a test harness that proves the in-activity
-delta-reducer stays equivalent to the engine reducer.
+This is the original P73 "materialization activity" idea, kept to its good half:
+the request is materialized in an activity rather than persisted. It avoids the
+bad half — there is **no cursor, no manifest blob, no hash-verification, and no
+second delta-reducer inside the activity** — because the workflow hands over the
+already-reduced active set instead of asking the activity to re-derive it from
+deltas.
 
-## Proposed Fix (Option A)
+### Why not a CAS blob / manifest per turn
+
+An earlier draft proposed writing the list to a CAS blob ("manifest") per turn
+and referencing it from the event. Two reasons that was dropped:
+
+1. **It only relocates bytes.** Writing the list to CAS instead of inline moves
+   it off the *replay scan* path (a genuine win) but writes the same `O(N)` bytes
+   per change. The sizing above shows that the win is "off the replayed log",
+   not "fewer bytes" — and once the goal is "off the replayed log", a transient
+   activity input achieves it with **no persistent write at all**.
+2. **CAS dedup only helps when context is stable across turns.** But each turn
+   appends new messages/tool results to the active set, so the list typically
+   changes nearly every turn — pushing dedup toward zero benefit while still
+   paying per-turn blob writes and adding a CAS-GC edge. Transient
+   materialization sidesteps this entirely.
+
+A `request_ref` in CAS remains available as a *later* opt-in if on-demand rebuild
+proves operationally awkward (e.g. a debugger that can't run the rebuild), but it
+is explicitly not the default, because it re-adds per-turn churn.
+
+## Proposed Fix
 
 ### G1: Compact `turn.planned`
 
-Refactor `TurnEvent::Planned` to record `request_ref`, `request_fingerprint`,
+Refactor `TurnEvent::Planned` to record `request_fingerprint`,
 `context_revision`, and `toolset_revision` instead of `request: LlmRequest`.
-This is a versioned engine event change: gate on a planner/event version and
-keep a decode path for existing `turn.planned` events that still inline a full
+This is a versioned engine event change: gate on a planner/event version and keep
+a decode path for existing `turn.planned` events that still inline a full
 `LlmRequest` (old sessions must still replay). Do not require backfill.
 
-### G2: Materialize-and-store boundary
+### G2: Reducer stops storing the request
 
-The runtime writes the canonical `LlmRequest` to CAS and supplies the resulting
-`request_ref` back to the workflow, which records it in the planned event. Keep
-the engine deterministic: it emits the logical plan; the side-effecting write is
-a runtime/activity responsibility (consistent with P73's split). The generation
-step consumes `request_ref`, loads the request from CAS, calls the provider, and
-returns compact facts.
+Change `apply_event` for `Event::Planned` to validate `context_revision`/
+`toolset_revision` against current reduced state and store only
+`request_fingerprint` + revisions in `TurnState`, not the `LlmRequest`. Drop the
+inline list-equality check in favor of the revision check. The reducer remains
+deterministic and reads only the durable context/tool state it already maintains.
 
-### G3: Metrics and regression guards
+### G3: Transient generation materialization
+
+The generation path takes the workflow-held active set
+(`CoreAgentState.context.entries`) and tool catalog, materializes the wire
+`LlmRequest` in memory inside the generation activity, calls the provider, and
+returns compact `LlmGenerationFacts`. Nothing materialized here is persisted. The
+list crosses only the activity boundary (Temporal history, reset by
+continue-as-new).
+
+### G4: On-demand request reconstruction
+
+Provide a deterministic function that rebuilds the full `LlmRequest` for a past
+turn from the durable context/tool events up to its recorded `context_revision`/
+`toolset_revision` plus the small recorded fields, for audit/debug/replay. This
+is a read path, not a write path.
+
+### G5: Metrics and regression guards
 
 - Per-event serialized size metric and a per-session cumulative-size metric.
 - A test that runs many turns over a stable active context and asserts the
-  durable log grows `O(turns)` in small events, not `O(turns × entries)`.
-- An assertion that `turn.planned` no longer carries an inline `ContextSnapshot`
-  on the new event version.
+  durable log grows `O(turns)` in small fixed-size events — not `O(turns × N)` —
+  and that **no per-turn CAS blob** is written for the planned request.
+- An assertion that `turn.planned` carries no inline `ContextSnapshot`/tool list
+  on the new event version, and that `TurnState` no longer holds a full request.
+- A test that on-demand reconstruction rebuilds a request equal to what was sent,
+  from durable events alone.
 
 ## Relationship to P73
 
@@ -212,11 +253,15 @@ returns compact facts.
 
 ## Acceptance Criteria
 
-- `turn.planned` on the current event version records compact refs/revisions and
-  no inline `LlmRequest`; older inlined events still decode and replay.
-- The canonical `LlmRequest` for a planned turn is retrievable from CAS by
-  `request_ref` for audit/debug/replay.
+- `turn.planned` on the current event version records `request_fingerprint`,
+  `context_revision`, and `toolset_revision` only — no inline `LlmRequest` and no
+  request CAS ref; older inlined events still decode and replay.
+- `TurnState` no longer holds a full `LlmRequest`; the reducer validates by
+  revision and stores only fingerprint + revisions.
+- The `LlmRequest` for a past turn can be rebuilt deterministically from durable
+  context/tool events plus the small recorded fields, for audit/debug/replay.
 - A regression test with `T` turns over a stable `N`-entry active context shows
-  durable-log growth linear in `T` (small events) rather than `~N·T`.
-- The engine reducer remains deterministic and does not perform the CAS write
-  itself; the runtime supplies `request_ref`.
+  durable-log growth linear in `T` (small fixed-size events), and **no per-turn
+  CAS blob** written for the planned request — not `~N·T`.
+- The engine reducer remains deterministic; the full request is materialized only
+  transiently in the generation activity and is never persisted.
