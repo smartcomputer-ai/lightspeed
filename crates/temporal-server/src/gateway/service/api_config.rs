@@ -362,8 +362,7 @@ pub(super) fn provider_params_with_reasoning(
                 ReasoningEffort::High => Some("high"),
             };
             params.thinking = effort_level.map(|_| anthropic_adaptive_thinking());
-            params.output_config =
-                effort_level.map(|level| serde_json::json!({ "effort": level }));
+            params.output_config = effort_level.map(|level| serde_json::json!({ "effort": level }));
             Ok(ProviderParams::new(
                 ProviderApiKind::AnthropicMessages,
                 serde_json::to_value(&params)

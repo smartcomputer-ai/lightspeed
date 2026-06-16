@@ -21,22 +21,22 @@ use auth_api::{
     api_auth_provider_kind, auth_grant_import_draft, auth_grant_view, map_auth_registry_error,
     parse_auth_grant_id, registry_auth_grant_status_for_filter,
 };
+use blobs::{get_blob, has_blobs, put_blob, put_blobs};
+use errors::*;
 use github_api::{
     auth_provider_create_draft, auth_provider_view, github_installation_grant_draft,
     github_installation_view, map_github_app_error, parse_auth_provider_id,
 };
-use oauth_api::{
-    auth_client_create_draft, auth_flow_view, cimd_config, map_mcp_oauth_error,
-    mcp_oauth_target_from_record, oauth_client_view, oauth_redirect_uri, parse_auth_flow_id,
-    parse_oauth_client_id,
-};
-use blobs::{get_blob, has_blobs, put_blob, put_blobs};
-use errors::*;
 use input::{context_entry_input_from_api, run_input_from_api};
 use mcp_api::{
     apply_session_mcp_link, create_mcp_server_record, linked_session_mcp, map_mcp_registry_error,
     mcp_server_view, parse_mcp_server_id, parse_mcp_tool_name, remove_session_mcp_link,
     session_mcp_link_from_record,
+};
+use oauth_api::{
+    auth_client_create_draft, auth_flow_view, cimd_config, map_mcp_oauth_error,
+    mcp_oauth_target_from_record, oauth_client_view, oauth_redirect_uri, parse_auth_flow_id,
+    parse_oauth_client_id,
 };
 use parse::*;
 use skills::{
@@ -60,33 +60,31 @@ use api::{
     AuthClientListParams, AuthClientListResponse, AuthClientReadParams, AuthClientReadResponse,
     AuthFlowStartParams, AuthFlowStartResponse, AuthFlowStatusParams, AuthFlowStatusResponse,
     AuthGitHubInstallationGrantParams, AuthGitHubInstallationGrantResponse,
-    AuthGitHubInstallationListParams, AuthGitHubInstallationListResponse,
+    AuthGitHubInstallationListParams, AuthGitHubInstallationListResponse, AuthGrantImportParams,
+    AuthGrantImportResponse, AuthGrantListParams, AuthGrantListResponse, AuthGrantReadParams,
+    AuthGrantReadResponse, AuthGrantRevokeParams, AuthGrantRevokeResponse,
     AuthProviderCreateParams, AuthProviderCreateResponse, AuthProviderDeleteParams,
     AuthProviderDeleteResponse, AuthProviderListParams, AuthProviderListResponse,
-    AuthProviderReadParams, AuthProviderReadResponse,
-    AuthGrantImportParams,
-    AuthGrantImportResponse, AuthGrantListParams, AuthGrantListResponse, AuthGrantReadParams,
-    AuthGrantReadResponse, AuthGrantRevokeParams, AuthGrantRevokeResponse, BlobGetParams,
-    BlobGetResponse, BlobHasItem, BlobHasManyParams, BlobHasManyResponse, BlobPutManyParams,
-    BlobPutManyResponse, BlobPutParams, BlobPutResponse, ClientCapabilities, CompactionPolicyInput,
-    ContextAppendParams, ContextAppendResponse, ContextCompactParams, ContextCompactResponse,
-    ContextConfigInput as ApiContextConfigInput,
-    ContextConfigPatchInput, FieldPatch, GenerationConfig, GenerationConfigPatch, InitializeParams,
-    InitializeResponse, InputItem, MediaKind, McpServerCreateParams, McpServerCreateResponse,
-    McpServerDeleteParams, McpServerDeleteResponse, McpServerListParams, McpServerListResponse,
-    McpServerReadParams, McpServerReadResponse, ModelConfig, OutboundAckInput,
-    OutboundMessageView, OutboundOriginView, OutboundPayloadView, OutboundStatusView,
-    OutboxAckParams, OutboxAckResponse, OutboxReadParams, OutboxReadResponse,
-    PromptInstructionView,
-    PromptsActiveParams, PromptsActiveResponse, ReasoningEffort, RunCancelParams,
-    RunCancelResponse, RunDefaultsConfig, RunDefaultsPatch, RunLimitsConfig, RunStartConfig,
-    RunStartParams, RunStartResponse, RunView, ServerCapabilities, ServerInfo, SessionCloseParams,
-    SessionCloseResponse, SessionConfigInput, SessionConfigPatchInput, SessionEventsReadParams,
-    SessionEventsReadResponse, SessionMcpLinkParams, SessionMcpLinkResponse, SessionMcpListParams,
-    SessionMcpListResponse, SessionMcpUnlinkParams, SessionMcpUnlinkResponse, SessionReadParams,
-    SessionReadResponse, SessionStartParams, SessionStartResponse, SessionToolsUpdateParams,
-    SessionToolsUpdateResponse, SessionUpdateParams, SessionUpdateResponse, SessionView,
-    SkillActivateParams, SkillActivateResponse, SkillActivationScope as ApiSkillActivationScope,
+    AuthProviderReadParams, AuthProviderReadResponse, BlobGetParams, BlobGetResponse, BlobHasItem,
+    BlobHasManyParams, BlobHasManyResponse, BlobPutManyParams, BlobPutManyResponse, BlobPutParams,
+    BlobPutResponse, ClientCapabilities, CompactionPolicyInput, ContextAppendParams,
+    ContextAppendResponse, ContextCompactParams, ContextCompactResponse,
+    ContextConfigInput as ApiContextConfigInput, ContextConfigPatchInput, FieldPatch,
+    GenerationConfig, GenerationConfigPatch, InitializeParams, InitializeResponse, InputItem,
+    McpServerCreateParams, McpServerCreateResponse, McpServerDeleteParams, McpServerDeleteResponse,
+    McpServerListParams, McpServerListResponse, McpServerReadParams, McpServerReadResponse,
+    MediaKind, ModelConfig, OutboundAckInput, OutboundMessageView, OutboundOriginView,
+    OutboundPayloadView, OutboundStatusView, OutboxAckParams, OutboxAckResponse, OutboxReadParams,
+    OutboxReadResponse, PromptInstructionView, PromptsActiveParams, PromptsActiveResponse,
+    ReasoningEffort, RunCancelParams, RunCancelResponse, RunDefaultsConfig, RunDefaultsPatch,
+    RunLimitsConfig, RunStartConfig, RunStartParams, RunStartResponse, RunView, ServerCapabilities,
+    ServerInfo, SessionCloseParams, SessionCloseResponse, SessionConfigInput,
+    SessionConfigPatchInput, SessionEventsReadParams, SessionEventsReadResponse,
+    SessionMcpLinkParams, SessionMcpLinkResponse, SessionMcpListParams, SessionMcpListResponse,
+    SessionMcpUnlinkParams, SessionMcpUnlinkResponse, SessionReadParams, SessionReadResponse,
+    SessionStartParams, SessionStartResponse, SessionToolsUpdateParams, SessionToolsUpdateResponse,
+    SessionUpdateParams, SessionUpdateResponse, SessionView, SkillActivateParams,
+    SkillActivateResponse, SkillActivationScope as ApiSkillActivationScope,
     SkillActivationSource as ApiSkillActivationSource, SkillActivationView, SkillActiveParams,
     SkillActiveResponse, SkillDeactivateParams, SkillDeactivateResponse, SkillListItem,
     SkillListParams, SkillListResponse, ToolChoiceConfig, ToolChoiceModeConfig, ToolConfigInput,
@@ -108,20 +106,20 @@ use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use messaging::{MessagingError, OutboundPayload, OutboxStore, ReadPendingOutbound};
 
-use engine::{
-    BlobRef, CommandCodec, CompactionPolicy, ContextConfigPatch, ContextEntry, ContextEntryInput,
-    ContextEntryKey, ContextEntryKind, ContextMessageRole, CoreAgentCommand, CoreAgentStatus,
-    HostToolMode, ModelSelection, OptionalConfigPatch, ProviderApiKind,
-    ProviderParams, RunConfig, RunConfigPatch, RunId, RunStatus,
-    SKILL_ACTIVATION_PROVIDER_KIND_RUN, SKILL_ACTIVATION_PROVIDER_KIND_SESSION,
-    SKILL_CATALOG_CONTEXT_KEY, SessionConfig, SessionConfigPatch, SessionId, SkillId, SubmissionId,
-    ToolChoice, ToolChoiceMode, ToolName, TurnConfigPatch, skill_activation_context_key,
-    storage::{BlobStore, BlobStoreError, ReadSessionEvents, SessionStore},
-};
 use auth_registry::{
     AuthFlowStore, AuthGrantStore, AuthProviderStore, GitHubApiClient, HttpGitHubApiClient,
     HttpOAuthMetadataClient, HttpOAuthTokenClient, McpOAuthDriver, OAuthClientStore,
     OAuthFlowService, OAuthMetadataClient, OAuthTokenClient, SecretStore, StartAuthFlow,
+};
+use engine::{
+    BlobRef, CommandCodec, CompactionPolicy, ContextConfigPatch, ContextEntry, ContextEntryInput,
+    ContextEntryKey, ContextEntryKind, ContextMessageRole, CoreAgentCommand, CoreAgentStatus,
+    HostToolMode, ModelSelection, OptionalConfigPatch, ProviderApiKind, ProviderParams, RunConfig,
+    RunConfigPatch, RunId, RunStatus, SKILL_ACTIVATION_PROVIDER_KIND_RUN,
+    SKILL_ACTIVATION_PROVIDER_KIND_SESSION, SKILL_CATALOG_CONTEXT_KEY, SessionConfig,
+    SessionConfigPatch, SessionId, SkillId, SubmissionId, ToolChoice, ToolChoiceMode, ToolName,
+    TurnConfigPatch, skill_activation_context_key,
+    storage::{BlobStore, BlobStoreError, ReadSessionEvents, SessionStore},
 };
 use mcp_registry::McpRegistryStore;
 use store_pg::PgStore;
@@ -257,8 +255,7 @@ impl GatewayAgentApiBuilder {
     pub fn build(self) -> GatewayAgentApi {
         let token_client = self.oauth_token_client.unwrap_or_else(|| {
             Arc::new(
-                HttpOAuthTokenClient::new()
-                    .expect("construct OAuth token endpoint HTTP client"),
+                HttpOAuthTokenClient::new().expect("construct OAuth token endpoint HTTP client"),
             )
         });
         let oauth_flows = OAuthFlowService::new(
@@ -269,10 +266,7 @@ impl GatewayAgentApiBuilder {
             token_client,
         );
         let metadata_client = self.oauth_metadata_client.unwrap_or_else(|| {
-            Arc::new(
-                HttpOAuthMetadataClient::new()
-                    .expect("construct OAuth metadata HTTP client"),
-            )
+            Arc::new(HttpOAuthMetadataClient::new().expect("construct OAuth metadata HTTP client"))
         });
         let mcp_oauth = McpOAuthDriver::new(
             self.store.clone() as Arc<dyn OAuthClientStore>,
@@ -591,7 +585,9 @@ impl AgentApiService for GatewayAgentApi {
             .map_err(map_workflow_start_error);
         match started {
             Ok(_) => {}
-            Err(error) if matches!(error.kind, AgentApiErrorKind::Conflict) && client_supplied_id => {
+            Err(error)
+                if matches!(error.kind, AgentApiErrorKind::Conflict) && client_supplied_id =>
+            {
                 let loaded = self.load_session_state(&session_id).await?;
                 if loaded.state.lifecycle.status == CoreAgentStatus::Closed {
                     let session = self.project_session_by_id(&session_id).await?;
@@ -955,8 +951,8 @@ impl AgentApiService for GatewayAgentApi {
     ) -> Result<AgentApiOutcome<OutboxReadResponse>, AgentApiError> {
         let after = params.after.unwrap_or(0);
         let limit = params.limit.unwrap_or(64).clamp(1, 256) as usize;
-        let wait = Duration::from_millis(u64::from(params.wait_ms.unwrap_or(0)))
-            .min(self.events_wait_cap);
+        let wait =
+            Duration::from_millis(u64::from(params.wait_ms.unwrap_or(0))).min(self.events_wait_cap);
         let deadline = Instant::now() + wait;
         loop {
             let entries = OutboxStore::read_pending(
@@ -1656,7 +1652,11 @@ impl AgentApiService for GatewayAgentApi {
         let grant_id = parse_auth_grant_id(params.grant_id)?;
         let record = self
             .store
-            .update_grant_status(&grant_id, auth_registry::AuthGrantStatus::Revoked, now_ms()?)
+            .update_grant_status(
+                &grant_id,
+                auth_registry::AuthGrantStatus::Revoked,
+                now_ms()?,
+            )
             .await
             .map_err(map_auth_registry_error)?;
         Ok(AgentApiOutcome::new(AuthGrantRevokeResponse {
@@ -1888,10 +1888,7 @@ impl AgentApiService for GatewayAgentApi {
             .await
             .map_err(map_github_app_error)?;
         Ok(AgentApiOutcome::new(AuthGitHubInstallationListResponse {
-            installations: installations
-                .iter()
-                .map(github_installation_view)
-                .collect(),
+            installations: installations.iter().map(github_installation_view).collect(),
         }))
     }
 
@@ -2003,8 +2000,13 @@ impl GatewayAgentApi {
     async fn github_provider_jwt(
         &self,
         provider_id: String,
-    ) -> Result<(auth_registry::AuthProviderRecord, auth_registry::SecretValue), AgentApiError>
-    {
+    ) -> Result<
+        (
+            auth_registry::AuthProviderRecord,
+            auth_registry::SecretValue,
+        ),
+        AgentApiError,
+    > {
         let provider_id = parse_auth_provider_id(provider_id)?;
         let provider = self
             .store
@@ -2059,7 +2061,6 @@ impl GatewayAgentApi {
 #[cfg(test)]
 mod tests;
 
-
 fn outbound_message_view(message: messaging::OutboundMessage) -> OutboundMessageView {
     OutboundMessageView {
         seq: message.seq,
@@ -2072,7 +2073,9 @@ fn outbound_message_view(message: messaging::OutboundMessage) -> OutboundMessage
             messaging::OutboundOrigin::Trigger => OutboundOriginView::Trigger,
         },
         payload: match message.payload {
-            OutboundPayload::Send { text, reply_to } => OutboundPayloadView::Send { text, reply_to },
+            OutboundPayload::Send { text, reply_to } => {
+                OutboundPayloadView::Send { text, reply_to }
+            }
             OutboundPayload::React { message_id, emoji } => {
                 OutboundPayloadView::React { message_id, emoji }
             }

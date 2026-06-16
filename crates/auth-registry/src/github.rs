@@ -17,9 +17,8 @@ use thiserror::Error;
 
 use crate::{
     AuthBrokerError, AuthGrantId, AuthGrantRecord, AuthGrantStatus, AuthGrantStore,
-    AuthProviderConfig, AuthProviderId, AuthProviderStatus, AuthProviderStore,
-    AuthRegistryError, DEFAULT_REFRESH_EXPIRY_MARGIN_MS, GrantTokenSource, SecretStore,
-    SecretValue,
+    AuthProviderConfig, AuthProviderId, AuthProviderStatus, AuthProviderStore, AuthRegistryError,
+    DEFAULT_REFRESH_EXPIRY_MARGIN_MS, GrantTokenSource, SecretStore, SecretValue,
 };
 
 pub const SECRET_KIND_GITHUB_APP_PRIVATE_KEY: &str = "auth.github_app.private_key";
@@ -101,7 +100,9 @@ struct AppJwtClaims {
 
 /// Validate a PEM-encoded RSA private key without signing anything; used at
 /// import time so a bad key fails at registration, not at mint time.
-pub fn validate_github_app_private_key(private_key_pem: &SecretValue) -> Result<(), GitHubAppError> {
+pub fn validate_github_app_private_key(
+    private_key_pem: &SecretValue,
+) -> Result<(), GitHubAppError> {
     jsonwebtoken::EncodingKey::from_rsa_pem(private_key_pem.expose().as_bytes())
         .map(|_| ())
         .map_err(|error| GitHubAppError::InvalidPrivateKey {
@@ -168,15 +169,14 @@ impl GitHubInstallationGrantMetadata {
     /// load-bearing (the broker mints against it), so this is validated at
     /// grant creation and re-validated here.
     pub fn from_grant(grant: &AuthGrantRecord) -> Result<Self, AuthRegistryError> {
-        let metadata: Self =
-            serde_json::from_value(grant.metadata.clone()).map_err(|error| {
-                AuthRegistryError::InvalidInput {
-                    message: format!(
-                        "grant {} has invalid github installation metadata: {error}",
-                        grant.grant_id
-                    ),
-                }
-            })?;
+        let metadata: Self = serde_json::from_value(grant.metadata.clone()).map_err(|error| {
+            AuthRegistryError::InvalidInput {
+                message: format!(
+                    "grant {} has invalid github installation metadata: {error}",
+                    grant.grant_id
+                ),
+            }
+        })?;
         if metadata.installation_id <= 0 {
             return Err(AuthRegistryError::InvalidInput {
                 message: format!(
@@ -436,10 +436,13 @@ impl HttpGitHubApiClient {
                 message: format!("github api request failed: {error}"),
             })?;
         let status = response.status();
-        let body = response.text().await.map_err(|error| GitHubAppError::Http {
-            status: Some(status.as_u16()),
-            message: format!("read github api response: {error}"),
-        })?;
+        let body = response
+            .text()
+            .await
+            .map_err(|error| GitHubAppError::Http {
+                status: Some(status.as_u16()),
+                message: format!("read github api response: {error}"),
+            })?;
         if status == reqwest::StatusCode::UNAUTHORIZED {
             return Err(GitHubAppError::CredentialsRejected {
                 message: github_error_message(&body),
@@ -543,8 +546,7 @@ impl GitHubApiClient for HttpGitHubApiClient {
                 message: "token response is missing token".to_owned(),
             });
         };
-        let Some(expires_at) = value.get("expires_at").and_then(|expires| expires.as_str())
-        else {
+        let Some(expires_at) = value.get("expires_at").and_then(|expires| expires.as_str()) else {
             return Err(GitHubAppError::InvalidResponse {
                 message: "token response is missing expires_at".to_owned(),
             });
@@ -593,12 +595,9 @@ mod tests {
         let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::RS256);
         validation.validate_exp = false;
         validation.set_required_spec_claims::<&str>(&[]);
-        let decoded = jsonwebtoken::decode::<serde_json::Value>(
-            jwt.expose(),
-            &decoding_key,
-            &validation,
-        )
-        .expect("verify jwt");
+        let decoded =
+            jsonwebtoken::decode::<serde_json::Value>(jwt.expose(), &decoding_key, &validation)
+                .expect("verify jwt");
         assert_eq!(decoded.claims["iss"], "12345");
         assert_eq!(decoded.claims["iat"], 1_700_000_000 - 60);
         assert_eq!(decoded.claims["exp"], 1_700_000_000 + 540);

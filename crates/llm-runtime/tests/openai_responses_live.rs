@@ -255,7 +255,10 @@ fn minimal_pdf(text: &str) -> Vec<u8> {
         "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R \
          /Resources << /Font << /F1 5 0 R >> >> >>"
             .to_string(),
-        format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()),
+        format!(
+            "<< /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        ),
         "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string(),
     ];
     let mut pdf = String::from("%PDF-1.4\n");
@@ -393,7 +396,11 @@ async fn openai_responses_live_adapter_reads_pdf_document_input() {
 #[ignore = "requires OPENAI_API_KEY (costs real money)"]
 async fn openai_responses_live_adapter_generates_result() {
     let blobs = Arc::new(InMemoryBlobStore::new());
-    let input_ref = text_blob(&blobs, "Reply with exactly these two words: lightspeed adapter").await;
+    let input_ref = text_blob(
+        &blobs,
+        "Reply with exactly these two words: lightspeed adapter",
+    )
+    .await;
     let context_entry = ContextEntry {
         key: None,
         entry_id: ContextEntryId::new(1),

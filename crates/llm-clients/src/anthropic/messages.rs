@@ -171,8 +171,8 @@ impl Client {
                 Ok(builder.header("x-api-key", self.auth_header(api_key)?))
             }
             Some(crate::RequestAuth::Bearer(token)) => {
-                let mut bearer = HeaderValue::from_str(&format!("Bearer {token}"))
-                    .map_err(|err| {
+                let mut bearer =
+                    HeaderValue::from_str(&format!("Bearer {token}")).map_err(|err| {
                         ConfigurationError::new(format!(
                             "invalid Anthropic bearer token header: {err}"
                         ))
@@ -203,9 +203,7 @@ impl Client {
         auth: Option<crate::RequestAuth<'_>>,
     ) -> Result<ApiResponse<Message>, LlmApiError> {
         request.stream = Some(false);
-        let builder = self
-            .http
-            .request(Method::POST, self.messages_url.clone());
+        let builder = self.http.request(Method::POST, self.messages_url.clone());
         let response = self
             .apply_auth(builder, auth)?
             .json(&request)

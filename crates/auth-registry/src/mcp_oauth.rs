@@ -13,9 +13,9 @@ use async_trait::async_trait;
 use thiserror::Error;
 
 use crate::{
-    AuthProviderKind, AuthRegistryError, CreateOAuthClientRecord, OAuthClientId,
-    OAuthClientRecord, OAuthClientStore, PutSecretRecord, SECRET_KIND_OAUTH_CLIENT_SECRET,
-    SecretId, SecretStore, SecretValue, TokenEndpointAuthMethod, random_auth_id,
+    AuthProviderKind, AuthRegistryError, CreateOAuthClientRecord, OAuthClientId, OAuthClientRecord,
+    OAuthClientStore, PutSecretRecord, SECRET_KIND_OAUTH_CLIENT_SECRET, SecretId, SecretStore,
+    SecretValue, TokenEndpointAuthMethod, random_auth_id,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -153,7 +153,9 @@ fn split_http_url(url: &str) -> Result<(String, String), McpOAuthError> {
 /// host-wide document).
 pub fn protected_resource_metadata_urls(resource: &str) -> Result<Vec<String>, McpOAuthError> {
     let (origin, path) = split_http_url(resource)?;
-    let mut urls = vec![format!("{origin}/.well-known/oauth-protected-resource{path}")];
+    let mut urls = vec![format!(
+        "{origin}/.well-known/oauth-protected-resource{path}"
+    )];
     if !path.is_empty() {
         urls.push(format!("{origin}/.well-known/oauth-protected-resource"));
     }
@@ -314,10 +316,7 @@ impl McpOAuthDriver {
         }
     }
 
-    pub fn with_now_fn(
-        mut self,
-        now_ms: std::sync::Arc<dyn Fn() -> i64 + Send + Sync>,
-    ) -> Self {
+    pub fn with_now_fn(mut self, now_ms: std::sync::Arc<dyn Fn() -> i64 + Send + Sync>) -> Self {
         self.now_ms = now_ms;
         self
     }
@@ -358,8 +357,12 @@ impl McpOAuthDriver {
             },
             _ => match &as_metadata.registration_endpoint {
                 Some(registration_endpoint) => {
-                    self.register_client(registration_endpoint, redirect_uri, &target.scopes_default)
-                        .await?
+                    self.register_client(
+                        registration_endpoint,
+                        redirect_uri,
+                        &target.scopes_default,
+                    )
+                    .await?
                 }
                 None => {
                     return Err(McpOAuthError::NoClientIdentification {
@@ -497,7 +500,10 @@ impl McpOAuthDriver {
         if !scopes.is_empty() {
             body["scope"] = serde_json::Value::String(scopes.join(" "));
         }
-        let response = self.metadata.post_json(registration_endpoint, &body).await?;
+        let response = self
+            .metadata
+            .post_json(registration_endpoint, &body)
+            .await?;
         let invalid = |message: String| McpOAuthError::InvalidMetadata {
             url: registration_endpoint.to_owned(),
             message,
@@ -777,15 +783,13 @@ mod tests {
                 .lock()
                 .expect("lock")
                 .push((url.to_owned(), body.clone()));
-            self.post_response
-                .clone()
-                .unwrap_or_else(|| {
-                    Err(McpOAuthError::Http {
-                        url: url.to_owned(),
-                        status: Some(404),
-                        message: "no post response scripted".to_owned(),
-                    })
+            self.post_response.clone().unwrap_or_else(|| {
+                Err(McpOAuthError::Http {
+                    url: url.to_owned(),
+                    status: Some(404),
+                    message: "no post response scripted".to_owned(),
                 })
+            })
         }
     }
 
@@ -876,7 +880,10 @@ mod tests {
         assert_eq!(record.provider_id, "mcp:playground");
         assert_eq!(record.provider_kind, AuthProviderKind::McpOAuth);
         assert_eq!(record.remote_client_id, "dcr-client-1");
-        assert_eq!(record.token_endpoint_auth_method, TokenEndpointAuthMethod::None);
+        assert_eq!(
+            record.token_endpoint_auth_method,
+            TokenEndpointAuthMethod::None
+        );
         assert_eq!(record.audience.as_deref(), Some(RESOURCE));
         assert_eq!(
             record.authorization_endpoint,
@@ -955,7 +962,10 @@ mod tests {
             .expect("ensure client");
 
         assert_eq!(record.remote_client_id, cimd.client_id_url);
-        assert_eq!(record.token_endpoint_auth_method, TokenEndpointAuthMethod::None);
+        assert_eq!(
+            record.token_endpoint_auth_method,
+            TokenEndpointAuthMethod::None
+        );
         // No registration request was made.
         assert!(harness.metadata.posts.lock().expect("lock").is_empty());
     }

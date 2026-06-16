@@ -374,7 +374,10 @@ mod tests {
                 .iter()
                 .map(|root| root.root_path.as_str())
                 .collect::<Vec<_>>(),
-            vec!["/workspace/.lightspeed/prompts", "/workspace/.agents/prompts"]
+            vec![
+                "/workspace/.lightspeed/prompts",
+                "/workspace/.agents/prompts"
+            ]
         );
     }
 

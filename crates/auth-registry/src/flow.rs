@@ -9,13 +9,13 @@
 use std::sync::Arc;
 
 use crate::{
-    AuthFlowId, AuthFlowRecord, AuthFlowStore, AuthGrantId, AuthGrantStatus,
-    AuthGrantStore, AuthRegistryError, CreateAuthFlowRecord, CreateAuthGrantRecord, FinishAuthFlow,
-    OAuthClientId, OAuthClientStore, OAuthTokenClient, OAuthTokenGrant,
-    OAuthTokenRequest, PrincipalRef, PutSecretRecord, SECRET_KIND_OAUTH_ACCESS_TOKEN,
-    SECRET_KIND_OAUTH_PKCE_VERIFIER, SECRET_KIND_OAUTH_REFRESH_TOKEN, SecretId, SecretStore,
-    SecretValue, build_authorization_url, generate_pkce_verifier, generate_state,
-    pkce_challenge_s256, random_auth_id, state_hash, validate_audience_url,
+    AuthFlowId, AuthFlowRecord, AuthFlowStore, AuthGrantId, AuthGrantStatus, AuthGrantStore,
+    AuthRegistryError, CreateAuthFlowRecord, CreateAuthGrantRecord, FinishAuthFlow, OAuthClientId,
+    OAuthClientStore, OAuthTokenClient, OAuthTokenGrant, OAuthTokenRequest, PrincipalRef,
+    PutSecretRecord, SECRET_KIND_OAUTH_ACCESS_TOKEN, SECRET_KIND_OAUTH_PKCE_VERIFIER,
+    SECRET_KIND_OAUTH_REFRESH_TOKEN, SecretId, SecretStore, SecretValue, build_authorization_url,
+    generate_pkce_verifier, generate_state, pkce_challenge_s256, random_auth_id, state_hash,
+    validate_audience_url,
 };
 
 pub const DEFAULT_AUTH_FLOW_TTL_MS: i64 = 10 * 60 * 1000;
@@ -216,7 +216,10 @@ impl OAuthFlowService {
         }
         let Some(code) = callback.code else {
             return self
-                .fail_flow(&flow, "callback is missing the authorization code".to_owned())
+                .fail_flow(
+                    &flow,
+                    "callback is missing the authorization code".to_owned(),
+                )
                 .await;
         };
 
@@ -418,10 +421,7 @@ mod tests {
             request: &OAuthTokenRequest,
         ) -> Result<OAuthTokenResponse, OAuthTokenError> {
             self.requests.lock().expect("lock").push(request.clone());
-            self.responses
-                .lock()
-                .expect("lock")
-                .remove(0)
+            self.responses.lock().expect("lock").remove(0)
         }
     }
 
@@ -517,10 +517,7 @@ mod tests {
         assert_eq!(started.flow.state_hash, state_hash(&state));
         assert_ne!(started.flow.state_hash, state);
         assert_eq!(started.flow.status(1_001), AuthFlowStatus::Pending);
-        assert_eq!(
-            started.flow.expires_at_ms,
-            1_000 + DEFAULT_AUTH_FLOW_TTL_MS
-        );
+        assert_eq!(started.flow.expires_at_ms, 1_000 + DEFAULT_AUTH_FLOW_TTL_MS);
         let (meta, _) = harness
             .secrets
             .read_secret(&started.flow.pkce_verifier_secret)
@@ -560,7 +557,10 @@ mod tests {
         let grant_id = finished.grant_id.expect("grant id");
         let grant = harness.grants.read_grant(&grant_id).await.expect("grant");
         assert_eq!(grant.provider_kind, AuthProviderKind::McpOAuth);
-        assert_eq!(grant.audience.as_deref(), Some("https://crm.example.com/mcp"));
+        assert_eq!(
+            grant.audience.as_deref(),
+            Some("https://crm.example.com/mcp")
+        );
         assert_eq!(grant.oauth_client, Some(OAuthClientId::new("crm")));
         assert_eq!(grant.expires_at_ms, Some(1_000 + 3_600_000));
         assert_eq!(grant.scopes, vec!["contacts.read".to_owned()]);

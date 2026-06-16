@@ -80,10 +80,13 @@ fn open_secret(
         });
     }
     let plaintext = cipher
-        .decrypt(Nonce::from_slice(nonce), Payload {
-            msg: ciphertext,
-            aad,
-        })
+        .decrypt(
+            Nonce::from_slice(nonce),
+            Payload {
+                msg: ciphertext,
+                aad,
+            },
+        )
         .map_err(|_| AuthRegistryError::Store {
             message: "secret decryption failed; wrong master key or tampered record".to_owned(),
         })?;
@@ -454,7 +457,9 @@ impl AuthGrantStore for PgStore {
     }
 }
 
-fn secret_meta_from_row(row: &sqlx::postgres::PgRow) -> Result<SecretRecordMeta, AuthRegistryError> {
+fn secret_meta_from_row(
+    row: &sqlx::postgres::PgRow,
+) -> Result<SecretRecordMeta, AuthRegistryError> {
     let secret_id: String = row
         .try_get("secret_id")
         .map_err(|error| auth_sql_error("decode secret id", error))?;
@@ -474,7 +479,9 @@ fn secret_meta_from_row(row: &sqlx::postgres::PgRow) -> Result<SecretRecordMeta,
     })
 }
 
-fn grant_record_from_row(row: &sqlx::postgres::PgRow) -> Result<AuthGrantRecord, AuthRegistryError> {
+fn grant_record_from_row(
+    row: &sqlx::postgres::PgRow,
+) -> Result<AuthGrantRecord, AuthRegistryError> {
     let grant_id: String = row
         .try_get("grant_id")
         .map_err(|error| auth_sql_error("decode grant id", error))?;

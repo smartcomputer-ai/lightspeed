@@ -548,12 +548,11 @@ mod tests {
         BlobRef, CommandRejectionKind, CompactionPolicy, ContextCompactionStatus,
         ContextCompactionTrigger, ContextConfig, ContextConfigPatch, ContextEntry, ContextEntryId,
         ContextEntryInput, ContextEntryKey, ContextEntryKind, ContextRemovalReason,
-        ContextRewriteReason, CoreAgentCommand, LlmGenerationFacts,
-        ModelSelection, OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, OptionalConfigPatch,
-        ProviderApiKind, RunConfig, RunFailureKind, RunStatus,
-        SKILL_ACTIVATION_PROVIDER_KIND_RUN, SKILL_CATALOG_CONTEXT_KEY, SessionConfig,
-        SessionConfigPatch, SkillId, TokenEstimate, TokenEstimateQuality, ToolChoice,
-        ToolChoiceMode, ToolName, TurnConfig, TurnConfigPatch, TurnStatus,
+        ContextRewriteReason, CoreAgentCommand, LlmGenerationFacts, ModelSelection,
+        OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, OptionalConfigPatch, ProviderApiKind, RunConfig,
+        RunFailureKind, RunStatus, SKILL_ACTIVATION_PROVIDER_KIND_RUN, SKILL_CATALOG_CONTEXT_KEY,
+        SessionConfig, SessionConfigPatch, SkillId, TokenEstimate, TokenEstimateQuality,
+        ToolChoice, ToolChoiceMode, ToolName, TurnConfig, TurnConfigPatch, TurnStatus,
         skill_activation_context_key,
     };
 
@@ -1383,10 +1382,7 @@ mod tests {
         assert_eq!(request.session_id, session_id);
         let compaction_task = &request.request;
         assert_eq!(compaction_task.target_tokens, Some(256));
-        assert_eq!(
-            compaction_task.context.entry_ids(),
-            vec![original_entry_id]
-        );
+        assert_eq!(compaction_task.context.entry_ids(), vec![original_entry_id]);
         assert_eq!(compaction_task.context.context_revision, 2);
 
         let completed = drive
@@ -2374,8 +2370,9 @@ mod tests {
             CoreAgentDrive::from_replayed(SessionId::new("session-a"), CoreAgentState::new(), None);
         open_session(&mut drive);
 
-        let accepted = request_run_with_submission(&mut drive, "retry_1", BlobRef::from_bytes(b"x"))
-            .expect("first request run");
+        let accepted =
+            request_run_with_submission(&mut drive, "retry_1", BlobRef::from_bytes(b"x"))
+                .expect("first request run");
         commit_action(&mut drive, accepted);
         assert_eq!(drive.state().runs.queued.len(), 1);
 
@@ -2395,8 +2392,9 @@ mod tests {
             CoreAgentDrive::from_replayed(SessionId::new("session-a"), CoreAgentState::new(), None);
         open_session(&mut drive);
 
-        let accepted = request_run_with_submission(&mut drive, "retry_1", BlobRef::from_bytes(b"x"))
-            .expect("first request run");
+        let accepted =
+            request_run_with_submission(&mut drive, "retry_1", BlobRef::from_bytes(b"x"))
+                .expect("first request run");
         commit_action(&mut drive, accepted);
 
         let error =
@@ -2414,8 +2412,9 @@ mod tests {
             CoreAgentDrive::from_replayed(SessionId::new("session-a"), CoreAgentState::new(), None);
         open_session(&mut drive);
 
-        let accepted = request_run_with_submission(&mut drive, "retry_1", BlobRef::from_bytes(b"x"))
-            .expect("first request run");
+        let accepted =
+            request_run_with_submission(&mut drive, "retry_1", BlobRef::from_bytes(b"x"))
+                .expect("first request run");
         commit_action(&mut drive, accepted);
         let llm_request = drive_until_generate(&mut drive);
         let resumed = drive

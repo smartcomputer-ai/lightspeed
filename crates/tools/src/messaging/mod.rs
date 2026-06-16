@@ -99,9 +99,7 @@ pub struct MessagingToolResult {
     pub outbox_id: Option<String>,
 }
 
-pub fn messaging_tool_bundles(
-    config: &MessagingToolsetConfig,
-) -> ToolResult<Vec<ToolSpecBundle>> {
+pub fn messaging_tool_bundles(config: &MessagingToolsetConfig) -> ToolResult<Vec<ToolSpecBundle>> {
     if !config.enabled {
         return Ok(Vec::new());
     }
@@ -483,8 +481,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn bundles_cover_the_tool_family() {
-        let bundles =
-            messaging_tool_bundles(&MessagingToolsetConfig::enabled()).expect("bundles");
+        let bundles = messaging_tool_bundles(&MessagingToolsetConfig::enabled()).expect("bundles");
         let names: Vec<&str> = bundles
             .iter()
             .map(|bundle| bundle.spec.name.as_str())

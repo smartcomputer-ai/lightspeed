@@ -103,10 +103,7 @@ impl AuthProviderConfig {
                 validate_token_component("github app id", &config.app_id)?;
                 if !config.app_id.chars().all(|ch| ch.is_ascii_digit()) {
                     return Err(AuthRegistryError::InvalidInput {
-                        message: format!(
-                            "github app id must be numeric, got {:?}",
-                            config.app_id
-                        ),
+                        message: format!("github app id must be numeric, got {:?}", config.app_id),
                     });
                 }
                 validate_audience_url(&config.api_base_url).map_err(|error| match error {

@@ -436,10 +436,8 @@ fn oauth_client_from_row(
         .map_err(|error| auth_sql_error("decode oauth client auth method", error))?;
 
     let record = OAuthClientRecord {
-        client_id: OAuthClientId::try_new(client_id).map_err(|error| {
-            AuthRegistryError::Store {
-                message: format!("decode oauth client id: {error}"),
-            }
+        client_id: OAuthClientId::try_new(client_id).map_err(|error| AuthRegistryError::Store {
+            message: format!("decode oauth client id: {error}"),
         })?,
         provider_id: row
             .try_get("provider_id")
@@ -507,10 +505,8 @@ fn auth_flow_from_row(row: &sqlx::postgres::PgRow) -> Result<AuthFlowRecord, Aut
         flow_id: AuthFlowId::try_new(flow_id).map_err(|error| AuthRegistryError::Store {
             message: format!("decode auth flow id: {error}"),
         })?,
-        client_id: OAuthClientId::try_new(client_id).map_err(|error| {
-            AuthRegistryError::Store {
-                message: format!("decode auth flow client id: {error}"),
-            }
+        client_id: OAuthClientId::try_new(client_id).map_err(|error| AuthRegistryError::Store {
+            message: format!("decode auth flow client id: {error}"),
         })?,
         provider_id: row
             .try_get("provider_id")

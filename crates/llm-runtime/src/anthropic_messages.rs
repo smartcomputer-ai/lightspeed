@@ -15,14 +15,13 @@ use engine::{
     ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND, ANTHROPIC_MESSAGES_MCP_TOOL_RESULT_PROVIDER_KIND,
     ANTHROPIC_MESSAGES_MCP_TOOL_USE_PROVIDER_KIND,
     ANTHROPIC_MESSAGES_SERVER_TOOL_RESULT_PROVIDER_KIND,
-    ANTHROPIC_MESSAGES_SERVER_TOOL_USE_PROVIDER_KIND, CompactionPolicy,
-    ContextCompactionRequest, ContextCompactionResult, ContextCompactionStatus,
-    ContextCompactionTask, ContextEntry, ContextEntryInput, ContextEntryKind, ContextMessageRole,
-    LlmFinish, LlmGenerationFacts, LlmGenerationRequest, LlmGenerationResult, LlmGenerationStatus,
-    LlmRequest, LlmUsage, ObservedToolCall, ProviderApiKind, ProviderNativeToolExecution,
-    RemoteMcpApprovalPolicy, RemoteMcpToolSpec, TokenEstimate, TokenEstimateQuality, ToolCallId,
-    ToolChoice, ToolChoiceMode, ToolKind, ToolName, ToolSpec,
-    storage::BlobStore,
+    ANTHROPIC_MESSAGES_SERVER_TOOL_USE_PROVIDER_KIND, CompactionPolicy, ContextCompactionRequest,
+    ContextCompactionResult, ContextCompactionStatus, ContextCompactionTask, ContextEntry,
+    ContextEntryInput, ContextEntryKind, ContextMessageRole, LlmFinish, LlmGenerationFacts,
+    LlmGenerationRequest, LlmGenerationResult, LlmGenerationStatus, LlmRequest, LlmUsage,
+    ObservedToolCall, ProviderApiKind, ProviderNativeToolExecution, RemoteMcpApprovalPolicy,
+    RemoteMcpToolSpec, TokenEstimate, TokenEstimateQuality, ToolCallId, ToolChoice, ToolChoiceMode,
+    ToolKind, ToolName, ToolSpec, storage::BlobStore,
 };
 use llm_clients::{ApiResponse, anthropic::messages as am};
 use serde_json::{Value, json};
@@ -44,8 +43,7 @@ const PROVIDER_KIND_BLOCK: &str = "anthropic.messages.block";
 /// Client-seeded raw input message: a `ProviderOpaque` entry tagged with this
 /// provider kind carries a complete Anthropic `{role, content}` message JSON
 /// and lowers as that message instead of an assistant content block.
-pub const ANTHROPIC_MESSAGES_INPUT_MESSAGE_PROVIDER_KIND: &str =
-    "anthropic.messages.input_message";
+pub const ANTHROPIC_MESSAGES_INPUT_MESSAGE_PROVIDER_KIND: &str = "anthropic.messages.input_message";
 const MEDIA_TYPE_JSON: &str = "application/json";
 const MEDIA_TYPE_TEXT: &str = "text/plain";
 
@@ -106,7 +104,10 @@ impl AnthropicMessagesLlmAdapter {
         self
     }
 
-    pub fn with_provider_key_resolver(mut self, provider_keys: Arc<dyn ProviderKeyResolver>) -> Self {
+    pub fn with_provider_key_resolver(
+        mut self,
+        provider_keys: Arc<dyn ProviderKeyResolver>,
+    ) -> Self {
         self.provider_keys = provider_keys;
         self
     }
@@ -454,11 +455,11 @@ async fn materialize_block(
             ))
         }
         ContextEntryKind::Instructions => Err(LlmAdapterError::InvalidProviderRequest {
-            message: "instruction context entries must materialize as the system prompt"
-                .to_owned(),
+            message: "instruction context entries must materialize as the system prompt".to_owned(),
         }),
         ContextEntryKind::SkillCatalog => {
-            let catalog = crate::skill_prompts::read_skill_catalog(blobs, &entry.content_ref).await?;
+            let catalog =
+                crate::skill_prompts::read_skill_catalog(blobs, &entry.content_ref).await?;
             Ok((
                 am::MessageRole::User,
                 am::ContentBlockParam::text(crate::skill_prompts::skill_catalog_text(&catalog)),
@@ -689,7 +690,11 @@ fn optional_f64(value: Option<&Value>, name: &'static str) -> LlmAdapterResult<O
 }
 
 fn non_empty<T>(entries: Vec<T>) -> Option<Vec<T>> {
-    if entries.is_empty() { None } else { Some(entries) }
+    if entries.is_empty() {
+        None
+    } else {
+        Some(entries)
+    }
 }
 
 pub async fn result_from_response(
@@ -709,8 +714,7 @@ pub async fn result_from_response(
                 }
             }
             "tool_use" => {
-                let (entry, tool_call) =
-                    tool_use_context(blobs, block, raw_block, index).await?;
+                let (entry, tool_call) = tool_use_context(blobs, block, raw_block, index).await?;
                 context_entries.push(entry);
                 tool_calls.push(tool_call);
             }
@@ -724,15 +728,16 @@ pub async fn result_from_response(
     }
 
     let usage = response.parsed.usage.as_ref().map(llm_usage);
-    let context_token_estimate = response
-        .parsed
-        .usage
-        .as_ref()
-        .and_then(prompt_tokens)
-        .map(|tokens| TokenEstimate {
-            tokens: u64_to_u32(tokens),
-            quality: TokenEstimateQuality::ProviderCounted,
-        });
+    let context_token_estimate =
+        response
+            .parsed
+            .usage
+            .as_ref()
+            .and_then(prompt_tokens)
+            .map(|tokens| TokenEstimate {
+                tokens: u64_to_u32(tokens),
+                quality: TokenEstimateQuality::ProviderCounted,
+            });
     Ok(LlmGenerationResult {
         run_id: request.run_id,
         turn_id: request.turn_id,
@@ -830,10 +835,7 @@ async fn tool_use_context(
     raw_block: Value,
     index: usize,
 ) -> LlmAdapterResult<(ContextEntryInput, ObservedToolCall)> {
-    let call_id = block
-        .id
-        .clone()
-        .unwrap_or_else(|| format!("toolu_{index}"));
+    let call_id = block.id.clone().unwrap_or_else(|| format!("toolu_{index}"));
     let call_id = ToolCallId::try_new(call_id.clone()).map_err(|error| {
         LlmAdapterError::InvalidProviderRequest {
             message: format!("invalid Anthropic tool call id {call_id:?}: {error}"),
@@ -1595,8 +1597,7 @@ mod tests {
         let api = fake_api(completed_text_response_json());
         let adapter = AnthropicMessagesLlmAdapter::new(api.clone(), blobs)
             .with_provider_key_resolver(Arc::new(
-                crate::provider_keys::StaticProviderKeys::new()
-                    .with_key("anthropic", "stored-key"),
+                crate::provider_keys::StaticProviderKeys::new().with_key("anthropic", "stored-key"),
             ));
 
         LlmGenerationAdapter::generate(&adapter, generation_request())
@@ -1705,10 +1706,7 @@ mod tests {
         let error = materialize_create_request(&blobs, &mcp_approval)
             .await
             .expect_err("mcp approval must fail");
-        assert!(
-            error.to_string().contains("no approval flow"),
-            "{error}"
-        );
+        assert!(error.to_string().contains("no approval flow"), "{error}");
     }
 
     #[tokio::test(flavor = "current_thread")]

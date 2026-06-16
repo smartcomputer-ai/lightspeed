@@ -195,7 +195,10 @@ fn request_has_tool_result(request: &LlmGenerationRequest) -> bool {
 /// case the fake model answers directly.
 fn invocable_fake_tool(request: &LlmGenerationRequest) -> Option<ToolName> {
     let tools = &request.request.tools;
-    if let Some(tool) = tools.iter().find(|tool| tool.name.as_str() == FAKE_TOOL_NAME) {
+    if let Some(tool) = tools
+        .iter()
+        .find(|tool| tool.name.as_str() == FAKE_TOOL_NAME)
+    {
         return Some(tool.name.clone());
     }
     tools

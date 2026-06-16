@@ -137,7 +137,9 @@ fn auth_policy_from_args(args: &McpServerAddArgs) -> Result<api::McpServerAuthPo
         )
     };
     match args.auth_policy {
-        McpAuthPolicyArg::None | McpAuthPolicyArg::OptionalBearer | McpAuthPolicyArg::RequiredBearer
+        McpAuthPolicyArg::None
+        | McpAuthPolicyArg::OptionalBearer
+        | McpAuthPolicyArg::RequiredBearer
             if oauth_flags_used =>
         {
             anyhow::bail!(

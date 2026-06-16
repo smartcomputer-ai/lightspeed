@@ -165,10 +165,7 @@ impl CoreAgentLlm for LlmRuntime {
 mod tests {
     use super::*;
     use crate::error::LlmAdapterError;
-    use engine::{
-        ContextSnapshot, LlmRequest, ModelSelection, RunId, SessionId,
-        TurnId,
-    };
+    use engine::{ContextSnapshot, LlmRequest, ModelSelection, RunId, SessionId, TurnId};
 
     struct FailingAdapter;
 

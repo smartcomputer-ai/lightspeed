@@ -15,8 +15,8 @@ use sha2::{Digest, Sha256};
 use crate::{
     AuthFlowId, AuthGrantId, AuthProviderKind, AuthRegistryError, OAuthClientId, PrincipalRef,
     SecretId, SecretValue, validate_audience_url, validate_nonempty_optional,
-    validate_nonnegative_i64, validate_oauth_endpoint_url,
-    validate_scopes, validate_token_component,
+    validate_nonnegative_i64, validate_oauth_endpoint_url, validate_scopes,
+    validate_token_component,
 };
 
 pub const SECRET_KIND_OAUTH_ACCESS_TOKEN: &str = "auth.oauth.access_token";
@@ -102,7 +102,8 @@ impl OAuthClientRecord {
                     .to_owned(),
             }),
             (
-                TokenEndpointAuthMethod::ClientSecretBasic | TokenEndpointAuthMethod::ClientSecretPost,
+                TokenEndpointAuthMethod::ClientSecretBasic
+                | TokenEndpointAuthMethod::ClientSecretPost,
                 None,
             ) => Err(AuthRegistryError::InvalidInput {
                 message: "client_secret_basic/client_secret_post require a client secret"
@@ -467,7 +468,9 @@ pub enum OAuthTokenGrant {
         redirect_uri: String,
         code_verifier: SecretValue,
     },
-    RefreshToken { refresh_token: SecretValue },
+    RefreshToken {
+        refresh_token: SecretValue,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -561,10 +564,7 @@ pub(crate) fn token_request_wire(
                     message: "client_secret_basic requires a client secret".to_owned(),
                 });
             };
-            Some((
-                request.remote_client_id.clone(),
-                secret.expose().to_owned(),
-            ))
+            Some((request.remote_client_id.clone(), secret.expose().to_owned()))
         }
         TokenEndpointAuthMethod::ClientSecretPost => {
             let Some(secret) = &request.client_secret else {
@@ -706,10 +706,13 @@ impl OAuthTokenClient for HttpOAuthTokenClient {
                 message: format!("token endpoint request failed: {error}"),
             })?;
         let status = response.status();
-        let body = response.text().await.map_err(|error| OAuthTokenError::Http {
-            status: Some(status.as_u16()),
-            message: format!("read token endpoint response: {error}"),
-        })?;
+        let body = response
+            .text()
+            .await
+            .map_err(|error| OAuthTokenError::Http {
+                status: Some(status.as_u16()),
+                message: format!("read token endpoint response: {error}"),
+            })?;
         if !status.is_success() {
             return Err(parse_token_error_body(status.as_u16(), &body));
         }
@@ -852,7 +855,9 @@ mod tests {
         assert!(url.starts_with("https://github.com/login/oauth/authorize?"));
         assert!(url.contains("response_type=code"));
         assert!(url.contains("client_id=Iv1.abc123"));
-        assert!(url.contains("redirect_uri=https%3A%2F%2Flightspeed.example.com%2Fauth%2Fcallback"));
+        assert!(
+            url.contains("redirect_uri=https%3A%2F%2Flightspeed.example.com%2Fauth%2Fcallback")
+        );
         assert!(url.contains("state=state-123"));
         assert!(url.contains("code_challenge=challenge-456"));
         assert!(url.contains("code_challenge_method=S256"));
@@ -907,11 +912,23 @@ mod tests {
 
         let wire = token_request_wire(&request).expect("wire form");
 
-        assert_eq!(wire.basic_auth, Some(("client-1".to_owned(), "secret-1".to_owned())));
-        assert!(wire.form.contains(&("grant_type", "authorization_code".to_owned())));
+        assert_eq!(
+            wire.basic_auth,
+            Some(("client-1".to_owned(), "secret-1".to_owned()))
+        );
+        assert!(
+            wire.form
+                .contains(&("grant_type", "authorization_code".to_owned()))
+        );
         assert!(wire.form.contains(&("code", "code-1".to_owned())));
-        assert!(wire.form.contains(&("code_verifier", "verifier-1".to_owned())));
-        assert!(wire.form.contains(&("resource", "https://crm.example.com/mcp".to_owned())));
+        assert!(
+            wire.form
+                .contains(&("code_verifier", "verifier-1".to_owned()))
+        );
+        assert!(
+            wire.form
+                .contains(&("resource", "https://crm.example.com/mcp".to_owned()))
+        );
         assert!(!wire.form.iter().any(|(key, _)| *key == "client_secret"));
         assert!(!wire.form.iter().any(|(key, _)| *key == "client_id"));
     }
@@ -932,10 +949,19 @@ mod tests {
         let wire = token_request_wire(&request).expect("wire form");
 
         assert_eq!(wire.basic_auth, None);
-        assert!(wire.form.contains(&("grant_type", "refresh_token".to_owned())));
-        assert!(wire.form.contains(&("refresh_token", "refresh-1".to_owned())));
+        assert!(
+            wire.form
+                .contains(&("grant_type", "refresh_token".to_owned()))
+        );
+        assert!(
+            wire.form
+                .contains(&("refresh_token", "refresh-1".to_owned()))
+        );
         assert!(wire.form.contains(&("client_id", "client-1".to_owned())));
-        assert!(wire.form.contains(&("client_secret", "secret-1".to_owned())));
+        assert!(
+            wire.form
+                .contains(&("client_secret", "secret-1".to_owned()))
+        );
     }
 
     #[test]
@@ -946,7 +972,10 @@ mod tests {
         .expect("parse token response");
         assert_eq!(parsed.access_token.expose(), "at-1");
         assert_eq!(parsed.expires_in_secs, Some(3600));
-        assert_eq!(parsed.refresh_token.as_ref().map(SecretValue::expose), Some("rt-1"));
+        assert_eq!(
+            parsed.refresh_token.as_ref().map(SecretValue::expose),
+            Some("rt-1")
+        );
         assert_eq!(parsed.scope.as_deref(), Some("repo"));
 
         let parsed = parse_token_response_body(r#"{"access_token":"at-2","expires_in":"7200"}"#)
@@ -973,7 +1002,10 @@ mod tests {
         ));
         assert!(matches!(
             parse_token_error_body(502, "<html>bad gateway</html>"),
-            OAuthTokenError::Http { status: Some(502), .. }
+            OAuthTokenError::Http {
+                status: Some(502),
+                ..
+            }
         ));
     }
 

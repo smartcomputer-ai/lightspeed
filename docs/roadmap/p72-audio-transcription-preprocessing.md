@@ -229,7 +229,8 @@ Completed 2026-06-16:
   cheap metadata is available today: OGG/Opus granule positions and WAV RIFF
   byte-rate/data chunks.
 - Added an ignored live transcription test that fails clearly unless
-  `OPENAI_API_KEY` and `OPENAI_AUDIO_TRANSCRIPTION_FIXTURE` are supplied.
+  `OPENAI_API_KEY` is supplied; it uses a hosted OGG fixture by default and
+  supports local path/URL fixture overrides.
 
 ### G4: Optional Transcoder (Container Widening)
 
@@ -241,7 +242,16 @@ Completed 2026-06-16:
 - Add duration/output caps, timeouts, and temp cleanup.
 - Cover command construction with unit tests; avoid shell execution.
 
-### G5: End-To-End Voice Note
+### [~] G5: End-To-End Voice Note
+
+Partial 2026-06-16:
+
+- Added `crates/temporal-server/tests/preprocess_live.rs`, an ignored live
+  Temporal/Postgres admission test that submits `audio/ogg` through
+  `run/start`, injects a deterministic fake transcriber, and verifies the
+  admitted run input contains transcript text instead of the raw audio preview.
+- This covers the channel-neutral gateway/workflow preprocessing path. The
+  WhatsApp/Telegram bridge end-to-end checks remain pending.
 
 - WhatsApp voice note live test: submit a spoken question and verify the run
   input contains transcript text and the model answers it (no transcoder

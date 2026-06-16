@@ -2,10 +2,9 @@ use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
 use engine::{
     AgentHandle, ContextConfig, ContextEntryInput, ContextEntryKind, ContextMessageRole,
-    CoreAgentCommand, CoreAgentEventKind, ModelSelection,
-    ProviderApiKind,
-    RemoteMcpApprovalPolicy, RemoteMcpToolSpec, RunConfig, RunStatus, SessionConfig, SessionId,
-    ToolKind, ToolName, ToolParallelism, ToolSpec, ToolTargetRequirement,
+    CoreAgentCommand, CoreAgentEventKind, ModelSelection, ProviderApiKind, RemoteMcpApprovalPolicy,
+    RemoteMcpToolSpec, RunConfig, RunStatus, SessionConfig, SessionId, ToolKind, ToolName,
+    ToolParallelism, ToolSpec, ToolTargetRequirement,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
 };
 use llm_clients::openai::responses::{Client, Config};
@@ -236,10 +235,12 @@ fn session_config(model: ModelSelection) -> SessionConfig {
         turn: engine::TurnConfig {
             max_output_tokens: Some(1024),
             tool_choice: None,
-            provider_params: Some(support::openai_params(&llm_runtime::OpenAiResponsesParams {
-                store: Some(false),
-                ..llm_runtime::OpenAiResponsesParams::default()
-            })),
+            provider_params: Some(support::openai_params(
+                &llm_runtime::OpenAiResponsesParams {
+                    store: Some(false),
+                    ..llm_runtime::OpenAiResponsesParams::default()
+                },
+            )),
         },
         context: ContextConfig { compaction: None },
         tools: Default::default(),

@@ -1884,7 +1884,8 @@ mod tests {
 
         assert!(rendered.contains("active 1"));
         assert!(
-            rendered.contains("- lightspeed:review [session directContext:sha256:skill-doc] Review")
+            rendered
+                .contains("- lightspeed:review [session directContext:sha256:skill-doc] Review")
         );
         assert!(rendered.contains("catalogRef sha256:catalog"));
     }

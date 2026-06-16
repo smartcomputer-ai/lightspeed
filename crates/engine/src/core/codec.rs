@@ -191,7 +191,9 @@ fn core_agent_event_envelope_kind(event: &CoreAgentEvent) -> &'static str {
     match &event.kind {
         CoreAgentEventKind::Lifecycle(event) => match event {
             CoreAgentLifecycleEvent::Opened { .. } => "lightspeed.core.lifecycle.opened",
-            CoreAgentLifecycleEvent::ConfigChanged { .. } => "lightspeed.core.lifecycle.config_changed",
+            CoreAgentLifecycleEvent::ConfigChanged { .. } => {
+                "lightspeed.core.lifecycle.config_changed"
+            }
             CoreAgentLifecycleEvent::Closed => "lightspeed.core.lifecycle.closed",
         },
         CoreAgentEventKind::Run(event) => match event {
@@ -216,13 +218,19 @@ fn core_agent_event_envelope_kind(event: &CoreAgentEvent) -> &'static str {
             ContextEvent::KeysRemoved { .. } => "lightspeed.core.context.keys_removed",
             ContextEvent::KeyPrefixReplaced { .. } => "lightspeed.core.context.key_prefix_replaced",
             ContextEvent::StateReplaced { .. } => "lightspeed.core.context.state_replaced",
-            ContextEvent::CompactionRequested { .. } => "lightspeed.core.context.compaction_requested",
-            ContextEvent::CompactionFinished { .. } => "lightspeed.core.context.compaction_finished",
+            ContextEvent::CompactionRequested { .. } => {
+                "lightspeed.core.context.compaction_requested"
+            }
+            ContextEvent::CompactionFinished { .. } => {
+                "lightspeed.core.context.compaction_finished"
+            }
         },
         CoreAgentEventKind::ToolConfig(event) => match event {
             ToolConfigEvent::ToolsReplaced { .. } => "lightspeed.core.tool_config.tools_replaced",
             ToolConfigEvent::ToolsPatched { .. } => "lightspeed.core.tool_config.tools_patched",
-            ToolConfigEvent::DefaultTargetSet { .. } => "lightspeed.core.tool_config.default_target_set",
+            ToolConfigEvent::DefaultTargetSet { .. } => {
+                "lightspeed.core.tool_config.default_target_set"
+            }
             ToolConfigEvent::DefaultTargetCleared { .. } => {
                 "lightspeed.core.tool_config.default_target_cleared"
             }

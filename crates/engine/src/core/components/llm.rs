@@ -350,9 +350,10 @@ fn compaction_request_fingerprint(
     target_tokens: Option<u32>,
     params: Option<&ProviderParams>,
 ) -> Result<String, PlanningError> {
-    let encoded = serde_json::to_vec(&(model, context, target_tokens, params)).map_err(|error| {
-        PlanningError::Rejected(format!("failed to fingerprint compaction request: {error}"))
-    })?;
+    let encoded =
+        serde_json::to_vec(&(model, context, target_tokens, params)).map_err(|error| {
+            PlanningError::Rejected(format!("failed to fingerprint compaction request: {error}"))
+        })?;
     let digest = Sha256::digest(encoded);
     Ok(format!("sha256:{}", hex::encode(digest)))
 }
@@ -553,8 +554,8 @@ mod tests {
             )),
         };
 
-        let error = llm_request_context(&request)
-            .expect_err("params api kind mismatch must be rejected");
+        let error =
+            llm_request_context(&request).expect_err("params api kind mismatch must be rejected");
         assert!(matches!(error, DomainError::ProviderCompatibility(_)));
     }
 }

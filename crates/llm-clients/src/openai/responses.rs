@@ -142,7 +142,10 @@ impl Client {
     /// Effective `Authorization` value: the per-request auth when supplied,
     /// otherwise the configured key. OpenAI sends API keys and OAuth tokens
     /// the same way (`Bearer`). Fails before any I/O when neither exists.
-    fn auth_header(&self, auth: Option<crate::RequestAuth<'_>>) -> Result<HeaderValue, LlmApiError> {
+    fn auth_header(
+        &self,
+        auth: Option<crate::RequestAuth<'_>>,
+    ) -> Result<HeaderValue, LlmApiError> {
         match auth {
             Some(crate::RequestAuth::ApiKey(value)) | Some(crate::RequestAuth::Bearer(value)) => {
                 bearer_auth_value(value)

@@ -1,41 +1,29 @@
-use std::{
-    env,
-    future::Future,
-    sync::{Arc, Mutex},
-    time::{Duration, Instant},
-};
+mod support;
 
 use api::{
     AgentApiErrorKind, AgentApiService, ContextAppendEntry, ContextAppendParams, InitializeParams,
-    InputItem, McpServerCreateParams,
-    McpServerDeleteParams, McpServerListParams, McpServerReadParams, McpServerStatus,
-    RemoteMcpApprovalPolicy, RemoteMcpTransport, RunStartParams, RunStatus, SessionConfigInput,
-    SessionEventsReadParams, SessionItemView, SessionMcpLinkParams, SessionMcpListParams,
-    SessionMcpUnlinkParams, SessionReadParams, SessionStartParams, SessionStatus,
+    InputItem, McpServerCreateParams, McpServerDeleteParams, McpServerListParams,
+    McpServerReadParams, McpServerStatus, RemoteMcpApprovalPolicy, RemoteMcpTransport,
+    RunStartParams, SessionConfigInput, SessionEventsReadParams, SessionItemView,
+    SessionMcpLinkParams, SessionMcpListParams, SessionMcpUnlinkParams, SessionReadParams,
+    SessionStartParams, SessionStatus,
 };
 use api_projection::model_to_api;
 use engine::{
-    CommandCodec, CoreAgentCodec, CoreAgentCommand, CoreAgentLlm, CoreAgentTools, DynamicCommand,
-    ModelSelection, ProviderApiKind, SessionId, storage::BlobStore,
+    CommandCodec, CoreAgentCodec, CoreAgentCommand, DynamicCommand, SessionId, storage::BlobStore,
+};
+use support::live::{
+    LIVE_TEST_LOCK, fake_worker_activities, final_assistant_text, openai_live_model,
+    require_openai_live_env, require_storage_live_env, run_with_live_worker,
+    wait_for_admission_failure, wait_for_session_status, wait_for_terminal_run,
 };
 use temporal_server::{
-    default_model_from_env,
-    gateway::GatewayAgentApi,
-    pg_store_from_env,
-    worker::{ActivityState, FakeLlm, FakeTools, WorkerActivities},
+    default_model_from_env, gateway::GatewayAgentApi, pg_store_from_env, worker::WorkerActivities,
 };
-use temporal_workflow::{
-    AgentAdmission, AgentAdmissionFailureKind, AgentSessionWorkflow, DEFAULT_TEMPORAL_NAMESPACE,
-    DEFAULT_TEMPORAL_TARGET, connect_temporal,
-};
+use temporal_workflow::{AgentAdmission, AgentAdmissionFailureKind, AgentSessionWorkflow};
 use temporalio_client::{
     Client, WorkflowQueryOptions, WorkflowSignalOptions, WorkflowTerminateOptions,
 };
-use temporalio_common::{telemetry::TelemetryOptions, worker::WorkerTaskTypes};
-use temporalio_sdk::{Worker, WorkerOptions};
-use temporalio_sdk_core::{CoreRuntime, RuntimeOptions};
-
-static LIVE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires local/up.sh or compatible Temporal + Postgres env"]
@@ -124,71 +112,6 @@ async fn temporal_live_session_start_then_run_start_completes_openai_run() -> an
 
     let activities = WorkerActivities::from_env().await?;
     run_with_live_worker(activities, run_openai_live_client).await
-}
-
-async fn run_with_live_worker<F, Fut>(
-    activities: WorkerActivities,
-    run_client: F,
-) -> anyhow::Result<()>
-where
-    F: FnOnce(Client, String, SessionId) -> Fut,
-    Fut: Future<Output = anyhow::Result<()>>,
-{
-    let task_queue = format!("lightspeed-agent-live-{}", uuid::Uuid::new_v4().simple());
-    let session_id = SessionId::new(format!("session_live_{}", uuid::Uuid::new_v4().simple()));
-    let temporal_target =
-        env::var("TEMPORAL_ADDRESS").unwrap_or_else(|_| DEFAULT_TEMPORAL_TARGET.to_owned());
-    let namespace =
-        env::var("TEMPORAL_NAMESPACE").unwrap_or_else(|_| DEFAULT_TEMPORAL_NAMESPACE.to_owned());
-
-    let runtime = CoreRuntime::new_assume_tokio(
-        RuntimeOptions::builder()
-            .telemetry_options(TelemetryOptions::builder().build())
-            .build()
-            .map_err(|error| anyhow::anyhow!("{error}"))?,
-    )?;
-    let client = connect_temporal(&temporal_target, &namespace).await?;
-    let worker_options = WorkerOptions::new(task_queue.clone())
-        .register_workflow::<AgentSessionWorkflow>()
-        .register_activities(activities)
-        .task_types(WorkerTaskTypes::all())
-        .build();
-    let mut worker = Worker::new(&runtime, client.clone(), worker_options)
-        .map_err(|error| anyhow::anyhow!("{error}"))?;
-    let shutdown_worker = worker.shutdown_handle();
-    let worker_future = worker.run();
-    tokio::pin!(worker_future);
-
-    let client_future = run_client(client, task_queue, session_id);
-    tokio::pin!(client_future);
-
-    let client_result = loop {
-        tokio::select! {
-            worker_result = worker_future.as_mut() => {
-                return match worker_result {
-                    Ok(()) => Err(anyhow::anyhow!("Temporal worker stopped before the live test completed")),
-                    Err(error) => Err(error.context("Temporal worker failed")),
-                };
-            }
-            client_result = client_future.as_mut() => break client_result,
-        }
-    };
-
-    shutdown_worker();
-    tokio::time::timeout(Duration::from_secs(10), worker_future.as_mut())
-        .await
-        .map_err(|_| anyhow::anyhow!("Temporal worker did not shut down within 10 seconds"))??;
-    client_result
-}
-
-async fn fake_worker_activities() -> anyhow::Result<WorkerActivities> {
-    let store = pg_store_from_env().await?;
-    let blobs: Arc<dyn BlobStore> = store.clone();
-    let llm = Arc::new(FakeLlm::new(blobs.clone())) as Arc<dyn CoreAgentLlm>;
-    let tools = Arc::new(FakeTools::new(blobs)) as Arc<dyn CoreAgentTools>;
-    Ok(WorkerActivities::new(ActivityState::from_pg_store(
-        store, llm, tools,
-    )))
 }
 
 async fn run_fake_live_client(
@@ -963,131 +886,4 @@ async fn run_openai_live_client(
         )
         .await;
     Ok(())
-}
-
-fn final_assistant_text(run: &api::RunView) -> Option<&str> {
-    run.items.iter().rev().find_map(|item| match item {
-        SessionItemView::AssistantMessage { text, .. } => Some(text.as_str()),
-        _ => None,
-    })
-}
-
-async fn wait_for_terminal_run(
-    api: &GatewayAgentApi,
-    session_id: &SessionId,
-    run_id: &str,
-) -> anyhow::Result<api::RunView> {
-    let started = Instant::now();
-    loop {
-        if started.elapsed() > Duration::from_secs(30) {
-            anyhow::bail!("timed out waiting for run {run_id} to finish");
-        }
-        let session = api
-            .read_session(SessionReadParams {
-                session_id: session_id.as_str().to_owned(),
-            })
-            .await?;
-        if let Some(run) = session
-            .result
-            .session
-            .runs
-            .into_iter()
-            .find(|run| run.id == run_id)
-        {
-            if matches!(
-                run.status,
-                RunStatus::Completed | RunStatus::Failed | RunStatus::Cancelled
-            ) {
-                return Ok(run);
-            }
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-}
-
-async fn wait_for_admission_failure(
-    client: &Client,
-    session_id: &SessionId,
-    kind: AgentAdmissionFailureKind,
-) -> anyhow::Result<()> {
-    let handle = client.get_workflow_handle::<AgentSessionWorkflow>(session_id.as_str());
-    let started = Instant::now();
-    loop {
-        if started.elapsed() > Duration::from_secs(30) {
-            anyhow::bail!("timed out waiting for admission failure {kind:?}");
-        }
-        let status = handle
-            .query(
-                AgentSessionWorkflow::status,
-                (),
-                WorkflowQueryOptions::default(),
-            )
-            .await?;
-        if status
-            .admission_failures
-            .iter()
-            .any(|failure| failure.kind == kind)
-        {
-            assert_eq!(status.last_error, None);
-            return Ok(());
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-}
-
-async fn wait_for_session_status(
-    api: &GatewayAgentApi,
-    session_id: &SessionId,
-    expected: SessionStatus,
-) -> anyhow::Result<()> {
-    let started = Instant::now();
-    loop {
-        if started.elapsed() > Duration::from_secs(30) {
-            anyhow::bail!("timed out waiting for session status {expected:?}");
-        }
-        let session = api
-            .read_session(SessionReadParams {
-                session_id: session_id.as_str().to_owned(),
-            })
-            .await?;
-        if session.result.session.status == expected {
-            return Ok(());
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-}
-
-fn require_storage_live_env() -> anyhow::Result<()> {
-    if env::var("LIGHTSPEED_POSTGRES_URL")
-        .or_else(|_| env::var("LIGHTSPEED_TEST_POSTGRES_URL"))
-        .is_err()
-    {
-        anyhow::bail!("temporal live test requires LIGHTSPEED_POSTGRES_URL or LIGHTSPEED_TEST_POSTGRES_URL");
-    }
-    if env::var("LIGHTSPEED_PG_UNIVERSE_ID").is_err() {
-        anyhow::bail!("temporal live test requires LIGHTSPEED_PG_UNIVERSE_ID");
-    }
-    Ok(())
-}
-
-fn require_openai_live_env() -> anyhow::Result<()> {
-    let api_key = env::var("OPENAI_API_KEY").map_err(|_| {
-        anyhow::anyhow!("OPENAI_API_KEY must be set to run the OpenAI Agent live test")
-    })?;
-    if api_key.trim().is_empty() {
-        anyhow::bail!("OPENAI_API_KEY is set but empty");
-    }
-    Ok(())
-}
-
-fn openai_live_model() -> ModelSelection {
-    ModelSelection {
-        api_kind: ProviderApiKind::OpenAiResponses,
-        provider_id: "openai".to_owned(),
-        model: env::var("LIGHTSPEED_OPENAI_MODEL")
-            .or_else(|_| env::var("OPENAI_RESPONSES_MODEL"))
-            .or_else(|_| env::var("OPENAI_LIVE_MODEL"))
-            .or_else(|_| env::var("LIGHTSPEED_CHAT_MODEL"))
-            .unwrap_or_else(|_| "gpt-5.5".to_owned()),
-    }
 }

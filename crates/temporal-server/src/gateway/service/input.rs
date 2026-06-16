@@ -14,7 +14,12 @@ const ALLOWED_AUDIO_MIMES: &[&str] = &[
 /// PDF is the only document type both providers accept natively; the text
 /// MIMEs are inlined as text by the llm-runtime adapters.
 const PDF_MIME: &str = "application/pdf";
-const TEXT_DOCUMENT_MIMES: &[&str] = &["text/plain", "text/markdown", "text/csv", "application/json"];
+const TEXT_DOCUMENT_MIMES: &[&str] = &[
+    "text/plain",
+    "text/markdown",
+    "text/csv",
+    "application/json",
+];
 const MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_AUDIO_BYTES: u64 = 25 * 1024 * 1024;
 const MAX_PDF_BYTES: u64 = 10 * 1024 * 1024;
