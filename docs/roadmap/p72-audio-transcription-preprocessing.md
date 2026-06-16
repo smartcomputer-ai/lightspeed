@@ -250,13 +250,18 @@ Partial 2026-06-16:
   Temporal/Postgres admission test that submits `audio/ogg` through
   `run/start`, injects a deterministic fake transcriber, and verifies the
   admitted run input contains transcript text instead of the raw audio preview.
-- This covers the channel-neutral gateway/workflow preprocessing path. The
-  WhatsApp/Telegram bridge end-to-end checks remain pending.
+- Added a non-live gateway regression test for duplicate `submission_id`
+  handling so a stale completed run cannot mask a mismatched retry rejection.
+- This covers the channel-neutral gateway/workflow preprocessing path. Full
+  WhatsApp/Telegram bot live tests are deferred unless adapter-specific gaps
+  show up; the current first-cut confidence comes from bridge media unit tests,
+  the channel-neutral live admission test, and the provider transcription live
+  test.
 
-- WhatsApp voice note live test: submit a spoken question and verify the run
-  input contains transcript text and the model answers it (no transcoder
-  needed for the OGG/Opus path).
-- Telegram voice/audio equivalent where bot API access is practical.
+- Optional WhatsApp voice note live test: submit a spoken question and verify
+  the run input contains transcript text and the model answers it (no
+  transcoder needed for the OGG/Opus path).
+- Optional Telegram voice/audio equivalent where bot API access is practical.
 - Bridge tests for lazy media download, transcription-failure surfacing to the
   chat, and placeholder behavior.
 

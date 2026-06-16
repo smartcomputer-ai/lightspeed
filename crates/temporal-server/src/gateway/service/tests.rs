@@ -681,6 +681,35 @@ fn run_start_config_maps_tool_choice() {
 }
 
 #[test]
+fn existing_run_submission_rejects_completed_duplicate_with_different_input() {
+    let submission_id = SubmissionId::new("submit_retry");
+    let run_config = RunConfig::default();
+    let original_input = vec![test_user_message_input(BlobRef::from_bytes(b"original"))];
+    let changed_input = vec![test_user_message_input(BlobRef::from_bytes(b"changed"))];
+    let mut state = engine::CoreAgentState::new();
+    state.runs.completed.push(engine::RunRecord {
+        run_id: RunId::new(7),
+        status: RunStatus::Completed,
+        submission_id: Some(submission_id.clone()),
+        submission_digest: Some(run_submission_digest(&original_input, &run_config)),
+        output_ref: None,
+        failure: None,
+    });
+
+    assert!(matches!(
+        existing_run_submission(&state, &submission_id, &changed_input, &run_config),
+        Some(ExistingRunSubmission::Reject)
+    ));
+    let Some(ExistingRunSubmission::ReturnRun { run_id, status }) =
+        existing_run_submission(&state, &submission_id, &original_input, &run_config)
+    else {
+        panic!("identical duplicate should return existing completed run");
+    };
+    assert_eq!(run_id, RunId::new(7));
+    assert_eq!(status, RunStatus::Completed);
+}
+
+#[test]
 fn web_search_defaults_on_for_openai_responses_sessions() {
     let config = default_session_config(openai_model());
 
@@ -1245,6 +1274,20 @@ fn openai_model() -> ModelSelection {
         api_kind: ProviderApiKind::OpenAiResponses,
         provider_id: "openai".to_owned(),
         model: "gpt-5.5".to_owned(),
+    }
+}
+
+fn test_user_message_input(content_ref: BlobRef) -> ContextEntryInput {
+    ContextEntryInput {
+        kind: engine::ContextEntryKind::Message {
+            role: engine::ContextMessageRole::User,
+        },
+        content_ref,
+        media_type: Some("text/plain".to_owned()),
+        preview: None,
+        provider_kind: None,
+        provider_item_id: None,
+        token_estimate: None,
     }
 }
 
