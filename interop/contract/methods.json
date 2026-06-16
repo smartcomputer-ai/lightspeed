@@ -826,6 +826,12 @@
   "protocolVersion": "lightspeed.agent.api.v1",
   "transport": {
     "endpoint": "/rpc",
+    "error": {
+      "schema": {
+        "$ref": "#/definitions/JsonRpcError"
+      },
+      "type": "JsonRpcError"
+    },
     "kind": "http-json-rpc",
     "resultEnvelope": "AgentApiOutcome"
   }

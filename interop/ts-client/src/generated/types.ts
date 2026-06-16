@@ -66,6 +66,26 @@ export type ToolTargetRequirementView =
     };
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiErrorKind".
+ */
+export type AgentApiErrorKind =
+  | "invalid_request"
+  | "not_found"
+  | "conflict"
+  | "rejected"
+  | "unsupported_audio_mime"
+  | "audio_blob_missing"
+  | "audio_blob_too_large"
+  | "audio_duration_too_long"
+  | "transcoder_unavailable"
+  | "transcode_timeout"
+  | "transcode_output_too_large"
+  | "provider_authentication"
+  | "provider_configuration"
+  | "provider_transcription_failure"
+  | "internal";
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentNotification".
  */
 export type AgentNotification =
@@ -791,6 +811,14 @@ export interface ToolView {
 export interface SecretRefView {
   id: string;
   namespace: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiError".
+ */
+export interface AgentApiError {
+  kind: AgentApiErrorKind;
+  message: string;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -2341,6 +2369,15 @@ export interface GenerationConfigPatch {
 export interface InitializeParams {
   capabilities?: ClientCapabilities | null;
   clientInfo?: ClientInfo | null;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "JsonRpcError".
+ */
+export interface JsonRpcError {
+  code: number;
+  data?: AgentApiError | null;
+  message: string;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema

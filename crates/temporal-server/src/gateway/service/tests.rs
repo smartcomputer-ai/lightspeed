@@ -15,6 +15,20 @@ fn admission_failure_mapping_uses_gateway_error_kinds() {
             .kind,
         AgentApiErrorKind::Rejected
     );
+    assert_eq!(
+        map_admission_failure_to_api_error(&failure(
+            AgentAdmissionFailureKind::UnsupportedAudioMime
+        ))
+        .kind,
+        AgentApiErrorKind::UnsupportedAudioMime
+    );
+    assert_eq!(
+        map_admission_failure_to_api_error(&failure(
+            AgentAdmissionFailureKind::ProviderAuthentication
+        ))
+        .kind,
+        AgentApiErrorKind::ProviderAuthentication
+    );
 }
 
 #[test]
@@ -225,9 +239,12 @@ fn mcp_link_with_grant_materializes_auth_ref_for_bearer_server() {
         Some("https://crm.example.com"),
     );
 
-    let draft =
-        session_mcp_link_from_record(mcp_link_params_with_grant("authgrant_1"), &record, Some(&grant))
-            .expect("materialize MCP link draft with grant");
+    let draft = session_mcp_link_from_record(
+        mcp_link_params_with_grant("authgrant_1"),
+        &record,
+        Some(&grant),
+    )
+    .expect("materialize MCP link draft with grant");
 
     assert_eq!(
         draft.spec.auth_ref,
@@ -249,9 +266,12 @@ fn mcp_link_rejects_revoked_grant() {
         None,
     );
 
-    let error =
-        session_mcp_link_from_record(mcp_link_params_with_grant("authgrant_1"), &record, Some(&grant))
-            .expect_err("revoked grant must be rejected");
+    let error = session_mcp_link_from_record(
+        mcp_link_params_with_grant("authgrant_1"),
+        &record,
+        Some(&grant),
+    )
+    .expect_err("revoked grant must be rejected");
 
     assert_eq!(error.kind, api::AgentApiErrorKind::Rejected);
 }
@@ -272,9 +292,12 @@ fn mcp_link_rejects_grant_kind_incompatible_with_auth_policy() {
         None,
     );
 
-    let error =
-        session_mcp_link_from_record(mcp_link_params_with_grant("authgrant_1"), &record, Some(&grant))
-            .expect_err("bearer grant must not satisfy OAuth policy");
+    let error = session_mcp_link_from_record(
+        mcp_link_params_with_grant("authgrant_1"),
+        &record,
+        Some(&grant),
+    )
+    .expect_err("bearer grant must not satisfy OAuth policy");
 
     assert_eq!(error.kind, api::AgentApiErrorKind::Rejected);
 }
@@ -290,9 +313,12 @@ fn mcp_link_rejects_grant_audience_that_does_not_cover_server() {
         Some("https://other.example.com"),
     );
 
-    let error =
-        session_mcp_link_from_record(mcp_link_params_with_grant("authgrant_1"), &record, Some(&grant))
-            .expect_err("audience mismatch must be rejected");
+    let error = session_mcp_link_from_record(
+        mcp_link_params_with_grant("authgrant_1"),
+        &record,
+        Some(&grant),
+    )
+    .expect_err("audience mismatch must be rejected");
 
     assert_eq!(error.kind, api::AgentApiErrorKind::Rejected);
 }
@@ -307,9 +333,12 @@ fn mcp_link_rejects_grant_for_no_auth_server() {
         None,
     );
 
-    let error =
-        session_mcp_link_from_record(mcp_link_params_with_grant("authgrant_1"), &record, Some(&grant))
-            .expect_err("grant on no-auth server must be rejected");
+    let error = session_mcp_link_from_record(
+        mcp_link_params_with_grant("authgrant_1"),
+        &record,
+        Some(&grant),
+    )
+    .expect_err("grant on no-auth server must be rejected");
 
     assert_eq!(error.kind, api::AgentApiErrorKind::InvalidRequest);
 }

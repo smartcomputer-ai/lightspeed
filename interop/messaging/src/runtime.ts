@@ -378,7 +378,7 @@ export class MessagingBridgeRuntime {
       this.log(`bridge: answered ${first.message.provider} batch of ${batch.length} in ${key}`);
     } catch (error) {
       const errorText = error instanceof Error ? error.message : String(error);
-      const userText = `Lightspeed could not answer this message: ${errorText}`;
+      const userText = userFacingTurnFailure(error, errorText);
       try {
         await first.sendReply(userText);
         for (const turn of batch) {
@@ -443,4 +443,46 @@ function roomContextKey(message: NormalizedInbound): string {
     message.messageId,
     message.senderId,
   ])}`;
+}
+
+const AUDIO_ADMISSION_FAILURE_KINDS = new Set([
+  "unsupported_audio_mime",
+  "audio_blob_missing",
+  "audio_blob_too_large",
+  "audio_duration_too_long",
+  "transcoder_unavailable",
+  "transcode_timeout",
+  "transcode_output_too_large",
+  "provider_authentication",
+  "provider_configuration",
+  "provider_transcription_failure",
+]);
+
+function userFacingTurnFailure(error: unknown, fallbackMessage: string): string {
+  const apiError = apiErrorData(error);
+  if (apiError && AUDIO_ADMISSION_FAILURE_KINDS.has(apiError.kind)) {
+    return `Lightspeed could not transcribe this audio message: ${
+      apiError.message || fallbackMessage
+    }`;
+  }
+  return `Lightspeed could not answer this message: ${fallbackMessage}`;
+}
+
+function apiErrorData(error: unknown): { kind: string; message?: string } | null {
+  if (typeof error !== "object" || error === null || !("data" in error)) {
+    return null;
+  }
+  const data = (error as { data?: unknown }).data;
+  if (typeof data !== "object" || data === null) {
+    return null;
+  }
+  const kind = (data as { kind?: unknown }).kind;
+  if (typeof kind !== "string") {
+    return null;
+  }
+  const message = (data as { message?: unknown }).message;
+  return {
+    kind,
+    ...(typeof message === "string" ? { message } : {}),
+  };
 }

@@ -198,23 +198,38 @@ Completed 2026-06-16:
 - Teach Telegram and WhatsApp adapters to pass voice/audio messages as media on
   addressed turns; room-event audio remains placeholder text.
 
-### G2: Worker Preprocessing Activity
+### [x] G2: Worker Preprocessing Activity
 
-- Add `WorkflowActivities::preprocess_run_input`.
-- Add worker implementation with fake/test adapters; the activity must work
-  with no transcoder configured.
-- Wire preprocessing into `process_admissions` before `drive.admit_command`.
-- Add typed, per-variant admission failure mapping, and the group-failure rule
-  (any audio entry failing fails the whole submission).
+Completed 2026-06-16:
 
-### G3: OpenAI Transcription Client (No-Transcode Path)
+- Added `WorkflowActivities::preprocess_run_input` and the request/result DTOs
+  used to record preprocessing outcomes in workflow history.
+- Wired `AgentSessionWorkflow::process_admissions` to preprocess audio-bearing
+  `RequestRun` commands before `drive.admit_command`, preserving submission-id
+  correlation for admission failures.
+- Added the worker preprocessing activity. It rewrites provider-accepted audio
+  entries into transcript text CAS blobs and leaves non-audio input untouched.
+- Added typed preprocessing/admission failure variants, gateway/API mapping,
+  contract artifacts, TS client error typing, and bridge chat notices for audio
+  transcription admission failures.
+- Enforced the group-failure rule: any failed audio entry rejects the whole
+  submitted `run/start` group.
 
-- Add OpenAI audio transcription support in `llm-clients` for the most advanced
-  transcribe model, with whatever API shape that model requires.
-- Add an activity-level transcriber adapter with provider key resolution.
-- Send provider-accepted containers (OGG/Opus voice notes) directly, with only
-  duration/size validation — no transcoder required for this path.
-- Add ignored live tests that fail clearly when credentials are missing.
+### [x] G3: OpenAI Transcription Client (No-Transcode Path)
+
+Completed 2026-06-16:
+
+- Added the narrow `llm-clients` OpenAI audio transcription client for
+  multipart `/audio/transcriptions`, defaulting to `gpt-4o-transcribe`.
+- Added the activity-level OpenAI transcriber adapter with stored provider-key
+  resolution and env-key fallback through the shared client config.
+- Sends provider-accepted audio MIME types directly to OpenAI with no FFmpeg or
+  transcoder dependency for the voice-note path.
+- Enforces the 25 MB provider upload cap and a 10 minute duration cap where
+  cheap metadata is available today: OGG/Opus granule positions and WAV RIFF
+  byte-rate/data chunks.
+- Added an ignored live transcription test that fails clearly unless
+  `OPENAI_API_KEY` and `OPENAI_AUDIO_TRANSCRIPTION_FIXTURE` are supplied.
 
 ### G4: Optional Transcoder (Container Widening)
 

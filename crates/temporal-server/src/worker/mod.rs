@@ -11,21 +11,24 @@ use temporalio_sdk::{Worker, WorkerOptions};
 use temporalio_sdk_core::{CoreRuntime, RuntimeOptions};
 
 pub use activities::{
-    ActivityState, LlmActivityDeps, SkillCatalogActivityDeps, StorageActivityDeps,
-    ToolActivityDeps, WorkerActivities,
+    ActivityState, AudioTranscriber, AudioTranscription, AudioTranscriptionError,
+    AudioTranscriptionRequest, LlmActivityDeps, PreprocessActivityDeps, SkillCatalogActivityDeps,
+    StorageActivityDeps, ToolActivityDeps, WorkerActivities,
 };
 pub use fake::{FakeLlm, FakeTools};
 pub use secrets::{BrokerSecretResolver, StoredProviderKeyResolver};
 pub use session_tools::SessionTools;
 pub use temporal_workflow::{
     ACTIVITY_APPEND_EVENTS, ACTIVITY_CONTEXT_COMPACT, ACTIVITY_CREATE_OR_LOAD_SESSION,
-    ACTIVITY_LLM_GENERATE, ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB, ACTIVITY_SKILL_CATALOG_REFRESH,
-    ACTIVITY_TOOL_INVOKE_BATCH, AgentSessionWorkflow, AppendEventsRequest,
-    ContextCompactActivityRequest, CreateOrLoadSessionRequest, CreateOrLoadSessionResult,
-    DEFAULT_TASK_QUEUE, DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET, FAKE_TOOL_NAME,
-    LlmGenerateActivityRequest, PutBlobRequest, ReadBlobRequest, ReadBlobResult,
-    SkillCatalogRefreshActivityRequest, SkillCatalogRefreshActivityResult,
-    ToolInvokeBatchActivityRequest, connect_temporal, default_run_config, default_session_config,
+    ACTIVITY_LLM_GENERATE, ACTIVITY_PREPROCESS_RUN_INPUT, ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB,
+    ACTIVITY_SKILL_CATALOG_REFRESH, ACTIVITY_TOOL_INVOKE_BATCH, AgentSessionWorkflow,
+    AppendEventsRequest, ContextCompactActivityRequest, CreateOrLoadSessionRequest,
+    CreateOrLoadSessionResult, DEFAULT_TASK_QUEUE, DEFAULT_TEMPORAL_NAMESPACE,
+    DEFAULT_TEMPORAL_TARGET, FAKE_TOOL_NAME, LlmGenerateActivityRequest,
+    PreprocessRunInputActivityRequest, PreprocessRunInputActivityResult, PutBlobRequest,
+    ReadBlobRequest, ReadBlobResult, SkillCatalogRefreshActivityRequest,
+    SkillCatalogRefreshActivityResult, ToolInvokeBatchActivityRequest, connect_temporal,
+    default_run_config, default_session_config,
 };
 
 #[derive(Clone, Debug)]

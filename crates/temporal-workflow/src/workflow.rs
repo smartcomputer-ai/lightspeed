@@ -16,8 +16,10 @@ use crate::{
     AgentActiveRunSummary, AgentAdmission, AgentAdmissionFailure, AgentAdmissionFailureKind,
     AgentCompletedRunSummary, AgentQueuedRunSummary, AgentSessionArgs, AgentSessionStatus,
     AppendEventsRequest, CreateOrLoadSessionRequest, DEFAULT_CONTINUE_AS_NEW_HISTORY_THRESHOLD,
-    LlmGenerateActivityRequest, PutBlobRequest, SkillCatalogRefreshActivityRequest,
-    ToolInvokeBatchActivityRequest, WorkflowActivities, activity_options, default_instructions,
+    LlmGenerateActivityRequest, PreprocessRunInputActivityRequest, PreprocessRunInputFailure,
+    PreprocessRunInputFailureKind, PreprocessRunInputOutcome, PutBlobRequest,
+    SkillCatalogRefreshActivityRequest, ToolInvokeBatchActivityRequest, WorkflowActivities,
+    activity_options, default_instructions,
 };
 
 const DEFAULT_MAX_STEPS_PER_INPUT: usize = 256;
@@ -270,7 +272,7 @@ async fn process_admissions(
 ) -> anyhow::Result<()> {
     let mut drive = drive_from_state(ctx)?;
     for admission in admissions {
-        let command = match CoreAgentCodec.decode_command(&admission.command) {
+        let mut command = match CoreAgentCodec.decode_command(&admission.command) {
             Ok(command) => command,
             Err(error) => {
                 record_admission_failure(
@@ -284,6 +286,18 @@ async fn process_admissions(
                 continue;
             }
         };
+        if command_needs_run_input_preprocessing(&command) {
+            let session_id = drive.session_id().clone();
+            match preprocess_run_input(ctx, session_id, command).await? {
+                RunInputPreprocessResult::Succeeded { command: rewritten } => {
+                    command = rewritten;
+                }
+                RunInputPreprocessResult::Failed { failure } => {
+                    record_admission_failure(ctx, failure);
+                    continue;
+                }
+            }
+        }
         if should_refresh_skill_catalog_before_admitting(drive.state(), &command) {
             refresh_skill_catalog_before_run(ctx, &mut drive).await?;
         }
@@ -295,6 +309,105 @@ async fn process_admissions(
         }
     }
     drive_until_idle(ctx, args, &mut drive).await
+}
+
+enum RunInputPreprocessResult {
+    Succeeded { command: CoreAgentCommand },
+    Failed { failure: AgentAdmissionFailure },
+}
+
+fn command_needs_run_input_preprocessing(command: &CoreAgentCommand) -> bool {
+    match command {
+        CoreAgentCommand::RequestRun { input, .. } => input.iter().any(is_audio_input),
+        _ => false,
+    }
+}
+
+fn is_audio_input(input: &ContextEntryInput) -> bool {
+    input
+        .media_type
+        .as_deref()
+        .map(|mime| mime.trim().to_ascii_lowercase().starts_with("audio/"))
+        .unwrap_or(false)
+}
+
+async fn preprocess_run_input(
+    ctx: &mut WorkflowContext<AgentSessionWorkflow>,
+    session_id: SessionId,
+    command: CoreAgentCommand,
+) -> anyhow::Result<RunInputPreprocessResult> {
+    let CoreAgentCommand::RequestRun {
+        submission_id,
+        input,
+        run_config,
+    } = command
+    else {
+        return Ok(RunInputPreprocessResult::Succeeded { command });
+    };
+
+    let result = ctx
+        .start_activity(
+            WorkflowActivities::preprocess_run_input,
+            PreprocessRunInputActivityRequest { session_id, input },
+            activity_options(),
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    match result.outcome {
+        PreprocessRunInputOutcome::Succeeded { input } => Ok(RunInputPreprocessResult::Succeeded {
+            command: CoreAgentCommand::RequestRun {
+                submission_id,
+                input,
+                run_config,
+            },
+        }),
+        PreprocessRunInputOutcome::Failed { failure } => Ok(RunInputPreprocessResult::Failed {
+            failure: preprocess_failure_to_admission_failure(submission_id, failure),
+        }),
+    }
+}
+
+fn preprocess_failure_to_admission_failure(
+    submission_id: Option<SubmissionId>,
+    failure: PreprocessRunInputFailure,
+) -> AgentAdmissionFailure {
+    AgentAdmissionFailure {
+        submission_id,
+        kind: match failure.kind {
+            PreprocessRunInputFailureKind::UnsupportedAudioMime => {
+                AgentAdmissionFailureKind::UnsupportedAudioMime
+            }
+            PreprocessRunInputFailureKind::AudioBlobMissing => {
+                AgentAdmissionFailureKind::AudioBlobMissing
+            }
+            PreprocessRunInputFailureKind::AudioBlobTooLarge => {
+                AgentAdmissionFailureKind::AudioBlobTooLarge
+            }
+            PreprocessRunInputFailureKind::AudioDurationTooLong => {
+                AgentAdmissionFailureKind::AudioDurationTooLong
+            }
+            PreprocessRunInputFailureKind::TranscoderUnavailable => {
+                AgentAdmissionFailureKind::TranscoderUnavailable
+            }
+            PreprocessRunInputFailureKind::TranscodeTimeout => {
+                AgentAdmissionFailureKind::TranscodeTimeout
+            }
+            PreprocessRunInputFailureKind::TranscodeOutputTooLarge => {
+                AgentAdmissionFailureKind::TranscodeOutputTooLarge
+            }
+            PreprocessRunInputFailureKind::ProviderAuthentication => {
+                AgentAdmissionFailureKind::ProviderAuthentication
+            }
+            PreprocessRunInputFailureKind::ProviderConfiguration => {
+                AgentAdmissionFailureKind::ProviderConfiguration
+            }
+            PreprocessRunInputFailureKind::ProviderTranscriptionFailure => {
+                AgentAdmissionFailureKind::ProviderTranscriptionFailure
+            }
+        },
+        message: failure.message,
+    }
 }
 
 fn should_refresh_skill_catalog_before_admitting(
@@ -666,6 +779,47 @@ mod tests {
 
         assert_eq!(command_submission_id(&command), Some(submission_id));
         assert_eq!(command_submission_id(&CoreAgentCommand::CloseSession), None);
+    }
+
+    #[test]
+    fn request_run_with_audio_input_needs_preprocessing() {
+        let command = CoreAgentCommand::RequestRun {
+            submission_id: Some(SubmissionId::new("submit_audio")),
+            input: vec![ContextEntryInput {
+                kind: ContextEntryKind::Message {
+                    role: ContextMessageRole::User,
+                },
+                content_ref: engine::BlobRef::from_bytes(b"audio"),
+                media_type: Some("audio/ogg".to_owned()),
+                preview: Some("[audio]".to_owned()),
+                provider_kind: None,
+                provider_item_id: None,
+                token_estimate: None,
+            }],
+            run_config: crate::default_run_config(),
+        };
+
+        assert!(command_needs_run_input_preprocessing(&command));
+    }
+
+    #[test]
+    fn preprocess_failures_preserve_submission_id_for_admission_failure() {
+        let failure = preprocess_failure_to_admission_failure(
+            Some(SubmissionId::new("submit_audio")),
+            PreprocessRunInputFailure {
+                kind: PreprocessRunInputFailureKind::ProviderAuthentication,
+                message: "missing OpenAI key".to_owned(),
+            },
+        );
+
+        assert_eq!(
+            failure.submission_id.as_ref(),
+            Some(&SubmissionId::new("submit_audio"))
+        );
+        assert_eq!(
+            failure.kind,
+            AgentAdmissionFailureKind::ProviderAuthentication
+        );
     }
 
     #[test]

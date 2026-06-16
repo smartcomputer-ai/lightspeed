@@ -8,8 +8,8 @@ mod workflow;
 
 pub use activities::{
     ACTIVITY_APPEND_EVENTS, ACTIVITY_CONTEXT_COMPACT, ACTIVITY_CREATE_OR_LOAD_SESSION,
-    ACTIVITY_LLM_GENERATE, ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB, ACTIVITY_SKILL_CATALOG_REFRESH,
-    ACTIVITY_TOOL_INVOKE_BATCH, WorkflowActivities,
+    ACTIVITY_LLM_GENERATE, ACTIVITY_PREPROCESS_RUN_INPUT, ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB,
+    ACTIVITY_SKILL_CATALOG_REFRESH, ACTIVITY_TOOL_INVOKE_BATCH, WorkflowActivities,
 };
 pub use config::{
     DEFAULT_CONTINUE_AS_NEW_HISTORY_THRESHOLD, DEFAULT_MODEL, DEFAULT_TASK_QUEUE,
@@ -21,8 +21,10 @@ pub use types::{
     AgentActiveRunSummary, AgentAdmission, AgentAdmissionFailure, AgentAdmissionFailureKind,
     AgentCompletedRunSummary, AgentQueuedRunSummary, AgentSessionArgs, AgentSessionStatus,
     AppendEventsRequest, ContextCompactActivityRequest, CreateOrLoadSessionRequest,
-    CreateOrLoadSessionResult, LlmGenerateActivityRequest, PutBlobRequest, ReadBlobRequest,
-    ReadBlobResult, SkillCatalogRefreshActivityRequest, SkillCatalogRefreshActivityResult,
+    CreateOrLoadSessionResult, LlmGenerateActivityRequest, PreprocessRunInputActivityRequest,
+    PreprocessRunInputActivityResult, PreprocessRunInputFailure, PreprocessRunInputFailureKind,
+    PreprocessRunInputOutcome, PutBlobRequest, ReadBlobRequest, ReadBlobResult,
+    SkillCatalogRefreshActivityRequest, SkillCatalogRefreshActivityResult,
     ToolInvokeBatchActivityRequest,
 };
 pub use workflow::AgentSessionWorkflow;

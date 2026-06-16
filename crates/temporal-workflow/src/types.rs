@@ -44,6 +44,16 @@ pub struct AgentAdmissionFailure {
 pub enum AgentAdmissionFailureKind {
     InvalidCommand,
     RejectedCommand,
+    UnsupportedAudioMime,
+    AudioBlobMissing,
+    AudioBlobTooLarge,
+    AudioDurationTooLong,
+    TranscoderUnavailable,
+    TranscodeTimeout,
+    TranscodeOutputTooLarge,
+    ProviderAuthentication,
+    ProviderConfiguration,
+    ProviderTranscriptionFailure,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -108,6 +118,45 @@ pub struct AppendEventsRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LlmGenerateActivityRequest {
     pub request: engine::LlmGenerationRequest,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreprocessRunInputActivityRequest {
+    pub session_id: SessionId,
+    pub input: Vec<ContextEntryInput>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreprocessRunInputActivityResult {
+    pub outcome: PreprocessRunInputOutcome,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "status")]
+pub enum PreprocessRunInputOutcome {
+    Succeeded { input: Vec<ContextEntryInput> },
+    Failed { failure: PreprocessRunInputFailure },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreprocessRunInputFailure {
+    pub kind: PreprocessRunInputFailureKind,
+    pub message: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PreprocessRunInputFailureKind {
+    UnsupportedAudioMime,
+    AudioBlobMissing,
+    AudioBlobTooLarge,
+    AudioDurationTooLong,
+    TranscoderUnavailable,
+    TranscodeTimeout,
+    TranscodeOutputTooLarge,
+    ProviderAuthentication,
+    ProviderConfiguration,
+    ProviderTranscriptionFailure,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

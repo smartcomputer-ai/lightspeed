@@ -1,11 +1,15 @@
 #![allow(dead_code)]
 
-use std::{thread, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    thread,
+    time::Duration,
+};
 
 use llm_clients::{
     ApiResponse, LlmApiError,
     openai::{
-        completions as completions_api,
+        audio as audio_api, completions as completions_api,
         responses::{
             self as responses_api, CompactResponse, CompactResponseRequest,
             CountInputTokensRequest, DeletedResponse, ListInputItemsRequest, Response,
@@ -15,6 +19,73 @@ use llm_clients::{
 };
 
 const MAX_LIVE_ATTEMPTS: usize = 3;
+
+pub fn env_or_dotenv_var(name: &str) -> Result<String, std::env::VarError> {
+    match std::env::var(name) {
+        Ok(value) => Ok(value),
+        Err(env_error) => dotenv_var(name).ok_or(env_error),
+    }
+}
+
+pub fn required_env_or_dotenv_var(name: &str, missing_message: &str) -> String {
+    let value = env_or_dotenv_var(name).expect(missing_message);
+    assert!(!value.trim().is_empty(), "{name} is set but empty");
+    value
+}
+
+pub fn required_first_env_or_dotenv_var(names: &[&str], missing_message: &str) -> String {
+    for name in names {
+        if let Ok(value) = env_or_dotenv_var(name) {
+            assert!(!value.trim().is_empty(), "{name} is set but empty");
+            return value;
+        }
+    }
+    panic!("{missing_message}");
+}
+
+pub fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("repo root")
+        .to_path_buf()
+}
+
+pub fn repo_relative_path(path: impl AsRef<Path>) -> PathBuf {
+    let path = path.as_ref();
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        repo_root().join(path)
+    }
+}
+
+fn dotenv_var(name: &str) -> Option<String> {
+    let contents = std::fs::read_to_string(repo_root().join(".env")).ok()?;
+    for line in contents.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let (key, value) = line.split_once('=')?;
+        if key.trim() == name {
+            return Some(unquote_dotenv_value(value.trim()));
+        }
+    }
+    None
+}
+
+fn unquote_dotenv_value(value: &str) -> String {
+    if value.len() >= 2 {
+        let bytes = value.as_bytes();
+        if (bytes[0] == b'"' && bytes[value.len() - 1] == b'"')
+            || (bytes[0] == b'\'' && bytes[value.len() - 1] == b'\'')
+        {
+            return value[1..value.len() - 1].to_string();
+        }
+    }
+    value.to_string()
+}
 
 pub async fn openai_responses_create(
     client: &responses_api::Client,
@@ -181,6 +252,23 @@ pub async fn openai_completions_stream(
             Ok(stream) => return Ok(stream),
             Err(error) if should_retry(&error, attempt) => {
                 retry(&error, attempt, "completions stream")
+            }
+            Err(error) => return Err(error),
+        }
+        attempt += 1;
+    }
+}
+
+pub async fn openai_audio_transcription_create(
+    client: &audio_api::Client,
+    request: audio_api::CreateTranscriptionRequest,
+) -> Result<ApiResponse<audio_api::Transcription>, LlmApiError> {
+    let mut attempt = 0;
+    loop {
+        match client.create_transcription(request.clone()).await {
+            Ok(response) => return Ok(response),
+            Err(error) if should_retry(&error, attempt) => {
+                retry(&error, attempt, "audio transcription create")
             }
             Err(error) => return Err(error),
         }

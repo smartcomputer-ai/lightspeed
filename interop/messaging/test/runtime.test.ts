@@ -16,6 +16,7 @@ interface LightspeedCall {
 class FakeLightspeed {
   readonly calls: LightspeedCall[] = [];
   failTurns = false;
+  turnError: unknown = null;
   messagingToolUsed = false;
 
   async appendRoomEvents(sessionId: string, events: readonly LightspeedRoomEvent[]): Promise<void> {
@@ -24,7 +25,7 @@ class FakeLightspeed {
 
   async submitTurn(turn: LightspeedTurn): Promise<LightspeedReply> {
     if (this.failTurns) {
-      throw new Error("lightspeed unavailable");
+      throw this.turnError ?? new Error("lightspeed unavailable");
     }
     this.calls.push({
       kind: "turn",
@@ -341,6 +342,27 @@ describe("MessagingBridgeRuntime", () => {
 
     expect(replies[0]).toContain("Lightspeed could not answer");
     // The message is marked done (not retried forever).
+    expect(await store.beginMessage(message.messageKey)).toBe("duplicate");
+  });
+
+  it("surfaces audio transcription admission failures as audio failures", async () => {
+    const error = new Error("run rejected") as Error & {
+      data: { kind: string; message: string };
+    };
+    error.data = {
+      kind: "provider_transcription_failure",
+      message: "OpenAI could not transcribe the audio",
+    };
+    lightspeed.failTurns = true;
+    lightspeed.turnError = error;
+
+    const message = inbound({ isDirect: true, text: "(sent a voice note)" });
+    await runtime.handleInbound(message, policy, io());
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await runtime.flush();
+
+    expect(replies[0]).toContain("could not transcribe this audio message");
+    expect(replies[0]).toContain("OpenAI could not transcribe the audio");
     expect(await store.beginMessage(message.messageKey)).toBe("duplicate");
   });
 });

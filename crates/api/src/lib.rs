@@ -2234,7 +2234,10 @@ impl std::fmt::Debug for AuthProviderCreateParams {
             .field("provider_id", &self.provider_id)
             .field("display_name", &self.display_name)
             .field("config", &self.config)
-            .field("credential", &self.credential.as_ref().map(|_| "<redacted>"))
+            .field(
+                "credential",
+                &self.credential.as_ref().map(|_| "<redacted>"),
+            )
             .finish()
     }
 }
@@ -2765,6 +2768,16 @@ pub enum AgentApiErrorKind {
     NotFound,
     Conflict,
     Rejected,
+    UnsupportedAudioMime,
+    AudioBlobMissing,
+    AudioBlobTooLarge,
+    AudioDurationTooLong,
+    TranscoderUnavailable,
+    TranscodeTimeout,
+    TranscodeOutputTooLarge,
+    ProviderAuthentication,
+    ProviderConfiguration,
+    ProviderTranscriptionFailure,
     Internal,
 }
 
@@ -2800,17 +2813,66 @@ impl AgentApiError {
         Self::new(AgentApiErrorKind::Rejected, message)
     }
 
+    pub fn unsupported_audio_mime(message: impl Into<String>) -> Self {
+        Self::new(AgentApiErrorKind::UnsupportedAudioMime, message)
+    }
+
+    pub fn audio_blob_missing(message: impl Into<String>) -> Self {
+        Self::new(AgentApiErrorKind::AudioBlobMissing, message)
+    }
+
+    pub fn audio_blob_too_large(message: impl Into<String>) -> Self {
+        Self::new(AgentApiErrorKind::AudioBlobTooLarge, message)
+    }
+
+    pub fn audio_duration_too_long(message: impl Into<String>) -> Self {
+        Self::new(AgentApiErrorKind::AudioDurationTooLong, message)
+    }
+
+    pub fn transcoder_unavailable(message: impl Into<String>) -> Self {
+        Self::new(AgentApiErrorKind::TranscoderUnavailable, message)
+    }
+
+    pub fn transcode_timeout(message: impl Into<String>) -> Self {
+        Self::new(AgentApiErrorKind::TranscodeTimeout, message)
+    }
+
+    pub fn transcode_output_too_large(message: impl Into<String>) -> Self {
+        Self::new(AgentApiErrorKind::TranscodeOutputTooLarge, message)
+    }
+
+    pub fn provider_authentication(message: impl Into<String>) -> Self {
+        Self::new(AgentApiErrorKind::ProviderAuthentication, message)
+    }
+
+    pub fn provider_configuration(message: impl Into<String>) -> Self {
+        Self::new(AgentApiErrorKind::ProviderConfiguration, message)
+    }
+
+    pub fn provider_transcription_failure(message: impl Into<String>) -> Self {
+        Self::new(AgentApiErrorKind::ProviderTranscriptionFailure, message)
+    }
+
     pub fn internal(message: impl Into<String>) -> Self {
         Self::new(AgentApiErrorKind::Internal, message)
     }
 
     pub fn json_rpc_code(&self) -> i64 {
         match self.kind {
-            AgentApiErrorKind::InvalidRequest => -32602,
+            AgentApiErrorKind::InvalidRequest
+            | AgentApiErrorKind::UnsupportedAudioMime
+            | AgentApiErrorKind::AudioBlobMissing
+            | AgentApiErrorKind::AudioBlobTooLarge
+            | AgentApiErrorKind::AudioDurationTooLong
+            | AgentApiErrorKind::TranscoderUnavailable
+            | AgentApiErrorKind::TranscodeOutputTooLarge => -32602,
             AgentApiErrorKind::NotFound => -32004,
             AgentApiErrorKind::Conflict => -32009,
-            AgentApiErrorKind::Rejected => -32010,
-            AgentApiErrorKind::Internal => -32603,
+            AgentApiErrorKind::Rejected
+            | AgentApiErrorKind::TranscodeTimeout
+            | AgentApiErrorKind::ProviderAuthentication
+            | AgentApiErrorKind::ProviderTranscriptionFailure => -32010,
+            AgentApiErrorKind::ProviderConfiguration | AgentApiErrorKind::Internal => -32603,
         }
     }
 }
@@ -2876,7 +2938,7 @@ pub struct JsonRpcError {
     pub code: i64,
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub data: Option<Value>,
+    pub data: Option<AgentApiError>,
 }
 
 impl JsonRpcError {
@@ -2907,10 +2969,12 @@ impl JsonRpcError {
 
 impl From<AgentApiError> for JsonRpcError {
     fn from(error: AgentApiError) -> Self {
+        let code = error.json_rpc_code();
+        let message = error.message.clone();
         Self {
-            code: error.json_rpc_code(),
-            message: error.message,
-            data: None,
+            code,
+            message,
+            data: Some(error),
         }
     }
 }
@@ -3152,7 +3216,13 @@ mod tests {
 
         assert!(!debug.contains("super-secret-key"), "{debug}");
         assert!(debug.contains("<redacted>"));
-        assert!(params.credential.as_deref().unwrap().contains("super-secret-key"));
+        assert!(
+            params
+                .credential
+                .as_deref()
+                .unwrap()
+                .contains("super-secret-key")
+        );
     }
 
     #[test]
@@ -3343,7 +3413,10 @@ mod tests {
         assert!(read.error.is_none());
         let read = read.result.expect("result");
         assert_eq!(read["result"]["nextAfter"], json!(8));
-        assert_eq!(read["result"]["entries"][0]["payload"]["type"], json!("send"));
+        assert_eq!(
+            read["result"]["entries"][0]["payload"]["type"],
+            json!("send")
+        );
 
         let ack = dispatch_json_rpc(
             &TestService,
@@ -4684,7 +4757,9 @@ mod tests {
         ) -> Result<AgentApiOutcome<AuthProviderCreateResponse>, AgentApiError> {
             Ok(AgentApiOutcome::new(AuthProviderCreateResponse {
                 provider: test_auth_provider(
-                    params.provider_id.unwrap_or_else(|| "lightspeed-github".to_owned()),
+                    params
+                        .provider_id
+                        .unwrap_or_else(|| "lightspeed-github".to_owned()),
                 ),
             }))
         }

@@ -435,6 +435,9 @@ pub(crate) fn api_error(error: api::AgentApiError) -> anyhow::Error {
 }
 
 fn agent_error_from_json_rpc(error: api::JsonRpcError) -> AgentApiError {
+    if let Some(error) = error.data {
+        return error;
+    }
     let kind = match error.code {
         -32602 => AgentApiErrorKind::InvalidRequest,
         -32004 => AgentApiErrorKind::NotFound,
