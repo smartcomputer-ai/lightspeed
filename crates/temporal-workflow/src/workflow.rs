@@ -34,6 +34,7 @@ pub struct AgentSessionWorkflow {
     run_submissions: BTreeMap<u64, Option<SubmissionId>>,
     admission_failures: Vec<AgentAdmissionFailure>,
     last_error: Option<String>,
+    bootstrap_failed: bool,
 }
 
 impl Default for AgentSessionWorkflow {
@@ -47,6 +48,7 @@ impl Default for AgentSessionWorkflow {
             run_submissions: BTreeMap::new(),
             admission_failures: Vec::new(),
             last_error: None,
+            bootstrap_failed: false,
         }
     }
 }
@@ -59,7 +61,7 @@ impl AgentSessionWorkflow {
         args: AgentSessionArgs,
     ) -> WorkflowResult<()> {
         if let Err(error) = initialize(ctx, args.clone()).await {
-            record_error(ctx, &error);
+            record_bootstrap_error(ctx, &error);
             return Err(anyhow::anyhow!("{error}").into());
         }
 
@@ -151,6 +153,7 @@ impl AgentSessionWorkflow {
                 .collect(),
             admission_failures: self.admission_failures.clone(),
             last_error: self.last_error.clone(),
+            bootstrap_failed: self.bootstrap_failed,
         }
     }
 }
@@ -170,6 +173,9 @@ async fn initialize(
         return Ok(());
     }
     let observed_at_ms = workflow_time_ms(ctx);
+    // the activity reduces the durable log internally and returns compact
+    // state. The full event log no longer crosses the activity boundary, so this
+    // bootstrap path is bounded by active context size, not total log length.
     let loaded = ctx
         .start_activity(
             WorkflowActivities::create_or_load_session,
@@ -182,17 +188,10 @@ async fn initialize(
         .await
         .map_err(|error| anyhow::anyhow!("{error}"))?;
 
-    let codec = CoreAgentCodec;
-    let apply = CoreApplyEvent;
-    let mut core_state = CoreAgentState::new();
-    let mut run_submissions = BTreeMap::new();
-    let entries = loaded
-        .entries
-        .iter()
-        .map(|entry| codec.decode_entry(entry))
-        .collect::<Result<Vec<_>, _>>()?;
-    apply_entries(&apply, &mut core_state, &entries, &mut run_submissions)?;
-    let head = loaded.record.head.clone();
+    let is_fresh_session = loaded.replayed_event_count == 0;
+    let core_state = loaded.core_state.unwrap_or_else(CoreAgentState::new);
+    let run_submissions = loaded.run_submissions;
+    let head = loaded.head;
     ctx.state_mut(|state| {
         state.session_id = Some(args.session_id.clone());
         state.core_state = core_state;
@@ -202,7 +201,7 @@ async fn initialize(
         state.last_error = None;
     });
 
-    if entries.is_empty() {
+    if is_fresh_session {
         open_new_session(ctx, args).await?;
     }
     Ok(())
@@ -682,6 +681,18 @@ fn record_error(ctx: &WorkflowContext<AgentSessionWorkflow>, error: &anyhow::Err
     let message = error.to_string();
     ctx.state_mut(|state| {
         state.last_error = Some(message);
+    });
+}
+
+/// Record a failure that occurred during session bootstrap (rehydration). This
+/// is surfaced distinctly from ordinary run errors so the gateway/bridge can
+/// report a typed `session_bootstrap_failed` recovery problem instead of a
+/// generic message-answer failure.
+fn record_bootstrap_error(ctx: &WorkflowContext<AgentSessionWorkflow>, error: &anyhow::Error) {
+    let message = error.to_string();
+    ctx.state_mut(|state| {
+        state.last_error = Some(message);
+        state.bootstrap_failed = true;
     });
 }
 

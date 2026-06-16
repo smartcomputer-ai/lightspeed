@@ -10,6 +10,15 @@ pub const DEFAULT_MODEL: &str = "gpt-5.5";
 pub const DEFAULT_CONTINUE_AS_NEW_HISTORY_THRESHOLD: u32 = 10_000;
 pub const DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT: Duration = Duration::from_secs(360);
 
+/// Conservative ceiling on the serialized compact bootstrap result (replayed
+/// `CoreAgentState` plus small indices). Temporal's default activity-result
+/// payload limit is 2 MiB; we guard well below it so a near-limit reduced state
+/// fails with a typed `SessionBootstrapPayloadTooLarge` error before Temporal
+/// rejects the activity completion with an opaque size error. Reduced state is
+/// bounded by active context (entry metadata + content refs), not by total log
+/// length, so this budget should never be hit in normal operation.
+pub const DEFAULT_BOOTSTRAP_PAYLOAD_BUDGET_BYTES: u64 = 1_500_000;
+
 pub const FAKE_TOOL_NAME: &str = "agent_echo";
 
 pub fn default_run_config() -> RunConfig {

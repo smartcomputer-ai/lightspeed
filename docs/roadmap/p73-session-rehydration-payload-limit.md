@@ -2,9 +2,32 @@
 
 **Status**
 - Proposed 2026-06-16.
+- Implemented 2026-06-16 (G1–G3/G5). G4 (operator reporting tooling) dropped as
+  unnecessary — after G1 the typed bootstrap guard catches the real risk, and
+  raw-log-size reporting is a loose indicator better served by P74 or ad-hoc
+  SQL. Problem B (durable event-log growth) split to P74.
 - Raised from the `ls.bot` Hetzner incident where a Telegram audio message
   surfaced as `Lightspeed could not answer this message: agent workflow not
   found`.
+
+**Implementation summary**
+- G1: `CreateOrLoadSessionResult` now carries reduced `CoreAgentState` +
+  `run_submissions` + `head` + `replayed_event_count` instead of the full event
+  list. Reduction runs inside the `create_or_load_session` activity via the
+  shared `temporal_workflow::reduce_session_entries`. A serialized-size guard
+  (`DEFAULT_BOOTSTRAP_PAYLOAD_BUDGET_BYTES`, 1.5 MB) fails with a typed
+  `SessionBootstrapPayloadTooLarge` before Temporal rejects the completion.
+- G2: continue-as-new keeps passing the same `AgentSessionArgs`; because the
+  activity now reduces internally, the idle path no longer transports the full
+  log. No `Resume` args variant was introduced (see G2 rationale below).
+- G3/G5: added `AgentApiErrorKind::SessionBootstrapFailed`. The workflow records
+  bootstrap failures distinctly (`AgentSessionStatus::bootstrap_failed`);
+  `query_status_optional` maps that to the typed error, and signal `NotFound` is
+  classified via `describe` so a failed/closed workflow returns
+  `session_bootstrap_failed` instead of "agent workflow not found".
+- Regression test: `bootstrap_returns_compact_state_for_large_log` drives a
+  ~1.5 MB durable log and asserts cold bootstrap returns compact state far
+  smaller than the raw log.
 
 ## Incident
 
@@ -183,14 +206,14 @@ Durable event-log volume reduction (so the log itself stops accumulating a full
 context snapshot per turn) is out of scope for P73 and tracked in P74. P73
 makes bootstrap survive a large log; P74 keeps the log from growing that fast.
 
-### G4: Migration And Recovery Tooling
+### G4: Migration And Recovery Tooling (dropped)
 
-Add an operator path for existing large sessions:
-
-- a CLI or admin method that reports sessions near bootstrap payload risk;
-- a safe "rotate bridge binding" runbook or command for emergency recovery;
-- an optional "materialize compact checkpoint" command once compact bootstrap
-  exists, so old sessions can be recovered without losing context.
+Originally proposed an operator reporting path (a CLI that lists sessions near
+bootstrap payload risk). Dropped during implementation: after G1 the typed
+bootstrap guard catches the real risk at the moment it matters, and raw-log-size
+reporting is only a loose leading indicator — better served once P74 shrinks the
+log, or by an ad-hoc SQL query when an operator actually needs it. The emergency
+"rotate bridge binding" recovery remains documented under Operational Recovery.
 
 ## Acceptance Criteria
 

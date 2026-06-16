@@ -2774,6 +2774,11 @@ pub enum AgentApiErrorKind {
     TranscoderUnavailable,
     TranscodeFailure,
     TranscriptionFailure,
+    /// The session's agent workflow exists but failed during bootstrap
+    /// (rehydration) and cannot serve runs. Distinct from `NotFound` (no
+    /// workflow) so clients/bridges treat it as a session recovery problem
+    /// rather than an ordinary "answer this message" failure.
+    SessionBootstrapFailed,
     Internal,
 }
 
@@ -2833,6 +2838,10 @@ impl AgentApiError {
         Self::new(AgentApiErrorKind::TranscriptionFailure, message)
     }
 
+    pub fn session_bootstrap_failed(message: impl Into<String>) -> Self {
+        Self::new(AgentApiErrorKind::SessionBootstrapFailed, message)
+    }
+
     pub fn internal(message: impl Into<String>) -> Self {
         Self::new(AgentApiErrorKind::Internal, message)
     }
@@ -2849,6 +2858,7 @@ impl AgentApiError {
             AgentApiErrorKind::Rejected
             | AgentApiErrorKind::TranscodeFailure
             | AgentApiErrorKind::TranscriptionFailure => -32010,
+            AgentApiErrorKind::SessionBootstrapFailed => -32011,
             AgentApiErrorKind::Internal => -32603,
         }
     }

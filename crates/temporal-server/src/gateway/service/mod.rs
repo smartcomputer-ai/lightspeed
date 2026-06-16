@@ -124,9 +124,11 @@ use engine::{
 use mcp_registry::McpRegistryStore;
 use store_pg::PgStore;
 use temporalio_client::{
-    Client, WorkflowHandle, WorkflowQueryOptions, WorkflowSignalOptions, WorkflowStartOptions,
-    errors::WorkflowInteractionError, errors::WorkflowQueryError, errors::WorkflowStartError,
+    Client, WorkflowDescribeOptions, WorkflowHandle, WorkflowQueryOptions, WorkflowSignalOptions,
+    WorkflowStartOptions, errors::WorkflowInteractionError, errors::WorkflowQueryError,
+    errors::WorkflowStartError,
 };
+use temporalio_common::protos::temporal::api::enums::v1::WorkflowExecutionStatus;
 use tools::{
     host::{
         HostToolTargets,
@@ -755,14 +757,8 @@ impl AgentApiService for GatewayAgentApi {
                 patch,
             })
             .map_err(|error| AgentApiError::internal(error.to_string()))?;
-        self.workflow_handle(&session_id)
-            .signal(
-                AgentSessionWorkflow::submit_admission,
-                AgentAdmission { command },
-                WorkflowSignalOptions::default(),
-            )
-            .await
-            .map_err(map_workflow_interaction_error)?;
+        self.signal_submit_admission(&session_id, AgentAdmission { command })
+            .await?;
         self.wait_for_config_revision(&session_id, target_revision, baseline_failures)
             .await?;
         let loaded = self.load_session_state(&session_id).await?;
@@ -918,14 +914,8 @@ impl AgentApiService for GatewayAgentApi {
         let command = engine::CoreAgentCodec
             .encode_command(&CoreAgentCommand::CloseSession)
             .map_err(|error| AgentApiError::internal(error.to_string()))?;
-        self.workflow_handle(&session_id)
-            .signal(
-                AgentSessionWorkflow::submit_admission,
-                AgentAdmission { command },
-                WorkflowSignalOptions::default(),
-            )
-            .await
-            .map_err(map_workflow_interaction_error)?;
+        self.signal_submit_admission(&session_id, AgentAdmission { command })
+            .await?;
         let session = self.wait_for_closed_session(&session_id).await?;
         Ok(AgentApiOutcome::new(SessionCloseResponse { session }))
     }
@@ -1148,14 +1138,8 @@ impl AgentApiService for GatewayAgentApi {
                 run_config,
             })
             .map_err(|error| AgentApiError::internal(error.to_string()))?;
-        self.workflow_handle(&session_id)
-            .signal(
-                AgentSessionWorkflow::submit_admission,
-                AgentAdmission { command },
-                WorkflowSignalOptions::default(),
-            )
-            .await
-            .map_err(map_workflow_interaction_error)?;
+        self.signal_submit_admission(&session_id, AgentAdmission { command })
+            .await?;
         let run = self
             .wait_for_run_accepted(
                 &session_id,
@@ -1207,14 +1191,8 @@ impl AgentApiService for GatewayAgentApi {
         let command = engine::CoreAgentCodec
             .encode_command(&CoreAgentCommand::RequestRunCancellation)
             .map_err(|error| AgentApiError::internal(error.to_string()))?;
-        self.workflow_handle(&session_id)
-            .signal(
-                AgentSessionWorkflow::submit_admission,
-                AgentAdmission { command },
-                WorkflowSignalOptions::default(),
-            )
-            .await
-            .map_err(map_workflow_interaction_error)?;
+        self.signal_submit_admission(&session_id, AgentAdmission { command })
+            .await?;
         let run = self
             .wait_for_cancelled_run(&session_id, requested_run_id)
             .await?;
