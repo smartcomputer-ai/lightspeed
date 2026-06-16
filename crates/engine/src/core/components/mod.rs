@@ -47,12 +47,12 @@ pub use state::*;
 pub use tooling::{
     ActiveToolBatch, CompletedToolBatch, FunctionToolSpec, ObservedToolCall,
     ProviderNativeToolExecution, ProviderNativeToolSpec, RemoteMcpApprovalPolicy,
-    RemoteMcpToolSpec, SecretRef, ToolCallResult, ToolCallState, ToolCallStatus, ToolChoice,
-    ToolChoiceMode, ToolConfigEvent, ToolEvent, ToolExecutionTarget, ToolKind, ToolParallelism,
-    ToolPatch, ToolRoutingState, ToolSpec, ToolTargetRequirement, ToolingState,
-    UNAVAILABLE_TOOL_RESULT_CONTENT, unavailable_tool_result_ref, validate_tool_map,
+    RemoteMcpToolSpec, SecretRef, ToolCallExecutionPolicy, ToolCallResult, ToolCallState,
+    ToolCallStatus, ToolChoice, ToolChoiceMode, ToolConfigEvent, ToolEvent, ToolExecutionTarget,
+    ToolKind, ToolParallelism, ToolPatch, ToolRoutingState, ToolSpec, ToolTargetRequirement,
+    ToolingState, UNAVAILABLE_TOOL_RESULT_CONTENT, unavailable_tool_result_ref, validate_tool_map,
 };
 pub use turn::{
-    LlmFinish, LlmGenerationFacts, LlmGenerationStatus, LlmUsage, TurnEvent, TurnOutcome,
-    TurnState, TurnStatus,
+    LlmFinish, LlmGenerationFacts, LlmGenerationStatus, LlmUsage, PlannedRequestState, TurnEvent,
+    TurnOutcome, TurnState, TurnStatus,
 };

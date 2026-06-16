@@ -15,9 +15,9 @@ use crate::{
     ContextMessageRole, CoreAdmitCommand, CoreAgentCodec, CoreAgentEntry, CoreAgentEventKind,
     CoreAgentEventProposal, CoreAgentJoins, CoreAgentState, CoreAgentStatus, CoreApplyEvent,
     CorePlanner, DomainError, LlmFinish, LlmGenerationRequest, LlmGenerationResult,
-    LlmGenerationStatus, PlanNext, PlanningError, SessionId, SessionPosition, ToolCallResult,
-    ToolCallStatus, ToolEvent, ToolInvocationBatchRequest, ToolInvocationBatchResult,
-    ToolInvocationRequest, TurnEvent, TurnOutcome,
+    LlmGenerationStatus, LlmRequest, PlanNext, PlanningError, SessionId, SessionPosition,
+    ToolCallResult, ToolCallStatus, ToolEvent, ToolInvocationBatchRequest,
+    ToolInvocationBatchResult, ToolInvocationRequest, TurnEvent, TurnId, TurnOutcome,
     core::components::context::context_entries_from_inputs,
     session::{DynamicSessionEntry, DynamicUncommittedSessionEvent},
 };
@@ -251,15 +251,63 @@ pub fn next_generation_request(
     if turn.status != crate::TurnStatus::GenerationPending {
         return Ok(None);
     }
-    let request = turn.request.clone().ok_or_else(|| {
-        DomainError::InvariantViolation("generation-pending turn is missing request".into())
+    let planned = turn.planned_request.as_ref().ok_or_else(|| {
+        DomainError::InvariantViolation(
+            "generation-pending turn is missing planned request metadata".into(),
+        )
     })?;
+    let request = crate::core::components::llm::build_planned_llm_request(
+        state, active_run, turn_id, planned,
+    )?;
     Ok(Some(LlmGenerationRequest {
         session_id: session_id.clone(),
         run_id: active_run.run_id,
         turn_id,
         request,
     }))
+}
+
+pub fn rebuild_llm_request_for_planned_turn(
+    entries: &[CoreAgentEntry],
+    target_turn_id: TurnId,
+) -> Result<Option<LlmRequest>, DomainError> {
+    let mut state = CoreAgentState::new();
+    let apply = CoreApplyEvent;
+    for entry in entries {
+        if let CoreAgentEventKind::Turn(TurnEvent::Planned {
+            turn_id,
+            run_id,
+            request_fingerprint,
+            config_revision,
+            context_revision,
+            toolset_revision,
+        }) = &entry.event.kind
+            && *turn_id == target_turn_id
+        {
+            let active_run = state.runs.active.as_ref().ok_or_else(|| {
+                DomainError::InvariantViolation(
+                    "planned turn reconstruction requires an active run".into(),
+                )
+            })?;
+            if active_run.run_id != *run_id || active_run.active_turn_id != Some(*turn_id) {
+                return Err(DomainError::InvariantViolation(
+                    "planned turn reconstruction run/turn does not match active state".into(),
+                ));
+            }
+            let planned = crate::PlannedRequestState {
+                request_fingerprint: request_fingerprint.clone(),
+                config_revision: *config_revision,
+                context_revision: *context_revision,
+                toolset_revision: *toolset_revision,
+            };
+            return crate::core::components::llm::build_planned_llm_request(
+                &state, active_run, *turn_id, &planned,
+            )
+            .map(Some);
+        }
+        apply.apply(&mut state, entry)?;
+    }
+    Ok(None)
 }
 
 pub fn next_context_compaction_request(
@@ -789,18 +837,151 @@ mod tests {
     }
 
     fn drive_until_generate(drive: &mut CoreAgentDrive) -> LlmGenerationRequest {
+        drive_until_generate_with_planned_event(drive).1
+    }
+
+    fn drive_until_generate_with_planned_event(
+        drive: &mut CoreAgentDrive,
+    ) -> (TurnEvent, LlmGenerationRequest) {
+        let mut planned = None;
         for observed_at_ms in 21..80 {
             let action = drive.next_action(observed_at_ms, 64).expect("next action");
             if let CoreAgentAction::GenerateLlm { request } = action {
-                return request;
+                return (
+                    planned.expect("drive emitted generation without planned event"),
+                    request,
+                );
             }
-            commit_action(drive, action);
+            let entries = commit_action(drive, action);
+            for entry in entries {
+                if let CoreAgentEventKind::Turn(event @ TurnEvent::Planned { .. }) =
+                    entry.event.kind
+                {
+                    planned = Some(event);
+                }
+            }
         }
         panic!("drive did not emit an LLM action");
     }
 
     fn openai_items(request: &LlmGenerationRequest) -> &[ContextEntry] {
         &request.request.context.entries
+    }
+
+    fn planned_event_size_for_context_entry_count(count: usize) -> (usize, usize) {
+        let session_id = SessionId::new(format!("session-context-{count}"));
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        open_session(&mut drive);
+        for index in 0..count {
+            let action = drive
+                .admit_command(
+                    CoreAgentCommand::UpsertContext {
+                        key: ContextEntryKey::new(format!("context.entry.{index:04}")),
+                        entry: provider_opaque_input(BlobRef::from_bytes(
+                            format!("context entry {index}").as_bytes(),
+                        )),
+                    },
+                    20 + index as u64,
+                )
+                .expect("context edit");
+            commit_action(&mut drive, action);
+        }
+        request_run(&mut drive, BlobRef::from_bytes(b"user"));
+
+        let (planned, request) = drive_until_generate_with_planned_event(&mut drive);
+        let planned_size = serde_json::to_vec(&planned)
+            .expect("serialize planned event")
+            .len();
+        (planned_size, request.request.context.entries.len())
+    }
+
+    #[test]
+    fn planned_turn_event_and_state_store_metadata_only() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        open_session(&mut drive);
+        request_run(&mut drive, BlobRef::from_bytes(b"input"));
+
+        let (planned, request) = drive_until_generate_with_planned_event(&mut drive);
+        let TurnEvent::Planned {
+            ref request_fingerprint,
+            config_revision,
+            context_revision,
+            toolset_revision,
+            ..
+        } = planned
+        else {
+            panic!("expected planned event");
+        };
+        assert_eq!(request_fingerprint, &request.request.request_fingerprint);
+        assert_eq!(config_revision, drive.state().lifecycle.config_revision);
+        assert_eq!(context_revision, request.request.context.context_revision);
+        assert_eq!(toolset_revision, drive.state().tooling.revision);
+
+        let planned_json = serde_json::to_value(&planned).expect("serialize planned event");
+        let planned_object = planned_json
+            .get("planned")
+            .and_then(serde_json::Value::as_object)
+            .expect("planned event object");
+        assert!(!planned_object.contains_key("request"));
+        assert!(!planned_object.contains_key("context"));
+        assert!(!planned_object.contains_key("tools"));
+
+        let active_run = drive.state().runs.active.as_ref().expect("active run");
+        let active_turn = active_run.turns.get(&request.turn_id).expect("active turn");
+        assert!(active_turn.planned_request.is_some());
+        let turn_state = serde_json::to_value(active_turn).expect("serialize turn state");
+        let turn_object = turn_state.as_object().expect("turn state object");
+        assert!(!turn_object.contains_key("request"));
+        assert!(turn_object.contains_key("planned_request"));
+    }
+
+    #[test]
+    fn planned_request_rebuilds_from_durable_events() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut entries = Vec::new();
+
+        let open = drive
+            .admit_command(CoreAgentCommand::OpenSession { config: config() }, 10)
+            .expect("open");
+        entries.extend(commit_action(&mut drive, open));
+        let request_run = drive
+            .admit_command(
+                CoreAgentCommand::RequestRun {
+                    submission_id: None,
+                    input: user_input(BlobRef::from_bytes(b"input")),
+                    run_config: run_config(),
+                },
+                20,
+            )
+            .expect("request run");
+        entries.extend(commit_action(&mut drive, request_run));
+
+        let request = loop {
+            let action = drive.next_action(30, 64).expect("next action");
+            if let CoreAgentAction::GenerateLlm { request } = action {
+                break request;
+            }
+            entries.extend(commit_action(&mut drive, action));
+        };
+
+        let rebuilt = rebuild_llm_request_for_planned_turn(&entries, request.turn_id)
+            .expect("rebuild request")
+            .expect("planned request exists");
+        assert_eq!(rebuilt, request.request);
+    }
+
+    #[test]
+    fn planned_turn_event_size_does_not_scale_with_active_context() {
+        let (small_event_size, small_context_len) = planned_event_size_for_context_entry_count(1);
+        let (large_event_size, large_context_len) = planned_event_size_for_context_entry_count(80);
+
+        assert!(large_context_len > small_context_len + 70);
+        assert!(
+            large_event_size.abs_diff(small_event_size) < 32,
+            "planned event size should be fixed-ish: small={small_event_size} large={large_event_size}"
+        );
     }
 
     #[test]
@@ -1829,8 +2010,15 @@ mod tests {
 
         let active_turn = active_run.turns.get(&request.turn_id).expect("active turn");
         assert_eq!(active_turn.status, TurnStatus::GenerationPending);
-        let planned_request = active_turn.request.as_ref().expect("planned request");
-        assert_eq!(planned_request.context.entries.len(), 1);
+        let planned_request = active_turn
+            .planned_request
+            .as_ref()
+            .expect("planned request metadata");
+        assert_eq!(
+            planned_request.context_revision,
+            request.request.context.context_revision
+        );
+        assert_eq!(request.request.context.entries.len(), 1);
     }
 
     #[test]

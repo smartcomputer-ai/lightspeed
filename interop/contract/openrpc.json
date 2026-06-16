@@ -56,7 +56,7 @@
           },
           {
             "const": "session_bootstrap_failed",
-            "description": "The session's agent workflow exists but failed during bootstrap\n(rehydration) and cannot serve runs. Distinct from `NotFound` (no\nworkflow) so clients/bridges treat it as a session recovery problem\nrather than an ordinary \"answer this message\" failure. (P73)",
+            "description": "The session's agent workflow exists but failed during bootstrap\n(rehydration) and cannot serve runs. Distinct from `NotFound` (no\nworkflow) so clients/bridges treat it as a session recovery problem\nrather than an ordinary \"answer this message\" failure.",
             "type": "string"
           }
         ]

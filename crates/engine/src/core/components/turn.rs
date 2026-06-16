@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ActiveRun, BlobRef, CoreAgentEventKind, CoreAgentEventProposal, CoreAgentJoins, CoreAgentState,
-    CoreAgentStatus, DomainError, LlmRequest, ObservedToolCall, PlanNext, PlanningError, RunId,
-    RunStatus, TokenEstimate, TurnId,
+    CoreAgentStatus, DomainError, ObservedToolCall, PlanNext, PlanningError, RunId, RunStatus,
+    TokenEstimate, TurnId,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -16,7 +16,10 @@ pub enum Event {
     Planned {
         turn_id: TurnId,
         run_id: RunId,
-        request: LlmRequest,
+        request_fingerprint: String,
+        config_revision: u64,
+        context_revision: u64,
+        toolset_revision: u64,
     },
     GenerationRequested {
         turn_id: TurnId,
@@ -117,7 +120,10 @@ fn decide_active_turn_progress(
                 CoreAgentEventKind::Turn(Event::Planned {
                     turn_id,
                     run_id: active_run.run_id,
-                    request,
+                    request_fingerprint: request.request_fingerprint,
+                    config_revision: state.lifecycle.config_revision,
+                    context_revision: request.context.context_revision,
+                    toolset_revision: state.tooling.revision,
                 }),
             )])
         }
@@ -125,9 +131,9 @@ fn decide_active_turn_progress(
             if active_run.status != RunStatus::Active {
                 return Ok(Vec::new());
             }
-            if turn.request.is_none() {
+            if turn.planned_request.is_none() {
                 return Err(DomainError::InvariantViolation(format!(
-                    "planned turn {} is missing request",
+                    "planned turn {} is missing request metadata",
                     turn_id
                 ))
                 .into());
@@ -158,10 +164,18 @@ pub struct TurnState {
     pub turn_id: TurnId,
     pub run_id: RunId,
     pub status: TurnStatus,
-    pub request: Option<LlmRequest>,
+    pub planned_request: Option<PlannedRequestState>,
     pub generation_status: Option<LlmGenerationStatus>,
     pub facts: Option<LlmGenerationFacts>,
     pub outcome: Option<TurnOutcome>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlannedRequestState {
+    pub request_fingerprint: String,
+    pub config_revision: u64,
+    pub context_revision: u64,
+    pub toolset_revision: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -259,7 +273,7 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
                         turn_id: *turn_id,
                         run_id: *run_id,
                         status: TurnStatus::Started,
-                        request: None,
+                        planned_request: None,
                         generation_status: None,
                         facts: None,
                         outcome: None,
@@ -273,12 +287,31 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
         Event::Planned {
             turn_id,
             run_id,
-            request,
+            request_fingerprint,
+            config_revision,
+            context_revision,
+            toolset_revision,
         } => {
-            crate::core::components::llm::validate_request_matches_active_context(state, request)?;
-            let snapshot = crate::core::components::llm::llm_request_context(request)?.clone();
-            crate::core::components::context::mark_snapshot_consumed_by_turn(
-                state, *run_id, *turn_id, &snapshot,
+            if *config_revision != state.lifecycle.config_revision {
+                return Err(DomainError::InvariantViolation(format!(
+                    "planned request config revision {} does not match active revision {}",
+                    config_revision, state.lifecycle.config_revision
+                )));
+            }
+            if *context_revision != state.context.revision {
+                return Err(DomainError::InvariantViolation(format!(
+                    "planned request context revision {} does not match active revision {}",
+                    context_revision, state.context.revision
+                )));
+            }
+            if *toolset_revision != state.tooling.revision {
+                return Err(DomainError::InvariantViolation(format!(
+                    "planned request toolset revision {} does not match active revision {}",
+                    toolset_revision, state.tooling.revision
+                )));
+            }
+            crate::core::components::context::mark_current_context_consumed_by_turn(
+                state, *run_id, *turn_id,
             )?;
             let active_turn = active_turn_mut(state, *run_id, *turn_id)?;
             if active_turn.status != TurnStatus::Started {
@@ -286,12 +319,17 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
                     "turn can only be planned from started state".into(),
                 ));
             }
-            if active_turn.request.is_some() {
+            if active_turn.planned_request.is_some() {
                 return Err(DomainError::InvariantViolation(
-                    "turn already has a planned request".into(),
+                    "turn already has planned request metadata".into(),
                 ));
             }
-            active_turn.request = Some(request.clone());
+            active_turn.planned_request = Some(PlannedRequestState {
+                request_fingerprint: request_fingerprint.clone(),
+                config_revision: *config_revision,
+                context_revision: *context_revision,
+                toolset_revision: *toolset_revision,
+            });
             active_turn.status = TurnStatus::Planned;
             Ok(())
         }
@@ -302,9 +340,9 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
                     "generation can only be requested for planned turns".into(),
                 ));
             }
-            if active_turn.request.is_none() {
+            if active_turn.planned_request.is_none() {
                 return Err(DomainError::InvariantViolation(
-                    "generation request requires a planned turn request".into(),
+                    "generation request requires planned turn metadata".into(),
                 ));
             }
             active_turn.status = TurnStatus::GenerationPending;

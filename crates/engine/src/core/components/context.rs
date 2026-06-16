@@ -372,34 +372,21 @@ pub(crate) fn compactable_context_snapshot(
     })
 }
 
-pub(crate) fn validate_snapshot_matches_active_context(
-    state: &CoreAgentState,
-    snapshot: &ContextSnapshot,
-) -> Result<(), DomainError> {
-    if snapshot.context_revision != state.context.revision {
-        return Err(DomainError::InvariantViolation(format!(
-            "turn context snapshot revision {} does not match active context revision {}",
-            snapshot.context_revision, state.context.revision
-        )));
-    }
-
-    let expected_entry_ids = planned_context_entry_ids(state);
-    let actual_entry_ids = snapshot.entry_ids();
-    if expected_entry_ids != actual_entry_ids {
-        return Err(DomainError::InvariantViolation(
-            "turn context snapshot entries do not match active context plan".to_owned(),
-        ));
-    }
-    Ok(())
-}
-
-pub(crate) fn mark_snapshot_consumed_by_turn(
+pub(crate) fn mark_current_context_consumed_by_turn(
     state: &mut CoreAgentState,
     run_id: RunId,
     turn_id: TurnId,
-    snapshot: &ContextSnapshot,
 ) -> Result<(), DomainError> {
-    let snapshot_ids = snapshot.entry_ids().into_iter().collect::<BTreeSet<_>>();
+    let planned_ids = planned_context_entry_ids(state).into_iter().collect();
+    mark_context_entries_consumed_by_turn(state, run_id, turn_id, planned_ids)
+}
+
+fn mark_context_entries_consumed_by_turn(
+    state: &mut CoreAgentState,
+    run_id: RunId,
+    turn_id: TurnId,
+    consumed_ids: BTreeSet<ContextEntryId>,
+) -> Result<(), DomainError> {
     let active_run = crate::core::components::run::active_run_mut(state, run_id)?;
 
     if active_run.input.consumed_by_turn_id.is_none()
@@ -407,7 +394,7 @@ pub(crate) fn mark_snapshot_consumed_by_turn(
             .input
             .entry_ids
             .iter()
-            .all(|entry_id| snapshot_ids.contains(entry_id))
+            .all(|entry_id| consumed_ids.contains(entry_id))
     {
         active_run.input.consumed_by_turn_id = Some(turn_id);
     }
@@ -417,7 +404,7 @@ pub(crate) fn mark_snapshot_consumed_by_turn(
             && steering
                 .entry_ids
                 .iter()
-                .all(|entry_id| snapshot_ids.contains(entry_id))
+                .all(|entry_id| consumed_ids.contains(entry_id))
         {
             steering.consumed_by_turn_id = Some(turn_id);
         }

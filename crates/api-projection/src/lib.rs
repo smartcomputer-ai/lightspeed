@@ -522,6 +522,7 @@ impl<'a> CoreAgentProjector<'a> {
                     turn_id,
                     batch_id,
                     calls,
+                    ..
                 } => Ok(SessionEventKindView::ToolBatchStarted {
                     run_id: api_run_id(*run_id),
                     turn_id: api_turn_id(*turn_id),
@@ -605,6 +606,7 @@ impl<'a> CoreAgentProjector<'a> {
                     turn_id,
                     batch_id,
                     calls,
+                    ..
                 } if *event_run_id == run_id => {
                     let mut projected_calls = Vec::with_capacity(calls.len());
                     for call in calls {

@@ -2,10 +2,35 @@
 
 **Status**
 - Proposed 2026-06-16.
+- Implemented 2026-06-16. This was a breaking pre-release CoreAgent event-shape
+  change; the schema envelope version stays at v1 because no compatibility
+  boundary has shipped.
+- Completed 2026-06-16. Event-size metrics were explicitly deferred out of P74.
 - Split out of `docs/roadmap/p73-session-rehydration-payload-limit.md`. P73 was
   the `ls.bot` Hetzner incident (`Complete result exceeds size limit` at
   bootstrap). P73 fixes the *transport* (compact bootstrap/continue-as-new); P74
   fixes the *durable log growth* that made the log large in the first place.
+
+**Implementation summary**
+- `TurnEvent::Planned` now records only `turn_id`, `run_id`,
+  `request_fingerprint`, `config_revision`, `context_revision`, and
+  `toolset_revision`. It no longer stores `LlmRequest`, `ContextSnapshot`,
+  tools, or a request CAS ref.
+- `TurnState` stores `PlannedRequestState` with the same compact metadata. The
+  reducer validates config/context/tool revisions and marks current planned
+  context as consumed without a copied snapshot.
+- `CoreAgentDrive::next_generation_request` rebuilds the transient
+  `LlmRequest` from reduced state, verifies the recorded fingerprint/revisions,
+  and passes the full request only as runtime activity input.
+- Tool-call acceptance no longer reads `turn.request.tools`. `ToolEvent::BatchStarted`
+  records the planned `toolset_revision`, and each accepted `ToolCallState`
+  stores only a `ToolCallExecutionPolicy` needed for invocation/routing.
+- `rebuild_llm_request_for_planned_turn` reconstructs the full request for a
+  past planned turn by replaying durable typed events up to the compact
+  `turn.planned` event and rebuilding from the reduced state at that point.
+- Regression tests cover compact planned-event/state shape, request
+  reconstruction from durable events, and planned-event size staying fixed as
+  active context grows.
 
 ## Problem
 
@@ -145,9 +170,9 @@ Get the list out of the durable log *and* out of reduced state entirely. Do not
 persist the materialized request anywhere — not inline, not as a CAS blob.
 
 - **`turn.planned` records only**: `turn_id`, `run_id`, `request_fingerprint`,
-  `context_revision`, `toolset_revision`. No entry list, no tool list, no CAS
-  ref. Per-turn durable cost is a fixed handful of bytes → `O(T)` total, with
-  **zero CAS churn**.
+  `config_revision`, `context_revision`, `toolset_revision`. No entry list, no
+  tool list, no CAS ref. Per-turn durable cost is a fixed handful of bytes →
+  `O(T)` total, with **zero CAS churn**.
 - **The reducer stops storing the request in `CoreAgentState`.** Today
   `apply_event` stores `active_turn.request = Some(request.clone())`
   (`turn.rs:294`) after validating it against the active context the reducer
@@ -199,44 +224,48 @@ is explicitly not the default, because it re-adds per-turn churn.
 
 ## Proposed Fix
 
-### G1: Compact `turn.planned`
+### G1: Compact `turn.planned` (implemented)
 
 Refactor `TurnEvent::Planned` to record `request_fingerprint`,
-`context_revision`, and `toolset_revision` instead of `request: LlmRequest`.
-This is a versioned engine event change: gate on a planner/event version and keep
-a decode path for existing `turn.planned` events that still inline a full
-`LlmRequest` (old sessions must still replay). Do not require backfill.
+`config_revision`, `context_revision`, and `toolset_revision` instead of
+`request: LlmRequest`. This landed as a breaking pre-release event-shape change;
+the schema envelope version remains v1 because no compatibility boundary has
+shipped.
 
-### G2: Reducer stops storing the request
+### G2: Reducer stops storing the request (implemented)
 
 Change `apply_event` for `Event::Planned` to validate `context_revision`/
-`toolset_revision` against current reduced state and store only
-`request_fingerprint` + revisions in `TurnState`, not the `LlmRequest`. Drop the
-inline list-equality check in favor of the revision check. The reducer remains
-deterministic and reads only the durable context/tool state it already maintains.
+`toolset_revision`/`config_revision` against current reduced state and store
+only `request_fingerprint` + revisions in `TurnState`, not the `LlmRequest`.
+Drop the inline list-equality check in favor of the revision check. The reducer
+remains deterministic and reads only the durable context/tool state it already
+maintains.
 
-### G3: Transient generation materialization
+### G3: Transient generation materialization (implemented)
 
 The generation path takes the workflow-held active set
 (`CoreAgentState.context.entries`) and tool catalog, materializes the wire
 `LlmRequest` in memory inside the generation activity, calls the provider, and
 returns compact `LlmGenerationFacts`. Nothing materialized here is persisted. The
-list crosses only the activity boundary (Temporal history, reset by
+list crosses only the action/activity boundary (Temporal history, reset by
 continue-as-new).
 
-### G4: On-demand request reconstruction
+### G4: On-demand request reconstruction (implemented)
 
 Provide a deterministic function that rebuilds the full `LlmRequest` for a past
 turn from the durable context/tool events up to its recorded `context_revision`/
 `toolset_revision` plus the small recorded fields, for audit/debug/replay. This
 is a read path, not a write path.
 
-### G5: Metrics and regression guards
+### G5: Regression guards implemented; metrics deferred
 
-- Per-event serialized size metric and a per-session cumulative-size metric.
+- Per-event serialized size metric and a per-session cumulative-size metric are
+  deferred out of P74.
 - A test that runs many turns over a stable active context and asserts the
   durable log grows `O(turns)` in small fixed-size events — not `O(turns × N)` —
-  and that **no per-turn CAS blob** is written for the planned request.
+  and that **no per-turn CAS blob** is written for the planned request. The
+  landed regression directly asserts `turn.planned` serialized size stays
+  fixed as active context grows.
 - An assertion that `turn.planned` carries no inline `ContextSnapshot`/tool list
   on the new event version, and that `TurnState` no longer holds a full request.
 - A test that on-demand reconstruction rebuilds a request equal to what was sent,
@@ -254,8 +283,9 @@ is a read path, not a write path.
 ## Acceptance Criteria
 
 - `turn.planned` on the current event version records `request_fingerprint`,
-  `context_revision`, and `toolset_revision` only — no inline `LlmRequest` and no
-  request CAS ref; older inlined events still decode and replay.
+  `config_revision`, `context_revision`, and `toolset_revision` only — no inline
+  `LlmRequest` and no request CAS ref. This is a breaking pre-release event
+  shape; older inlined events do not decode on this schema.
 - `TurnState` no longer holds a full `LlmRequest`; the reducer validates by
   revision and stores only fingerprint + revisions.
 - The `LlmRequest` for a past turn can be rebuilt deterministically from durable
