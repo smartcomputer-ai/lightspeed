@@ -15,6 +15,7 @@
     - session binding & consistency (what about /new)
     - cross session knowledge
 - [ ] audio transcription preprocessing ([P72 proposed](p72-audio-transcription-preprocessing.md))
+- [ ] session rehydration payload limit ([P73 proposed](p73-session-rehydration-payload-limit.md))
 - (go live)
 - timers/schedules/cron
 - vms/sandboxes
