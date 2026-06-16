@@ -52,6 +52,33 @@ The current continue-as-new path does not solve this because it continues with
 the same `AgentSessionArgs`, not with compact workflow state. The new execution
 still calls `create_or_load_session` and reloads the full durable event log.
 
+## Scope: Two Problems, One Symptom
+
+This incident has two independent causes that share a symptom. They are
+separated into two roadmap items so the live incident fix does not wait on the
+larger engine refactor.
+
+- **Problem A — bootstrap transport (this document, P73).** The
+  `create_or_load_session` activity returns the entire event log through its
+  result, and Temporal records activity results in workflow history. Any
+  long-lived session eventually exceeds the payload limit at bootstrap or
+  continue-as-new. This is fixed by reducing inside the activity and returning
+  compact state. It does not require any engine or event-schema change.
+
+- **Problem B — durable event-log growth (see P74).** Every
+  `lightspeed.core.turn.planned` event embeds a full `LlmRequest` containing a
+  fresh copy of the active context entry list and tool catalog metadata. Long
+  sessions accumulate one full snapshot per turn, which is the dominant source
+  of the 1.1 MB log in this incident and grows roughly quadratically. This is an
+  engine/reducer change and is tracked separately in
+  `docs/roadmap/p74-planned-request-event-bloat.md`.
+
+These are genuinely independent. Fixing Problem B without Problem A still fails
+bootstrap, because the activity would still return the whole (smaller) log.
+Fixing Problem A without Problem B resolves the incident and stops the bootstrap
+failure, but the durable log keeps growing and should be addressed by P74. P73
+is the urgent fix; P74 is the durability/cost fix.
+
 ## Operational Recovery
 
 For `ls.bot`, the immediate recovery was:
@@ -90,128 +117,9 @@ Pagination alone is not sufficient if the workflow records every page of events
 as activity results. That still moves the same large data into Temporal history.
 The bootstrap contract must become compact.
 
-Likewise, moving all planning into activities is too far. If planning, context
-selection, and state transitions all become opaque activity-side database
-mutations, Temporal becomes a retry wrapper instead of the durable agent state
-machine. The target design is: workflow decides logical state; activities
-materialize bulky physical requests from persisted deltas; CAS stores canonical
-artifacts.
-
-## Generation Materialization Boundary
-
-The current `lightspeed.core.turn.planned` event stores a full `LlmRequest`.
-That request includes the full context snapshot and the current tool catalog.
-Even though individual entry contents and tool schemas are CAS-backed, the full
-list of context entry metadata is copied into every planned turn. Long sessions
-therefore accumulate repeated snapshots.
-
-The engine does need to know which context entries are in context to plan the
-next turn. The fix is not to remove context metadata from workflow state. The
-fix is to stop recording and transporting repeated full request snapshots across
-Temporal boundaries.
-
-Introduce a generation materialization cursor. The workflow/engine keeps the
-reduced state and emits a deterministic "prepare generation" effect with target
-revisions and expected hashes. A storage activity materializes the bulky
-provider-neutral request from persisted context/tool deltas, writes the
-canonical artifacts to CAS, and returns compact refs.
-
-Sketch:
-
-```rust
-struct GenerationMaterializationCursor {
-    session_position: SessionPosition,
-
-    context_revision: u64,
-    context_manifest_ref: BlobRef,
-    context_manifest_hash: String,
-
-    toolset_revision: u64,
-    toolset_manifest_ref: BlobRef,
-    toolset_manifest_hash: String,
-
-    provider_state_ref: Option<BlobRef>,
-}
-
-struct PrepareGenerationInput {
-    session_id: SessionId,
-    run_id: RunId,
-    turn_id: TurnId,
-
-    base_cursor: Option<GenerationMaterializationCursor>,
-
-    target_position: SessionPosition,
-    target_context_revision: u64,
-    target_toolset_revision: u64,
-
-    model: ModelSelection,
-    tool_choice: Option<ToolChoice>,
-    output_limit: Option<u32>,
-    compaction: Option<CompactionPolicy>,
-    params_ref: Option<BlobRef>,
-
-    expected_context_manifest_hash: String,
-    expected_toolset_manifest_hash: String,
-    planner_version: u32,
-}
-
-struct PrepareGenerationResult {
-    request_ref: BlobRef,
-    request_fingerprint: String,
-    cursor: GenerationMaterializationCursor,
-}
-```
-
-The prepare activity:
-
-1. loads the previous context/tool manifests from `base_cursor`, if present;
-2. reads persisted session event deltas from `base_cursor.session_position` to
-   `target_position`;
-3. applies only materialization-relevant patches, such as
-   `context.entries_applied`, `context.entries_removed`,
-   `context.state_replaced`, `tool_config.tools_patched`, and
-   `tool_config.tools_replaced`;
-4. reconstructs the target context and tool manifests;
-5. verifies their hashes match the workflow's expected hashes;
-6. builds the canonical provider-neutral `LlmRequest`;
-7. stores the full request and manifests in CAS;
-8. returns `request_ref`, `request_fingerprint`, and the new cursor.
-
-Then `turn.planned` records a compact fact instead of the full request:
-
-```json
-{
-  "turn_id": 48,
-  "run_id": 19,
-  "request_ref": "sha256:...",
-  "request_fingerprint": "...",
-  "cursor": {
-    "session_position": "...",
-    "context_revision": 123,
-    "context_manifest_ref": "sha256:...",
-    "context_manifest_hash": "...",
-    "toolset_revision": 9,
-    "toolset_manifest_ref": "sha256:...",
-    "toolset_manifest_hash": "..."
-  }
-}
-```
-
-The `request_ref` is therefore not invented by the reducer. The reducer emits a
-logical prepare-generation intent; the activity constructs and stores the bulky
-artifact, and the workflow records the returned ref as the authoritative planned
-request.
-
-This preserves the useful role of Temporal:
-
-- the workflow remains the deterministic planner and orchestrator;
-- activities perform I/O and materialize large artifacts;
-- Temporal history carries revisions, hashes, cursors, and refs;
-- CAS carries the full request for audit, replay, and provider debugging.
-
-Checkpoints are a separate optimization on top. They can make cold recovery and
-continue-as-new cheaper, but the first-order fix is this materialization
-boundary and compact event shape.
+Reducing the durable log itself (so each turn does not re-snapshot the full
+context) is a separate concern, tracked in P74. P73 makes bootstrap compact
+regardless of log size; P74 reduces how fast the log grows.
 
 ## Proposed Fix
 
@@ -236,57 +144,30 @@ This does not require checkpoints as the first step. Checkpoints can later
 reduce replay cost, but the correctness fix is to avoid returning the full event
 log through the activity boundary.
 
-### G2: Continue-As-New Carries Compact State
+### G2: Continue-As-New Stays Cheap
 
-Change continue-as-new from "same args, reload from storage" to "resume from
-compact state":
+Continue-as-new passes the same `AgentSessionArgs` today, so the resumed
+execution re-runs `initialize` and re-rehydrates. Once G1 makes rehydration
+compact (the activity reduces and returns `CoreAgentState`, not the event log),
+this path is correct again: the resumed execution reduces from the durable log
+inside the activity and never crosses the payload boundary with the full log.
 
-- introduce an `AgentSessionBootstrap` or versioned `AgentSessionArgs` variant;
-- first execution uses `CreateOrLoad { session_id, session_config, ... }`;
-- continue-as-new uses `Resume { session_id, session_config, head,
-  core_state, run_submissions, admission_failures, ... }`;
-- the resumed execution must not call `create_or_load_session` unless it is a
-  true cold recovery path.
+Prefer this over a new `AgentSessionArgs::Resume` variant that carries
+`CoreAgentState` forward in workflow args. A resume variant introduces a second,
+divergence-prone way to produce `CoreAgentState` (carried-forward state vs.
+in-activity replay) that must stay byte-identical with the reducer forever, for
+a benefit that only matters once replay cost is proven to hurt. Defer it until
+profiling shows the compact reload is actually too expensive at idle
+continue-as-new; if it is, the first lever is reducing replay cost (P74 shrinks
+the log; checkpoints shrink replay) before changing the workflow-args contract.
 
-Keep the resume payload below a conservative size budget. If `CoreAgentState`
-itself grows too large, add state compaction before continue-as-new rather than
-falling back to event-log replay.
+`CoreAgentState` is bounded by active context, not history: `ContextEntry`
+carries a `content_ref: BlobRef` rather than inline content, and `ToolSpec`
+carries a `description_ref`, so the reduced state is entry/tool *metadata* plus
+refs. Add an assertion/metric on reduced-state size so a regression that inlines
+payloads into state is caught early.
 
-### G3: Compact Planned Request Events
-
-Refactor `TurnEvent::Planned` so it records the prepared request ref and
-materialization cursor, not the full `LlmRequest`.
-
-The full canonical `LlmRequest` should be written to CAS by the prepare
-activity. The event log should keep enough information to prove which request
-was planned and to rematerialize/debug it:
-
-- `request_ref`;
-- `request_fingerprint`;
-- `context_revision`;
-- `context_manifest_ref` and hash;
-- `toolset_revision`;
-- `toolset_manifest_ref` and hash;
-- optional provider continuity state ref;
-- planner/materializer version.
-
-During replay, the workflow should rebuild logical state from compact events and
-refs. It should not need the full provider request inline in the event.
-
-### G4: Generation And Tool Materialization Activities
-
-Add a prepare/materialize activity before model generation.
-
-The workflow passes a base cursor, target session position, target context/tool
-revisions, and expected manifest hashes. The activity applies persisted
-context/tool patches since the base cursor, writes manifests and the canonical
-request to CAS, and returns compact refs.
-
-The generation activity should consume `request_ref`, load the canonical request
-from CAS/storage, call the provider, write output artifacts to CAS, and return
-compact completion facts.
-
-### G5: Startup And Bridge Failure Semantics
+### G3: Startup And Bridge Failure Semantics
 
 Make the gateway/bridge failure clearer:
 
@@ -298,19 +179,11 @@ Make the gateway/bridge failure clearer:
 - bridge should surface this as a system/session recovery problem, not as an
   ordinary message-answer failure.
 
-### G6: Event Volume Reduction
+Durable event-log volume reduction (so the log itself stops accumulating a full
+context snapshot per turn) is out of scope for P73 and tracked in P74. P73
+makes bootstrap survive a large log; P74 keeps the log from growing that fast.
 
-Reduce durable event bloat separately:
-
-- avoid persisting repeated context snapshots and full tool catalogs in every
-  `turn.planned` event when stable request/context/toolset refs are enough;
-- store large repeated request artifacts in CAS and keep event payloads as refs;
-- add metrics/tests around per-event size and per-session accumulated size.
-
-This is not the only bootstrap fix, but it is required to avoid continued
-quadratic-ish growth after bootstrap is made compact.
-
-### G7: Migration And Recovery Tooling
+### G4: Migration And Recovery Tooling
 
 Add an operator path for existing large sessions:
 
@@ -324,15 +197,8 @@ Add an operator path for existing large sessions:
 - A session with multiple megabytes of persisted event log can be restarted or
   continued-as-new without returning the full event log through an activity
   result.
-- Continue-as-new does not call full-history session rehydration in the normal
-  idle path.
-- `turn.planned` no longer embeds a full `LlmRequest`; it records compact refs,
-  revisions, hashes, and the materialization cursor.
-- A prepare/materialize activity can construct the canonical `LlmRequest` from a
-  base cursor plus persisted context/tool patches, then store it in CAS and
-  return a `request_ref`.
-- The workflow still owns deterministic planning and context selection; the
-  materialization activity performs I/O and bulk request construction only.
+- Continue-as-new at idle does not move the full event log through an activity
+  result; it reduces inside the activity and carries only compact state.
 - Bootstrap payloads have an explicit size budget and fail with a typed,
   diagnosable error before Temporal reports `Complete result exceeds size
   limit`.
