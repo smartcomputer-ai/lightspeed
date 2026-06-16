@@ -26,7 +26,9 @@ mod storage;
 mod tools;
 
 pub use preprocess::{
+    AudioTranscodeError, AudioTranscodeOutput, AudioTranscodeRequest, AudioTranscoder,
     AudioTranscriber, AudioTranscription, AudioTranscriptionError, AudioTranscriptionRequest,
+    FfmpegAudioTranscoder,
 };
 pub use state::{
     ActivityState, LlmActivityDeps, PreprocessActivityDeps, SkillCatalogActivityDeps,

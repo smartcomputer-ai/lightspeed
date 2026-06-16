@@ -23,7 +23,8 @@ use crate::{
 };
 
 use super::preprocess::{
-    AudioTranscriber, UnavailableAudioTranscriber, default_openai_audio_transcriber,
+    AudioTranscoder, AudioTranscriber, UnavailableAudioTranscriber,
+    default_audio_transcoder_from_env, default_openai_audio_transcriber,
 };
 
 #[derive(Clone)]
@@ -55,6 +56,7 @@ pub struct SkillCatalogActivityDeps {
 pub struct PreprocessActivityDeps {
     pub(super) blobs: Arc<dyn BlobStore>,
     pub(super) transcriber: Arc<dyn AudioTranscriber>,
+    pub(super) transcoder: Option<Arc<dyn AudioTranscoder>>,
 }
 
 #[derive(Clone)]
@@ -90,6 +92,7 @@ impl ActivityState {
             preprocess: PreprocessActivityDeps {
                 blobs: blobs.clone(),
                 transcriber: Arc::new(UnavailableAudioTranscriber),
+                transcoder: None,
             },
         }
     }
@@ -112,6 +115,11 @@ impl ActivityState {
         self
     }
 
+    pub fn with_audio_transcoder(mut self, transcoder: Arc<dyn AudioTranscoder>) -> Self {
+        self.preprocess.transcoder = Some(transcoder);
+        self
+    }
+
     pub fn from_pg_store(
         store: Arc<PgStore>,
         llm: Arc<dyn CoreAgentLlm>,
@@ -130,9 +138,14 @@ impl ActivityState {
         let secrets: Arc<dyn SecretResolver> = Arc::new(BrokerSecretResolver::new(broker.clone()));
         let provider_keys = stored_provider_key_resolver(store.clone(), broker);
         let transcriber = default_audio_transcriber(provider_keys.clone())?;
+        let transcoder = default_audio_transcoder_from_env()?;
         let llm = default_llm_runtime(blobs, Some(secrets), Some(provider_keys))?;
         let tools = session_tools(store.clone());
-        Ok(Self::from_pg_store(store, llm, tools).with_audio_transcriber(transcriber))
+        let mut state = Self::from_pg_store(store, llm, tools).with_audio_transcriber(transcriber);
+        if let Some(transcoder) = transcoder {
+            state = state.with_audio_transcoder(transcoder);
+        }
+        Ok(state)
     }
 
     pub async fn from_env() -> anyhow::Result<Self> {

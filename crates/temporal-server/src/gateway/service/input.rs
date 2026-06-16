@@ -10,6 +10,10 @@ const ALLOWED_AUDIO_MIMES: &[&str] = &[
     "audio/wav",
     "audio/webm",
     "audio/ogg",
+    "audio/aac",
+    "audio/amr",
+    "audio/3gpp",
+    "audio/3gpp2",
 ];
 /// PDF is the only document type both providers accept natively; the text
 /// MIMEs are inlined as text by the llm-runtime adapters.
@@ -88,7 +92,17 @@ async fn media_message_input(
     kind: MediaKind,
     name: Option<&str>,
 ) -> Result<ContextEntryInput, AgentApiError> {
-    let mime = mime.trim().to_ascii_lowercase();
+    let raw_mime = mime.trim().to_ascii_lowercase();
+    let mime = if matches!(kind, MediaKind::Audio) {
+        normalize_audio_mime(&raw_mime)
+    } else {
+        raw_mime
+            .split(';')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_owned()
+    };
     let (label, max_bytes) = match kind {
         MediaKind::Image => {
             if !ALLOWED_IMAGE_MIMES.contains(&mime.as_str()) {
@@ -101,7 +115,7 @@ async fn media_message_input(
         }
         MediaKind::Audio => {
             if !ALLOWED_AUDIO_MIMES.contains(&mime.as_str()) {
-                return Err(AgentApiError::invalid_request(format!(
+                return Err(AgentApiError::unsupported_audio_mime(format!(
                     "unsupported audio mime type {mime}; allowed: {}",
                     ALLOWED_AUDIO_MIMES.join(", ")
                 )));
@@ -125,10 +139,17 @@ async fn media_message_input(
         .await
         .map_err(map_input_blob_store_error)?;
     if info.byte_len > max_bytes {
-        return Err(AgentApiError::invalid_request(format!(
-            "{label} blob is {} bytes; the limit is {max_bytes} bytes",
-            info.byte_len
-        )));
+        return if matches!(kind, MediaKind::Audio) {
+            Err(AgentApiError::audio_blob_too_large(format!(
+                "{label} blob is {} bytes; the limit is {max_bytes} bytes",
+                info.byte_len
+            )))
+        } else {
+            Err(AgentApiError::invalid_request(format!(
+                "{label} blob is {} bytes; the limit is {max_bytes} bytes",
+                info.byte_len
+            )))
+        };
     }
     if matches!(kind, MediaKind::Document) && mime != PDF_MIME {
         // Text documents reach the model as text; reject undecodable bytes
@@ -208,4 +229,24 @@ pub(super) fn user_message_input(content_ref: BlobRef) -> ContextEntryInput {
 }
 pub(super) fn empty_run_input_error() -> AgentApiError {
     AgentApiError::invalid_request("run/start input must contain at least one non-empty item")
+}
+
+fn normalize_audio_mime(mime: &str) -> String {
+    let mime = mime
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    match mime.as_str() {
+        "audio/mp3" => "audio/mpeg",
+        "audio/x-m4a" | "audio/m4a" => "audio/mp4",
+        "audio/x-wav" | "audio/wave" | "audio/vnd.wave" => "audio/wav",
+        "audio/oga" | "audio/opus" => "audio/ogg",
+        "audio/x-aac" => "audio/aac",
+        "audio/3gp" => "audio/3gpp",
+        "audio/3gpp2" | "audio/3g2" => "audio/3gpp2",
+        other => other,
+    }
+    .to_owned()
 }

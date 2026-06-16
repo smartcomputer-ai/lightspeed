@@ -350,7 +350,7 @@ describe("MessagingBridgeRuntime", () => {
       data: { kind: string; message: string };
     };
     error.data = {
-      kind: "provider_transcription_failure",
+      kind: "transcription_failure",
       message: "OpenAI could not transcribe the audio",
     };
     lightspeed.failTurns = true;

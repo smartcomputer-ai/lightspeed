@@ -49,11 +49,8 @@ pub enum AgentAdmissionFailureKind {
     AudioBlobTooLarge,
     AudioDurationTooLong,
     TranscoderUnavailable,
-    TranscodeTimeout,
-    TranscodeOutputTooLarge,
-    ProviderAuthentication,
-    ProviderConfiguration,
-    ProviderTranscriptionFailure,
+    TranscodeFailure,
+    TranscriptionFailure,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -152,11 +149,8 @@ pub enum PreprocessRunInputFailureKind {
     AudioBlobTooLarge,
     AudioDurationTooLong,
     TranscoderUnavailable,
-    TranscodeTimeout,
-    TranscodeOutputTooLarge,
-    ProviderAuthentication,
-    ProviderConfiguration,
-    ProviderTranscriptionFailure,
+    TranscodeFailure,
+    TranscriptionFailure,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

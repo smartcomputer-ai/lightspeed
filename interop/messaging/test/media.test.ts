@@ -49,10 +49,13 @@ describe("audioMime", () => {
     expect(audioMime("voice.opus", "application/octet-stream")).toBe("audio/ogg");
     expect(audioMime("clip.m4a", undefined)).toBe("audio/mp4");
     expect(audioMime("recording.wav", "audio/x-wav")).toBe("audio/wav");
+    expect(audioMime("track.aac", "application/octet-stream")).toBe("audio/aac");
+    expect(audioMime("memo.amr", "audio/amr")).toBe("audio/amr");
+    expect(audioMime("note.3gp", "audio/3gp")).toBe("audio/3gpp");
   });
 
   it("rejects unsupported audio containers", () => {
-    expect(audioMime("track.aac", "audio/aac")).toBeNull();
+    expect(audioMime("track.flac", "audio/flac")).toBeNull();
     expect(audioMime(undefined, undefined)).toBeNull();
   });
 });

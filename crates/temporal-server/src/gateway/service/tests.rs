@@ -23,11 +23,21 @@ fn admission_failure_mapping_uses_gateway_error_kinds() {
         AgentApiErrorKind::UnsupportedAudioMime
     );
     assert_eq!(
+        map_admission_failure_to_api_error(&failure(AgentAdmissionFailureKind::AudioBlobMissing))
+            .kind,
+        AgentApiErrorKind::InvalidRequest
+    );
+    assert_eq!(
         map_admission_failure_to_api_error(&failure(
-            AgentAdmissionFailureKind::ProviderAuthentication
+            AgentAdmissionFailureKind::TranscriptionFailure
         ))
         .kind,
-        AgentApiErrorKind::ProviderAuthentication
+        AgentApiErrorKind::TranscriptionFailure
+    );
+    assert_eq!(
+        map_admission_failure_to_api_error(&failure(AgentAdmissionFailureKind::TranscodeFailure))
+            .kind,
+        AgentApiErrorKind::TranscodeFailure
     );
 }
 
@@ -1025,14 +1035,14 @@ async fn run_input_from_api_rejects_unsupported_media() {
         &store,
         &[InputItem::Media {
             blob_ref: blob_ref.as_str().to_owned(),
-            mime: "audio/aac".to_owned(),
+            mime: "audio/flac".to_owned(),
             kind: api::MediaKind::Audio,
             name: None,
         }],
     )
     .await
     .expect_err("unsupported audio mime must be rejected");
-    assert_eq!(audio.kind, AgentApiErrorKind::InvalidRequest);
+    assert_eq!(audio.kind, AgentApiErrorKind::UnsupportedAudioMime);
 
     let bad_mime = run_input_from_api(
         &store,
@@ -1046,6 +1056,28 @@ async fn run_input_from_api_rejects_unsupported_media() {
     .await
     .expect_err("unsupported image mime must be rejected");
     assert_eq!(bad_mime.kind, AgentApiErrorKind::InvalidRequest);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn run_input_from_api_accepts_transcodable_audio_media() {
+    let store = engine::storage::InMemoryBlobStore::new();
+    let blob_ref = store.put_bytes(vec![1, 2, 3]).await.expect("store blob");
+
+    let input = run_input_from_api(
+        &store,
+        &[InputItem::Media {
+            blob_ref: blob_ref.as_str().to_owned(),
+            mime: "audio/x-aac".to_owned(),
+            kind: api::MediaKind::Audio,
+            name: Some("clip.aac".to_owned()),
+        }],
+    )
+    .await
+    .expect("transcodable audio should be admitted");
+
+    assert_eq!(input[0].content_ref, blob_ref);
+    assert_eq!(input[0].media_type.as_deref(), Some("audio/aac"));
+    assert_eq!(input[0].preview.as_deref(), Some("[audio: clip.aac]"));
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -1067,6 +1099,25 @@ async fn run_input_from_api_rejects_audio_over_byte_cap() {
     )
     .await
     .expect_err("oversized audio must be rejected");
+
+    assert_eq!(error.kind, AgentApiErrorKind::AudioBlobTooLarge);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn run_input_from_api_rejects_missing_audio_blob() {
+    let store = engine::storage::InMemoryBlobStore::new();
+
+    let error = run_input_from_api(
+        &store,
+        &[InputItem::Media {
+            blob_ref: BlobRef::from_bytes(b"missing-audio").as_str().to_owned(),
+            mime: "audio/ogg".to_owned(),
+            kind: api::MediaKind::Audio,
+            name: None,
+        }],
+    )
+    .await
+    .expect_err("missing audio blob must be rejected");
 
     assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
 }

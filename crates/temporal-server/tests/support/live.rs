@@ -14,8 +14,8 @@ use engine::{
 use temporal_server::{
     pg_store_from_env,
     worker::{
-        ActivityState, AudioTranscriber, FakeLlm, FakeTools, WorkerActivities, core_runtime,
-        worker_with_activities,
+        ActivityState, AudioTranscoder, AudioTranscriber, FakeLlm, FakeTools, WorkerActivities,
+        core_runtime, worker_with_activities,
     },
 };
 use temporal_workflow::{
@@ -78,11 +78,20 @@ pub async fn fake_worker_activities() -> anyhow::Result<WorkerActivities> {
 pub async fn fake_worker_activities_with_audio_transcriber(
     transcriber: Arc<dyn AudioTranscriber>,
 ) -> anyhow::Result<WorkerActivities> {
-    Ok(WorkerActivities::new(
-        fake_activity_state()
-            .await?
-            .with_audio_transcriber(transcriber),
-    ))
+    fake_worker_activities_with_audio_preprocessors(transcriber, None).await
+}
+
+pub async fn fake_worker_activities_with_audio_preprocessors(
+    transcriber: Arc<dyn AudioTranscriber>,
+    transcoder: Option<Arc<dyn AudioTranscoder>>,
+) -> anyhow::Result<WorkerActivities> {
+    let mut state = fake_activity_state()
+        .await?
+        .with_audio_transcriber(transcriber);
+    if let Some(transcoder) = transcoder {
+        state = state.with_audio_transcoder(transcoder);
+    }
+    Ok(WorkerActivities::new(state))
 }
 
 pub async fn fake_activity_state() -> anyhow::Result<ActivityState> {

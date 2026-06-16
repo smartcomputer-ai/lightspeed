@@ -11,9 +11,10 @@ use temporalio_sdk::{Worker, WorkerOptions};
 use temporalio_sdk_core::{CoreRuntime, RuntimeOptions};
 
 pub use activities::{
-    ActivityState, AudioTranscriber, AudioTranscription, AudioTranscriptionError,
-    AudioTranscriptionRequest, LlmActivityDeps, PreprocessActivityDeps, SkillCatalogActivityDeps,
-    StorageActivityDeps, ToolActivityDeps, WorkerActivities,
+    ActivityState, AudioTranscodeError, AudioTranscodeOutput, AudioTranscodeRequest,
+    AudioTranscoder, AudioTranscriber, AudioTranscription, AudioTranscriptionError,
+    AudioTranscriptionRequest, FfmpegAudioTranscoder, LlmActivityDeps, PreprocessActivityDeps,
+    SkillCatalogActivityDeps, StorageActivityDeps, ToolActivityDeps, WorkerActivities,
 };
 pub use fake::{FakeLlm, FakeTools};
 pub use secrets::{BrokerSecretResolver, StoredProviderKeyResolver};

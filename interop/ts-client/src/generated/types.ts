@@ -74,15 +74,11 @@ export type AgentApiErrorKind =
   | "conflict"
   | "rejected"
   | "unsupported_audio_mime"
-  | "audio_blob_missing"
   | "audio_blob_too_large"
   | "audio_duration_too_long"
   | "transcoder_unavailable"
-  | "transcode_timeout"
-  | "transcode_output_too_large"
-  | "provider_authentication"
-  | "provider_configuration"
-  | "provider_transcription_failure"
+  | "transcode_failure"
+  | "transcription_failure"
   | "internal";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema

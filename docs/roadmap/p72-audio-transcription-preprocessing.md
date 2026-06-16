@@ -142,11 +142,13 @@ vanished. Requirements:
 Failures that must be explicit and typed:
 
 - unsupported audio MIME/container;
-- blob missing or over size/duration limit;
+- blob over size/duration limit; missing blob refs use the generic invalid
+  request path;
 - no transcoder configured for a non-provider-accepted container;
-- transcode timeout or output over cap (only when transcoding is attempted);
-- provider authentication/configuration failure;
-- provider transcription failure.
+- transcode failure (including timeout or output over cap when transcoding is
+  attempted);
+- transcription failure (including provider authentication/configuration and
+  provider transcription errors).
 
 Group-failure rule: a single `run/start` input may contain several entries
 (text, images, multiple audio clips). If **any** audio entry in the group fails
@@ -232,7 +234,31 @@ Completed 2026-06-16:
   `OPENAI_API_KEY` is supplied; it uses a hosted OGG fixture by default and
   supports local path/URL fixture overrides.
 
-### G4: Optional Transcoder (Container Widening)
+### [x] G4: Optional Transcoder (Container Widening)
+
+Completed 2026-06-16:
+
+- Added the worker-side `AudioTranscoder` trait and `Option<Arc<dyn
+  AudioTranscoder>>` activity dependency. No transcoder remains the default
+  supported worker configuration.
+- Added an opt-in FFmpeg CLI adapter enabled with
+  `LIGHTSPEED_AUDIO_TRANSCODER=ffmpeg`; `LIGHTSPEED_FFMPEG_PATH` overrides the
+  binary path and `LIGHTSPEED_AUDIO_TRANSCODE_TIMEOUT_MS` overrides the default
+  30 second process timeout.
+- Widened gateway and bridge admission to a conservative transcodable MIME set
+  (`audio/aac`, `audio/amr`, `audio/3gpp`, `audio/3gpp2`) plus common aliases,
+  without accepting arbitrary `audio/*`.
+- Non-provider containers transcode to 16 kHz mono WAV with shell-free
+  `tokio::process::Command`, worker-owned temp files, timeout handling, output
+  byte-cap enforcement, and typed transcode failure mapping.
+- Added the dedicated `transcode_failure` and `transcription_failure`
+  API/contract/client variants, and regenerated the committed contract and TS
+  client artifacts.
+- Added unit coverage for transcode routing, missing-transcoder behavior,
+  failure mapping, FFmpeg argument construction, and an ignored real-FFmpeg
+  smoke test. Added an ignored live `preprocess_live` workflow test that submits
+  `audio/x-aac` through `run/start`, injects a fake transcoder, and verifies the
+  run is admitted with transcript text after WAV transcription input.
 
 - Add the `AudioTranscoder` trait and an opt-in FFmpeg-CLI implementation;
   the worker holds `Option<Arc<dyn AudioTranscoder>>`.

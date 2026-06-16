@@ -390,20 +390,11 @@ fn preprocess_failure_to_admission_failure(
             PreprocessRunInputFailureKind::TranscoderUnavailable => {
                 AgentAdmissionFailureKind::TranscoderUnavailable
             }
-            PreprocessRunInputFailureKind::TranscodeTimeout => {
-                AgentAdmissionFailureKind::TranscodeTimeout
+            PreprocessRunInputFailureKind::TranscodeFailure => {
+                AgentAdmissionFailureKind::TranscodeFailure
             }
-            PreprocessRunInputFailureKind::TranscodeOutputTooLarge => {
-                AgentAdmissionFailureKind::TranscodeOutputTooLarge
-            }
-            PreprocessRunInputFailureKind::ProviderAuthentication => {
-                AgentAdmissionFailureKind::ProviderAuthentication
-            }
-            PreprocessRunInputFailureKind::ProviderConfiguration => {
-                AgentAdmissionFailureKind::ProviderConfiguration
-            }
-            PreprocessRunInputFailureKind::ProviderTranscriptionFailure => {
-                AgentAdmissionFailureKind::ProviderTranscriptionFailure
+            PreprocessRunInputFailureKind::TranscriptionFailure => {
+                AgentAdmissionFailureKind::TranscriptionFailure
             }
         },
         message: failure.message,
@@ -807,7 +798,7 @@ mod tests {
         let failure = preprocess_failure_to_admission_failure(
             Some(SubmissionId::new("submit_audio")),
             PreprocessRunInputFailure {
-                kind: PreprocessRunInputFailureKind::ProviderAuthentication,
+                kind: PreprocessRunInputFailureKind::TranscriptionFailure,
                 message: "missing OpenAI key".to_owned(),
             },
         );
@@ -818,7 +809,7 @@ mod tests {
         );
         assert_eq!(
             failure.kind,
-            AgentAdmissionFailureKind::ProviderAuthentication
+            AgentAdmissionFailureKind::TranscriptionFailure
         );
     }
 

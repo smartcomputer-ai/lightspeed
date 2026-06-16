@@ -3812,6 +3812,7 @@ dependencies = [
  "serde",
  "serde_json",
  "store-pg",
+ "tempfile",
  "temporal-workflow",
  "temporalio-client",
  "temporalio-common",

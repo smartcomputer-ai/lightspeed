@@ -2769,15 +2769,11 @@ pub enum AgentApiErrorKind {
     Conflict,
     Rejected,
     UnsupportedAudioMime,
-    AudioBlobMissing,
     AudioBlobTooLarge,
     AudioDurationTooLong,
     TranscoderUnavailable,
-    TranscodeTimeout,
-    TranscodeOutputTooLarge,
-    ProviderAuthentication,
-    ProviderConfiguration,
-    ProviderTranscriptionFailure,
+    TranscodeFailure,
+    TranscriptionFailure,
     Internal,
 }
 
@@ -2817,10 +2813,6 @@ impl AgentApiError {
         Self::new(AgentApiErrorKind::UnsupportedAudioMime, message)
     }
 
-    pub fn audio_blob_missing(message: impl Into<String>) -> Self {
-        Self::new(AgentApiErrorKind::AudioBlobMissing, message)
-    }
-
     pub fn audio_blob_too_large(message: impl Into<String>) -> Self {
         Self::new(AgentApiErrorKind::AudioBlobTooLarge, message)
     }
@@ -2833,24 +2825,12 @@ impl AgentApiError {
         Self::new(AgentApiErrorKind::TranscoderUnavailable, message)
     }
 
-    pub fn transcode_timeout(message: impl Into<String>) -> Self {
-        Self::new(AgentApiErrorKind::TranscodeTimeout, message)
+    pub fn transcode_failure(message: impl Into<String>) -> Self {
+        Self::new(AgentApiErrorKind::TranscodeFailure, message)
     }
 
-    pub fn transcode_output_too_large(message: impl Into<String>) -> Self {
-        Self::new(AgentApiErrorKind::TranscodeOutputTooLarge, message)
-    }
-
-    pub fn provider_authentication(message: impl Into<String>) -> Self {
-        Self::new(AgentApiErrorKind::ProviderAuthentication, message)
-    }
-
-    pub fn provider_configuration(message: impl Into<String>) -> Self {
-        Self::new(AgentApiErrorKind::ProviderConfiguration, message)
-    }
-
-    pub fn provider_transcription_failure(message: impl Into<String>) -> Self {
-        Self::new(AgentApiErrorKind::ProviderTranscriptionFailure, message)
+    pub fn transcription_failure(message: impl Into<String>) -> Self {
+        Self::new(AgentApiErrorKind::TranscriptionFailure, message)
     }
 
     pub fn internal(message: impl Into<String>) -> Self {
@@ -2861,18 +2841,15 @@ impl AgentApiError {
         match self.kind {
             AgentApiErrorKind::InvalidRequest
             | AgentApiErrorKind::UnsupportedAudioMime
-            | AgentApiErrorKind::AudioBlobMissing
             | AgentApiErrorKind::AudioBlobTooLarge
             | AgentApiErrorKind::AudioDurationTooLong
-            | AgentApiErrorKind::TranscoderUnavailable
-            | AgentApiErrorKind::TranscodeOutputTooLarge => -32602,
+            | AgentApiErrorKind::TranscoderUnavailable => -32602,
             AgentApiErrorKind::NotFound => -32004,
             AgentApiErrorKind::Conflict => -32009,
             AgentApiErrorKind::Rejected
-            | AgentApiErrorKind::TranscodeTimeout
-            | AgentApiErrorKind::ProviderAuthentication
-            | AgentApiErrorKind::ProviderTranscriptionFailure => -32010,
-            AgentApiErrorKind::ProviderConfiguration | AgentApiErrorKind::Internal => -32603,
+            | AgentApiErrorKind::TranscodeFailure
+            | AgentApiErrorKind::TranscriptionFailure => -32010,
+            AgentApiErrorKind::Internal => -32603,
         }
     }
 }

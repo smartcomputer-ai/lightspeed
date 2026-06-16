@@ -329,5 +329,8 @@ the same variables directly in your shell.
 | `LIGHTSPEED_PG_UNIVERSE_ID` | Hosted store universe UUID |
 | `LIGHTSPEED_TASK_QUEUE` | Temporal task queue override; defaults to `lightspeed-universe-{LIGHTSPEED_PG_UNIVERSE_ID}` |
 | `LIGHTSPEED_OBJECT_STORE_ENDPOINT` | S3-compatible object store endpoint |
+| `LIGHTSPEED_AUDIO_TRANSCODER` | Optional audio transcoder adapter; set to `ffmpeg` to enable non-provider audio container transcoding |
+| `LIGHTSPEED_FFMPEG_PATH` | Optional FFmpeg binary path when `LIGHTSPEED_AUDIO_TRANSCODER=ffmpeg`; defaults to `ffmpeg` |
+| `LIGHTSPEED_AUDIO_TRANSCODE_TIMEOUT_MS` | Optional FFmpeg transcode timeout in milliseconds; defaults to 30000 |
 | `RUST_LOG` | Server log filter. Defaults to app/Temporal info and dependency warnings; use `temporal_server=debug,temporal_workflow=debug` for more detail |
 | `LIGHTSPEED_LOG_FORMAT` | Server log format: `compact` (default), `pretty`, or `json` |

@@ -28,6 +28,10 @@ const ALLOWED_AUDIO_MIMES = new Set([
   "audio/wav",
   "audio/webm",
   "audio/ogg",
+  "audio/aac",
+  "audio/amr",
+  "audio/3gpp",
+  "audio/3gpp2",
 ]);
 
 /// Channels may report container-specific or legacy audio MIME names. Normalize
@@ -44,6 +48,12 @@ const AUDIO_MIME_BY_EXTENSION: Record<string, string> = {
   oga: "audio/ogg",
   ogg: "audio/ogg",
   opus: "audio/ogg",
+  aac: "audio/aac",
+  amr: "audio/amr",
+  "3gp": "audio/3gpp",
+  "3gpp": "audio/3gpp",
+  "3g2": "audio/3gpp2",
+  "3gpp2": "audio/3gpp2",
 };
 
 const AUDIO_MIME_ALIASES: Record<string, string> = {
@@ -55,6 +65,9 @@ const AUDIO_MIME_ALIASES: Record<string, string> = {
   "audio/vnd.wave": "audio/wav",
   "audio/oga": "audio/ogg",
   "audio/opus": "audio/ogg",
+  "audio/x-aac": "audio/aac",
+  "audio/3gp": "audio/3gpp",
+  "audio/3g2": "audio/3gpp2",
 };
 
 export const MAX_PDF_BYTES = 10 * 1024 * 1024;
