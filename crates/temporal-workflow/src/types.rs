@@ -1,7 +1,9 @@
+use std::collections::BTreeMap;
+
 use engine::{
-    BlobRef, ContextEntryInput, CoreAgentCommand, DynamicCommand, RunStatus, SessionConfig,
-    SessionId, SessionPosition, SubmissionId,
-    storage::{DynamicSessionEntry, DynamicUncommittedSessionEvent, SessionRecord},
+    BlobRef, ContextEntryInput, CoreAgentCommand, CoreAgentState, DynamicCommand, RunStatus,
+    SessionConfig, SessionId, SessionPosition, SubmissionId,
+    storage::{DynamicUncommittedSessionEvent, SessionRecord},
 };
 use serde::{Deserialize, Serialize};
 
@@ -30,6 +32,10 @@ pub struct AgentSessionStatus {
     #[serde(default)]
     pub admission_failures: Vec<AgentAdmissionFailure>,
     pub last_error: Option<String>,
+    /// True when the session workflow failed during bootstrap/rehydration. The
+    /// gateway surfaces this as a typed `session_bootstrap_failed` error.
+    #[serde(default)]
+    pub bootstrap_failed: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -44,6 +50,13 @@ pub struct AgentAdmissionFailure {
 pub enum AgentAdmissionFailureKind {
     InvalidCommand,
     RejectedCommand,
+    UnsupportedAudioMime,
+    AudioBlobMissing,
+    AudioBlobTooLarge,
+    AudioDurationTooLong,
+    TranscoderUnavailable,
+    TranscodeFailure,
+    TranscriptionFailure,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,11 +90,54 @@ pub struct CreateOrLoadSessionRequest {
     pub observed_at_ms: u64,
 }
 
+/// Compact session rehydration result.
+///
+/// The bootstrap activity reduces the durable session log internally and returns
+/// only the replayed `CoreAgentState` plus the small workflow-only indices it
+/// reconstructs. The full event log is never transported through the activity
+/// result (and therefore never recorded in Temporal history), which is what
+/// previously failed long-lived sessions with `Complete result exceeds size
+/// limit`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreateOrLoadSessionResult {
     pub record: SessionRecord,
-    pub entries: Vec<DynamicSessionEntry>,
+    /// Replayed reduced agent state. `None` for a freshly created session with
+    /// no persisted events yet (the workflow then opens a new session).
+    pub core_state: Option<CoreAgentState>,
+    /// `run_id` -> originating submission id, reconstructed from accepted-run
+    /// events. Empty for a fresh session.
+    #[serde(default)]
+    pub run_submissions: BTreeMap<u64, Option<SubmissionId>>,
+    /// Current durable log head after replay.
+    pub head: Option<SessionPosition>,
+    /// Number of persisted events replayed. `0` signals a fresh session that
+    /// still needs `open_new_session`.
+    pub replayed_event_count: u64,
 }
+
+/// Typed bootstrap failure surfaced when the compact rehydration result would
+/// still exceed the configured Temporal payload budget, so the failure is
+/// diagnosable instead of an opaque `Complete result exceeds size limit`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionBootstrapPayloadTooLarge {
+    pub session_id: SessionId,
+    pub reduced_state_bytes: u64,
+    pub budget_bytes: u64,
+    pub replayed_event_count: u64,
+}
+
+impl std::fmt::Display for SessionBootstrapPayloadTooLarge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "session bootstrap payload too large: session_id={} \
+             reduced_state_bytes={} budget_bytes={} replayed_event_count={}",
+            self.session_id, self.reduced_state_bytes, self.budget_bytes, self.replayed_event_count,
+        )
+    }
+}
+
+impl std::error::Error for SessionBootstrapPayloadTooLarge {}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PutBlobRequest {
@@ -108,6 +164,42 @@ pub struct AppendEventsRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LlmGenerateActivityRequest {
     pub request: engine::LlmGenerationRequest,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreprocessRunInputActivityRequest {
+    pub session_id: SessionId,
+    pub input: Vec<ContextEntryInput>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreprocessRunInputActivityResult {
+    pub outcome: PreprocessRunInputOutcome,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "status")]
+pub enum PreprocessRunInputOutcome {
+    Succeeded { input: Vec<ContextEntryInput> },
+    Failed { failure: PreprocessRunInputFailure },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreprocessRunInputFailure {
+    pub kind: PreprocessRunInputFailureKind,
+    pub message: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PreprocessRunInputFailureKind {
+    UnsupportedAudioMime,
+    AudioBlobMissing,
+    AudioBlobTooLarge,
+    AudioDurationTooLong,
+    TranscoderUnavailable,
+    TranscodeFailure,
+    TranscriptionFailure,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

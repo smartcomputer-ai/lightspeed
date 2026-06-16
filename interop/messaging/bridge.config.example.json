@@ -1,0 +1,78 @@
+{
+  "_comment": "Example BRIDGE_CONFIG file. Copy to bridge.config.json, set BRIDGE_CONFIG=bridge.config.json in .env, and edit. JSON has no comments, so see README 'Access control and bindings' for field docs. Env vars (TELEGRAM_*, WHATSAPP_*) override the matching values here.",
+
+  "telegram": {
+    "allowFrom": ["@lukas", "123456789"],
+    "controlAllowFrom": ["@lukas"]
+  },
+  "whatsapp": {
+    "allowFrom": ["41790000000@s.whatsapp.net", "41790000001"],
+    "controlAllowFrom": ["41790000000@s.whatsapp.net"]
+  },
+
+  "recipes": {
+    "personal": {
+      "config": {
+        "model": {
+          "providerId": "anthropic",
+          "apiKind": "anthropic_messages",
+          "model": "claude-opus-4-8"
+        },
+        "tools": {
+          "messaging": true,
+          "host": "readWrite",
+          "webSearch": true,
+          "webFetch": true
+        }
+      },
+      "mounts": [
+        {
+          "mountPath": "/workspace",
+          "source": { "workspaceId": "lukas-ws" },
+          "access": "readWrite"
+        }
+      ],
+      "mcp": [
+        {
+          "serverId": "github-mcp",
+          "allowedTools": ["search_issues", "get_issue"],
+          "approval": "never"
+        }
+      ]
+    },
+
+    "support": {
+      "config": {
+        "tools": { "messaging": true, "webSearch": true }
+      },
+      "mounts": [
+        {
+          "mountPath": "/playbook",
+          "source": { "snapshotRef": "snap_support_v3" },
+          "access": "readOnly"
+        }
+      ],
+      "mcp": []
+    }
+  },
+
+  "bindings": [
+    {
+      "match": { "channel": "telegram", "handle": "@lukas" },
+      "recipe": "personal",
+      "sessionKey": "lukas"
+    },
+    {
+      "match": { "channel": "telegram", "chatId": "-1001234567890", "scope": "group" },
+      "recipe": "support",
+      "sessionKey": "eng-support-room"
+    },
+    {
+      "match": { "channel": "whatsapp", "scope": "direct" },
+      "recipe": "support"
+    },
+    {
+      "match": { "channel": "*" }
+    }
+  ]
+}

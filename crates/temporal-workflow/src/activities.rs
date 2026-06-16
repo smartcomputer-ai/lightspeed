@@ -4,8 +4,9 @@ use temporalio_sdk::activities::{ActivityContext, ActivityError};
 
 use crate::{
     AppendEventsRequest, ContextCompactActivityRequest, CreateOrLoadSessionRequest,
-    CreateOrLoadSessionResult, LlmGenerateActivityRequest, PutBlobRequest, ReadBlobRequest,
-    ReadBlobResult, SkillCatalogRefreshActivityRequest, SkillCatalogRefreshActivityResult,
+    CreateOrLoadSessionResult, LlmGenerateActivityRequest, PreprocessRunInputActivityRequest,
+    PreprocessRunInputActivityResult, PutBlobRequest, ReadBlobRequest, ReadBlobResult,
+    SkillCatalogRefreshActivityRequest, SkillCatalogRefreshActivityResult,
     ToolInvokeBatchActivityRequest,
 };
 
@@ -14,6 +15,7 @@ pub const ACTIVITY_PUT_BLOB: &str = "WorkflowActivities::put_blob";
 pub const ACTIVITY_READ_BLOB: &str = "WorkflowActivities::read_blob";
 pub const ACTIVITY_APPEND_EVENTS: &str = "WorkflowActivities::append_events";
 pub const ACTIVITY_LLM_GENERATE: &str = "WorkflowActivities::llm_generate";
+pub const ACTIVITY_PREPROCESS_RUN_INPUT: &str = "WorkflowActivities::preprocess_run_input";
 pub const ACTIVITY_CONTEXT_COMPACT: &str = "WorkflowActivities::context_compact";
 pub const ACTIVITY_TOOL_INVOKE_BATCH: &str = "WorkflowActivities::tool_invoke_batch";
 pub const ACTIVITY_SKILL_CATALOG_REFRESH: &str = "WorkflowActivities::skill_catalog_refresh";
@@ -59,6 +61,14 @@ impl WorkflowActivities {
         _ctx: ActivityContext,
         _request: LlmGenerateActivityRequest,
     ) -> Result<LlmGenerationResult, ActivityError> {
+        unimplemented!("workflow activity definition only")
+    }
+
+    #[activity(name = ACTIVITY_PREPROCESS_RUN_INPUT)]
+    pub async fn preprocess_run_input(
+        _ctx: ActivityContext,
+        _request: PreprocessRunInputActivityRequest,
+    ) -> Result<PreprocessRunInputActivityResult, ActivityError> {
         unimplemented!("workflow activity definition only")
     }
 

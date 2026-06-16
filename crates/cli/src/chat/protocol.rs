@@ -35,7 +35,8 @@ impl Default for ChatDraftSettings {
                 .unwrap_or_else(|_| DEFAULT_CHAT_PROVIDER.into()),
             api_kind: std::env::var("LIGHTSPEED_CHAT_API_KIND")
                 .unwrap_or_else(|_| DEFAULT_CHAT_API_KIND.into()),
-            model: std::env::var("LIGHTSPEED_CHAT_MODEL").unwrap_or_else(|_| DEFAULT_CHAT_MODEL.into()),
+            model: std::env::var("LIGHTSPEED_CHAT_MODEL")
+                .unwrap_or_else(|_| DEFAULT_CHAT_MODEL.into()),
             reasoning_effort: default_reasoning_effort_from_env(),
             max_tokens: std::env::var("LIGHTSPEED_CHAT_MAX_TOKENS")
                 .ok()

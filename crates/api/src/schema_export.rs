@@ -11,7 +11,9 @@ use std::collections::BTreeMap;
 use schemars::generate::SchemaSettings;
 use serde_json::{Value, json};
 
-use crate::{AgentNotification, NOTIFICATION_METHODS, PROTOCOL_VERSION, method_manifest};
+use crate::{
+    AgentNotification, JsonRpcError, NOTIFICATION_METHODS, PROTOCOL_VERSION, method_manifest,
+};
 
 pub struct ExportedSchemas {
     /// Draft-07 JSON Schema bundle: every wire type under `definitions`.
@@ -51,15 +53,13 @@ pub fn export_schemas() -> ExportedSchemas {
             "result": { "name": "result", "schema": result_schema },
         }));
     }
-    let notification_schema = serde_json::to_value(
-        generator.subschema_for::<AgentNotification>(),
-    )
-    .expect("schema serializes");
+    let notification_schema = serde_json::to_value(generator.subschema_for::<AgentNotification>())
+        .expect("schema serializes");
+    let error_schema =
+        serde_json::to_value(generator.subschema_for::<JsonRpcError>()).expect("schema serializes");
 
-    let definitions: BTreeMap<String, Value> = generator
-        .take_definitions(true)
-        .into_iter()
-        .collect();
+    let definitions: BTreeMap<String, Value> =
+        generator.take_definitions(true).into_iter().collect();
 
     let schema_bundle = json!({
         "$schema": "http://json-schema.org/draft-07/schema#",
@@ -74,6 +74,7 @@ pub fn export_schemas() -> ExportedSchemas {
             "kind": "http-json-rpc",
             "endpoint": "/rpc",
             "resultEnvelope": "AgentApiOutcome",
+            "error": { "type": "JsonRpcError", "schema": error_schema },
         },
         "methods": methods,
         "notifications": NOTIFICATION_METHODS,

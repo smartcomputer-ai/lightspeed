@@ -28,12 +28,13 @@ We belive running and coordination agents at scale are best managed by durable w
 - Parse only required reducer facts for deterministic branching. Provider-native data that the reducer does not need to branch on should remain opaque and blob-backed.
 - Keep provider request vocabulary out of the deterministic core. The engine
   plans a provider-neutral generation intent (model route, context snapshot,
-  tools, tool choice, output limit) plus opaque `ProviderParams`; `llm-runtime`
-  adapters own the typed param schemas and materialize provider-native wire
-  requests. Params are validated against the adapter schema at the admission
-  boundary, before they enter the session log. Transport configuration
-  (endpoints, credentials, headers) is runtime deployment config keyed by
-  `provider_id` and never enters the log.
+  tools, tool choice, output limit) plus opaque `ProviderParams` transiently for
+  runtime execution; durable planned-turn events store only fingerprints and
+  revisions. `llm-runtime` adapters own the typed param schemas and materialize
+  provider-native wire requests. Params are validated against the adapter schema
+  at the admission boundary, before they enter the session log. Transport
+  configuration (endpoints, credentials, headers) is runtime deployment config
+  keyed by `provider_id` and never enters the log.
 - Store the rest of the user inputs, context, files, and model respones in content addressed storage and only pass refs to that data, so that the objects traveling between deterministic workflow and effexts stays thin and minimal.
 - Treat context management as a first-class agent concern. The core plans context windows, records context items, and leaves room for compaction as an explicit future operation.
 - Keep the client boundary stable. CLIs, TUIs, editors, hosted gateways, and future Temporal frontends should consume `api`, not reducer internals.
@@ -329,5 +330,8 @@ the same variables directly in your shell.
 | `LIGHTSPEED_PG_UNIVERSE_ID` | Hosted store universe UUID |
 | `LIGHTSPEED_TASK_QUEUE` | Temporal task queue override; defaults to `lightspeed-universe-{LIGHTSPEED_PG_UNIVERSE_ID}` |
 | `LIGHTSPEED_OBJECT_STORE_ENDPOINT` | S3-compatible object store endpoint |
+| `LIGHTSPEED_AUDIO_TRANSCODER` | Optional audio transcoder adapter; set to `ffmpeg` to enable non-provider audio container transcoding |
+| `LIGHTSPEED_FFMPEG_PATH` | Optional FFmpeg binary path when `LIGHTSPEED_AUDIO_TRANSCODER=ffmpeg`; defaults to `ffmpeg` |
+| `LIGHTSPEED_AUDIO_TRANSCODE_TIMEOUT_MS` | Optional FFmpeg transcode timeout in milliseconds; defaults to 30000 |
 | `RUST_LOG` | Server log filter. Defaults to app/Temporal info and dependency warnings; use `temporal_server=debug,temporal_workflow=debug` for more detail |
 | `LIGHTSPEED_LOG_FORMAT` | Server log format: `compact` (default), `pretty`, or `json` |

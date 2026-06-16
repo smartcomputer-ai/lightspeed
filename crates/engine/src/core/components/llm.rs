@@ -3,9 +3,9 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    ActiveRun, CompactionPolicy, ContextSnapshot, CoreAgentState, DomainError, PlanningError,
-    RunConfig, RunId, SessionConfig, SessionId, ToolChoice, ToolChoiceMode, ToolKind, ToolSpec,
-    TurnId,
+    ActiveRun, CompactionPolicy, ContextSnapshot, CoreAgentState, DomainError, PlannedRequestState,
+    PlanningError, RunConfig, RunId, SessionConfig, SessionId, ToolChoice, ToolChoiceMode,
+    ToolKind, ToolSpec, TurnId,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -57,13 +57,12 @@ pub struct ProviderCompatibility {
     pub native_context_family: String,
 }
 
-/// Deterministic generation intent planned by the core.
+/// Transient generation intent planned by the core.
 ///
-/// This carries everything the reducer and planners branch on: the model
-/// route, the exact context snapshot, the tool catalog, and product-level
-/// generation limits. Provider-specific request settings travel opaquely in
-/// `params`; runtime adapters materialize the provider-native wire request
-/// from this intent.
+/// This is rebuilt from reduced state when a generation action is emitted; it is
+/// not stored in the durable turn log or reduced turn state. Provider-specific
+/// request settings travel opaquely in `params`; runtime adapters materialize
+/// the provider-native wire request from this intent.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LlmRequest {
     pub model: ModelSelection,
@@ -116,32 +115,6 @@ pub struct ContextCompactionResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure_ref: Option<crate::BlobRef>,
     pub context_entries: Vec<crate::ContextEntryInput>,
-}
-
-pub(crate) fn validate_request_matches_active_context(
-    state: &CoreAgentState,
-    request: &LlmRequest,
-) -> Result<(), DomainError> {
-    let context = llm_request_context(request)?;
-    crate::core::components::context::validate_snapshot_matches_active_context(state, context)
-}
-
-pub(crate) fn llm_request_context(request: &LlmRequest) -> Result<&ContextSnapshot, DomainError> {
-    if request.context.api_kind != request.model.api_kind {
-        return Err(DomainError::ProviderCompatibility(format!(
-            "request context api kind {:?} does not match model api kind {:?}",
-            request.context.api_kind, request.model.api_kind
-        )));
-    }
-    if let Some(params) = request.params.as_ref()
-        && params.api_kind != request.model.api_kind
-    {
-        return Err(DomainError::ProviderCompatibility(format!(
-            "request params api kind {:?} does not match model api kind {:?}",
-            params.api_kind, request.model.api_kind
-        )));
-    }
-    Ok(&request.context)
 }
 
 pub(crate) fn build_llm_request(
@@ -198,6 +171,41 @@ pub(crate) fn build_llm_request(
         compaction,
         params,
     })
+}
+
+pub(crate) fn build_planned_llm_request(
+    state: &CoreAgentState,
+    active_run: &ActiveRun,
+    turn_id: TurnId,
+    planned: &PlannedRequestState,
+) -> Result<LlmRequest, DomainError> {
+    if planned.config_revision != state.lifecycle.config_revision {
+        return Err(DomainError::InvariantViolation(format!(
+            "planned request config revision {} does not match active revision {}",
+            planned.config_revision, state.lifecycle.config_revision
+        )));
+    }
+    if planned.context_revision != state.context.revision {
+        return Err(DomainError::InvariantViolation(format!(
+            "planned request context revision {} does not match active revision {}",
+            planned.context_revision, state.context.revision
+        )));
+    }
+    if planned.toolset_revision != state.tooling.revision {
+        return Err(DomainError::InvariantViolation(format!(
+            "planned request toolset revision {} does not match active revision {}",
+            planned.toolset_revision, state.tooling.revision
+        )));
+    }
+    let request = build_llm_request(state, active_run, turn_id)
+        .map_err(|error| DomainError::InvariantViolation(error.to_string()))?;
+    if request.request_fingerprint != planned.request_fingerprint {
+        return Err(DomainError::InvariantViolation(format!(
+            "rebuilt request fingerprint {} does not match planned fingerprint {}",
+            request.request_fingerprint, planned.request_fingerprint
+        )));
+    }
+    Ok(request)
 }
 
 pub(crate) fn build_context_compaction_task(
@@ -350,9 +358,10 @@ fn compaction_request_fingerprint(
     target_tokens: Option<u32>,
     params: Option<&ProviderParams>,
 ) -> Result<String, PlanningError> {
-    let encoded = serde_json::to_vec(&(model, context, target_tokens, params)).map_err(|error| {
-        PlanningError::Rejected(format!("failed to fingerprint compaction request: {error}"))
-    })?;
+    let encoded =
+        serde_json::to_vec(&(model, context, target_tokens, params)).map_err(|error| {
+            PlanningError::Rejected(format!("failed to fingerprint compaction request: {error}"))
+        })?;
     let digest = Sha256::digest(encoded);
     Ok(format!("sha256:{}", hex::encode(digest)))
 }
@@ -529,32 +538,5 @@ mod tests {
         .expect("fingerprint second request");
 
         assert_ne!(first_fingerprint, second_fingerprint);
-    }
-
-    #[test]
-    fn llm_request_context_rejects_mismatched_params_api_kind() {
-        let request = LlmRequest {
-            model: test_config().model,
-            request_fingerprint: "sha256:test".to_owned(),
-            context: ContextSnapshot {
-                api_kind: ProviderApiKind::OpenAiResponses,
-                context_revision: 0,
-                entries: Vec::new(),
-                token_estimate: None,
-            },
-            tools: Vec::new(),
-            tool_choice: None,
-            output_limit: None,
-            provider_response_id: None,
-            compaction: None,
-            params: Some(ProviderParams::new(
-                ProviderApiKind::AnthropicMessages,
-                serde_json::json!({}),
-            )),
-        };
-
-        let error = llm_request_context(&request)
-            .expect_err("params api kind mismatch must be rejected");
-        assert!(matches!(error, DomainError::ProviderCompatibility(_)));
     }
 }

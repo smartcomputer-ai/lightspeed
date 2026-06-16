@@ -17,14 +17,34 @@ impl GatewayAgentApi {
         let command = engine::CoreAgentCodec
             .encode_command(&command)
             .map_err(|error| AgentApiError::internal(error.to_string()))?;
-        self.workflow_handle(session_id)
+        self.signal_submit_admission(session_id, AgentAdmission { command })
+            .await
+    }
+
+    /// Signal an encoded admission to the session workflow. A raw Temporal
+    /// `NotFound` is classified: a workflow that exists but failed at
+    /// bootstrap is reported as `session_bootstrap_failed`, not the misleading
+    /// "agent workflow not found".
+    pub(super) async fn signal_submit_admission(
+        &self,
+        session_id: &SessionId,
+        admission: AgentAdmission,
+    ) -> Result<(), AgentApiError> {
+        match self
+            .workflow_handle(session_id)
             .signal(
                 AgentSessionWorkflow::submit_admission,
-                AgentAdmission { command },
+                admission,
                 WorkflowSignalOptions::default(),
             )
             .await
-            .map_err(map_workflow_interaction_error)
+        {
+            Ok(()) => Ok(()),
+            Err(WorkflowInteractionError::NotFound(_)) => Err(self
+                .classify_workflow_interaction_not_found(session_id)
+                .await),
+            Err(error) => Err(map_workflow_interaction_error(error)),
+        }
     }
 
     pub(super) async fn wait_for_open_session(
@@ -200,6 +220,8 @@ impl GatewayAgentApi {
         &self,
         session_id: &SessionId,
         submission_id: &SubmissionId,
+        baseline_failures: usize,
+        wait_for_admission_drain: bool,
     ) -> Result<RunView, AgentApiError> {
         let started = Instant::now();
         loop {
@@ -212,10 +234,22 @@ impl GatewayAgentApi {
                 tokio::time::sleep(self.poll_interval).await;
                 continue;
             };
+            if let Some(failure) = status
+                .admission_failures
+                .iter()
+                .skip(baseline_failures)
+                .rev()
+                .find(|failure| failure.submission_id.as_ref() == Some(submission_id))
+            {
+                return Err(map_admission_failure_to_api_error(failure));
+            }
+            let can_return_matching_run =
+                !wait_for_admission_drain || status.pending_admissions == 0;
             if let Some(active) = status
                 .active_run
                 .as_ref()
                 .filter(|run| run.submission_id.as_ref() == Some(submission_id))
+                .filter(|_| can_return_matching_run)
             {
                 let run = self
                     .project_run_by_id(session_id, RunId::new(active.run_id), active.status)
@@ -229,6 +263,7 @@ impl GatewayAgentApi {
                 .iter()
                 .rev()
                 .find(|run| run.submission_id.as_ref() == Some(submission_id))
+                .filter(|_| can_return_matching_run)
             {
                 let run = self
                     .project_run_by_id(session_id, RunId::new(run.run_id), run.status)
@@ -236,14 +271,6 @@ impl GatewayAgentApi {
                 if !run.input.is_empty() {
                     return Ok(run);
                 }
-            }
-            if let Some(failure) = status
-                .admission_failures
-                .iter()
-                .rev()
-                .find(|failure| failure.submission_id.as_ref() == Some(submission_id))
-            {
-                return Err(map_admission_failure_to_api_error(failure));
             }
             if let Some(error) = status.last_error {
                 return Err(AgentApiError::internal(format!(
@@ -340,9 +367,60 @@ impl GatewayAgentApi {
             )
             .await
         {
-            Ok(status) => Ok(Some(status)),
+            Ok(status) => {
+                // A queryable workflow that reports a bootstrap failure is a
+                // session recovery problem, not a generic internal error.
+                if status.bootstrap_failed {
+                    return Err(session_bootstrap_failed_error(
+                        session_id,
+                        status.last_error.as_deref(),
+                    ));
+                }
+                Ok(Some(status))
+            }
             Err(WorkflowQueryError::NotFound(_)) => Ok(None),
             Err(error) => Err(map_workflow_query_error(error)),
         }
     }
+
+    /// Distinguish a workflow that does not exist from one that exists but is no
+    /// longer running (e.g. failed during bootstrap and closed). Used to turn a
+    /// raw `NotFound` from a signal/query into a typed
+    /// `session_bootstrap_failed` recovery error instead of the misleading
+    /// "agent workflow not found".
+    pub(super) async fn classify_workflow_interaction_not_found(
+        &self,
+        session_id: &SessionId,
+    ) -> AgentApiError {
+        match self
+            .workflow_handle(session_id)
+            .describe(WorkflowDescribeOptions::default())
+            .await
+        {
+            Ok(description) => {
+                if matches!(description.status(), WorkflowExecutionStatus::Running) {
+                    // Running but the interaction missed it: keep not-found
+                    // semantics; the caller will typically retry/poll.
+                    AgentApiError::not_found("agent workflow not found")
+                } else {
+                    session_bootstrap_failed_error(session_id, None)
+                }
+            }
+            // Truly absent: there is no execution for this session id.
+            Err(WorkflowInteractionError::NotFound(_)) => {
+                AgentApiError::not_found("agent workflow not found")
+            }
+            Err(error) => map_workflow_interaction_error(error),
+        }
+    }
+}
+
+pub(super) fn session_bootstrap_failed_error(
+    session_id: &SessionId,
+    reason: Option<&str>,
+) -> AgentApiError {
+    let detail = reason.unwrap_or("session workflow failed during bootstrap");
+    AgentApiError::session_bootstrap_failed(format!(
+        "agent session {session_id} failed to start (bootstrap): {detail}"
+    ))
 }

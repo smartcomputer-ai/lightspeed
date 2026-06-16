@@ -6,7 +6,8 @@ use crate::host::fs::FsPath;
 
 pub const PROMPT_INSTRUCTIONS_CONTEXT_KEY_PREFIX: &str = "instructions.100.prompts";
 pub const PROMPT_INSTRUCTIONS_PROVIDER_KIND: &str = "lightspeed.prompts.instructions";
-pub const PROMPT_INSTRUCTIONS_REPORT_SCHEMA_VERSION: &str = "lightspeed.prompts.instructions.report.v1";
+pub const PROMPT_INSTRUCTIONS_REPORT_SCHEMA_VERSION: &str =
+    "lightspeed.prompts.instructions.report.v1";
 pub const PROMPT_SOURCE_FINGERPRINT_SCHEMA_VERSION: &str =
     "lightspeed.prompts.instructions.source_fingerprint.v1";
 

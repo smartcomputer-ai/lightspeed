@@ -4,7 +4,10 @@ use llm_clients::anthropic::messages::{
     ToolChoice, ToolDefinition,
 };
 use serde_json::json;
-use std::path::PathBuf;
+
+mod support;
+
+use support::{env_or_dotenv_var, required_env_or_dotenv_var};
 
 fn live_model() -> String {
     env_or_dotenv_var("ANTHROPIC_MESSAGES_MODEL")
@@ -13,12 +16,9 @@ fn live_model() -> String {
 }
 
 fn live_client() -> Client {
-    let api_key = env_or_dotenv_var("ANTHROPIC_API_KEY").expect(
+    let api_key = required_env_or_dotenv_var(
+        "ANTHROPIC_API_KEY",
         "ANTHROPIC_API_KEY must be set in env or root .env to run anthropic:messages live tests",
-    );
-    assert!(
-        !api_key.trim().is_empty(),
-        "ANTHROPIC_API_KEY is set but empty"
     );
 
     let mut config = Config::new(api_key);
@@ -38,48 +38,6 @@ fn live_client() -> Client {
     }
 
     Client::new(config).expect("Anthropic Messages client")
-}
-
-fn env_or_dotenv_var(name: &str) -> Result<String, std::env::VarError> {
-    match std::env::var(name) {
-        Ok(value) => Ok(value),
-        Err(env_error) => dotenv_var(name).ok_or(env_error),
-    }
-}
-
-fn dotenv_var(name: &str) -> Option<String> {
-    let contents = std::fs::read_to_string(root_dotenv_path()).ok()?;
-    for line in contents.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let (key, value) = line.split_once('=')?;
-        if key.trim() == name {
-            return Some(unquote_dotenv_value(value.trim()));
-        }
-    }
-    None
-}
-
-fn root_dotenv_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(2)
-        .expect("repo root")
-        .join(".env")
-}
-
-fn unquote_dotenv_value(value: &str) -> String {
-    if value.len() >= 2 {
-        let bytes = value.as_bytes();
-        if (bytes[0] == b'"' && bytes[value.len() - 1] == b'"')
-            || (bytes[0] == b'\'' && bytes[value.len() - 1] == b'\'')
-        {
-            return value[1..value.len() - 1].to_string();
-        }
-    }
-    value.to_string()
 }
 
 #[tokio::test(flavor = "current_thread")]

@@ -22,6 +22,11 @@ use crate::{
     worker::{BrokerSecretResolver, SessionTools, StoredProviderKeyResolver},
 };
 
+use super::preprocess::{
+    AudioTranscoder, AudioTranscriber, UnavailableAudioTranscriber,
+    default_audio_transcoder_from_env, default_openai_audio_transcriber,
+};
+
 #[derive(Clone)]
 pub struct StorageActivityDeps {
     pub(super) sessions: Arc<dyn SessionStore>,
@@ -48,11 +53,19 @@ pub struct SkillCatalogActivityDeps {
 }
 
 #[derive(Clone)]
+pub struct PreprocessActivityDeps {
+    pub(super) blobs: Arc<dyn BlobStore>,
+    pub(super) transcriber: Arc<dyn AudioTranscriber>,
+    pub(super) transcoder: Option<Arc<dyn AudioTranscoder>>,
+}
+
+#[derive(Clone)]
 pub struct ActivityState {
     storage: StorageActivityDeps,
     llm: LlmActivityDeps,
     tools: ToolActivityDeps,
     skill_catalog: Option<SkillCatalogActivityDeps>,
+    preprocess: PreprocessActivityDeps,
 }
 
 impl ActivityState {
@@ -71,8 +84,16 @@ impl ActivityState {
                 llm,
                 blobs: blobs.clone(),
             },
-            tools: ToolActivityDeps { tools, blobs },
+            tools: ToolActivityDeps {
+                tools,
+                blobs: blobs.clone(),
+            },
             skill_catalog: None,
+            preprocess: PreprocessActivityDeps {
+                blobs: blobs.clone(),
+                transcriber: Arc::new(UnavailableAudioTranscriber),
+                transcoder: None,
+            },
         }
     }
 
@@ -86,6 +107,16 @@ impl ActivityState {
             workspace_store,
             mount_store,
         });
+        self
+    }
+
+    pub fn with_audio_transcriber(mut self, transcriber: Arc<dyn AudioTranscriber>) -> Self {
+        self.preprocess.transcriber = transcriber;
+        self
+    }
+
+    pub fn with_audio_transcoder(mut self, transcoder: Arc<dyn AudioTranscoder>) -> Self {
+        self.preprocess.transcoder = Some(transcoder);
         self
     }
 
@@ -104,12 +135,17 @@ impl ActivityState {
     pub fn from_pg_store_with_default_runtime(store: Arc<PgStore>) -> anyhow::Result<Self> {
         let blobs: Arc<dyn BlobStore> = store.clone();
         let broker = registry_token_broker(store.clone())?;
-        let secrets: Arc<dyn SecretResolver> =
-            Arc::new(BrokerSecretResolver::new(broker.clone()));
+        let secrets: Arc<dyn SecretResolver> = Arc::new(BrokerSecretResolver::new(broker.clone()));
         let provider_keys = stored_provider_key_resolver(store.clone(), broker);
+        let transcriber = default_audio_transcriber(provider_keys.clone())?;
+        let transcoder = default_audio_transcoder_from_env()?;
         let llm = default_llm_runtime(blobs, Some(secrets), Some(provider_keys))?;
         let tools = session_tools(store.clone());
-        Ok(Self::from_pg_store(store, llm, tools))
+        let mut state = Self::from_pg_store(store, llm, tools).with_audio_transcriber(transcriber);
+        if let Some(transcoder) = transcoder {
+            state = state.with_audio_transcoder(transcoder);
+        }
+        Ok(state)
     }
 
     pub async fn from_env() -> anyhow::Result<Self> {
@@ -131,6 +167,10 @@ impl ActivityState {
 
     pub(super) fn skill_catalog(&self) -> Option<&SkillCatalogActivityDeps> {
         self.skill_catalog.as_ref()
+    }
+
+    pub(super) fn preprocess(&self) -> &PreprocessActivityDeps {
+        &self.preprocess
     }
 }
 
@@ -208,4 +248,10 @@ fn default_llm_runtime(
     registry.insert_compaction_adapter(ProviderApiKind::AnthropicMessages, adapter);
 
     Ok(Arc::new(LlmRuntime::new(registry)))
+}
+
+fn default_audio_transcriber(
+    provider_keys: Arc<dyn ProviderKeyResolver>,
+) -> anyhow::Result<Arc<dyn AudioTranscriber>> {
+    default_openai_audio_transcriber(provider_keys)
 }

@@ -5,8 +5,8 @@
 
 mod auth;
 mod blob;
-mod messaging;
 mod mcp;
+mod messaging;
 mod oauth;
 mod object;
 mod providers;
@@ -48,14 +48,15 @@ impl SecretsMasterKey {
             .map_err(|error| PgStoreError::Store {
                 message: format!("secrets master key is not valid base64: {error}"),
             })?;
-        let bytes: [u8; 32] = decoded.try_into().map_err(|decoded: Vec<u8>| {
-            PgStoreError::Store {
-                message: format!(
-                    "secrets master key must decode to 32 bytes, got {}",
-                    decoded.len()
-                ),
-            }
-        })?;
+        let bytes: [u8; 32] =
+            decoded
+                .try_into()
+                .map_err(|decoded: Vec<u8>| PgStoreError::Store {
+                    message: format!(
+                        "secrets master key must decode to 32 bytes, got {}",
+                        decoded.len()
+                    ),
+                })?;
         Ok(Self(bytes))
     }
 

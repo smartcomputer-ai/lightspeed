@@ -188,7 +188,11 @@ fn weather_tool_spec(schema_ref: BlobRef, description_ref: BlobRef) -> engine::T
 #[ignore = "requires ANTHROPIC_API_KEY (costs real money)"]
 async fn anthropic_messages_live_adapter_generates_result() {
     let blobs = Arc::new(InMemoryBlobStore::new());
-    let input_ref = text_blob(&blobs, "Reply with exactly these two words: lightspeed adapter").await;
+    let input_ref = text_blob(
+        &blobs,
+        "Reply with exactly these two words: lightspeed adapter",
+    )
+    .await;
     let adapter = AnthropicMessagesLlmAdapter::new(
         retrying_anthropic_messages_client(live_client()),
         blobs.clone(),
@@ -332,7 +336,10 @@ fn minimal_pdf(text: &str) -> Vec<u8> {
         "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R \
          /Resources << /Font << /F1 5 0 R >> >> >>"
             .to_string(),
-        format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()),
+        format!(
+            "<< /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        ),
         "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string(),
     ];
     let mut pdf = String::from("%PDF-1.4\n");
@@ -443,7 +450,10 @@ async fn anthropic_messages_live_adapter_runs_tool_round_trip() {
         "live-anthropic-messages-tool",
         vec![user_entry(1, input_ref.clone())],
     );
-    request.tools = vec![weather_tool_spec(schema_ref.clone(), description_ref.clone())];
+    request.tools = vec![weather_tool_spec(
+        schema_ref.clone(),
+        description_ref.clone(),
+    )];
     request.tool_choice = Some(ToolChoice {
         mode: ToolChoiceMode::RequiredAny,
         disable_parallel_tool_use: Some(true),

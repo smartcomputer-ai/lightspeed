@@ -3,10 +3,12 @@ import {
   type EventCursor,
   type InputItem,
   type RunStatus,
+  type SessionConfigInput,
   type SessionItemView,
   type SessionView,
+  type VfsMountSourceInput,
 } from "@lightspeed/agent-client";
-import type { LightspeedBridgeConfig } from "./config.js";
+import type { LightspeedBridgeConfig, SessionRecipe } from "./config.js";
 import { stableSubmissionId } from "./ids.js";
 import { mediaKindForMime } from "./media.js";
 import type { JsonBridgeStore } from "./store.js";
@@ -22,6 +24,8 @@ export interface LightspeedTurn {
   accountId: string;
   conversationKey: string;
   sessionId: string;
+  /// Recipe to provision the session with on first creation (null = default).
+  recipe?: SessionRecipe | null;
   /// Stable parts identifying this turn batch for submission idempotency.
   submissionParts: readonly unknown[];
   text: string;
@@ -55,27 +59,55 @@ export class LightspeedSessionBridge {
     private readonly config: LightspeedBridgeConfig,
   ) {}
 
-  async ensureSession(sessionId: string): Promise<void> {
+  /// Starts the session (if not already) and applies the recipe once: the
+  /// session config (model + tools), then workspace/snapshot mounts, then MCP
+  /// links. The core discovers prompts and the skill catalog from the mounts,
+  /// so the bridge never activates skills or sets instructions itself.
+  /// session/start is idempotent and the config only applies on creation;
+  /// mounts and links are guarded by `startedSessions` so they run once.
+  async ensureSession(sessionId: string, recipe?: SessionRecipe | null): Promise<void> {
     if (this.startedSessions.has(sessionId)) {
       return;
     }
-    // New sessions get the messaging toolset; session/start is idempotent
-    // and the config only applies on creation.
     await this.client.call("session/start", {
       sessionId,
       cwd: this.config.cwd ?? null,
-      config: { tools: { messaging: true } },
+      config: sessionStartConfig(recipe),
     });
+    for (const mount of recipe?.mounts ?? []) {
+      await this.client.call("vfs/mount/put", {
+        sessionId,
+        mountPath: mount.mountPath,
+        source: mountSourceInput(mount.source),
+        access: mount.access,
+      });
+    }
+    for (const link of recipe?.mcp ?? []) {
+      await this.client.call("session/mcp/link", {
+        sessionId,
+        serverId: link.serverId,
+        ...(link.serverLabel !== undefined ? { serverLabel: link.serverLabel } : {}),
+        ...(link.toolId !== undefined ? { toolId: link.toolId } : {}),
+        ...(link.allowedTools !== undefined ? { allowedTools: link.allowedTools } : {}),
+        ...(link.approval !== undefined ? { approval: link.approval } : {}),
+        ...(link.authGrantId !== undefined ? { authGrantId: link.authGrantId } : {}),
+        ...(link.deferLoading !== undefined ? { deferLoading: link.deferLoading } : {}),
+      });
+    }
     this.startedSessions.add(sessionId);
   }
 
   /// Appends unaddressed room chatter as session context without starting a
   /// run. Idempotent per entry key, so channel redelivery is harmless.
-  async appendRoomEvents(sessionId: string, events: readonly LightspeedRoomEvent[]): Promise<void> {
+  async appendRoomEvents(
+    sessionId: string,
+    events: readonly LightspeedRoomEvent[],
+    recipe?: SessionRecipe | null,
+  ): Promise<void> {
     if (events.length === 0) {
       return;
     }
-    await this.ensureSession(sessionId);
+    await this.ensureSession(sessionId, recipe);
     for (let start = 0; start < events.length; start += CONTEXT_APPEND_BATCH_LIMIT) {
       const batch = events.slice(start, start + CONTEXT_APPEND_BATCH_LIMIT);
       await this.client.call("context/append", {
@@ -89,7 +121,7 @@ export class LightspeedSessionBridge {
   }
 
   async submitTurn(turn: LightspeedTurn): Promise<LightspeedReply> {
-    await this.ensureSession(turn.sessionId);
+    await this.ensureSession(turn.sessionId, turn.recipe);
 
     const input: InputItem[] = [{ type: "text", text: turn.text }];
     for (const media of turn.media ?? []) {
@@ -149,6 +181,29 @@ export class LightspeedSessionBridge {
       messagingToolUsed: runUsedMessagingTool(read.result.session, run.id),
     };
   }
+}
+
+/// Builds the session/start config from a recipe, defaulting the messaging
+/// toolset on (the bridge delivers via the outbox) unless the recipe sets it
+/// explicitly. All other config fields (model, generation, host tool mode,
+/// web tools, etc.) pass through from the recipe untouched.
+export function sessionStartConfig(recipe?: SessionRecipe | null): SessionConfigInput {
+  const base = recipe?.config ?? {};
+  const tools = base.tools ?? {};
+  return {
+    ...base,
+    tools: {
+      ...tools,
+      messaging: tools.messaging ?? true,
+    },
+  };
+}
+
+function mountSourceInput(source: SessionRecipe["mounts"][number]["source"]): VfsMountSourceInput {
+  if ("workspaceId" in source) {
+    return { type: "workspace", workspaceId: source.workspaceId };
+  }
+  return { type: "snapshot", snapshotRef: source.snapshotRef };
 }
 
 /// True when the run contains at least one successful messaging tool call

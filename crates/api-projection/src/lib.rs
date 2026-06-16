@@ -10,8 +10,7 @@ use api::{
     ActiveToolsView, AgentApiError, CompactionPolicyInput, ContextConfigInput,
     ContextEntryInputView, ContextEntryKindView, ContextMessageRoleView, ContextView, EventCursor,
     EventJoinsView, GenerationConfig, HostToolMode as ApiHostToolMode, InputItem, MediaKind,
-    ModelConfig,
-    ProviderContextDisplayView, ProviderNativeToolExecutionView, ReasoningEffort,
+    ModelConfig, ProviderContextDisplayView, ProviderNativeToolExecutionView, ReasoningEffort,
     RunDefaultsConfig, RunStatus as ApiRunStatus, RunView, SessionConfigView, SessionEventKindView,
     SessionEventView, SessionItemView, SessionStatus as ApiSessionStatus, SessionView,
     TokenEstimateQualityView, TokenEstimateView, ToolBatchView, ToolCallDisplayGroup,
@@ -27,9 +26,9 @@ use engine::{
     CoreAgentEventKind, CoreAgentJoins, CoreAgentLifecycleEvent, CoreAgentState, CoreAgentStatus,
     CoreApplyEvent, EventSeq, LlmGenerationStatus, ModelSelection,
     OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND, ObservedToolCall, ProviderApiKind, ProviderParams,
-    RunEvent, RunFailure, RunId, RunStatus, SessionConfig, SessionId,
-    SteeringId, ToolBatchId, ToolCallStatus, ToolChoice, ToolChoiceMode, ToolConfigEvent,
-    ToolEvent, ToolKind, ToolParallelism, ToolSpec, ToolTargetRequirement, TurnEvent, TurnId,
+    RunEvent, RunFailure, RunId, RunStatus, SessionConfig, SessionId, SteeringId, ToolBatchId,
+    ToolCallStatus, ToolChoice, ToolChoiceMode, ToolConfigEvent, ToolEvent, ToolKind,
+    ToolParallelism, ToolSpec, ToolTargetRequirement, TurnEvent, TurnId,
     storage::{
         BlobStore, BlobStoreError, DynamicSessionEntry, ReadSessionEvents, SessionRecord,
         SessionStore, SessionStoreError,
@@ -523,6 +522,7 @@ impl<'a> CoreAgentProjector<'a> {
                     turn_id,
                     batch_id,
                     calls,
+                    ..
                 } => Ok(SessionEventKindView::ToolBatchStarted {
                     run_id: api_run_id(*run_id),
                     turn_id: api_turn_id(*turn_id),
@@ -606,6 +606,7 @@ impl<'a> CoreAgentProjector<'a> {
                     turn_id,
                     batch_id,
                     calls,
+                    ..
                 } if *event_run_id == run_id => {
                     let mut projected_calls = Vec::with_capacity(calls.len());
                     for call in calls {

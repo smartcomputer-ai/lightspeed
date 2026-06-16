@@ -12,6 +12,8 @@ notes-world/
 refs/
 .bridge-state.json
 .whatsapp-auth/
+.claude/
+.codex/
 
 # ===========================================================================
 # Rust.gitignore

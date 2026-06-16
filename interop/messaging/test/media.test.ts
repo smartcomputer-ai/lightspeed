@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { documentByteLimit, documentMime, mediaKindForMime } from "../src/media.js";
+import {
+  audioMime,
+  documentByteLimit,
+  documentMime,
+  mediaKindForMime,
+} from "../src/media.js";
 
 describe("documentMime", () => {
   it("prefers the file extension over the reported mime", () => {
@@ -30,9 +35,27 @@ describe("documentByteLimit", () => {
 });
 
 describe("mediaKindForMime", () => {
-  it("classifies images and documents", () => {
+  it("classifies images, audio, and documents", () => {
     expect(mediaKindForMime("image/jpeg")).toBe("image");
+    expect(mediaKindForMime("audio/ogg")).toBe("audio");
     expect(mediaKindForMime("application/pdf")).toBe("document");
     expect(mediaKindForMime("text/markdown")).toBe("document");
+  });
+});
+
+describe("audioMime", () => {
+  it("normalizes common voice-note and audio MIME aliases", () => {
+    expect(audioMime(undefined, "audio/ogg; codecs=opus")).toBe("audio/ogg");
+    expect(audioMime("voice.opus", "application/octet-stream")).toBe("audio/ogg");
+    expect(audioMime("clip.m4a", undefined)).toBe("audio/mp4");
+    expect(audioMime("recording.wav", "audio/x-wav")).toBe("audio/wav");
+    expect(audioMime("track.aac", "application/octet-stream")).toBe("audio/aac");
+    expect(audioMime("memo.amr", "audio/amr")).toBe("audio/amr");
+    expect(audioMime("note.3gp", "audio/3gp")).toBe("audio/3gpp");
+  });
+
+  it("rejects unsupported audio containers", () => {
+    expect(audioMime("track.flac", "audio/flac")).toBeNull();
+    expect(audioMime(undefined, undefined)).toBeNull();
   });
 });

@@ -21,22 +21,22 @@ use auth_api::{
     api_auth_provider_kind, auth_grant_import_draft, auth_grant_view, map_auth_registry_error,
     parse_auth_grant_id, registry_auth_grant_status_for_filter,
 };
+use blobs::{get_blob, has_blobs, put_blob, put_blobs};
+use errors::*;
 use github_api::{
     auth_provider_create_draft, auth_provider_view, github_installation_grant_draft,
     github_installation_view, map_github_app_error, parse_auth_provider_id,
 };
-use oauth_api::{
-    auth_client_create_draft, auth_flow_view, cimd_config, map_mcp_oauth_error,
-    mcp_oauth_target_from_record, oauth_client_view, oauth_redirect_uri, parse_auth_flow_id,
-    parse_oauth_client_id,
-};
-use blobs::{get_blob, has_blobs, put_blob, put_blobs};
-use errors::*;
 use input::{context_entry_input_from_api, run_input_from_api};
 use mcp_api::{
     apply_session_mcp_link, create_mcp_server_record, linked_session_mcp, map_mcp_registry_error,
     mcp_server_view, parse_mcp_server_id, parse_mcp_tool_name, remove_session_mcp_link,
     session_mcp_link_from_record,
+};
+use oauth_api::{
+    auth_client_create_draft, auth_flow_view, cimd_config, map_mcp_oauth_error,
+    mcp_oauth_target_from_record, oauth_client_view, oauth_redirect_uri, parse_auth_flow_id,
+    parse_oauth_client_id,
 };
 use parse::*;
 use skills::{
@@ -60,33 +60,31 @@ use api::{
     AuthClientListParams, AuthClientListResponse, AuthClientReadParams, AuthClientReadResponse,
     AuthFlowStartParams, AuthFlowStartResponse, AuthFlowStatusParams, AuthFlowStatusResponse,
     AuthGitHubInstallationGrantParams, AuthGitHubInstallationGrantResponse,
-    AuthGitHubInstallationListParams, AuthGitHubInstallationListResponse,
+    AuthGitHubInstallationListParams, AuthGitHubInstallationListResponse, AuthGrantImportParams,
+    AuthGrantImportResponse, AuthGrantListParams, AuthGrantListResponse, AuthGrantReadParams,
+    AuthGrantReadResponse, AuthGrantRevokeParams, AuthGrantRevokeResponse,
     AuthProviderCreateParams, AuthProviderCreateResponse, AuthProviderDeleteParams,
     AuthProviderDeleteResponse, AuthProviderListParams, AuthProviderListResponse,
-    AuthProviderReadParams, AuthProviderReadResponse,
-    AuthGrantImportParams,
-    AuthGrantImportResponse, AuthGrantListParams, AuthGrantListResponse, AuthGrantReadParams,
-    AuthGrantReadResponse, AuthGrantRevokeParams, AuthGrantRevokeResponse, BlobGetParams,
-    BlobGetResponse, BlobHasItem, BlobHasManyParams, BlobHasManyResponse, BlobPutManyParams,
-    BlobPutManyResponse, BlobPutParams, BlobPutResponse, ClientCapabilities, CompactionPolicyInput,
-    ContextAppendParams, ContextAppendResponse, ContextCompactParams, ContextCompactResponse,
-    ContextConfigInput as ApiContextConfigInput,
-    ContextConfigPatchInput, FieldPatch, GenerationConfig, GenerationConfigPatch, InitializeParams,
-    InitializeResponse, InputItem, MediaKind, McpServerCreateParams, McpServerCreateResponse,
-    McpServerDeleteParams, McpServerDeleteResponse, McpServerListParams, McpServerListResponse,
-    McpServerReadParams, McpServerReadResponse, ModelConfig, OutboundAckInput,
-    OutboundMessageView, OutboundOriginView, OutboundPayloadView, OutboundStatusView,
-    OutboxAckParams, OutboxAckResponse, OutboxReadParams, OutboxReadResponse,
-    PromptInstructionView,
-    PromptsActiveParams, PromptsActiveResponse, ReasoningEffort, RunCancelParams,
-    RunCancelResponse, RunDefaultsConfig, RunDefaultsPatch, RunLimitsConfig, RunStartConfig,
-    RunStartParams, RunStartResponse, RunView, ServerCapabilities, ServerInfo, SessionCloseParams,
-    SessionCloseResponse, SessionConfigInput, SessionConfigPatchInput, SessionEventsReadParams,
-    SessionEventsReadResponse, SessionMcpLinkParams, SessionMcpLinkResponse, SessionMcpListParams,
-    SessionMcpListResponse, SessionMcpUnlinkParams, SessionMcpUnlinkResponse, SessionReadParams,
-    SessionReadResponse, SessionStartParams, SessionStartResponse, SessionToolsUpdateParams,
-    SessionToolsUpdateResponse, SessionUpdateParams, SessionUpdateResponse, SessionView,
-    SkillActivateParams, SkillActivateResponse, SkillActivationScope as ApiSkillActivationScope,
+    AuthProviderReadParams, AuthProviderReadResponse, BlobGetParams, BlobGetResponse, BlobHasItem,
+    BlobHasManyParams, BlobHasManyResponse, BlobPutManyParams, BlobPutManyResponse, BlobPutParams,
+    BlobPutResponse, ClientCapabilities, CompactionPolicyInput, ContextAppendParams,
+    ContextAppendResponse, ContextCompactParams, ContextCompactResponse,
+    ContextConfigInput as ApiContextConfigInput, ContextConfigPatchInput, FieldPatch,
+    GenerationConfig, GenerationConfigPatch, InitializeParams, InitializeResponse, InputItem,
+    McpServerCreateParams, McpServerCreateResponse, McpServerDeleteParams, McpServerDeleteResponse,
+    McpServerListParams, McpServerListResponse, McpServerReadParams, McpServerReadResponse,
+    MediaKind, ModelConfig, OutboundAckInput, OutboundMessageView, OutboundOriginView,
+    OutboundPayloadView, OutboundStatusView, OutboxAckParams, OutboxAckResponse, OutboxReadParams,
+    OutboxReadResponse, PromptInstructionView, PromptsActiveParams, PromptsActiveResponse,
+    ReasoningEffort, RunCancelParams, RunCancelResponse, RunDefaultsConfig, RunDefaultsPatch,
+    RunLimitsConfig, RunStartConfig, RunStartParams, RunStartResponse, RunView, ServerCapabilities,
+    ServerInfo, SessionCloseParams, SessionCloseResponse, SessionConfigInput,
+    SessionConfigPatchInput, SessionEventsReadParams, SessionEventsReadResponse,
+    SessionMcpLinkParams, SessionMcpLinkResponse, SessionMcpListParams, SessionMcpListResponse,
+    SessionMcpUnlinkParams, SessionMcpUnlinkResponse, SessionReadParams, SessionReadResponse,
+    SessionStartParams, SessionStartResponse, SessionToolsUpdateParams, SessionToolsUpdateResponse,
+    SessionUpdateParams, SessionUpdateResponse, SessionView, SkillActivateParams,
+    SkillActivateResponse, SkillActivationScope as ApiSkillActivationScope,
     SkillActivationSource as ApiSkillActivationSource, SkillActivationView, SkillActiveParams,
     SkillActiveResponse, SkillDeactivateParams, SkillDeactivateResponse, SkillListItem,
     SkillListParams, SkillListResponse, ToolChoiceConfig, ToolChoiceModeConfig, ToolConfigInput,
@@ -108,27 +106,29 @@ use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use messaging::{MessagingError, OutboundPayload, OutboxStore, ReadPendingOutbound};
 
-use engine::{
-    BlobRef, CommandCodec, CompactionPolicy, ContextConfigPatch, ContextEntry, ContextEntryInput,
-    ContextEntryKey, ContextEntryKind, ContextMessageRole, CoreAgentCommand, CoreAgentStatus,
-    HostToolMode, ModelSelection, OptionalConfigPatch, ProviderApiKind,
-    ProviderParams, RunConfig, RunConfigPatch, RunId, RunStatus,
-    SKILL_ACTIVATION_PROVIDER_KIND_RUN, SKILL_ACTIVATION_PROVIDER_KIND_SESSION,
-    SKILL_CATALOG_CONTEXT_KEY, SessionConfig, SessionConfigPatch, SessionId, SkillId, SubmissionId,
-    ToolChoice, ToolChoiceMode, ToolName, TurnConfigPatch, skill_activation_context_key,
-    storage::{BlobStore, BlobStoreError, ReadSessionEvents, SessionStore},
-};
 use auth_registry::{
     AuthFlowStore, AuthGrantStore, AuthProviderStore, GitHubApiClient, HttpGitHubApiClient,
     HttpOAuthMetadataClient, HttpOAuthTokenClient, McpOAuthDriver, OAuthClientStore,
     OAuthFlowService, OAuthMetadataClient, OAuthTokenClient, SecretStore, StartAuthFlow,
 };
+use engine::{
+    BlobRef, CommandCodec, CompactionPolicy, ContextConfigPatch, ContextEntry, ContextEntryInput,
+    ContextEntryKey, ContextEntryKind, ContextMessageRole, CoreAgentCommand, CoreAgentStatus,
+    HostToolMode, ModelSelection, OptionalConfigPatch, ProviderApiKind, ProviderParams, RunConfig,
+    RunConfigPatch, RunId, RunStatus, SKILL_ACTIVATION_PROVIDER_KIND_RUN,
+    SKILL_ACTIVATION_PROVIDER_KIND_SESSION, SKILL_CATALOG_CONTEXT_KEY, SessionConfig,
+    SessionConfigPatch, SessionId, SkillId, SubmissionId, ToolChoice, ToolChoiceMode, ToolName,
+    TurnConfigPatch, skill_activation_context_key,
+    storage::{BlobStore, BlobStoreError, ReadSessionEvents, SessionStore},
+};
 use mcp_registry::McpRegistryStore;
 use store_pg::PgStore;
 use temporalio_client::{
-    Client, WorkflowHandle, WorkflowQueryOptions, WorkflowSignalOptions, WorkflowStartOptions,
-    errors::WorkflowInteractionError, errors::WorkflowQueryError, errors::WorkflowStartError,
+    Client, WorkflowDescribeOptions, WorkflowHandle, WorkflowQueryOptions, WorkflowSignalOptions,
+    WorkflowStartOptions, errors::WorkflowInteractionError, errors::WorkflowQueryError,
+    errors::WorkflowStartError,
 };
+use temporalio_common::protos::temporal::api::enums::v1::WorkflowExecutionStatus;
 use tools::{
     host::{
         HostToolTargets,
@@ -167,6 +167,103 @@ const DEFAULT_EVENTS_WAIT_CAP: Duration = Duration::from_secs(30);
 /// Default public base URL for the gateway-hosted OAuth callback; matches
 /// `DEFAULT_GATEWAY_BIND`. Hosted deployments must set the real public URL.
 pub const DEFAULT_PUBLIC_BASE_URL: &str = "http://127.0.0.1:18080";
+
+fn status_has_submission(
+    status: Option<&AgentSessionStatus>,
+    submission_id: &SubmissionId,
+) -> bool {
+    let Some(status) = status else {
+        return false;
+    };
+    status
+        .active_run
+        .as_ref()
+        .is_some_and(|run| run.submission_id.as_ref() == Some(submission_id))
+        || status
+            .queued_runs
+            .iter()
+            .any(|run| run.submission_id.as_ref() == Some(submission_id))
+        || status
+            .completed_runs
+            .iter()
+            .any(|run| run.submission_id.as_ref() == Some(submission_id))
+}
+
+enum ExistingRunSubmission {
+    ReturnRun { run_id: RunId, status: RunStatus },
+    Reject,
+}
+
+fn existing_run_submission(
+    state: &engine::CoreAgentState,
+    submission_id: &SubmissionId,
+    input: &[ContextEntryInput],
+    run_config: &RunConfig,
+) -> Option<ExistingRunSubmission> {
+    if let Some(active) = state
+        .runs
+        .active
+        .as_ref()
+        .filter(|run| run.submission_id.as_ref() == Some(submission_id))
+    {
+        return Some(
+            if active.input.input == input && &active.run_config == run_config {
+                ExistingRunSubmission::ReturnRun {
+                    run_id: active.run_id,
+                    status: active.status,
+                }
+            } else {
+                ExistingRunSubmission::Reject
+            },
+        );
+    }
+    if let Some(queued) = state
+        .runs
+        .queued
+        .iter()
+        .find(|run| run.submission_id.as_ref() == Some(submission_id))
+    {
+        if queued.input != input || &queued.run_config != run_config {
+            return Some(ExistingRunSubmission::Reject);
+        }
+        return None;
+    }
+    if let Some(completed) = state
+        .runs
+        .completed
+        .iter()
+        .find(|run| run.submission_id.as_ref() == Some(submission_id))
+    {
+        let digest = run_submission_digest(input, run_config);
+        return Some(match completed.submission_digest {
+            Some(existing) if existing != digest => ExistingRunSubmission::Reject,
+            _ => ExistingRunSubmission::ReturnRun {
+                run_id: completed.run_id,
+                status: completed.status,
+            },
+        });
+    }
+    None
+}
+
+fn run_submission_digest(input: &[ContextEntryInput], run_config: &RunConfig) -> u64 {
+    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+    let bytes = serde_json::to_vec(&(input, run_config))
+        .expect("run submission payload serializes to JSON");
+    let mut hash = FNV_OFFSET;
+    for byte in bytes {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash
+}
+
+fn duplicate_submission_error(submission_id: &SubmissionId) -> AgentApiError {
+    AgentApiError::rejected(format!(
+        "submission id {submission_id} was already used by a run with different input or run config"
+    ))
+}
 
 pub struct GatewayAgentApiBuilder {
     client: Client,
@@ -257,8 +354,7 @@ impl GatewayAgentApiBuilder {
     pub fn build(self) -> GatewayAgentApi {
         let token_client = self.oauth_token_client.unwrap_or_else(|| {
             Arc::new(
-                HttpOAuthTokenClient::new()
-                    .expect("construct OAuth token endpoint HTTP client"),
+                HttpOAuthTokenClient::new().expect("construct OAuth token endpoint HTTP client"),
             )
         });
         let oauth_flows = OAuthFlowService::new(
@@ -269,10 +365,7 @@ impl GatewayAgentApiBuilder {
             token_client,
         );
         let metadata_client = self.oauth_metadata_client.unwrap_or_else(|| {
-            Arc::new(
-                HttpOAuthMetadataClient::new()
-                    .expect("construct OAuth metadata HTTP client"),
-            )
+            Arc::new(HttpOAuthMetadataClient::new().expect("construct OAuth metadata HTTP client"))
         });
         let mcp_oauth = McpOAuthDriver::new(
             self.store.clone() as Arc<dyn OAuthClientStore>,
@@ -591,7 +684,9 @@ impl AgentApiService for GatewayAgentApi {
             .map_err(map_workflow_start_error);
         match started {
             Ok(_) => {}
-            Err(error) if matches!(error.kind, AgentApiErrorKind::Conflict) && client_supplied_id => {
+            Err(error)
+                if matches!(error.kind, AgentApiErrorKind::Conflict) && client_supplied_id =>
+            {
                 let loaded = self.load_session_state(&session_id).await?;
                 if loaded.state.lifecycle.status == CoreAgentStatus::Closed {
                     let session = self.project_session_by_id(&session_id).await?;
@@ -662,14 +757,8 @@ impl AgentApiService for GatewayAgentApi {
                 patch,
             })
             .map_err(|error| AgentApiError::internal(error.to_string()))?;
-        self.workflow_handle(&session_id)
-            .signal(
-                AgentSessionWorkflow::submit_admission,
-                AgentAdmission { command },
-                WorkflowSignalOptions::default(),
-            )
-            .await
-            .map_err(map_workflow_interaction_error)?;
+        self.signal_submit_admission(&session_id, AgentAdmission { command })
+            .await?;
         self.wait_for_config_revision(&session_id, target_revision, baseline_failures)
             .await?;
         let loaded = self.load_session_state(&session_id).await?;
@@ -825,14 +914,8 @@ impl AgentApiService for GatewayAgentApi {
         let command = engine::CoreAgentCodec
             .encode_command(&CoreAgentCommand::CloseSession)
             .map_err(|error| AgentApiError::internal(error.to_string()))?;
-        self.workflow_handle(&session_id)
-            .signal(
-                AgentSessionWorkflow::submit_admission,
-                AgentAdmission { command },
-                WorkflowSignalOptions::default(),
-            )
-            .await
-            .map_err(map_workflow_interaction_error)?;
+        self.signal_submit_admission(&session_id, AgentAdmission { command })
+            .await?;
         let session = self.wait_for_closed_session(&session_id).await?;
         Ok(AgentApiOutcome::new(SessionCloseResponse { session }))
     }
@@ -955,8 +1038,8 @@ impl AgentApiService for GatewayAgentApi {
     ) -> Result<AgentApiOutcome<OutboxReadResponse>, AgentApiError> {
         let after = params.after.unwrap_or(0);
         let limit = params.limit.unwrap_or(64).clamp(1, 256) as usize;
-        let wait = Duration::from_millis(u64::from(params.wait_ms.unwrap_or(0)))
-            .min(self.events_wait_cap);
+        let wait =
+            Duration::from_millis(u64::from(params.wait_ms.unwrap_or(0))).min(self.events_wait_cap);
         let deadline = Instant::now() + wait;
         loop {
             let entries = OutboxStore::read_pending(
@@ -1016,8 +1099,10 @@ impl AgentApiService for GatewayAgentApi {
         let session_id = SessionId::try_new(params.session_id).map_err(|error| {
             AgentApiError::invalid_request(format!("invalid session id: {error}"))
         })?;
-        self.load_session_state_with_current_run_context(&session_id)
+        let loaded = self
+            .load_session_state_with_current_run_context(&session_id)
             .await?;
+        let client_supplied_submission_id = params.submission_id.is_some();
         let submission_id = match params.submission_id {
             Some(submission_id) => SubmissionId::try_new(submission_id).map_err(|error| {
                 AgentApiError::invalid_request(format!("invalid submission id: {error}"))
@@ -1028,6 +1113,24 @@ impl AgentApiService for GatewayAgentApi {
             .run_config_for_start(&session_id, params.config)
             .await?;
         let input = run_input_from_api(self.store.as_ref(), &params.input).await?;
+        if let Some(existing) =
+            existing_run_submission(&loaded.state, &submission_id, &input, &run_config)
+        {
+            return match existing {
+                ExistingRunSubmission::ReturnRun { run_id, status } => {
+                    let run = self.project_run_by_id(&session_id, run_id, status).await?;
+                    Ok(AgentApiOutcome::new(RunStartResponse { run }))
+                }
+                ExistingRunSubmission::Reject => Err(duplicate_submission_error(&submission_id)),
+            };
+        }
+        let status_before_signal = self.query_status_optional(&session_id).await?;
+        let baseline_admission_failures = status_before_signal
+            .as_ref()
+            .map(|status| status.admission_failures.len())
+            .unwrap_or(0);
+        let wait_for_admission_drain = client_supplied_submission_id
+            || status_has_submission(status_before_signal.as_ref(), &submission_id);
         let command = engine::CoreAgentCodec
             .encode_command(&CoreAgentCommand::RequestRun {
                 submission_id: Some(submission_id.clone()),
@@ -1035,16 +1138,15 @@ impl AgentApiService for GatewayAgentApi {
                 run_config,
             })
             .map_err(|error| AgentApiError::internal(error.to_string()))?;
-        self.workflow_handle(&session_id)
-            .signal(
-                AgentSessionWorkflow::submit_admission,
-                AgentAdmission { command },
-                WorkflowSignalOptions::default(),
-            )
-            .await
-            .map_err(map_workflow_interaction_error)?;
+        self.signal_submit_admission(&session_id, AgentAdmission { command })
+            .await?;
         let run = self
-            .wait_for_run_accepted(&session_id, &submission_id)
+            .wait_for_run_accepted(
+                &session_id,
+                &submission_id,
+                baseline_admission_failures,
+                wait_for_admission_drain,
+            )
             .await?;
         Ok(AgentApiOutcome::new(RunStartResponse { run }))
     }
@@ -1089,14 +1191,8 @@ impl AgentApiService for GatewayAgentApi {
         let command = engine::CoreAgentCodec
             .encode_command(&CoreAgentCommand::RequestRunCancellation)
             .map_err(|error| AgentApiError::internal(error.to_string()))?;
-        self.workflow_handle(&session_id)
-            .signal(
-                AgentSessionWorkflow::submit_admission,
-                AgentAdmission { command },
-                WorkflowSignalOptions::default(),
-            )
-            .await
-            .map_err(map_workflow_interaction_error)?;
+        self.signal_submit_admission(&session_id, AgentAdmission { command })
+            .await?;
         let run = self
             .wait_for_cancelled_run(&session_id, requested_run_id)
             .await?;
@@ -1656,7 +1752,11 @@ impl AgentApiService for GatewayAgentApi {
         let grant_id = parse_auth_grant_id(params.grant_id)?;
         let record = self
             .store
-            .update_grant_status(&grant_id, auth_registry::AuthGrantStatus::Revoked, now_ms()?)
+            .update_grant_status(
+                &grant_id,
+                auth_registry::AuthGrantStatus::Revoked,
+                now_ms()?,
+            )
             .await
             .map_err(map_auth_registry_error)?;
         Ok(AgentApiOutcome::new(AuthGrantRevokeResponse {
@@ -1888,10 +1988,7 @@ impl AgentApiService for GatewayAgentApi {
             .await
             .map_err(map_github_app_error)?;
         Ok(AgentApiOutcome::new(AuthGitHubInstallationListResponse {
-            installations: installations
-                .iter()
-                .map(github_installation_view)
-                .collect(),
+            installations: installations.iter().map(github_installation_view).collect(),
         }))
     }
 
@@ -2003,8 +2100,13 @@ impl GatewayAgentApi {
     async fn github_provider_jwt(
         &self,
         provider_id: String,
-    ) -> Result<(auth_registry::AuthProviderRecord, auth_registry::SecretValue), AgentApiError>
-    {
+    ) -> Result<
+        (
+            auth_registry::AuthProviderRecord,
+            auth_registry::SecretValue,
+        ),
+        AgentApiError,
+    > {
         let provider_id = parse_auth_provider_id(provider_id)?;
         let provider = self
             .store
@@ -2059,7 +2161,6 @@ impl GatewayAgentApi {
 #[cfg(test)]
 mod tests;
 
-
 fn outbound_message_view(message: messaging::OutboundMessage) -> OutboundMessageView {
     OutboundMessageView {
         seq: message.seq,
@@ -2072,7 +2173,9 @@ fn outbound_message_view(message: messaging::OutboundMessage) -> OutboundMessage
             messaging::OutboundOrigin::Trigger => OutboundOriginView::Trigger,
         },
         payload: match message.payload {
-            OutboundPayload::Send { text, reply_to } => OutboundPayloadView::Send { text, reply_to },
+            OutboundPayload::Send { text, reply_to } => {
+                OutboundPayloadView::Send { text, reply_to }
+            }
             OutboundPayload::React { message_id, emoji } => {
                 OutboundPayloadView::React { message_id, emoji }
             }

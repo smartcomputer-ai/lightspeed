@@ -1,5 +1,12 @@
 use std::{path::PathBuf, sync::Arc};
 
+use auth_registry::{
+    AuthFlowId, AuthFlowStore, AuthGrantId, AuthGrantStatus, AuthGrantStore, AuthGrantTokenRefresh,
+    AuthProviderKind, AuthRegistryError, CreateAuthFlowRecord, CreateAuthGrantRecord,
+    CreateOAuthClientRecord, FinishAuthFlow, GrantRefreshLock, ListAuthGrants, OAuthClientId,
+    OAuthClientStore, PrincipalRef, PutSecretRecord, SECRET_KIND_STATIC_BEARER, SecretId,
+    SecretStore, SecretValue, TokenEndpointAuthMethod, state_hash,
+};
 use engine::{
     BlobRef,
     session::{
@@ -14,14 +21,6 @@ use engine::{
 use mcp_registry::{
     CreateMcpServerRecord, ListMcpServers, McpApprovalPolicy, McpRegistryError, McpRegistryStore,
     McpServerAuthPolicy, McpServerId, McpServerStatus, RemoteMcpTransport,
-};
-use auth_registry::{
-    AuthFlowId, AuthFlowStore, AuthGrantId, AuthGrantStatus, AuthGrantStore,
-    AuthGrantTokenRefresh, AuthProviderKind, AuthRegistryError, CreateAuthFlowRecord,
-    CreateAuthGrantRecord, CreateOAuthClientRecord, FinishAuthFlow, GrantRefreshLock,
-    ListAuthGrants, OAuthClientId, OAuthClientStore, PrincipalRef, PutSecretRecord,
-    SECRET_KIND_STATIC_BEARER, SecretId, SecretStore, SecretValue, TokenEndpointAuthMethod,
-    state_hash,
 };
 use object_store::{ObjectStore, aws::AmazonS3Builder};
 use sqlx::{PgPool, Row, postgres::PgPoolOptions};
@@ -488,7 +487,9 @@ async fn pg_live_auth_secrets_are_encrypted_and_universe_scoped() {
     let wrong_key_store = PgStore::with_object_store(
         left.pool().clone(),
         live_object_store(),
-        left.config().clone().with_secrets_master_key(random_master_key()),
+        left.config()
+            .clone()
+            .with_secrets_master_key(random_master_key()),
     );
     assert!(matches!(
         wrong_key_store.read_secret(&secret_id).await,
@@ -691,11 +692,14 @@ async fn pg_live_auth_flows_are_one_time_use() {
     ));
 
     let finished = store
-        .finish_flow(&flow_id, FinishAuthFlow {
-            grant_id: Some(AuthGrantId::new("authgrant_flow_live")),
-            error: None,
-            completed_at_ms: 150,
-        })
+        .finish_flow(
+            &flow_id,
+            FinishAuthFlow {
+                grant_id: Some(AuthGrantId::new("authgrant_flow_live")),
+                error: None,
+                completed_at_ms: 150,
+            },
+        )
         .await
         .expect("finish flow");
     assert_eq!(
@@ -704,11 +708,14 @@ async fn pg_live_auth_flows_are_one_time_use() {
     );
     assert!(matches!(
         store
-            .finish_flow(&flow_id, FinishAuthFlow {
-                grant_id: None,
-                error: Some("late".to_owned()),
-                completed_at_ms: 160,
-            })
+            .finish_flow(
+                &flow_id,
+                FinishAuthFlow {
+                    grant_id: None,
+                    error: Some("late".to_owned()),
+                    completed_at_ms: 160,
+                }
+            )
             .await,
         Err(AuthRegistryError::FlowAlreadyCompleted { .. })
     ));
@@ -765,12 +772,15 @@ async fn pg_live_grant_refresh_updates_token_refs_and_lock_serializes() {
         .expect("create oauth grant");
 
     let refreshed = store
-        .record_grant_refresh(&grant_id, AuthGrantTokenRefresh {
-            access_token_secret: SecretId::new("authsec_new_access"),
-            refresh_token_secret: None,
-            expires_at_ms: Some(5_000),
-            updated_at_ms: 2_000,
-        })
+        .record_grant_refresh(
+            &grant_id,
+            AuthGrantTokenRefresh {
+                access_token_secret: SecretId::new("authsec_new_access"),
+                refresh_token_secret: None,
+                expires_at_ms: Some(5_000),
+                updated_at_ms: 2_000,
+            },
+        )
         .await
         .expect("record refresh without rotation");
     assert_eq!(
@@ -785,12 +795,15 @@ async fn pg_live_grant_refresh_updates_token_refs_and_lock_serializes() {
     assert_eq!(refreshed.expires_at_ms, Some(5_000));
 
     let rotated = store
-        .record_grant_refresh(&grant_id, AuthGrantTokenRefresh {
-            access_token_secret: SecretId::new("authsec_newer_access"),
-            refresh_token_secret: Some(SecretId::new("authsec_new_refresh")),
-            expires_at_ms: Some(9_000),
-            updated_at_ms: 3_000,
-        })
+        .record_grant_refresh(
+            &grant_id,
+            AuthGrantTokenRefresh {
+                access_token_secret: SecretId::new("authsec_newer_access"),
+                refresh_token_secret: Some(SecretId::new("authsec_new_refresh")),
+                expires_at_ms: Some(9_000),
+                updated_at_ms: 3_000,
+            },
+        )
         .await
         .expect("record refresh with rotation");
     assert_eq!(
@@ -832,7 +845,9 @@ async fn pg_live_auth_providers_crud_and_credential_fk() {
         .put_secret(PutSecretRecord {
             secret_id: key_secret.clone(),
             secret_kind: SECRET_KIND_GITHUB_APP_PRIVATE_KEY.to_owned(),
-            value: SecretValue::new("-----BEGIN RSA PRIVATE KEY-----\ntest\n-----END RSA PRIVATE KEY-----"),
+            value: SecretValue::new(
+                "-----BEGIN RSA PRIVATE KEY-----\ntest\n-----END RSA PRIVATE KEY-----",
+            ),
             created_at_ms: 10,
         })
         .await
@@ -879,10 +894,7 @@ async fn pg_live_auth_providers_crud_and_credential_fk() {
         created
     );
     assert_eq!(
-        store
-            .list_auth_providers()
-            .await
-            .expect("list providers"),
+        store.list_auth_providers().await.expect("list providers"),
         vec![created.clone()]
     );
 
@@ -973,8 +985,8 @@ async fn live_store(test_name: &str, inline_threshold_bytes: usize) -> PgStore {
         .expect("connect to live Postgres");
     migrate_once(&pool).await;
 
-    let prefix =
-        env_or_dotenv_var("LIGHTSPEED_OBJECT_STORE_PREFIX").unwrap_or_else(|_| "lightspeed".to_string());
+    let prefix = env_or_dotenv_var("LIGHTSPEED_OBJECT_STORE_PREFIX")
+        .unwrap_or_else(|_| "lightspeed".to_string());
     let config = PgStoreConfig::new(Uuid::new_v4())
         .with_inline_threshold_bytes(inline_threshold_bytes)
         .with_object_prefix(format!("{}/tests/{}", prefix.trim_matches('/'), test_name))
@@ -1004,10 +1016,10 @@ async fn migrate_once(pool: &PgPool) {
 fn live_object_store() -> Arc<dyn ObjectStore> {
     let endpoint = env_or_dotenv_var("LIGHTSPEED_OBJECT_STORE_ENDPOINT")
         .unwrap_or_else(|_| "http://localhost:29000".to_string());
-    let bucket =
-        env_or_dotenv_var("LIGHTSPEED_OBJECT_STORE_BUCKET").unwrap_or_else(|_| "lightspeed-dev".to_string());
-    let region =
-        env_or_dotenv_var("LIGHTSPEED_OBJECT_STORE_REGION").unwrap_or_else(|_| "us-east-1".to_string());
+    let bucket = env_or_dotenv_var("LIGHTSPEED_OBJECT_STORE_BUCKET")
+        .unwrap_or_else(|_| "lightspeed-dev".to_string());
+    let region = env_or_dotenv_var("LIGHTSPEED_OBJECT_STORE_REGION")
+        .unwrap_or_else(|_| "us-east-1".to_string());
     let access_key =
         env_or_dotenv_var("AWS_ACCESS_KEY_ID").unwrap_or_else(|_| "minioadmin".to_string());
     let secret_key =

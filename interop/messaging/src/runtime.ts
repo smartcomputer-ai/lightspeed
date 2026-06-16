@@ -1,5 +1,5 @@
 import { RoomBuffer, TurnDebouncer } from "./batcher.js";
-import type { BridgeRuntimeConfig } from "./config.js";
+import type { BridgeRuntimeConfig, SessionRecipe } from "./config.js";
 import type { LightspeedSessionBridge } from "./lightspeed.js";
 import { stableHash, stableSessionId } from "./ids.js";
 import {
@@ -35,7 +35,17 @@ export interface NormalizedInbound {
   mentionedBot: boolean;
   isReplyToBot: boolean;
   isFromSelf: boolean;
-  senderAllowed: boolean;
+  /// Sender is on the channel turn allowlist (may chat at all).
+  turnAllowed: boolean;
+  /// Sender is on the control allowlist (may run /activation, /status).
+  controlAllowed: boolean;
+  /// Recipe resolved for this conversation (null = default recipe).
+  recipe?: SessionRecipe | null;
+  /// Configured session key for the binding, or null to derive one per
+  /// conversation. Conversations sharing a key share a session.
+  sessionKey?: string | null;
+  /// Recipe name recorded on the binding (informational; null = default).
+  recipeName?: string | null;
   /// Lazily fetches attached media; only invoked when the message becomes a
   /// user turn, so ignored chatter never downloads anything.
   fetchMedia?: () => Promise<InboundMedia[]>;
@@ -108,6 +118,9 @@ export class MessagingBridgeRuntime {
   private readonly log: (message: string) => void;
   private readonly queues = new Map<string, Promise<void>>();
   private readonly seenRoomKeys = new Set<string>();
+  /// Recipe resolved per conversation, so room-event flushes (which only carry
+  /// the binding) can provision the session the same way turns do.
+  private readonly recipeByConversation = new Map<string, SessionRecipe | null>();
   private readonly turns: TurnDebouncer<PendingTurn>;
   private readonly rooms: RoomBuffer;
 
@@ -145,7 +158,11 @@ export class MessagingBridgeRuntime {
                 ...events.slice(1),
               ]
             : events;
-        await this.lightspeed.appendRoomEvents(binding.sessionId, flushed);
+        await this.lightspeed.appendRoomEvents(
+          binding.sessionId,
+          flushed,
+          this.recipeByConversation.get(key) ?? null,
+        );
         this.log(`bridge: appended ${events.length} room event(s) for ${key}`);
       },
     });
@@ -153,6 +170,7 @@ export class MessagingBridgeRuntime {
 
   async handleInbound(message: NormalizedInbound, policy: ChannelPolicy, options: HandleInboundOptions): Promise<void> {
     const binding = await this.ensureBinding(message, policy);
+    this.recipeByConversation.set(message.conversationKey, message.recipe ?? null);
     const classification = classifyInbound(
       {
         text: message.text,
@@ -160,7 +178,8 @@ export class MessagingBridgeRuntime {
         isFromSelf: message.isFromSelf,
         mentionedBot: message.mentionedBot,
         isReplyToBot: message.isReplyToBot,
-        senderAllowed: message.senderAllowed,
+        turnAllowed: message.turnAllowed,
+        controlAllowed: message.controlAllowed,
       },
       {
         activation: binding.activation,
@@ -173,6 +192,14 @@ export class MessagingBridgeRuntime {
     switch (classification.kind) {
       case "drop":
         return;
+      case "denied": {
+        if (classification.notify) {
+          await options.sendReply(
+            "You are not authorized to use this assistant.",
+          );
+        }
+        return;
+      }
       case "control":
         await this.handleControl(message, classification.command, options);
         return;
@@ -224,12 +251,19 @@ export class MessagingBridgeRuntime {
     policy: ChannelPolicy,
   ): Promise<BindingState> {
     const activation: ActivationPolicy = message.isDirect ? "dm" : policy.groupActivation;
+    // A configured session key binds multiple conversations to one session;
+    // otherwise each conversation derives its own session id.
+    const sessionParts =
+      message.sessionKey != null && message.sessionKey !== ""
+        ? [message.provider, message.accountId, "key", message.sessionKey]
+        : message.conversationParts;
     return this.store.getOrCreateBinding(message.conversationKey, {
       channel: message.provider,
       accountId: message.accountId,
       chatId: message.chatId,
       ...(message.threadId !== undefined ? { threadId: message.threadId } : {}),
-      sessionId: stableSessionId(this.sessionPrefix, message.conversationParts),
+      sessionId: stableSessionId(this.sessionPrefix, sessionParts),
+      recipe: message.recipeName ?? null,
       activation,
     });
   }
@@ -268,20 +302,6 @@ export class MessagingBridgeRuntime {
         });
         return `Activation set to ${command.mode}.`;
       }
-      case "new": {
-        const binding = await this.store.getBinding(message.conversationKey);
-        const generation = (binding?.generation ?? 0) + 1;
-        const sessionId = stableSessionId(this.sessionPrefix, [
-          ...message.conversationParts,
-          `gen-${generation}`,
-        ]);
-        await this.store.updateBinding(message.conversationKey, {
-          generation,
-          sessionId,
-          cursor: null,
-        });
-        return "Started a fresh session for this chat.";
-      }
       case "status": {
         const binding = await this.store.getBinding(message.conversationKey);
         if (!binding) {
@@ -290,9 +310,10 @@ export class MessagingBridgeRuntime {
         const buffered = this.rooms.bufferedCount(message.conversationKey);
         return [
           `session: ${binding.sessionId}`,
+          `recipe: ${binding.recipe ?? "default"}`,
           `activation: ${binding.activation}`,
           `buffered room messages: ${buffered}`,
-          "commands: /activation mention|always|silent, /new, /status",
+          "commands: /activation mention|always|silent, /status",
         ].join("\n");
       }
     }
@@ -335,6 +356,7 @@ export class MessagingBridgeRuntime {
         accountId: first.message.accountId,
         conversationKey: key,
         sessionId: binding.sessionId,
+        recipe: first.message.recipe ?? null,
         submissionParts: batch.map((turn) => turn.message.messageId),
         text,
         media,
@@ -356,7 +378,7 @@ export class MessagingBridgeRuntime {
       this.log(`bridge: answered ${first.message.provider} batch of ${batch.length} in ${key}`);
     } catch (error) {
       const errorText = error instanceof Error ? error.message : String(error);
-      const userText = `Lightspeed could not answer this message: ${errorText}`;
+      const userText = userFacingTurnFailure(error, errorText);
       try {
         await first.sendReply(userText);
         for (const turn of batch) {
@@ -421,4 +443,42 @@ function roomContextKey(message: NormalizedInbound): string {
     message.messageId,
     message.senderId,
   ])}`;
+}
+
+const AUDIO_ADMISSION_FAILURE_KINDS = new Set([
+  "unsupported_audio_mime",
+  "audio_blob_too_large",
+  "audio_duration_too_long",
+  "transcoder_unavailable",
+  "transcode_failure",
+  "transcription_failure",
+]);
+
+function userFacingTurnFailure(error: unknown, fallbackMessage: string): string {
+  const apiError = apiErrorData(error);
+  if (apiError && AUDIO_ADMISSION_FAILURE_KINDS.has(apiError.kind)) {
+    return `Lightspeed could not transcribe this audio message: ${
+      apiError.message || fallbackMessage
+    }`;
+  }
+  return `Lightspeed could not answer this message: ${fallbackMessage}`;
+}
+
+function apiErrorData(error: unknown): { kind: string; message?: string } | null {
+  if (typeof error !== "object" || error === null || !("data" in error)) {
+    return null;
+  }
+  const data = (error as { data?: unknown }).data;
+  if (typeof data !== "object" || data === null) {
+    return null;
+  }
+  const kind = (data as { kind?: unknown }).kind;
+  if (typeof kind !== "string") {
+    return null;
+  }
+  const message = (data as { message?: unknown }).message;
+  return {
+    kind,
+    ...(typeof message === "string" ? { message } : {}),
+  };
 }

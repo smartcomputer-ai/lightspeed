@@ -16,8 +16,10 @@ use crate::{
     AgentActiveRunSummary, AgentAdmission, AgentAdmissionFailure, AgentAdmissionFailureKind,
     AgentCompletedRunSummary, AgentQueuedRunSummary, AgentSessionArgs, AgentSessionStatus,
     AppendEventsRequest, CreateOrLoadSessionRequest, DEFAULT_CONTINUE_AS_NEW_HISTORY_THRESHOLD,
-    LlmGenerateActivityRequest, PutBlobRequest, SkillCatalogRefreshActivityRequest,
-    ToolInvokeBatchActivityRequest, WorkflowActivities, activity_options, default_instructions,
+    LlmGenerateActivityRequest, PreprocessRunInputActivityRequest, PreprocessRunInputFailure,
+    PreprocessRunInputFailureKind, PreprocessRunInputOutcome, PutBlobRequest,
+    SkillCatalogRefreshActivityRequest, ToolInvokeBatchActivityRequest, WorkflowActivities,
+    activity_options, default_instructions,
 };
 
 const DEFAULT_MAX_STEPS_PER_INPUT: usize = 256;
@@ -32,6 +34,7 @@ pub struct AgentSessionWorkflow {
     run_submissions: BTreeMap<u64, Option<SubmissionId>>,
     admission_failures: Vec<AgentAdmissionFailure>,
     last_error: Option<String>,
+    bootstrap_failed: bool,
 }
 
 impl Default for AgentSessionWorkflow {
@@ -45,6 +48,7 @@ impl Default for AgentSessionWorkflow {
             run_submissions: BTreeMap::new(),
             admission_failures: Vec::new(),
             last_error: None,
+            bootstrap_failed: false,
         }
     }
 }
@@ -57,7 +61,7 @@ impl AgentSessionWorkflow {
         args: AgentSessionArgs,
     ) -> WorkflowResult<()> {
         if let Err(error) = initialize(ctx, args.clone()).await {
-            record_error(ctx, &error);
+            record_bootstrap_error(ctx, &error);
             return Err(anyhow::anyhow!("{error}").into());
         }
 
@@ -149,6 +153,7 @@ impl AgentSessionWorkflow {
                 .collect(),
             admission_failures: self.admission_failures.clone(),
             last_error: self.last_error.clone(),
+            bootstrap_failed: self.bootstrap_failed,
         }
     }
 }
@@ -168,6 +173,9 @@ async fn initialize(
         return Ok(());
     }
     let observed_at_ms = workflow_time_ms(ctx);
+    // the activity reduces the durable log internally and returns compact
+    // state. The full event log no longer crosses the activity boundary, so this
+    // bootstrap path is bounded by active context size, not total log length.
     let loaded = ctx
         .start_activity(
             WorkflowActivities::create_or_load_session,
@@ -180,17 +188,10 @@ async fn initialize(
         .await
         .map_err(|error| anyhow::anyhow!("{error}"))?;
 
-    let codec = CoreAgentCodec;
-    let apply = CoreApplyEvent;
-    let mut core_state = CoreAgentState::new();
-    let mut run_submissions = BTreeMap::new();
-    let entries = loaded
-        .entries
-        .iter()
-        .map(|entry| codec.decode_entry(entry))
-        .collect::<Result<Vec<_>, _>>()?;
-    apply_entries(&apply, &mut core_state, &entries, &mut run_submissions)?;
-    let head = loaded.record.head.clone();
+    let is_fresh_session = loaded.replayed_event_count == 0;
+    let core_state = loaded.core_state.unwrap_or_else(CoreAgentState::new);
+    let run_submissions = loaded.run_submissions;
+    let head = loaded.head;
     ctx.state_mut(|state| {
         state.session_id = Some(args.session_id.clone());
         state.core_state = core_state;
@@ -200,7 +201,7 @@ async fn initialize(
         state.last_error = None;
     });
 
-    if entries.is_empty() {
+    if is_fresh_session {
         open_new_session(ctx, args).await?;
     }
     Ok(())
@@ -270,7 +271,7 @@ async fn process_admissions(
 ) -> anyhow::Result<()> {
     let mut drive = drive_from_state(ctx)?;
     for admission in admissions {
-        let command = match CoreAgentCodec.decode_command(&admission.command) {
+        let mut command = match CoreAgentCodec.decode_command(&admission.command) {
             Ok(command) => command,
             Err(error) => {
                 record_admission_failure(
@@ -284,6 +285,18 @@ async fn process_admissions(
                 continue;
             }
         };
+        if command_needs_run_input_preprocessing(&command) {
+            let session_id = drive.session_id().clone();
+            match preprocess_run_input(ctx, session_id, command).await? {
+                RunInputPreprocessResult::Succeeded { command: rewritten } => {
+                    command = rewritten;
+                }
+                RunInputPreprocessResult::Failed { failure } => {
+                    record_admission_failure(ctx, failure);
+                    continue;
+                }
+            }
+        }
         if should_refresh_skill_catalog_before_admitting(drive.state(), &command) {
             refresh_skill_catalog_before_run(ctx, &mut drive).await?;
         }
@@ -295,6 +308,96 @@ async fn process_admissions(
         }
     }
     drive_until_idle(ctx, args, &mut drive).await
+}
+
+enum RunInputPreprocessResult {
+    Succeeded { command: CoreAgentCommand },
+    Failed { failure: AgentAdmissionFailure },
+}
+
+fn command_needs_run_input_preprocessing(command: &CoreAgentCommand) -> bool {
+    match command {
+        CoreAgentCommand::RequestRun { input, .. } => input.iter().any(is_audio_input),
+        _ => false,
+    }
+}
+
+fn is_audio_input(input: &ContextEntryInput) -> bool {
+    input
+        .media_type
+        .as_deref()
+        .map(|mime| mime.trim().to_ascii_lowercase().starts_with("audio/"))
+        .unwrap_or(false)
+}
+
+async fn preprocess_run_input(
+    ctx: &mut WorkflowContext<AgentSessionWorkflow>,
+    session_id: SessionId,
+    command: CoreAgentCommand,
+) -> anyhow::Result<RunInputPreprocessResult> {
+    let CoreAgentCommand::RequestRun {
+        submission_id,
+        input,
+        run_config,
+    } = command
+    else {
+        return Ok(RunInputPreprocessResult::Succeeded { command });
+    };
+
+    let result = ctx
+        .start_activity(
+            WorkflowActivities::preprocess_run_input,
+            PreprocessRunInputActivityRequest { session_id, input },
+            activity_options(),
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    match result.outcome {
+        PreprocessRunInputOutcome::Succeeded { input } => Ok(RunInputPreprocessResult::Succeeded {
+            command: CoreAgentCommand::RequestRun {
+                submission_id,
+                input,
+                run_config,
+            },
+        }),
+        PreprocessRunInputOutcome::Failed { failure } => Ok(RunInputPreprocessResult::Failed {
+            failure: preprocess_failure_to_admission_failure(submission_id, failure),
+        }),
+    }
+}
+
+fn preprocess_failure_to_admission_failure(
+    submission_id: Option<SubmissionId>,
+    failure: PreprocessRunInputFailure,
+) -> AgentAdmissionFailure {
+    AgentAdmissionFailure {
+        submission_id,
+        kind: match failure.kind {
+            PreprocessRunInputFailureKind::UnsupportedAudioMime => {
+                AgentAdmissionFailureKind::UnsupportedAudioMime
+            }
+            PreprocessRunInputFailureKind::AudioBlobMissing => {
+                AgentAdmissionFailureKind::AudioBlobMissing
+            }
+            PreprocessRunInputFailureKind::AudioBlobTooLarge => {
+                AgentAdmissionFailureKind::AudioBlobTooLarge
+            }
+            PreprocessRunInputFailureKind::AudioDurationTooLong => {
+                AgentAdmissionFailureKind::AudioDurationTooLong
+            }
+            PreprocessRunInputFailureKind::TranscoderUnavailable => {
+                AgentAdmissionFailureKind::TranscoderUnavailable
+            }
+            PreprocessRunInputFailureKind::TranscodeFailure => {
+                AgentAdmissionFailureKind::TranscodeFailure
+            }
+            PreprocessRunInputFailureKind::TranscriptionFailure => {
+                AgentAdmissionFailureKind::TranscriptionFailure
+            }
+        },
+        message: failure.message,
+    }
 }
 
 fn should_refresh_skill_catalog_before_admitting(
@@ -581,6 +684,18 @@ fn record_error(ctx: &WorkflowContext<AgentSessionWorkflow>, error: &anyhow::Err
     });
 }
 
+/// Record a failure that occurred during session bootstrap (rehydration). This
+/// is surfaced distinctly from ordinary run errors so the gateway/bridge can
+/// report a typed `session_bootstrap_failed` recovery problem instead of a
+/// generic message-answer failure.
+fn record_bootstrap_error(ctx: &WorkflowContext<AgentSessionWorkflow>, error: &anyhow::Error) {
+    let message = error.to_string();
+    ctx.state_mut(|state| {
+        state.last_error = Some(message);
+        state.bootstrap_failed = true;
+    });
+}
+
 fn can_continue_as_new_at_idle(
     ctx: &WorkflowContext<AgentSessionWorkflow>,
     args: &AgentSessionArgs,
@@ -666,6 +781,47 @@ mod tests {
 
         assert_eq!(command_submission_id(&command), Some(submission_id));
         assert_eq!(command_submission_id(&CoreAgentCommand::CloseSession), None);
+    }
+
+    #[test]
+    fn request_run_with_audio_input_needs_preprocessing() {
+        let command = CoreAgentCommand::RequestRun {
+            submission_id: Some(SubmissionId::new("submit_audio")),
+            input: vec![ContextEntryInput {
+                kind: ContextEntryKind::Message {
+                    role: ContextMessageRole::User,
+                },
+                content_ref: engine::BlobRef::from_bytes(b"audio"),
+                media_type: Some("audio/ogg".to_owned()),
+                preview: Some("[audio]".to_owned()),
+                provider_kind: None,
+                provider_item_id: None,
+                token_estimate: None,
+            }],
+            run_config: crate::default_run_config(),
+        };
+
+        assert!(command_needs_run_input_preprocessing(&command));
+    }
+
+    #[test]
+    fn preprocess_failures_preserve_submission_id_for_admission_failure() {
+        let failure = preprocess_failure_to_admission_failure(
+            Some(SubmissionId::new("submit_audio")),
+            PreprocessRunInputFailure {
+                kind: PreprocessRunInputFailureKind::TranscriptionFailure,
+                message: "missing OpenAI key".to_owned(),
+            },
+        );
+
+        assert_eq!(
+            failure.submission_id.as_ref(),
+            Some(&SubmissionId::new("submit_audio"))
+        );
+        assert_eq!(
+            failure.kind,
+            AgentAdmissionFailureKind::TranscriptionFailure
+        );
     }
 
     #[test]

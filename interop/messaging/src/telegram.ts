@@ -1,6 +1,11 @@
 import { Bot, type Context } from "grammy";
 import type { Message } from "grammy/types";
-import type { TelegramBridgeConfig } from "./config.js";
+import {
+  resolveInboundAccess,
+  type BindingRule,
+  type SessionRecipe,
+  type TelegramBridgeConfig,
+} from "./config.js";
 import { stableHash } from "./ids.js";
 import { shouldQuoteChunk, type ReplyToMode } from "./policy.js";
 import type { OutboundMessageView } from "@lightspeed/agent-client";
@@ -12,7 +17,7 @@ import type {
   NormalizedInbound,
 } from "./runtime.js";
 import { renderTelegramHtml } from "./markdown.js";
-import { documentByteLimit, documentMime } from "./media.js";
+import { audioMime, documentByteLimit, documentMime, MAX_AUDIO_BYTES } from "./media.js";
 import type { BindingState } from "./store.js";
 import { splitMessageText } from "./text.js";
 
@@ -25,18 +30,26 @@ export interface RunningBridge {
   deliverer: ChannelDeliverer;
 }
 
+export interface BridgeRouting {
+  bindings: readonly BindingRule[];
+  recipes: Record<string, SessionRecipe>;
+}
+
 export async function startTelegramBridge(
   config: TelegramBridgeConfig,
   runtime: MessagingBridgeRuntime,
+  routing: BridgeRouting,
 ): Promise<RunningBridge> {
   const bot = new Bot(config.botToken);
   const me = await bot.api.getMe();
   const botUsername = me.username ?? null;
   const allowedChatIds = new Set(config.allowedChatIds.map(String));
-  const allowFrom = new Set(config.allowFrom.map(String));
 
   if (allowedChatIds.size === 0) {
     console.warn("telegram: TELEGRAM_ALLOWED_CHAT_IDS is empty; all chats can trigger the bridge");
+  }
+  if (config.allowFrom.length === 0) {
+    console.warn("telegram: TELEGRAM_ALLOW_FROM is empty; any sender in an allowed chat can chat");
   }
 
   const policy: ChannelPolicy = {
@@ -63,12 +76,35 @@ export async function startTelegramBridge(
       ? documentMime(message.document.file_name, message.document.mime_type)
       : null;
     const hasDocument = documentMimeType !== null;
-    if (!text && !hasPhoto && !hasDocument) {
+    const voiceMimeType = message.voice
+      ? audioMime("voice.ogg", message.voice.mime_type)
+      : null;
+    const hasVoice =
+      voiceMimeType !== null && (message.voice?.file_size ?? 0) <= MAX_AUDIO_BYTES;
+    const audioMimeType = message.audio
+      ? audioMime(message.audio.file_name, message.audio.mime_type)
+      : null;
+    const hasAudio =
+      audioMimeType !== null && (message.audio?.file_size ?? 0) <= MAX_AUDIO_BYTES;
+    if (!text && !hasPhoto && !hasDocument && !hasVoice && !hasAudio) {
       return;
     }
 
     const isDirect = message.chat.type === "private";
     const senderId = message.from ? String(message.from.id) : "unknown";
+    const senderUsername = message.from?.username ?? null;
+    const senderHandles = senderUsername ? [senderId, senderUsername] : [senderId];
+    const access = resolveInboundAccess(
+      {
+        channel: "telegram",
+        handles: senderHandles,
+        chatId,
+        scope: isDirect ? "direct" : "group",
+      },
+      config,
+      routing.bindings,
+      routing.recipes,
+    );
     const threadId = message.message_thread_id;
     const conversationParts = ["telegram", config.accountId, chatId, threadId ?? "main"];
     const conversationKey = `telegram:${stableHash(conversationParts)}`;
@@ -78,6 +114,29 @@ export async function startTelegramBridge(
       threadId ?? "main",
       message.message_id,
     ])}`;
+    const fetchMedia = hasPhoto
+      ? () => downloadTelegramPhoto(ctx, config.botToken, message)
+      : hasDocument
+        ? () => downloadTelegramDocument(ctx, config.botToken, message, documentMimeType)
+        : hasVoice
+          ? () =>
+              downloadTelegramAudioFile(
+                ctx,
+                config.botToken,
+                message.voice?.file_id,
+                voiceMimeType,
+                "voice.ogg",
+              )
+          : hasAudio
+            ? () =>
+                downloadTelegramAudioFile(
+                  ctx,
+                  config.botToken,
+                  message.audio?.file_id,
+                  audioMimeType,
+                  message.audio?.file_name ?? "audio",
+                )
+            : undefined;
 
     const inbound: NormalizedInbound = {
       provider: "telegram",
@@ -95,23 +154,22 @@ export async function startTelegramBridge(
         text ||
         (hasDocument
           ? `(sent a file: ${message.document?.file_name ?? "document"})`
-          : "(sent an image)"),
+          : hasVoice
+            ? "(sent a voice note)"
+            : hasAudio
+              ? `(sent audio: ${message.audio?.file_name ?? "audio"})`
+              : "(sent an image)"),
       isDirect,
       chatLabel: isDirect ? "dm" : (message.chat.title ?? chatId),
       mentionedBot: messageMentionsBot(message, me.id, botUsername),
       isReplyToBot: message.reply_to_message?.from?.id === me.id,
       isFromSelf: message.from?.id === me.id,
-      // With no explicit allowFrom, direct chats in the chat allowlist are
-      // trusted for control commands; group members are not.
-      senderAllowed: allowFrom.size > 0 ? allowFrom.has(senderId) : isDirect,
-      ...(hasPhoto
-        ? { fetchMedia: () => downloadTelegramPhoto(ctx, config.botToken, message) }
-        : hasDocument
-          ? {
-              fetchMedia: () =>
-                downloadTelegramDocument(ctx, config.botToken, message, documentMimeType),
-            }
-          : {}),
+      turnAllowed: access.turnAllowed,
+      controlAllowed: access.controlAllowed,
+      recipe: access.recipe,
+      recipeName: access.recipeName,
+      sessionKey: access.sessionKey,
+      ...(fetchMedia ? { fetchMedia } : {}),
     };
 
     await runtime.handleInbound(inbound, policy, {
@@ -129,6 +187,8 @@ export async function startTelegramBridge(
   bot.on("message:text", handleMessage);
   bot.on("message:photo", handleMessage);
   bot.on("message:document", handleMessage);
+  bot.on("message:voice", handleMessage);
+  bot.on("message:audio", handleMessage);
 
   const polling = bot.start({ allowed_updates: ["message"] }).catch((error) => {
     console.error("telegram: polling stopped", error);
@@ -302,6 +362,37 @@ async function downloadTelegramDocument(
       base64: bytes.toString("base64"),
       mime,
       name: document.file_name ?? file.file_path.split("/").at(-1) ?? "document",
+    },
+  ];
+}
+
+async function downloadTelegramAudioFile(
+  ctx: Context,
+  botToken: string,
+  fileId: string | undefined,
+  mime: string,
+  name: string,
+): Promise<InboundMedia[]> {
+  if (!fileId) {
+    return [];
+  }
+  const file = await ctx.api.getFile(fileId);
+  if (!file.file_path) {
+    return [];
+  }
+  const response = await fetch(`https://api.telegram.org/file/bot${botToken}/${file.file_path}`);
+  if (!response.ok) {
+    throw new Error(`telegram file download failed: ${response.status}`);
+  }
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (bytes.byteLength > MAX_AUDIO_BYTES) {
+    return [];
+  }
+  return [
+    {
+      base64: bytes.toString("base64"),
+      mime,
+      name,
     },
   ];
 }

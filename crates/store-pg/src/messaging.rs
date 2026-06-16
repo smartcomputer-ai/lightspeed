@@ -189,7 +189,9 @@ impl OutboxStore for PgStore {
     }
 }
 
-fn outbound_message_from_row(row: &sqlx::postgres::PgRow) -> Result<OutboundMessage, MessagingError> {
+fn outbound_message_from_row(
+    row: &sqlx::postgres::PgRow,
+) -> Result<OutboundMessage, MessagingError> {
     let decode = |what: &str, error: sqlx::Error| outbox_store_error(what, error);
     let seq: i64 = row.try_get("seq").map_err(|e| decode("seq", e))?;
     let payload_json: serde_json::Value = row

@@ -151,7 +151,10 @@ pub struct OAuthRefreshRuntime {
 }
 
 impl OAuthRefreshRuntime {
-    pub fn new(clients: Arc<dyn OAuthClientStore>, token_client: Arc<dyn OAuthTokenClient>) -> Self {
+    pub fn new(
+        clients: Arc<dyn OAuthClientStore>,
+        token_client: Arc<dyn OAuthTokenClient>,
+    ) -> Self {
         Self {
             clients,
             token_client,
@@ -195,18 +198,18 @@ impl StoredTokenSource {
                 grant_id: grant.grant_id.clone(),
             });
         };
-        let (_, value) = self
-            .secrets
-            .read_secret(secret_id)
-            .await
-            .map_err(|error| match error {
-                AuthRegistryError::SecretNotFound { .. } => AuthBrokerError::SecretMissing {
-                    grant_id: grant.grant_id.clone(),
-                },
-                other => AuthBrokerError::Store {
-                    message: other.to_string(),
-                },
-            })?;
+        let (_, value) =
+            self.secrets
+                .read_secret(secret_id)
+                .await
+                .map_err(|error| match error {
+                    AuthRegistryError::SecretNotFound { .. } => AuthBrokerError::SecretMissing {
+                        grant_id: grant.grant_id.clone(),
+                    },
+                    other => AuthBrokerError::Store {
+                        message: other.to_string(),
+                    },
+                })?;
         Ok(value)
     }
 
@@ -320,7 +323,9 @@ impl StoredTokenSource {
                         created_at_ms: now_ms,
                     })
                     .await
-                    .map_err(|error| store_error(format!("store rotated refresh token: {error}")))?;
+                    .map_err(|error| {
+                        store_error(format!("store rotated refresh token: {error}"))
+                    })?;
                 Some(secret_id)
             }
             None => None,
@@ -339,14 +344,17 @@ impl StoredTokenSource {
         let old_access_secret = grant.access_token_secret.clone();
         let old_refresh_secret = grant.refresh_token_secret.clone();
         self.grants
-            .record_grant_refresh(&grant_id, AuthGrantTokenRefresh {
-                access_token_secret: new_access_secret_id,
-                refresh_token_secret: new_refresh_secret_id.clone(),
-                expires_at_ms: response
-                    .expires_in_secs
-                    .map(|secs| now_ms.saturating_add(secs.saturating_mul(1000))),
-                updated_at_ms: now_ms,
-            })
+            .record_grant_refresh(
+                &grant_id,
+                AuthGrantTokenRefresh {
+                    access_token_secret: new_access_secret_id,
+                    refresh_token_secret: new_refresh_secret_id.clone(),
+                    expires_at_ms: response
+                        .expires_in_secs
+                        .map(|secs| now_ms.saturating_add(secs.saturating_mul(1000))),
+                    updated_at_ms: now_ms,
+                },
+            )
             .await
             .map_err(|error| store_error(format!("record grant refresh: {error}")))?;
 
@@ -552,13 +560,13 @@ impl AuthTokenBroker for RegistryTokenBroker {
             return Ok(token);
         }
 
-        let _guard = self
-            .locks
-            .lock_grant(grant_id)
-            .await
-            .map_err(|error| AuthBrokerError::Store {
-                message: format!("acquire grant renewal lock: {error}"),
-            })?;
+        let _guard =
+            self.locks
+                .lock_grant(grant_id)
+                .await
+                .map_err(|error| AuthBrokerError::Store {
+                    message: format!("acquire grant renewal lock: {error}"),
+                })?;
         // Re-read and re-check under the lock: a concurrent resolver may
         // have renewed while this call waited.
         let grant = self.read_checked_grant(grant_id, audience).await?;
@@ -576,9 +584,9 @@ mod tests {
 
     use super::*;
     use crate::{
-        CreateAuthGrantRecord, CreateOAuthClientRecord, InMemoryAuthGrantStore,
-        InMemoryGrantLocks, InMemoryOAuthClientStore, InMemorySecretStore, OAuthClientId,
-        OAuthTokenResponse, PrincipalRef, SECRET_KIND_STATIC_BEARER, TokenEndpointAuthMethod,
+        CreateAuthGrantRecord, CreateOAuthClientRecord, InMemoryAuthGrantStore, InMemoryGrantLocks,
+        InMemoryOAuthClientStore, InMemorySecretStore, OAuthClientId, OAuthTokenResponse,
+        PrincipalRef, SECRET_KIND_STATIC_BEARER, TokenEndpointAuthMethod,
     };
 
     fn grant_request(grant_id: &str, audience: Option<&str>) -> CreateAuthGrantRecord {
@@ -601,10 +609,7 @@ mod tests {
         }
     }
 
-    async fn broker_with(
-        grant: CreateAuthGrantRecord,
-        token: Option<&str>,
-    ) -> RegistryTokenBroker {
+    async fn broker_with(grant: CreateAuthGrantRecord, token: Option<&str>) -> RegistryTokenBroker {
         let grants = Arc::new(InMemoryAuthGrantStore::new());
         let secrets = Arc::new(InMemorySecretStore::new());
         grants.create_grant(grant).await.expect("create grant");
@@ -689,7 +694,11 @@ mod tests {
         let broker = broker_with(grant_request("authgrant_1", None), Some("token-123")).await;
         broker
             .grants
-            .update_grant_status(&AuthGrantId::new("authgrant_1"), AuthGrantStatus::Revoked, 20)
+            .update_grant_status(
+                &AuthGrantId::new("authgrant_1"),
+                AuthGrantStatus::Revoked,
+                20,
+            )
             .await
             .expect("revoke grant");
 
@@ -917,8 +926,11 @@ mod tests {
 
     #[tokio::test]
     async fn expired_oauth_tokens_refresh_and_rotate_secrets() {
-        let harness = oauth_harness(vec![Ok(refreshed_response("at-new", Some("rt-new")))], 2_000)
-            .await;
+        let harness = oauth_harness(
+            vec![Ok(refreshed_response("at-new", Some("rt-new")))],
+            2_000,
+        )
+        .await;
 
         let token = harness
             .broker
@@ -1148,8 +1160,7 @@ mod tests {
         request.access_token_secret = None;
         grants.create_grant(request).await.expect("create grant");
         // No source is registered for GitHubApp on a bare broker.
-        let broker =
-            RegistryTokenBroker::new(grants, secrets, Arc::new(InMemoryGrantLocks::new()));
+        let broker = RegistryTokenBroker::new(grants, secrets, Arc::new(InMemoryGrantLocks::new()));
 
         let error = broker
             .bearer_token(

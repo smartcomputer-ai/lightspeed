@@ -32,11 +32,7 @@ pub struct BlobInfo {
 /// content-addressed puts make repeated calls idempotent.
 pub async fn ensure_engine_blobs(blobs: &dyn BlobStore) -> Result<(), BlobStoreError> {
     let blob_ref = blobs
-        .put_bytes(
-            crate::UNAVAILABLE_TOOL_RESULT_CONTENT
-                .as_bytes()
-                .to_vec(),
-        )
+        .put_bytes(crate::UNAVAILABLE_TOOL_RESULT_CONTENT.as_bytes().to_vec())
         .await?;
     debug_assert_eq!(blob_ref, crate::unavailable_tool_result_ref());
     Ok(())

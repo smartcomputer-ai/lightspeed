@@ -195,6 +195,12 @@ mod tests {
 
         assert_eq!(store.root(), temp_dir.path().join(LIGHTSPEED_DIR).as_path());
         assert!(temp_dir.path().join(LIGHTSPEED_DIR).join("cas").is_dir());
-        assert!(temp_dir.path().join(LIGHTSPEED_DIR).join("sessions").is_dir());
+        assert!(
+            temp_dir
+                .path()
+                .join(LIGHTSPEED_DIR)
+                .join("sessions")
+                .is_dir()
+        );
     }
 }

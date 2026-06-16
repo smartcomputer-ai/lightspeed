@@ -1,8 +1,6 @@
-export interface JsonRpcErrorPayload {
-  code: number;
-  message: string;
-  data?: unknown;
-}
+import type { AgentApiError, JsonRpcError as ApiJsonRpcError } from "./generated/types.js";
+
+export type JsonRpcErrorPayload = ApiJsonRpcError;
 
 export type LightspeedRpcErrorKind =
   | "invalid_request"
@@ -34,7 +32,7 @@ export function lightspeedRpcErrorKind(code: number): LightspeedRpcErrorKind {
 
 export class LightspeedRpcError extends Error {
   readonly code: number;
-  readonly data: unknown | undefined;
+  readonly data: AgentApiError | null | undefined;
   readonly kind: LightspeedRpcErrorKind;
   readonly payload: JsonRpcErrorPayload;
 

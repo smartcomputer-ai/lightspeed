@@ -5,12 +5,9 @@
 use std::{env, fs, path::PathBuf};
 
 fn main() {
-    let out_dir = env::args()
-        .nth(1)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../interop/contract")
-        });
+    let out_dir = env::args().nth(1).map(PathBuf::from).unwrap_or_else(|| {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../interop/contract")
+    });
     fs::create_dir_all(&out_dir).expect("create output directory");
 
     let exported = api::export_schemas();

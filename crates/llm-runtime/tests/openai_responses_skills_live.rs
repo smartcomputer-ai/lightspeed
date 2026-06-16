@@ -7,8 +7,7 @@ use std::{
 use async_trait::async_trait;
 use engine::{
     AgentHandle, BlobRef, ContextConfig, ContextEntryInput, ContextEntryKind, ContextMessageRole,
-    CoreAgentCommand, CoreAgentEventKind, ModelSelection,
-    ProviderApiKind, RunConfig, RunStatus,
+    CoreAgentCommand, CoreAgentEventKind, ModelSelection, ProviderApiKind, RunConfig, RunStatus,
     SessionConfig, SessionId, ToolExecutionTarget,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
 };
@@ -434,10 +433,12 @@ fn session_config(model: ModelSelection) -> SessionConfig {
         turn: engine::TurnConfig {
             max_output_tokens: Some(1024),
             tool_choice: None,
-            provider_params: Some(support::openai_params(&llm_runtime::OpenAiResponsesParams {
-                store: Some(false),
-                ..llm_runtime::OpenAiResponsesParams::default()
-            })),
+            provider_params: Some(support::openai_params(
+                &llm_runtime::OpenAiResponsesParams {
+                    store: Some(false),
+                    ..llm_runtime::OpenAiResponsesParams::default()
+                },
+            )),
         },
         context: ContextConfig { compaction: None },
         tools: Default::default(),

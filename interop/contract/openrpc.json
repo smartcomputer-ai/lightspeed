@@ -21,6 +21,46 @@
         ],
         "type": "object"
       },
+      "AgentApiError": {
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/AgentApiErrorKind"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "message"
+        ],
+        "type": "object"
+      },
+      "AgentApiErrorKind": {
+        "oneOf": [
+          {
+            "enum": [
+              "invalid_request",
+              "not_found",
+              "conflict",
+              "rejected",
+              "unsupported_audio_mime",
+              "audio_blob_too_large",
+              "audio_duration_too_long",
+              "transcoder_unavailable",
+              "transcode_failure",
+              "transcription_failure",
+              "internal"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "session_bootstrap_failed",
+            "description": "The session's agent workflow exists but failed during bootstrap\n(rehydration) and cannot serve runs. Distinct from `NotFound` (no\nworkflow) so clients/bridges treat it as a session recovery problem\nrather than an ordinary \"answer this message\" failure.",
+            "type": "string"
+          }
+        ]
+      },
       "AgentApiOutcomeOfAuthClientCreateResponse": {
         "properties": {
           "notifications": {
@@ -2968,6 +3008,32 @@
             "type": "object"
           }
         ]
+      },
+      "JsonRpcError": {
+        "properties": {
+          "code": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentApiError"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "type": "object"
       },
       "McpServerAuthPolicy": {
         "oneOf": [

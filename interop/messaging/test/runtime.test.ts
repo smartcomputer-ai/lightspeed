@@ -16,6 +16,7 @@ interface LightspeedCall {
 class FakeLightspeed {
   readonly calls: LightspeedCall[] = [];
   failTurns = false;
+  turnError: unknown = null;
   messagingToolUsed = false;
 
   async appendRoomEvents(sessionId: string, events: readonly LightspeedRoomEvent[]): Promise<void> {
@@ -24,7 +25,7 @@ class FakeLightspeed {
 
   async submitTurn(turn: LightspeedTurn): Promise<LightspeedReply> {
     if (this.failTurns) {
-      throw new Error("lightspeed unavailable");
+      throw this.turnError ?? new Error("lightspeed unavailable");
     }
     this.calls.push({
       kind: "turn",
@@ -106,7 +107,8 @@ function inbound(overrides: Partial<NormalizedInbound>): NormalizedInbound {
     mentionedBot: false,
     isReplyToBot: false,
     isFromSelf: false,
-    senderAllowed: false,
+    turnAllowed: true,
+    controlAllowed: false,
     ...overrides,
   };
 }
@@ -177,7 +179,7 @@ describe("MessagingBridgeRuntime", () => {
 
   it("persists /activation changes and applies them to later messages", async () => {
     await runtime.handleInbound(
-      inbound({ text: "/activation always", senderAllowed: true }),
+      inbound({ text: "/activation always", controlAllowed: true }),
       policy,
       io(),
     );
@@ -194,27 +196,79 @@ describe("MessagingBridgeRuntime", () => {
     expect(turns[0]?.texts[0]).toContain("no mention needed");
   });
 
-  it("rebinds to a fresh session on /new", async () => {
-    await runtime.handleInbound(
-      inbound({ isDirect: true, text: "before" }),
-      policy,
-      io(),
-    );
+  it("binds two conversations sharing a session key to one session", async () => {
+    const a = {
+      isDirect: true,
+      conversationKey: "telegram:a",
+      conversationParts: ["telegram", "default", "a"],
+      chatId: "a",
+      sessionKey: "team",
+    };
+    const b = {
+      isDirect: true,
+      conversationKey: "telegram:b",
+      conversationParts: ["telegram", "default", "b"],
+      chatId: "b",
+      sessionKey: "team",
+    };
+    await runtime.handleInbound(inbound({ ...a, text: "from a" }), policy, io());
+    await runtime.handleInbound(inbound({ ...b, text: "from b" }), policy, io());
     await new Promise((resolve) => setTimeout(resolve, 50));
     await runtime.flush();
 
-    await runtime.handleInbound(
-      inbound({ isDirect: true, text: "/new", senderAllowed: true }),
-      policy,
-      io(),
-    );
-    await runtime.handleInbound(inbound({ isDirect: true, text: "after" }), policy, io());
+    const turns = lightspeed.calls.filter((call) => call.kind === "turn");
+    expect(turns).toHaveLength(2);
+    expect(turns[0]?.sessionId).toBe(turns[1]?.sessionId);
+  });
+
+  it("gives conversations without a session key their own sessions", async () => {
+    const a = {
+      isDirect: true,
+      conversationKey: "telegram:a",
+      conversationParts: ["telegram", "default", "a"],
+      chatId: "a",
+    };
+    const b = {
+      isDirect: true,
+      conversationKey: "telegram:b",
+      conversationParts: ["telegram", "default", "b"],
+      chatId: "b",
+    };
+    await runtime.handleInbound(inbound({ ...a, text: "from a" }), policy, io());
+    await runtime.handleInbound(inbound({ ...b, text: "from b" }), policy, io());
     await new Promise((resolve) => setTimeout(resolve, 50));
     await runtime.flush();
 
     const turns = lightspeed.calls.filter((call) => call.kind === "turn");
     expect(turns).toHaveLength(2);
     expect(turns[0]?.sessionId).not.toBe(turns[1]?.sessionId);
+  });
+
+  it("replies with an authorization error and starts no run for a denied direct sender", async () => {
+    await runtime.handleInbound(
+      inbound({ isDirect: true, text: "let me in", turnAllowed: false }),
+      policy,
+      io(),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await runtime.flush();
+
+    expect(lightspeed.calls.filter((call) => call.kind === "turn")).toHaveLength(0);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toContain("not authorized");
+  });
+
+  it("drops a denied group sender silently", async () => {
+    await runtime.handleInbound(
+      inbound({ text: "@lightspeed_bot help", mentionedBot: true, turnAllowed: false }),
+      policy,
+      io(),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await runtime.flush();
+
+    expect(lightspeed.calls.filter((call) => call.kind === "turn")).toHaveLength(0);
+    expect(replies).toHaveLength(0);
   });
 
   it("downloads media only for user turns and passes it to the run", async () => {
@@ -288,6 +342,27 @@ describe("MessagingBridgeRuntime", () => {
 
     expect(replies[0]).toContain("Lightspeed could not answer");
     // The message is marked done (not retried forever).
+    expect(await store.beginMessage(message.messageKey)).toBe("duplicate");
+  });
+
+  it("surfaces audio transcription admission failures as audio failures", async () => {
+    const error = new Error("run rejected") as Error & {
+      data: { kind: string; message: string };
+    };
+    error.data = {
+      kind: "transcription_failure",
+      message: "OpenAI could not transcribe the audio",
+    };
+    lightspeed.failTurns = true;
+    lightspeed.turnError = error;
+
+    const message = inbound({ isDirect: true, text: "(sent a voice note)" });
+    await runtime.handleInbound(message, policy, io());
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await runtime.flush();
+
+    expect(replies[0]).toContain("could not transcribe this audio message");
+    expect(replies[0]).toContain("OpenAI could not transcribe the audio");
     expect(await store.beginMessage(message.messageKey)).toBe("duplicate");
   });
 });

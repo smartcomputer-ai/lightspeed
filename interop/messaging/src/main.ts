@@ -22,13 +22,14 @@ const runtime = new MessagingBridgeRuntime({
   sessionPrefix: config.lightspeed.sessionPrefix,
 });
 const running: Running[] = [];
+const routing = { bindings: config.bindings, recipes: config.recipes };
 
 if (config.telegram?.enabled) {
-  running.push(await startTelegramBridge(config.telegram, runtime));
+  running.push(await startTelegramBridge(config.telegram, runtime, routing));
 }
 
 if (config.whatsapp?.enabled) {
-  running.push(await startWhatsAppBridge(config.whatsapp, runtime));
+  running.push(await startWhatsAppBridge(config.whatsapp, runtime, routing));
 }
 
 if (running.length === 0) {

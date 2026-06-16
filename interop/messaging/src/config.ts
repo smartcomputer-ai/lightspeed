@@ -1,4 +1,9 @@
 import { readFile } from "node:fs/promises";
+import type {
+  RemoteMcpApprovalPolicy,
+  SessionConfigInput,
+  VfsMountAccess,
+} from "@lightspeed/agent-client";
 import type { GroupActivation, ReplyToMode } from "./policy.js";
 
 export interface LightspeedBridgeConfig {
@@ -21,13 +26,73 @@ export interface BridgeRuntimeConfig {
   roomBudget: number;
 }
 
+/// One workspace/snapshot to mount into a recipe's sessions. The core
+/// discovers `.lightspeed/prompts/` instructions and the skill catalog under
+/// workspace mounts, so a recipe configures prompts and skills purely by what
+/// it mounts; the bridge never activates skills itself.
+export interface RecipeMount {
+  mountPath: string;
+  source: { workspaceId: string } | { snapshotRef: string };
+  access: VfsMountAccess;
+}
+
+/// One MCP server to link into a recipe's sessions. The server must already be
+/// created and authenticated (`mcp/servers/create`); the recipe references it
+/// by id and passes the link surface through unchanged.
+export interface RecipeMcpLink {
+  serverId: string;
+  serverLabel?: string;
+  toolId?: string;
+  allowedTools?: string[];
+  approval?: RemoteMcpApprovalPolicy;
+  authGrantId?: string;
+  deferLoading?: boolean;
+}
+
+/// A named provisioning recipe applied once when a bound session is first
+/// created: start with `config` (model + tools), mount workspaces/snapshots,
+/// then link MCP servers.
+export interface SessionRecipe {
+  config?: SessionConfigInput;
+  mounts: RecipeMount[];
+  mcp: RecipeMcpLink[];
+}
+
+export type BindingScope = "direct" | "group";
+
+export interface BindingMatch {
+  /// Channel to match, or `*` for any channel.
+  channel: "telegram" | "whatsapp" | "*";
+  /// Sender handle (telegram id/@username, whatsapp jid). Omit to match any.
+  handle?: string;
+  /// Channel chat id (telegram chat id, whatsapp jid). Omit to match any.
+  chatId?: string;
+  /// Restrict to direct or group conversations. Omit to match either.
+  scope?: BindingScope;
+}
+
+/// A rule mapping matched conversations to a recipe and a session key.
+/// Bindings are evaluated top-to-bottom, first match wins.
+export interface BindingRule {
+  match: BindingMatch;
+  /// Recipe name from `recipes`. Omitted/unknown means the default recipe
+  /// (no mounts, no mcp, messaging tool only).
+  recipe?: string;
+  /// Stable key used to derive the bound session id. Conversations sharing a
+  /// key share a session. Omitted means the bridge derives a per-conversation
+  /// key, so each conversation gets its own session.
+  sessionKey?: string;
+}
+
 export interface TelegramBridgeConfig {
   enabled: boolean;
   botToken: string;
   accountId: string;
   allowedChatIds: string[];
-  /// Senders allowed to run control commands (/activation, /new, /status).
+  /// Sender handles allowed to run a turn at all. Empty means anyone may chat.
   allowFrom: string[];
+  /// Sender handles allowed to run control commands (/activation, /status).
+  controlAllowFrom: string[];
   triggerPrefixes: string[];
   mentionNames: string[];
   groupActivation: GroupActivation;
@@ -42,6 +107,7 @@ export interface WhatsAppBridgeConfig {
   authDir: string;
   allowedJids: string[];
   allowFrom: string[];
+  controlAllowFrom: string[];
   triggerPrefixes: string[];
   mentionNames: string[];
   groupActivation: GroupActivation;
@@ -55,14 +121,22 @@ export interface MessagingBridgeConfig {
   store: {
     path: string;
   };
+  recipes: Record<string, SessionRecipe>;
+  bindings: BindingRule[];
   telegram?: TelegramBridgeConfig;
   whatsapp?: WhatsAppBridgeConfig;
 }
+
+/// Defaults applied to a recipe mount when `mountPath`/`access` are omitted.
+const DEFAULT_MOUNT_PATH = "/workspace";
+const DEFAULT_MOUNT_ACCESS: VfsMountAccess = "readWrite";
 
 type PartialConfig = Partial<{
   lightspeed: Partial<LightspeedBridgeConfig>;
   runtime: Partial<BridgeRuntimeConfig>;
   store: Partial<{ path: string }>;
+  recipes: Record<string, unknown>;
+  bindings: unknown[];
   telegram: Partial<TelegramBridgeConfig>;
   whatsapp: Partial<WhatsAppBridgeConfig>;
 }>;
@@ -96,6 +170,8 @@ export async function loadBridgeConfig(env: NodeJS.ProcessEnv = process.env): Pr
     ),
     roomBudget: parsePositiveInt(env.BRIDGE_ROOM_BUDGET, fileConfig.runtime?.roomBudget ?? 50),
   };
+  const recipes = parseRecipes(fileConfig.recipes);
+  const bindings = parseBindings(fileConfig.bindings, recipes);
   const telegramToken = env.TELEGRAM_BOT_TOKEN ?? fileConfig.telegram?.botToken ?? "";
   const telegramEnabled =
     parseBoolean(env.TELEGRAM_ENABLED, fileConfig.telegram?.enabled ?? Boolean(telegramToken));
@@ -107,6 +183,8 @@ export async function loadBridgeConfig(env: NodeJS.ProcessEnv = process.env): Pr
     store: {
       path: env.BRIDGE_STATE_PATH ?? fileConfig.store?.path ?? ".bridge-state.json",
     },
+    recipes,
+    bindings,
   };
   if (telegramEnabled) {
     config.telegram = {
@@ -115,6 +193,10 @@ export async function loadBridgeConfig(env: NodeJS.ProcessEnv = process.env): Pr
       accountId: env.TELEGRAM_ACCOUNT_ID ?? fileConfig.telegram?.accountId ?? "default",
       allowedChatIds: csv(env.TELEGRAM_ALLOWED_CHAT_IDS, fileConfig.telegram?.allowedChatIds),
       allowFrom: csv(env.TELEGRAM_ALLOW_FROM, fileConfig.telegram?.allowFrom),
+      controlAllowFrom: csv(
+        env.TELEGRAM_CONTROL_ALLOW_FROM,
+        fileConfig.telegram?.controlAllowFrom,
+      ),
       triggerPrefixes: csv(
         env.TELEGRAM_TRIGGER_PREFIXES,
         fileConfig.telegram?.triggerPrefixes ?? ["/ask", "/lightspeed"],
@@ -139,6 +221,10 @@ export async function loadBridgeConfig(env: NodeJS.ProcessEnv = process.env): Pr
       authDir: env.WHATSAPP_AUTH_DIR ?? fileConfig.whatsapp?.authDir ?? ".whatsapp-auth",
       allowedJids: csv(env.WHATSAPP_ALLOWED_JIDS, fileConfig.whatsapp?.allowedJids),
       allowFrom: csv(env.WHATSAPP_ALLOW_FROM, fileConfig.whatsapp?.allowFrom),
+      controlAllowFrom: csv(
+        env.WHATSAPP_CONTROL_ALLOW_FROM,
+        fileConfig.whatsapp?.controlAllowFrom,
+      ),
       triggerPrefixes: csv(
         env.WHATSAPP_TRIGGER_PREFIXES,
         fileConfig.whatsapp?.triggerPrefixes ?? ["/ask", "/lightspeed"],
@@ -163,6 +249,293 @@ export async function loadBridgeConfig(env: NodeJS.ProcessEnv = process.env): Pr
 async function readJsonConfig(path: string): Promise<PartialConfig> {
   const raw = await readFile(path, "utf8");
   return JSON.parse(raw) as PartialConfig;
+}
+
+export interface BindingQuery {
+  channel: "telegram" | "whatsapp";
+  /// Every identity for the sender (e.g. a telegram numeric id and @username),
+  /// any of which may match a configured handle.
+  handles: readonly string[];
+  chatId: string;
+  scope: BindingScope;
+}
+
+export interface ChannelAccessConfig {
+  allowFrom: readonly string[];
+  controlAllowFrom: readonly string[];
+}
+
+/// Everything the runtime needs from config for one inbound message: whether
+/// the sender may take a turn or run control commands, and which recipe and
+/// session key the conversation binds to.
+export interface InboundAccess {
+  turnAllowed: boolean;
+  controlAllowed: boolean;
+  recipeName: string | null;
+  recipe: SessionRecipe | null;
+  sessionKey: string | null;
+}
+
+export function resolveInboundAccess(
+  query: BindingQuery,
+  access: ChannelAccessConfig,
+  bindings: readonly BindingRule[],
+  recipes: Record<string, SessionRecipe>,
+): InboundAccess {
+  const binding = resolveBinding(query, bindings);
+  return {
+    turnAllowed: !handleDenied(access.allowFrom, query.handles),
+    // With no explicit control allowlist, direct chats are trusted for control
+    // and group members are not (matches the prior default).
+    controlAllowed:
+      access.controlAllowFrom.length > 0
+        ? !handleDenied(access.controlAllowFrom, query.handles)
+        : query.scope === "direct",
+    recipeName: binding.recipe,
+    recipe: binding.recipe != null ? recipes[binding.recipe] ?? null : null,
+    sessionKey: binding.sessionKey,
+  };
+}
+
+export interface ResolvedBinding {
+  recipe: string | null;
+  sessionKey: string | null;
+}
+
+/// Finds the first binding rule matching the conversation. Returns the recipe
+/// name (or null for the default recipe) and the configured session key (or
+/// null, meaning the bridge derives a per-conversation key). When no rule
+/// matches, returns the default recipe with a derived key.
+export function resolveBinding(query: BindingQuery, bindings: readonly BindingRule[]): ResolvedBinding {
+  for (const rule of bindings) {
+    if (bindingMatches(rule.match, query)) {
+      return { recipe: rule.recipe ?? null, sessionKey: rule.sessionKey ?? null };
+    }
+  }
+  return { recipe: null, sessionKey: null };
+}
+
+function bindingMatches(match: BindingMatch, query: BindingQuery): boolean {
+  if (match.channel !== "*" && match.channel !== query.channel) {
+    return false;
+  }
+  if (match.scope !== undefined && match.scope !== query.scope) {
+    return false;
+  }
+  if (match.chatId !== undefined && match.chatId !== query.chatId) {
+    return false;
+  }
+  if (match.handle !== undefined && !handleMatchesAny(match.handle, query.handles)) {
+    return false;
+  }
+  return true;
+}
+
+/// Case-insensitive handle comparison that ignores a leading `@`, so a config
+/// `@lukas` matches a telegram username `lukas` and vice versa.
+export function handleMatches(configured: string, actual: string): boolean {
+  return normalizeHandle(configured) === normalizeHandle(actual);
+}
+
+function handleMatchesAny(configured: string, actuals: readonly string[]): boolean {
+  return actuals.some((actual) => handleMatches(configured, actual));
+}
+
+/// True when none of the sender's handles appears in `allowFrom`, given
+/// `allowFrom`'s empty-means-anyone semantics. Used both for the turn gate and
+/// the control-command gate.
+export function handleDenied(allowFrom: readonly string[], handles: readonly string[]): boolean {
+  if (allowFrom.length === 0) {
+    return false;
+  }
+  return !allowFrom.some((entry) => handleMatchesAny(entry, handles));
+}
+
+function normalizeHandle(handle: string): string {
+  return handle.trim().toLowerCase().replace(/^@/, "");
+}
+
+export function parseRecipes(raw: unknown): Record<string, SessionRecipe> {
+  if (raw === undefined || raw === null) {
+    return {};
+  }
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("recipes must be an object keyed by recipe name");
+  }
+  const recipes: Record<string, SessionRecipe> = {};
+  for (const [name, value] of Object.entries(raw as Record<string, unknown>)) {
+    recipes[name] = parseRecipe(name, value);
+  }
+  return recipes;
+}
+
+function parseRecipe(name: string, raw: unknown): SessionRecipe {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new Error(`recipe "${name}" must be an object`);
+  }
+  const record = raw as Record<string, unknown>;
+  const recipe: SessionRecipe = {
+    mounts: parseMounts(name, record.mounts),
+    mcp: parseMcpLinks(name, record.mcp),
+  };
+  if (record.config !== undefined && record.config !== null) {
+    if (typeof record.config !== "object" || Array.isArray(record.config)) {
+      throw new Error(`recipe "${name}".config must be an object`);
+    }
+    recipe.config = record.config as SessionConfigInput;
+  }
+  return recipe;
+}
+
+function parseMounts(recipe: string, raw: unknown): RecipeMount[] {
+  if (raw === undefined || raw === null) {
+    return [];
+  }
+  if (!Array.isArray(raw)) {
+    throw new Error(`recipe "${recipe}".mounts must be an array`);
+  }
+  return raw.map((entry, index) => parseMount(recipe, index, entry));
+}
+
+function parseMount(recipe: string, index: number, raw: unknown): RecipeMount {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new Error(`recipe "${recipe}".mounts[${index}] must be an object`);
+  }
+  const record = raw as Record<string, unknown>;
+  const workspaceId = optionalString(record.workspaceId);
+  const snapshotRef = optionalString(record.snapshotRef);
+  const nestedSource = record.source as Record<string, unknown> | undefined;
+  const source =
+    workspaceId !== undefined
+      ? { workspaceId }
+      : snapshotRef !== undefined
+        ? { snapshotRef }
+        : nestedSource && optionalString(nestedSource.workspaceId) !== undefined
+          ? { workspaceId: optionalString(nestedSource.workspaceId) as string }
+          : nestedSource && optionalString(nestedSource.snapshotRef) !== undefined
+            ? { snapshotRef: optionalString(nestedSource.snapshotRef) as string }
+            : null;
+  if (!source) {
+    throw new Error(
+      `recipe "${recipe}".mounts[${index}] needs a workspaceId or snapshotRef`,
+    );
+  }
+  const access = optionalString(record.access);
+  if (access !== undefined && access !== "readOnly" && access !== "readWrite") {
+    throw new Error(
+      `recipe "${recipe}".mounts[${index}].access must be readOnly or readWrite`,
+    );
+  }
+  return {
+    mountPath: optionalString(record.mountPath) ?? DEFAULT_MOUNT_PATH,
+    source,
+    access: (access as VfsMountAccess | undefined) ?? DEFAULT_MOUNT_ACCESS,
+  };
+}
+
+function parseMcpLinks(recipe: string, raw: unknown): RecipeMcpLink[] {
+  if (raw === undefined || raw === null) {
+    return [];
+  }
+  if (!Array.isArray(raw)) {
+    throw new Error(`recipe "${recipe}".mcp must be an array`);
+  }
+  return raw.map((entry, index) => parseMcpLink(recipe, index, entry));
+}
+
+function parseMcpLink(recipe: string, index: number, raw: unknown): RecipeMcpLink {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new Error(`recipe "${recipe}".mcp[${index}] must be an object`);
+  }
+  const record = raw as Record<string, unknown>;
+  const serverId = optionalString(record.serverId);
+  if (serverId === undefined) {
+    throw new Error(`recipe "${recipe}".mcp[${index}] needs a serverId`);
+  }
+  const approval = optionalString(record.approval);
+  if (
+    approval !== undefined &&
+    approval !== "providerDefault" &&
+    approval !== "always" &&
+    approval !== "never"
+  ) {
+    throw new Error(
+      `recipe "${recipe}".mcp[${index}].approval must be providerDefault, always, or never`,
+    );
+  }
+  const allowedTools = record.allowedTools;
+  const link: RecipeMcpLink = { serverId };
+  const serverLabel = optionalString(record.serverLabel);
+  if (serverLabel !== undefined) link.serverLabel = serverLabel;
+  const toolId = optionalString(record.toolId);
+  if (toolId !== undefined) link.toolId = toolId;
+  if (Array.isArray(allowedTools)) {
+    link.allowedTools = allowedTools.map((tool) => String(tool));
+  }
+  if (approval !== undefined) link.approval = approval as RemoteMcpApprovalPolicy;
+  const authGrantId = optionalString(record.authGrantId);
+  if (authGrantId !== undefined) link.authGrantId = authGrantId;
+  if (typeof record.deferLoading === "boolean") link.deferLoading = record.deferLoading;
+  return link;
+}
+
+export function parseBindings(
+  raw: unknown,
+  recipes: Record<string, SessionRecipe>,
+): BindingRule[] {
+  if (raw === undefined || raw === null) {
+    return [];
+  }
+  if (!Array.isArray(raw)) {
+    throw new Error("bindings must be an array");
+  }
+  return raw.map((entry, index) => parseBinding(index, entry, recipes));
+}
+
+function parseBinding(
+  index: number,
+  raw: unknown,
+  recipes: Record<string, SessionRecipe>,
+): BindingRule {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new Error(`bindings[${index}] must be an object`);
+  }
+  const record = raw as Record<string, unknown>;
+  const match = record.match as Record<string, unknown> | undefined;
+  if (typeof match !== "object" || match === null || Array.isArray(match)) {
+    throw new Error(`bindings[${index}].match must be an object`);
+  }
+  const channel = optionalString(match.channel) ?? "*";
+  if (channel !== "telegram" && channel !== "whatsapp" && channel !== "*") {
+    throw new Error(`bindings[${index}].match.channel must be telegram, whatsapp, or *`);
+  }
+  const scope = optionalString(match.scope);
+  if (scope !== undefined && scope !== "direct" && scope !== "group") {
+    throw new Error(`bindings[${index}].match.scope must be direct or group`);
+  }
+  const recipe = optionalString(record.recipe);
+  if (recipe !== undefined && !(recipe in recipes)) {
+    throw new Error(`bindings[${index}].recipe "${recipe}" is not defined in recipes`);
+  }
+  const matchRule: BindingMatch = { channel };
+  const handle = optionalString(match.handle);
+  if (handle !== undefined) matchRule.handle = handle;
+  const chatId = optionalString(match.chatId);
+  if (chatId !== undefined) matchRule.chatId = chatId;
+  if (scope !== undefined) matchRule.scope = scope as BindingScope;
+  const rule: BindingRule = { match: matchRule };
+  if (recipe !== undefined) rule.recipe = recipe;
+  const sessionKey = optionalString(record.sessionKey);
+  if (sessionKey !== undefined) rule.sessionKey = sessionKey;
+  return rule;
+}
+
+function optionalString(value: unknown): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  const text = String(value).trim();
+  return text === "" ? undefined : text;
 }
 
 function csv(value: string | undefined, fallback: readonly string[] | undefined): string[] {

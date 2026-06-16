@@ -3,10 +3,9 @@ use std::{path::PathBuf, sync::Arc};
 use engine::{
     AgentHandle, BlobRef, CompactionPolicy, ContextCompactionStatus, ContextCompactionTrigger,
     ContextConfig, ContextEntryInput, ContextEntryKey, ContextEntryKind, ContextMessageRole,
-    ContextRemovalReason, CoreAgentCommand, CoreAgentEventKind,
-    ModelSelection, OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND,
-    ProviderApiKind, RunConfig, RunStatus, SessionConfig, SessionId,
-    TokenEstimate, TokenEstimateQuality, TurnConfig,
+    ContextRemovalReason, CoreAgentCommand, CoreAgentEventKind, ModelSelection,
+    OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, ProviderApiKind, RunConfig, RunStatus,
+    SessionConfig, SessionId, TokenEstimate, TokenEstimateQuality, TurnConfig,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
 };
 use llm_clients::openai::responses::{Client, Config};
@@ -408,11 +407,13 @@ fn session_config(model: ModelSelection) -> SessionConfig {
         turn: TurnConfig {
             max_output_tokens: Some(160),
             tool_choice: None,
-            provider_params: Some(support::openai_params(&llm_runtime::OpenAiResponsesParams {
-                store: Some(false),
-                stream: Some(false),
-                ..llm_runtime::OpenAiResponsesParams::default()
-            })),
+            provider_params: Some(support::openai_params(
+                &llm_runtime::OpenAiResponsesParams {
+                    store: Some(false),
+                    stream: Some(false),
+                    ..llm_runtime::OpenAiResponsesParams::default()
+                },
+            )),
         },
         context: ContextConfig {
             compaction: Some(CompactionPolicy::ProviderTriggered {
@@ -433,11 +434,13 @@ fn standalone_session_config(
         turn: TurnConfig {
             max_output_tokens: Some(160),
             tool_choice: None,
-            provider_params: Some(support::openai_params(&llm_runtime::OpenAiResponsesParams {
-                store: Some(false),
-                stream: Some(false),
-                ..llm_runtime::OpenAiResponsesParams::default()
-            })),
+            provider_params: Some(support::openai_params(
+                &llm_runtime::OpenAiResponsesParams {
+                    store: Some(false),
+                    stream: Some(false),
+                    ..llm_runtime::OpenAiResponsesParams::default()
+                },
+            )),
         },
         context: ContextConfig {
             compaction: Some(CompactionPolicy::ProviderStandalone {

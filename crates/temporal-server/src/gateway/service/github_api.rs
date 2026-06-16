@@ -35,10 +35,12 @@ pub(super) fn auth_provider_create_draft(
 ) -> Result<AuthProviderCreateDraft, AgentApiError> {
     let provider_id = match params.provider_id {
         Some(provider_id) => parse_auth_provider_id(provider_id)?,
-        None => auth_registry::AuthProviderId::try_new(auth_registry::random_auth_id(
-            "authprovider_",
-        ))
-        .map_err(|error| AgentApiError::internal(format!("generate auth provider id: {error}")))?,
+        None => {
+            auth_registry::AuthProviderId::try_new(auth_registry::random_auth_id("authprovider_"))
+                .map_err(|error| {
+                AgentApiError::internal(format!("generate auth provider id: {error}"))
+            })?
+        }
     };
 
     let (config, secret) = match params.config {
@@ -66,13 +68,12 @@ pub(super) fn auth_provider_create_draft(
                 value: private_key,
                 created_at_ms: now_ms,
             };
-            let config = auth_registry::AuthProviderConfig::GitHubApp(
-                auth_registry::GitHubAppConfig {
+            let config =
+                auth_registry::AuthProviderConfig::GitHubApp(auth_registry::GitHubAppConfig {
                     app_id,
                     api_base_url: api_base_url
                         .unwrap_or_else(|| auth_registry::DEFAULT_GITHUB_API_BASE_URL.to_owned()),
-                },
-            );
+                });
             (config, Some((secret_id, secret)))
         }
         api::AuthProviderConfigInput::ModelApiKey {} => {
@@ -112,9 +113,11 @@ pub(super) fn auth_provider_create_draft(
             let grant_id = auth_registry::AuthGrantId::try_new(grant_id).map_err(|error| {
                 AgentApiError::invalid_request(format!("invalid auth grant id: {error}"))
             })?;
-            let config = auth_registry::AuthProviderConfig::ModelOAuth(
-                auth_registry::ModelOAuthConfig { grant_id, audience },
-            );
+            let config =
+                auth_registry::AuthProviderConfig::ModelOAuth(auth_registry::ModelOAuthConfig {
+                    grant_id,
+                    audience,
+                });
             (config, None)
         }
     };
@@ -207,10 +210,9 @@ pub(super) fn github_installation_grant_draft(
             provider.provider_id
         )));
     };
-    let metadata =
-        auth_registry::GitHubInstallationGrantMetadata::from_installation(installation)
-            .to_json()
-            .map_err(map_auth_registry_error)?;
+    let metadata = auth_registry::GitHubInstallationGrantMetadata::from_installation(installation)
+        .to_json()
+        .map_err(map_auth_registry_error)?;
     let create = auth_registry::CreateAuthGrantRecord {
         grant_id,
         provider_id: provider.provider_id.as_str().to_owned(),

@@ -15,6 +15,30 @@ fn admission_failure_mapping_uses_gateway_error_kinds() {
             .kind,
         AgentApiErrorKind::Rejected
     );
+    assert_eq!(
+        map_admission_failure_to_api_error(&failure(
+            AgentAdmissionFailureKind::UnsupportedAudioMime
+        ))
+        .kind,
+        AgentApiErrorKind::UnsupportedAudioMime
+    );
+    assert_eq!(
+        map_admission_failure_to_api_error(&failure(AgentAdmissionFailureKind::AudioBlobMissing))
+            .kind,
+        AgentApiErrorKind::InvalidRequest
+    );
+    assert_eq!(
+        map_admission_failure_to_api_error(&failure(
+            AgentAdmissionFailureKind::TranscriptionFailure
+        ))
+        .kind,
+        AgentApiErrorKind::TranscriptionFailure
+    );
+    assert_eq!(
+        map_admission_failure_to_api_error(&failure(AgentAdmissionFailureKind::TranscodeFailure))
+            .kind,
+        AgentApiErrorKind::TranscodeFailure
+    );
 }
 
 #[test]
@@ -225,9 +249,12 @@ fn mcp_link_with_grant_materializes_auth_ref_for_bearer_server() {
         Some("https://crm.example.com"),
     );
 
-    let draft =
-        session_mcp_link_from_record(mcp_link_params_with_grant("authgrant_1"), &record, Some(&grant))
-            .expect("materialize MCP link draft with grant");
+    let draft = session_mcp_link_from_record(
+        mcp_link_params_with_grant("authgrant_1"),
+        &record,
+        Some(&grant),
+    )
+    .expect("materialize MCP link draft with grant");
 
     assert_eq!(
         draft.spec.auth_ref,
@@ -249,9 +276,12 @@ fn mcp_link_rejects_revoked_grant() {
         None,
     );
 
-    let error =
-        session_mcp_link_from_record(mcp_link_params_with_grant("authgrant_1"), &record, Some(&grant))
-            .expect_err("revoked grant must be rejected");
+    let error = session_mcp_link_from_record(
+        mcp_link_params_with_grant("authgrant_1"),
+        &record,
+        Some(&grant),
+    )
+    .expect_err("revoked grant must be rejected");
 
     assert_eq!(error.kind, api::AgentApiErrorKind::Rejected);
 }
@@ -272,9 +302,12 @@ fn mcp_link_rejects_grant_kind_incompatible_with_auth_policy() {
         None,
     );
 
-    let error =
-        session_mcp_link_from_record(mcp_link_params_with_grant("authgrant_1"), &record, Some(&grant))
-            .expect_err("bearer grant must not satisfy OAuth policy");
+    let error = session_mcp_link_from_record(
+        mcp_link_params_with_grant("authgrant_1"),
+        &record,
+        Some(&grant),
+    )
+    .expect_err("bearer grant must not satisfy OAuth policy");
 
     assert_eq!(error.kind, api::AgentApiErrorKind::Rejected);
 }
@@ -290,9 +323,12 @@ fn mcp_link_rejects_grant_audience_that_does_not_cover_server() {
         Some("https://other.example.com"),
     );
 
-    let error =
-        session_mcp_link_from_record(mcp_link_params_with_grant("authgrant_1"), &record, Some(&grant))
-            .expect_err("audience mismatch must be rejected");
+    let error = session_mcp_link_from_record(
+        mcp_link_params_with_grant("authgrant_1"),
+        &record,
+        Some(&grant),
+    )
+    .expect_err("audience mismatch must be rejected");
 
     assert_eq!(error.kind, api::AgentApiErrorKind::Rejected);
 }
@@ -307,9 +343,12 @@ fn mcp_link_rejects_grant_for_no_auth_server() {
         None,
     );
 
-    let error =
-        session_mcp_link_from_record(mcp_link_params_with_grant("authgrant_1"), &record, Some(&grant))
-            .expect_err("grant on no-auth server must be rejected");
+    let error = session_mcp_link_from_record(
+        mcp_link_params_with_grant("authgrant_1"),
+        &record,
+        Some(&grant),
+    )
+    .expect_err("grant on no-auth server must be rejected");
 
     assert_eq!(error.kind, api::AgentApiErrorKind::InvalidRequest);
 }
@@ -652,6 +691,35 @@ fn run_start_config_maps_tool_choice() {
 }
 
 #[test]
+fn existing_run_submission_rejects_completed_duplicate_with_different_input() {
+    let submission_id = SubmissionId::new("submit_retry");
+    let run_config = RunConfig::default();
+    let original_input = vec![test_user_message_input(BlobRef::from_bytes(b"original"))];
+    let changed_input = vec![test_user_message_input(BlobRef::from_bytes(b"changed"))];
+    let mut state = engine::CoreAgentState::new();
+    state.runs.completed.push(engine::RunRecord {
+        run_id: RunId::new(7),
+        status: RunStatus::Completed,
+        submission_id: Some(submission_id.clone()),
+        submission_digest: Some(run_submission_digest(&original_input, &run_config)),
+        output_ref: None,
+        failure: None,
+    });
+
+    assert!(matches!(
+        existing_run_submission(&state, &submission_id, &changed_input, &run_config),
+        Some(ExistingRunSubmission::Reject)
+    ));
+    let Some(ExistingRunSubmission::ReturnRun { run_id, status }) =
+        existing_run_submission(&state, &submission_id, &original_input, &run_config)
+    else {
+        panic!("identical duplicate should return existing completed run");
+    };
+    assert_eq!(run_id, RunId::new(7));
+    assert_eq!(status, RunStatus::Completed);
+}
+
+#[test]
 fn web_search_defaults_on_for_openai_responses_sessions() {
     let config = default_session_config(openai_model());
 
@@ -933,6 +1001,32 @@ async fn run_input_from_api_rejects_unsupported_document_media() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn run_input_from_api_maps_audio_media_to_user_message_entry() {
+    let store = engine::storage::InMemoryBlobStore::new();
+    let blob_ref = store
+        .put_bytes(b"OggS fake voice note".to_vec())
+        .await
+        .expect("store audio");
+
+    let input = run_input_from_api(
+        &store,
+        &[InputItem::Media {
+            blob_ref: blob_ref.as_str().to_owned(),
+            mime: "audio/ogg".to_owned(),
+            kind: api::MediaKind::Audio,
+            name: Some("voice.ogg".to_owned()),
+        }],
+    )
+    .await
+    .expect("input");
+
+    assert_eq!(input.len(), 1);
+    assert_eq!(input[0].content_ref, blob_ref);
+    assert_eq!(input[0].media_type.as_deref(), Some("audio/ogg"));
+    assert_eq!(input[0].preview.as_deref(), Some("[audio: voice.ogg]"));
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn run_input_from_api_rejects_unsupported_media() {
     let store = engine::storage::InMemoryBlobStore::new();
     let blob_ref = store.put_bytes(vec![1, 2, 3]).await.expect("store blob");
@@ -941,14 +1035,14 @@ async fn run_input_from_api_rejects_unsupported_media() {
         &store,
         &[InputItem::Media {
             blob_ref: blob_ref.as_str().to_owned(),
-            mime: "audio/ogg".to_owned(),
+            mime: "audio/flac".to_owned(),
             kind: api::MediaKind::Audio,
             name: None,
         }],
     )
     .await
-    .expect_err("audio must be rejected");
-    assert_eq!(audio.kind, AgentApiErrorKind::InvalidRequest);
+    .expect_err("unsupported audio mime must be rejected");
+    assert_eq!(audio.kind, AgentApiErrorKind::UnsupportedAudioMime);
 
     let bad_mime = run_input_from_api(
         &store,
@@ -962,6 +1056,70 @@ async fn run_input_from_api_rejects_unsupported_media() {
     .await
     .expect_err("unsupported image mime must be rejected");
     assert_eq!(bad_mime.kind, AgentApiErrorKind::InvalidRequest);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn run_input_from_api_accepts_transcodable_audio_media() {
+    let store = engine::storage::InMemoryBlobStore::new();
+    let blob_ref = store.put_bytes(vec![1, 2, 3]).await.expect("store blob");
+
+    let input = run_input_from_api(
+        &store,
+        &[InputItem::Media {
+            blob_ref: blob_ref.as_str().to_owned(),
+            mime: "audio/x-aac".to_owned(),
+            kind: api::MediaKind::Audio,
+            name: Some("clip.aac".to_owned()),
+        }],
+    )
+    .await
+    .expect("transcodable audio should be admitted");
+
+    assert_eq!(input[0].content_ref, blob_ref);
+    assert_eq!(input[0].media_type.as_deref(), Some("audio/aac"));
+    assert_eq!(input[0].preview.as_deref(), Some("[audio: clip.aac]"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn run_input_from_api_rejects_audio_over_byte_cap() {
+    let store = engine::storage::InMemoryBlobStore::new();
+    let blob_ref = store
+        .put_bytes(vec![0; 25 * 1024 * 1024 + 1])
+        .await
+        .expect("store large audio");
+
+    let error = run_input_from_api(
+        &store,
+        &[InputItem::Media {
+            blob_ref: blob_ref.as_str().to_owned(),
+            mime: "audio/ogg".to_owned(),
+            kind: api::MediaKind::Audio,
+            name: None,
+        }],
+    )
+    .await
+    .expect_err("oversized audio must be rejected");
+
+    assert_eq!(error.kind, AgentApiErrorKind::AudioBlobTooLarge);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn run_input_from_api_rejects_missing_audio_blob() {
+    let store = engine::storage::InMemoryBlobStore::new();
+
+    let error = run_input_from_api(
+        &store,
+        &[InputItem::Media {
+            blob_ref: BlobRef::from_bytes(b"missing-audio").as_str().to_owned(),
+            mime: "audio/ogg".to_owned(),
+            kind: api::MediaKind::Audio,
+            name: None,
+        }],
+    )
+    .await
+    .expect_err("missing audio blob must be rejected");
+
+    assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -1167,6 +1325,20 @@ fn openai_model() -> ModelSelection {
         api_kind: ProviderApiKind::OpenAiResponses,
         provider_id: "openai".to_owned(),
         model: "gpt-5.5".to_owned(),
+    }
+}
+
+fn test_user_message_input(content_ref: BlobRef) -> ContextEntryInput {
+    ContextEntryInput {
+        kind: engine::ContextEntryKind::Message {
+            role: engine::ContextMessageRole::User,
+        },
+        content_ref,
+        media_type: Some("text/plain".to_owned()),
+        preview: None,
+        provider_kind: None,
+        provider_item_id: None,
+        token_estimate: None,
     }
 }
 

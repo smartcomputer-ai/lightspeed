@@ -180,12 +180,8 @@ async fn run_both(args: BothArgs) -> anyhow::Result<()> {
     .await?;
     let store = pg_store_from_env().await?;
     let activities = WorkerActivities::from_pg_store_with_default_runtime(store.clone())?;
-    let mut temporal_worker = worker::worker_with_activities(
-        &runtime,
-        client.clone(),
-        task_queue.clone(),
-        activities,
-    )?;
+    let mut temporal_worker =
+        worker::worker_with_activities(&runtime, client.clone(), task_queue.clone(), activities)?;
     let shutdown_worker = temporal_worker.shutdown_handle();
     let worker_future = temporal_worker.run();
     tokio::pin!(worker_future);

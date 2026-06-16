@@ -110,12 +110,13 @@ impl ProviderKeyResolver for StoredProviderKeyResolver {
         &self,
         provider_id: &str,
     ) -> Result<Option<ResolvedProviderAuth>, ProviderKeyError> {
-        let row_id = AuthProviderId::try_new(model_auth_provider_id(provider_id)).map_err(
-            |error| ProviderKeyError::Backend {
-                provider_id: provider_id.to_owned(),
-                message: format!("invalid model auth provider id: {error}"),
-            },
-        )?;
+        let row_id =
+            AuthProviderId::try_new(model_auth_provider_id(provider_id)).map_err(|error| {
+                ProviderKeyError::Backend {
+                    provider_id: provider_id.to_owned(),
+                    message: format!("invalid model auth provider id: {error}"),
+                }
+            })?;
         let record = match self.providers.read_auth_provider(&row_id).await {
             Ok(record) => record,
             Err(AuthRegistryError::ProviderNotFound { .. }) => return Ok(None),
@@ -140,13 +141,12 @@ impl ProviderKeyResolver for StoredProviderKeyResolver {
                         message: format!("auth provider {row_id} has no credential secret"),
                     });
                 };
-                let (_, value) =
-                    self.secrets.read_secret(secret_id).await.map_err(|error| {
-                        ProviderKeyError::Backend {
-                            provider_id: provider_id.to_owned(),
-                            message: format!("read credential secret: {error}"),
-                        }
-                    })?;
+                let (_, value) = self.secrets.read_secret(secret_id).await.map_err(|error| {
+                    ProviderKeyError::Backend {
+                        provider_id: provider_id.to_owned(),
+                        message: format!("read credential secret: {error}"),
+                    }
+                })?;
                 Ok(Some(ResolvedProviderAuth::api_key(value.expose())))
             }
             AuthProviderConfig::ModelOAuth(config) => {

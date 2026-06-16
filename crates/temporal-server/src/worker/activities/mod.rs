@@ -7,23 +7,32 @@ use temporalio_sdk::activities::{ActivityContext, ActivityError};
 
 use crate::worker::{
     ACTIVITY_APPEND_EVENTS, ACTIVITY_CONTEXT_COMPACT, ACTIVITY_CREATE_OR_LOAD_SESSION,
-    ACTIVITY_LLM_GENERATE, ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB, ACTIVITY_SKILL_CATALOG_REFRESH,
-    ACTIVITY_TOOL_INVOKE_BATCH, AppendEventsRequest, ContextCompactActivityRequest,
-    CreateOrLoadSessionRequest, CreateOrLoadSessionResult, LlmGenerateActivityRequest,
-    PutBlobRequest, ReadBlobRequest, ReadBlobResult, SkillCatalogRefreshActivityRequest,
-    SkillCatalogRefreshActivityResult, ToolInvokeBatchActivityRequest,
+    ACTIVITY_LLM_GENERATE, ACTIVITY_PREPROCESS_RUN_INPUT, ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB,
+    ACTIVITY_SKILL_CATALOG_REFRESH, ACTIVITY_TOOL_INVOKE_BATCH, AppendEventsRequest,
+    ContextCompactActivityRequest, CreateOrLoadSessionRequest, CreateOrLoadSessionResult,
+    LlmGenerateActivityRequest, PreprocessRunInputActivityRequest,
+    PreprocessRunInputActivityResult, PutBlobRequest, ReadBlobRequest, ReadBlobResult,
+    SkillCatalogRefreshActivityRequest, SkillCatalogRefreshActivityResult,
+    ToolInvokeBatchActivityRequest,
 };
 
 mod common;
 mod compaction;
 mod llm;
+mod preprocess;
 mod skills;
 mod state;
 mod storage;
 mod tools;
 
+pub use preprocess::{
+    AudioTranscodeError, AudioTranscodeOutput, AudioTranscodeRequest, AudioTranscoder,
+    AudioTranscriber, AudioTranscription, AudioTranscriptionError, AudioTranscriptionRequest,
+    FfmpegAudioTranscoder,
+};
 pub use state::{
-    ActivityState, LlmActivityDeps, SkillCatalogActivityDeps, StorageActivityDeps, ToolActivityDeps,
+    ActivityState, LlmActivityDeps, PreprocessActivityDeps, SkillCatalogActivityDeps,
+    StorageActivityDeps, ToolActivityDeps,
 };
 
 pub struct WorkerActivities {
@@ -54,8 +63,8 @@ mod tests {
 
     use engine::{
         ContextSnapshot, CoreAgentLlm, CoreAgentTools, LlmGenerationRequest, LlmRequest,
-        ModelSelection, ProviderApiKind, RunId, SessionId, ToolBatchId,
-        ToolCallStatus, ToolInvocationBatchRequest, ToolInvocationRequest, TurnId,
+        ModelSelection, ProviderApiKind, RunId, SessionId, ToolBatchId, ToolCallStatus,
+        ToolInvocationBatchRequest, ToolInvocationRequest, TurnId,
         storage::{BlobStore, InMemoryBlobStore, InMemorySessionStore, SessionStore},
     };
 
@@ -84,6 +93,10 @@ mod tests {
         assert_eq!(
             WorkerActivities::llm_generate.name(),
             temporal_workflow::WorkflowActivities::llm_generate.name()
+        );
+        assert_eq!(
+            WorkerActivities::preprocess_run_input.name(),
+            temporal_workflow::WorkflowActivities::preprocess_run_input.name()
         );
         assert_eq!(
             WorkerActivities::context_compact.name(),
@@ -234,6 +247,15 @@ impl WorkerActivities {
         request: LlmGenerateActivityRequest,
     ) -> Result<LlmGenerationResult, ActivityError> {
         llm::generate(self.state.llm(), request).await
+    }
+
+    #[activity(name = ACTIVITY_PREPROCESS_RUN_INPUT)]
+    pub async fn preprocess_run_input(
+        self: Arc<Self>,
+        _ctx: ActivityContext,
+        request: PreprocessRunInputActivityRequest,
+    ) -> Result<PreprocessRunInputActivityResult, ActivityError> {
+        preprocess::preprocess_run_input(self.state.preprocess(), request).await
     }
 
     #[activity(name = ACTIVITY_CONTEXT_COMPACT)]

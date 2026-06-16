@@ -76,9 +76,7 @@ pub(super) fn auth_client_create_draft(
         authorization_endpoint: params.authorization_endpoint,
         token_endpoint: params.token_endpoint,
         remote_client_id: params.remote_client_id,
-        client_secret: secret
-            .as_ref()
-            .map(|secret| secret.secret_id.clone()),
+        client_secret: secret.as_ref().map(|secret| secret.secret_id.clone()),
         token_endpoint_auth_method: auth_method,
         scopes_default: params.scopes_default,
         audience: params.audience,

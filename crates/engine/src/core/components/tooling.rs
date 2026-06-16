@@ -36,6 +36,7 @@ pub enum Event {
         run_id: RunId,
         turn_id: TurnId,
         batch_id: ToolBatchId,
+        toolset_revision: u64,
         calls: Vec<ObservedToolCall>,
     },
     CallStarted {
@@ -117,6 +118,20 @@ impl PlanNext for CoreToolPlanner {
             if facts.tool_calls.is_empty() {
                 continue;
             }
+            let Some(planned) = turn.planned_request.as_ref() else {
+                return Err(DomainError::InvariantViolation(format!(
+                    "tool-call turn {} is missing planned request metadata",
+                    turn_id
+                ))
+                .into());
+            };
+            if planned.toolset_revision != state.tooling.revision {
+                return Err(DomainError::InvariantViolation(format!(
+                    "planned toolset revision {} does not match active revision {}",
+                    planned.toolset_revision, state.tooling.revision
+                ))
+                .into());
+            }
 
             let next_batch_id = state
                 .id_cursors
@@ -138,6 +153,7 @@ impl PlanNext for CoreToolPlanner {
                     run_id: active_run.run_id,
                     turn_id: *turn_id,
                     batch_id,
+                    toolset_revision: planned.toolset_revision,
                     calls: facts.tool_calls.clone(),
                 }),
             )]);
@@ -756,8 +772,15 @@ pub struct CompletedToolBatch {
 pub struct ToolCallState {
     pub call: ObservedToolCall,
     pub status: ToolCallStatus,
+    pub execution_policy: Option<ToolCallExecutionPolicy>,
     pub execution_target: Option<ToolExecutionTarget>,
     pub result: Option<ToolCallResult>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolCallExecutionPolicy {
+    pub invokes_client_effect: bool,
+    pub target_requirement: ToolTargetRequirement,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -856,19 +879,22 @@ fn decide_active_tool_batch_invocations(
         if call_state.status != ToolCallStatus::Accepted {
             continue;
         }
-        let Some(tool) =
-            planned_tool_for_turn(active_run, batch.turn_id, &call_state.call.tool_name)
-        else {
+        let Some(policy) = call_state.execution_policy.as_ref() else {
             return Err(DomainError::InvariantViolation(format!(
-                "accepted tool call references missing tool {}",
-                call_state.call.tool_name
+                "accepted tool call {} is missing execution policy",
+                call_state.call.call_id
             ))
             .into());
         };
-        if !tool.invokes_client_effect() {
-            continue;
+        if !policy.invokes_client_effect {
+            return Err(DomainError::InvariantViolation(format!(
+                "accepted tool call {} does not invoke a client effect",
+                call_state.call.call_id
+            ))
+            .into());
         }
-        let execution_target = resolve_tool_execution_target(state, &tool)?;
+        let execution_target =
+            resolve_tool_execution_target(state, &call_state.call.tool_name, policy)?;
 
         let joins = CoreAgentJoins {
             run_id: Some(batch.run_id),
@@ -990,10 +1016,11 @@ fn tool_result_context_entries(
 
 fn resolve_tool_execution_target(
     state: &CoreAgentState,
-    tool: &ToolSpec,
+    tool_name: &ToolName,
+    policy: &ToolCallExecutionPolicy,
 ) -> Result<Option<ToolExecutionTarget>, PlanningError> {
-    tool.target_requirement.validate()?;
-    match &tool.target_requirement {
+    policy.target_requirement.validate()?;
+    match &policy.target_requirement {
         ToolTargetRequirement::None => Ok(None),
         ToolTargetRequirement::Optional { namespace } => Ok(state
             .tooling
@@ -1011,7 +1038,7 @@ fn resolve_tool_execution_target(
             .ok_or_else(|| {
                 DomainError::InvariantViolation(format!(
                     "tool {} requires default execution target namespace {}",
-                    tool.name, namespace
+                    tool_name, namespace
                 ))
                 .into()
             }),
@@ -1024,6 +1051,7 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
             run_id,
             turn_id,
             batch_id,
+            toolset_revision,
             calls,
         } => {
             if calls.is_empty() {
@@ -1043,6 +1071,20 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
                 return Err(DomainError::InvariantViolation(format!(
                     "expected tool batch id {}, got {}",
                     expected_batch_id, batch_id
+                )));
+            }
+            let planned_toolset_revision =
+                planned_toolset_revision_for_turn(state, *run_id, *turn_id)?;
+            if *toolset_revision != planned_toolset_revision {
+                return Err(DomainError::InvariantViolation(format!(
+                    "tool batch toolset revision {} does not match planned revision {}",
+                    toolset_revision, planned_toolset_revision
+                )));
+            }
+            if *toolset_revision != state.tooling.revision {
+                return Err(DomainError::InvariantViolation(format!(
+                    "tool batch toolset revision {} does not match active revision {}",
+                    toolset_revision, state.tooling.revision
                 )));
             }
             let call_states = calls
@@ -1231,7 +1273,12 @@ fn initial_tool_call_state(
     turn_id: TurnId,
     call: &ObservedToolCall,
 ) -> ToolCallState {
-    let status = initial_tool_call_status(state, turn_id, call);
+    let execution_policy = initial_tool_call_execution_policy(state, turn_id, call);
+    let status = if execution_policy.is_some() {
+        ToolCallStatus::Accepted
+    } else {
+        ToolCallStatus::Unavailable
+    };
     let result = if status == ToolCallStatus::Unavailable {
         Some(unavailable_tool_result(call))
     } else {
@@ -1240,27 +1287,25 @@ fn initial_tool_call_state(
     ToolCallState {
         call: call.clone(),
         status,
+        execution_policy,
         execution_target: None,
         result,
     }
 }
 
-fn initial_tool_call_status(
+fn initial_tool_call_execution_policy(
     state: &CoreAgentState,
     turn_id: TurnId,
     call: &ObservedToolCall,
-) -> ToolCallStatus {
-    let Some(active_run) = state.runs.active.as_ref() else {
-        return ToolCallStatus::Unavailable;
-    };
-    let Some(tool) = planned_tool_for_turn(active_run, turn_id, &call.tool_name) else {
-        return ToolCallStatus::Unavailable;
+) -> Option<ToolCallExecutionPolicy> {
+    let Some(tool) = planned_tool_for_turn(state, turn_id, &call.tool_name) else {
+        return None;
     };
     if !tool.invokes_client_effect() {
-        return ToolCallStatus::Unavailable;
+        return None;
     }
     if tool.target_requirement.validate().is_err() {
-        return ToolCallStatus::Unavailable;
+        return None;
     }
     if let Some(namespace) = required_target_namespace(&tool.target_requirement) {
         if !state
@@ -1269,10 +1314,13 @@ fn initial_tool_call_status(
             .default_targets
             .contains_key(namespace)
         {
-            return ToolCallStatus::Unavailable;
+            return None;
         }
     }
-    ToolCallStatus::Accepted
+    Some(ToolCallExecutionPolicy {
+        invokes_client_effect: true,
+        target_requirement: tool.target_requirement,
+    })
 }
 
 fn required_target_namespace(requirement: &ToolTargetRequirement) -> Option<&str> {
@@ -1283,17 +1331,35 @@ fn required_target_namespace(requirement: &ToolTargetRequirement) -> Option<&str
 }
 
 fn planned_tool_for_turn(
-    active_run: &ActiveRun,
+    state: &CoreAgentState,
     turn_id: TurnId,
     tool_name: &ToolName,
 ) -> Option<ToolSpec> {
+    let active_run = state.runs.active.as_ref()?;
     let turn = active_run.turns.get(&turn_id)?;
-    let request = turn.request.as_ref()?;
-    request
-        .tools
-        .iter()
-        .find(|tool| &tool.name == tool_name)
-        .cloned()
+    let planned = turn.planned_request.as_ref()?;
+    if planned.toolset_revision != state.tooling.revision {
+        return None;
+    }
+    state.tooling.tools.get(tool_name).cloned()
+}
+
+fn planned_toolset_revision_for_turn(
+    state: &CoreAgentState,
+    run_id: RunId,
+    turn_id: TurnId,
+) -> Result<u64, DomainError> {
+    let active_run = crate::core::components::run::active_run_ref(state, run_id)?;
+    let turn = active_run.turns.get(&turn_id).ok_or_else(|| {
+        DomainError::InvariantViolation(format!("tool batch turn {} is missing", turn_id))
+    })?;
+    let planned = turn.planned_request.as_ref().ok_or_else(|| {
+        DomainError::InvariantViolation(format!(
+            "tool batch turn {} is missing planned request metadata",
+            turn_id
+        ))
+    })?;
+    Ok(planned.toolset_revision)
 }
 
 /// Model-visible content for tool calls the engine marks unavailable.
@@ -1404,21 +1470,23 @@ fn start_tool_call(
     arguments_ref: &BlobRef,
     execution_target: Option<&ToolExecutionTarget>,
 ) -> Result<(), DomainError> {
-    let tool = {
+    let policy = {
         let active_run = crate::core::components::run::active_run_ref(state, run_id)?;
-        planned_tool_for_turn(active_run, turn_id, tool_name).ok_or_else(|| {
-            DomainError::InvariantViolation(format!(
-                "tool call start references tool {} missing from planned request",
-                tool_name
-            ))
-        })?
+        tool_call_execution_policy_for_start(
+            active_run,
+            turn_id,
+            batch_id,
+            call_id,
+            tool_name,
+            arguments_ref,
+        )?
     };
-    if !tool.invokes_client_effect() {
+    if !policy.invokes_client_effect {
         return Err(DomainError::InvariantViolation(
             "tool call start requires a client-effect tool".into(),
         ));
     }
-    validate_tool_execution_target_for_requirement(&tool.target_requirement, execution_target)?;
+    validate_tool_execution_target_for_requirement(&policy.target_requirement, execution_target)?;
 
     let active_run = crate::core::components::run::active_run_mut(state, run_id)?;
     if active_run.status != RunStatus::Active {
@@ -1472,6 +1540,60 @@ fn start_tool_call(
     call_state.status = ToolCallStatus::Pending;
     call_state.execution_target = execution_target.cloned();
     Ok(())
+}
+
+fn tool_call_execution_policy_for_start(
+    active_run: &ActiveRun,
+    turn_id: TurnId,
+    batch_id: ToolBatchId,
+    call_id: &ToolCallId,
+    tool_name: &ToolName,
+    arguments_ref: &BlobRef,
+) -> Result<ToolCallExecutionPolicy, DomainError> {
+    if active_run.active_tool_batch_id != Some(batch_id) {
+        return Err(DomainError::InvariantViolation(
+            "tool call start does not match active tool batch".into(),
+        ));
+    }
+    let batch = active_run.tool_batches.get(&batch_id).ok_or_else(|| {
+        DomainError::InvariantViolation(format!("tool batch {} is missing", batch_id))
+    })?;
+    if batch.turn_id != turn_id {
+        return Err(DomainError::InvariantViolation(
+            "tool call start does not match tool batch turn".into(),
+        ));
+    }
+    let call_state = batch
+        .calls
+        .iter()
+        .find(|call_state| call_state.call.call_id == *call_id)
+        .ok_or_else(|| {
+            DomainError::InvariantViolation(format!(
+                "tool call start references missing call {}",
+                call_id
+            ))
+        })?;
+    if call_state.call.tool_name != *tool_name || call_state.call.arguments_ref != *arguments_ref {
+        return Err(DomainError::InvariantViolation(
+            "tool call start does not match accepted call".into(),
+        ));
+    }
+    if call_state.status != ToolCallStatus::Accepted {
+        return Err(DomainError::InvariantViolation(
+            "tool call can only start from accepted state".into(),
+        ));
+    }
+    if call_state.result.is_some() {
+        return Err(DomainError::InvariantViolation(
+            "tool call already has a result".into(),
+        ));
+    }
+    call_state.execution_policy.clone().ok_or_else(|| {
+        DomainError::InvariantViolation(format!(
+            "accepted tool call {} is missing execution policy",
+            call_id
+        ))
+    })
 }
 
 fn complete_tool_call(

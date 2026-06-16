@@ -12,6 +12,27 @@ pub(super) fn map_admission_failure_to_api_error(failure: &AgentAdmissionFailure
         AgentAdmissionFailureKind::RejectedCommand => {
             AgentApiError::rejected(failure.message.clone())
         }
+        AgentAdmissionFailureKind::UnsupportedAudioMime => {
+            AgentApiError::unsupported_audio_mime(failure.message.clone())
+        }
+        AgentAdmissionFailureKind::AudioBlobMissing => {
+            AgentApiError::invalid_request(failure.message.clone())
+        }
+        AgentAdmissionFailureKind::AudioBlobTooLarge => {
+            AgentApiError::audio_blob_too_large(failure.message.clone())
+        }
+        AgentAdmissionFailureKind::AudioDurationTooLong => {
+            AgentApiError::audio_duration_too_long(failure.message.clone())
+        }
+        AgentAdmissionFailureKind::TranscoderUnavailable => {
+            AgentApiError::transcoder_unavailable(failure.message.clone())
+        }
+        AgentAdmissionFailureKind::TranscodeFailure => {
+            AgentApiError::transcode_failure(failure.message.clone())
+        }
+        AgentAdmissionFailureKind::TranscriptionFailure => {
+            AgentApiError::transcription_failure(failure.message.clone())
+        }
     }
 }
 

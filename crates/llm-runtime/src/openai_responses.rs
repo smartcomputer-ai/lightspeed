@@ -21,8 +21,8 @@ use crate::{
     error::{LlmAdapterError, LlmAdapterResult},
     executor::{LlmCompactionAdapter, LlmGenerationAdapter},
     params::openai_responses_params,
-    result::LlmGenerationExecution,
     provider_keys::{NoStoredProviderKeys, ProviderKeyResolver, resolve_stored_provider_key},
+    result::LlmGenerationExecution,
     secrets::{REDACTED_SECRET_PLACEHOLDER, SecretResolver, UnconfiguredSecretResolver},
 };
 
@@ -90,7 +90,10 @@ impl OpenAiResponsesLlmAdapter {
         self
     }
 
-    pub fn with_provider_key_resolver(mut self, provider_keys: Arc<dyn ProviderKeyResolver>) -> Self {
+    pub fn with_provider_key_resolver(
+        mut self,
+        provider_keys: Arc<dyn ProviderKeyResolver>,
+    ) -> Self {
         self.provider_keys = provider_keys;
         self
     }
@@ -344,13 +347,11 @@ async fn materialize_input_item(
                 let data = crate::blob_io::read_base64(blobs, &item.content_ref).await?;
                 return Ok(oai::ResponseInputItem::Message(oai::InputMessage {
                     role,
-                    content: oai::InputMessageContent::Parts(vec![
-                        oai::InputContent::InputImage {
-                            r#type: oai::InputImageContentType::InputImage,
-                            image_url: format!("data:{mime};base64,{data}"),
-                            detail: None,
-                        },
-                    ]),
+                    content: oai::InputMessageContent::Parts(vec![oai::InputContent::InputImage {
+                        r#type: oai::InputImageContentType::InputImage,
+                        image_url: format!("data:{mime};base64,{data}"),
+                        detail: None,
+                    }]),
                     extra: Default::default(),
                 }));
             }
@@ -407,7 +408,8 @@ async fn materialize_input_item(
                 .to_owned(),
         }),
         ContextEntryKind::SkillCatalog => {
-            let catalog = crate::skill_prompts::read_skill_catalog(blobs, &item.content_ref).await?;
+            let catalog =
+                crate::skill_prompts::read_skill_catalog(blobs, &item.content_ref).await?;
             Ok(oai::ResponseInputItem::Message(oai::InputMessage {
                 role: oai::MessageRole::Developer,
                 content: oai::InputMessageContent::Text(crate::skill_prompts::skill_catalog_text(
@@ -1103,15 +1105,14 @@ mod tests {
     use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
 
+    use engine::SkillId;
     use engine::{
         ContextCompactionTask, ContextEntryId, ContextEntrySource, ContextSnapshot, CoreAgentLlm,
-        FunctionToolSpec, LlmGenerationRequest, LlmRequest, ModelSelection,
-        ProviderParams, RunId, SessionId, ToolExecutionTarget, ToolParallelism, TurnId,
-        storage::InMemoryBlobStore,
+        FunctionToolSpec, LlmGenerationRequest, LlmRequest, ModelSelection, ProviderParams, RunId,
+        SessionId, ToolExecutionTarget, ToolParallelism, TurnId, storage::InMemoryBlobStore,
     };
     use llm_clients::HeaderSnapshot;
     use serde_json::json;
-    use engine::SkillId;
     use tools::skills::{
         SKILL_CATALOG_SCHEMA_VERSION, SkillCatalogSnapshot, SkillDependencies, SkillLocation,
         SkillMetadata, SkillScope, SkillSource, SkillTrustLevel,
@@ -1394,9 +1395,7 @@ mod tests {
         });
         request.output_limit = Some(1024);
         request.params = Some(openai_params(&OpenAiResponsesParams {
-            include: vec![
-                crate::params::OPENAI_RESPONSES_WEB_SEARCH_SOURCES_INCLUDE.to_string(),
-            ],
+            include: vec![crate::params::OPENAI_RESPONSES_WEB_SEARCH_SOURCES_INCLUDE.to_string()],
             store: Some(false),
             ..OpenAiResponsesParams::default()
         }));
@@ -2385,7 +2384,10 @@ mod tests {
         assert_eq!(value["role"], json!("user"));
         assert_eq!(value["content"][0]["type"], json!("input_image"));
         assert_eq!(value["content"][1]["type"], json!("input_text"));
-        assert_eq!(value["content"][1]["text"], json!("what is in this picture?"));
+        assert_eq!(
+            value["content"][1]["text"],
+            json!("what is in this picture?")
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -2421,7 +2423,9 @@ mod tests {
         let value = serde_json::to_value(&input[0]).expect("serialize message");
         assert_eq!(value["content"][0]["type"], json!("input_file"));
         assert_eq!(value["content"][0]["filename"], json!("offer.pdf"));
-        let file_data = value["content"][0]["file_data"].as_str().expect("file data");
+        let file_data = value["content"][0]["file_data"]
+            .as_str()
+            .expect("file data");
         assert!(file_data.starts_with("data:application/pdf;base64,"));
     }
 

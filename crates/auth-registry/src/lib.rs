@@ -111,19 +111,14 @@ pub use broker::{
     AuthBrokerError, AuthTokenBroker, DEFAULT_REFRESH_EXPIRY_MARGIN_MS, GrantTokenSource,
     OAuthRefreshRuntime, RegistryTokenBroker, TokenAudience, audience_covers,
 };
+pub use flow::{
+    AuthCallback, DEFAULT_AUTH_FLOW_TTL_MS, OAuthFlowService, StartAuthFlow, StartedAuthFlow,
+};
 pub use github::{
     DEFAULT_GITHUB_API_BASE_URL, GitHubApiClient, GitHubAppError, GitHubAppRuntime,
     GitHubInstallation, GitHubInstallationGrantMetadata, GitHubInstallationToken,
     HttpGitHubApiClient, SECRET_KIND_GITHUB_APP_PRIVATE_KEY, sign_github_app_jwt,
     validate_github_app_private_key,
-};
-pub use providers::{
-    AuthProviderConfig, AuthProviderRecord, AuthProviderStatus, AuthProviderStore,
-    CreateAuthProviderRecord, GitHubAppConfig, ModelApiKeyConfig, ModelOAuthConfig,
-    model_auth_provider_id,
-};
-pub use flow::{
-    AuthCallback, DEFAULT_AUTH_FLOW_TTL_MS, OAuthFlowService, StartAuthFlow, StartedAuthFlow,
 };
 pub use grants::{
     AuthGrantRecord, AuthGrantStatus, AuthGrantStore, AuthGrantTokenRefresh, AuthProviderKind,
@@ -148,6 +143,11 @@ pub use oauth::{
     SECRET_KIND_OAUTH_PKCE_VERIFIER, SECRET_KIND_OAUTH_REFRESH_TOKEN, TokenEndpointAuthMethod,
     build_authorization_url, generate_pkce_verifier, generate_state, pkce_challenge_s256,
     state_hash,
+};
+pub use providers::{
+    AuthProviderConfig, AuthProviderRecord, AuthProviderStatus, AuthProviderStore,
+    CreateAuthProviderRecord, GitHubAppConfig, ModelApiKeyConfig, ModelOAuthConfig,
+    model_auth_provider_id,
 };
 pub use secrets::{
     PutSecretRecord, SECRET_KIND_MODEL_API_KEY, SECRET_KIND_STATIC_BEARER, SecretRecordMeta,
@@ -353,18 +353,18 @@ pub(crate) fn validate_oauth_endpoint_url(
     let authority_end = rest
         .find(|ch| matches!(ch, '/' | '?' | '#'))
         .unwrap_or(rest.len());
-    let host = rest[..authority_end]
-        .rsplit_once(':')
-        .map_or(&rest[..authority_end], |(host, port)| {
-            if port.chars().all(|ch| ch.is_ascii_digit()) {
-                host
-            } else {
-                &rest[..authority_end]
-            }
-        });
-    let loopback = host.eq_ignore_ascii_case("localhost")
-        || host.starts_with("127.")
-        || host == "[::1]";
+    let host =
+        rest[..authority_end]
+            .rsplit_once(':')
+            .map_or(&rest[..authority_end], |(host, port)| {
+                if port.chars().all(|ch| ch.is_ascii_digit()) {
+                    host
+                } else {
+                    &rest[..authority_end]
+                }
+            });
+    let loopback =
+        host.eq_ignore_ascii_case("localhost") || host.starts_with("127.") || host == "[::1]";
     if loopback {
         return Ok(());
     }

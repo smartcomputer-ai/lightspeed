@@ -79,7 +79,10 @@ describe("LightspeedClient", () => {
         error: {
           code: -32009,
           message: "submission id was reused with different input",
-          data: { submissionId: "sub_1" },
+          data: {
+            kind: "conflict",
+            message: "submission id was reused with different input",
+          },
         },
       }),
     ) as unknown as typeof fetch;
@@ -99,7 +102,10 @@ describe("LightspeedClient", () => {
       name: "LightspeedRpcError",
       code: -32009,
       kind: "conflict",
-      data: { submissionId: "sub_1" },
+      data: {
+        kind: "conflict",
+        message: "submission id was reused with different input",
+      },
     } satisfies Partial<LightspeedRpcError>);
   });
 
