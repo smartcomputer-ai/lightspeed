@@ -53,60 +53,65 @@ workflow just to make audio work.
   `RequestRun` needs preprocessing, records the activity result in workflow
   history, rewrites the command input, and then continues through the existing
   drive path.
-- Worker activity: side-effect owner. It reads/writes CAS blobs, invokes
-  FFmpeg, calls OpenAI transcription, and maps failures to typed activity
-  errors.
+- Worker activity: side-effect owner. It reads/writes CAS blobs, calls OpenAI
+  transcription, optionally invokes a transcoder when the container is not
+  provider-accepted, and maps failures to typed activity errors. It must
+  function with no transcoder configured.
 - `llm-clients`: low-level OpenAI audio transcription client.
-- Deployment/runtime config: owns FFmpeg availability, provider credentials,
-  base URLs, timeouts, and feature enablement.
+- Deployment/runtime config: owns provider credentials, base URLs, timeouts,
+  feature enablement, and *optional* transcoder availability. FFmpeg is never
+  a required worker dependency.
 
 ## Transcoding
 
-Use the FFmpeg CLI as an external worker dependency, wrapped by a small Rust
-adapter. Avoid libav bindings in the first cut.
+FFmpeg must **not** be a hard worker dependency. The same problem returns for
+images, video, and GIFs later, so the worker baseline is "no external media
+binaries required," and any transcoder is an optional, capability-gated adapter.
 
-Recommended normalization:
+Transcode only when the provider will not accept the input directly.
+Telegram and WhatsApp voice notes ship as OGG/Opus, which OpenAI's
+transcription endpoint accepts as-is, so the common voice-note path needs **no
+transcoding at all** — only a cheap duration/size check before upload. The
+first cut should:
 
-1. For `audio/ogg` voice notes, prefer WebM/Opus output:
+1. Validate the audio against an accepted-container/MIME allowlist and the
+   duration/size caps. Prefer cheap header/metadata inspection over spawning a
+   process; only probe deeper if a cap cannot be enforced from metadata.
+2. If the container is provider-accepted, send the original (or CAS) bytes
+   straight to transcription. No transcode step.
+3. Only when the container is *not* provider-accepted, attempt a transcode via
+   the optional adapter. If no transcoder is configured, this is a typed
+   admission failure (see Failure Semantics), not a worker crash.
 
-   ```text
-   ffmpeg -hide_banner -nostdin -y -i input.ogg -vn -ac 1 -c:a libopus -b:a 32k output.webm
-   ```
+Optional transcoder shape (when present):
 
-2. If WebM/Opus is unavailable or fails, fall back to 16 kHz mono WAV:
+- `AudioTranscoder` trait, with the worker holding `Option<Arc<dyn
+  AudioTranscoder>>` — absence is a normal, supported configuration;
+- an FFmpeg-CLI implementation (`tokio::process::Command`, no shell
+  invocation, worker-owned temp dir, process timeout and cleanup on all paths)
+  is the obvious first adapter, but it is opt-in;
+- normalization target when transcoding is required: 16 kHz mono
+  (`-vn -ac 1 -ar 16000`), Opus or WAV output;
+- no startup hard-fail on missing FFmpeg — audio preprocessing stays enabled
+  for provider-accepted containers, and only non-accepted containers degrade
+  to a typed "transcoder unavailable" admission failure.
 
-   ```text
-   ffmpeg -hide_banner -nostdin -y -i input.ogg -vn -ac 1 -ar 16000 -c:a pcm_s16le output.wav
-   ```
-
-3. Use `ffprobe` before transcription to enforce duration, codec/container,
-   and output-size caps.
-
-Implementation shape:
-
-- `AudioTranscoder` trait;
-- `FfmpegAudioTranscoder` implementation using `tokio::process::Command`;
-- temp files under a worker-owned temp dir;
-- no shell invocation;
-- process timeout and cleanup on all paths;
-- startup/config check that fails clearly when audio preprocessing is enabled
-  but `ffmpeg` is unavailable.
-
-Local development should document `brew install ffmpeg`. Docker/local runtime
-images should install the FFmpeg package explicitly.
+Document FFmpeg as an *optional* enhancement (`brew install ffmpeg`, optional
+package in runtime images) needed only to widen container support beyond what
+the provider accepts natively — not a precondition for voice notes to work.
 
 ## Transcription
 
-Use OpenAI's file-oriented audio transcription endpoint first. Initial model
-choices:
+Use OpenAI's audio transcription endpoint with the **most advanced transcribe
+model OpenAI offers** as the single first-cut default; do not build a
+multi-model selection surface yet. The API shape follows whatever that model
+requires. `llm-clients` has no audio support today, so this is greenfield — add
+exactly the one client call the chosen model needs.
 
-- `gpt-4o-transcribe` as the quality default;
-- `gpt-4o-mini-transcribe` as the lower-cost/default-latency option;
-- `whisper-1` only where timestamp features or compatibility require it.
-
-The first cut should request plain JSON/text transcript output. Speaker
-diarization, timestamps, streaming transcription, and realtime microphone
-sessions are later extensions.
+The first cut requests plain text/JSON transcript output. Speaker diarization,
+timestamps, alternate/cheaper models, streaming transcription, and realtime
+microphone sessions are later extensions; revisit the model surface only when a
+second model is actually needed.
 
 Provider credentials follow the existing model-provider credential path: resolve
 inside the activity/runtime layer, never in the bridge, gateway handler, or
@@ -114,19 +119,40 @@ engine.
 
 ## Failure Semantics
 
-Because the first cut rewrites input before core admission, transcription
-failures are admission failures for the submitted `run/start` request, not
-completed `RunStatus::Failed` records. Extend admission failure typing as needed
-instead of silently dropping audio or submitting an empty text turn.
+Preprocessing rewrites input before core admission, so a preprocessing failure
+is an **admission failure** for the submitted `run/start` request, not a
+completed `RunStatus::Failed` record. This is deliberate and correct: if
+transcription fails there is no text turn to admit, so the command literally
+cannot be admitted. Inventing a failed *run* would fabricate a run object for a
+turn that never entered the session log.
 
-Failures that should be explicit:
+The obligation this creates is on the **bridge and clients**, not the engine:
+a rejected `run/start` for a voice note must not look like the message silently
+vanished. Requirements:
+
+- extend admission failure typing so each failure below is a distinct,
+  machine-readable variant (not an opaque string);
+- the bridge surfaces transcription admission failures to the chat as a clear,
+  user-facing notice (e.g. "couldn't transcribe that voice note: <reason>"),
+  and logs them — never drops the message silently and never submits an empty
+  text turn;
+- the contract artifacts and TS client expose the new admission failure
+  variants so any client (not just this bridge) can react.
+
+Failures that must be explicit and typed:
 
 - unsupported audio MIME/container;
 - blob missing or over size/duration limit;
-- FFmpeg or `ffprobe` unavailable when audio preprocessing is enabled;
-- transcode timeout or output over cap;
+- no transcoder configured for a non-provider-accepted container;
+- transcode timeout or output over cap (only when transcoding is attempted);
 - provider authentication/configuration failure;
 - provider transcription failure.
+
+Group-failure rule: a single `run/start` input may contain several entries
+(text, images, multiple audio clips). If **any** audio entry in the group fails
+preprocessing, the **whole submission fails** as an admission failure. Partial
+admission would drop context the model needs to answer correctly, so the first
+cut is all-or-nothing per submission; the bridge reports which entry failed.
 
 Idempotency rule: retried `run/start` with the same submission id should use the
 same deterministic workflow history result. The OpenAI call must live in an
@@ -163,38 +189,54 @@ projection needs it.
 ### G2: Worker Preprocessing Activity
 
 - Add `WorkflowActivities::preprocess_run_input`.
-- Add worker implementation with fake/test adapters.
+- Add worker implementation with fake/test adapters; the activity must work
+  with no transcoder configured.
 - Wire preprocessing into `process_admissions` before `drive.admit_command`.
-- Add typed admission failure mapping.
+- Add typed, per-variant admission failure mapping, and the group-failure rule
+  (any audio entry failing fails the whole submission).
 
-### G3: FFmpeg Normalization
+### G3: OpenAI Transcription Client (No-Transcode Path)
 
-- Add `AudioTranscoder` and `FfmpegAudioTranscoder`.
-- Add duration/output caps, timeouts, temp cleanup, and startup validation.
-- Cover command construction with unit tests; avoid shell execution.
-
-### G4: OpenAI Transcription Client
-
-- Add OpenAI audio transcription support in `llm-clients`.
+- Add OpenAI audio transcription support in `llm-clients` for the most advanced
+  transcribe model, with whatever API shape that model requires.
 - Add an activity-level transcriber adapter with provider key resolution.
-- Add ignored live tests that fail clearly when credentials or FFmpeg are
-  missing.
+- Send provider-accepted containers (OGG/Opus voice notes) directly, with only
+  duration/size validation — no transcoder required for this path.
+- Add ignored live tests that fail clearly when credentials are missing.
+
+### G4: Optional Transcoder (Container Widening)
+
+- Add the `AudioTranscoder` trait and an opt-in FFmpeg-CLI implementation;
+  the worker holds `Option<Arc<dyn AudioTranscoder>>`.
+- Transcode only non-provider-accepted containers; a missing transcoder yields
+  a typed "transcoder unavailable" admission failure, not a crash or hard
+  startup failure.
+- Add duration/output caps, timeouts, and temp cleanup.
+- Cover command construction with unit tests; avoid shell execution.
 
 ### G5: End-To-End Voice Note
 
 - WhatsApp voice note live test: submit a spoken question and verify the run
-  input contains transcript text and the model answers it.
+  input contains transcript text and the model answers it (no transcoder
+  needed for the OGG/Opus path).
 - Telegram voice/audio equivalent where bot API access is practical.
-- Bridge tests for lazy media download and placeholder behavior.
+- Bridge tests for lazy media download, transcription-failure surfacing to the
+  chat, and placeholder behavior.
 
 ## Acceptance Criteria
 
 - Audio media submitted through `run/start` produces text transcript input
   before the agent plans.
-- WhatsApp voice notes work end to end through `interop/messaging`.
+- WhatsApp voice notes work end to end through `interop/messaging` with **no
+  FFmpeg installed on the worker** (provider-accepted container path).
 - The bridge does not hold OpenAI credentials and does not call FFmpeg.
 - The engine has no provider, FFmpeg, or audio-specific side effects.
-- Unsupported audio and provider/transcode failures surface as typed admission
-  failures.
+- FFmpeg is never a required worker dependency; the worker runs and transcribes
+  provider-accepted audio without it.
+- Unsupported audio, missing transcoder, and provider/transcode failures
+  surface as distinct, typed admission failures, and the bridge reports them to
+  the chat rather than dropping the message.
+- If any audio entry in a submission fails preprocessing, the whole `run/start`
+  submission is rejected (no partial admission).
 - Live provider tests are `#[ignore]` and fail clearly when prerequisites are
   missing.
