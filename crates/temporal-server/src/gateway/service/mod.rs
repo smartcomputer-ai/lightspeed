@@ -166,6 +166,103 @@ const DEFAULT_EVENTS_WAIT_CAP: Duration = Duration::from_secs(30);
 /// `DEFAULT_GATEWAY_BIND`. Hosted deployments must set the real public URL.
 pub const DEFAULT_PUBLIC_BASE_URL: &str = "http://127.0.0.1:18080";
 
+fn status_has_submission(
+    status: Option<&AgentSessionStatus>,
+    submission_id: &SubmissionId,
+) -> bool {
+    let Some(status) = status else {
+        return false;
+    };
+    status
+        .active_run
+        .as_ref()
+        .is_some_and(|run| run.submission_id.as_ref() == Some(submission_id))
+        || status
+            .queued_runs
+            .iter()
+            .any(|run| run.submission_id.as_ref() == Some(submission_id))
+        || status
+            .completed_runs
+            .iter()
+            .any(|run| run.submission_id.as_ref() == Some(submission_id))
+}
+
+enum ExistingRunSubmission {
+    ReturnRun { run_id: RunId, status: RunStatus },
+    Reject,
+}
+
+fn existing_run_submission(
+    state: &engine::CoreAgentState,
+    submission_id: &SubmissionId,
+    input: &[ContextEntryInput],
+    run_config: &RunConfig,
+) -> Option<ExistingRunSubmission> {
+    if let Some(active) = state
+        .runs
+        .active
+        .as_ref()
+        .filter(|run| run.submission_id.as_ref() == Some(submission_id))
+    {
+        return Some(
+            if active.input.input == input && &active.run_config == run_config {
+                ExistingRunSubmission::ReturnRun {
+                    run_id: active.run_id,
+                    status: active.status,
+                }
+            } else {
+                ExistingRunSubmission::Reject
+            },
+        );
+    }
+    if let Some(queued) = state
+        .runs
+        .queued
+        .iter()
+        .find(|run| run.submission_id.as_ref() == Some(submission_id))
+    {
+        if queued.input != input || &queued.run_config != run_config {
+            return Some(ExistingRunSubmission::Reject);
+        }
+        return None;
+    }
+    if let Some(completed) = state
+        .runs
+        .completed
+        .iter()
+        .find(|run| run.submission_id.as_ref() == Some(submission_id))
+    {
+        let digest = run_submission_digest(input, run_config);
+        return Some(match completed.submission_digest {
+            Some(existing) if existing != digest => ExistingRunSubmission::Reject,
+            _ => ExistingRunSubmission::ReturnRun {
+                run_id: completed.run_id,
+                status: completed.status,
+            },
+        });
+    }
+    None
+}
+
+fn run_submission_digest(input: &[ContextEntryInput], run_config: &RunConfig) -> u64 {
+    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+    let bytes = serde_json::to_vec(&(input, run_config))
+        .expect("run submission payload serializes to JSON");
+    let mut hash = FNV_OFFSET;
+    for byte in bytes {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash
+}
+
+fn duplicate_submission_error(submission_id: &SubmissionId) -> AgentApiError {
+    AgentApiError::rejected(format!(
+        "submission id {submission_id} was already used by a run with different input or run config"
+    ))
+}
+
 pub struct GatewayAgentApiBuilder {
     client: Client,
     store: Arc<PgStore>,
@@ -1012,8 +1109,10 @@ impl AgentApiService for GatewayAgentApi {
         let session_id = SessionId::try_new(params.session_id).map_err(|error| {
             AgentApiError::invalid_request(format!("invalid session id: {error}"))
         })?;
-        self.load_session_state_with_current_run_context(&session_id)
+        let loaded = self
+            .load_session_state_with_current_run_context(&session_id)
             .await?;
+        let client_supplied_submission_id = params.submission_id.is_some();
         let submission_id = match params.submission_id {
             Some(submission_id) => SubmissionId::try_new(submission_id).map_err(|error| {
                 AgentApiError::invalid_request(format!("invalid submission id: {error}"))
@@ -1024,6 +1123,24 @@ impl AgentApiService for GatewayAgentApi {
             .run_config_for_start(&session_id, params.config)
             .await?;
         let input = run_input_from_api(self.store.as_ref(), &params.input).await?;
+        if let Some(existing) =
+            existing_run_submission(&loaded.state, &submission_id, &input, &run_config)
+        {
+            return match existing {
+                ExistingRunSubmission::ReturnRun { run_id, status } => {
+                    let run = self.project_run_by_id(&session_id, run_id, status).await?;
+                    Ok(AgentApiOutcome::new(RunStartResponse { run }))
+                }
+                ExistingRunSubmission::Reject => Err(duplicate_submission_error(&submission_id)),
+            };
+        }
+        let status_before_signal = self.query_status_optional(&session_id).await?;
+        let baseline_admission_failures = status_before_signal
+            .as_ref()
+            .map(|status| status.admission_failures.len())
+            .unwrap_or(0);
+        let wait_for_admission_drain = client_supplied_submission_id
+            || status_has_submission(status_before_signal.as_ref(), &submission_id);
         let command = engine::CoreAgentCodec
             .encode_command(&CoreAgentCommand::RequestRun {
                 submission_id: Some(submission_id.clone()),
@@ -1040,7 +1157,12 @@ impl AgentApiService for GatewayAgentApi {
             .await
             .map_err(map_workflow_interaction_error)?;
         let run = self
-            .wait_for_run_accepted(&session_id, &submission_id)
+            .wait_for_run_accepted(
+                &session_id,
+                &submission_id,
+                baseline_admission_failures,
+                wait_for_admission_drain,
+            )
             .await?;
         Ok(AgentApiOutcome::new(RunStartResponse { run }))
     }

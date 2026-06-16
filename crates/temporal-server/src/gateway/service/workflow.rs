@@ -200,6 +200,8 @@ impl GatewayAgentApi {
         &self,
         session_id: &SessionId,
         submission_id: &SubmissionId,
+        baseline_failures: usize,
+        wait_for_admission_drain: bool,
     ) -> Result<RunView, AgentApiError> {
         let started = Instant::now();
         loop {
@@ -212,10 +214,22 @@ impl GatewayAgentApi {
                 tokio::time::sleep(self.poll_interval).await;
                 continue;
             };
+            if let Some(failure) = status
+                .admission_failures
+                .iter()
+                .skip(baseline_failures)
+                .rev()
+                .find(|failure| failure.submission_id.as_ref() == Some(submission_id))
+            {
+                return Err(map_admission_failure_to_api_error(failure));
+            }
+            let can_return_matching_run =
+                !wait_for_admission_drain || status.pending_admissions == 0;
             if let Some(active) = status
                 .active_run
                 .as_ref()
                 .filter(|run| run.submission_id.as_ref() == Some(submission_id))
+                .filter(|_| can_return_matching_run)
             {
                 let run = self
                     .project_run_by_id(session_id, RunId::new(active.run_id), active.status)
@@ -229,6 +243,7 @@ impl GatewayAgentApi {
                 .iter()
                 .rev()
                 .find(|run| run.submission_id.as_ref() == Some(submission_id))
+                .filter(|_| can_return_matching_run)
             {
                 let run = self
                     .project_run_by_id(session_id, RunId::new(run.run_id), run.status)
@@ -236,14 +251,6 @@ impl GatewayAgentApi {
                 if !run.input.is_empty() {
                     return Ok(run);
                 }
-            }
-            if let Some(failure) = status
-                .admission_failures
-                .iter()
-                .rev()
-                .find(|failure| failure.submission_id.as_ref() == Some(submission_id))
-            {
-                return Err(map_admission_failure_to_api_error(failure));
             }
             if let Some(error) = status.last_error {
                 return Err(AgentApiError::internal(format!(
