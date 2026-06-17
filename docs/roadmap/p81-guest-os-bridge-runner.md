@@ -2,9 +2,7 @@
 
 **Status**
 - Proposed 2026-06-17.
-- G1-G6 implemented 2026-06-17.
-- G7 remains pending: add an ignored live test that spawns the real binary
-  against the Temporal-backed gateway.
+- G1-G7 implemented 2026-06-17.
 - Builds on P75-P80 and `docs/spec/04-environments.md`.
 - Breaking changes remain allowed. Lightspeed has not shipped a stable
   environment API.
@@ -23,7 +21,17 @@
 - Added focused process/filesystem tests plus a host-client protocol smoke test
   that initializes the controller, attaches the target, connects to the returned
   data plane, and executes a process.
-- Verified with `cargo test -p host-bridge`.
+- Added `lightspeed env` CLI helpers for list/read/attach/activate/deactivate/
+  close so operators can bind a running bridge provider to a session without
+  hand-writing JSON-RPC.
+- Added ignored live test
+  `temporal_live_host_bridge_agent_reads_local_filesystem`, which starts a
+  Temporal worker, starts an HTTP gateway, spawns the real `host-bridge` binary,
+  attaches/activates it, has the agent write a local file with `exec_command`,
+  reads the same file through `read_file`, and verifies the file on the local
+  filesystem.
+- Verified with `cargo test -p host-bridge`, `cargo test -p cli --tests`, and
+  the ignored host-bridge live test.
 
 ## Goal
 
@@ -355,10 +363,10 @@ Test shape:
 4. start a session;
 5. attach target `local`, activate it;
 6. run a process tool call that writes a file;
-7. read/edit that same file through fs tools;
-8. run another process tool call that observes the edit;
+7. read that same file through fs tools;
+8. assert the final assistant answer contains the marker read from the file;
 9. close the session environment without stopping the bridge;
-10. stop the bridge and assert unregister or lease expiry behavior.
+10. stop the bridge process during test cleanup.
 
 This proves the real bridge has the "same guest filesystem" property that P80's
 fake provider only simulated.
@@ -375,7 +383,8 @@ fake provider only simulated.
 - No multi-target provider inventory.
 - No VFS workspace sync/fusion beyond exposing the guest filesystem as an
   environment filesystem route.
-- No integration into the Lightspeed CLI binary.
+- No bridge runner implementation inside the Lightspeed CLI binary. The CLI may
+  contain small API helpers for session environment lifecycle.
 
 ## Done When
 

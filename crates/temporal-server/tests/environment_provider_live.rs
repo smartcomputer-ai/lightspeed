@@ -2,10 +2,13 @@ mod support;
 
 use std::{
     collections::BTreeMap,
+    path::PathBuf,
+    process::Stdio,
     sync::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
+    time::{Duration, Instant},
 };
 
 use api::{
@@ -55,18 +58,24 @@ use host_protocol::{
 use serde_json::{Value, json};
 use support::live::{LIVE_TEST_LOCK, final_assistant_text, require_storage_live_env};
 use temporal_server::{
-    gateway::GatewayAgentApi,
+    gateway::{DEFAULT_MAX_REQUEST_BODY_BYTES, GatewayAgentApi, gateway_router},
     pg_store_from_env,
     worker::{ActivityState, SessionTools, WorkerActivities},
 };
 use temporal_workflow::AgentSessionWorkflow;
 use temporalio_client::{Client, WorkflowTerminateOptions};
-use tokio::{net::TcpListener, task::JoinHandle};
+use tokio::{
+    net::TcpListener,
+    process::{Child, Command},
+    task::JoinHandle,
+};
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 
 const ATTACH_TARGET_ID: &str = "attach-target";
 const CREATED_TARGET_ID: &str = "created-target";
 const PROCESS_STDOUT: &str = "fake provider stdout\n";
+const BRIDGE_FILE_NAME: &str = "bridge-agent.txt";
+const BRIDGE_FILE_MARKER: &str = "LIGHTSPEED_BRIDGE_AGENT_MARKER";
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires local/up.sh or compatible Temporal + Postgres env"]
@@ -86,6 +95,131 @@ async fn temporal_live_fake_provider_create_attach_and_process_tool() -> anyhow:
         run_fake_provider_client(client, task_queue, session_id, provider).await
     })
     .await
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires local/up.sh or compatible Temporal + Postgres env and target/debug/host-bridge"]
+async fn temporal_live_host_bridge_agent_reads_local_filesystem() -> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().expect("live test lock");
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+
+    let bridge_bin = host_bridge_binary_path()?;
+    let bridge_root = tempfile::tempdir()?;
+    let bridge_root = bridge_root.path().canonicalize()?;
+    let store = pg_store_from_env().await?;
+    let blobs: Arc<dyn BlobStore> = store.clone();
+    let llm = Arc::new(BridgeFileLlm::new(blobs.clone())) as Arc<dyn CoreAgentLlm>;
+    let tools = Arc::new(SessionTools::from_pg_store(store.clone())) as Arc<dyn CoreAgentTools>;
+    let activities = WorkerActivities::new(ActivityState::from_pg_store(store, llm, tools));
+
+    support::live::run_with_live_worker(activities, |client, task_queue, session_id| async move {
+        run_host_bridge_client(client, task_queue, session_id, bridge_bin, bridge_root).await
+    })
+    .await
+}
+
+async fn run_host_bridge_client(
+    client: Client,
+    task_queue: String,
+    session_id: engine::SessionId,
+    bridge_bin: PathBuf,
+    bridge_root: PathBuf,
+) -> anyhow::Result<()> {
+    let store = pg_store_from_env().await?;
+    let model = fake_model();
+    let api = Arc::new(
+        GatewayAgentApi::builder(client.clone(), store)
+            .with_task_queue(task_queue)
+            .with_default_model(model.clone())
+            .with_max_steps_per_input(32)
+            .build(),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let gateway_url = format!("http://{}/rpc", listener.local_addr()?);
+    let gateway = tokio::spawn({
+        let api = api.clone();
+        async move {
+            let app = gateway_router(api, DEFAULT_MAX_REQUEST_BODY_BYTES);
+            axum::serve(listener, app).await
+        }
+    });
+
+    let provider_id = format!("host-bridge-{}", uuid::Uuid::new_v4().simple());
+    let bridge = SpawnedBridge::start(&bridge_bin, &gateway_url, &provider_id, &bridge_root)?;
+
+    api.start_session(SessionStartParams {
+        session_id: Some(session_id.as_str().to_owned()),
+        cwd: None,
+        config: Some(SessionConfigInput {
+            model: Some(api_projection::model_to_api(&model)),
+            ..SessionConfigInput::default()
+        }),
+    })
+    .await?;
+
+    let attached =
+        wait_for_bridge_attach(api.as_ref(), &session_id, &provider_id, "bridge-local").await?;
+    assert_eq!(
+        attached.result.active_env_id.as_deref(),
+        Some("bridge-local")
+    );
+    assert_eq!(
+        attached.result.environment.cwd.as_deref(),
+        Some(path_str(&bridge_root)?)
+    );
+
+    let run = api
+        .start_run(RunStartParams {
+            submission_id: None,
+            session_id: session_id.as_str().to_owned(),
+            input: vec![InputItem::Text {
+                text: "write a file through the host bridge, then read it back".to_owned(),
+            }],
+            config: None,
+        })
+        .await?;
+    let run = support::live::wait_for_terminal_run(&api, &session_id, &run.result.run.id).await?;
+    assert_eq!(
+        run.status,
+        RunStatus::Completed,
+        "host bridge run did not complete: {run:#?}"
+    );
+    let Some(text) = final_assistant_text(&run) else {
+        anyhow::bail!("host bridge run missing final assistant message: {run:#?}");
+    };
+    assert!(
+        text.contains(BRIDGE_FILE_MARKER),
+        "final answer did not include marker from bridge file read: {text}"
+    );
+
+    let local_file = bridge_root.join(BRIDGE_FILE_NAME);
+    let local_contents = tokio::fs::read_to_string(&local_file).await?;
+    assert!(
+        local_contents.contains(BRIDGE_FILE_MARKER),
+        "bridge command did not write marker to local file {}: {local_contents}",
+        local_file.display()
+    );
+
+    api.close_session_environment(SessionEnvironmentCloseParams {
+        session_id: session_id.as_str().to_owned(),
+        env_id: "bridge-local".to_owned(),
+        force: false,
+        close_target: Some(false),
+    })
+    .await?;
+
+    let handle = client.get_workflow_handle::<AgentSessionWorkflow>(session_id.as_str());
+    let _ = handle
+        .terminate(
+            WorkflowTerminateOptions::builder()
+                .reason("host bridge live test cleanup")
+                .build(),
+        )
+        .await;
+    drop(bridge);
+    gateway.abort();
+    Ok(())
 }
 
 async fn run_fake_provider_client(
@@ -397,22 +531,308 @@ impl CoreAgentLlm for ExecCommandLlm {
     }
 }
 
-fn current_run_tool_result(request: &LlmGenerationRequest) -> Option<&engine::ContextEntry> {
-    request.request.context.entries.iter().rev().find(|entry| {
-        matches!(
-            (&entry.source, &entry.kind),
-            (
-                ContextEntrySource::Tool { run_id, .. },
-                ContextEntryKind::ToolResult { .. }
-            ) if *run_id == request.run_id
+struct BridgeFileLlm {
+    blobs: Arc<dyn BlobStore>,
+}
+
+impl BridgeFileLlm {
+    fn new(blobs: Arc<dyn BlobStore>) -> Self {
+        Self { blobs }
+    }
+
+    async fn exec_write_result(
+        &self,
+        request: &LlmGenerationRequest,
+    ) -> Result<LlmGenerationResult, CoreAgentIoError> {
+        if !request
+            .request
+            .tools
+            .iter()
+            .any(|tool| tool.name.as_str() == "exec_command")
+        {
+            return Err(io_error("planned request did not expose exec_command"));
+        }
+        let command = format!(
+            "printf '{} from exec_command\\n' > {} && printf 'wrote {}\\n'",
+            BRIDGE_FILE_MARKER, BRIDGE_FILE_NAME, BRIDGE_FILE_NAME
+        );
+        self.tool_call_result(
+            request,
+            "exec_command",
+            json!({
+                "argv": ["/bin/sh", "-c", command],
+                "timeout_ms": 5000,
+                "max_output_bytes": 4096
+            }),
+            "bridge_exec_write",
         )
-    })
+        .await
+    }
+
+    async fn read_file_result(
+        &self,
+        request: &LlmGenerationRequest,
+    ) -> Result<LlmGenerationResult, CoreAgentIoError> {
+        if !request
+            .request
+            .tools
+            .iter()
+            .any(|tool| tool.name.as_str() == "read_file")
+        {
+            return Err(io_error("planned request did not expose read_file"));
+        }
+        self.tool_call_result(
+            request,
+            "read_file",
+            json!({
+                "path": BRIDGE_FILE_NAME,
+                "offset": 1,
+                "limit": 20
+            }),
+            "bridge_read_file",
+        )
+        .await
+    }
+
+    async fn tool_call_result(
+        &self,
+        request: &LlmGenerationRequest,
+        tool_name: &str,
+        arguments: Value,
+        label: &str,
+    ) -> Result<LlmGenerationResult, CoreAgentIoError> {
+        let arguments_ref = self
+            .blobs
+            .put_bytes(serde_json::to_vec(&arguments).map_err(io_error)?)
+            .await
+            .map_err(io_error)?;
+        let call_id = ToolCallId::new(format!("{label}_{}_{}", request.run_id, request.turn_id));
+        let tool_name = ToolName::new(tool_name);
+        Ok(LlmGenerationResult {
+            run_id: request.run_id,
+            turn_id: request.turn_id,
+            status: LlmGenerationStatus::Succeeded,
+            failure_ref: None,
+            context_entries: vec![ContextEntryInput {
+                kind: ContextEntryKind::ToolCall {
+                    call_id: call_id.clone(),
+                    name: tool_name.clone(),
+                },
+                content_ref: arguments_ref.clone(),
+                media_type: Some("application/json".to_owned()),
+                preview: Some(format!("{}({arguments})", tool_name.as_str())),
+                provider_kind: Some("fake".to_owned()),
+                provider_item_id: Some(call_id.as_str().to_owned()),
+                token_estimate: None,
+            }],
+            facts: LlmGenerationFacts {
+                provider_response_id: Some(format!("fake-{label}-{}", request.turn_id)),
+                finish: LlmFinish::ToolCalls,
+                usage: None,
+                tool_calls: vec![ObservedToolCall {
+                    call_id,
+                    tool_name,
+                    provider_kind: Some("fake".to_owned()),
+                    arguments_ref,
+                    native_call_ref: None,
+                }],
+                context_token_estimate: None,
+            },
+        })
+    }
+
+    async fn final_result(
+        &self,
+        request: &LlmGenerationRequest,
+    ) -> Result<LlmGenerationResult, CoreAgentIoError> {
+        let mut text = String::from("Host bridge local filesystem test completed.\n");
+        for entry in current_run_tool_results(request) {
+            let output = self
+                .blobs
+                .read_text(&entry.content_ref)
+                .await
+                .map_err(io_error)?;
+            text.push_str("\n--- tool result ---\n");
+            text.push_str(&output);
+        }
+        let output_ref = self
+            .blobs
+            .put_bytes(text.into_bytes())
+            .await
+            .map_err(io_error)?;
+        Ok(LlmGenerationResult {
+            run_id: request.run_id,
+            turn_id: request.turn_id,
+            status: LlmGenerationStatus::Succeeded,
+            failure_ref: None,
+            context_entries: vec![ContextEntryInput {
+                kind: ContextEntryKind::Message {
+                    role: ContextMessageRole::Assistant,
+                },
+                content_ref: output_ref,
+                media_type: Some("text/plain".to_owned()),
+                preview: Some("host bridge final answer".to_owned()),
+                provider_kind: Some("fake".to_owned()),
+                provider_item_id: None,
+                token_estimate: None,
+            }],
+            facts: LlmGenerationFacts {
+                provider_response_id: Some(format!("fake-host-bridge-final-{}", request.turn_id)),
+                finish: LlmFinish::Stop,
+                usage: None,
+                tool_calls: Vec::new(),
+                context_token_estimate: None,
+            },
+        })
+    }
+}
+
+#[async_trait]
+impl CoreAgentLlm for BridgeFileLlm {
+    async fn generate(
+        &self,
+        request: LlmGenerationRequest,
+    ) -> Result<LlmGenerationResult, CoreAgentIoError> {
+        match current_run_tool_results(&request).len() {
+            0 => self.exec_write_result(&request).await,
+            1 => self.read_file_result(&request).await,
+            _ => self.final_result(&request).await,
+        }
+    }
+}
+
+fn current_run_tool_result(request: &LlmGenerationRequest) -> Option<&engine::ContextEntry> {
+    current_run_tool_results(request).into_iter().next()
+}
+
+fn current_run_tool_results(request: &LlmGenerationRequest) -> Vec<&engine::ContextEntry> {
+    request
+        .request
+        .context
+        .entries
+        .iter()
+        .rev()
+        .filter(|entry| {
+            matches!(
+                (&entry.source, &entry.kind),
+                (
+                    ContextEntrySource::Tool { run_id, .. },
+                    ContextEntryKind::ToolResult { .. }
+                ) if *run_id == request.run_id
+            )
+        })
+        .collect()
 }
 
 fn io_error(error: impl std::fmt::Display) -> CoreAgentIoError {
     CoreAgentIoError::Failed {
         message: error.to_string(),
     }
+}
+
+struct SpawnedBridge {
+    child: Child,
+}
+
+impl SpawnedBridge {
+    fn start(
+        bridge_bin: &PathBuf,
+        gateway_url: &str,
+        provider_id: &str,
+        root: &PathBuf,
+    ) -> anyhow::Result<Self> {
+        let child = Command::new(bridge_bin)
+            .arg("--gateway-url")
+            .arg(gateway_url)
+            .arg("--provider-id")
+            .arg(provider_id)
+            .arg("--target-id")
+            .arg("local")
+            .arg("--listen")
+            .arg("127.0.0.1:0")
+            .arg("--cwd")
+            .arg(root)
+            .arg("--fs-root")
+            .arg(root)
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|error| {
+                anyhow::anyhow!("spawn host-bridge binary {}: {error}", bridge_bin.display())
+            })?;
+        Ok(Self { child })
+    }
+}
+
+impl Drop for SpawnedBridge {
+    fn drop(&mut self) {
+        let _ = self.child.start_kill();
+    }
+}
+
+async fn wait_for_bridge_attach(
+    api: &GatewayAgentApi,
+    session_id: &engine::SessionId,
+    provider_id: &str,
+    env_id: &str,
+) -> anyhow::Result<api::AgentApiOutcome<api::SessionEnvironmentAttachResponse>> {
+    let started = Instant::now();
+    let mut last_error = None;
+    loop {
+        if started.elapsed() > Duration::from_secs(30) {
+            anyhow::bail!(
+                "timed out waiting to attach host bridge provider {provider_id}; last error: {}",
+                last_error.unwrap_or_else(|| "none".to_owned())
+            );
+        }
+        match api
+            .attach_session_environment(SessionEnvironmentAttachParams {
+                session_id: session_id.as_str().to_owned(),
+                env_id: Some(env_id.to_owned()),
+                provider_id: provider_id.to_owned(),
+                request: HostTargetAttachRequestView::Target {
+                    target_id: "local".to_owned(),
+                },
+                activate: true,
+            })
+            .await
+        {
+            Ok(response) => return Ok(response),
+            Err(error) => {
+                last_error = Some(error.to_string());
+                tokio::time::sleep(Duration::from_millis(250)).await;
+            }
+        }
+    }
+}
+
+fn host_bridge_binary_path() -> anyhow::Result<PathBuf> {
+    if let Ok(path) = std::env::var("HOST_BRIDGE_BIN") {
+        let path = PathBuf::from(path);
+        if path.exists() {
+            return Ok(path);
+        }
+        anyhow::bail!("HOST_BRIDGE_BIN does not exist: {}", path.display());
+    }
+
+    let current_exe = std::env::current_exe()?;
+    let target_dir = current_exe
+        .parent()
+        .and_then(|deps| deps.parent())
+        .ok_or_else(|| anyhow::anyhow!("cannot infer target dir from {}", current_exe.display()))?;
+    let binary = target_dir.join("host-bridge");
+    if binary.exists() {
+        return Ok(binary);
+    }
+    anyhow::bail!(
+        "host-bridge binary not found at {}; run `cargo build -p host-bridge` or set HOST_BRIDGE_BIN",
+        binary.display()
+    );
+}
+
+fn path_str(path: &std::path::Path) -> anyhow::Result<&str> {
+    path.to_str()
+        .ok_or_else(|| anyhow::anyhow!("path is not valid UTF-8: {}", path.display()))
 }
 
 struct FakeHostProvider {

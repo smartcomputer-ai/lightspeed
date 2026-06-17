@@ -21,25 +21,33 @@ use api::{
     METHOD_AUTH_PROVIDERS_DELETE, METHOD_AUTH_PROVIDERS_LIST, METHOD_AUTH_PROVIDERS_READ,
     METHOD_BLOB_GET, METHOD_BLOB_HAS_MANY, METHOD_BLOB_PUT_MANY, METHOD_MCP_SERVERS_CREATE,
     METHOD_MCP_SERVERS_DELETE, METHOD_MCP_SERVERS_LIST, METHOD_MCP_SERVERS_READ, METHOD_RUN_START,
-    METHOD_SESSION_EVENTS_READ, METHOD_SESSION_MCP_LINK, METHOD_SESSION_MCP_LIST,
-    METHOD_SESSION_MCP_UNLINK, METHOD_SESSION_READ, METHOD_SESSION_START, METHOD_SKILLS_ACTIVATE,
-    METHOD_SKILLS_ACTIVE, METHOD_SKILLS_DEACTIVATE, METHOD_SKILLS_LIST, METHOD_VFS_MOUNT_DELETE,
-    METHOD_VFS_MOUNT_LIST, METHOD_VFS_MOUNT_PUT, METHOD_VFS_SNAPSHOT_COMMIT,
-    METHOD_VFS_SNAPSHOT_READ, METHOD_VFS_WORKSPACE_CREATE, METHOD_VFS_WORKSPACE_DELETE,
-    METHOD_VFS_WORKSPACE_READ, METHOD_VFS_WORKSPACE_UPDATE, McpServerCreateParams,
-    McpServerCreateResponse, McpServerDeleteParams, McpServerDeleteResponse, McpServerListParams,
-    McpServerListResponse, McpServerReadParams, McpServerReadResponse, RequestId, RunStartParams,
-    RunStartResponse, SessionEventsReadParams, SessionEventsReadResponse, SessionMcpLinkParams,
-    SessionMcpLinkResponse, SessionMcpListParams, SessionMcpListResponse, SessionMcpUnlinkParams,
-    SessionMcpUnlinkResponse, SessionReadParams, SessionReadResponse, SessionStartParams,
-    SessionStartResponse, SkillActivateParams, SkillActivateResponse, SkillActiveParams,
-    SkillActiveResponse, SkillDeactivateParams, SkillDeactivateResponse, SkillListParams,
-    SkillListResponse, VfsMountDeleteParams, VfsMountDeleteResponse, VfsMountListParams,
-    VfsMountListResponse, VfsMountPutParams, VfsMountPutResponse, VfsSnapshotCommitParams,
-    VfsSnapshotCommitResponse, VfsSnapshotReadParams, VfsSnapshotReadResponse,
-    VfsWorkspaceCreateParams, VfsWorkspaceCreateResponse, VfsWorkspaceDeleteParams,
-    VfsWorkspaceDeleteResponse, VfsWorkspaceReadParams, VfsWorkspaceReadResponse,
-    VfsWorkspaceUpdateParams, VfsWorkspaceUpdateResponse,
+    METHOD_SESSION_ENVIRONMENTS_ACTIVATE, METHOD_SESSION_ENVIRONMENTS_ATTACH,
+    METHOD_SESSION_ENVIRONMENTS_CLOSE, METHOD_SESSION_ENVIRONMENTS_DEACTIVATE,
+    METHOD_SESSION_ENVIRONMENTS_LIST, METHOD_SESSION_ENVIRONMENTS_READ, METHOD_SESSION_EVENTS_READ,
+    METHOD_SESSION_MCP_LINK, METHOD_SESSION_MCP_LIST, METHOD_SESSION_MCP_UNLINK,
+    METHOD_SESSION_READ, METHOD_SESSION_START, METHOD_SKILLS_ACTIVATE, METHOD_SKILLS_ACTIVE,
+    METHOD_SKILLS_DEACTIVATE, METHOD_SKILLS_LIST, METHOD_VFS_MOUNT_DELETE, METHOD_VFS_MOUNT_LIST,
+    METHOD_VFS_MOUNT_PUT, METHOD_VFS_SNAPSHOT_COMMIT, METHOD_VFS_SNAPSHOT_READ,
+    METHOD_VFS_WORKSPACE_CREATE, METHOD_VFS_WORKSPACE_DELETE, METHOD_VFS_WORKSPACE_READ,
+    METHOD_VFS_WORKSPACE_UPDATE, McpServerCreateParams, McpServerCreateResponse,
+    McpServerDeleteParams, McpServerDeleteResponse, McpServerListParams, McpServerListResponse,
+    McpServerReadParams, McpServerReadResponse, RequestId, RunStartParams, RunStartResponse,
+    SessionEnvironmentActivateParams, SessionEnvironmentActivateResponse,
+    SessionEnvironmentAttachParams, SessionEnvironmentAttachResponse,
+    SessionEnvironmentCloseParams, SessionEnvironmentCloseResponse,
+    SessionEnvironmentDeactivateParams, SessionEnvironmentDeactivateResponse,
+    SessionEnvironmentListParams, SessionEnvironmentListResponse, SessionEnvironmentReadParams,
+    SessionEnvironmentReadResponse, SessionEventsReadParams, SessionEventsReadResponse,
+    SessionMcpLinkParams, SessionMcpLinkResponse, SessionMcpListParams, SessionMcpListResponse,
+    SessionMcpUnlinkParams, SessionMcpUnlinkResponse, SessionReadParams, SessionReadResponse,
+    SessionStartParams, SessionStartResponse, SkillActivateParams, SkillActivateResponse,
+    SkillActiveParams, SkillActiveResponse, SkillDeactivateParams, SkillDeactivateResponse,
+    SkillListParams, SkillListResponse, VfsMountDeleteParams, VfsMountDeleteResponse,
+    VfsMountListParams, VfsMountListResponse, VfsMountPutParams, VfsMountPutResponse,
+    VfsSnapshotCommitParams, VfsSnapshotCommitResponse, VfsSnapshotReadParams,
+    VfsSnapshotReadResponse, VfsWorkspaceCreateParams, VfsWorkspaceCreateResponse,
+    VfsWorkspaceDeleteParams, VfsWorkspaceDeleteResponse, VfsWorkspaceReadParams,
+    VfsWorkspaceReadResponse, VfsWorkspaceUpdateParams, VfsWorkspaceUpdateResponse,
 };
 use serde::{Serialize, de::DeserializeOwned};
 
@@ -386,6 +394,52 @@ impl HttpAgentApi {
         params: SessionMcpListParams,
     ) -> Result<AgentApiOutcome<SessionMcpListResponse>, AgentApiError> {
         self.request(METHOD_SESSION_MCP_LIST, params).await
+    }
+
+    pub(crate) async fn list_session_environments(
+        &self,
+        params: SessionEnvironmentListParams,
+    ) -> Result<AgentApiOutcome<SessionEnvironmentListResponse>, AgentApiError> {
+        self.request(METHOD_SESSION_ENVIRONMENTS_LIST, params).await
+    }
+
+    pub(crate) async fn read_session_environment(
+        &self,
+        params: SessionEnvironmentReadParams,
+    ) -> Result<AgentApiOutcome<SessionEnvironmentReadResponse>, AgentApiError> {
+        self.request(METHOD_SESSION_ENVIRONMENTS_READ, params).await
+    }
+
+    pub(crate) async fn attach_session_environment(
+        &self,
+        params: SessionEnvironmentAttachParams,
+    ) -> Result<AgentApiOutcome<SessionEnvironmentAttachResponse>, AgentApiError> {
+        self.request(METHOD_SESSION_ENVIRONMENTS_ATTACH, params)
+            .await
+    }
+
+    pub(crate) async fn activate_session_environment(
+        &self,
+        params: SessionEnvironmentActivateParams,
+    ) -> Result<AgentApiOutcome<SessionEnvironmentActivateResponse>, AgentApiError> {
+        self.request(METHOD_SESSION_ENVIRONMENTS_ACTIVATE, params)
+            .await
+    }
+
+    pub(crate) async fn deactivate_session_environment(
+        &self,
+        params: SessionEnvironmentDeactivateParams,
+    ) -> Result<AgentApiOutcome<SessionEnvironmentDeactivateResponse>, AgentApiError> {
+        self.request(METHOD_SESSION_ENVIRONMENTS_DEACTIVATE, params)
+            .await
+    }
+
+    pub(crate) async fn close_session_environment(
+        &self,
+        params: SessionEnvironmentCloseParams,
+    ) -> Result<AgentApiOutcome<SessionEnvironmentCloseResponse>, AgentApiError> {
+        self.request(METHOD_SESSION_ENVIRONMENTS_CLOSE, params)
+            .await
     }
 
     async fn request<P, R>(
