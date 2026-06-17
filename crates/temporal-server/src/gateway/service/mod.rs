@@ -4,6 +4,7 @@ mod api_config;
 mod auth_api;
 mod blobs;
 mod environment_projection;
+mod environments;
 mod errors;
 mod github_api;
 mod input;
@@ -23,6 +24,9 @@ use auth_api::{
     parse_auth_grant_id, registry_auth_grant_status_for_filter,
 };
 use blobs::{get_blob, has_blobs, put_blob, put_blobs};
+use environments::{
+    activate_environment_command, deactivate_environment_command, parse_environment_id,
+};
 use errors::*;
 use github_api::{
     auth_provider_create_draft, auth_provider_view, github_installation_grant_draft,
@@ -55,6 +59,8 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+use crate::environment::{RuntimeEnvironment, SessionEnvironmentManager};
+
 use api::{
     AgentApiError, AgentApiErrorKind, AgentApiOutcome, AgentApiService, AuthClientCreateParams,
     AuthClientCreateResponse, AuthClientDeleteParams, AuthClientDeleteResponse,
@@ -80,18 +86,22 @@ use api::{
     ReasoningEffort, RunCancelParams, RunCancelResponse, RunDefaultsConfig, RunDefaultsPatch,
     RunLimitsConfig, RunStartConfig, RunStartParams, RunStartResponse, RunView, ServerCapabilities,
     ServerInfo, SessionCloseParams, SessionCloseResponse, SessionConfigInput,
-    SessionConfigPatchInput, SessionEventsReadParams, SessionEventsReadResponse,
-    SessionMcpLinkParams, SessionMcpLinkResponse, SessionMcpListParams, SessionMcpListResponse,
-    SessionMcpUnlinkParams, SessionMcpUnlinkResponse, SessionReadParams, SessionReadResponse,
-    SessionStartParams, SessionStartResponse, SessionToolsUpdateParams, SessionToolsUpdateResponse,
-    SessionUpdateParams, SessionUpdateResponse, SessionView, SkillActivateParams,
-    SkillActivateResponse, SkillActivationScope as ApiSkillActivationScope,
+    SessionConfigPatchInput, SessionEnvironmentActivateParams, SessionEnvironmentActivateResponse,
+    SessionEnvironmentCapabilitiesView, SessionEnvironmentDeactivateParams,
+    SessionEnvironmentDeactivateResponse, SessionEnvironmentKindView, SessionEnvironmentListParams,
+    SessionEnvironmentListResponse, SessionEnvironmentReadParams, SessionEnvironmentReadResponse,
+    SessionEnvironmentStatusView, SessionEnvironmentView, SessionEventsReadParams,
+    SessionEventsReadResponse, SessionMcpLinkParams, SessionMcpLinkResponse, SessionMcpListParams,
+    SessionMcpListResponse, SessionMcpUnlinkParams, SessionMcpUnlinkResponse, SessionReadParams,
+    SessionReadResponse, SessionStartParams, SessionStartResponse, SessionToolsUpdateParams,
+    SessionToolsUpdateResponse, SessionUpdateParams, SessionUpdateResponse, SessionView,
+    SkillActivateParams, SkillActivateResponse, SkillActivationScope as ApiSkillActivationScope,
     SkillActivationSource as ApiSkillActivationSource, SkillActivationView, SkillActiveParams,
     SkillActiveResponse, SkillDeactivateParams, SkillDeactivateResponse, SkillListItem,
     SkillListParams, SkillListResponse, ToolChoiceConfig, ToolChoiceModeConfig, ToolConfigInput,
-    ToolConfigPatchInput, VfsMountAccess as ApiVfsMountAccess, VfsMountDeleteParams,
-    VfsMountDeleteResponse, VfsMountListParams, VfsMountListResponse, VfsMountPutParams,
-    VfsMountPutResponse, VfsMountSourceInput, VfsMountSourceView, VfsMountView,
+    ToolConfigPatchInput, ToolExecutionTargetView, VfsMountAccess as ApiVfsMountAccess,
+    VfsMountDeleteParams, VfsMountDeleteResponse, VfsMountListParams, VfsMountListResponse,
+    VfsMountPutParams, VfsMountPutResponse, VfsMountSourceInput, VfsMountSourceView, VfsMountView,
     VfsSnapshotCommitParams, VfsSnapshotCommitResponse, VfsSnapshotReadParams,
     VfsSnapshotReadResponse, VfsWorkspaceCreateParams, VfsWorkspaceCreateResponse,
     VfsWorkspaceDeleteParams, VfsWorkspaceDeleteResponse, VfsWorkspaceReadParams,
@@ -279,6 +289,7 @@ pub struct GatewayAgentApiBuilder {
     oauth_token_client: Option<Arc<dyn OAuthTokenClient>>,
     oauth_metadata_client: Option<Arc<dyn OAuthMetadataClient>>,
     github_api_client: Option<Arc<dyn GitHubApiClient>>,
+    environments: Vec<RuntimeEnvironment>,
 }
 
 impl GatewayAgentApiBuilder {
@@ -312,6 +323,11 @@ impl GatewayAgentApiBuilder {
     /// Override the GitHub REST client (tests).
     pub fn with_github_api_client(mut self, github_api_client: Arc<dyn GitHubApiClient>) -> Self {
         self.github_api_client = Some(github_api_client);
+        self
+    }
+
+    pub fn with_environment(mut self, environment: RuntimeEnvironment) -> Self {
+        self.environments.push(environment);
         self
     }
 
@@ -374,6 +390,11 @@ impl GatewayAgentApiBuilder {
         let github_api = self.github_api_client.unwrap_or_else(|| {
             Arc::new(HttpGitHubApiClient::new().expect("construct GitHub REST HTTP client"))
         });
+        let mut environment_manager =
+            SessionEnvironmentManager::new(self.store.clone(), self.store.clone());
+        for environment in self.environments {
+            environment_manager.insert_environment(environment);
+        }
         GatewayAgentApi {
             client: self.client,
             store: self.store,
@@ -389,6 +410,7 @@ impl GatewayAgentApiBuilder {
             oauth_flows,
             mcp_oauth,
             github_api,
+            environment_manager,
             metadata: RwLock::new(BTreeMap::new()),
         }
     }
@@ -414,6 +436,7 @@ pub struct GatewayAgentApi {
     oauth_flows: OAuthFlowService,
     mcp_oauth: McpOAuthDriver,
     github_api: Arc<dyn GitHubApiClient>,
+    environment_manager: SessionEnvironmentManager,
     metadata: RwLock<BTreeMap<SessionId, GatewaySessionMetadata>>,
 }
 
@@ -434,6 +457,7 @@ impl GatewayAgentApi {
             oauth_token_client: None,
             oauth_metadata_client: None,
             github_api_client: None,
+            environments: Vec::new(),
         }
     }
 
@@ -512,6 +536,9 @@ impl GatewayAgentApi {
         }
         if session_config.tools.messaging.unwrap_or(false) {
             config.messaging = tools::messaging::MessagingToolsetConfig::enabled();
+        }
+        if self.environment_manager.has_environments() {
+            config.builtin.process = tools::toolset::EnvironmentToolsetConfig::basic();
         }
         config
     }
@@ -1369,6 +1396,118 @@ impl AgentApiService for GatewayAgentApi {
         Ok(AgentApiOutcome::new(SkillDeactivateResponse {
             skill_id: skill_id.as_str().to_owned(),
             active,
+        }))
+    }
+
+    async fn list_session_environments(
+        &self,
+        params: SessionEnvironmentListParams,
+    ) -> Result<AgentApiOutcome<SessionEnvironmentListResponse>, AgentApiError> {
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let loaded = self
+            .load_session_state_with_current_environment_projection(&session_id)
+            .await?;
+        Ok(AgentApiOutcome::new(
+            self.project_session_environments(&loaded.state),
+        ))
+    }
+
+    async fn read_session_environment(
+        &self,
+        params: SessionEnvironmentReadParams,
+    ) -> Result<AgentApiOutcome<SessionEnvironmentReadResponse>, AgentApiError> {
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let env_id = parse_environment_id(params.env_id)?;
+        let loaded = self
+            .load_session_state_with_current_environment_projection(&session_id)
+            .await?;
+        Ok(AgentApiOutcome::new(SessionEnvironmentReadResponse {
+            environment: self.project_session_environment(&loaded.state, &env_id)?,
+        }))
+    }
+
+    async fn activate_session_environment(
+        &self,
+        params: SessionEnvironmentActivateParams,
+    ) -> Result<AgentApiOutcome<SessionEnvironmentActivateResponse>, AgentApiError> {
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let env_id = parse_environment_id(params.env_id)?;
+        let loaded = self.load_session_state(&session_id).await?;
+        self.require_open_idle_session(&session_id, &loaded, "environment activation")?;
+        let target = self.activation_target_for_environment(&env_id)?;
+
+        if loaded
+            .state
+            .tooling
+            .routing
+            .default_targets
+            .get(tools::targets::ENV_TARGET_NAMESPACE)
+            != Some(&target)
+        {
+            let baseline_failures = self
+                .query_status_optional(&session_id)
+                .await?
+                .map(|status| status.admission_failures.len())
+                .unwrap_or(0);
+            self.submit_core_command(&session_id, activate_environment_command(target.clone()))
+                .await?;
+            self.wait_for_environment_default_target(&session_id, Some(&target), baseline_failures)
+                .await?;
+        }
+
+        let loaded = self
+            .load_session_state_with_current_environment_projection(&session_id)
+            .await?;
+        let environment = self.project_session_environment(&loaded.state, &env_id)?;
+        let response = self.project_session_environments(&loaded.state);
+        Ok(AgentApiOutcome::new(SessionEnvironmentActivateResponse {
+            environment,
+            active_env_id: response.active_env_id,
+            environments: response.environments,
+        }))
+    }
+
+    async fn deactivate_session_environment(
+        &self,
+        params: SessionEnvironmentDeactivateParams,
+    ) -> Result<AgentApiOutcome<SessionEnvironmentDeactivateResponse>, AgentApiError> {
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let loaded = self.load_session_state(&session_id).await?;
+        self.require_open_idle_session(&session_id, &loaded, "environment deactivation")?;
+
+        if loaded
+            .state
+            .tooling
+            .routing
+            .default_targets
+            .contains_key(tools::targets::ENV_TARGET_NAMESPACE)
+        {
+            let baseline_failures = self
+                .query_status_optional(&session_id)
+                .await?
+                .map(|status| status.admission_failures.len())
+                .unwrap_or(0);
+            self.submit_core_command(&session_id, deactivate_environment_command())
+                .await?;
+            self.wait_for_environment_default_target(&session_id, None, baseline_failures)
+                .await?;
+        }
+
+        let loaded = self
+            .load_session_state_with_current_environment_projection(&session_id)
+            .await?;
+        let response = self.project_session_environments(&loaded.state);
+        Ok(AgentApiOutcome::new(SessionEnvironmentDeactivateResponse {
+            active_env_id: response.active_env_id,
+            environments: response.environments,
         }))
     }
 

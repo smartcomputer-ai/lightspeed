@@ -622,6 +622,74 @@
       ],
       "type": "object"
     },
+    "AgentApiOutcomeOfSessionEnvironmentActivateResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/SessionEnvironmentActivateResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfSessionEnvironmentDeactivateResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/SessionEnvironmentDeactivateResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfSessionEnvironmentListResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/SessionEnvironmentListResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfSessionEnvironmentReadResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/SessionEnvironmentReadResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
     "AgentApiOutcomeOfSessionEventsReadResponse": {
       "properties": {
         "notifications": {
@@ -4362,6 +4430,219 @@
         "context",
         "runDefaults",
         "tools"
+      ],
+      "type": "object"
+    },
+    "SessionEnvironmentActivateParams": {
+      "properties": {
+        "envId": {
+          "type": "string"
+        },
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "envId"
+      ],
+      "type": "object"
+    },
+    "SessionEnvironmentActivateResponse": {
+      "properties": {
+        "activeEnvId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "environment": {
+          "$ref": "#/definitions/SessionEnvironmentView"
+        },
+        "environments": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/SessionEnvironmentView"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "environment"
+      ],
+      "type": "object"
+    },
+    "SessionEnvironmentCapabilitiesView": {
+      "properties": {
+        "fsRead": {
+          "type": "boolean"
+        },
+        "fsWrite": {
+          "type": "boolean"
+        },
+        "network": {
+          "type": "boolean"
+        },
+        "persistent": {
+          "type": "boolean"
+        },
+        "processExec": {
+          "type": "boolean"
+        },
+        "processStdin": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "fsRead",
+        "fsWrite",
+        "processExec",
+        "processStdin",
+        "network",
+        "persistent"
+      ],
+      "type": "object"
+    },
+    "SessionEnvironmentDeactivateParams": {
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "type": "object"
+    },
+    "SessionEnvironmentDeactivateResponse": {
+      "properties": {
+        "activeEnvId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "environments": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/SessionEnvironmentView"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "SessionEnvironmentKindView": {
+      "enum": [
+        "sandbox",
+        "attachedHost"
+      ],
+      "type": "string"
+    },
+    "SessionEnvironmentListParams": {
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "type": "object"
+    },
+    "SessionEnvironmentListResponse": {
+      "properties": {
+        "activeEnvId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "environments": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/SessionEnvironmentView"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "SessionEnvironmentReadParams": {
+      "properties": {
+        "envId": {
+          "type": "string"
+        },
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "envId"
+      ],
+      "type": "object"
+    },
+    "SessionEnvironmentReadResponse": {
+      "properties": {
+        "environment": {
+          "$ref": "#/definitions/SessionEnvironmentView"
+        }
+      },
+      "required": [
+        "environment"
+      ],
+      "type": "object"
+    },
+    "SessionEnvironmentStatusView": {
+      "enum": [
+        "attaching",
+        "ready",
+        "degraded",
+        "detached"
+      ],
+      "type": "string"
+    },
+    "SessionEnvironmentView": {
+      "properties": {
+        "active": {
+          "type": "boolean"
+        },
+        "capabilities": {
+          "$ref": "#/definitions/SessionEnvironmentCapabilitiesView"
+        },
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "envId": {
+          "type": "string"
+        },
+        "execTarget": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ToolExecutionTargetView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "$ref": "#/definitions/SessionEnvironmentKindView"
+        },
+        "status": {
+          "$ref": "#/definitions/SessionEnvironmentStatusView"
+        }
+      },
+      "required": [
+        "envId",
+        "kind",
+        "status",
+        "capabilities",
+        "active"
       ],
       "type": "object"
     },

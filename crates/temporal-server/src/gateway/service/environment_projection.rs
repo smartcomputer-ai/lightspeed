@@ -50,11 +50,8 @@ impl GatewayAgentApi {
         session_id: &SessionId,
         state: &engine::CoreAgentState,
     ) -> Result<Vec<CoreAgentCommand>, AgentApiError> {
-        let manager = crate::environment::SessionEnvironmentManager::new(
-            self.store.clone(),
-            self.store.clone(),
-        );
-        let refresh = manager
+        let refresh = self
+            .environment_manager
             .refresh_projection(session_id, state)
             .await
             .map_err(map_session_environment_error)?;

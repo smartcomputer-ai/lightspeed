@@ -166,6 +166,72 @@ fn active_skill_ids_after_remove_drops_selected_skill() {
 }
 
 #[test]
+fn environment_view_maps_record_and_active_status() {
+    let record = test_environment_record(
+        "local",
+        tools::environment::projection::EnvironmentStatus::Ready,
+    );
+
+    let view = environments::session_environment_view(&record, Some("local"));
+
+    assert_eq!(view.env_id, "local");
+    assert_eq!(view.kind, SessionEnvironmentKindView::AttachedHost);
+    assert_eq!(view.status, SessionEnvironmentStatusView::Ready);
+    assert!(view.capabilities.process_exec);
+    assert_eq!(view.exec_target.expect("exec target").namespace, "env");
+    assert_eq!(view.cwd.as_deref(), Some("/workspace"));
+    assert!(view.active);
+}
+
+#[test]
+fn environment_activation_lowers_to_default_env_target_command() {
+    let record = test_environment_record(
+        "local",
+        tools::environment::projection::EnvironmentStatus::Ready,
+    );
+    let target =
+        environments::activation_target_for_environment_record(&record).expect("activation target");
+
+    let command = environments::activate_environment_command(target.clone());
+
+    assert!(matches!(
+        command,
+        CoreAgentCommand::SetDefaultToolTarget { target: actual } if actual == target
+    ));
+}
+
+#[test]
+fn environment_deactivation_lowers_to_clear_env_target_command() {
+    let command = environments::deactivate_environment_command();
+
+    assert!(matches!(
+        command,
+        CoreAgentCommand::ClearDefaultToolTarget { namespace } if namespace == "env"
+    ));
+}
+
+#[test]
+fn invalid_environment_id_maps_to_invalid_request() {
+    let error = environments::parse_environment_id("bad id".to_owned())
+        .expect_err("invalid environment id");
+
+    assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
+}
+
+#[test]
+fn inactive_environment_cannot_be_activation_target() {
+    let record = test_environment_record(
+        "local",
+        tools::environment::projection::EnvironmentStatus::Detached,
+    );
+
+    let error = environments::activation_target_for_environment_record(&record)
+        .expect_err("detached environment");
+
+    assert_eq!(error.kind, AgentApiErrorKind::Rejected);
+}
+
+#[test]
 fn mcp_link_materializes_remote_tool_patch() {
     let tool_name = ToolName::new("mcp_crm");
     let tools = BTreeMap::new();
@@ -1416,6 +1482,27 @@ fn direct_activation(
         provider_kind: input.provider_kind,
         provider_item_id: input.provider_item_id,
         token_estimate: input.token_estimate,
+    }
+}
+
+fn test_environment_record(
+    env_id: &str,
+    status: tools::environment::projection::EnvironmentStatus,
+) -> tools::environment::projection::EnvironmentRecord {
+    tools::environment::projection::EnvironmentRecord {
+        env_id: env_id.to_owned(),
+        kind: tools::environment::projection::EnvironmentKind::AttachedHost,
+        capabilities: tools::environment::projection::EnvironmentCapabilities {
+            fs_read: true,
+            fs_write: true,
+            process_exec: true,
+            process_stdin: true,
+            network: false,
+            persistent: true,
+        },
+        exec_target: Some(tools::targets::environment_target(env_id)),
+        cwd: Some(FsPath::new("/workspace").expect("cwd")),
+        status,
     }
 }
 

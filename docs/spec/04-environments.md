@@ -3,9 +3,12 @@
 Design notes for making a Lightspeed agent aware of, and able to act against, a
 VFS plus zero or more execution environments at a time.
 
-Status: design plus preparatory tools refactor. This doc fixes the model, the
-routing rules, the projection, and the open questions; it does not prescribe the
-provider integrations.
+Status: design plus implementation through P79. P75-P79 landed the split
+`fs`/`env` tool namespaces, runtime projection, `SessionEnvironmentManager`, and
+a provider-free active environment runtime path with list/read/activate/deactivate
+session APIs. Environment create/attach/close, provider lifecycle, and workspace
+fusion are still pending; this doc fixes the model, routing rules, projection,
+and open questions without prescribing a provider integration.
 
 ## The problem
 
@@ -410,9 +413,10 @@ identity, not lifecycle, credentials, leases, workers, or provider APIs.
    executor" to "VFS is the layer-1-only filesystem; an active environment
    supplies the shell and its own routes." This is the fix for the original
    failure.
-4. **Session API for environments:** list / create-or-attach / activate /
-   deactivate / close. Keep provider-specific sandbox specs opaque at the API
-   boundary, like provider params.
+4. **Session API for environments:** list / read / activate / deactivate are
+   implemented. Create-or-attach and close remain pending; keep
+   provider-specific sandbox specs opaque at the API boundary, like provider
+   params.
 5. **Optional core promotion.** Add `EnvironmentState` + attach/detach/activate
    events only once the runtime projection has stabilized or deterministic
    planning needs environment facts.

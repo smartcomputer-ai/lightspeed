@@ -37,6 +37,10 @@ pub const METHOD_SKILLS_LIST: &str = "skills/list";
 pub const METHOD_SKILLS_ACTIVE: &str = "skills/active";
 pub const METHOD_SKILLS_ACTIVATE: &str = "skills/activate";
 pub const METHOD_SKILLS_DEACTIVATE: &str = "skills/deactivate";
+pub const METHOD_SESSION_ENVIRONMENTS_LIST: &str = "session/environments/list";
+pub const METHOD_SESSION_ENVIRONMENTS_READ: &str = "session/environments/read";
+pub const METHOD_SESSION_ENVIRONMENTS_ACTIVATE: &str = "session/environments/activate";
+pub const METHOD_SESSION_ENVIRONMENTS_DEACTIVATE: &str = "session/environments/deactivate";
 pub const METHOD_BLOB_PUT: &str = "blob/put";
 pub const METHOD_BLOB_PUT_MANY: &str = "blob/put_many";
 pub const METHOD_BLOB_GET: &str = "blob/get";
@@ -86,6 +90,7 @@ pub type SessionId = String;
 pub type RunId = String;
 pub type ItemId = String;
 pub type SkillId = String;
+pub type EnvironmentId = String;
 
 const SESSION_ID_MAX_LEN: usize = 128;
 
@@ -218,6 +223,26 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: SkillDeactivateParams,
     ) -> Result<AgentApiOutcome<SkillDeactivateResponse>, AgentApiError>;
+
+    async fn list_session_environments(
+        &self,
+        params: SessionEnvironmentListParams,
+    ) -> Result<AgentApiOutcome<SessionEnvironmentListResponse>, AgentApiError>;
+
+    async fn read_session_environment(
+        &self,
+        params: SessionEnvironmentReadParams,
+    ) -> Result<AgentApiOutcome<SessionEnvironmentReadResponse>, AgentApiError>;
+
+    async fn activate_session_environment(
+        &self,
+        params: SessionEnvironmentActivateParams,
+    ) -> Result<AgentApiOutcome<SessionEnvironmentActivateResponse>, AgentApiError>;
+
+    async fn deactivate_session_environment(
+        &self,
+        params: SessionEnvironmentDeactivateParams,
+    ) -> Result<AgentApiOutcome<SessionEnvironmentDeactivateResponse>, AgentApiError>;
 
     async fn put_blob(
         &self,
@@ -1388,6 +1413,107 @@ pub struct SkillDeactivateResponse {
     pub skill_id: SkillId,
     #[serde(default)]
     pub active: Vec<SkillActivationView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionEnvironmentView {
+    pub env_id: EnvironmentId,
+    pub kind: SessionEnvironmentKindView,
+    pub status: SessionEnvironmentStatusView,
+    pub capabilities: SessionEnvironmentCapabilitiesView,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exec_target: Option<ToolExecutionTargetView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    pub active: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum SessionEnvironmentKindView {
+    Sandbox,
+    AttachedHost,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum SessionEnvironmentStatusView {
+    Attaching,
+    Ready,
+    Degraded,
+    Detached,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionEnvironmentCapabilitiesView {
+    pub fs_read: bool,
+    pub fs_write: bool,
+    pub process_exec: bool,
+    pub process_stdin: bool,
+    pub network: bool,
+    pub persistent: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionEnvironmentListParams {
+    pub session_id: SessionId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionEnvironmentListResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_env_id: Option<EnvironmentId>,
+    #[serde(default)]
+    pub environments: Vec<SessionEnvironmentView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionEnvironmentReadParams {
+    pub session_id: SessionId,
+    pub env_id: EnvironmentId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionEnvironmentReadResponse {
+    pub environment: SessionEnvironmentView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionEnvironmentActivateParams {
+    pub session_id: SessionId,
+    pub env_id: EnvironmentId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionEnvironmentActivateResponse {
+    pub environment: SessionEnvironmentView,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_env_id: Option<EnvironmentId>,
+    #[serde(default)]
+    pub environments: Vec<SessionEnvironmentView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionEnvironmentDeactivateParams {
+    pub session_id: SessionId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionEnvironmentDeactivateResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_env_id: Option<EnvironmentId>,
+    #[serde(default)]
+    pub environments: Vec<SessionEnvironmentView>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -3044,6 +3170,10 @@ api_methods! {
     METHOD_SKILLS_ACTIVE => active_skills(SkillActiveParams) -> SkillActiveResponse,
     METHOD_SKILLS_ACTIVATE => activate_skill(SkillActivateParams) -> SkillActivateResponse,
     METHOD_SKILLS_DEACTIVATE => deactivate_skill(SkillDeactivateParams) -> SkillDeactivateResponse,
+    METHOD_SESSION_ENVIRONMENTS_LIST => list_session_environments(SessionEnvironmentListParams) -> SessionEnvironmentListResponse,
+    METHOD_SESSION_ENVIRONMENTS_READ => read_session_environment(SessionEnvironmentReadParams) -> SessionEnvironmentReadResponse,
+    METHOD_SESSION_ENVIRONMENTS_ACTIVATE => activate_session_environment(SessionEnvironmentActivateParams) -> SessionEnvironmentActivateResponse,
+    METHOD_SESSION_ENVIRONMENTS_DEACTIVATE => deactivate_session_environment(SessionEnvironmentDeactivateParams) -> SessionEnvironmentDeactivateResponse,
     METHOD_BLOB_PUT => put_blob(BlobPutParams) -> BlobPutResponse,
     METHOD_BLOB_PUT_MANY => put_blobs(BlobPutManyParams) -> BlobPutManyResponse,
     METHOD_BLOB_GET => get_blob(BlobGetParams) -> BlobGetResponse,
@@ -3549,6 +3679,87 @@ mod tests {
             response.result.expect("result")["result"]["skillId"],
             json!("skill:one")
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_session_environments_list() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_SESSION_ENVIRONMENTS_LIST.to_owned(),
+                params: Some(json!({ "sessionId": "session_1" })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["environments"][0]["active"],
+            json!(true)
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_session_environments_read() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_SESSION_ENVIRONMENTS_READ.to_owned(),
+                params: Some(json!({
+                    "sessionId": "session_1",
+                    "envId": "test"
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["environment"]["envId"],
+            json!("test")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_session_environments_activate() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_SESSION_ENVIRONMENTS_ACTIVATE.to_owned(),
+                params: Some(json!({
+                    "sessionId": "session_1",
+                    "envId": "test"
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["activeEnvId"],
+            json!("test")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_session_environments_deactivate() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_SESSION_ENVIRONMENTS_DEACTIVATE.to_owned(),
+                params: Some(json!({ "sessionId": "session_1" })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        let result = response.result.expect("result");
+        assert!(result["result"]["activeEnvId"].is_null());
+        assert_eq!(result["result"]["environments"][0]["active"], json!(false));
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -4369,6 +4580,50 @@ mod tests {
             }))
         }
 
+        async fn list_session_environments(
+            &self,
+            _params: SessionEnvironmentListParams,
+        ) -> Result<AgentApiOutcome<SessionEnvironmentListResponse>, AgentApiError> {
+            let environment = test_session_environment(true);
+            Ok(AgentApiOutcome::new(SessionEnvironmentListResponse {
+                active_env_id: Some(environment.env_id.clone()),
+                environments: vec![environment],
+            }))
+        }
+
+        async fn read_session_environment(
+            &self,
+            params: SessionEnvironmentReadParams,
+        ) -> Result<AgentApiOutcome<SessionEnvironmentReadResponse>, AgentApiError> {
+            assert_eq!(params.env_id, "test");
+            Ok(AgentApiOutcome::new(SessionEnvironmentReadResponse {
+                environment: test_session_environment(true),
+            }))
+        }
+
+        async fn activate_session_environment(
+            &self,
+            params: SessionEnvironmentActivateParams,
+        ) -> Result<AgentApiOutcome<SessionEnvironmentActivateResponse>, AgentApiError> {
+            assert_eq!(params.env_id, "test");
+            let environment = test_session_environment(true);
+            Ok(AgentApiOutcome::new(SessionEnvironmentActivateResponse {
+                active_env_id: Some(environment.env_id.clone()),
+                environments: vec![environment.clone()],
+                environment,
+            }))
+        }
+
+        async fn deactivate_session_environment(
+            &self,
+            _params: SessionEnvironmentDeactivateParams,
+        ) -> Result<AgentApiOutcome<SessionEnvironmentDeactivateResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(SessionEnvironmentDeactivateResponse {
+                active_env_id: None,
+                environments: vec![test_session_environment(false)],
+            }))
+        }
+
         async fn put_blob(
             &self,
             params: BlobPutParams,
@@ -4872,6 +5127,28 @@ mod tests {
             active_context: ContextView::default(),
             active_tools: ActiveToolsView::default(),
             vfs_mounts: Vec::new(),
+        }
+    }
+
+    fn test_session_environment(active: bool) -> SessionEnvironmentView {
+        SessionEnvironmentView {
+            env_id: "test".to_owned(),
+            kind: SessionEnvironmentKindView::AttachedHost,
+            status: SessionEnvironmentStatusView::Ready,
+            capabilities: SessionEnvironmentCapabilitiesView {
+                fs_read: true,
+                fs_write: true,
+                process_exec: true,
+                process_stdin: true,
+                network: false,
+                persistent: false,
+            },
+            exec_target: Some(ToolExecutionTargetView {
+                namespace: "env".to_owned(),
+                id: "test".to_owned(),
+            }),
+            cwd: Some("/workspace".to_owned()),
+            active,
         }
     }
 

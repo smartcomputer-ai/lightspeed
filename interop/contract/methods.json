@@ -271,6 +271,66 @@
       }
     },
     {
+      "method": "session/environments/list",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/SessionEnvironmentListParams"
+        },
+        "type": "SessionEnvironmentListParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfSessionEnvironmentListResponse"
+        },
+        "type": "AgentApiOutcome<SessionEnvironmentListResponse>"
+      }
+    },
+    {
+      "method": "session/environments/read",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/SessionEnvironmentReadParams"
+        },
+        "type": "SessionEnvironmentReadParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfSessionEnvironmentReadResponse"
+        },
+        "type": "AgentApiOutcome<SessionEnvironmentReadResponse>"
+      }
+    },
+    {
+      "method": "session/environments/activate",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/SessionEnvironmentActivateParams"
+        },
+        "type": "SessionEnvironmentActivateParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfSessionEnvironmentActivateResponse"
+        },
+        "type": "AgentApiOutcome<SessionEnvironmentActivateResponse>"
+      }
+    },
+    {
+      "method": "session/environments/deactivate",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/SessionEnvironmentDeactivateParams"
+        },
+        "type": "SessionEnvironmentDeactivateParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfSessionEnvironmentDeactivateResponse"
+        },
+        "type": "AgentApiOutcome<SessionEnvironmentDeactivateResponse>"
+      }
+    },
+    {
       "method": "blob/put",
       "params": {
         "schema": {

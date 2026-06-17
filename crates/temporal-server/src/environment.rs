@@ -1,24 +1,63 @@
-//! Hosted session environment projection owner.
+//! Hosted session environment projection and runtime target owner.
 
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use engine::{CoreAgentState, SessionId, ToolExecutionTarget, storage::BlobStore};
 use thiserror::Error;
 use tools::{
+    environment::EnvironmentToolContext,
     environment::projection::{
         EnvironmentProjectionError, EnvironmentProjectionInput, EnvironmentProjectionRefresh,
         EnvironmentRecord, FsRoute, prepare_environment_projection_refresh,
     },
-    targets::ENV_TARGET_NAMESPACE,
+    fs::FsToolContext,
+    targets::{ENV_TARGET_NAMESPACE, SESSION_FS_TARGET_ID, ToolTargets},
 };
 use vfs::{VfsCatalogError, VfsMountRecord, VfsMountStore};
+
+#[derive(Clone)]
+pub struct RuntimeEnvironment {
+    record: EnvironmentRecord,
+    tool_context: EnvironmentToolContext,
+    fs_routes: Vec<FsRoute>,
+}
+
+impl RuntimeEnvironment {
+    pub fn new(record: EnvironmentRecord, tool_context: EnvironmentToolContext) -> Self {
+        Self {
+            record,
+            tool_context,
+            fs_routes: Vec::new(),
+        }
+    }
+
+    pub fn with_fs_routes(mut self, fs_routes: Vec<FsRoute>) -> Self {
+        self.fs_routes = fs_routes;
+        self
+    }
+
+    pub fn env_id(&self) -> &str {
+        self.record.env_id.as_str()
+    }
+
+    pub fn record(&self) -> &EnvironmentRecord {
+        &self.record
+    }
+
+    pub fn tool_context(&self) -> &EnvironmentToolContext {
+        &self.tool_context
+    }
+
+    pub fn fs_routes(&self) -> &[FsRoute] {
+        &self.fs_routes
+    }
+}
 
 #[derive(Clone)]
 pub struct SessionEnvironmentManager {
     blobs: Arc<dyn BlobStore>,
     mount_store: Arc<dyn VfsMountStore>,
-    environments: Vec<EnvironmentRecord>,
-    active_fs_routes: Vec<FsRoute>,
+    environments: BTreeMap<String, RuntimeEnvironment>,
 }
 
 impl SessionEnvironmentManager {
@@ -26,19 +65,54 @@ impl SessionEnvironmentManager {
         Self {
             blobs,
             mount_store,
-            environments: Vec::new(),
-            active_fs_routes: Vec::new(),
+            environments: BTreeMap::new(),
         }
     }
 
-    pub fn with_environments(mut self, environments: Vec<EnvironmentRecord>) -> Self {
-        self.environments = environments;
+    pub fn with_environment(mut self, environment: RuntimeEnvironment) -> Self {
+        self.insert_environment(environment);
         self
     }
 
-    pub fn with_active_fs_routes(mut self, fs_routes: Vec<FsRoute>) -> Self {
-        self.active_fs_routes = fs_routes;
-        self
+    pub fn insert_environment(&mut self, environment: RuntimeEnvironment) {
+        self.environments
+            .insert(environment.env_id().to_owned(), environment);
+    }
+
+    pub fn environment_records(&self) -> Vec<EnvironmentRecord> {
+        self.environments
+            .values()
+            .map(|environment| environment.record.clone())
+            .collect()
+    }
+
+    pub fn environments(&self) -> impl Iterator<Item = &RuntimeEnvironment> {
+        self.environments.values()
+    }
+
+    pub fn environment(&self, env_id: &str) -> Option<&RuntimeEnvironment> {
+        self.environments.get(env_id)
+    }
+
+    pub fn active_environment_id(&self, state: &CoreAgentState) -> Option<&str> {
+        self.active_environment(state)
+            .map(RuntimeEnvironment::env_id)
+    }
+
+    pub fn has_environments(&self) -> bool {
+        !self.environments.is_empty()
+    }
+
+    pub fn tool_targets(&self, session_fs: Option<FsToolContext>) -> ToolTargets {
+        let mut targets = ToolTargets::new();
+        if let Some(session_fs) = session_fs {
+            targets.insert_fs_context(SESSION_FS_TARGET_ID, session_fs);
+        }
+        for environment in self.environments.values() {
+            targets
+                .insert_environment_context(environment.env_id(), environment.tool_context.clone());
+        }
+        targets
     }
 
     pub async fn refresh_projection(
@@ -55,26 +129,23 @@ impl SessionEnvironmentManager {
         state: &CoreAgentState,
         mounts: Vec<VfsMountRecord>,
     ) -> Result<EnvironmentProjectionRefresh, SessionEnvironmentManagerError> {
-        let active_env_id = self.active_environment_id(state);
-        let active_fs_routes = active_env_id
-            .as_ref()
-            .map(|_| self.active_fs_routes.clone())
-            .unwrap_or_default();
+        let active_environment = self.active_environment(state);
         let mut input = EnvironmentProjectionInput::from_mounts(mounts)
-            .with_environments(self.environments.clone());
-        if let Some(env_id) = active_env_id {
-            input = input.with_active_environment(env_id, active_fs_routes);
+            .with_environments(self.environment_records());
+        if let Some(environment) = active_environment {
+            input = input
+                .with_active_environment(environment.env_id(), environment.fs_routes().to_vec());
         }
         Ok(prepare_environment_projection_refresh(self.blobs.as_ref(), state, input).await?)
     }
 
-    fn active_environment_id(&self, state: &CoreAgentState) -> Option<String> {
+    fn active_environment(&self, state: &CoreAgentState) -> Option<&RuntimeEnvironment> {
         let target = state
             .tooling
             .routing
             .default_targets
             .get(ENV_TARGET_NAMESPACE)?;
-        active_environment_id_for_target(&self.environments, target)
+        active_environment_for_target(&self.environments, target)
     }
 }
 
@@ -87,19 +158,18 @@ pub enum SessionEnvironmentManagerError {
     VfsCatalog(#[from] VfsCatalogError),
 }
 
-fn active_environment_id_for_target(
-    environments: &[EnvironmentRecord],
+fn active_environment_for_target<'a>(
+    environments: &'a BTreeMap<String, RuntimeEnvironment>,
     target: &ToolExecutionTarget,
-) -> Option<String> {
+) -> Option<&'a RuntimeEnvironment> {
     environments
-        .iter()
-        .find(|record| record.exec_target.as_ref() == Some(target))
+        .values()
+        .find(|environment| environment.record.exec_target.as_ref() == Some(target))
         .or_else(|| {
-            environments.iter().find(|record| {
-                target.namespace == ENV_TARGET_NAMESPACE && record.env_id == target.id
+            environments.values().find(|environment| {
+                target.namespace == ENV_TARGET_NAMESPACE && environment.record.env_id == target.id
             })
         })
-        .map(|record| record.env_id.clone())
 }
 
 #[cfg(test)]
@@ -107,7 +177,11 @@ mod tests {
     use async_trait::async_trait;
     use engine::{ContextEntryKey, CoreAgentCommand, storage::InMemoryBlobStore};
     use tools::{
-        environment::projection::{EnvironmentCapabilities, EnvironmentKind, EnvironmentStatus},
+        environment::EnvironmentToolContext,
+        environment::projection::{
+            EnvironmentCapabilities, EnvironmentKind, EnvironmentStatus, FsRoute, FsRouteAccess,
+            FsRouteSource,
+        },
         fs::FsPath,
         targets::environment_target,
     };
@@ -118,22 +192,35 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn manager_projects_active_environment_from_default_env_target() {
         let blobs = Arc::new(InMemoryBlobStore::new());
-        let manager = SessionEnvironmentManager::new(blobs, Arc::new(EmptyMountStore))
-            .with_environments(vec![EnvironmentRecord {
-                env_id: "local".to_owned(),
-                kind: EnvironmentKind::AttachedHost,
-                capabilities: EnvironmentCapabilities {
-                    fs_read: true,
-                    fs_write: true,
-                    process_exec: true,
-                    process_stdin: true,
-                    network: false,
-                    persistent: true,
-                },
-                exec_target: Some(environment_target("local")),
-                cwd: Some(FsPath::new("/workspace").expect("cwd")),
-                status: EnvironmentStatus::Ready,
-            }]);
+        let manager = SessionEnvironmentManager::new(blobs.clone(), Arc::new(EmptyMountStore))
+            .with_environment(
+                RuntimeEnvironment::new(
+                    EnvironmentRecord {
+                        env_id: "local".to_owned(),
+                        kind: EnvironmentKind::AttachedHost,
+                        capabilities: EnvironmentCapabilities {
+                            fs_read: true,
+                            fs_write: true,
+                            process_exec: true,
+                            process_stdin: true,
+                            network: false,
+                            persistent: true,
+                        },
+                        exec_target: Some(environment_target("local")),
+                        cwd: Some(FsPath::new("/workspace").expect("cwd")),
+                        status: EnvironmentStatus::Ready,
+                    },
+                    EnvironmentToolContext::new(None, blobs),
+                )
+                .with_fs_routes(vec![FsRoute {
+                    path: FsPath::new("/workspace").expect("route path"),
+                    access: FsRouteAccess::ReadWrite,
+                    source: FsRouteSource::HostFilesystem {
+                        target: environment_target("local"),
+                    },
+                    same_state_as_active_env: Some("local".to_owned()),
+                }]),
+            );
         let mut state = CoreAgentState::new();
         state.tooling.routing.default_targets.insert(
             tools::targets::ENV_TARGET_NAMESPACE.to_owned(),
@@ -151,6 +238,18 @@ mod tests {
                 .as_ref()
                 .map(|active| active.env_id.as_str()),
             Some("local")
+        );
+        assert_eq!(
+            refresh.environment_catalog.active_env_id.as_deref(),
+            Some("local")
+        );
+        assert_eq!(refresh.environment_catalog.environments.len(), 1);
+        assert_eq!(
+            refresh
+                .environment_active
+                .as_ref()
+                .map(|active| active.fs_routes.len()),
+            Some(1)
         );
         assert!(refresh.commands.iter().any(|command| matches!(
             command,
