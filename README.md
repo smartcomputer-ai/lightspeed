@@ -52,9 +52,10 @@ We belive running and coordination agents at scale are best managed by durable w
 | `test-support` | `crates/test-support` | Fast in-process runner harness for tests/evals; not a production runtime |
 | `tools` | `crates/tools` | Optional tool packages for session filesystems, environment actions, web, messaging, prompts, and skills |
 | `store-fs` | `crates/store-fs` | Filesystem-backed session log and content-addressed blob store adapters |
-| `store-pg` | `crates/store-pg` | PostgreSQL-backed session store, CAS catalog, MCP server catalog, and encrypted auth storage |
+| `store-pg` | `crates/store-pg` | PostgreSQL-backed session store, CAS catalog, MCP server catalog, environment registry, and encrypted auth storage |
 | `mcp-registry` | `crates/mcp-registry` | Provider-independent remote MCP server catalog DTOs, validation, and store traits |
 | `auth-registry` | `crates/auth-registry` | Generic auth grants/secrets/providers, OAuth + GitHub App drivers, and the refreshing/minting token broker |
+| `environment-registry` | `crates/environment-registry` | Environment provider, host target, and session environment binding DTOs plus store traits |
 | `eval` | `crates/eval` | Eval harness for agent/tool workflows |
 | `llm-runtime` | `crates/llm-runtime` | CoreAgent LLM runtime over provider-native clients |
 | `llm-clients` | `crates/llm-clients` | Provider-native OpenAI and Anthropic API clients |

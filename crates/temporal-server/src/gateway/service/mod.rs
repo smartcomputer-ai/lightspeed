@@ -4,6 +4,7 @@ mod api_config;
 mod auth_api;
 mod blobs;
 mod environment_projection;
+mod environment_providers;
 mod environments;
 mod errors;
 mod github_api;
@@ -76,8 +77,15 @@ use api::{
     BlobHasManyParams, BlobHasManyResponse, BlobPutManyParams, BlobPutManyResponse, BlobPutParams,
     BlobPutResponse, ClientCapabilities, CompactionPolicyInput, ContextAppendParams,
     ContextAppendResponse, ContextCompactParams, ContextCompactResponse,
-    ContextConfigInput as ApiContextConfigInput, ContextConfigPatchInput, FieldPatch,
-    GenerationConfig, GenerationConfigPatch, InitializeParams, InitializeResponse, InputItem,
+    ContextConfigInput as ApiContextConfigInput, ContextConfigPatchInput,
+    EnvironmentProviderCapabilitiesView, EnvironmentProviderHeartbeatParams,
+    EnvironmentProviderHeartbeatResponse, EnvironmentProviderImplementationView,
+    EnvironmentProviderKindView, EnvironmentProviderRegisterParams,
+    EnvironmentProviderRegisterResponse, EnvironmentProviderStatusView,
+    EnvironmentProviderUnregisterParams, EnvironmentProviderUnregisterResponse,
+    EnvironmentProviderView, EnvironmentTargetStatusView, EnvironmentTargetSummaryView, FieldPatch,
+    GenerationConfig, GenerationConfigPatch, HostCapabilitiesView, HostControllerConnectionView,
+    HostScopeView, HostTransportView, InitializeParams, InitializeResponse, InputItem,
     McpServerCreateParams, McpServerCreateResponse, McpServerDeleteParams, McpServerDeleteResponse,
     McpServerListParams, McpServerListResponse, McpServerReadParams, McpServerReadResponse,
     MediaKind, ModelConfig, OutboundAckInput, OutboundMessageView, OutboundOriginView,
@@ -1509,6 +1517,33 @@ impl AgentApiService for GatewayAgentApi {
             active_env_id: response.active_env_id,
             environments: response.environments,
         }))
+    }
+
+    async fn register_environment_provider(
+        &self,
+        params: EnvironmentProviderRegisterParams,
+    ) -> Result<AgentApiOutcome<EnvironmentProviderRegisterResponse>, AgentApiError> {
+        self.register_environment_provider_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn heartbeat_environment_provider(
+        &self,
+        params: EnvironmentProviderHeartbeatParams,
+    ) -> Result<AgentApiOutcome<EnvironmentProviderHeartbeatResponse>, AgentApiError> {
+        self.heartbeat_environment_provider_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn unregister_environment_provider(
+        &self,
+        params: EnvironmentProviderUnregisterParams,
+    ) -> Result<AgentApiOutcome<EnvironmentProviderUnregisterResponse>, AgentApiError> {
+        self.unregister_environment_provider_record(params)
+            .await
+            .map(AgentApiOutcome::new)
     }
 
     async fn put_blob(

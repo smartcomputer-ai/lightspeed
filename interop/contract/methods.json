@@ -331,6 +331,51 @@
       }
     },
     {
+      "method": "environmentProviders/register",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/EnvironmentProviderRegisterParams"
+        },
+        "type": "EnvironmentProviderRegisterParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentProviderRegisterResponse"
+        },
+        "type": "AgentApiOutcome<EnvironmentProviderRegisterResponse>"
+      }
+    },
+    {
+      "method": "environmentProviders/heartbeat",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/EnvironmentProviderHeartbeatParams"
+        },
+        "type": "EnvironmentProviderHeartbeatParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentProviderHeartbeatResponse"
+        },
+        "type": "AgentApiOutcome<EnvironmentProviderHeartbeatResponse>"
+      }
+    },
+    {
+      "method": "environmentProviders/unregister",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/EnvironmentProviderUnregisterParams"
+        },
+        "type": "EnvironmentProviderUnregisterParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentProviderUnregisterResponse"
+        },
+        "type": "AgentApiOutcome<EnvironmentProviderUnregisterResponse>"
+      }
+    },
+    {
       "method": "blob/put",
       "params": {
         "schema": {

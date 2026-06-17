@@ -5,6 +5,7 @@ members = [
     "crates/llm-clients",
     "crates/api",
     "crates/auth-registry",
+    "crates/environment-registry",
     "crates/engine",
     "crates/mcp-registry",
     "crates/messaging",

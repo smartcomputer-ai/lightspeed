@@ -8,6 +8,8 @@ aes-gcm = "0.10"
 auth-registry = { path = "../auth-registry" }
 base64 = "0.22"
 engine = { path = "../engine" }
+environment-registry = { path = "../environment-registry" }
+host-protocol = { path = "../host-protocol" }
 async-trait = "0.1"
 mcp-registry = { path = "../mcp-registry" }
 messaging = { path = "../messaging" }

@@ -8,6 +8,8 @@ temporal-workflow = { path = "../temporal-workflow" }
 api = { path = "../api" }
 api-projection = { path = "../api-projection" }
 engine = { path = "../engine" }
+environment-registry = { path = "../environment-registry" }
+host-protocol = { path = "../host-protocol" }
 vfs = { path = "../vfs" }
 anyhow = "1"
 async-trait = "0.1"

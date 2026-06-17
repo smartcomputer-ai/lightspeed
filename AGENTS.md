@@ -37,6 +37,7 @@ cargo test -p store-pg
 cargo test -p mcp-registry
 cargo test -p messaging
 cargo test -p auth-registry
+cargo test -p environment-registry
 cargo test -p llm-runtime
 cargo test -p llm-clients
 cargo test -p eval
@@ -97,7 +98,7 @@ cargo run -p cli -- chat --api-url http://127.0.0.1:18080/rpc --session session_
 - `crates/store-fs/` — filesystem-backed session log and content-addressed blob
   store adapters.
 - `crates/store-pg/` — PostgreSQL-backed session store, CAS catalog, MCP server
-  catalog, and AEAD-encrypted auth grant/secret storage.
+  catalog, environment registry, and AEAD-encrypted auth grant/secret storage.
 - `crates/messaging/` — channel-neutral outbound message types and the
   delivery outbox store trait backing the messaging tools and bridges (P71).
 - `crates/mcp-registry/` — provider-independent remote MCP server catalog DTOs,
@@ -106,6 +107,8 @@ cargo run -p cli -- chat --api-url http://127.0.0.1:18080/rpc --session session_
   OAuth client and authorization-flow records, PKCE helpers, the MCP OAuth
   and GitHub App drivers, store traits, typed broker errors, and the runtime
   token broker with single-flight refresh and on-demand minting (P69).
+- `crates/environment-registry/` — environment provider, host target, and
+  session environment binding DTOs, validation, errors, and store traits.
 - `crates/eval/` — eval harness for agent/tool workflows.
 - `crates/llm-runtime/` — CoreAgent LLM runtime from planned requests to
   provider-native client calls.

@@ -885,6 +885,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "environment-registry"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "engine",
+ "host-protocol",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3674,6 +3687,8 @@ dependencies = [
  "auth-registry",
  "base64",
  "engine",
+ "environment-registry",
+ "host-protocol",
  "mcp-registry",
  "messaging",
  "object_store",
@@ -3804,7 +3819,9 @@ dependencies = [
  "clap",
  "dotenvy",
  "engine",
+ "environment-registry",
  "futures",
+ "host-protocol",
  "llm-clients",
  "llm-runtime",
  "mcp-registry",

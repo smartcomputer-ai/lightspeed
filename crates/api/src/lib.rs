@@ -41,6 +41,9 @@ pub const METHOD_SESSION_ENVIRONMENTS_LIST: &str = "session/environments/list";
 pub const METHOD_SESSION_ENVIRONMENTS_READ: &str = "session/environments/read";
 pub const METHOD_SESSION_ENVIRONMENTS_ACTIVATE: &str = "session/environments/activate";
 pub const METHOD_SESSION_ENVIRONMENTS_DEACTIVATE: &str = "session/environments/deactivate";
+pub const METHOD_ENVIRONMENT_PROVIDERS_REGISTER: &str = "environmentProviders/register";
+pub const METHOD_ENVIRONMENT_PROVIDERS_HEARTBEAT: &str = "environmentProviders/heartbeat";
+pub const METHOD_ENVIRONMENT_PROVIDERS_UNREGISTER: &str = "environmentProviders/unregister";
 pub const METHOD_BLOB_PUT: &str = "blob/put";
 pub const METHOD_BLOB_PUT_MANY: &str = "blob/put_many";
 pub const METHOD_BLOB_GET: &str = "blob/get";
@@ -91,6 +94,8 @@ pub type RunId = String;
 pub type ItemId = String;
 pub type SkillId = String;
 pub type EnvironmentId = String;
+pub type EnvironmentProviderId = String;
+pub type EnvironmentTargetId = String;
 
 const SESSION_ID_MAX_LEN: usize = 128;
 
@@ -243,6 +248,21 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: SessionEnvironmentDeactivateParams,
     ) -> Result<AgentApiOutcome<SessionEnvironmentDeactivateResponse>, AgentApiError>;
+
+    async fn register_environment_provider(
+        &self,
+        params: EnvironmentProviderRegisterParams,
+    ) -> Result<AgentApiOutcome<EnvironmentProviderRegisterResponse>, AgentApiError>;
+
+    async fn heartbeat_environment_provider(
+        &self,
+        params: EnvironmentProviderHeartbeatParams,
+    ) -> Result<AgentApiOutcome<EnvironmentProviderHeartbeatResponse>, AgentApiError>;
+
+    async fn unregister_environment_provider(
+        &self,
+        params: EnvironmentProviderUnregisterParams,
+    ) -> Result<AgentApiOutcome<EnvironmentProviderUnregisterResponse>, AgentApiError>;
 
     async fn put_blob(
         &self,
@@ -1514,6 +1534,196 @@ pub struct SessionEnvironmentDeactivateResponse {
     pub active_env_id: Option<EnvironmentId>,
     #[serde(default)]
     pub environments: Vec<SessionEnvironmentView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentProviderView {
+    pub provider_id: EnvironmentProviderId,
+    pub provider_kind: EnvironmentProviderKindView,
+    pub status: EnvironmentProviderStatusView,
+    pub controller_connection: HostControllerConnectionView,
+    pub capabilities: EnvironmentProviderCapabilitiesView,
+    pub implementation: EnvironmentProviderImplementationView,
+    pub last_seen_ms: i64,
+    pub lease_expires_ms: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub metadata: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum EnvironmentProviderKindView {
+    Sandbox,
+    Bridge,
+    Custom,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum EnvironmentProviderStatusView {
+    Registering,
+    Online,
+    Stale,
+    Offline,
+    Disabled,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HostControllerConnectionView {
+    pub endpoint: String,
+    pub transport: HostTransportView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum HostTransportView {
+    WebSocket,
+    Http,
+    Stdio,
+    Ssh,
+    Provider { provider_type: String },
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentProviderCapabilitiesView {
+    #[serde(default)]
+    pub list_targets: bool,
+    #[serde(default)]
+    pub create_target: bool,
+    #[serde(default)]
+    pub attach_target: bool,
+    #[serde(default)]
+    pub get_target: bool,
+    #[serde(default)]
+    pub close_target: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentProviderImplementationView {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentTargetSummaryView {
+    pub target_id: EnvironmentTargetId,
+    pub status: EnvironmentTargetStatusView,
+    pub scope: HostScopeView,
+    pub capabilities: HostCapabilitiesView,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub metadata: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum EnvironmentTargetStatusView {
+    Creating,
+    Starting,
+    Ready,
+    Stopped,
+    Closing,
+    Closed,
+    Failed,
+    Unknown,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum HostScopeView {
+    Default,
+    Session { session_id: String },
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HostCapabilitiesView {
+    #[serde(default)]
+    pub filesystem_read: bool,
+    #[serde(default)]
+    pub filesystem_write: bool,
+    #[serde(default)]
+    pub process_start: bool,
+    #[serde(default)]
+    pub process_stdin: bool,
+    #[serde(default)]
+    pub process_terminate: bool,
+    #[serde(default)]
+    pub process_output_polling: bool,
+    #[serde(default)]
+    pub process_output_notifications: bool,
+    #[serde(default)]
+    pub process_pty: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentProviderRegisterParams {
+    pub provider_id: EnvironmentProviderId,
+    pub provider_kind: EnvironmentProviderKindView,
+    pub controller_connection: HostControllerConnectionView,
+    pub capabilities: EnvironmentProviderCapabilitiesView,
+    pub implementation: EnvironmentProviderImplementationView,
+    pub lease_ttl_ms: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub metadata: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentProviderRegisterResponse {
+    pub provider: EnvironmentProviderView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentProviderHeartbeatParams {
+    pub provider_id: EnvironmentProviderId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lease_ttl_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub observed_targets: Vec<EnvironmentTargetSummaryView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentProviderHeartbeatResponse {
+    pub provider: EnvironmentProviderView,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub targets: Vec<EnvironmentTargetSummaryView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentProviderUnregisterParams {
+    pub provider_id: EnvironmentProviderId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentProviderUnregisterResponse {
+    pub provider: EnvironmentProviderView,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -3174,6 +3384,9 @@ api_methods! {
     METHOD_SESSION_ENVIRONMENTS_READ => read_session_environment(SessionEnvironmentReadParams) -> SessionEnvironmentReadResponse,
     METHOD_SESSION_ENVIRONMENTS_ACTIVATE => activate_session_environment(SessionEnvironmentActivateParams) -> SessionEnvironmentActivateResponse,
     METHOD_SESSION_ENVIRONMENTS_DEACTIVATE => deactivate_session_environment(SessionEnvironmentDeactivateParams) -> SessionEnvironmentDeactivateResponse,
+    METHOD_ENVIRONMENT_PROVIDERS_REGISTER => register_environment_provider(EnvironmentProviderRegisterParams) -> EnvironmentProviderRegisterResponse,
+    METHOD_ENVIRONMENT_PROVIDERS_HEARTBEAT => heartbeat_environment_provider(EnvironmentProviderHeartbeatParams) -> EnvironmentProviderHeartbeatResponse,
+    METHOD_ENVIRONMENT_PROVIDERS_UNREGISTER => unregister_environment_provider(EnvironmentProviderUnregisterParams) -> EnvironmentProviderUnregisterResponse,
     METHOD_BLOB_PUT => put_blob(BlobPutParams) -> BlobPutResponse,
     METHOD_BLOB_PUT_MANY => put_blobs(BlobPutManyParams) -> BlobPutManyResponse,
     METHOD_BLOB_GET => get_blob(BlobGetParams) -> BlobGetResponse,
@@ -3760,6 +3973,94 @@ mod tests {
         let result = response.result.expect("result");
         assert!(result["result"]["activeEnvId"].is_null());
         assert_eq!(result["result"]["environments"][0]["active"], json!(false));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_environment_provider_register() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_ENVIRONMENT_PROVIDERS_REGISTER.to_owned(),
+                params: Some(json!({
+                    "providerId": "bridge-local",
+                    "providerKind": "bridge",
+                    "controllerConnection": {
+                        "endpoint": "ws://127.0.0.1:9000/controller",
+                        "transport": { "type": "webSocket" }
+                    },
+                    "capabilities": {
+                        "listTargets": true,
+                        "attachTarget": true,
+                        "getTarget": true
+                    },
+                    "implementation": {
+                        "name": "test-bridge",
+                        "version": "1.0.0"
+                    },
+                    "leaseTtlMs": 30000
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["provider"]["providerId"],
+            json!("bridge-local")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_environment_provider_heartbeat() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_ENVIRONMENT_PROVIDERS_HEARTBEAT.to_owned(),
+                params: Some(json!({
+                    "providerId": "bridge-local",
+                    "observedTargets": [{
+                        "targetId": "local-host",
+                        "status": "ready",
+                        "scope": { "type": "default" },
+                        "capabilities": {
+                            "filesystemRead": true,
+                            "filesystemWrite": true,
+                            "processStart": true,
+                            "processStdin": true
+                        },
+                        "defaultCwd": "/workspace"
+                    }]
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["targets"][0]["targetId"],
+            json!("local-host")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_environment_provider_unregister() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_ENVIRONMENT_PROVIDERS_UNREGISTER.to_owned(),
+                params: Some(json!({ "providerId": "bridge-local" })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["provider"]["status"],
+            json!("offline")
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -4624,6 +4925,48 @@ mod tests {
             }))
         }
 
+        async fn register_environment_provider(
+            &self,
+            params: EnvironmentProviderRegisterParams,
+        ) -> Result<AgentApiOutcome<EnvironmentProviderRegisterResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(EnvironmentProviderRegisterResponse {
+                provider: test_environment_provider(
+                    params.provider_id,
+                    params.provider_kind,
+                    EnvironmentProviderStatusView::Online,
+                ),
+            }))
+        }
+
+        async fn heartbeat_environment_provider(
+            &self,
+            params: EnvironmentProviderHeartbeatParams,
+        ) -> Result<AgentApiOutcome<EnvironmentProviderHeartbeatResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(EnvironmentProviderHeartbeatResponse {
+                provider: test_environment_provider(
+                    params.provider_id,
+                    EnvironmentProviderKindView::Bridge,
+                    EnvironmentProviderStatusView::Online,
+                ),
+                targets: params.observed_targets,
+            }))
+        }
+
+        async fn unregister_environment_provider(
+            &self,
+            params: EnvironmentProviderUnregisterParams,
+        ) -> Result<AgentApiOutcome<EnvironmentProviderUnregisterResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(
+                EnvironmentProviderUnregisterResponse {
+                    provider: test_environment_provider(
+                        params.provider_id,
+                        EnvironmentProviderKindView::Bridge,
+                        EnvironmentProviderStatusView::Offline,
+                    ),
+                },
+            ))
+        }
+
         async fn put_blob(
             &self,
             params: BlobPutParams,
@@ -5149,6 +5492,36 @@ mod tests {
             }),
             cwd: Some("/workspace".to_owned()),
             active,
+        }
+    }
+
+    fn test_environment_provider(
+        provider_id: EnvironmentProviderId,
+        provider_kind: EnvironmentProviderKindView,
+        status: EnvironmentProviderStatusView,
+    ) -> EnvironmentProviderView {
+        EnvironmentProviderView {
+            provider_id,
+            provider_kind,
+            status,
+            controller_connection: HostControllerConnectionView {
+                endpoint: "ws://127.0.0.1:9000/controller".to_owned(),
+                transport: HostTransportView::WebSocket,
+            },
+            capabilities: EnvironmentProviderCapabilitiesView {
+                list_targets: true,
+                attach_target: true,
+                get_target: true,
+                ..EnvironmentProviderCapabilitiesView::default()
+            },
+            implementation: EnvironmentProviderImplementationView {
+                name: "test-bridge".to_owned(),
+                version: Some("1.0.0".to_owned()),
+            },
+            last_seen_ms: 10,
+            lease_expires_ms: 30_010,
+            display_name: Some("Local bridge".to_owned()),
+            metadata: BTreeMap::new(),
         }
     }
 

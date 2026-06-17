@@ -18,6 +18,23 @@ use engine::{
         SessionBlobRoot, SessionStore,
     },
 };
+use environment_registry::{
+    CreateSessionEnvironmentBinding, EnvironmentId, EnvironmentProviderCapabilities,
+    EnvironmentProviderHeartbeat, EnvironmentProviderId, EnvironmentProviderKind,
+    EnvironmentProviderStatus, EnvironmentProviderStore, EnvironmentTargetStore,
+    HostControllerConnectionSpec, ListEnvironmentProviders, ListEnvironmentTargets,
+    RegisterEnvironmentProvider, SessionEnvironmentBindingStatus, SessionEnvironmentBindingStore,
+    SessionEnvironmentCapabilities, SessionEnvironmentFsRoute, SessionEnvironmentFsRouteAccess,
+    SessionEnvironmentKind, UpdateEnvironmentProviderStatus, UpdateEnvironmentTargetStatus,
+    UpdateSessionEnvironmentBindingStatus, UpsertEnvironmentTargetRecord,
+};
+use host_protocol::{
+    control::targets::HostTargetStatus,
+    shared::{
+        HostCapabilities, HostConnectionSpec, HostPath, HostScope, HostTargetId, HostTransport,
+        ImplementationInfo,
+    },
+};
 use mcp_registry::{
     CreateMcpServerRecord, ListMcpServers, McpApprovalPolicy, McpRegistryError, McpRegistryStore,
     McpServerAuthPolicy, McpServerId, McpServerStatus, RemoteMcpTransport,
@@ -429,6 +446,186 @@ async fn pg_live_mcp_registry_crud_and_universe_isolation() {
         left.read_server(&server_id).await,
         Err(McpRegistryError::NotFound { server_id }) if server_id.as_str() == "crm"
     ));
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires local/up.sh or compatible Postgres + MinIO env"]
+async fn pg_live_environment_registry_crud_and_session_bindings() {
+    let store = live_store("environment-registry", 1024).await;
+    let provider_id = EnvironmentProviderId::new("bridge-local");
+    let target_id = HostTargetId::new("local-host");
+    let session_id = SessionId::new("session-env");
+    let env_id = EnvironmentId::new("local");
+
+    let provider = store
+        .register_provider(RegisterEnvironmentProvider {
+            provider_id: provider_id.clone(),
+            provider_kind: EnvironmentProviderKind::Bridge,
+            display_name: Some("Local bridge".to_owned()),
+            controller_connection: HostControllerConnectionSpec::new(
+                "ws://127.0.0.1:9000/controller",
+                HostTransport::WebSocket,
+            ),
+            capabilities: EnvironmentProviderCapabilities {
+                list_targets: true,
+                attach_target: true,
+                get_target: true,
+                ..EnvironmentProviderCapabilities::default()
+            },
+            implementation: ImplementationInfo {
+                name: "test-bridge".to_owned(),
+                version: Some("1.0.0".to_owned()),
+            },
+            lease_ttl_ms: 30_000,
+            metadata: Default::default(),
+            observed_at_ms: 10,
+        })
+        .await
+        .expect("register provider");
+    assert_eq!(provider.status, EnvironmentProviderStatus::Online);
+
+    let heartbeat = store
+        .update_provider_heartbeat(EnvironmentProviderHeartbeat {
+            provider_id: provider_id.clone(),
+            observed_at_ms: 20,
+            lease_ttl_ms: Some(30_000),
+            observed_targets: Vec::new(),
+        })
+        .await
+        .expect("provider heartbeat");
+    assert_eq!(heartbeat.last_seen_ms, 20);
+    assert_eq!(heartbeat.lease_expires_ms, 30_020);
+    assert_eq!(
+        store
+            .list_providers(ListEnvironmentProviders {
+                status: Some(EnvironmentProviderStatus::Online),
+                provider_kind: Some(EnvironmentProviderKind::Bridge),
+            })
+            .await
+            .expect("list providers"),
+        vec![heartbeat.clone()]
+    );
+
+    let target = store
+        .upsert_target(UpsertEnvironmentTargetRecord {
+            provider_id: provider_id.clone(),
+            target_id: target_id.clone(),
+            display_name: Some("Local host".to_owned()),
+            status: HostTargetStatus::Ready,
+            scope: HostScope::Default,
+            capabilities: HostCapabilities::filesystem(true, true).with_process(),
+            default_cwd: Some(HostPath::new("/workspace").expect("cwd")),
+            metadata: Default::default(),
+            observed_at_ms: 30,
+        })
+        .await
+        .expect("upsert target");
+    assert_eq!(
+        store
+            .list_targets(ListEnvironmentTargets {
+                provider_id: Some(provider_id.clone()),
+                status: Some(HostTargetStatus::Ready),
+            })
+            .await
+            .expect("list targets"),
+        vec![target.clone()]
+    );
+
+    store
+        .create_session(CreateSession {
+            session_id: session_id.clone(),
+            agent_handle: AgentHandle::new("lightspeed.default"),
+            created_at_ms: 35,
+        })
+        .await
+        .expect("create session");
+
+    let binding = store
+        .create_binding(CreateSessionEnvironmentBinding {
+            session_id: session_id.clone(),
+            env_id: env_id.clone(),
+            provider_id: provider_id.clone(),
+            target_id: target_id.clone(),
+            kind: SessionEnvironmentKind::AttachedHost,
+            status: SessionEnvironmentBindingStatus::Ready,
+            capabilities: SessionEnvironmentCapabilities {
+                fs_read: true,
+                fs_write: true,
+                process_exec: true,
+                process_stdin: true,
+                network: false,
+                persistent: true,
+            },
+            connection: HostConnectionSpec {
+                target_id: target_id.clone(),
+                endpoint: "ws://127.0.0.1:9001/data".to_owned(),
+                transport: HostTransport::WebSocket,
+                scope: HostScope::Session {
+                    session_id: session_id.as_str().to_owned(),
+                },
+                default_cwd: Some(HostPath::new("/workspace").expect("cwd")),
+                capabilities: HostCapabilities::filesystem(true, true).with_process(),
+            },
+            cwd: Some(HostPath::new("/workspace").expect("cwd")),
+            fs_routes: vec![SessionEnvironmentFsRoute {
+                path: HostPath::new("/workspace").expect("route"),
+                access: SessionEnvironmentFsRouteAccess::ReadWrite,
+                same_state_as_active_env: Some(env_id.clone()),
+            }],
+            created_at_ms: 40,
+        })
+        .await
+        .expect("create binding");
+    assert_eq!(
+        store
+            .list_bindings_for_session(&session_id)
+            .await
+            .expect("list bindings"),
+        vec![binding.clone()]
+    );
+
+    let degraded = store
+        .update_binding_status(UpdateSessionEnvironmentBindingStatus {
+            session_id: session_id.clone(),
+            env_id: env_id.clone(),
+            status: SessionEnvironmentBindingStatus::Degraded,
+            updated_at_ms: 50,
+        })
+        .await
+        .expect("degrade binding");
+    assert_eq!(degraded.status, SessionEnvironmentBindingStatus::Degraded);
+
+    let stopped = store
+        .update_target_status(UpdateEnvironmentTargetStatus {
+            provider_id: provider_id.clone(),
+            target_id: target_id.clone(),
+            status: HostTargetStatus::Stopped,
+            observed_at_ms: 60,
+        })
+        .await
+        .expect("stop target");
+    assert_eq!(stopped.status, HostTargetStatus::Stopped);
+
+    let offline = store
+        .update_provider_status(UpdateEnvironmentProviderStatus {
+            provider_id: provider_id.clone(),
+            status: EnvironmentProviderStatus::Offline,
+            updated_at_ms: 70,
+        })
+        .await
+        .expect("mark provider offline");
+    assert_eq!(offline.status, EnvironmentProviderStatus::Offline);
+
+    let deleted = store
+        .delete_binding(&session_id, &env_id)
+        .await
+        .expect("delete binding");
+    assert_eq!(deleted, degraded);
+    let deleted_provider = store
+        .delete_provider(&provider_id)
+        .await
+        .expect("delete provider");
+    assert_eq!(deleted_provider.status, EnvironmentProviderStatus::Offline);
 }
 
 #[tokio::test(flavor = "current_thread")]
