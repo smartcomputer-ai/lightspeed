@@ -2,7 +2,7 @@
 
 **Status**
 - Proposed 2026-06-17.
-- G1-G3 implemented 2026-06-17.
+- G1-G7 implemented 2026-06-17.
 - Builds on P75-P79 and `docs/spec/04-environments.md`.
 - Breaking changes remain allowed. Lightspeed has not shipped a stable
   environment API.
@@ -435,29 +435,60 @@ Implemented as JSON-RPC methods:
 - `environmentProviders/heartbeat`
 - `environmentProviders/unregister`
 
-This first API pass validates and persists provider registry state. It does not
-perform `controller/initialize`; controller transport integration starts in G4.
+Implemented provider registration calls `controller/initialize`, validates the
+host-protocol version, and persists controller-advertised capabilities and
+implementation metadata. Heartbeat can poll `controller/listTargets` when the
+provider omits observed target summaries.
 
 ### G4: Host-Protocol Controller Client Integration
 
 Use `host-client`/`host-protocol` to initialize controllers and call
 `listTargets`, `createTarget`, `attachTarget`, `getTarget`, and `closeTarget`.
 
+Implemented for WebSocket controller transports. Unsupported controller
+transports fail explicitly at the gateway boundary. `getTarget` remains unused
+until a public API needs a single-target refresh path.
+
 ### G5: Public Session Lifecycle API
 
 Add `session/environments/create`, `session/environments/attach`, and
 `session/environments/close` on top of the registry and controller client.
+
+Implemented as JSON-RPC methods:
+
+- `session/environments/create`
+- `session/environments/attach`
+- `session/environments/close`
+
+Create/attach call the provider controller, persist a
+`SessionEnvironmentBindingRecord`, refresh projection, and optionally activate
+`env:<id>`. Close optionally calls `controller/closeTarget`, clears the active
+environment first when needed, and marks the binding detached.
 
 ### G6: Registry-Backed SessionEnvironmentManager
 
 Build gateway projection and worker `ToolTargets` from session binding records.
 Keep core activation as `SetDefaultToolTarget` / `ClearDefaultToolTarget`.
 
+Implemented. Gateway list/read/projection load bindings from the registry.
+Worker `SessionTools` loads ready bindings, connects to the data-plane
+`HostConnectionSpec`, performs the host data handshake, and materializes
+environment action contexts. The internal `ToolInvocationBatchRequest` now
+includes the default-target snapshot so `fs:session` can compose the active
+environment filesystem route without stamping a per-route backend into core.
+
 ### G7: Fake Provider Integration Test
 
 Add a fake host-protocol controller that registers, heartbeats, creates or
 attaches a target, and supports a process tool call through the resulting
 session environment.
+
+Implemented as ignored live test
+`temporal_live_fake_provider_create_attach_and_process_tool` in
+`crates/temporal-server/tests/environment_provider_live.rs`. It starts an
+in-process WebSocket fake provider, registers it through the gateway, exercises
+heartbeat/listTargets, bridge-style attach, sandbox-style create, process tool
+execution through the host data plane, and close/detach semantics.
 
 ## Done When
 

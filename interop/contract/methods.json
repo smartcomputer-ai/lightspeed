@@ -301,6 +301,36 @@
       }
     },
     {
+      "method": "session/environments/create",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/SessionEnvironmentCreateParams"
+        },
+        "type": "SessionEnvironmentCreateParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfSessionEnvironmentCreateResponse"
+        },
+        "type": "AgentApiOutcome<SessionEnvironmentCreateResponse>"
+      }
+    },
+    {
+      "method": "session/environments/attach",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/SessionEnvironmentAttachParams"
+        },
+        "type": "SessionEnvironmentAttachParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfSessionEnvironmentAttachResponse"
+        },
+        "type": "AgentApiOutcome<SessionEnvironmentAttachResponse>"
+      }
+    },
+    {
       "method": "session/environments/activate",
       "params": {
         "schema": {
@@ -328,6 +358,21 @@
           "$ref": "#/definitions/AgentApiOutcomeOfSessionEnvironmentDeactivateResponse"
         },
         "type": "AgentApiOutcome<SessionEnvironmentDeactivateResponse>"
+      }
+    },
+    {
+      "method": "session/environments/close",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/SessionEnvironmentCloseParams"
+        },
+        "type": "SessionEnvironmentCloseParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfSessionEnvironmentCloseResponse"
+        },
+        "type": "AgentApiOutcome<SessionEnvironmentCloseResponse>"
       }
     },
     {

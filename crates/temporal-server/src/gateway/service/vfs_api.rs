@@ -323,7 +323,10 @@ impl GatewayAgentApi {
             AgentApiError::invalid_request(format!("session is missing config: {session_id}"))
         })?;
         let target = ToolTarget::from(&session_config.model);
-        let config = self.session_toolset_config(session_config);
+        let config = self.session_toolset_config(
+            session_config,
+            self.session_has_process_environment(session_id).await?,
+        );
         let fs_tools_enabled = config.builtin.fs.enabled();
         let toolset = resolve_toolset(ToolsetEnvironment { target: &target }, &config)
             .map_err(|error| AgentApiError::internal(format!("build session tools: {error}")))?;

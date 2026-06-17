@@ -3,14 +3,23 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use engine::{CoreAgentState, SessionId, ToolExecutionTarget, storage::BlobStore};
+use environment_registry::{
+    SessionEnvironmentBindingRecord, SessionEnvironmentBindingStatus, SessionEnvironmentFsRoute,
+    SessionEnvironmentFsRouteAccess, SessionEnvironmentKind,
+};
 use thiserror::Error;
 use tools::{
     environment::EnvironmentToolContext,
     environment::projection::{
-        EnvironmentProjectionError, EnvironmentProjectionInput, EnvironmentProjectionRefresh,
-        EnvironmentRecord, FsRoute, prepare_environment_projection_refresh,
+        EnvironmentCapabilities, EnvironmentKind, EnvironmentProjectionError,
+        EnvironmentProjectionInput, EnvironmentProjectionRefresh, EnvironmentRecord,
+        EnvironmentStatus, FsRoute, FsRouteAccess, FsRouteSource,
+        prepare_environment_projection_refresh,
     },
-    fs::FsToolContext,
+    fs::{
+        FileSystem, FsError, FsPath, FsToolContext, ScopedFileSystem, SessionFileSystem,
+        SessionFileSystemRoute, SessionFileSystemRouteSource,
+    },
     targets::{ENV_TARGET_NAMESPACE, SESSION_FS_TARGET_ID, ToolTargets},
 };
 use vfs::{VfsCatalogError, VfsMountRecord, VfsMountStore};
@@ -19,6 +28,7 @@ use vfs::{VfsCatalogError, VfsMountRecord, VfsMountStore};
 pub struct RuntimeEnvironment {
     record: EnvironmentRecord,
     tool_context: EnvironmentToolContext,
+    fs_context: Option<FsToolContext>,
     fs_routes: Vec<FsRoute>,
 }
 
@@ -27,8 +37,14 @@ impl RuntimeEnvironment {
         Self {
             record,
             tool_context,
+            fs_context: None,
             fs_routes: Vec::new(),
         }
+    }
+
+    pub fn with_fs_context(mut self, fs_context: FsToolContext) -> Self {
+        self.fs_context = Some(fs_context);
+        self
     }
 
     pub fn with_fs_routes(mut self, fs_routes: Vec<FsRoute>) -> Self {
@@ -46,6 +62,10 @@ impl RuntimeEnvironment {
 
     pub fn tool_context(&self) -> &EnvironmentToolContext {
         &self.tool_context
+    }
+
+    pub fn fs_context(&self) -> Option<&FsToolContext> {
+        self.fs_context.as_ref()
     }
 
     pub fn fs_routes(&self) -> &[FsRoute] {
@@ -99,20 +119,32 @@ impl SessionEnvironmentManager {
             .map(RuntimeEnvironment::env_id)
     }
 
+    pub fn active_environment_id_for<'a>(
+        &self,
+        environments: &'a [RuntimeEnvironment],
+        state: &CoreAgentState,
+    ) -> Option<&'a str> {
+        active_environment_for_slice(environments, state).map(RuntimeEnvironment::env_id)
+    }
+
     pub fn has_environments(&self) -> bool {
         !self.environments.is_empty()
     }
 
-    pub fn tool_targets(&self, session_fs: Option<FsToolContext>) -> ToolTargets {
+    pub fn tool_targets(
+        &self,
+        session_fs: Option<FsToolContext>,
+        active_env_target: Option<&ToolExecutionTarget>,
+    ) -> Result<ToolTargets, SessionEnvironmentManagerError> {
         let mut targets = ToolTargets::new();
-        if let Some(session_fs) = session_fs {
+        if let Some(session_fs) = self.composed_session_fs(session_fs, active_env_target)? {
             targets.insert_fs_context(SESSION_FS_TARGET_ID, session_fs);
         }
         for environment in self.environments.values() {
             targets
                 .insert_environment_context(environment.env_id(), environment.tool_context.clone());
         }
-        targets
+        Ok(targets)
     }
 
     pub async fn refresh_projection(
@@ -139,6 +171,26 @@ impl SessionEnvironmentManager {
         Ok(prepare_environment_projection_refresh(self.blobs.as_ref(), state, input).await?)
     }
 
+    pub async fn refresh_projection_for_runtime_environments(
+        &self,
+        state: &CoreAgentState,
+        mounts: Vec<VfsMountRecord>,
+        environments: Vec<RuntimeEnvironment>,
+    ) -> Result<EnvironmentProjectionRefresh, SessionEnvironmentManagerError> {
+        let active_environment = active_environment_for_slice(&environments, state);
+        let mut input = EnvironmentProjectionInput::from_mounts(mounts).with_environments(
+            environments
+                .iter()
+                .map(|environment| environment.record.clone())
+                .collect(),
+        );
+        if let Some(environment) = active_environment {
+            input = input
+                .with_active_environment(environment.env_id(), environment.fs_routes().to_vec());
+        }
+        Ok(prepare_environment_projection_refresh(self.blobs.as_ref(), state, input).await?)
+    }
+
     fn active_environment(&self, state: &CoreAgentState) -> Option<&RuntimeEnvironment> {
         let target = state
             .tooling
@@ -147,6 +199,97 @@ impl SessionEnvironmentManager {
             .get(ENV_TARGET_NAMESPACE)?;
         active_environment_for_target(&self.environments, target)
     }
+
+    fn composed_session_fs(
+        &self,
+        session_fs: Option<FsToolContext>,
+        active_env_target: Option<&ToolExecutionTarget>,
+    ) -> Result<Option<FsToolContext>, SessionEnvironmentManagerError> {
+        let active_environment = active_env_target
+            .and_then(|target| active_environment_for_target(&self.environments, target))
+            .filter(|environment| environment.fs_context().is_some())
+            .filter(|environment| !environment.fs_routes().is_empty());
+        let Some(active_environment) = active_environment else {
+            return Ok(session_fs);
+        };
+        let active_fs = active_environment
+            .fs_context()
+            .expect("active environment fs context checked above");
+
+        let mut routes = Vec::new();
+        for route in active_environment.fs_routes() {
+            let FsRouteSource::HostFilesystem { .. } = &route.source else {
+                continue;
+            };
+            let route_fs = scoped_route_fs(route, active_fs.fs.clone())?;
+            routes.push(SessionFileSystemRoute::new(
+                route.path.clone(),
+                route_fs,
+                SessionFileSystemRouteSource::EnvironmentFilesystem {
+                    environment_id: active_environment.env_id().to_owned(),
+                },
+                route.same_state_as_active_env.as_deref() == Some(active_environment.env_id()),
+            )?);
+        }
+
+        if let Some(session_fs) = session_fs.as_ref() {
+            routes.push(SessionFileSystemRoute::new(
+                FsPath::root(),
+                session_fs.fs.clone(),
+                SessionFileSystemRouteSource::Other {
+                    label: "session_vfs".to_owned(),
+                },
+                false,
+            )?);
+        }
+
+        if routes.is_empty() {
+            return Ok(session_fs);
+        }
+
+        let mut fs_context = FsToolContext::new(
+            Arc::new(SessionFileSystem::new(routes)?),
+            self.blobs.clone(),
+        );
+        if let Some(cwd) = session_fs
+            .as_ref()
+            .and_then(|ctx| ctx.fs_cwd.clone())
+            .or_else(|| active_fs.fs_cwd.clone())
+        {
+            fs_context = fs_context.with_cwd(cwd);
+        }
+        Ok(Some(fs_context))
+    }
+}
+
+fn scoped_route_fs(
+    route: &FsRoute,
+    fs: Arc<dyn FileSystem>,
+) -> Result<Arc<dyn FileSystem>, FsError> {
+    let scoped = match route.access {
+        FsRouteAccess::ReadOnly => ScopedFileSystem::read_only_from_arc(route.path.clone(), fs)?,
+        FsRouteAccess::ReadWrite => ScopedFileSystem::read_write_from_arc(route.path.clone(), fs)?,
+    };
+    Ok(Arc::new(scoped))
+}
+
+fn active_environment_for_slice<'a>(
+    environments: &'a [RuntimeEnvironment],
+    state: &CoreAgentState,
+) -> Option<&'a RuntimeEnvironment> {
+    let target = state
+        .tooling
+        .routing
+        .default_targets
+        .get(ENV_TARGET_NAMESPACE)?;
+    environments
+        .iter()
+        .find(|environment| environment.record.exec_target.as_ref() == Some(target))
+        .or_else(|| {
+            environments.iter().find(|environment| {
+                target.namespace == ENV_TARGET_NAMESPACE && environment.record.env_id == target.id
+            })
+        })
 }
 
 #[derive(Debug, Error)]
@@ -156,6 +299,105 @@ pub enum SessionEnvironmentManagerError {
 
     #[error(transparent)]
     VfsCatalog(#[from] VfsCatalogError),
+
+    #[error(transparent)]
+    Fs(#[from] FsError),
+}
+
+#[derive(Debug, Error)]
+pub enum RuntimeEnvironmentBindingError {
+    #[error("invalid environment binding cwd: {0}")]
+    InvalidCwd(String),
+
+    #[error("invalid environment binding fs route: {0}")]
+    InvalidFsRoute(String),
+}
+
+pub fn runtime_environment_from_binding_record(
+    binding: &SessionEnvironmentBindingRecord,
+    tool_context: EnvironmentToolContext,
+) -> Result<RuntimeEnvironment, RuntimeEnvironmentBindingError> {
+    let record = environment_record_from_binding(binding)?;
+    let fs_routes = fs_routes_from_binding(binding)?;
+    Ok(RuntimeEnvironment::new(record, tool_context).with_fs_routes(fs_routes))
+}
+
+pub fn environment_record_from_binding(
+    binding: &SessionEnvironmentBindingRecord,
+) -> Result<EnvironmentRecord, RuntimeEnvironmentBindingError> {
+    Ok(EnvironmentRecord {
+        env_id: binding.env_id.as_str().to_owned(),
+        kind: environment_kind_from_binding(binding.kind),
+        capabilities: environment_capabilities_from_binding(binding.capabilities),
+        exec_target: Some(binding.exec_target.clone()),
+        cwd: binding
+            .cwd
+            .as_ref()
+            .map(|cwd| FsPath::new(cwd.as_str()))
+            .transpose()
+            .map_err(|error| RuntimeEnvironmentBindingError::InvalidCwd(error.to_string()))?,
+        status: environment_status_from_binding(binding.status),
+    })
+}
+
+pub fn fs_routes_from_binding(
+    binding: &SessionEnvironmentBindingRecord,
+) -> Result<Vec<FsRoute>, RuntimeEnvironmentBindingError> {
+    binding
+        .fs_routes
+        .iter()
+        .map(|route| fs_route_from_binding(route, &binding.exec_target))
+        .collect()
+}
+
+fn fs_route_from_binding(
+    route: &SessionEnvironmentFsRoute,
+    target: &ToolExecutionTarget,
+) -> Result<FsRoute, RuntimeEnvironmentBindingError> {
+    Ok(FsRoute {
+        path: FsPath::new(route.path.as_str())
+            .map_err(|error| RuntimeEnvironmentBindingError::InvalidFsRoute(error.to_string()))?,
+        access: match route.access {
+            SessionEnvironmentFsRouteAccess::ReadOnly => FsRouteAccess::ReadOnly,
+            SessionEnvironmentFsRouteAccess::ReadWrite => FsRouteAccess::ReadWrite,
+        },
+        source: FsRouteSource::HostFilesystem {
+            target: target.clone(),
+        },
+        same_state_as_active_env: route
+            .same_state_as_active_env
+            .as_ref()
+            .map(|env_id| env_id.as_str().to_owned()),
+    })
+}
+
+fn environment_kind_from_binding(kind: SessionEnvironmentKind) -> EnvironmentKind {
+    match kind {
+        SessionEnvironmentKind::Sandbox => EnvironmentKind::Sandbox,
+        SessionEnvironmentKind::AttachedHost => EnvironmentKind::AttachedHost,
+    }
+}
+
+fn environment_status_from_binding(status: SessionEnvironmentBindingStatus) -> EnvironmentStatus {
+    match status {
+        SessionEnvironmentBindingStatus::Attaching => EnvironmentStatus::Attaching,
+        SessionEnvironmentBindingStatus::Ready => EnvironmentStatus::Ready,
+        SessionEnvironmentBindingStatus::Degraded => EnvironmentStatus::Degraded,
+        SessionEnvironmentBindingStatus::Detached => EnvironmentStatus::Detached,
+    }
+}
+
+fn environment_capabilities_from_binding(
+    capabilities: environment_registry::SessionEnvironmentCapabilities,
+) -> EnvironmentCapabilities {
+    EnvironmentCapabilities {
+        fs_read: capabilities.fs_read,
+        fs_write: capabilities.fs_write,
+        process_exec: capabilities.process_exec,
+        process_stdin: capabilities.process_stdin,
+        network: capabilities.network,
+        persistent: capabilities.persistent,
+    }
 }
 
 fn active_environment_for_target<'a>(
@@ -182,7 +424,7 @@ mod tests {
             EnvironmentCapabilities, EnvironmentKind, EnvironmentStatus, FsRoute, FsRouteAccess,
             FsRouteSource,
         },
-        fs::FsPath,
+        fs::{CreateDirectoryOptions, FileSystem, FsPath, FsToolContext, InMemoryFileSystem},
         targets::environment_target,
     };
     use vfs::{VfsCatalogError, VfsMountRecord};
@@ -256,6 +498,73 @@ mod tests {
             CoreAgentCommand::UpsertContext { key, .. }
                 if key == &ContextEntryKey::new(engine::ENVIRONMENT_ACTIVE_CONTEXT_KEY)
         )));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn manager_composes_active_environment_filesystem_into_session_target() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let fs = InMemoryFileSystem::full_access();
+        fs.create_directory(
+            &FsPath::new("/workspace").expect("workspace path"),
+            CreateDirectoryOptions::single(),
+        )
+        .await
+        .expect("create workspace");
+        fs.write_file(
+            &FsPath::new("/workspace/README.md").expect("file path"),
+            b"from environment".to_vec(),
+        )
+        .await
+        .expect("write file");
+        let fs_context = FsToolContext::new(Arc::new(fs), blobs.clone())
+            .with_cwd(FsPath::new("/workspace").expect("cwd"));
+        let manager = SessionEnvironmentManager::new(blobs.clone(), Arc::new(EmptyMountStore))
+            .with_environment(
+                RuntimeEnvironment::new(
+                    EnvironmentRecord {
+                        env_id: "local".to_owned(),
+                        kind: EnvironmentKind::AttachedHost,
+                        capabilities: EnvironmentCapabilities {
+                            fs_read: true,
+                            fs_write: true,
+                            process_exec: false,
+                            process_stdin: false,
+                            network: false,
+                            persistent: true,
+                        },
+                        exec_target: Some(environment_target("local")),
+                        cwd: Some(FsPath::new("/workspace").expect("cwd")),
+                        status: EnvironmentStatus::Ready,
+                    },
+                    EnvironmentToolContext::new(None, blobs.clone()),
+                )
+                .with_fs_context(fs_context)
+                .with_fs_routes(vec![FsRoute {
+                    path: FsPath::new("/workspace").expect("route path"),
+                    access: FsRouteAccess::ReadWrite,
+                    source: FsRouteSource::HostFilesystem {
+                        target: environment_target("local"),
+                    },
+                    same_state_as_active_env: Some("local".to_owned()),
+                }]),
+            );
+
+        let targets = manager
+            .tool_targets(None, Some(&environment_target("local")))
+            .expect("tool targets");
+        let ctx = targets
+            .resolve(&tools::targets::session_fs_target())
+            .expect("session fs target")
+            .filesystem()
+            .expect("filesystem context");
+        let contents = ctx
+            .fs
+            .read_file(&FsPath::new("/workspace/README.md").expect("file path"))
+            .await
+            .expect("read file");
+
+        assert_eq!(contents, b"from environment");
+        assert_eq!(ctx.fs_cwd.as_ref().map(FsPath::as_str), Some("/workspace"));
     }
 
     struct EmptyMountStore;

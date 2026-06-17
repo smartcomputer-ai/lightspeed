@@ -484,6 +484,7 @@ mod tests {
             run_id: RunId::new(1),
             turn_id: TurnId::new(1),
             batch_id: ToolBatchId::new(1),
+            default_targets: Default::default(),
             calls: vec![call],
         }
     }
@@ -629,6 +630,7 @@ mod tests {
                 run_id: RunId::new(1),
                 turn_id: TurnId::new(1),
                 batch_id: ToolBatchId::new(1),
+                default_targets: Default::default(),
                 calls: vec![engine::ToolInvocationRequest {
                     call_id: ToolCallId::new("call-1"),
                     tool_name: ToolName::new("read_file"),

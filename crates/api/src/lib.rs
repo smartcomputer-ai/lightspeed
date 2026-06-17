@@ -39,8 +39,11 @@ pub const METHOD_SKILLS_ACTIVATE: &str = "skills/activate";
 pub const METHOD_SKILLS_DEACTIVATE: &str = "skills/deactivate";
 pub const METHOD_SESSION_ENVIRONMENTS_LIST: &str = "session/environments/list";
 pub const METHOD_SESSION_ENVIRONMENTS_READ: &str = "session/environments/read";
+pub const METHOD_SESSION_ENVIRONMENTS_CREATE: &str = "session/environments/create";
+pub const METHOD_SESSION_ENVIRONMENTS_ATTACH: &str = "session/environments/attach";
 pub const METHOD_SESSION_ENVIRONMENTS_ACTIVATE: &str = "session/environments/activate";
 pub const METHOD_SESSION_ENVIRONMENTS_DEACTIVATE: &str = "session/environments/deactivate";
+pub const METHOD_SESSION_ENVIRONMENTS_CLOSE: &str = "session/environments/close";
 pub const METHOD_ENVIRONMENT_PROVIDERS_REGISTER: &str = "environmentProviders/register";
 pub const METHOD_ENVIRONMENT_PROVIDERS_HEARTBEAT: &str = "environmentProviders/heartbeat";
 pub const METHOD_ENVIRONMENT_PROVIDERS_UNREGISTER: &str = "environmentProviders/unregister";
@@ -239,6 +242,16 @@ pub trait AgentApiService: Send + Sync {
         params: SessionEnvironmentReadParams,
     ) -> Result<AgentApiOutcome<SessionEnvironmentReadResponse>, AgentApiError>;
 
+    async fn create_session_environment(
+        &self,
+        params: SessionEnvironmentCreateParams,
+    ) -> Result<AgentApiOutcome<SessionEnvironmentCreateResponse>, AgentApiError>;
+
+    async fn attach_session_environment(
+        &self,
+        params: SessionEnvironmentAttachParams,
+    ) -> Result<AgentApiOutcome<SessionEnvironmentAttachResponse>, AgentApiError>;
+
     async fn activate_session_environment(
         &self,
         params: SessionEnvironmentActivateParams,
@@ -248,6 +261,11 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: SessionEnvironmentDeactivateParams,
     ) -> Result<AgentApiOutcome<SessionEnvironmentDeactivateResponse>, AgentApiError>;
+
+    async fn close_session_environment(
+        &self,
+        params: SessionEnvironmentCloseParams,
+    ) -> Result<AgentApiOutcome<SessionEnvironmentCloseResponse>, AgentApiError>;
 
     async fn register_environment_provider(
         &self,
@@ -1504,6 +1522,105 @@ pub struct SessionEnvironmentReadResponse {
     pub environment: SessionEnvironmentView,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionEnvironmentCreateParams {
+    pub session_id: SessionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env_id: Option<EnvironmentId>,
+    pub provider_id: EnvironmentProviderId,
+    pub request: HostTargetCreateRequestView,
+    #[serde(default)]
+    pub activate: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionEnvironmentCreateResponse {
+    pub environment: SessionEnvironmentView,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_env_id: Option<EnvironmentId>,
+    #[serde(default)]
+    pub environments: Vec<SessionEnvironmentView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionEnvironmentAttachParams {
+    pub session_id: SessionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env_id: Option<EnvironmentId>,
+    pub provider_id: EnvironmentProviderId,
+    pub request: HostTargetAttachRequestView,
+    #[serde(default)]
+    pub activate: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionEnvironmentAttachResponse {
+    pub environment: SessionEnvironmentView,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_env_id: Option<EnvironmentId>,
+    #[serde(default)]
+    pub environments: Vec<SessionEnvironmentView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum HostTargetCreateRequestView {
+    Sandbox { spec: SandboxTargetSpecView },
+    AttachedHost { spec: AttachedHostSpecView },
+    Provider { provider_type: String, spec: Value },
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SandboxTargetSpecView {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub template: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub labels: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_options: Option<Value>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachedHostSpecView {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub labels: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_options: Option<Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum HostTargetAttachRequestView {
+    Target { target_id: EnvironmentTargetId },
+    Provider { provider_type: String, spec: Value },
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionEnvironmentActivateParams {
@@ -1530,6 +1647,27 @@ pub struct SessionEnvironmentDeactivateParams {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionEnvironmentDeactivateResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_env_id: Option<EnvironmentId>,
+    #[serde(default)]
+    pub environments: Vec<SessionEnvironmentView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionEnvironmentCloseParams {
+    pub session_id: SessionId,
+    pub env_id: EnvironmentId,
+    #[serde(default)]
+    pub force: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub close_target: Option<bool>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionEnvironmentCloseResponse {
+    pub environment: SessionEnvironmentView,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_env_id: Option<EnvironmentId>,
     #[serde(default)]
@@ -3382,8 +3520,11 @@ api_methods! {
     METHOD_SKILLS_DEACTIVATE => deactivate_skill(SkillDeactivateParams) -> SkillDeactivateResponse,
     METHOD_SESSION_ENVIRONMENTS_LIST => list_session_environments(SessionEnvironmentListParams) -> SessionEnvironmentListResponse,
     METHOD_SESSION_ENVIRONMENTS_READ => read_session_environment(SessionEnvironmentReadParams) -> SessionEnvironmentReadResponse,
+    METHOD_SESSION_ENVIRONMENTS_CREATE => create_session_environment(SessionEnvironmentCreateParams) -> SessionEnvironmentCreateResponse,
+    METHOD_SESSION_ENVIRONMENTS_ATTACH => attach_session_environment(SessionEnvironmentAttachParams) -> SessionEnvironmentAttachResponse,
     METHOD_SESSION_ENVIRONMENTS_ACTIVATE => activate_session_environment(SessionEnvironmentActivateParams) -> SessionEnvironmentActivateResponse,
     METHOD_SESSION_ENVIRONMENTS_DEACTIVATE => deactivate_session_environment(SessionEnvironmentDeactivateParams) -> SessionEnvironmentDeactivateResponse,
+    METHOD_SESSION_ENVIRONMENTS_CLOSE => close_session_environment(SessionEnvironmentCloseParams) -> SessionEnvironmentCloseResponse,
     METHOD_ENVIRONMENT_PROVIDERS_REGISTER => register_environment_provider(EnvironmentProviderRegisterParams) -> EnvironmentProviderRegisterResponse,
     METHOD_ENVIRONMENT_PROVIDERS_HEARTBEAT => heartbeat_environment_provider(EnvironmentProviderHeartbeatParams) -> EnvironmentProviderHeartbeatResponse,
     METHOD_ENVIRONMENT_PROVIDERS_UNREGISTER => unregister_environment_provider(EnvironmentProviderUnregisterParams) -> EnvironmentProviderUnregisterResponse,
@@ -3936,6 +4077,64 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_session_environments_create() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_SESSION_ENVIRONMENTS_CREATE.to_owned(),
+                params: Some(json!({
+                    "sessionId": "session_1",
+                    "envId": "test",
+                    "providerId": "sandbox-pool",
+                    "request": {
+                        "type": "sandbox",
+                        "spec": {
+                            "image": "ubuntu:latest",
+                            "cwd": "/workspace"
+                        }
+                    },
+                    "activate": true
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["environment"]["envId"],
+            json!("test")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_session_environments_attach() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_SESSION_ENVIRONMENTS_ATTACH.to_owned(),
+                params: Some(json!({
+                    "sessionId": "session_1",
+                    "envId": "test",
+                    "providerId": "bridge-local",
+                    "request": {
+                        "type": "target",
+                        "targetId": "local-host"
+                    }
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["environment"]["kind"],
+            json!("attachedHost")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn dispatch_json_rpc_routes_session_environments_activate() {
         let response = dispatch_json_rpc(
             &TestService,
@@ -3973,6 +4172,29 @@ mod tests {
         let result = response.result.expect("result");
         assert!(result["result"]["activeEnvId"].is_null());
         assert_eq!(result["result"]["environments"][0]["active"], json!(false));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_session_environments_close() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_SESSION_ENVIRONMENTS_CLOSE.to_owned(),
+                params: Some(json!({
+                    "sessionId": "session_1",
+                    "envId": "test",
+                    "force": true
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["environment"]["status"],
+            json!("detached")
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -4902,6 +5124,32 @@ mod tests {
             }))
         }
 
+        async fn create_session_environment(
+            &self,
+            params: SessionEnvironmentCreateParams,
+        ) -> Result<AgentApiOutcome<SessionEnvironmentCreateResponse>, AgentApiError> {
+            let mut environment = test_session_environment(params.activate);
+            environment.env_id = params.env_id.unwrap_or_else(|| "created".to_owned());
+            Ok(AgentApiOutcome::new(SessionEnvironmentCreateResponse {
+                active_env_id: params.activate.then(|| environment.env_id.clone()),
+                environments: vec![environment.clone()],
+                environment,
+            }))
+        }
+
+        async fn attach_session_environment(
+            &self,
+            params: SessionEnvironmentAttachParams,
+        ) -> Result<AgentApiOutcome<SessionEnvironmentAttachResponse>, AgentApiError> {
+            let mut environment = test_session_environment(params.activate);
+            environment.env_id = params.env_id.unwrap_or_else(|| "attached".to_owned());
+            Ok(AgentApiOutcome::new(SessionEnvironmentAttachResponse {
+                active_env_id: params.activate.then(|| environment.env_id.clone()),
+                environments: vec![environment.clone()],
+                environment,
+            }))
+        }
+
         async fn activate_session_environment(
             &self,
             params: SessionEnvironmentActivateParams,
@@ -4922,6 +5170,19 @@ mod tests {
             Ok(AgentApiOutcome::new(SessionEnvironmentDeactivateResponse {
                 active_env_id: None,
                 environments: vec![test_session_environment(false)],
+            }))
+        }
+
+        async fn close_session_environment(
+            &self,
+            _params: SessionEnvironmentCloseParams,
+        ) -> Result<AgentApiOutcome<SessionEnvironmentCloseResponse>, AgentApiError> {
+            let mut environment = test_session_environment(false);
+            environment.status = SessionEnvironmentStatusView::Detached;
+            Ok(AgentApiOutcome::new(SessionEnvironmentCloseResponse {
+                active_env_id: None,
+                environments: vec![environment.clone()],
+                environment,
             }))
         }
 

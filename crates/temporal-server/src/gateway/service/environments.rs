@@ -1,7 +1,9 @@
 use super::*;
 
 use engine::ToolExecutionTarget;
+use environment_registry::SessionEnvironmentBindingRecord;
 use tools::{
+    environment::EnvironmentToolContext,
     environment::projection::{
         EnvironmentCapabilities, EnvironmentKind, EnvironmentRecord, EnvironmentStatus,
     },
@@ -19,36 +21,67 @@ impl GatewayAgentApi {
         self.load_session_state(session_id).await
     }
 
-    pub(super) fn project_session_environments(
+    pub(super) async fn load_session_runtime_environments(
         &self,
-        state: &engine::CoreAgentState,
-    ) -> SessionEnvironmentListResponse {
-        let active_env_id = self
-            .environment_manager
-            .active_environment_id(state)
-            .map(ToOwned::to_owned);
-        let environments = self
+        session_id: &SessionId,
+    ) -> Result<Vec<RuntimeEnvironment>, AgentApiError> {
+        let mut environments = self
             .environment_manager
             .environments()
+            .cloned()
+            .collect::<Vec<_>>();
+        let bindings =
+            environment_registry::SessionEnvironmentBindingStore::list_bindings_for_session(
+                self.store.as_ref(),
+                session_id,
+            )
+            .await
+            .map_err(map_environment_registry_error)?;
+        let blobs: Arc<dyn BlobStore> = self.store.clone();
+        for binding in bindings {
+            environments.push(runtime_environment_from_binding_projection(
+                binding,
+                blobs.clone(),
+            )?);
+        }
+        Ok(environments)
+    }
+
+    pub(super) async fn project_session_environments(
+        &self,
+        session_id: &SessionId,
+        state: &engine::CoreAgentState,
+    ) -> Result<SessionEnvironmentListResponse, AgentApiError> {
+        let runtime_environments = self.load_session_runtime_environments(session_id).await?;
+        let active_env_id = self
+            .environment_manager
+            .active_environment_id_for(&runtime_environments, state)
+            .map(ToOwned::to_owned);
+        let environments = runtime_environments
+            .iter()
             .map(|environment| {
                 session_environment_view(environment.record(), active_env_id.as_deref())
             })
             .collect();
-        SessionEnvironmentListResponse {
+        Ok(SessionEnvironmentListResponse {
             active_env_id,
             environments,
-        }
+        })
     }
 
-    pub(super) fn project_session_environment(
+    pub(super) async fn project_session_environment(
         &self,
+        session_id: &SessionId,
         state: &engine::CoreAgentState,
         env_id: &str,
     ) -> Result<SessionEnvironmentView, AgentApiError> {
-        let active_env_id = self.environment_manager.active_environment_id(state);
-        let environment = self
+        let runtime_environments = self.load_session_runtime_environments(session_id).await?;
+        let active_env_id = self
             .environment_manager
-            .environment(env_id)
+            .active_environment_id_for(&runtime_environments, state);
+        let environment = runtime_environments
+            .iter()
+            .find(|environment| environment.env_id() == env_id)
             .ok_or_else(|| AgentApiError::not_found(format!("environment not found: {env_id}")))?;
         Ok(session_environment_view(
             environment.record(),
@@ -56,15 +89,28 @@ impl GatewayAgentApi {
         ))
     }
 
-    pub(super) fn activation_target_for_environment(
+    pub(super) async fn activation_target_for_environment(
         &self,
+        session_id: &SessionId,
         env_id: &str,
     ) -> Result<ToolExecutionTarget, AgentApiError> {
-        let environment = self
-            .environment_manager
-            .environment(env_id)
+        let runtime_environments = self.load_session_runtime_environments(session_id).await?;
+        let environment = runtime_environments
+            .iter()
+            .find(|environment| environment.env_id() == env_id)
             .ok_or_else(|| AgentApiError::not_found(format!("environment not found: {env_id}")))?;
         activation_target_for_environment_record(environment.record())
+    }
+
+    pub(super) async fn session_has_process_environment(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<bool, AgentApiError> {
+        let runtime_environments = self.load_session_runtime_environments(session_id).await?;
+        Ok(runtime_environments.iter().any(|environment| {
+            environment.record().status == EnvironmentStatus::Ready
+                && environment.record().capabilities.process_exec
+        }))
     }
 
     pub(super) async fn wait_for_environment_default_target(
@@ -105,6 +151,17 @@ impl GatewayAgentApi {
             tokio::time::sleep(self.poll_interval).await;
         }
     }
+}
+
+pub(super) fn runtime_environment_from_binding_projection(
+    binding: SessionEnvironmentBindingRecord,
+    blobs: Arc<dyn BlobStore>,
+) -> Result<RuntimeEnvironment, AgentApiError> {
+    crate::environment::runtime_environment_from_binding_record(
+        &binding,
+        EnvironmentToolContext::new(None, blobs),
+    )
+    .map_err(|error| AgentApiError::internal(error.to_string()))
 }
 
 pub(super) fn parse_environment_id(value: String) -> Result<String, AgentApiError> {

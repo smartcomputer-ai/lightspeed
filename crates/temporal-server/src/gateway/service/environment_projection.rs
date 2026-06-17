@@ -50,9 +50,15 @@ impl GatewayAgentApi {
         session_id: &SessionId,
         state: &engine::CoreAgentState,
     ) -> Result<Vec<CoreAgentCommand>, AgentApiError> {
+        let mounts = self
+            .store
+            .list_mounts(session_id)
+            .await
+            .map_err(map_vfs_catalog_error)?;
+        let environments = self.load_session_runtime_environments(session_id).await?;
         let refresh = self
             .environment_manager
-            .refresh_projection(session_id, state)
+            .refresh_projection_for_runtime_environments(state, mounts, environments)
             .await
             .map_err(map_session_environment_error)?;
         Ok(refresh.commands)

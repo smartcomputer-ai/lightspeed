@@ -6,11 +6,21 @@ use engine::{
     ToolInvocationBatchRequest, ToolInvocationBatchResult, ToolInvocationResult,
     storage::{BlobStore, BlobStoreError},
 };
+use environment_registry::{
+    EnvironmentRegistryError, SessionEnvironmentBindingRecord, SessionEnvironmentBindingStatus,
+    SessionEnvironmentBindingStore,
+};
+use host_client::{HostClientError, HostDataClient, WebSocketConnectOptions};
+use host_protocol::{
+    data::handshake::{InitializeParams, InitializedParams},
+    shared::{CURRENT_PROTOCOL_VERSION, HostConnectionSpec, HostTransport},
+};
 use messaging::OutboxStore;
 use serde_json::Value;
 use store_pg::PgStore;
 use tools::{
     fs::{FsPath, FsToolContext, MountedVfsFileSystem},
+    host_protocol::RemoteHostConnection,
     limits::ToolLimits,
     messaging::{MessagingToolExecutor, is_messaging_tool},
     runtime::InlineToolRuntime,
@@ -28,6 +38,7 @@ pub struct SessionTools {
     workspace_store: Arc<dyn VfsWorkspaceStore>,
     mount_store: Arc<dyn VfsMountStore>,
     environments: SessionEnvironmentManager,
+    environment_bindings: Option<Arc<dyn SessionEnvironmentBindingStore>>,
     messaging: Option<MessagingToolExecutor>,
 }
 
@@ -43,12 +54,21 @@ impl SessionTools {
             workspace_store,
             mount_store,
             environments,
+            environment_bindings: None,
             messaging: None,
         }
     }
 
     pub fn with_messaging_outbox(mut self, outbox: Arc<dyn OutboxStore>) -> Self {
         self.messaging = Some(MessagingToolExecutor::new(outbox));
+        self
+    }
+
+    pub fn with_environment_bindings(
+        mut self,
+        bindings: Arc<dyn SessionEnvironmentBindingStore>,
+    ) -> Self {
+        self.environment_bindings = Some(bindings);
         self
     }
 
@@ -61,8 +81,11 @@ impl SessionTools {
         let blobs: Arc<dyn BlobStore> = store.clone();
         let workspace_store: Arc<dyn VfsWorkspaceStore> = store.clone();
         let mount_store: Arc<dyn VfsMountStore> = store.clone();
-        let outbox: Arc<dyn OutboxStore> = store;
-        Self::new(blobs, workspace_store, mount_store).with_messaging_outbox(outbox)
+        let outbox: Arc<dyn OutboxStore> = store.clone();
+        let environment_bindings: Arc<dyn SessionEnvironmentBindingStore> = store;
+        Self::new(blobs, workspace_store, mount_store)
+            .with_messaging_outbox(outbox)
+            .with_environment_bindings(environment_bindings)
     }
 
     async fn invoke_messaging_call(
@@ -132,11 +155,76 @@ impl SessionTools {
         }
     }
 
+    async fn environment_manager_for_session(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<SessionEnvironmentManager, CoreAgentIoError> {
+        let mut environments = self.environments.clone();
+        let Some(bindings) = &self.environment_bindings else {
+            return Ok(environments);
+        };
+        let bindings = bindings
+            .list_bindings_for_session(session_id)
+            .await
+            .map_err(map_environment_registry_error)?;
+        for binding in bindings {
+            if binding.status != SessionEnvironmentBindingStatus::Ready {
+                continue;
+            }
+            environments.insert_environment(self.runtime_environment_for_binding(binding).await?);
+        }
+        Ok(environments)
+    }
+
+    async fn runtime_environment_for_binding(
+        &self,
+        binding: SessionEnvironmentBindingRecord,
+    ) -> Result<RuntimeEnvironment, CoreAgentIoError> {
+        let mut client = connect_host_data_client(&binding.connection).await?;
+        let response = client
+            .initialize(&InitializeParams {
+                protocol_version: CURRENT_PROTOCOL_VERSION,
+                client_name: "lightspeed-temporal-server".to_owned(),
+                scope: binding.connection.scope.clone(),
+                resume_connection_id: None,
+            })
+            .await
+            .map_err(map_host_client_error)?;
+        if response.protocol_version != CURRENT_PROTOCOL_VERSION {
+            return Err(io_error(format!(
+                "unsupported host data protocol version {}; expected {CURRENT_PROTOCOL_VERSION}",
+                response.protocol_version
+            )));
+        }
+        let cwd = response
+            .default_cwd
+            .as_deref()
+            .or_else(|| binding.cwd.as_ref().map(|cwd| cwd.as_str()))
+            .map(FsPath::new)
+            .transpose()
+            .map_err(|error| io_error(format!("invalid host data default cwd: {error}")))?;
+        client
+            .initialized(&InitializedParams {})
+            .await
+            .map_err(map_host_client_error)?;
+
+        let mut connection = RemoteHostConnection::new(client, response.capabilities);
+        if let Some(cwd) = cwd {
+            connection = connection.with_cwd(cwd);
+        }
+        let (fs_context, environment_context) = connection.into_contexts(self.blobs.clone());
+        crate::environment::runtime_environment_from_binding_record(&binding, environment_context)
+            .map(|environment| environment.with_fs_context(fs_context))
+            .map_err(io_error)
+    }
+
     fn runtime_for_mounts(
         &self,
         mounts: Vec<VfsMountRecord>,
+        environments: &SessionEnvironmentManager,
+        active_env_target: Option<&engine::ToolExecutionTarget>,
     ) -> Result<InlineToolRuntime, CoreAgentIoError> {
-        let catalog = workspace_catalog(self.environments.has_environments())?;
+        let catalog = workspace_catalog(environments.has_environments())?;
         let session_fs = if mounts.is_empty() {
             None
         } else {
@@ -146,7 +234,9 @@ impl SessionTools {
             let cwd = mounted_vfs_cwd(fs.mounts())?;
             Some(FsToolContext::new(Arc::new(fs), self.blobs.clone()).with_cwd(cwd))
         };
-        let targets = self.environments.tool_targets(session_fs);
+        let targets = environments
+            .tool_targets(session_fs, active_env_target)
+            .map_err(io_error)?;
         Ok(InlineToolRuntime::with_targets_and_blob_store(
             targets,
             self.blobs.clone(),
@@ -154,6 +244,47 @@ impl SessionTools {
             catalog,
         ))
     }
+}
+
+async fn connect_host_data_client(
+    connection: &HostConnectionSpec,
+) -> Result<HostDataClient<host_client::WebSocketTransport>, CoreAgentIoError> {
+    match &connection.transport {
+        HostTransport::WebSocket => HostDataClient::connect(
+            &connection.endpoint,
+            WebSocketConnectOptions {
+                user_agent: Some("lightspeed-temporal-server".to_owned()),
+                ..WebSocketConnectOptions::default()
+            },
+        )
+        .await
+        .map_err(map_host_client_error),
+        HostTransport::Http => Err(unsupported_host_data_transport("http")),
+        HostTransport::Stdio => Err(unsupported_host_data_transport("stdio")),
+        HostTransport::Ssh => Err(unsupported_host_data_transport("ssh")),
+        HostTransport::Provider { provider_type } => Err(unsupported_host_data_transport(format!(
+            "provider:{provider_type}"
+        ))),
+    }
+}
+
+fn unsupported_host_data_transport(transport: impl std::fmt::Display) -> CoreAgentIoError {
+    io_error(format!(
+        "host data transport is not supported by this worker: {transport}"
+    ))
+}
+
+fn has_active_environment_fs(
+    environments: &SessionEnvironmentManager,
+    active_env_target: Option<&engine::ToolExecutionTarget>,
+) -> bool {
+    let Some(target) = active_env_target else {
+        return false;
+    };
+    target.namespace == tools::targets::ENV_TARGET_NAMESPACE
+        && environments
+            .environment(&target.id)
+            .is_some_and(|environment| environment.fs_context().is_some())
 }
 
 fn workspace_catalog(include_process_tools: bool) -> Result<ToolCatalog, CoreAgentIoError> {
@@ -210,8 +341,15 @@ impl CoreAgentTools for SessionTools {
             .list_mounts(&request.session_id)
             .await
             .map_err(map_catalog_error)?;
-        let no_mounts = mounts.is_empty();
-        let runtime = self.runtime_for_mounts(mounts)?;
+        let active_env_target = request
+            .default_targets
+            .get(tools::targets::ENV_TARGET_NAMESPACE);
+        let environments = self
+            .environment_manager_for_session(&request.session_id)
+            .await?;
+        let has_session_fs =
+            !mounts.is_empty() || has_active_environment_fs(&environments, active_env_target);
+        let runtime = self.runtime_for_mounts(mounts, &environments, active_env_target)?;
 
         let mut results = Vec::with_capacity(request.calls.len());
         for call in &request.calls {
@@ -220,7 +358,7 @@ impl CoreAgentTools for SessionTools {
                     self.invoke_messaging_call(&request.session_id, request.run_id, call)
                         .await?,
                 );
-            } else if no_mounts
+            } else if !has_session_fs
                 && call
                     .execution_target
                     .as_ref()
@@ -280,6 +418,14 @@ async fn failed_result(
 
 fn map_catalog_error(error: VfsCatalogError) -> CoreAgentIoError {
     io_error(format!("load VFS mounts: {error}"))
+}
+
+fn map_environment_registry_error(error: EnvironmentRegistryError) -> CoreAgentIoError {
+    io_error(format!("load session environment bindings: {error}"))
+}
+
+fn map_host_client_error(error: HostClientError) -> CoreAgentIoError {
+    io_error(format!("host data-plane call failed: {error}"))
 }
 
 fn map_blob_error(error: BlobStoreError) -> CoreAgentIoError {
@@ -542,6 +688,7 @@ mod tests {
                 run_id: RunId::new(1),
                 turn_id: TurnId::new(1),
                 batch_id: ToolBatchId::new(1),
+                default_targets: Default::default(),
                 calls: vec![engine::ToolInvocationRequest {
                     call_id: ToolCallId::new("call_1"),
                     tool_name: ToolName::new("read_file"),
@@ -574,6 +721,7 @@ mod tests {
                 run_id: RunId::new(1),
                 turn_id: TurnId::new(1),
                 batch_id: ToolBatchId::new(1),
+                default_targets: Default::default(),
                 calls: vec![engine::ToolInvocationRequest {
                     call_id: ToolCallId::new("call_1"),
                     tool_name: ToolName::new("Read"),
@@ -612,6 +760,7 @@ mod tests {
                 run_id: RunId::new(1),
                 turn_id: TurnId::new(1),
                 batch_id: ToolBatchId::new(1),
+                default_targets: Default::default(),
                 calls: vec![
                     engine::ToolInvocationRequest {
                         call_id: ToolCallId::new("call_read"),
@@ -687,6 +836,7 @@ mod tests {
                 run_id: RunId::new(9),
                 turn_id: TurnId::new(1),
                 batch_id: ToolBatchId::new(1),
+                default_targets: Default::default(),
                 calls: vec![
                     engine::ToolInvocationRequest {
                         call_id: ToolCallId::new("call_send"),
@@ -754,6 +904,7 @@ mod tests {
                 run_id: RunId::new(1),
                 turn_id: TurnId::new(1),
                 batch_id: ToolBatchId::new(1),
+                default_targets: Default::default(),
                 calls: vec![engine::ToolInvocationRequest {
                     call_id: ToolCallId::new("call_1"),
                     tool_name: ToolName::new("read_file"),
@@ -788,6 +939,7 @@ mod tests {
                 run_id: RunId::new(1),
                 turn_id: TurnId::new(1),
                 batch_id: ToolBatchId::new(1),
+                default_targets: Default::default(),
                 calls: vec![engine::ToolInvocationRequest {
                     call_id: ToolCallId::new("call_1"),
                     tool_name: ToolName::new("web_fetch"),

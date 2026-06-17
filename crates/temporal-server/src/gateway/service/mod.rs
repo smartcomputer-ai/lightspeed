@@ -3,11 +3,13 @@
 mod api_config;
 mod auth_api;
 mod blobs;
+mod environment_lifecycle;
 mod environment_projection;
 mod environment_providers;
 mod environments;
 mod errors;
 mod github_api;
+mod host_controllers;
 mod input;
 mod mcp_api;
 mod oauth_api;
@@ -25,6 +27,7 @@ use auth_api::{
     parse_auth_grant_id, registry_auth_grant_status_for_filter,
 };
 use blobs::{get_blob, has_blobs, put_blob, put_blobs};
+use environment_providers::{map_environment_registry_error, parse_environment_provider_id};
 use environments::{
     activate_environment_command, deactivate_environment_command, parse_environment_id,
 };
@@ -33,6 +36,7 @@ use github_api::{
     auth_provider_create_draft, auth_provider_view, github_installation_grant_draft,
     github_installation_view, map_github_app_error, parse_auth_provider_id,
 };
+use host_controllers::{HostControllerConnector, WebSocketHostControllerConnector};
 use input::{context_entry_input_from_api, run_input_from_api};
 use mcp_api::{
     apply_session_mcp_link, create_mcp_server_record, linked_session_mcp, map_mcp_registry_error,
@@ -63,11 +67,11 @@ use std::{
 use crate::environment::{RuntimeEnvironment, SessionEnvironmentManager};
 
 use api::{
-    AgentApiError, AgentApiErrorKind, AgentApiOutcome, AgentApiService, AuthClientCreateParams,
-    AuthClientCreateResponse, AuthClientDeleteParams, AuthClientDeleteResponse,
-    AuthClientListParams, AuthClientListResponse, AuthClientReadParams, AuthClientReadResponse,
-    AuthFlowStartParams, AuthFlowStartResponse, AuthFlowStatusParams, AuthFlowStatusResponse,
-    AuthGitHubInstallationGrantParams, AuthGitHubInstallationGrantResponse,
+    AgentApiError, AgentApiErrorKind, AgentApiOutcome, AgentApiService, AttachedHostSpecView,
+    AuthClientCreateParams, AuthClientCreateResponse, AuthClientDeleteParams,
+    AuthClientDeleteResponse, AuthClientListParams, AuthClientListResponse, AuthClientReadParams,
+    AuthClientReadResponse, AuthFlowStartParams, AuthFlowStartResponse, AuthFlowStatusParams,
+    AuthFlowStatusResponse, AuthGitHubInstallationGrantParams, AuthGitHubInstallationGrantResponse,
     AuthGitHubInstallationListParams, AuthGitHubInstallationListResponse, AuthGrantImportParams,
     AuthGrantImportResponse, AuthGrantListParams, AuthGrantListResponse, AuthGrantReadParams,
     AuthGrantReadResponse, AuthGrantRevokeParams, AuthGrantRevokeResponse,
@@ -85,17 +89,21 @@ use api::{
     EnvironmentProviderUnregisterParams, EnvironmentProviderUnregisterResponse,
     EnvironmentProviderView, EnvironmentTargetStatusView, EnvironmentTargetSummaryView, FieldPatch,
     GenerationConfig, GenerationConfigPatch, HostCapabilitiesView, HostControllerConnectionView,
-    HostScopeView, HostTransportView, InitializeParams, InitializeResponse, InputItem,
-    McpServerCreateParams, McpServerCreateResponse, McpServerDeleteParams, McpServerDeleteResponse,
-    McpServerListParams, McpServerListResponse, McpServerReadParams, McpServerReadResponse,
-    MediaKind, ModelConfig, OutboundAckInput, OutboundMessageView, OutboundOriginView,
-    OutboundPayloadView, OutboundStatusView, OutboxAckParams, OutboxAckResponse, OutboxReadParams,
-    OutboxReadResponse, PromptInstructionView, PromptsActiveParams, PromptsActiveResponse,
-    ReasoningEffort, RunCancelParams, RunCancelResponse, RunDefaultsConfig, RunDefaultsPatch,
-    RunLimitsConfig, RunStartConfig, RunStartParams, RunStartResponse, RunView, ServerCapabilities,
-    ServerInfo, SessionCloseParams, SessionCloseResponse, SessionConfigInput,
+    HostScopeView, HostTargetAttachRequestView, HostTargetCreateRequestView, HostTransportView,
+    InitializeParams, InitializeResponse, InputItem, McpServerCreateParams,
+    McpServerCreateResponse, McpServerDeleteParams, McpServerDeleteResponse, McpServerListParams,
+    McpServerListResponse, McpServerReadParams, McpServerReadResponse, MediaKind, ModelConfig,
+    OutboundAckInput, OutboundMessageView, OutboundOriginView, OutboundPayloadView,
+    OutboundStatusView, OutboxAckParams, OutboxAckResponse, OutboxReadParams, OutboxReadResponse,
+    PromptInstructionView, PromptsActiveParams, PromptsActiveResponse, ReasoningEffort,
+    RunCancelParams, RunCancelResponse, RunDefaultsConfig, RunDefaultsPatch, RunLimitsConfig,
+    RunStartConfig, RunStartParams, RunStartResponse, RunView, SandboxTargetSpecView,
+    ServerCapabilities, ServerInfo, SessionCloseParams, SessionCloseResponse, SessionConfigInput,
     SessionConfigPatchInput, SessionEnvironmentActivateParams, SessionEnvironmentActivateResponse,
-    SessionEnvironmentCapabilitiesView, SessionEnvironmentDeactivateParams,
+    SessionEnvironmentAttachParams, SessionEnvironmentAttachResponse,
+    SessionEnvironmentCapabilitiesView, SessionEnvironmentCloseParams,
+    SessionEnvironmentCloseResponse, SessionEnvironmentCreateParams,
+    SessionEnvironmentCreateResponse, SessionEnvironmentDeactivateParams,
     SessionEnvironmentDeactivateResponse, SessionEnvironmentKindView, SessionEnvironmentListParams,
     SessionEnvironmentListResponse, SessionEnvironmentReadParams, SessionEnvironmentReadResponse,
     SessionEnvironmentStatusView, SessionEnvironmentView, SessionEventsReadParams,
@@ -298,6 +306,7 @@ pub struct GatewayAgentApiBuilder {
     oauth_metadata_client: Option<Arc<dyn OAuthMetadataClient>>,
     github_api_client: Option<Arc<dyn GitHubApiClient>>,
     environments: Vec<RuntimeEnvironment>,
+    host_controller_connector: Arc<dyn HostControllerConnector>,
 }
 
 impl GatewayAgentApiBuilder {
@@ -336,6 +345,16 @@ impl GatewayAgentApiBuilder {
 
     pub fn with_environment(mut self, environment: RuntimeEnvironment) -> Self {
         self.environments.push(environment);
+        self
+    }
+
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub(crate) fn with_host_controller_connector(
+        mut self,
+        connector: Arc<dyn HostControllerConnector>,
+    ) -> Self {
+        self.host_controller_connector = connector;
         self
     }
 
@@ -419,6 +438,7 @@ impl GatewayAgentApiBuilder {
             mcp_oauth,
             github_api,
             environment_manager,
+            host_controller_connector: self.host_controller_connector,
             metadata: RwLock::new(BTreeMap::new()),
         }
     }
@@ -445,6 +465,7 @@ pub struct GatewayAgentApi {
     mcp_oauth: McpOAuthDriver,
     github_api: Arc<dyn GitHubApiClient>,
     environment_manager: SessionEnvironmentManager,
+    host_controller_connector: Arc<dyn HostControllerConnector>,
     metadata: RwLock<BTreeMap<SessionId, GatewaySessionMetadata>>,
 }
 
@@ -466,6 +487,7 @@ impl GatewayAgentApi {
             oauth_metadata_client: None,
             github_api_client: None,
             environments: Vec::new(),
+            host_controller_connector: Arc::new(WebSocketHostControllerConnector),
         }
     }
 
@@ -526,7 +548,11 @@ impl GatewayAgentApi {
         Ok(())
     }
 
-    fn session_toolset_config(&self, session_config: &SessionConfig) -> ToolsetConfig {
+    fn session_toolset_config(
+        &self,
+        session_config: &SessionConfig,
+        include_process_tools: bool,
+    ) -> ToolsetConfig {
         let mut config = ToolsetConfig::empty();
         config.builtin = match effective_filesystem_tool_mode(session_config) {
             FilesystemToolMode::None => tools::toolset::BuiltinToolsetConfig::disabled(),
@@ -545,7 +571,7 @@ impl GatewayAgentApi {
         if session_config.tools.messaging.unwrap_or(false) {
             config.messaging = tools::messaging::MessagingToolsetConfig::enabled();
         }
-        if self.environment_manager.has_environments() {
+        if include_process_tools {
             config.builtin.process = tools::toolset::EnvironmentToolsetConfig::basic();
         }
         config
@@ -1418,7 +1444,8 @@ impl AgentApiService for GatewayAgentApi {
             .load_session_state_with_current_environment_projection(&session_id)
             .await?;
         Ok(AgentApiOutcome::new(
-            self.project_session_environments(&loaded.state),
+            self.project_session_environments(&session_id, &loaded.state)
+                .await?,
         ))
     }
 
@@ -1434,8 +1461,28 @@ impl AgentApiService for GatewayAgentApi {
             .load_session_state_with_current_environment_projection(&session_id)
             .await?;
         Ok(AgentApiOutcome::new(SessionEnvironmentReadResponse {
-            environment: self.project_session_environment(&loaded.state, &env_id)?,
+            environment: self
+                .project_session_environment(&session_id, &loaded.state, &env_id)
+                .await?,
         }))
+    }
+
+    async fn create_session_environment(
+        &self,
+        params: SessionEnvironmentCreateParams,
+    ) -> Result<AgentApiOutcome<SessionEnvironmentCreateResponse>, AgentApiError> {
+        self.create_session_environment_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn attach_session_environment(
+        &self,
+        params: SessionEnvironmentAttachParams,
+    ) -> Result<AgentApiOutcome<SessionEnvironmentAttachResponse>, AgentApiError> {
+        self.attach_session_environment_record(params)
+            .await
+            .map(AgentApiOutcome::new)
     }
 
     async fn activate_session_environment(
@@ -1448,7 +1495,9 @@ impl AgentApiService for GatewayAgentApi {
         let env_id = parse_environment_id(params.env_id)?;
         let loaded = self.load_session_state(&session_id).await?;
         self.require_open_idle_session(&session_id, &loaded, "environment activation")?;
-        let target = self.activation_target_for_environment(&env_id)?;
+        let target = self
+            .activation_target_for_environment(&session_id, &env_id)
+            .await?;
 
         if loaded
             .state
@@ -1472,8 +1521,12 @@ impl AgentApiService for GatewayAgentApi {
         let loaded = self
             .load_session_state_with_current_environment_projection(&session_id)
             .await?;
-        let environment = self.project_session_environment(&loaded.state, &env_id)?;
-        let response = self.project_session_environments(&loaded.state);
+        let environment = self
+            .project_session_environment(&session_id, &loaded.state, &env_id)
+            .await?;
+        let response = self
+            .project_session_environments(&session_id, &loaded.state)
+            .await?;
         Ok(AgentApiOutcome::new(SessionEnvironmentActivateResponse {
             environment,
             active_env_id: response.active_env_id,
@@ -1512,11 +1565,22 @@ impl AgentApiService for GatewayAgentApi {
         let loaded = self
             .load_session_state_with_current_environment_projection(&session_id)
             .await?;
-        let response = self.project_session_environments(&loaded.state);
+        let response = self
+            .project_session_environments(&session_id, &loaded.state)
+            .await?;
         Ok(AgentApiOutcome::new(SessionEnvironmentDeactivateResponse {
             active_env_id: response.active_env_id,
             environments: response.environments,
         }))
+    }
+
+    async fn close_session_environment(
+        &self,
+        params: SessionEnvironmentCloseParams,
+    ) -> Result<AgentApiOutcome<SessionEnvironmentCloseResponse>, AgentApiError> {
+        self.close_session_environment_record(params)
+            .await
+            .map(AgentApiOutcome::new)
     }
 
     async fn register_environment_provider(

@@ -9,9 +9,13 @@ use environment_registry::{
     UpdateEnvironmentProviderStatus, UpsertEnvironmentTargetRecord,
 };
 use host_protocol::{
-    control::targets::{HostTargetStatus, HostTargetSummary},
+    control::{
+        handshake::ControllerInitializeParams,
+        targets::{HostTargetStatus, HostTargetSummary, ListTargetsParams},
+    },
     shared::{
-        HostCapabilities, HostPath, HostScope, HostTargetId, HostTransport, ImplementationInfo,
+        CURRENT_PROTOCOL_VERSION, HostCapabilities, HostPath, HostScope, HostTargetId,
+        HostTransport, ImplementationInfo,
     },
 };
 
@@ -21,17 +25,19 @@ impl GatewayAgentApi {
         params: EnvironmentProviderRegisterParams,
     ) -> Result<EnvironmentProviderRegisterResponse, AgentApiError> {
         let observed_at_ms = now_ms()?;
+        let controller_connection = registry_controller_connection(params.controller_connection)?;
+        let (capabilities, implementation) = self
+            .initialize_environment_provider_controller(&controller_connection)
+            .await?;
         let provider = environment_registry::EnvironmentProviderStore::register_provider(
             self.store.as_ref(),
             RegisterEnvironmentProvider {
                 provider_id: parse_environment_provider_id(params.provider_id)?,
                 provider_kind: registry_provider_kind(params.provider_kind),
                 display_name: params.display_name,
-                controller_connection: registry_controller_connection(
-                    params.controller_connection,
-                )?,
-                capabilities: registry_provider_capabilities(params.capabilities),
-                implementation: registry_implementation(params.implementation),
+                controller_connection,
+                capabilities,
+                implementation,
                 lease_ttl_ms: params.lease_ttl_ms,
                 metadata: params.metadata,
                 observed_at_ms,
@@ -51,7 +57,7 @@ impl GatewayAgentApi {
     ) -> Result<EnvironmentProviderHeartbeatResponse, AgentApiError> {
         let observed_at_ms = now_ms()?;
         let provider_id = parse_environment_provider_id(params.provider_id)?;
-        let observed_targets = params
+        let mut observed_targets = params
             .observed_targets
             .into_iter()
             .map(registry_target_summary)
@@ -68,6 +74,13 @@ impl GatewayAgentApi {
         )
         .await
         .map_err(map_environment_registry_error)?;
+
+        if observed_targets.is_empty() && provider.capabilities.list_targets {
+            observed_targets = self
+                .list_environment_provider_targets(&provider)
+                .await?
+                .targets;
+        }
 
         let mut targets = Vec::with_capacity(observed_targets.len());
         for target in observed_targets {
@@ -105,9 +118,44 @@ impl GatewayAgentApi {
             provider: environment_provider_view(&provider),
         })
     }
+
+    async fn initialize_environment_provider_controller(
+        &self,
+        connection: &HostControllerConnectionSpec,
+    ) -> Result<(RegistryProviderCapabilities, ImplementationInfo), AgentApiError> {
+        let mut controller = self.host_controller_connector.connect(connection).await?;
+        let response = controller
+            .initialize(&ControllerInitializeParams {
+                protocol_version: CURRENT_PROTOCOL_VERSION,
+                client_name: "lightspeed-temporal-server".to_owned(),
+            })
+            .await?;
+        validate_controller_protocol_version(response.protocol_version)?;
+        let capabilities = RegistryProviderCapabilities::from_controller(response.capabilities);
+        capabilities
+            .validate()
+            .map_err(map_environment_registry_error)?;
+        validate_implementation(&response.implementation)?;
+        Ok((capabilities, response.implementation))
+    }
+
+    async fn list_environment_provider_targets(
+        &self,
+        provider: &EnvironmentProviderRecord,
+    ) -> Result<host_protocol::control::targets::ListTargetsResponse, AgentApiError> {
+        let mut controller = self
+            .host_controller_connector
+            .connect(&provider.controller_connection)
+            .await?;
+        controller
+            .list_targets(&ListTargetsParams { status: None })
+            .await
+    }
 }
 
-fn parse_environment_provider_id(value: String) -> Result<EnvironmentProviderId, AgentApiError> {
+pub(super) fn parse_environment_provider_id(
+    value: String,
+) -> Result<EnvironmentProviderId, AgentApiError> {
     EnvironmentProviderId::try_new(value)
         .map_err(|error| AgentApiError::invalid_request(format!("invalid provider id: {error}")))
 }
@@ -183,18 +231,6 @@ fn api_host_transport(value: &HostTransport) -> HostTransportView {
     }
 }
 
-fn registry_provider_capabilities(
-    value: EnvironmentProviderCapabilitiesView,
-) -> RegistryProviderCapabilities {
-    RegistryProviderCapabilities {
-        list_targets: value.list_targets,
-        create_target: value.create_target,
-        attach_target: value.attach_target,
-        get_target: value.get_target,
-        close_target: value.close_target,
-    }
-}
-
 fn api_provider_capabilities(
     value: RegistryProviderCapabilities,
 ) -> EnvironmentProviderCapabilitiesView {
@@ -207,11 +243,31 @@ fn api_provider_capabilities(
     }
 }
 
-fn registry_implementation(value: EnvironmentProviderImplementationView) -> ImplementationInfo {
-    ImplementationInfo {
-        name: value.name,
-        version: value.version,
+fn validate_controller_protocol_version(version: u32) -> Result<(), AgentApiError> {
+    if version != CURRENT_PROTOCOL_VERSION {
+        return Err(AgentApiError::rejected(format!(
+            "unsupported host controller protocol version {version}; expected {CURRENT_PROTOCOL_VERSION}"
+        )));
     }
+    Ok(())
+}
+
+fn validate_implementation(implementation: &ImplementationInfo) -> Result<(), AgentApiError> {
+    if implementation.name.is_empty() {
+        return Err(AgentApiError::rejected(
+            "host controller implementation name must not be empty",
+        ));
+    }
+    if implementation
+        .version
+        .as_ref()
+        .is_some_and(|version| version.is_empty())
+    {
+        return Err(AgentApiError::rejected(
+            "host controller implementation version must not be empty",
+        ));
+    }
+    Ok(())
 }
 
 fn api_implementation(value: &ImplementationInfo) -> EnvironmentProviderImplementationView {
@@ -341,7 +397,7 @@ fn api_host_capabilities(value: &HostCapabilities) -> HostCapabilitiesView {
     }
 }
 
-fn map_environment_registry_error(error: EnvironmentRegistryError) -> AgentApiError {
+pub(super) fn map_environment_registry_error(error: EnvironmentRegistryError) -> AgentApiError {
     match error {
         EnvironmentRegistryError::AlreadyExists { kind, id } => {
             AgentApiError::conflict(format!("environment registry {kind} already exists: {id}"))

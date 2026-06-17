@@ -74,6 +74,8 @@ pub struct ToolInvocationBatchRequest {
     pub run_id: RunId,
     pub turn_id: TurnId,
     pub batch_id: ToolBatchId,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub default_targets: BTreeMap<String, ToolExecutionTarget>,
     pub calls: Vec<ToolInvocationRequest>,
 }
 

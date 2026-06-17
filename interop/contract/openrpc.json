@@ -690,6 +690,57 @@
         ],
         "type": "object"
       },
+      "AgentApiOutcomeOfSessionEnvironmentAttachResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/SessionEnvironmentAttachResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfSessionEnvironmentCloseResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/SessionEnvironmentCloseResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfSessionEnvironmentCreateResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/SessionEnvironmentCreateResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
       "AgentApiOutcomeOfSessionEnvironmentDeactivateResponse": {
         "properties": {
           "notifications": {
@@ -1295,6 +1346,36 @@
             "type": "object"
           }
         ]
+      },
+      "AttachedHostSpecView": {
+        "properties": {
+          "cwd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "endpoint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "labels": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "providerOptions": true
+        },
+        "type": "object"
       },
       "AuthClientCreateParams": {
         "description": "Register an OAuth client configuration. `client_secret` is the second\ndeliberate inbound-plaintext path after `auth/grants/import`: it is\nencrypted on receipt and never returned by any method. `Debug` output\nredacts it; request logging must never echo these params.",
@@ -3423,6 +3504,98 @@
           }
         ]
       },
+      "HostTargetAttachRequestView": {
+        "oneOf": [
+          {
+            "properties": {
+              "targetId": {
+                "type": "string"
+              },
+              "type": {
+                "const": "target",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "targetId"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "providerType": {
+                "type": "string"
+              },
+              "spec": true,
+              "type": {
+                "const": "provider",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "providerType",
+              "spec"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "HostTargetCreateRequestView": {
+        "oneOf": [
+          {
+            "properties": {
+              "spec": {
+                "$ref": "#/components/schemas/SandboxTargetSpecView"
+              },
+              "type": {
+                "const": "sandbox",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "spec"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "spec": {
+                "$ref": "#/components/schemas/AttachedHostSpecView"
+              },
+              "type": {
+                "const": "attachedHost",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "spec"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "providerType": {
+                "type": "string"
+              },
+              "spec": true,
+              "type": {
+                "const": "provider",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "providerType",
+              "spec"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "HostTransportView": {
         "oneOf": [
           {
@@ -4709,6 +4882,42 @@
         ],
         "type": "object"
       },
+      "SandboxTargetSpecView": {
+        "properties": {
+          "cwd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "env": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "image": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "labels": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "providerOptions": true,
+          "template": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "SecretRefView": {
         "properties": {
           "id": {
@@ -4960,6 +5169,59 @@
         ],
         "type": "object"
       },
+      "SessionEnvironmentAttachParams": {
+        "properties": {
+          "activate": {
+            "default": false,
+            "type": "boolean"
+          },
+          "envId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "providerId": {
+            "type": "string"
+          },
+          "request": {
+            "$ref": "#/components/schemas/HostTargetAttachRequestView"
+          },
+          "sessionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId",
+          "providerId",
+          "request"
+        ],
+        "type": "object"
+      },
+      "SessionEnvironmentAttachResponse": {
+        "properties": {
+          "activeEnvId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "environment": {
+            "$ref": "#/components/schemas/SessionEnvironmentView"
+          },
+          "environments": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SessionEnvironmentView"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "environment"
+        ],
+        "type": "object"
+      },
       "SessionEnvironmentCapabilitiesView": {
         "properties": {
           "fsRead": {
@@ -4988,6 +5250,108 @@
           "processStdin",
           "network",
           "persistent"
+        ],
+        "type": "object"
+      },
+      "SessionEnvironmentCloseParams": {
+        "properties": {
+          "closeTarget": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "envId": {
+            "type": "string"
+          },
+          "force": {
+            "default": false,
+            "type": "boolean"
+          },
+          "sessionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId",
+          "envId"
+        ],
+        "type": "object"
+      },
+      "SessionEnvironmentCloseResponse": {
+        "properties": {
+          "activeEnvId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "environment": {
+            "$ref": "#/components/schemas/SessionEnvironmentView"
+          },
+          "environments": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SessionEnvironmentView"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "environment"
+        ],
+        "type": "object"
+      },
+      "SessionEnvironmentCreateParams": {
+        "properties": {
+          "activate": {
+            "default": false,
+            "type": "boolean"
+          },
+          "envId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "providerId": {
+            "type": "string"
+          },
+          "request": {
+            "$ref": "#/components/schemas/HostTargetCreateRequestView"
+          },
+          "sessionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId",
+          "providerId",
+          "request"
+        ],
+        "type": "object"
+      },
+      "SessionEnvironmentCreateResponse": {
+        "properties": {
+          "activeEnvId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "environment": {
+            "$ref": "#/components/schemas/SessionEnvironmentView"
+          },
+          "environments": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SessionEnvironmentView"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "environment"
         ],
         "type": "object"
       },
@@ -8382,6 +8746,46 @@
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "session/environments/create",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/SessionEnvironmentCreateParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfSessionEnvironmentCreateResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "session/environments/attach",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/SessionEnvironmentAttachParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfSessionEnvironmentAttachResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
       "name": "session/environments/activate",
       "paramStructure": "by-name",
       "params": [
@@ -8417,6 +8821,26 @@
         "name": "result",
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfSessionEnvironmentDeactivateResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "session/environments/close",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/SessionEnvironmentCloseParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfSessionEnvironmentCloseResponse"
         }
       }
     },
