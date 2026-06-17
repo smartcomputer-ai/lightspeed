@@ -156,10 +156,7 @@ fn target_text(target: &ToolExecutionTarget) -> String {
 fn environment_kind(kind: EnvironmentKind) -> &'static str {
     match kind {
         EnvironmentKind::Sandbox => "sandbox",
-        EnvironmentKind::RemoteHost => "remote_host",
         EnvironmentKind::AttachedHost => "attached_host",
-        EnvironmentKind::Connector => "connector",
-        EnvironmentKind::Browser => "browser",
     }
 }
 

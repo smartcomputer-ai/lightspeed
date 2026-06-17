@@ -4,6 +4,7 @@
 //! deterministic workflow contract remains in `temporal-workflow`.
 
 pub mod config;
+pub mod environment;
 pub mod gateway;
 pub mod worker;
 

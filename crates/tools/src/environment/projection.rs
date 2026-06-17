@@ -69,17 +69,13 @@ pub struct EnvironmentRecord {
     pub exec_target: Option<ToolExecutionTarget>,
     pub cwd: Option<FsPath>,
     pub status: EnvironmentStatus,
-    pub description_ref: Option<BlobRef>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EnvironmentKind {
     Sandbox,
-    RemoteHost,
     AttachedHost,
-    Connector,
-    Browser,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -167,6 +163,48 @@ pub struct EnvironmentProjectionPublication<T> {
     pub command: Option<CoreAgentCommand>,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct EnvironmentProjectionInput {
+    pub mounts: Vec<VfsMountRecord>,
+    pub environments: Vec<EnvironmentRecord>,
+    pub active_env_id: Option<String>,
+    pub active_fs_routes: Vec<FsRoute>,
+}
+
+impl EnvironmentProjectionInput {
+    pub fn from_mounts(mounts: Vec<VfsMountRecord>) -> Self {
+        Self {
+            mounts,
+            environments: Vec::new(),
+            active_env_id: None,
+            active_fs_routes: Vec::new(),
+        }
+    }
+
+    pub fn with_environments(mut self, environments: Vec<EnvironmentRecord>) -> Self {
+        self.environments = environments;
+        self
+    }
+
+    pub fn with_active_environment(
+        mut self,
+        env_id: impl Into<String>,
+        fs_routes: Vec<FsRoute>,
+    ) -> Self {
+        self.active_env_id = Some(env_id.into());
+        self.active_fs_routes = fs_routes;
+        self
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct EnvironmentProjectionRefresh {
+    pub vfs_catalog: VfsCatalog,
+    pub environment_catalog: EnvironmentCatalogSnapshot,
+    pub environment_active: Option<EnvironmentActive>,
+    pub commands: Vec<CoreAgentCommand>,
+}
+
 #[derive(Debug, Error)]
 pub enum EnvironmentProjectionError {
     #[error(transparent)]
@@ -235,6 +273,87 @@ pub fn vfs_catalog_from_mounts(
     routes.sort_by(|left, right| left.path.cmp(&right.path));
     let revision = stable_revision(&encode_json(&routes)?);
     Ok(VfsCatalog::new(revision, routes))
+}
+
+pub async fn prepare_environment_projection_refresh(
+    blobs: &dyn BlobStore,
+    state: &CoreAgentState,
+    input: EnvironmentProjectionInput,
+) -> Result<EnvironmentProjectionRefresh, EnvironmentProjectionError> {
+    let vfs_catalog = vfs_catalog_from_mounts(&input.mounts)?;
+    let environment_catalog =
+        environment_catalog_from_records(input.active_env_id.clone(), input.environments)?;
+    let environment_active = input
+        .active_env_id
+        .map(|env_id| environment_active_snapshot(env_id, input.active_fs_routes))
+        .transpose()?;
+
+    let vfs_publication =
+        prepare_vfs_catalog_publication(blobs, state, vfs_catalog.clone()).await?;
+    let environment_publication =
+        prepare_environment_catalog_publication(blobs, state, environment_catalog.clone()).await?;
+
+    let mut commands = Vec::new();
+    if let Some(command) = vfs_publication.command {
+        commands.push(command);
+    }
+    if let Some(command) = environment_publication.command {
+        commands.push(command);
+    }
+    match &environment_active {
+        Some(active) => {
+            let active_publication =
+                prepare_environment_active_publication(blobs, state, active.clone()).await?;
+            if let Some(command) = active_publication.command {
+                commands.push(command);
+            }
+        }
+        None => {
+            if let Some(command) =
+                clear_environment_active_command(current_environment_active_ref(state).as_ref())
+            {
+                commands.push(command);
+            }
+        }
+    }
+
+    Ok(EnvironmentProjectionRefresh {
+        vfs_catalog,
+        environment_catalog,
+        environment_active,
+        commands,
+    })
+}
+
+pub fn environment_catalog_from_records(
+    active_env_id: Option<String>,
+    environments: Vec<EnvironmentRecord>,
+) -> Result<EnvironmentCatalogSnapshot, EnvironmentProjectionError> {
+    if active_env_id.is_none() && environments.is_empty() {
+        return Ok(empty_environment_catalog(0));
+    }
+
+    let mut environments = environments;
+    environments.sort_by(|left, right| left.env_id.cmp(&right.env_id));
+    let revision = stable_revision(&encode_json(&(
+        active_env_id.as_deref(),
+        environments.as_slice(),
+    ))?);
+    Ok(EnvironmentCatalogSnapshot::new(
+        revision,
+        active_env_id,
+        environments,
+    ))
+}
+
+pub fn environment_active_snapshot(
+    env_id: impl Into<String>,
+    fs_routes: Vec<FsRoute>,
+) -> Result<EnvironmentActive, EnvironmentProjectionError> {
+    let env_id = env_id.into();
+    let fs_routes = sorted_fs_routes(fs_routes)?;
+    let revision = stable_revision(&encode_json(&(env_id.as_str(), fs_routes.as_slice()))?);
+    Ok(EnvironmentActive::new(revision, env_id, fs_routes))
 }
 
 pub fn empty_environment_catalog(revision: u64) -> EnvironmentCatalogSnapshot {
@@ -337,6 +456,15 @@ fn fs_route_from_vfs_mount(record: &VfsMountRecord) -> Result<FsRoute, Environme
         source,
         same_state_as_active_env: None,
     })
+}
+
+fn sorted_fs_routes(routes: Vec<FsRoute>) -> Result<Vec<FsRoute>, EnvironmentProjectionError> {
+    let mut keyed_routes = routes
+        .into_iter()
+        .map(|route| encode_json(&route).map(|bytes| (bytes, route)))
+        .collect::<Result<Vec<_>, _>>()?;
+    keyed_routes.sort_by(|left, right| left.0.cmp(&right.0));
+    Ok(keyed_routes.into_iter().map(|(_, route)| route).collect())
 }
 
 fn projection_context_input(
@@ -468,5 +596,122 @@ mod tests {
             catalog.routes[0].source,
             FsRouteSource::VfsWorkspace { .. }
         ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn projection_refresh_publishes_vfs_catalog_environment_catalog_and_active_environment() {
+        let blobs = InMemoryBlobStore::new();
+        let mount = VfsMountRecord {
+            session_id: SessionId::new("session_1"),
+            mount_path: VfsPath::parse("/workspace").expect("mount path"),
+            source: VfsMountSource::Workspace {
+                workspace_id: VfsWorkspaceId::new("workspace_1"),
+            },
+            access: VfsMountAccess::ReadWrite,
+        };
+        let environment = EnvironmentRecord {
+            env_id: "local".to_owned(),
+            kind: EnvironmentKind::AttachedHost,
+            capabilities: EnvironmentCapabilities {
+                fs_read: true,
+                fs_write: true,
+                process_exec: true,
+                process_stdin: true,
+                network: true,
+                persistent: true,
+            },
+            exec_target: Some(ToolExecutionTarget::new("env", "local")),
+            cwd: Some(FsPath::new("/workspace").expect("cwd")),
+            status: EnvironmentStatus::Ready,
+        };
+        let active_route = FsRoute {
+            path: FsPath::new("/workspace").expect("active route"),
+            access: FsRouteAccess::ReadWrite,
+            source: FsRouteSource::FusedWorkspace {
+                env_id: "local".to_owned(),
+            },
+            same_state_as_active_env: Some("local".to_owned()),
+        };
+
+        let refresh = prepare_environment_projection_refresh(
+            &blobs,
+            &CoreAgentState::new(),
+            EnvironmentProjectionInput::from_mounts(vec![mount])
+                .with_environments(vec![environment])
+                .with_active_environment("local", vec![active_route]),
+        )
+        .await
+        .expect("projection refresh");
+
+        assert_eq!(refresh.vfs_catalog.routes.len(), 1);
+        assert_eq!(refresh.environment_catalog.environments.len(), 1);
+        assert_eq!(
+            refresh.environment_catalog.active_env_id.as_deref(),
+            Some("local")
+        );
+        assert_eq!(
+            refresh
+                .environment_active
+                .as_ref()
+                .map(|active| active.env_id.as_str()),
+            Some("local")
+        );
+        assert_eq!(refresh.commands.len(), 3);
+        assert!(refresh.commands.iter().any(|command| matches!(
+            command,
+            CoreAgentCommand::UpsertContext { key, .. }
+                if key.as_str() == VFS_CATALOG_CONTEXT_KEY
+        )));
+        assert!(refresh.commands.iter().any(|command| matches!(
+            command,
+            CoreAgentCommand::UpsertContext { key, .. }
+                if key.as_str() == ENVIRONMENT_CATALOG_CONTEXT_KEY
+        )));
+        assert!(refresh.commands.iter().any(|command| matches!(
+            command,
+            CoreAgentCommand::UpsertContext { key, .. }
+                if key.as_str() == ENVIRONMENT_ACTIVE_CONTEXT_KEY
+        )));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn projection_refresh_clears_stale_active_environment() {
+        let blobs = InMemoryBlobStore::new();
+        let stale_active =
+            environment_active_snapshot("local", Vec::new()).expect("active environment snapshot");
+        let publication =
+            prepare_environment_active_publication(&blobs, &CoreAgentState::new(), stale_active)
+                .await
+                .expect("active publication");
+        let mut state = CoreAgentState::new();
+        state.context.entries = vec![engine::ContextEntry {
+            entry_id: engine::ContextEntryId::new(1),
+            key: Some(ContextEntryKey::new(ENVIRONMENT_ACTIVE_CONTEXT_KEY)),
+            kind: ContextEntryKind::EnvironmentActive,
+            source: engine::ContextEntrySource::Runtime {
+                label: "environment.active".to_owned(),
+            },
+            content_ref: publication.snapshot_ref,
+            media_type: Some(ENVIRONMENT_PROJECTION_MEDIA_TYPE.to_owned()),
+            preview: Some("active environment".to_owned()),
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        }];
+
+        let refresh = prepare_environment_projection_refresh(
+            &blobs,
+            &state,
+            EnvironmentProjectionInput::default(),
+        )
+        .await
+        .expect("projection refresh");
+
+        assert!(refresh.environment_active.is_none());
+        assert!(refresh.commands.iter().any(|command| matches!(
+            command,
+            CoreAgentCommand::RemoveContext { key }
+                if key.as_str() == ENVIRONMENT_ACTIVE_CONTEXT_KEY
+        )));
     }
 }

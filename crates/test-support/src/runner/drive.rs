@@ -10,11 +10,7 @@ use engine::{
     storage::{AppendSessionEvents, BlobStore, ReadSessionEvents},
 };
 use tools::{
-    environment::projection::{
-        clear_environment_active_command, current_environment_active_ref,
-        empty_environment_catalog, prepare_environment_catalog_publication,
-        prepare_vfs_catalog_publication, vfs_catalog_from_mounts,
-    },
+    environment::projection::{EnvironmentProjectionInput, prepare_environment_projection_refresh},
     prompts::{
         PromptAssemblyLimits, conventional_vfs_prompt_root_specs,
         prepare_prompt_instructions_publication, resolve_mounted_vfs_prompt_roots,
@@ -279,39 +275,16 @@ impl SessionRunner {
                 message: format!("load VFS mounts for environment projection refresh: {error}"),
             }
         })?;
-        let vfs_catalog =
-            vfs_catalog_from_mounts(&mounts).map_err(|error| RunnerError::InvalidRequest {
-                message: format!("prepare VFS catalog: {error}"),
-            })?;
-        let vfs_publication =
-            prepare_vfs_catalog_publication(self.stores.blobs.as_ref(), state, vfs_catalog)
-                .await
-                .map_err(|error| RunnerError::InvalidRequest {
-                    message: format!("prepare VFS catalog publication: {error}"),
-                })?;
-        let environment_publication = prepare_environment_catalog_publication(
+        let refresh = prepare_environment_projection_refresh(
             self.stores.blobs.as_ref(),
             state,
-            empty_environment_catalog(0),
+            EnvironmentProjectionInput::from_mounts(mounts),
         )
         .await
         .map_err(|error| RunnerError::InvalidRequest {
-            message: format!("prepare environment catalog publication: {error}"),
+            message: format!("prepare environment projection refresh: {error}"),
         })?;
-
-        let mut commands = Vec::new();
-        if let Some(command) = vfs_publication.command {
-            commands.push(command);
-        }
-        if let Some(command) = environment_publication.command {
-            commands.push(command);
-        }
-        if let Some(command) =
-            clear_environment_active_command(current_environment_active_ref(state).as_ref())
-        {
-            commands.push(command);
-        }
-        Ok(commands)
+        Ok(refresh.commands)
     }
 
     async fn refresh_skill_catalog_before_run(

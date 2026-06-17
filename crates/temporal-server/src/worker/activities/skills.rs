@@ -10,6 +10,8 @@ use tools::skills::{
     resolve_mounted_vfs_skill_roots, skill_catalog_context_input,
 };
 
+use crate::environment::SessionEnvironmentManager;
+
 use super::{common::activity_error, state::SkillCatalogActivityDeps};
 
 pub(super) async fn refresh_skill_catalog(
@@ -53,7 +55,12 @@ pub(super) async fn refresh_skill_catalog(
             .push(active_environment_active_entry(active_ref));
     }
 
-    let mut commands = environment_projection_refresh_commands(deps, &state, &mounts).await?;
+    let manager = SessionEnvironmentManager::new(deps.blobs.clone(), deps.mount_store.clone());
+    let mut commands = manager
+        .refresh_projection_for_mounts(&state, mounts.clone())
+        .await
+        .map(|refresh| refresh.commands)
+        .map_err(activity_error)?;
 
     let specs = conventional_vfs_skill_root_specs(&mounts);
     if specs.is_empty() {
@@ -93,46 +100,6 @@ pub(super) async fn refresh_skill_catalog(
         commands.push(command);
     }
     Ok(SkillCatalogRefreshActivityResult { commands })
-}
-
-async fn environment_projection_refresh_commands(
-    deps: &SkillCatalogActivityDeps,
-    state: &CoreAgentState,
-    mounts: &[vfs::VfsMountRecord],
-) -> Result<Vec<CoreAgentCommand>, ActivityError> {
-    let vfs_catalog =
-        tools::environment::projection::vfs_catalog_from_mounts(mounts).map_err(activity_error)?;
-    let vfs_publication = tools::environment::projection::prepare_vfs_catalog_publication(
-        deps.blobs.as_ref(),
-        state,
-        vfs_catalog,
-    )
-    .await
-    .map_err(activity_error)?;
-
-    let environment_catalog = tools::environment::projection::empty_environment_catalog(0);
-    let environment_publication =
-        tools::environment::projection::prepare_environment_catalog_publication(
-            deps.blobs.as_ref(),
-            state,
-            environment_catalog,
-        )
-        .await
-        .map_err(activity_error)?;
-
-    let mut commands = Vec::new();
-    if let Some(command) = vfs_publication.command {
-        commands.push(command);
-    }
-    if let Some(command) = environment_publication.command {
-        commands.push(command);
-    }
-    if let Some(command) = tools::environment::projection::clear_environment_active_command(
-        tools::environment::projection::current_environment_active_ref(state).as_ref(),
-    ) {
-        commands.push(command);
-    }
-    Ok(commands)
 }
 
 fn append_optional(

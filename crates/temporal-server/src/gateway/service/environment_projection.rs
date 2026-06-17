@@ -50,43 +50,25 @@ impl GatewayAgentApi {
         session_id: &SessionId,
         state: &engine::CoreAgentState,
     ) -> Result<Vec<CoreAgentCommand>, AgentApiError> {
-        let mounts = self
-            .store
-            .list_mounts(session_id)
+        let manager = crate::environment::SessionEnvironmentManager::new(
+            self.store.clone(),
+            self.store.clone(),
+        );
+        let refresh = manager
+            .refresh_projection(session_id, state)
             .await
-            .map_err(map_vfs_catalog_error)?;
-        let vfs_catalog = tools::environment::projection::vfs_catalog_from_mounts(&mounts)
-            .map_err(|error| AgentApiError::internal(error.to_string()))?;
-        let vfs_publication = tools::environment::projection::prepare_vfs_catalog_publication(
-            self.store.as_ref(),
-            state,
-            vfs_catalog,
-        )
-        .await
-        .map_err(|error| AgentApiError::internal(error.to_string()))?;
+            .map_err(map_session_environment_error)?;
+        Ok(refresh.commands)
+    }
+}
 
-        let environment_catalog = tools::environment::projection::empty_environment_catalog(0);
-        let environment_publication =
-            tools::environment::projection::prepare_environment_catalog_publication(
-                self.store.as_ref(),
-                state,
-                environment_catalog,
-            )
-            .await
-            .map_err(|error| AgentApiError::internal(error.to_string()))?;
-
-        let mut commands = Vec::new();
-        if let Some(command) = vfs_publication.command {
-            commands.push(command);
+fn map_session_environment_error(
+    error: crate::environment::SessionEnvironmentManagerError,
+) -> AgentApiError {
+    match error {
+        crate::environment::SessionEnvironmentManagerError::VfsCatalog(error) => {
+            map_vfs_catalog_error(error)
         }
-        if let Some(command) = environment_publication.command {
-            commands.push(command);
-        }
-        if let Some(command) = tools::environment::projection::clear_environment_active_command(
-            tools::environment::projection::current_environment_active_ref(state).as_ref(),
-        ) {
-            commands.push(command);
-        }
-        Ok(commands)
+        other => AgentApiError::internal(other.to_string()),
     }
 }

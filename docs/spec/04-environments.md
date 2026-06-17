@@ -264,12 +264,11 @@ EnvironmentCatalogSnapshot       (the menu of environments only)
 
 EnvironmentRecord
   env_id            stable handle, e.g. "sandbox-1"
-  kind              Sandbox | RemoteHost | AttachedHost | Connector | Browser
+  kind              Sandbox | AttachedHost
   capabilities      fs_read, fs_write, process_exec, process_stdin, network, persistent
   exec_target       Option<ToolExecutionTarget> — set for process-capable environments
   cwd               default working directory for exec
   status            Attaching | Ready | Degraded | Detached
-  description_ref   Option<BlobRef> — agent-facing blurb, CAS-backed like skill docs
 
 EnvironmentActive                (published only when an environment is active)
   env_id

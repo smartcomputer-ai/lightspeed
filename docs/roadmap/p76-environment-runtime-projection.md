@@ -88,7 +88,6 @@ EnvironmentRecord
   exec_target
   cwd
   status
-  description_ref
 
 EnvironmentActive
   schema_version
