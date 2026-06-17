@@ -11,7 +11,7 @@
     ]
   },
   "expect": {
-    "tool_called": ["host.grep"],
+    "tool_called": ["fs.grep"],
     "assistant_contains": ["GREP=needle-7711"],
     "tool_output_contains": ["needle-7711"]
   },
@@ -21,6 +21,6 @@
   },
   "run": {
     "max_tokens": 768,
-    "allowed_tools": ["host.grep"]
+    "allowed_tools": ["fs.grep"]
   }
 }

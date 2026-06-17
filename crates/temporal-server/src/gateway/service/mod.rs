@@ -114,8 +114,8 @@ use auth_registry::{
 use engine::{
     BlobRef, CommandCodec, CompactionPolicy, ContextConfigPatch, ContextEntry, ContextEntryInput,
     ContextEntryKey, ContextEntryKind, ContextMessageRole, CoreAgentCommand, CoreAgentStatus,
-    HostToolMode, ModelSelection, OptionalConfigPatch, ProviderApiKind, ProviderParams, RunConfig,
-    RunConfigPatch, RunId, RunStatus, SKILL_ACTIVATION_PROVIDER_KIND_RUN,
+    FilesystemToolMode, ModelSelection, OptionalConfigPatch, ProviderApiKind, ProviderParams,
+    RunConfig, RunConfigPatch, RunId, RunStatus, SKILL_ACTIVATION_PROVIDER_KIND_RUN,
     SKILL_ACTIVATION_PROVIDER_KIND_SESSION, SKILL_CATALOG_CONTEXT_KEY, SessionConfig,
     SessionConfigPatch, SessionId, SkillId, SubmissionId, ToolChoice, ToolChoiceMode, ToolName,
     TurnConfigPatch, skill_activation_context_key,
@@ -130,16 +130,14 @@ use temporalio_client::{
 };
 use temporalio_common::protos::temporal::api::enums::v1::WorkflowExecutionStatus;
 use tools::{
-    host::{
-        HostToolTargets,
-        fs::{FileSystem, FsPath, MountedVfsFileSystem},
-    },
+    fs::{FileSystem, FsPath, MountedVfsFileSystem},
     runtime::{ToolDocument, ToolTarget},
     skills::{
         SkillCatalogSnapshot, SkillLocation, SkillMetadata, conventional_vfs_skill_root_specs,
         prepare_skill_catalog_publication, resolve_mounted_vfs_skill_roots,
         skill_catalog_context_input,
     },
+    targets::ToolTargets,
     toolset::{ResolvedToolset, ToolsetConfig, ToolsetEnvironment, resolve_toolset},
     web::fetch::WebFetchToolConfig,
     web::search::OpenAiResponsesWebSearchConfig,
@@ -497,13 +495,13 @@ impl GatewayAgentApi {
 
     fn session_toolset_config(&self, session_config: &SessionConfig) -> ToolsetConfig {
         let mut config = ToolsetConfig::empty();
-        config.host = match effective_host_tool_mode(session_config) {
-            HostToolMode::None => tools::toolset::HostToolsetConfig::disabled(),
-            HostToolMode::ReadOnly => tools::toolset::HostToolsetConfig {
-                fs: tools::toolset::HostFsToolsetConfig::read_only(),
-                ..tools::toolset::HostToolsetConfig::disabled()
+        config.builtin = match effective_filesystem_tool_mode(session_config) {
+            FilesystemToolMode::None => tools::toolset::BuiltinToolsetConfig::disabled(),
+            FilesystemToolMode::ReadOnly => tools::toolset::BuiltinToolsetConfig {
+                fs: tools::toolset::FilesystemToolsetConfig::read_only(),
+                ..tools::toolset::BuiltinToolsetConfig::disabled()
             },
-            HostToolMode::Edit => tools::toolset::HostToolsetConfig::workspace(),
+            FilesystemToolMode::Edit => tools::toolset::BuiltinToolsetConfig::workspace(),
         };
         if effective_web_search_enabled(session_config) {
             config.openai_web_search = OpenAiResponsesWebSearchConfig::cached();
@@ -610,8 +608,11 @@ fn effective_web_fetch_enabled(session_config: &SessionConfig) -> bool {
     session_config.tools.web_fetch.unwrap_or(true)
 }
 
-fn effective_host_tool_mode(session_config: &SessionConfig) -> HostToolMode {
-    session_config.tools.host.unwrap_or(HostToolMode::Edit)
+fn effective_filesystem_tool_mode(session_config: &SessionConfig) -> FilesystemToolMode {
+    session_config
+        .tools
+        .filesystem
+        .unwrap_or(FilesystemToolMode::Edit)
 }
 
 pub(super) struct LoadedSession {

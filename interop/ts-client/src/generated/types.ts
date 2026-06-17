@@ -69,17 +69,20 @@ export type ToolTargetRequirementView =
  * via the `definition` "AgentApiErrorKind".
  */
 export type AgentApiErrorKind =
-  | "invalid_request"
-  | "not_found"
-  | "conflict"
-  | "rejected"
-  | "unsupported_audio_mime"
-  | "audio_blob_too_large"
-  | "audio_duration_too_long"
-  | "transcoder_unavailable"
-  | "transcode_failure"
-  | "transcription_failure"
-  | "internal";
+  | (
+      | "invalid_request"
+      | "not_found"
+      | "conflict"
+      | "rejected"
+      | "unsupported_audio_mime"
+      | "audio_blob_too_large"
+      | "audio_duration_too_long"
+      | "transcoder_unavailable"
+      | "transcode_failure"
+      | "transcription_failure"
+      | "internal"
+    )
+  | "session_bootstrap_failed";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentNotification".
@@ -237,9 +240,9 @@ export type ToolChoiceModeConfig =
     };
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "HostToolMode".
+ * via the `definition` "FilesystemToolMode".
  */
-export type HostToolMode = "none" | "readOnly" | "edit";
+export type FilesystemToolMode = "none" | "readOnly" | "edit";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "InputItem".
@@ -688,12 +691,12 @@ export type FieldPatchOfCompactionPolicyInput =
     };
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "FieldPatchOfHostToolMode".
+ * via the `definition` "FieldPatchOfFilesystemToolMode".
  */
-export type FieldPatchOfHostToolMode =
+export type FieldPatchOfFilesystemToolMode =
   | {
       op: "set";
-      value: HostToolMode;
+      value: FilesystemToolMode;
     }
   | {
       op: "clear";
@@ -937,7 +940,7 @@ export interface RunDefaultsConfig {
  * via the `definition` "ToolConfigView".
  */
 export interface ToolConfigView {
-  host: HostToolMode;
+  filesystem: FilesystemToolMode;
   webFetch: boolean;
   webSearch: boolean;
 }
@@ -2516,7 +2519,7 @@ export interface SessionConfigInput {
  * via the `definition` "ToolConfigInput".
  */
 export interface ToolConfigInput {
-  host?: HostToolMode | null;
+  filesystem?: FilesystemToolMode | null;
   /**
    * Enables the messaging toolset (message_send/react/edit/noop) for
    * sessions bound to a chat channel.
@@ -2541,7 +2544,7 @@ export interface SessionConfigPatchInput {
  * via the `definition` "ToolConfigPatchInput".
  */
 export interface ToolConfigPatchInput {
-  host?: FieldPatchOfHostToolMode | null;
+  filesystem?: FieldPatchOfFilesystemToolMode | null;
   messaging?: FieldPatchOfboolean | null;
   webFetch?: FieldPatchOfboolean | null;
   webSearch?: FieldPatchOfboolean | null;

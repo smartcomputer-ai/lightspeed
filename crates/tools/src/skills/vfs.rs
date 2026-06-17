@@ -7,7 +7,7 @@ use thiserror::Error;
 use vfs::{VfsMountRecord, VfsMountSource, VfsPath, VfsWorkspaceId, VfsWorkspaceStore};
 
 use crate::{
-    host::fs::{FileSystem, FsError, FsPath, MountedVfsFileSystem},
+    fs::{FileSystem, FsError, FsPath, MountedVfsFileSystem},
     skills::{
         SkillCatalogRoot, SkillCatalogRootInput, SkillCatalogRootSource, SkillScope,
         SkillTrustLevel,

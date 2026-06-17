@@ -3,9 +3,9 @@
 Design notes for making a Lightspeed agent aware of, and able to act against, a
 VFS plus zero or more execution environments at a time.
 
-Status: design. No code yet. This doc fixes the model, the routing rules, the
-projection, and the open questions; it does not prescribe the provider
-integrations.
+Status: design plus preparatory tools refactor. This doc fixes the model, the
+routing rules, the projection, and the open questions; it does not prescribe the
+provider integrations.
 
 ## The problem
 
@@ -29,8 +29,8 @@ So the agent needs two things it does not have today:
 2. **Correct routing.** A way for a tool call to reach the right place without the
    runtime having to guess.
 
-The concrete failure today: the hosted runtime maps the session's VFS mounts into
-a `host:local` target that has **no process executor**
+The concrete failure this refactor addresses: the hosted runtime used to map the
+session's VFS mounts into a `host:local` target that had **no process executor**
 (`crates/temporal-server/src/worker/session_tools.rs`). File tools work; an
 `exec` against those same paths cannot. The agent has no way to know this in
 advance, so it tries to `run_process` on a VFS path and loops on the failure.
@@ -50,12 +50,14 @@ builds on them rather than replacing them.
   *which target* every effect went to.
 - **Per-call target resolution in the runtime.** Each `ToolInvocationRequest`
   carries `execution_target: Option<ToolExecutionTarget>`. The executor resolves
-  it to a `HostToolContext` via `HostToolTargets::resolve`
-  (`crates/tools/src/host/executor.rs`, `targets.rs`). Crucially, the target is
-  chosen *before* the call reaches the tool; `run_process` only resolves `cwd`
-  *within* the already-selected target's filesystem
-  (`crates/tools/src/host/tools/run_process.rs`). **The exec tool never inspects
-  the command to pick a host.** That is the seam this whole design rests on.
+  it through `ToolTargets` into either `FsToolContext` or
+  `EnvironmentToolContext` (`crates/tools/src/runtime/inline.rs`,
+  `crates/tools/src/targets.rs`). Crucially, the target is chosen *before* the
+  call reaches the tool; `run_process` only resolves `cwd` within the
+  already-selected environment context
+  (`crates/tools/src/environment/tools/run_process.rs`). **The exec tool never inspects
+  the command to pick an environment.** That is the seam this whole design rests
+  on.
 - **A capability-typed host wire protocol.** `host-protocol` / `host-client`
   define `HostConnectionSpec`, `HostTransport::{WebSocket, Http, Stdio, Ssh,
   Provider{provider_type}}`, `HostCapabilities` (fs read/write, process
@@ -65,13 +67,12 @@ builds on them rather than replacing them.
   `SandboxTargetSpec`, and attach/close
   (`crates/host-protocol/src/control/targets.rs`). The sandbox/provider lifecycle
   abstraction is substantially built.
-- **A fused filesystem primitive.** `MountedVfsFileSystem`
-  (`crates/tools/src/host/fs/vfs.rs`) already resolves a path against an ordered
-  mount table (deepest-prefix-wins) and dispatches to a snapshot or workspace
-  filesystem. `VfsMountAccess::{ReadOnly, ReadWrite}`. The `VfsMountTable` is
-  keyed by `session_id`, and `MountedVfsFileSystem` is always constructed as one
-  fs handed to one `HostToolContext`. Path-based fusion exists today — within one
-  filesystem namespace.
+- **A fused filesystem primitive.** `SessionFileSystem`
+  (`crates/tools/src/fs/session.rs`) routes by deepest matching prefix across
+  generic `FileSystem` backends and exposes route metadata for projection.
+  `MountedVfsFileSystem` (`crates/tools/src/fs/vfs.rs`) remains the VFS
+  implementation over `VfsMountTable`, dispatching to snapshot/workspace
+  filesystems and preserving workspace commit effects.
 - **The skill catalog as the projection precedent.** A typed runtime fact
   (the skill catalog) is written to CAS, published into model context as a keyed
   `ContextEntryKind::SkillCatalog` entry, and rendered provider-neutrally into
@@ -141,8 +142,8 @@ shell namespaces into one tree even in principle.
 With **one** active environment there is exactly one shell namespace, so the
 problem vanishes: every exec call and every environment-fs path resolves against
 the single active environment, unambiguously. The VFS adds only layer-1 routes,
-which have no competing shell. This is the namespace the existing code already
-assumes (one fs per `HostToolContext`).
+which have no competing shell. This is the namespace the old combined host tool
+context used to assume.
 
 Concurrently active multiple environments would reintroduce the collision. If we
 ever need it, the address of a file becomes the pair `(env_id, path)` rather than
@@ -292,8 +293,8 @@ Design constraints, consistent with the P51 architecture rules:
   specs, leases — **none of that enters context or the session log.** It is
   runtime/deployment config, exactly like LLM transport config stays out of
   `ModelSelection`. Process-capable records reference an `exec_target`; the
-  runtime resolves it to a live `HostToolContext` / host connection the same way
-  `HostToolTargets::resolve` does today.
+  runtime resolves it to a live `EnvironmentToolContext` / host connection
+  through `ToolTargets`.
 - **`capabilities` is the core's mirror of `HostCapabilities`.** We do not make
   `engine` depend on `host-protocol`; we mirror the booleans the agent and the
   router need.
@@ -304,7 +305,7 @@ Design constraints, consistent with the P51 architecture rules:
 ### Catalog first; core state later
 
 Start with these as **runtime-owned** snapshots written to CAS and published into
-context, reusing the existing `default_targets["host"]` routing for the active
+context, reusing `default_targets["env"]` routing for the active
 environment. This proves the entire agent-facing model without forcing the
 deterministic engine to own lifecycle facts it does not yet branch on.
 
@@ -314,13 +315,13 @@ or clients need an event-sourced environment timeline. If promoted, likely
 commands are `AttachEnvironment`, `DetachEnvironment`, `SetEnvironmentStatus`, and
 `ActivateEnvironment`.
 
-The activation command (not an either/or): the host-namespace default
-`default_targets["host"]` remains the **single deterministic source of truth**
+The activation command (not an either/or): the environment-namespace default
+`default_targets["env"]` remains the **single deterministic source of truth**
 for where exec lands. `ActivateEnvironment { env_id }` is the only author-facing
 command, and it is **pure sugar** — it resolves `env_id → exec_target` against the
-catalog and **lowers to** `SetDefaultToolTarget { namespace: "host", target }`,
+catalog and **lowers to** `SetDefaultToolTarget { namespace: "env", target }`,
 and republishes the catalog + active-environment entries. There is never a second
-default to keep in sync. Deactivation clears the host default and the active
+default to keep in sync. Deactivation clears the environment default and the active
 entry.
 
 Sandbox standup surfaces as: runtime provisions/handshakes a host connection,
@@ -372,7 +373,7 @@ unambiguous (see "Why at most one active environment"). Supporting several
 environment selection onto the tools — either distinct per-environment tool sets
 (self-documenting, parallel-safe, but multiplies the tool list) or an explicit
 `env_id` argument on every fs and exec tool (one tool set, more model burden).
-`ToolTargetRequirement::Required { namespace: "host" }` only resolves the
+`ToolTargetRequirement::Required { namespace: "env" }` only resolves the
 namespace default, so either path needs a tool-level routing extension first.
 
 Defer until there is a concrete need. The product shape — one active environment
@@ -400,12 +401,12 @@ identity, not lifecycle, credentials, leases, workers, or provider APIs.
    EnvironmentActive}`, the snapshot schemas, and publish them from gateway/worker
    code. Make exec fail with the "no active environment / VFS has no shell" error
    when appropriate. Prove the agent-facing design against the existing
-   `InlineHostToolRuntime` with VFS + a local host.
+   `InlineToolRuntime` with VFS + a local environment.
 2. **A `SessionEnvironmentManager` in `temporal-server`** that composes VFS mounts
-   and the active environment's host target into the `HostToolTargets` the runtime
-   resolves against, and republishes the entries whenever VFS mounts, the
+   and the active environment target into the `ToolTargets` the runtime resolves
+   against, and republishes the entries whenever VFS mounts, the
    environment set, or the active selection change. `ActivateEnvironment` lowers
-   to the host default target.
+   to the `env` default target.
 3. **Change hosted VFS behavior** from "VFS pretends to be `host:local` with no
    executor" to "VFS is the layer-1-only filesystem; an active environment
    supplies the shell and its own routes." This is the fix for the original

@@ -92,7 +92,8 @@ cargo run -p cli -- chat --api-url http://127.0.0.1:18080/rpc --session session_
   worker, HTTP/JSON-RPC gateway, and combined local/small-deployment mode.
 - `crates/test-support/` — fast in-process runner harness for tests/evals. It
   is not a production runtime and must not expose an `AgentApiService`.
-- `crates/tools/` — optional host filesystem/process tool package.
+- `crates/tools/` — optional tool packages for session filesystems,
+  environment actions, web, messaging, prompts, and skills.
 - `crates/store-fs/` — filesystem-backed session log and content-addressed blob
   store adapters.
 - `crates/store-pg/` — PostgreSQL-backed session store, CAS catalog, MCP server

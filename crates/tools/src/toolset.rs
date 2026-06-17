@@ -5,8 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use engine::{ProviderApiKind, ToolName, ToolSpec};
 
 use crate::{
+    builtin::{BuiltinTool, BuiltinToolOperation, BuiltinToolSurface},
     error::{ToolError, ToolResult},
-    host::tools::{HostTool, HostToolOperation, HostToolSurface},
     messaging::{MessagingToolsetConfig, messaging_tool_bindings, messaging_tool_bundles},
     runtime::{ToolCatalog, ToolDocument, ToolExecutionMode, ToolSpecBundle, ToolTarget},
     web::fetch::{WebFetchToolConfig, web_fetch_tool_binding, web_fetch_tool_bundle},
@@ -18,7 +18,7 @@ use crate::{
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ToolsetConfig {
-    pub host: HostToolsetConfig,
+    pub builtin: BuiltinToolsetConfig,
     pub openai_web_search: OpenAiResponsesWebSearchConfig,
     pub web_fetch: WebFetchToolConfig,
     pub messaging: MessagingToolsetConfig,
@@ -27,7 +27,7 @@ pub struct ToolsetConfig {
 impl ToolsetConfig {
     pub fn empty() -> Self {
         Self {
-            host: HostToolsetConfig::disabled(),
+            builtin: BuiltinToolsetConfig::disabled(),
             openai_web_search: OpenAiResponsesWebSearchConfig::default(),
             web_fetch: WebFetchToolConfig::default(),
             messaging: MessagingToolsetConfig::default(),
@@ -36,7 +36,7 @@ impl ToolsetConfig {
 
     pub fn workspace() -> Self {
         Self {
-            host: HostToolsetConfig::workspace(),
+            builtin: BuiltinToolsetConfig::workspace(),
             ..Self::empty()
         }
     }
@@ -49,31 +49,31 @@ impl Default for ToolsetConfig {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HostToolsetConfig {
-    pub presentation: HostToolPresentation,
-    pub fs: HostFsToolsetConfig,
-    pub process: HostProcessToolsetConfig,
+pub struct BuiltinToolsetConfig {
+    pub presentation: BuiltinToolPresentation,
+    pub fs: FilesystemToolsetConfig,
+    pub process: EnvironmentToolsetConfig,
     pub execution: ToolExecutionMode,
 }
 
-impl HostToolsetConfig {
+impl BuiltinToolsetConfig {
     pub fn disabled() -> Self {
         Self {
-            presentation: HostToolPresentation::ProviderDefault,
-            fs: HostFsToolsetConfig::disabled(),
-            process: HostProcessToolsetConfig::disabled(),
+            presentation: BuiltinToolPresentation::ProviderDefault,
+            fs: FilesystemToolsetConfig::disabled(),
+            process: EnvironmentToolsetConfig::disabled(),
             execution: ToolExecutionMode::Inline,
         }
     }
 
     pub fn workspace() -> Self {
         Self {
-            fs: HostFsToolsetConfig::workspace_edit(),
+            fs: FilesystemToolsetConfig::workspace_edit(),
             ..Self::disabled()
         }
     }
 
-    pub fn from_operations(operations: impl IntoIterator<Item = HostToolOperation>) -> Self {
+    pub fn from_operations(operations: impl IntoIterator<Item = BuiltinToolOperation>) -> Self {
         let mut config = Self::disabled();
         for operation in operations {
             config.enable_operation(operation);
@@ -81,17 +81,17 @@ impl HostToolsetConfig {
         config
     }
 
-    pub fn enable_operation(&mut self, operation: HostToolOperation) {
+    pub fn enable_operation(&mut self, operation: BuiltinToolOperation) {
         match operation {
-            HostToolOperation::ReadFile => self.fs.read_file = true,
-            HostToolOperation::WriteFile => self.fs.write_file = true,
-            HostToolOperation::EditFile => self.fs.edit_file = true,
-            HostToolOperation::ApplyPatch => self.fs.apply_patch = true,
-            HostToolOperation::Grep => self.fs.grep = true,
-            HostToolOperation::Glob => self.fs.glob = true,
-            HostToolOperation::ListDir => self.fs.list_dir = true,
-            HostToolOperation::RunProcess => self.process.run_process = true,
-            HostToolOperation::WriteProcessStdin => self.process.write_process_stdin = true,
+            BuiltinToolOperation::ReadFile => self.fs.read_file = true,
+            BuiltinToolOperation::WriteFile => self.fs.write_file = true,
+            BuiltinToolOperation::EditFile => self.fs.edit_file = true,
+            BuiltinToolOperation::ApplyPatch => self.fs.apply_patch = true,
+            BuiltinToolOperation::Grep => self.fs.grep = true,
+            BuiltinToolOperation::Glob => self.fs.glob = true,
+            BuiltinToolOperation::ListDir => self.fs.list_dir = true,
+            BuiltinToolOperation::RunProcess => self.process.run_process = true,
+            BuiltinToolOperation::WriteProcessStdin => self.process.write_process_stdin = true,
         }
     }
 
@@ -100,14 +100,14 @@ impl HostToolsetConfig {
     }
 }
 
-impl Default for HostToolsetConfig {
+impl Default for BuiltinToolsetConfig {
     fn default() -> Self {
         Self::disabled()
     }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum HostToolPresentation {
+pub enum BuiltinToolPresentation {
     #[default]
     ProviderDefault,
     Canonical,
@@ -115,24 +115,24 @@ pub enum HostToolPresentation {
     ClaudeCodeLike,
 }
 
-impl HostToolPresentation {
-    fn surface(self, target: &ToolTarget) -> HostToolSurface {
+impl BuiltinToolPresentation {
+    fn surface(self, target: &ToolTarget) -> BuiltinToolSurface {
         match self {
             Self::ProviderDefault => match target.api_kind {
-                ProviderApiKind::AnthropicMessages => HostToolSurface::ClaudeCodeLike,
+                ProviderApiKind::AnthropicMessages => BuiltinToolSurface::ClaudeCodeLike,
                 ProviderApiKind::OpenAiResponses | ProviderApiKind::OpenAiCompletions => {
-                    HostToolSurface::Canonical
+                    BuiltinToolSurface::Canonical
                 }
             },
-            Self::Canonical => HostToolSurface::Canonical,
-            Self::CodexLike => HostToolSurface::CodexLike,
-            Self::ClaudeCodeLike => HostToolSurface::ClaudeCodeLike,
+            Self::Canonical => BuiltinToolSurface::Canonical,
+            Self::CodexLike => BuiltinToolSurface::CodexLike,
+            Self::ClaudeCodeLike => BuiltinToolSurface::ClaudeCodeLike,
         }
     }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct HostFsToolsetConfig {
+pub struct FilesystemToolsetConfig {
     pub read_file: bool,
     pub write_file: bool,
     pub edit_file: bool,
@@ -142,7 +142,7 @@ pub struct HostFsToolsetConfig {
     pub list_dir: bool,
 }
 
-impl HostFsToolsetConfig {
+impl FilesystemToolsetConfig {
     pub fn disabled() -> Self {
         Self::default()
     }
@@ -176,40 +176,40 @@ impl HostFsToolsetConfig {
             || self.list_dir
     }
 
-    fn operations(&self) -> Vec<HostToolOperation> {
+    fn operations(&self) -> Vec<BuiltinToolOperation> {
         let mut operations = Vec::new();
         if self.read_file {
-            operations.push(HostToolOperation::ReadFile);
+            operations.push(BuiltinToolOperation::ReadFile);
         }
         if self.write_file {
-            operations.push(HostToolOperation::WriteFile);
+            operations.push(BuiltinToolOperation::WriteFile);
         }
         if self.edit_file {
-            operations.push(HostToolOperation::EditFile);
+            operations.push(BuiltinToolOperation::EditFile);
         }
         if self.apply_patch {
-            operations.push(HostToolOperation::ApplyPatch);
+            operations.push(BuiltinToolOperation::ApplyPatch);
         }
         if self.grep {
-            operations.push(HostToolOperation::Grep);
+            operations.push(BuiltinToolOperation::Grep);
         }
         if self.glob {
-            operations.push(HostToolOperation::Glob);
+            operations.push(BuiltinToolOperation::Glob);
         }
         if self.list_dir {
-            operations.push(HostToolOperation::ListDir);
+            operations.push(BuiltinToolOperation::ListDir);
         }
         operations
     }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct HostProcessToolsetConfig {
+pub struct EnvironmentToolsetConfig {
     pub run_process: bool,
     pub write_process_stdin: bool,
 }
 
-impl HostProcessToolsetConfig {
+impl EnvironmentToolsetConfig {
     pub fn disabled() -> Self {
         Self::default()
     }
@@ -225,13 +225,13 @@ impl HostProcessToolsetConfig {
         self.run_process || self.write_process_stdin
     }
 
-    fn operations(&self) -> Vec<HostToolOperation> {
+    fn operations(&self) -> Vec<BuiltinToolOperation> {
         let mut operations = Vec::new();
         if self.run_process {
-            operations.push(HostToolOperation::RunProcess);
+            operations.push(BuiltinToolOperation::RunProcess);
         }
         if self.write_process_stdin {
-            operations.push(HostToolOperation::WriteProcessStdin);
+            operations.push(BuiltinToolOperation::WriteProcessStdin);
         }
         operations
     }
@@ -291,8 +291,8 @@ pub fn resolve_toolset(
 ) -> ToolResult<ResolvedToolset> {
     let mut builder = ToolsetBuilder::new();
 
-    if config.host.enabled() {
-        builder.add_host_tools(env.target, &config.host)?;
+    if config.builtin.enabled() {
+        builder.add_builtin_tools(env.target, &config.builtin)?;
     }
 
     if config.openai_web_search.enabled() {
@@ -351,21 +351,21 @@ impl ToolsetBuilder {
         }
     }
 
-    fn add_host_tools(
+    fn add_builtin_tools(
         &mut self,
         target: &ToolTarget,
-        config: &HostToolsetConfig,
+        config: &BuiltinToolsetConfig,
     ) -> ToolResult<()> {
         let surface = config.presentation.surface(target);
-        let omit_unsupported = config.presentation == HostToolPresentation::ProviderDefault;
+        let omit_unsupported = config.presentation == BuiltinToolPresentation::ProviderDefault;
         for operation in config
             .fs
             .operations()
             .into_iter()
             .chain(config.process.operations())
         {
-            let tool = HostTool::new(operation, surface);
-            let bundle = match tool.spec_bundle(target, STATIC_SCOPED_HOST_PATHS) {
+            let tool = BuiltinTool::new(operation, surface);
+            let bundle = match tool.spec_bundle(target, STATIC_SCOPED_FS_PATHS) {
                 Ok(bundle) => bundle,
                 Err(ToolError::UnsupportedCapability { .. }) if omit_unsupported => continue,
                 Err(error) => return Err(error),
@@ -420,7 +420,7 @@ impl ToolsetBuilder {
     }
 }
 
-const STATIC_SCOPED_HOST_PATHS: bool = true;
+const STATIC_SCOPED_FS_PATHS: bool = true;
 
 #[cfg(test)]
 mod tests {
@@ -444,7 +444,7 @@ mod tests {
     }
 
     #[test]
-    fn workspace_toolset_renders_openai_canonical_host_tools() {
+    fn workspace_toolset_renders_openai_canonical_builtin_tools() {
         let target = target(ProviderApiKind::OpenAiResponses);
 
         let toolset = resolve_toolset(
@@ -470,15 +470,15 @@ mod tests {
     }
 
     #[test]
-    fn host_tool_presentation_defaults_to_claude_style_for_anthropic() {
+    fn builtin_tool_presentation_defaults_to_claude_style_for_anthropic() {
         let target = target(ProviderApiKind::AnthropicMessages);
         let mut config = ToolsetConfig::empty();
-        config.host = HostToolsetConfig {
-            fs: HostFsToolsetConfig {
+        config.builtin = BuiltinToolsetConfig {
+            fs: FilesystemToolsetConfig {
                 read_file: true,
-                ..HostFsToolsetConfig::disabled()
+                ..FilesystemToolsetConfig::disabled()
             },
-            ..HostToolsetConfig::disabled()
+            ..BuiltinToolsetConfig::disabled()
         };
 
         let toolset =
@@ -494,7 +494,7 @@ mod tests {
     }
 
     #[test]
-    fn workspace_provider_default_omits_host_tools_unsupported_by_provider_surface() {
+    fn workspace_provider_default_omits_builtin_tools_unsupported_by_provider_surface() {
         let target = target(ProviderApiKind::AnthropicMessages);
 
         let toolset = resolve_toolset(

@@ -10,12 +10,12 @@ use messaging::OutboxStore;
 use serde_json::Value;
 use store_pg::PgStore;
 use tools::{
-    host::{
-        HostToolContext, InlineHostToolRuntime,
-        fs::{FsPath, MountedVfsFileSystem},
-    },
+    fs::{FsPath, FsToolContext, MountedVfsFileSystem},
+    limits::ToolLimits,
     messaging::{MessagingToolExecutor, is_messaging_tool},
+    runtime::InlineToolRuntime,
     runtime::{ToolCatalog, ToolTarget},
+    targets::ToolTargets,
     toolset::{ToolsetConfig, ToolsetEnvironment, resolve_toolset},
     web::fetch::WebFetchToolConfig,
 };
@@ -126,22 +126,22 @@ impl SessionTools {
     fn runtime_for_mounts(
         &self,
         mounts: Vec<VfsMountRecord>,
-    ) -> Result<InlineHostToolRuntime, CoreAgentIoError> {
+    ) -> Result<InlineToolRuntime, CoreAgentIoError> {
         let fs =
             MountedVfsFileSystem::new(self.blobs.clone(), self.workspace_store.clone(), mounts)
                 .map_err(io_error)?;
         let cwd = mounted_vfs_cwd(fs.mounts())?;
-        let ctx = HostToolContext::new(Arc::new(fs), None, self.blobs.clone()).with_cwd(cwd);
+        let ctx = FsToolContext::new(Arc::new(fs), self.blobs.clone()).with_cwd(cwd);
         let catalog = workspace_catalog()?;
-        Ok(InlineHostToolRuntime::new(ctx, catalog))
+        Ok(InlineToolRuntime::with_session_filesystem(ctx, catalog))
     }
 
-    fn targetless_runtime(&self) -> Result<InlineHostToolRuntime, CoreAgentIoError> {
+    fn targetless_runtime(&self) -> Result<InlineToolRuntime, CoreAgentIoError> {
         let catalog = workspace_catalog()?;
-        Ok(InlineHostToolRuntime::with_targets_and_blob_store(
-            tools::host::HostToolTargets::new(),
+        Ok(InlineToolRuntime::with_targets_and_blob_store(
+            ToolTargets::new(),
             self.blobs.clone(),
-            tools::host::context::HostToolLimits::default(),
+            ToolLimits::default(),
             catalog,
         ))
     }
@@ -284,7 +284,7 @@ mod tests {
     use std::{collections::BTreeMap, sync::Mutex};
 
     use engine::{
-        BlobRef, RunId, SessionId, ToolBatchId, ToolCallId, ToolExecutionTarget, ToolName, TurnId,
+        BlobRef, RunId, SessionId, ToolBatchId, ToolCallId, ToolName, TurnId,
         storage::InMemoryBlobStore,
     };
     use vfs::{
@@ -466,7 +466,7 @@ mod tests {
                     call_id: ToolCallId::new("call_1"),
                     tool_name: ToolName::new("read_file"),
                     arguments_ref,
-                    execution_target: Some(ToolExecutionTarget::new("host", "local")),
+                    execution_target: Some(tools::targets::session_fs_target()),
                 }],
             })
             .await
@@ -498,7 +498,7 @@ mod tests {
                     call_id: ToolCallId::new("call_1"),
                     tool_name: ToolName::new("Read"),
                     arguments_ref,
-                    execution_target: Some(ToolExecutionTarget::new("host", "local")),
+                    execution_target: Some(tools::targets::session_fs_target()),
                 }],
             })
             .await
@@ -607,7 +607,7 @@ mod tests {
                     call_id: ToolCallId::new("call_1"),
                     tool_name: ToolName::new("read_file"),
                     arguments_ref,
-                    execution_target: Some(ToolExecutionTarget::new("host", "local")),
+                    execution_target: Some(tools::targets::session_fs_target()),
                 }],
             })
             .await

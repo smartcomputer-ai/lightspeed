@@ -185,7 +185,7 @@ export class LightspeedSessionBridge {
 
 /// Builds the session/start config from a recipe, defaulting the messaging
 /// toolset on (the bridge delivers via the outbox) unless the recipe sets it
-/// explicitly. All other config fields (model, generation, host tool mode,
+/// explicitly. All other config fields (model, generation, filesystem tool mode,
 /// web tools, etc.) pass through from the recipe untouched.
 export function sessionStartConfig(recipe?: SessionRecipe | null): SessionConfigInput {
   const base = recipe?.config ?? {};

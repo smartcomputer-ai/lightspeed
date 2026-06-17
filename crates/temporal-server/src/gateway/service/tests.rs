@@ -734,7 +734,7 @@ fn web_search_can_be_disabled_in_session_tools_config() {
         Some(ToolConfigInput {
             web_search: Some(false),
             web_fetch: None,
-            host: None,
+            filesystem: None,
             messaging: None,
         }),
     );
@@ -753,7 +753,7 @@ fn web_fetch_defaults_on_and_can_be_disabled() {
         Some(ToolConfigInput {
             web_search: None,
             web_fetch: Some(false),
-            host: None,
+            filesystem: None,
             messaging: None,
         }),
     );
@@ -773,7 +773,7 @@ fn web_search_rejects_explicit_enable_for_non_openai_responses() {
         Some(ToolConfigInput {
             web_search: Some(true),
             web_fetch: None,
-            host: None,
+            filesystem: None,
             messaging: None,
         }),
     );
@@ -789,38 +789,47 @@ fn web_search_rejects_explicit_enable_for_non_openai_responses() {
 }
 
 #[test]
-fn host_tools_default_to_edit_for_sessions() {
+fn filesystem_tools_default_to_edit_for_sessions() {
     let config = default_session_config(openai_model());
 
-    assert_eq!(effective_host_tool_mode(&config), HostToolMode::Edit);
+    assert_eq!(
+        effective_filesystem_tool_mode(&config),
+        FilesystemToolMode::Edit
+    );
 }
 
 #[test]
-fn host_tools_can_be_configured_read_only_or_none() {
+fn filesystem_tools_can_be_configured_read_only_or_none() {
     let mut config = default_session_config(openai_model());
     apply_tool_config(
         &mut config.tools,
         Some(ToolConfigInput {
             web_search: None,
             web_fetch: None,
-            host: Some(api::HostToolMode::ReadOnly),
+            filesystem: Some(api::FilesystemToolMode::ReadOnly),
             messaging: None,
         }),
     );
 
-    assert_eq!(effective_host_tool_mode(&config), HostToolMode::ReadOnly);
+    assert_eq!(
+        effective_filesystem_tool_mode(&config),
+        FilesystemToolMode::ReadOnly
+    );
 
     apply_tool_config(
         &mut config.tools,
         Some(ToolConfigInput {
             web_search: None,
             web_fetch: None,
-            host: Some(api::HostToolMode::None),
+            filesystem: Some(api::FilesystemToolMode::None),
             messaging: None,
         }),
     );
 
-    assert_eq!(effective_host_tool_mode(&config), HostToolMode::None);
+    assert_eq!(
+        effective_filesystem_tool_mode(&config),
+        FilesystemToolMode::None
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]

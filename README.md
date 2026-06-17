@@ -18,9 +18,9 @@ We belive running and coordination agents at scale are best managed by durable w
 - Keep the engine deterministic. `engine` owns the generic session log and
   the built-in CoreAgent domain: commands, events, state, planning, action
   emission, request/result helpers, and replay.
-- Execute side effects outside the core. LLM calls, host tools, filesystem
-  access, process execution, MCP, human input, timers, retries, and cancellation
-  belong in runtimes, adapters, workflow activities, or tool packages.
+- Execute side effects outside the core. LLM calls, filesystem tools,
+  environment actions, MCP, human input, timers, retries, and cancellation belong
+  in runtimes, adapters, workflow activities, or tool packages.
 - Speak provider APIs natively. `openai:responses`,
   `openai:completions`, and `anthropic:messages` are different APIs with
   different context rules, tool encodings, streaming events, cache behavior,
@@ -50,7 +50,7 @@ We belive running and coordination agents at scale are best managed by durable w
 | `temporal-workflow` | `crates/temporal-workflow` | Temporal workflow, signals, queries, and activity request/response DTOs |
 | `temporal-server` | `crates/temporal-server` | Hosted runtime binary and modules for the Temporal worker, HTTP/JSON-RPC gateway, and combined local/small-deployment mode |
 | `test-support` | `crates/test-support` | Fast in-process runner harness for tests/evals; not a production runtime |
-| `tools` | `crates/tools` | Optional host filesystem/process tool package |
+| `tools` | `crates/tools` | Optional tool packages for session filesystems, environment actions, web, messaging, prompts, and skills |
 | `store-fs` | `crates/store-fs` | Filesystem-backed session log and content-addressed blob store adapters |
 | `store-pg` | `crates/store-pg` | PostgreSQL-backed session store, CAS catalog, MCP server catalog, and encrypted auth storage |
 | `mcp-registry` | `crates/mcp-registry` | Provider-independent remote MCP server catalog DTOs, validation, and store traits |

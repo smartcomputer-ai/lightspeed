@@ -318,7 +318,7 @@ impl GatewayAgentApi {
         })?;
         let target = ToolTarget::from(&session_config.model);
         let config = self.session_toolset_config(session_config);
-        let host_tools_enabled = config.host.enabled();
+        let fs_tools_enabled = config.builtin.fs.enabled();
         let toolset = resolve_toolset(ToolsetEnvironment { target: &target }, &config)
             .map_err(|error| AgentApiError::internal(format!("build session tools: {error}")))?;
         let blobs: Arc<dyn BlobStore> = self.store.clone();
@@ -342,11 +342,11 @@ impl GatewayAgentApi {
             )
             .await?;
         }
-        if host_tools_enabled {
+        if fs_tools_enabled {
             self.submit_core_command(
                 session_id,
                 CoreAgentCommand::SetDefaultToolTarget {
-                    target: HostToolTargets::local_execution_target(),
+                    target: ToolTargets::session_fs_execution_target(),
                 },
             )
             .await?;
@@ -354,7 +354,7 @@ impl GatewayAgentApi {
             self.submit_core_command(
                 session_id,
                 CoreAgentCommand::ClearDefaultToolTarget {
-                    namespace: tools::host::HOST_TARGET_NAMESPACE.to_owned(),
+                    namespace: tools::targets::FS_TARGET_NAMESPACE.to_owned(),
                 },
             )
             .await?;
@@ -362,7 +362,7 @@ impl GatewayAgentApi {
         self.wait_for_session_toolset(
             session_id,
             expected_standard_tools,
-            host_tools_enabled,
+            fs_tools_enabled,
             baseline_failures,
         )
         .await
@@ -372,7 +372,7 @@ impl GatewayAgentApi {
         &self,
         session_id: &SessionId,
         expected_standard_tools: BTreeSet<ToolName>,
-        expect_host_target: bool,
+        expect_fs_target: bool,
         baseline_failures: usize,
     ) -> Result<SessionView, AgentApiError> {
         let started = Instant::now();
@@ -401,9 +401,9 @@ impl GatewayAgentApi {
                 .tooling
                 .routing
                 .default_targets
-                .get(tools::host::HOST_TARGET_NAMESPACE);
-            let target_ready = if expect_host_target {
-                target == Some(&HostToolTargets::local_execution_target())
+                .get(tools::targets::FS_TARGET_NAMESPACE);
+            let target_ready = if expect_fs_target {
+                target == Some(&ToolTargets::session_fs_execution_target())
             } else {
                 target.is_none()
             };

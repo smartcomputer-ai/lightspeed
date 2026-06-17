@@ -2,9 +2,47 @@
 
 **Status**
 - Proposed 2026-06-17.
+- G1-G3 implemented 2026-06-17.
+- G4-G6 implemented 2026-06-17.
+- G7 implemented 2026-06-17, including the API/config rename from
+  `HostToolMode` / `tools.host` to `FilesystemToolMode` / `tools.filesystem`.
 - Breaking changes are allowed. Lightspeed has not shipped a stable tool/runtime
   compatibility boundary.
 - Preparatory work for `docs/spec/04-environments.md`.
+
+**Progress**
+- Added canonical target namespace constants for `fs` and `env`, with
+  `fs:session` as the default filesystem target and `env:local` as the local
+  environment compatibility target.
+- Changed built-in file tool specs to require `fs`; process/stdin tools now
+  require `env`.
+- Added runtime namespace validation so file tools cannot be invoked against an
+  environment target and process tools cannot be invoked against the session
+  filesystem target.
+- Added a top-level `tools::fs` module as the canonical filesystem API.
+- Physically moved filesystem implementations, VFS filesystem code, apply-patch
+  internals, and file-tool operation modules under `tools::fs`.
+- Added `FsToolContext` and moved generic file tool implementations to depend on
+  that context instead of the former combined host tool context.
+- Updated hosted VFS/session tool setup and affected tests to set/wait for
+  `fs:session` rather than `host:local`.
+- Added `EnvironmentToolContext`; process/stdin tools now consume environment
+  context, while file tools consume filesystem context.
+- Moved process execution traits/adapters and process/stdin tool operations
+  under `tools::environment`.
+- Moved runtime target resolution to top-level `ToolTargets`, with `fs` and
+  `env` maps stored separately.
+- Added `SessionFileSystem`, a generic deepest-prefix router over arbitrary
+  `FileSystem` backends, with route metadata for future VFS/environment
+  projection.
+- Updated VFS-only runtime composition to build from `FsToolContext` and
+  `fs:session`, without manufacturing a process-capable host context.
+- Changed built-in tool catalog logical IDs and eval tool IDs from `host.*` to
+  `fs.*` / `env.*`; legacy `host.*` IDs remain accepted as aliases.
+- Moved built-in tool definitions under `tools::builtin` and inline execution
+  under `tools::runtime::InlineToolRuntime`.
+- Renamed the remaining host-protocol adapter module to `tools::host_protocol`
+  (`RemoteHostConnection`, `RemoteHostFileSystem`, `RemoteProcessExecutor`).
 
 ## Goal
 
@@ -17,14 +55,14 @@ Refactor the tools package so the code shape matches the environment model:
   environment-backed capabilities.
 
 The immediate goal is not to implement full environment activation. The goal is
-to remove the current coupling where one `HostToolContext` means both "the
+to remove the coupling where one combined host tool context meant both "the
 filesystem used by file tools" and "the process namespace used by exec". That
-coupling is what makes a VFS-only session look like `host:local` even though it
-has no shell.
+coupling is what made a VFS-only session look like `host:local` even though it
+had no shell.
 
 ## Problem
 
-`crates/tools/src/host/fs/mod.rs` already has the right core abstraction:
+`crates/tools/src/fs/mod.rs` has the right core abstraction:
 
 ```rust
 pub trait FileSystem: Send + Sync { ... }
@@ -32,9 +70,11 @@ pub trait FileSystem: Send + Sync { ... }
 
 `LocalFileSystem`, `ScopedFileSystem`, `ReadOnlyFileSystem`,
 `MountedVfsFileSystem`, `VfsSnapshotFileSystem`, and `VfsWorkspaceFileSystem`
-are implementations of that trait. The file tool implementations mostly operate
-through `HostToolContext.fs`, so they can be shared across local filesystems,
-VFS, and future environment-backed filesystems.
+are implementations of that trait. Before this refactor, the file tool
+implementations mostly operated through the old combined context's filesystem;
+the important
+property is that they can be shared across local filesystems, VFS, and future
+environment-backed filesystems.
 
 The problem is the surrounding ownership model:
 
@@ -56,7 +96,8 @@ process namespace. In the environment model that is no longer true:
 - the shell/process/computer-use layer belongs to one active environment;
 - VFS has no process model and should not be represented as a host target.
 
-Today all host tools also share one target namespace:
+Before this refactor, all built-in filesystem and process tools also shared one
+target namespace:
 
 ```text
 read_file / write_file / grep / glob / run_process -> host:<id>
@@ -110,9 +151,8 @@ Use the words consistently:
   future action surface with capabilities.
 - **host protocol**: low-level transport/control implementation used to reach
   environment-backed capabilities.
-- **host tools**: either rename to environment tools, or keep only as an
-  internal compatibility module while public concepts move to environment
-  terminology.
+- **built-in tools**: Lightspeed-provided fs/env/web/messaging tool
+  definitions and inline runtime bindings.
 
 `host` should not be the model-facing target namespace for new environment
 work. It is already worn out because it refers both to the protocol/backend and
@@ -159,7 +199,8 @@ and environment projection metadata.
 
 ## Filesystem Package
 
-Extract a generic filesystem tool package out of `tools::host`.
+Extract a generic filesystem tool package out of the old combined host tool
+package.
 
 Target shape:
 
@@ -236,7 +277,6 @@ pub struct EnvironmentToolContext {
     pub blobs: Arc<dyn BlobStore>,
     pub limits: ToolLimits,
     pub process_cwd: Option<FsPath>,
-    pub platform: EnvironmentPlatform,
 }
 ```
 
@@ -323,7 +363,7 @@ tool target identity and active tool specs.
 
 ## Implementation Plan
 
-### G1. Introduce filesystem target namespace
+### [x] G1. Introduce filesystem target namespace
 
 - Add constants for the `fs` and `env` target namespaces.
 - Replace hardcoded target namespace literals in built-in tool specs and tests.
@@ -334,7 +374,7 @@ tool target identity and active tool specs.
 - Keep compatibility shims only where needed for tests during the refactor.
 - Update P51-era tests that assert `host`.
 
-### G2. Extract generic filesystem tool context
+### [x] G2. Extract generic filesystem tool context
 
 - Add `FsToolContext`.
 - Move file tool invocation helpers to accept `&FsToolContext` or a narrower
@@ -342,7 +382,7 @@ tool target identity and active tool specs.
 - Remove process access from generic file tool code.
 - Keep behavior unchanged for read/write/edit/grep/glob/list-dir tests.
 
-### G3. Move filesystem modules out from under host
+### [x] G3. Move filesystem modules out from under host
 
 - Move `host/fs` to a top-level filesystem module within `tools`, or create the
   new top-level module and re-export while callers are migrated.
@@ -354,14 +394,14 @@ tool target identity and active tool specs.
   high-risk consumer because it wires public session/VFS behavior, not only
   internal tests.
 
-### G4. Introduce environment action context
+### [x] G4. Introduce environment action context
 
 - Add `EnvironmentToolContext` and target resolution for `env:<id>`.
 - Move `run_process` and `write_process_stdin` to use that context.
-- Rename `HostToolTargets` or wrap it with environment terminology.
+- Replace the old host target wrapper with top-level `ToolTargets`.
 - Preserve host-protocol-backed internals as implementation detail.
 
-### G5. Add session filesystem router
+### [x] G5. Add session filesystem router
 
 - Generalize `MountedVfsFileSystem` into a router that can mount VFS and
   environment filesystem backends.
@@ -369,7 +409,7 @@ tool target identity and active tool specs.
 - Preserve VFS workspace commit effects.
 - Expose route metadata needed by `VfsView` / `EnvironmentActive` projection.
 
-### G6. Update hosted runtime composition
+### [x] G6. Update hosted runtime composition
 
 - Stop creating a `host:local` target for VFS-only sessions.
 - Always configure `fs:session` when file tools are enabled.
@@ -379,12 +419,21 @@ tool target identity and active tool specs.
 - Ensure `run_process` is unavailable or fails instructively when no active
   environment exists.
 
-### G7. Rename public concepts
+### [x] G7. Rename public concepts
 
 - Prefer "environment" in docs, APIs, and model-visible prompt text.
 - Keep "host protocol" only for backend transport/control code.
 - Avoid model-visible `host` terminology except during temporary compatibility
   windows.
+
+Progress:
+
+- Built-in tool logical IDs now use `fs.*` and `env.*`.
+- `HostToolContext`, `HostToolTargets`, `HostToolsetConfig`, and
+  `InlineHostToolRuntime` were removed from the tools crate.
+- `tools::host_protocol` now means host-protocol adapters, not a semantic tool
+  target or combined filesystem/process runtime.
+- API wire/config names now use `FilesystemToolMode` and `tools.filesystem`.
 
 ## Tests
 

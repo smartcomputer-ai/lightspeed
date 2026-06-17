@@ -13,5 +13,5 @@ Prompt-level eval harness for Lightspeed agent workflows.
 are also honored when present.
 
 Each attempt gets a fresh temporary workspace, seeded files, the `test-support`
-runner harness, and an inline host tool executor. Assertions cover tool calls,
+runner harness, and an inline builtin tool executor. Assertions cover tool calls,
 tool output text, final assistant text, and workspace file state.

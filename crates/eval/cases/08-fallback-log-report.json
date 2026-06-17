@@ -15,7 +15,7 @@
     ]
   },
   "expect": {
-    "tool_called": ["host.list_dir", "host.read_file", "host.write_file"],
+    "tool_called": ["fs.list_dir", "fs.read_file", "fs.write_file"],
     "assistant_contains": ["CHAIN=OK"],
     "tool_output_contains": ["task-418.json", "INFO token-8831 acquired", "Wrote"],
     "files": [
@@ -33,6 +33,6 @@
     "max_tokens": 1024,
     "max_turns": 12,
     "max_tool_rounds": 8,
-    "allowed_tools": ["host.list_dir", "host.read_file", "host.write_file"]
+    "allowed_tools": ["fs.list_dir", "fs.read_file", "fs.write_file"]
   }
 }

@@ -567,7 +567,7 @@ pub struct ToolConfigInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub web_fetch: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub host: Option<HostToolMode>,
+    pub filesystem: Option<FilesystemToolMode>,
     /// Enables the messaging toolset (message_send/react/edit/noop) for
     /// sessions bound to a chat channel.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -576,7 +576,7 @@ pub struct ToolConfigInput {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub enum HostToolMode {
+pub enum FilesystemToolMode {
     None,
     ReadOnly,
     Edit,
@@ -656,7 +656,7 @@ pub struct ToolConfigPatchInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub web_fetch: Option<FieldPatch<bool>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub host: Option<FieldPatch<HostToolMode>>,
+    pub filesystem: Option<FieldPatch<FilesystemToolMode>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub messaging: Option<FieldPatch<bool>>,
 }
@@ -2443,7 +2443,7 @@ pub struct SessionConfigView {
 pub struct ToolConfigView {
     pub web_search: bool,
     pub web_fetch: bool,
-    pub host: HostToolMode,
+    pub filesystem: FilesystemToolMode,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

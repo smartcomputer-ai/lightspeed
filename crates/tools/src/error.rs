@@ -2,7 +2,7 @@ use thiserror::Error;
 
 use engine::storage::BlobStoreError;
 
-use crate::host::{fs::FsError, process::ProcessError};
+use crate::{environment::process::ProcessError, fs::FsError};
 
 pub type ToolResult<T> = Result<T, ToolError>;
 

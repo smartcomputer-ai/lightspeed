@@ -1,4 +1,4 @@
-use api::{HostToolMode, RunStatus, SessionStatus, SkillActivationScope};
+use api::{FilesystemToolMode, RunStatus, SessionStatus, SkillActivationScope};
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 
@@ -17,7 +17,7 @@ pub(crate) struct ChatDraftSettings {
     pub max_tokens: Option<u32>,
     pub web_search: Option<bool>,
     pub web_fetch: Option<bool>,
-    pub host_tools: Option<HostToolMode>,
+    pub filesystem_tools: Option<FilesystemToolMode>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
@@ -43,7 +43,7 @@ impl Default for ChatDraftSettings {
                 .and_then(|value| value.parse::<u32>().ok()),
             web_search: None,
             web_fetch: None,
-            host_tools: None,
+            filesystem_tools: None,
         }
     }
 }

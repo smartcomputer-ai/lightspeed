@@ -2666,7 +2666,7 @@
           }
         ]
       },
-      "FieldPatchOfHostToolMode": {
+      "FieldPatchOfFilesystemToolMode": {
         "oneOf": [
           {
             "properties": {
@@ -2675,7 +2675,7 @@
                 "type": "string"
               },
               "value": {
-                "$ref": "#/components/schemas/HostToolMode"
+                "$ref": "#/components/schemas/FilesystemToolMode"
               }
             },
             "required": [
@@ -2796,6 +2796,14 @@
           }
         ]
       },
+      "FilesystemToolMode": {
+        "enum": [
+          "none",
+          "readOnly",
+          "edit"
+        ],
+        "type": "string"
+      },
       "GenerationConfig": {
         "properties": {
           "maxOutputTokens": {
@@ -2890,14 +2898,6 @@
           "installationId"
         ],
         "type": "object"
-      },
-      "HostToolMode": {
-        "enum": [
-          "none",
-          "readOnly",
-          "edit"
-        ],
-        "type": "string"
       },
       "InitializeParams": {
         "properties": {
@@ -6392,10 +6392,10 @@
       },
       "ToolConfigInput": {
         "properties": {
-          "host": {
+          "filesystem": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/HostToolMode"
+                "$ref": "#/components/schemas/FilesystemToolMode"
               },
               {
                 "type": "null"
@@ -6426,10 +6426,10 @@
       },
       "ToolConfigPatchInput": {
         "properties": {
-          "host": {
+          "filesystem": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/FieldPatchOfHostToolMode"
+                "$ref": "#/components/schemas/FieldPatchOfFilesystemToolMode"
               },
               {
                 "type": "null"
@@ -6471,8 +6471,8 @@
       },
       "ToolConfigView": {
         "properties": {
-          "host": {
-            "$ref": "#/components/schemas/HostToolMode"
+          "filesystem": {
+            "$ref": "#/components/schemas/FilesystemToolMode"
           },
           "webFetch": {
             "type": "boolean"
@@ -6484,7 +6484,7 @@
         "required": [
           "webSearch",
           "webFetch",
-          "host"
+          "filesystem"
         ],
         "type": "object"
       },

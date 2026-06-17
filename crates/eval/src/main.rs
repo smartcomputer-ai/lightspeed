@@ -28,14 +28,13 @@ use test_support::{
     DriveCommand, DriveOutcome, DriveSession, RunnerQuiescence, RunnerStores, SessionRunner,
 };
 use tools::{
-    host::{
-        HostToolContext, HostToolTargets, InlineHostToolRuntime,
-        fs::{FsPath, ScopedLocalFileSystem},
-        tools::HostToolOperation,
-    },
+    builtin::BuiltinToolOperation,
+    fs::{FsPath, FsToolContext, ScopedLocalFileSystem},
+    runtime::InlineToolRuntime,
     runtime::ToolDocument,
+    targets::ToolTargets,
     toolset::{
-        HostToolsetConfig, ResolvedToolset, ToolsetConfig, ToolsetEnvironment, resolve_toolset,
+        BuiltinToolsetConfig, ResolvedToolset, ToolsetConfig, ToolsetEnvironment, resolve_toolset,
     },
 };
 
@@ -670,7 +669,7 @@ async fn build_runtime(
         ScopedLocalFileSystem::read_write(workdir)
             .with_context(|| format!("open eval workspace '{}'", workdir.display()))?,
     );
-    let host_ctx = HostToolContext::new(fs, None, blobs.clone()).with_cwd(FsPath::root());
+    let fs_ctx = FsToolContext::new(fs, blobs.clone()).with_cwd(FsPath::root());
     let host_profile = resolve_eval_toolset(&model, case)?;
     store_tool_documents(blobs.as_ref(), &host_profile.documents).await?;
     let tool_id_by_name = host_profile
@@ -683,8 +682,8 @@ async fn build_runtime(
             )
         })
         .collect::<BTreeMap<_, _>>();
-    let tool_executor = Arc::new(InlineHostToolRuntime::new(
-        host_ctx,
+    let tool_executor = Arc::new(InlineToolRuntime::with_session_filesystem(
+        fs_ctx,
         host_profile.catalog.clone(),
     ));
     let stores = RunnerStores::new(sessions.clone(), blobs.clone());
@@ -696,7 +695,7 @@ async fn build_runtime(
         config: default_config,
         instructions_ref,
         tool_set: host_profile.tools,
-        default_tool_target: HostToolTargets::local_execution_target(),
+        default_tool_target: ToolTargets::session_fs_execution_target(),
         tool_id_by_name,
         diagnostics,
     })
@@ -711,11 +710,11 @@ fn resolve_eval_toolset(model: &ModelSelection, case: &EvalCase) -> Result<Resol
         let operations = allowed
             .iter()
             .map(|id| {
-                host_operation_for_id(id)
+                builtin_operation_for_id(id)
                     .ok_or_else(|| anyhow!("case '{}' references unknown tool '{id}'", case.id))
             })
             .collect::<Result<Vec<_>>>()?;
-        config.host = HostToolsetConfig::from_operations(operations);
+        config.builtin = BuiltinToolsetConfig::from_operations(operations);
     }
     resolve_toolset(
         ToolsetEnvironment {
@@ -723,7 +722,7 @@ fn resolve_eval_toolset(model: &ModelSelection, case: &EvalCase) -> Result<Resol
         },
         &config,
     )
-    .context("build eval host tools")
+    .context("build eval tools")
 }
 
 fn session_config(case: &EvalCase, model: ModelSelection) -> SessionConfig {
@@ -924,18 +923,18 @@ fn safe_case_path(root: &Path, path: &str) -> Result<PathBuf> {
     Ok(root.join(candidate))
 }
 
-fn host_operation_for_id(id: &str) -> Option<HostToolOperation> {
+fn builtin_operation_for_id(id: &str) -> Option<BuiltinToolOperation> {
     let id = canonical_tool_id(id);
     Some(match id.as_str() {
-        "host.read_file" => HostToolOperation::ReadFile,
-        "host.write_file" => HostToolOperation::WriteFile,
-        "host.edit_file" => HostToolOperation::EditFile,
-        "host.apply_patch" => HostToolOperation::ApplyPatch,
-        "host.grep" => HostToolOperation::Grep,
-        "host.glob" => HostToolOperation::Glob,
-        "host.list_dir" => HostToolOperation::ListDir,
-        "host.run_process" => HostToolOperation::RunProcess,
-        "host.write_process_stdin" => HostToolOperation::WriteProcessStdin,
+        "fs.read_file" => BuiltinToolOperation::ReadFile,
+        "fs.write_file" => BuiltinToolOperation::WriteFile,
+        "fs.edit_file" => BuiltinToolOperation::EditFile,
+        "fs.apply_patch" => BuiltinToolOperation::ApplyPatch,
+        "fs.grep" => BuiltinToolOperation::Grep,
+        "fs.glob" => BuiltinToolOperation::Glob,
+        "fs.list_dir" => BuiltinToolOperation::ListDir,
+        "env.run_process" => BuiltinToolOperation::RunProcess,
+        "env.write_process_stdin" => BuiltinToolOperation::WriteProcessStdin,
         _ => return None,
     })
 }
@@ -943,13 +942,23 @@ fn host_operation_for_id(id: &str) -> Option<HostToolOperation> {
 fn canonical_tool_id(value: &str) -> String {
     let trimmed = value.trim();
     if let Some(name) = trimmed.strip_prefix("host.fs.") {
-        format!("host.{name}")
+        format!("fs.{name}")
+    } else if let Some(name) = trimmed.strip_prefix("host.env.") {
+        format!("env.{name}")
     } else if trimmed == "host.exec" || trimmed == "shell" || trimmed == "exec_command" {
-        "host.run_process".to_string()
-    } else if trimmed.starts_with("host.") {
+        "env.run_process".to_string()
+    } else if let Some(name) = trimmed.strip_prefix("host.") {
+        if matches!(name, "run_process" | "write_process_stdin") {
+            format!("env.{name}")
+        } else {
+            format!("fs.{name}")
+        }
+    } else if trimmed.starts_with("fs.") || trimmed.starts_with("env.") {
         trimmed.to_string()
+    } else if matches!(trimmed, "run_process" | "write_process_stdin") {
+        format!("env.{trimmed}")
     } else {
-        format!("host.{trimmed}")
+        format!("fs.{trimmed}")
     }
 }
 
@@ -1103,16 +1112,17 @@ mod tests {
 
     #[test]
     fn canonical_tool_id_accepts_lightspeed_names_and_legacy_aos_fs_names() {
-        assert_eq!(canonical_tool_id("read_file"), "host.read_file");
-        assert_eq!(canonical_tool_id("host.read_file"), "host.read_file");
-        assert_eq!(canonical_tool_id("host.fs.read_file"), "host.read_file");
-        assert_eq!(canonical_tool_id("host.exec"), "host.run_process");
+        assert_eq!(canonical_tool_id("read_file"), "fs.read_file");
+        assert_eq!(canonical_tool_id("fs.read_file"), "fs.read_file");
+        assert_eq!(canonical_tool_id("host.read_file"), "fs.read_file");
+        assert_eq!(canonical_tool_id("host.fs.read_file"), "fs.read_file");
+        assert_eq!(canonical_tool_id("host.exec"), "env.run_process");
     }
 
     #[test]
     fn collect_observations_maps_tool_names_to_logical_ids() {
         let mut tool_ids = BTreeMap::new();
-        tool_ids.insert("read_file".to_string(), "host.read_file".to_string());
+        tool_ids.insert("read_file".to_string(), "fs.read_file".to_string());
         let observations = collect_observations(
             &[
                 SessionItemView::ToolCall {
@@ -1137,7 +1147,7 @@ mod tests {
             &tool_ids,
         );
 
-        assert!(observations.used_tools.contains("host.read_file"));
+        assert!(observations.used_tools.contains("fs.read_file"));
         assert!(
             observations
                 .tool_arguments
@@ -1169,8 +1179,8 @@ mod tests {
     }
 
     #[test]
-    fn host_operation_for_id_resolves_supported_tools() {
-        let operation = host_operation_for_id("host.fs.grep").expect("tool");
-        assert_eq!(operation, HostToolOperation::Grep);
+    fn builtin_operation_for_id_resolves_supported_tools() {
+        let operation = builtin_operation_for_id("host.fs.grep").expect("tool");
+        assert_eq!(operation, BuiltinToolOperation::Grep);
     }
 }

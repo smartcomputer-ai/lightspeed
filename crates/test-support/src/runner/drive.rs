@@ -622,8 +622,8 @@ mod tests {
         ContextCompactionStatus, ContextConfig, ContextEntryInput, ContextEntryKey,
         ContextEntryKind, ContextMessageRole, CoreAgentCommand, CoreAgentEventKind,
         FunctionToolSpec, LlmFinish, ModelSelection, ObservedToolCall, ProviderApiKind, RunConfig,
-        RunStatus, SessionConfig, SessionId, ToolCallResult, ToolExecutionTarget, ToolKind,
-        ToolName, ToolParallelism, ToolSpec, ToolTargetRequirement, TurnConfig, TurnEvent,
+        RunStatus, SessionConfig, SessionId, ToolCallResult, ToolKind, ToolName, ToolParallelism,
+        ToolSpec, ToolTargetRequirement, TurnConfig, TurnEvent,
         storage::{
             BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore,
         },
@@ -634,11 +634,9 @@ mod tests {
     };
     use tools::skills::{SkillCatalogSnapshot, SkillLocation};
     use tools::{
-        host::{
-            HostToolContext, InlineHostToolRuntime,
-            fs::{FileSystem, FsPath, MountedVfsFileSystem},
-            tools::ReadFileResult,
-        },
+        fs::tools::ReadFileResult,
+        fs::{FileSystem, FsPath, FsToolContext, MountedVfsFileSystem},
+        runtime::InlineToolRuntime,
         runtime::ToolTarget,
         toolset::{ToolsetConfig, ToolsetEnvironment, resolve_toolset},
     };
@@ -1461,8 +1459,8 @@ mod tests {
             vfs.list_mounts(&session_id).await.expect("list mounts"),
         )
         .expect("mounted fs");
-        let ctx = HostToolContext::new(Arc::new(mounted_fs), None, blob_store.clone())
-            .with_cwd(FsPath::root());
+        let ctx =
+            FsToolContext::new(Arc::new(mounted_fs), blob_store.clone()).with_cwd(FsPath::root());
         let target = ToolTarget::api_kind(ProviderApiKind::OpenAiResponses);
         let toolset = resolve_toolset(
             ToolsetEnvironment { target: &target },
@@ -1470,7 +1468,7 @@ mod tests {
         )
         .expect("toolset");
         let tool_set = toolset.tools.clone();
-        let tools = InlineHostToolRuntime::new(ctx, toolset.catalog);
+        let tools = InlineToolRuntime::with_session_filesystem(ctx, toolset.catalog);
         let runner = SessionRunner::new(
             stores,
             Arc::new(ReadFileThenFinalLlm {
@@ -1510,7 +1508,7 @@ mod tests {
                 session_id: session_id.clone(),
                 observed_at_ms: 13,
                 command: CoreAgentCommand::SetDefaultToolTarget {
-                    target: ToolExecutionTarget::new("host", "local"),
+                    target: tools::targets::session_fs_target(),
                 },
                 max_steps: None,
             })
@@ -1608,8 +1606,8 @@ mod tests {
             vfs.list_mounts(&session_id).await.expect("list mounts"),
         )
         .expect("mounted fs");
-        let ctx = HostToolContext::new(Arc::new(mounted_fs), None, blob_store.clone())
-            .with_cwd(FsPath::root());
+        let ctx =
+            FsToolContext::new(Arc::new(mounted_fs), blob_store.clone()).with_cwd(FsPath::root());
         let target = ToolTarget::api_kind(ProviderApiKind::OpenAiResponses);
         let toolset = resolve_toolset(
             ToolsetEnvironment { target: &target },
@@ -1617,7 +1615,7 @@ mod tests {
         )
         .expect("toolset");
         let tool_set = toolset.tools.clone();
-        let tools = InlineHostToolRuntime::new(ctx, toolset.catalog);
+        let tools = InlineToolRuntime::with_session_filesystem(ctx, toolset.catalog);
         let runner = SessionRunner::new(
             stores,
             Arc::new(ReadFileThenFinalLlm {
@@ -1657,7 +1655,7 @@ mod tests {
                 session_id: session_id.clone(),
                 observed_at_ms: 13,
                 command: CoreAgentCommand::SetDefaultToolTarget {
-                    target: ToolExecutionTarget::new("host", "local"),
+                    target: tools::targets::session_fs_target(),
                 },
                 max_steps: None,
             })

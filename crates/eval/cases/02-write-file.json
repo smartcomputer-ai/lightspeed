@@ -6,7 +6,7 @@
     "files": []
   },
   "expect": {
-    "tool_called": ["host.write_file"],
+    "tool_called": ["fs.write_file"],
     "assistant_contains": ["WROTE=beta-5512"],
     "tool_output_contains": ["Wrote", "notes/generated.txt"],
     "files": [
@@ -22,6 +22,6 @@
   },
   "run": {
     "max_tokens": 768,
-    "allowed_tools": ["host.write_file"]
+    "allowed_tools": ["fs.write_file"]
   }
 }

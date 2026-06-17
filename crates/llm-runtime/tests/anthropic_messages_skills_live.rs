@@ -1,6 +1,6 @@
 //! Live engine-loop test proving the skill catalog flow works end to end on
 //! the Anthropic Messages adapter: the catalog lowers as a user message, the
-//! model picks the matching skill, reads its SKILL.md through the host file
+//! model picks the matching skill, reads its SKILL.md through the fs file
 //! tool, and answers with the hidden marker.
 
 use std::{
@@ -13,18 +13,16 @@ use async_trait::async_trait;
 use engine::{
     AgentHandle, BlobRef, ContextConfig, ContextEntryInput, ContextEntryKind, ContextMessageRole,
     CoreAgentCommand, CoreAgentEventKind, ModelSelection, ProviderApiKind, RunConfig, RunStatus,
-    SessionConfig, SessionId, ToolExecutionTarget,
+    SessionConfig, SessionId,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
 };
 use llm_clients::anthropic::messages::{Client, Config};
 use llm_runtime::{AnthropicMessagesLlmAdapter, LlmAdapterRegistry, LlmRuntime};
 use test_support::{DriveCommand, RunnerQuiescence, RunnerStores, SessionRunner};
 use tools::{
-    host::{
-        HostToolContext, InlineHostToolRuntime,
-        fs::{FsPath, MountedVfsFileSystem},
-        tools::ReadFileResult,
-    },
+    fs::tools::ReadFileResult,
+    fs::{FsPath, FsToolContext, MountedVfsFileSystem},
+    runtime::InlineToolRuntime,
     toolset::{ToolsetConfig, ToolsetEnvironment, resolve_toolset},
 };
 use vfs::{
@@ -287,8 +285,7 @@ async fn anthropic_messages_live_selects_and_activates_the_matching_skill() {
         vfs.list_mounts(&session_id).await.expect("list mounts"),
     )
     .expect("mounted fs");
-    let host_ctx =
-        HostToolContext::new(Arc::new(mounted_fs), None, blobs.clone()).with_cwd(FsPath::root());
+    let fs_ctx = FsToolContext::new(Arc::new(mounted_fs), blobs.clone()).with_cwd(FsPath::root());
     let model = ModelSelection {
         api_kind: ProviderApiKind::AnthropicMessages,
         provider_id: "anthropic".to_string(),
@@ -301,8 +298,8 @@ async fn anthropic_messages_live_selects_and_activates_the_matching_skill() {
     )
     .expect("toolset");
     store_tool_documents(blobs.as_ref(), &toolset.documents).await;
-    let tools = Arc::new(InlineHostToolRuntime::new(
-        host_ctx,
+    let tools = Arc::new(InlineToolRuntime::with_session_filesystem(
+        fs_ctx,
         toolset.catalog.clone(),
     ));
 
@@ -347,7 +344,7 @@ async fn anthropic_messages_live_selects_and_activates_the_matching_skill() {
             session_id: session_id.clone(),
             observed_at_ms: 13,
             command: CoreAgentCommand::SetDefaultToolTarget {
-                target: ToolExecutionTarget::new("host", "local"),
+                target: tools::targets::session_fs_target(),
             },
             max_steps: None,
         })
