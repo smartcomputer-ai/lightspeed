@@ -797,8 +797,8 @@ mod tests {
         assert_eq!(result.status, ToolCallStatus::Failed);
         let error_ref = result.error_ref.expect("error ref");
         let error = blobs.read_text(&error_ref).await.expect("error text");
-        assert!(error.contains("no execution environment target is configured"));
-        assert!(error.contains("process tools require an active environment"));
+        assert!(error.contains("no active execution environment target is configured"));
+        assert!(error.contains("process tools require an active env target"));
     }
 
     #[tokio::test(flavor = "current_thread")]

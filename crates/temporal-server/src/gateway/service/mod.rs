@@ -3,6 +3,7 @@
 mod api_config;
 mod auth_api;
 mod blobs;
+mod environment_projection;
 mod errors;
 mod github_api;
 mod input;

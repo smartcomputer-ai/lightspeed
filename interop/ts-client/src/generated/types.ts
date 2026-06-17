@@ -487,6 +487,15 @@ export type ContextEntryKindView =
       type: "instructions";
     }
   | {
+      type: "vfsCatalog";
+    }
+  | {
+      type: "environmentCatalog";
+    }
+  | {
+      type: "environmentActive";
+    }
+  | {
       type: "skillCatalog";
     }
   | {

@@ -11,7 +11,7 @@ use crate::{
     fs::{FsError, FsPath},
 };
 
-use super::{invalid_request, unsupported_capability};
+use super::{invalid_request, unsupported_process_capability};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RunProcessArgs {
@@ -36,7 +36,7 @@ pub async fn invoke_run_process(
     let process = ctx
         .process
         .as_ref()
-        .ok_or_else(|| unsupported_capability("process execution is not available"))?;
+        .ok_or_else(unsupported_process_capability)?;
     let cwd = match args.cwd {
         Some(cwd) => Some(resolve_process_cwd(ctx, &cwd)?),
         None => ctx.process_cwd.clone(),
@@ -183,5 +183,10 @@ mod tests {
         .expect_err("run should fail");
 
         assert!(matches!(error, ToolError::UnsupportedCapability { .. }));
+        assert!(
+            error
+                .to_string()
+                .contains("process tools require an active env target")
+        );
     }
 }

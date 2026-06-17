@@ -207,6 +207,9 @@ impl GatewayAgentApi {
             .put_mount(record.clone())
             .await
             .map_err(map_vfs_catalog_error)?;
+        let loaded = self.load_session_state(&session_id).await?;
+        self.refresh_environment_projection_for_idle_session(&session_id, &loaded.state)
+            .await?;
         let session = self.project_session_by_id(&session_id).await?;
         Ok((record, session))
     }
@@ -252,6 +255,9 @@ impl GatewayAgentApi {
             .remove_mount(&session_id, &mount_path)
             .await
             .map_err(map_vfs_catalog_error)?;
+        let loaded = self.load_session_state(&session_id).await?;
+        self.refresh_environment_projection_for_idle_session(&session_id, &loaded.state)
+            .await?;
         let session = self.project_session_by_id(&session_id).await?;
         Ok((mount_path.as_str().to_owned(), session))
     }

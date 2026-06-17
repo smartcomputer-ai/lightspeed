@@ -7,6 +7,7 @@ use engine::storage::BlobStore;
 use crate::{environment::process::ProcessExecutor, fs::FsPath, limits::ToolLimits};
 
 pub mod process;
+pub mod projection;
 pub mod tools;
 
 #[derive(Clone)]

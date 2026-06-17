@@ -2608,6 +2608,9 @@ pub struct ContextEntryInputView {
 pub enum ContextEntryKindView {
     Message { role: ContextMessageRoleView },
     Instructions,
+    VfsCatalog,
+    EnvironmentCatalog,
+    EnvironmentActive,
     SkillCatalog,
     SkillActivation { skill_id: SkillId },
     ToolCall { call_id: String, name: String },

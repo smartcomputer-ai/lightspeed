@@ -210,7 +210,7 @@ impl ToolTargets {
             .map(ResolvedToolContext::Environment)
             .ok_or_else(|| ToolError::InvalidRequest {
                 message: format!(
-                    "no execution environment target is configured for id {id}; file tools may still be available through fs:{SESSION_FS_TARGET_ID}, but process tools require an active environment"
+                    "no active execution environment target is configured for id {id}; file tools may still be available through fs:{SESSION_FS_TARGET_ID}, but process tools require an active env target"
                 ),
             })
     }

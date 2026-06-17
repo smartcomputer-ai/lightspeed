@@ -407,7 +407,7 @@ tool target identity and active tool specs.
   environment filesystem backends.
 - Preserve deepest-prefix-wins behavior.
 - Preserve VFS workspace commit effects.
-- Expose route metadata needed by `VfsView` / `EnvironmentActive` projection.
+- Expose route metadata needed by `VfsCatalog` / `EnvironmentActive` projection.
 
 ### [x] G6. Update hosted runtime composition
 

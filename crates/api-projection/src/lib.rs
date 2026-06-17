@@ -186,6 +186,27 @@ impl<'a> CoreAgentProjector<'a> {
                     .clone()
                     .unwrap_or_else(|| "instructions".to_owned()),
             }),
+            ContextEntryKind::VfsCatalog => Ok(SessionItemView::SystemEvent {
+                id,
+                text: item
+                    .preview
+                    .clone()
+                    .unwrap_or_else(|| "VFS catalog".to_owned()),
+            }),
+            ContextEntryKind::EnvironmentCatalog => Ok(SessionItemView::SystemEvent {
+                id,
+                text: item
+                    .preview
+                    .clone()
+                    .unwrap_or_else(|| "environment catalog".to_owned()),
+            }),
+            ContextEntryKind::EnvironmentActive => Ok(SessionItemView::SystemEvent {
+                id,
+                text: item
+                    .preview
+                    .clone()
+                    .unwrap_or_else(|| "active environment".to_owned()),
+            }),
             ContextEntryKind::SkillCatalog => Ok(SessionItemView::SystemEvent {
                 id,
                 text: item
@@ -1255,6 +1276,9 @@ fn context_entry_kind_to_api(kind: &ContextEntryKind) -> ContextEntryKindView {
             role: context_message_role_to_api(role),
         },
         ContextEntryKind::Instructions => ContextEntryKindView::Instructions,
+        ContextEntryKind::VfsCatalog => ContextEntryKindView::VfsCatalog,
+        ContextEntryKind::EnvironmentCatalog => ContextEntryKindView::EnvironmentCatalog,
+        ContextEntryKind::EnvironmentActive => ContextEntryKindView::EnvironmentActive,
         ContextEntryKind::SkillCatalog => ContextEntryKindView::SkillCatalog,
         ContextEntryKind::SkillActivation { skill_id } => ContextEntryKindView::SkillActivation {
             skill_id: skill_id.as_str().to_owned(),

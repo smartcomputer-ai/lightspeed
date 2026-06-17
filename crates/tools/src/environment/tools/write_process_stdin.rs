@@ -8,7 +8,7 @@ use crate::{
     error::ToolResult,
 };
 
-use super::unsupported_capability;
+use super::unsupported_process_capability;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct WriteProcessStdinArgs {
@@ -27,7 +27,7 @@ pub async fn invoke_write_process_stdin(
     let process = ctx
         .process
         .as_ref()
-        .ok_or_else(|| unsupported_capability("process execution is not available"))?;
+        .ok_or_else(unsupported_process_capability)?;
 
     process
         .write_stdin(WriteProcessStdinRequest {
@@ -137,5 +137,10 @@ mod tests {
         .expect_err("write stdin should fail");
 
         assert!(matches!(error, ToolError::UnsupportedCapability { .. }));
+        assert!(
+            error
+                .to_string()
+                .contains("process tools require an active env target")
+        );
     }
 }

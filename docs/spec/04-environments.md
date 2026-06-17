@@ -188,14 +188,14 @@ one-active-environment rule is precisely how we avoid it.
   That deterministic, capability-derived error is what actually breaks the
   agent's retry loop — far better than prose buried in a system prompt.
 
-### Projection: VFS view + environment catalog + active environment
+### Projection: VFS catalog + environment catalog + active environment
 
 Mirror the skill mechanism, which already separates the *menu* (`SkillCatalog`)
 from the *chosen, expanded* item (`SkillActivation`). Environments get the same
 shape, with VFS handled as an always-present standing entry rather than a
 catalog item — because VFS is never *selected*, it is simply always there:
 
-- **`ContextEntryKind::VfsView`** — a standing entry, published whenever VFS
+- **`ContextEntryKind::VfsCatalog`** — a standing entry, published whenever VFS
   mounts change, describing the VFS routes the agent always has via fs tools
   (`/skills`, `/prompts`, `/workspace`, …) and stating plainly that the VFS has
   no shell. Always present when a VFS exists.
@@ -249,7 +249,7 @@ it lives in the schema, not in prose.
 ### Schema
 
 ```text
-VfsView                          (standing context entry; always when VFS present)
+VfsCatalog                       (standing context entry; always when VFS present)
   routes[]                       VFS-only fs routes (path, access, source); no shell
 
 EnvironmentCatalogSnapshot       (the menu of environments only)
@@ -397,7 +397,7 @@ identity, not lifecycle, credentials, leases, workers, or provider APIs.
 ## Implementation path (proposed)
 
 1. **Runtime projection + instructive failures first** (no new provider, no new
-   core state). Add `ContextEntryKind::{VfsView, EnvironmentCatalog,
+   core state). Add `ContextEntryKind::{VfsCatalog, EnvironmentCatalog,
    EnvironmentActive}`, the snapshot schemas, and publish them from gateway/worker
    code. Make exec fail with the "no active environment / VFS has no shell" error
    when appropriate. Prove the agent-facing design against the existing
