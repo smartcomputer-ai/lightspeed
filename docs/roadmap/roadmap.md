@@ -16,6 +16,7 @@
     - cross session knowledge
 - [ ] audio transcription preprocessing ([P72 proposed](p72-audio-transcription-preprocessing.md))
 - [ ] session rehydration payload limit ([P73 proposed](p73-session-rehydration-payload-limit.md))
+- [ ] environment-ready tools refactor ([P75 proposed](p75-environment-ready-tools-refactor.md))
 - (go live)
 - timers/schedules/cron
 - vms/sandboxes
