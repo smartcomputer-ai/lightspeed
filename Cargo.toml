@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/host-client",
+    "crates/host-bridge",
     "crates/host-protocol",
     "crates/llm-clients",
     "crates/api",

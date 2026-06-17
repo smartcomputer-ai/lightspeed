@@ -1357,6 +1357,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "host-bridge"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "api",
+ "clap",
+ "dotenvy",
+ "futures-util",
+ "host-client",
+ "host-protocol",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-tungstenite",
+]
+
+[[package]]
 name = "host-client"
 version = "0.1.0"
 dependencies = [
