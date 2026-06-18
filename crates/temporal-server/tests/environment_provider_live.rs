@@ -18,6 +18,7 @@ use api::{
     HostTargetCreateRequestView, HostTransportView, InputItem, RunStartParams, RunStatus,
     SandboxTargetSpecView, SessionConfigInput, SessionEnvironmentAttachParams,
     SessionEnvironmentCloseParams, SessionEnvironmentCreateParams, SessionStartParams,
+    VfsMountAccess as ApiVfsMountAccess, VfsMountPutParams, VfsMountSourceInput,
 };
 use async_trait::async_trait;
 use engine::{
@@ -76,6 +77,7 @@ const CREATED_TARGET_ID: &str = "created-target";
 const PROCESS_STDOUT: &str = "fake provider stdout\n";
 const BRIDGE_FILE_NAME: &str = "bridge-agent.txt";
 const BRIDGE_FILE_MARKER: &str = "LIGHTSPEED_BRIDGE_AGENT_MARKER";
+const BRIDGE_VFS_SKILL_MARKER: &str = "LIGHTSPEED_BRIDGE_VFS_SKILL_MARKER";
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires local/up.sh or compatible Temporal + Postgres env"]
@@ -127,6 +129,7 @@ async fn run_host_bridge_client(
     bridge_root: PathBuf,
 ) -> anyhow::Result<()> {
     let store = pg_store_from_env().await?;
+    let blob_store: Arc<dyn BlobStore> = store.clone();
     let model = fake_model();
     let api = Arc::new(
         GatewayAgentApi::builder(client.clone(), store)
@@ -155,6 +158,27 @@ async fn run_host_bridge_client(
             model: Some(api_projection::model_to_api(&model)),
             ..SessionConfigInput::default()
         }),
+    })
+    .await?;
+
+    let skill_snapshot = vfs::create_inline_snapshot(
+        blob_store.as_ref(),
+        vfs::CreateInlineSnapshotRequest::new(vec![
+            vfs::InlineFile::new(
+                "SKILL.md",
+                format!("{BRIDGE_VFS_SKILL_MARKER}\n").into_bytes(),
+            )
+            .expect("inline skill"),
+        ]),
+    )
+    .await?;
+    api.put_vfs_mount(VfsMountPutParams {
+        session_id: session_id.as_str().to_owned(),
+        mount_path: "/skills".to_owned(),
+        source: VfsMountSourceInput::Snapshot {
+            snapshot_ref: skill_snapshot.snapshot_ref.as_str().to_owned(),
+        },
+        access: ApiVfsMountAccess::ReadOnly,
     })
     .await?;
 
@@ -191,6 +215,10 @@ async fn run_host_bridge_client(
     assert!(
         text.contains(BRIDGE_FILE_MARKER),
         "final answer did not include marker from bridge file read: {text}"
+    );
+    assert!(
+        text.contains(BRIDGE_VFS_SKILL_MARKER),
+        "final answer did not include marker from VFS /skills read: {text}"
     );
 
     let local_file = bridge_root.join(BRIDGE_FILE_NAME);
@@ -594,6 +622,31 @@ impl BridgeFileLlm {
         .await
     }
 
+    async fn read_vfs_skill_result(
+        &self,
+        request: &LlmGenerationRequest,
+    ) -> Result<LlmGenerationResult, CoreAgentIoError> {
+        if !request
+            .request
+            .tools
+            .iter()
+            .any(|tool| tool.name.as_str() == "read_file")
+        {
+            return Err(io_error("planned request did not expose read_file"));
+        }
+        self.tool_call_result(
+            request,
+            "read_file",
+            json!({
+                "path": "/skills/SKILL.md",
+                "offset": 1,
+                "limit": 20
+            }),
+            "bridge_read_vfs_skill",
+        )
+        .await
+    }
+
     async fn tool_call_result(
         &self,
         request: &LlmGenerationRequest,
@@ -696,6 +749,7 @@ impl CoreAgentLlm for BridgeFileLlm {
         match current_run_tool_results(&request).len() {
             0 => self.exec_write_result(&request).await,
             1 => self.read_file_result(&request).await,
+            2 => self.read_vfs_skill_result(&request).await,
             _ => self.final_result(&request).await,
         }
     }

@@ -53,10 +53,15 @@ impl SessionFileSystem {
         validate_routes(&routes)?;
         routes.sort_by(|left, right| {
             right
-                .mount_path
-                .segments()
-                .count()
-                .cmp(&left.mount_path.segments().count())
+                .precedence()
+                .cmp(&left.precedence())
+                .then_with(|| {
+                    right
+                        .mount_path
+                        .segments()
+                        .count()
+                        .cmp(&left.mount_path.segments().count())
+                })
                 .then_with(|| left.mount_path.cmp(&right.mount_path))
         });
         Ok(Self {
@@ -106,6 +111,20 @@ impl SessionFileSystem {
             }
         }
         Ok(entries.into_values().collect())
+    }
+
+    fn merge_directory_entries(
+        route_entries: Vec<ReadDirectoryEntry>,
+        synthetic_entries: Vec<ReadDirectoryEntry>,
+    ) -> Vec<ReadDirectoryEntry> {
+        let mut entries = BTreeMap::new();
+        for entry in route_entries {
+            entries.insert(entry.file_name.clone(), entry);
+        }
+        for entry in synthetic_entries {
+            entries.insert(entry.file_name.clone(), entry);
+        }
+        entries.into_values().collect()
     }
 
     fn synthetic_metadata(&self, path: &FsPath) -> FsResult<Option<FileMetadata>> {
@@ -214,6 +233,15 @@ impl SessionFileSystemRoute {
     pub fn metadata(&self) -> &SessionFileSystemRouteMetadata {
         &self.metadata
     }
+
+    fn precedence(&self) -> u8 {
+        match &self.metadata.source {
+            SessionFileSystemRouteSource::VfsSnapshot
+            | SessionFileSystemRouteSource::VfsWorkspace => 2,
+            SessionFileSystemRouteSource::EnvironmentFilesystem { .. } => 1,
+            SessionFileSystemRouteSource::Other { .. } => 0,
+        }
+    }
 }
 
 #[async_trait]
@@ -231,13 +259,13 @@ impl FileSystem for SessionFileSystem {
     }
 
     async fn read_file(&self, path: &FsPath) -> FsResult<Vec<u8>> {
-        if let Some(resolved) = self.resolve_route(path)? {
-            return resolved.route.fs.read_file(&resolved.inner_path).await;
-        }
         if self.synthetic_metadata(path)?.is_some() {
             return Err(FsError::InvalidInput {
                 message: format!("path is not a file: {path}"),
             });
+        }
+        if let Some(resolved) = self.resolve_route(path)? {
+            return resolved.route.fs.read_file(&resolved.inner_path).await;
         }
         Err(FsError::NotFound { path: path.clone() })
     }
@@ -276,22 +304,33 @@ impl FileSystem for SessionFileSystem {
     }
 
     async fn get_metadata(&self, path: &FsPath) -> FsResult<FileMetadata> {
-        if let Some(resolved) = self.resolve_route(path)? {
-            return resolved.route.fs.get_metadata(&resolved.inner_path).await;
-        }
         if let Some(metadata) = self.synthetic_metadata(path)? {
             return Ok(metadata);
+        }
+        if let Some(resolved) = self.resolve_route(path)? {
+            return resolved.route.fs.get_metadata(&resolved.inner_path).await;
         }
         Err(FsError::NotFound { path: path.clone() })
     }
 
     async fn read_directory(&self, path: &FsPath) -> FsResult<Vec<ReadDirectoryEntry>> {
+        let synthetic_entries = self.synthetic_directory_entries(path)?;
         if let Some(resolved) = self.resolve_route(path)? {
-            return resolved.route.fs.read_directory(&resolved.inner_path).await;
+            return match resolved.route.fs.read_directory(&resolved.inner_path).await {
+                Ok(route_entries) => Ok(Self::merge_directory_entries(
+                    route_entries,
+                    synthetic_entries,
+                )),
+                Err(FsError::NotFound { .. } | FsError::InvalidInput { .. })
+                    if !synthetic_entries.is_empty() =>
+                {
+                    Ok(synthetic_entries)
+                }
+                Err(error) => Err(error),
+            };
         }
-        let entries = self.synthetic_directory_entries(path)?;
-        if !entries.is_empty() {
-            return Ok(entries);
+        if !synthetic_entries.is_empty() {
+            return Ok(synthetic_entries);
         }
         Err(FsError::NotFound { path: path.clone() })
     }
@@ -339,7 +378,7 @@ impl FileSystem for SessionFileSystem {
 fn validate_routes(routes: &[SessionFileSystemRoute]) -> FsResult<()> {
     let mut seen = BTreeSet::new();
     for route in routes {
-        if !seen.insert(route.mount_path.clone()) {
+        if !seen.insert((route.precedence(), route.mount_path.clone())) {
             return Err(FsError::InvalidInput {
                 message: format!("duplicate session filesystem route: {}", route.mount_path),
             });
@@ -417,13 +456,27 @@ mod tests {
     use crate::fs::{InMemoryFileSystem, ReadOnlyFileSystem};
 
     fn route(mount_path: &str, fs: Arc<dyn FileSystem>, label: &str) -> SessionFileSystemRoute {
-        SessionFileSystemRoute::new(
-            FsPath::new(mount_path).expect("mount path"),
+        route_with_source(
+            mount_path,
             fs,
             SessionFileSystemRouteSource::Other {
                 label: label.to_owned(),
             },
             false,
+        )
+    }
+
+    fn route_with_source(
+        mount_path: &str,
+        fs: Arc<dyn FileSystem>,
+        source: SessionFileSystemRouteSource,
+        same_state_as_active_env: bool,
+    ) -> SessionFileSystemRoute {
+        SessionFileSystemRoute::new(
+            FsPath::new(mount_path).expect("mount path"),
+            fs,
+            source,
+            same_state_as_active_env,
         )
         .expect("route")
     }
@@ -466,6 +519,139 @@ mod tests {
             metadata.mount_path,
             FsPath::new("/workspace/project").unwrap()
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn session_file_system_vfs_routes_shadow_environment_root() {
+        let env = InMemoryFileSystem::full_access();
+        env.write_file(&FsPath::new("/env.txt").unwrap(), b"env".to_vec())
+            .await
+            .unwrap();
+        env.create_directory(
+            &FsPath::new("/skills").unwrap(),
+            CreateDirectoryOptions::single(),
+        )
+        .await
+        .unwrap();
+        env.write_file(
+            &FsPath::new("/skills/SKILL.md").unwrap(),
+            b"from env".to_vec(),
+        )
+        .await
+        .unwrap();
+
+        let vfs = InMemoryFileSystem::full_access();
+        vfs.write_file(&FsPath::new("/SKILL.md").unwrap(), b"from vfs".to_vec())
+            .await
+            .unwrap();
+
+        let fs = SessionFileSystem::new(vec![
+            route_with_source(
+                "/",
+                Arc::new(env),
+                SessionFileSystemRouteSource::EnvironmentFilesystem {
+                    environment_id: "local".to_owned(),
+                },
+                true,
+            ),
+            route_with_source(
+                "/skills",
+                Arc::new(vfs),
+                SessionFileSystemRouteSource::VfsSnapshot,
+                false,
+            ),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            fs.read_file_text(&FsPath::new("/skills/SKILL.md").unwrap())
+                .await
+                .unwrap(),
+            "from vfs"
+        );
+        assert_eq!(
+            fs.read_file_text(&FsPath::new("/env.txt").unwrap())
+                .await
+                .unwrap(),
+            "env"
+        );
+
+        let root_entries = fs
+            .read_directory(&FsPath::root())
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|entry| (entry.file_name, entry.is_directory, entry.is_file))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            root_entries,
+            [
+                ("env.txt".to_owned(), false, true),
+                ("skills".to_owned(), true, false),
+            ]
+        );
+
+        let metadata = fs
+            .route_metadata_for_path(&FsPath::new("/skills/SKILL.md").unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(metadata.source, SessionFileSystemRouteSource::VfsSnapshot);
+        assert!(!metadata.same_state_as_active_env);
+
+        let metadata = fs
+            .route_metadata_for_path(&FsPath::new("/env.txt").unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            metadata.source,
+            SessionFileSystemRouteSource::EnvironmentFilesystem {
+                environment_id: "local".to_owned()
+            }
+        );
+        assert!(metadata.same_state_as_active_env);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn session_file_system_vfs_routes_win_exact_environment_path_collision() {
+        let env = InMemoryFileSystem::full_access();
+        env.write_file(&FsPath::new("/file.txt").unwrap(), b"env".to_vec())
+            .await
+            .unwrap();
+        let vfs = InMemoryFileSystem::full_access();
+        vfs.write_file(&FsPath::new("/file.txt").unwrap(), b"vfs".to_vec())
+            .await
+            .unwrap();
+
+        let fs = SessionFileSystem::new(vec![
+            route_with_source(
+                "/shared",
+                Arc::new(env),
+                SessionFileSystemRouteSource::EnvironmentFilesystem {
+                    environment_id: "local".to_owned(),
+                },
+                true,
+            ),
+            route_with_source(
+                "/shared",
+                Arc::new(vfs),
+                SessionFileSystemRouteSource::VfsWorkspace,
+                false,
+            ),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            fs.read_file_text(&FsPath::new("/shared/file.txt").unwrap())
+                .await
+                .unwrap(),
+            "vfs"
+        );
+        let metadata = fs
+            .route_metadata_for_path(&FsPath::new("/shared/file.txt").unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(metadata.source, SessionFileSystemRouteSource::VfsWorkspace);
+        assert!(!metadata.same_state_as_active_env);
     }
 
     #[tokio::test(flavor = "current_thread")]

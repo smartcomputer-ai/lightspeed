@@ -134,10 +134,13 @@ impl SessionEnvironmentManager {
     pub fn tool_targets(
         &self,
         session_fs: Option<FsToolContext>,
+        vfs_mounts: &[VfsMountRecord],
         active_env_target: Option<&ToolExecutionTarget>,
     ) -> Result<ToolTargets, SessionEnvironmentManagerError> {
         let mut targets = ToolTargets::new();
-        if let Some(session_fs) = self.composed_session_fs(session_fs, active_env_target)? {
+        if let Some(session_fs) =
+            self.composed_session_fs(session_fs, vfs_mounts, active_env_target)?
+        {
             targets.insert_fs_context(SESSION_FS_TARGET_ID, session_fs);
         }
         for environment in self.environments.values() {
@@ -203,6 +206,7 @@ impl SessionEnvironmentManager {
     fn composed_session_fs(
         &self,
         session_fs: Option<FsToolContext>,
+        vfs_mounts: &[VfsMountRecord],
         active_env_target: Option<&ToolExecutionTarget>,
     ) -> Result<Option<FsToolContext>, SessionEnvironmentManagerError> {
         let active_environment = active_env_target
@@ -217,6 +221,11 @@ impl SessionEnvironmentManager {
             .expect("active environment fs context checked above");
 
         let mut routes = Vec::new();
+        if let Some(session_fs) = session_fs.as_ref() {
+            for mount in vfs_mounts {
+                routes.push(vfs_session_route(mount, session_fs.fs.clone())?);
+            }
+        }
         for route in active_environment.fs_routes() {
             let FsRouteSource::HostFilesystem { .. } = &route.source else {
                 continue;
@@ -232,17 +241,6 @@ impl SessionEnvironmentManager {
             )?);
         }
 
-        if let Some(session_fs) = session_fs.as_ref() {
-            routes.push(SessionFileSystemRoute::new(
-                FsPath::root(),
-                session_fs.fs.clone(),
-                SessionFileSystemRouteSource::Other {
-                    label: "session_vfs".to_owned(),
-                },
-                false,
-            )?);
-        }
-
         if routes.is_empty() {
             return Ok(session_fs);
         }
@@ -251,15 +249,39 @@ impl SessionEnvironmentManager {
             Arc::new(SessionFileSystem::new(routes)?),
             self.blobs.clone(),
         );
-        if let Some(cwd) = session_fs
-            .as_ref()
-            .and_then(|ctx| ctx.fs_cwd.clone())
-            .or_else(|| active_fs.fs_cwd.clone())
+        if let Some(cwd) = active_fs
+            .fs_cwd
+            .clone()
+            .or_else(|| session_fs.as_ref().and_then(|ctx| ctx.fs_cwd.clone()))
         {
             fs_context = fs_context.with_cwd(cwd);
         }
         Ok(Some(fs_context))
     }
+}
+
+fn vfs_session_route(
+    mount: &VfsMountRecord,
+    fs: Arc<dyn FileSystem>,
+) -> Result<SessionFileSystemRoute, FsError> {
+    let mount_path = FsPath::new(mount.mount_path.as_str())?;
+    let route_fs = match mount.access {
+        vfs::VfsMountAccess::ReadOnly => {
+            ScopedFileSystem::read_only_from_arc(mount_path.clone(), fs)?
+        }
+        vfs::VfsMountAccess::ReadWrite => {
+            ScopedFileSystem::read_write_from_arc(mount_path.clone(), fs)?
+        }
+    };
+    Ok(SessionFileSystemRoute::new(
+        mount_path,
+        Arc::new(route_fs),
+        match &mount.source {
+            vfs::VfsMountSource::Snapshot { .. } => SessionFileSystemRouteSource::VfsSnapshot,
+            vfs::VfsMountSource::Workspace { .. } => SessionFileSystemRouteSource::VfsWorkspace,
+        },
+        false,
+    )?)
 }
 
 fn scoped_route_fs(
@@ -417,7 +439,9 @@ fn active_environment_for_target<'a>(
 #[cfg(test)]
 mod tests {
     use async_trait::async_trait;
-    use engine::{ContextEntryKey, CoreAgentCommand, storage::InMemoryBlobStore};
+    use engine::{
+        BlobRef, ContextEntryKey, CoreAgentCommand, SessionId, storage::InMemoryBlobStore,
+    };
     use tools::{
         environment::EnvironmentToolContext,
         environment::projection::{
@@ -427,7 +451,7 @@ mod tests {
         fs::{CreateDirectoryOptions, FileSystem, FsPath, FsToolContext, InMemoryFileSystem},
         targets::environment_target,
     };
-    use vfs::{VfsCatalogError, VfsMountRecord};
+    use vfs::{VfsCatalogError, VfsMountAccess, VfsMountRecord, VfsMountSource, VfsPath};
 
     use super::*;
 
@@ -550,7 +574,7 @@ mod tests {
             );
 
         let targets = manager
-            .tool_targets(None, Some(&environment_target("local")))
+            .tool_targets(None, &[], Some(&environment_target("local")))
             .expect("tool targets");
         let ctx = targets
             .resolve(&tools::targets::session_fs_target())
@@ -565,6 +589,128 @@ mod tests {
 
         assert_eq!(contents, b"from environment");
         assert_eq!(ctx.fs_cwd.as_ref().map(FsPath::as_str), Some("/workspace"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn manager_composes_vfs_routes_before_active_environment_root() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+
+        let session_vfs = InMemoryFileSystem::full_access();
+        session_vfs
+            .create_directory(
+                &FsPath::new("/skills").expect("skills path"),
+                CreateDirectoryOptions::single(),
+            )
+            .await
+            .expect("create skills");
+        session_vfs
+            .write_file(
+                &FsPath::new("/skills/SKILL.md").expect("skill path"),
+                b"from vfs".to_vec(),
+            )
+            .await
+            .expect("write vfs skill");
+        let session_fs = FsToolContext::new(Arc::new(session_vfs), blobs.clone())
+            .with_cwd(FsPath::new("/skills").expect("vfs cwd"));
+        let mounts = vec![VfsMountRecord {
+            session_id: SessionId::new("session-vfs-first"),
+            mount_path: VfsPath::parse("/skills").expect("mount path"),
+            source: VfsMountSource::Snapshot {
+                snapshot_ref: BlobRef::from_bytes(b"skills"),
+            },
+            access: VfsMountAccess::ReadOnly,
+        }];
+
+        let env_fs = InMemoryFileSystem::full_access();
+        env_fs
+            .create_directory(
+                &FsPath::new("/skills").expect("env skills path"),
+                CreateDirectoryOptions::single(),
+            )
+            .await
+            .expect("create env skills");
+        env_fs
+            .write_file(
+                &FsPath::new("/skills/SKILL.md").expect("env skill path"),
+                b"from environment".to_vec(),
+            )
+            .await
+            .expect("write env skill");
+        env_fs
+            .create_directory(
+                &FsPath::new("/repo").expect("repo path"),
+                CreateDirectoryOptions::single(),
+            )
+            .await
+            .expect("create repo");
+        env_fs
+            .write_file(
+                &FsPath::new("/repo/Cargo.toml").expect("repo file"),
+                b"from environment repo".to_vec(),
+            )
+            .await
+            .expect("write repo file");
+        let env_fs_context = FsToolContext::new(Arc::new(env_fs), blobs.clone())
+            .with_cwd(FsPath::new("/repo").expect("env cwd"));
+        let manager = SessionEnvironmentManager::new(blobs.clone(), Arc::new(EmptyMountStore))
+            .with_environment(
+                RuntimeEnvironment::new(
+                    EnvironmentRecord {
+                        env_id: "local".to_owned(),
+                        kind: EnvironmentKind::AttachedHost,
+                        capabilities: EnvironmentCapabilities {
+                            fs_read: true,
+                            fs_write: true,
+                            process_exec: false,
+                            process_stdin: false,
+                            network: false,
+                            persistent: true,
+                        },
+                        exec_target: Some(environment_target("local")),
+                        cwd: Some(FsPath::new("/repo").expect("cwd")),
+                        status: EnvironmentStatus::Ready,
+                    },
+                    EnvironmentToolContext::new(None, blobs.clone()),
+                )
+                .with_fs_context(env_fs_context)
+                .with_fs_routes(vec![FsRoute {
+                    path: FsPath::root(),
+                    access: FsRouteAccess::ReadWrite,
+                    source: FsRouteSource::HostFilesystem {
+                        target: environment_target("local"),
+                    },
+                    same_state_as_active_env: Some("local".to_owned()),
+                }]),
+            );
+
+        let targets = manager
+            .tool_targets(
+                Some(session_fs),
+                &mounts,
+                Some(&environment_target("local")),
+            )
+            .expect("tool targets");
+        let ctx = targets
+            .resolve(&tools::targets::session_fs_target())
+            .expect("session fs target")
+            .filesystem()
+            .expect("filesystem context");
+
+        assert_eq!(
+            ctx.fs
+                .read_file_text(&FsPath::new("/skills/SKILL.md").expect("skill path"))
+                .await
+                .expect("read skill"),
+            "from vfs"
+        );
+        assert_eq!(
+            ctx.fs
+                .read_file_text(&FsPath::new("/repo/Cargo.toml").expect("repo file"))
+                .await
+                .expect("read repo"),
+            "from environment repo"
+        );
+        assert_eq!(ctx.fs_cwd.as_ref().map(FsPath::as_str), Some("/repo"));
     }
 
     struct EmptyMountStore;

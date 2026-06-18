@@ -30,7 +30,8 @@ pub(crate) async fn read_environment_active(
 }
 
 pub(crate) fn vfs_catalog_text(catalog: &VfsCatalog) -> String {
-    let mut text = String::from("Filesystem (virtual: file tools only, no shell):\n");
+    let mut text =
+        String::from("Filesystem (virtual: file tools only, no shell; wins on path collisions):\n");
     if catalog.routes.is_empty() {
         text.push_str("  No VFS routes are currently mounted.\n");
     } else {
@@ -97,6 +98,9 @@ pub(crate) fn environment_active_text(active: &EnvironmentActive) -> String {
     for route in &active.fs_routes {
         text.push_str(&format!("  {}\n", route_line(route)));
     }
+    text.push_str(
+        "VFS routes still take precedence over these environment routes on path collisions.\n",
+    );
     text
 }
 
@@ -113,7 +117,7 @@ where
 
 fn route_line(route: &FsRoute) -> String {
     let same_state = match &route.same_state_as_active_env {
-        Some(env_id) => format!("; same files as shell in {env_id}"),
+        Some(env_id) => format!("; same files as shell in {env_id} for paths resolved here"),
         None => "; no shell access".to_owned(),
     };
     format!(

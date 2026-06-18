@@ -228,14 +228,17 @@ impl SessionTools {
         let session_fs = if mounts.is_empty() {
             None
         } else {
-            let fs =
-                MountedVfsFileSystem::new(self.blobs.clone(), self.workspace_store.clone(), mounts)
-                    .map_err(io_error)?;
+            let fs = MountedVfsFileSystem::new(
+                self.blobs.clone(),
+                self.workspace_store.clone(),
+                mounts.clone(),
+            )
+            .map_err(io_error)?;
             let cwd = mounted_vfs_cwd(fs.mounts())?;
             Some(FsToolContext::new(Arc::new(fs), self.blobs.clone()).with_cwd(cwd))
         };
         let targets = environments
-            .tool_targets(session_fs, active_env_target)
+            .tool_targets(session_fs, &mounts, active_env_target)
             .map_err(io_error)?;
         Ok(InlineToolRuntime::with_targets_and_blob_store(
             targets,

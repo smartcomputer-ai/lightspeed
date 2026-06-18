@@ -489,19 +489,14 @@ fn binding_status_from_target(status: HostTargetStatus) -> SessionEnvironmentBin
 
 fn fs_routes_for_binding(
     env_id: &RegistryEnvironmentId,
-    cwd: &Option<HostPath>,
+    _cwd: &Option<HostPath>,
     capabilities: &HostCapabilities,
 ) -> Result<Vec<SessionEnvironmentFsRoute>, AgentApiError> {
     if !capabilities.filesystem_read {
         return Ok(Vec::new());
     }
-    let path = cwd
-        .as_ref()
-        .filter(|path| path.is_absolute())
-        .cloned()
-        .unwrap_or_else(HostPath::root);
     Ok(vec![SessionEnvironmentFsRoute {
-        path,
+        path: HostPath::root(),
         access: if capabilities.filesystem_write {
             SessionEnvironmentFsRouteAccess::ReadWrite
         } else {

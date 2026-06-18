@@ -3,12 +3,18 @@
 Design notes for making a Lightspeed agent aware of, and able to act against, a
 VFS plus zero or more execution environments at a time.
 
-Status: design plus implementation through P79. P75-P79 landed the split
-`fs`/`env` tool namespaces, runtime projection, `SessionEnvironmentManager`, and
-a provider-free active environment runtime path with list/read/activate/deactivate
-session APIs. Environment create/attach/close, provider lifecycle, and workspace
-fusion are still pending; this doc fixes the model, routing rules, projection,
-and open questions without prescribing a provider integration.
+Status: design implemented through the first real bridge-backed environment
+path. P75-P81 landed the `fs`/`env` tool namespace split, runtime projection,
+`SessionEnvironmentManager`, active-environment runtime wiring, public session
+environment APIs, provider registry, and a standalone `host-bridge` runner. An
+ignored live test now starts the gateway/worker, spawns `host-bridge`,
+attaches/activates it, and verifies that an agent can write through exec and
+read the same guest filesystem through file tools.
+
+What remains open is narrower: a real sandbox/VM provider, provider lifecycle
+hardening (leases, stale/offline cleanup, auth/policy), and future
+computer-use/browser surfaces. Multiple concurrently-active environments remain
+intentionally deferred.
 
 ## The problem
 
@@ -24,7 +30,7 @@ OS. Lightspeed does not. A Lightspeed session has:
   reachable over the host protocol — real process namespaces with real shells.
 - and, later, other surfaces (a browser, a connector).
 
-So the agent needs two things it does not have today:
+So the design needs two things:
 
 1. **Awareness.** A way to know what its filesystem looks like, which
    environments exist, what each can do (read? write? exec?), and — critically —
@@ -32,11 +38,11 @@ So the agent needs two things it does not have today:
 2. **Correct routing.** A way for a tool call to reach the right place without the
    runtime having to guess.
 
-The concrete failure this refactor addresses: the hosted runtime used to map the
+The concrete failure this refactor addressed: the hosted runtime used to map the
 session's VFS mounts into a `host:local` target that had **no process executor**
-(`crates/temporal-server/src/worker/session_tools.rs`). File tools work; an
-`exec` against those same paths cannot. The agent has no way to know this in
-advance, so it tries to `run_process` on a VFS path and loops on the failure.
+(`crates/temporal-server/src/worker/session_tools.rs`). File tools worked; an
+`exec` against those same paths could not. The agent had no way to know this in
+advance, so it tried to `run_process` on a VFS path and looped on the failure.
 
 ## What already exists
 
@@ -70,6 +76,15 @@ builds on them rather than replacing them.
   `SandboxTargetSpec`, and attach/close
   (`crates/host-protocol/src/control/targets.rs`). The sandbox/provider lifecycle
   abstraction is substantially built.
+- **A runtime provider registry and first bridge provider.**
+  `crates/environment-registry` plus the PostgreSQL migration in
+  `crates/store-pg/migrations/006_environment_registry.sql` store provider
+  records, observed targets, and session environment bindings. The gateway owns
+  the public session environment API and uses host-protocol controllers to
+  create, attach, and close targets. `crates/host-bridge` is the first real
+  provider: a standalone binary that registers, heartbeats, exposes a
+  host-protocol WebSocket controller/data plane, and represents the OS it is
+  running in as an attached host.
 - **A fused filesystem primitive.** `SessionFileSystem`
   (`crates/tools/src/fs/session.rs`) routes by deepest matching prefix across
   generic `FileSystem` backends and exposes route metadata for projection.
@@ -107,11 +122,13 @@ The single clarifying idea: there are **two filesystem layers**, and conflating
 them is what makes "where do paths live" confusing.
 
 1. **The fs-tool layer** — what `read_file`/`write_file`/`edit_file`/`glob`/
-   `grep`/`list_dir` see. This is a fused view that **Lightspeed's runtime owns
-   and resolves**. It is the union of VFS routes (`/skills`, `/prompts`, a VFS
-   `/workspace`) and, when an environment is active, that environment's own
-   filesystem routes (`/repo` on the sandbox disk, etc.). VFS and the active
-   environment **coexist here**. Lightspeed maps each path to its backend.
+   `grep`/`list_dir` see. This is a composed view that **Lightspeed's runtime
+   owns and resolves**. It is the union of VFS routes (`/skills`, `/prompts`,
+   session workspaces, etc.) and, when an environment is active, that
+   environment's own filesystem routes (often `/` for an attached host, or a
+   provider-chosen project root). VFS and the active environment **coexist here**.
+   Lightspeed maps each path to its backend. If a VFS route and an environment
+   route collide, the **VFS route wins**.
 2. **The shell layer** — what `run_process` runs against. This is the active
    environment's **real OS filesystem**. It sees only what is physically on that
    box. It does **not** see VFS-only paths unless something materialized them
@@ -119,15 +136,18 @@ them is what makes "where do paths live" confusing.
    environment is active.
 
 The **overlap** is the set of paths where layer 1 and layer 2 agree (same path,
-same bytes). For coding this must include the workspace: the agent edits files
-with fs tools and runs them with the shell, and they must be the same files.
-The overlap need **not** include skills/prompts — those live only in layer 1 and
-never need a shell.
+same bytes). For now, overlap exists only for environment-backed routes that are
+not shadowed by VFS. There is **no implicit sync** between a VFS workspace and an
+environment filesystem. If a VFS path and an environment path have the same
+name, file tools see the VFS path and shell commands see the environment path;
+the projection must therefore report `same_state_as_active_env: None` for the
+VFS route. This means VFS mounts should stay out of the way of the active
+environment's working directory unless that separation is intentional.
 
 So "VFS fuses *into* the host's namespace" was the wrong framing. The correct
-framing: **the fs-tool layer is the fusion of VFS and the active environment's
-fs; the shell sees only the environment.** Skills/prompts being VFS-only is not a
-special case — it is the normal state of layer-1-only routes.
+framing: **the fs-tool layer is a VFS-first composition of VFS and the active
+environment's fs; the shell sees only the environment.** Skills/prompts being
+VFS-only is not a special case — it is the normal state of layer-1-only routes.
 
 ### Why at most one active environment
 
@@ -157,12 +177,14 @@ one-active-environment rule is precisely how we avoid it.
 
 ### Routing rules
 
-- **fs tools** resolve their path against the fused layer-1 view: VFS routes plus,
-  when an environment is active, that environment's filesystem routes. Generalize
-  the existing `MountedVfsFileSystem::resolve_mount` (deepest-prefix wins) so a
-  resolved route can point at either a VFS source or the active environment's
-  host filesystem. With one active environment the path is unambiguous; no
-  per-call environment selection is needed.
+- **fs tools** resolve their path against the composed layer-1 view: VFS routes
+  plus, when an environment is active, that environment's filesystem routes.
+  VFS routes have precedence over environment routes on collision; environment
+  routes fill the remaining path space. Generalize the existing
+  `MountedVfsFileSystem::resolve_mount` so a resolved route can point at either
+  a VFS source or the active environment's host filesystem, with VFS-first
+  precedence. With one active environment the path is unambiguous; no per-call
+  environment selection is needed.
 
   Constraint to respect: core does not parse provider tool JSON arguments, so it
   cannot stamp the final per-route backend target onto a file-tool call before
@@ -232,22 +254,23 @@ Rendered text, one active environment (the coding case):
 
 ```text
 Filesystem (file tools):
-  VFS (no shell):
+  VFS (no shell, wins on path collisions):
     /skills      read-only — skill library.
     /prompts     read-only — prompt library.
-  sandbox-1 [ACTIVE] — Linux, exec available, cwd /workspace:
-    /workspace   read/write — file-tool edits AND shell edits are the same files.
-    /repo        read-only — on the sandbox disk.
+  bridge-local [ACTIVE] — Linux, exec available, cwd /Users/lukas/dev/app:
+    /            read/write — attached host filesystem, except VFS-shadowed paths.
 
-Commands run in sandbox-1. /skills and /prompts are virtual (file tools only);
-the shell cannot see them.
+Commands run in bridge-local. /skills and /prompts are virtual (file tools only);
+the shell cannot see them. File-tool relative paths resolve against the fs cwd;
+when that cwd is not shadowed by VFS, file-tool edits and shell edits are the
+same files.
 ```
 
 Whether a route's file-tool state equals its shell state is **not** an authoring
 choice in the renderer — it is derived from `FsRoute.same_state_as_active_env`
-(below). VFS routes resolve to `None` (no shell); the overlapping workspace
-resolves to the active environment. The agent's correctness depends on this, so
-it lives in the schema, not in prose.
+(below). VFS routes resolve to `None` (no shell). Environment routes resolve to
+the active environment only where they are not shadowed by VFS. The agent's
+correctness depends on this, so it lives in the schema, not in prose.
 
 ### Schema
 
@@ -279,13 +302,15 @@ EnvironmentActive                (published only when an environment is active)
   # room for richer info later: toolchains, project type, env-specific guidance
 
 FsRoute
-  path              where it appears in the fs-tool view, e.g. "/workspace"
+  path              where it appears in the fs-tool view, e.g. "/skills" or "/"
   access            ReadOnly | ReadWrite
   source            VfsWorkspace | VfsSnapshot | HostFilesystem | FusedWorkspace
+                    (FusedWorkspace is reserved for a future explicit fusion mode)
   same_state_as_active_env  Option<env_id>
-                    set when edits through this route and shell edits in the active
-                    environment are the same underlying state (the overlap). VFS-only
-                    routes are None. This is what the renderer reads to say "same files".
+                    set when edits through paths that resolve to this route and shell
+                    edits in the active environment are the same underlying state.
+                    VFS routes and VFS-shadowed paths are None. This is what the
+                    renderer reads to say "same files".
 ```
 
 Design constraints, consistent with the P51 architecture rules:
@@ -306,10 +331,10 @@ Design constraints, consistent with the P51 architecture rules:
 
 ### Catalog first; core state later
 
-Start with these as **runtime-owned** snapshots written to CAS and published into
-context, reusing `default_targets["env"]` routing for the active
-environment. This proves the entire agent-facing model without forcing the
-deterministic engine to own lifecycle facts it does not yet branch on.
+The current implementation keeps these as **runtime-owned** snapshots written to
+CAS and published into context, reusing `default_targets["env"]` routing for the
+active environment. This proves the entire agent-facing model without forcing
+the deterministic engine to own lifecycle facts it does not yet branch on.
 
 Promote into a core `EnvironmentState` (sibling of `tooling`/`context`, reduced
 from explicit events) only when the engine needs to branch on environment facts,
@@ -326,46 +351,37 @@ and republishes the catalog + active-environment entries. There is never a secon
 default to keep in sync. Deactivation clears the environment default and the active
 entry.
 
-Sandbox standup surfaces as: runtime provisions/handshakes a host connection,
-capability negotiation happens outside core, the runtime records the ready
-environment in the catalog; the agent (or a policy) activates it.
+Environment standup surfaces as: a provider registers and heartbeats; the
+gateway provisions or attaches a host-protocol target; capability negotiation
+happens outside core; the runtime records the ready environment in the catalog;
+the agent, user, or policy activates it. P81 implements the attached-host bridge
+case. A true sandbox provider still needs to be implemented.
 
-## Open question: VFS ↔ environment fusion for the workspace (decide later)
+## Decision: VFS and environment filesystems stay separate for now
 
-The one fact that *must* be decided before shipping coding sessions: for the
-overlapping workspace, **are file-tool edits and shell edits the same state?**
-The model above is correct regardless of mechanism — only how the workspace route
-is backed, and therefore `same_state_as_active_env`, changes.
+Do **not** sync VFS workspaces into environments, mount VFS into environments, or
+snapshot environment workspaces back to VFS as part of the default environment
+flow. The VFS remains Lightspeed-owned durable state reachable by file tools. An
+environment remains a real OS filesystem reachable by file tools and shell only
+through its advertised host-protocol routes.
 
-Options, with consequences:
+The routing rule is:
 
-1. **Mount VFS workspace into the environment.** `/workspace` in the environment
-   is backed by the VFS workspace (FUSE / network fs /
-   `MountedVfsFileSystem`-as-host-fs). One backing store; edit-via-tools /
-   run-via-shell over the same files, live. → route `source: FusedWorkspace`,
-   `same_state_as_active_env: Some(active)`. Cleanest agent story; the existing
-   fused-fs composition points this way. Cost: a real mount mechanism inside the
-   environment, and acceptable build/test IO latency.
-2. **Materialize / sync before exec.** Snapshot the VFS workspace into the
-   environment fs before a command runs, snapshot results back. → `source:
-   VfsWorkspace`, `same_state_as_active_env: None` until a sync completes, so the
-   renderer honestly says "sync first." Simple transport; cost is staleness
-   windows and an explicit flush concept the agent must understand.
-3. **Environment fs is primary; snapshot back to VFS.** The writable workspace
-   *is* the environment; VFS is the persistence/CAS layer behind it. → `/workspace`
-   route `source: HostFilesystem` on the environment, `same_state_as_active_env:
-   Some(active)` by construction. Simplest exec story. Cost: VFS-only sessions
-   need a different primary, and durability depends on snapshot cadence.
+1. VFS routes win on path collision.
+2. Environment routes fill paths not claimed by VFS.
+3. Shell commands always see only the environment filesystem.
+4. `same_state_as_active_env` is set only for environment-backed fs-tool routes
+   that are not shadowed by VFS.
 
-In all three, VFS-only routes (`/skills`, `/prompts`) are unaffected: `source:
-Vfs*`, `same_state_as_active_env: None`, served by fs tools, invisible to the
-shell. That is settled (see decisions), not part of this open question.
+Operational consequence: VFS should stay out of the way of the attached
+environment. Use reserved paths like `/skills` and `/prompts` for VFS-only
+resources. Avoid mounting a VFS workspace at the active environment cwd unless
+the intended behavior is that file tools and shell commands intentionally see
+different states at the same path.
 
-Recommended default *for coding sessions* (not an invariant): provision one
-environment whose `/workspace` overlaps the VFS workspace (option 1 or 3), and
-keep the VFS-only, no-environment session first-class — cheap, durable, no
-container, file-tools-only. That is a Lightspeed differentiator and the model
-must not foreclose it.
+Future workspace fusion remains possible, but it should be introduced as an
+explicit mode with explicit projection semantics. Until then, there is no hidden
+durability or sync boundary between VFS and an environment.
 
 ## Open question: multiple concurrently-active environments (deferred, maybe never)
 
@@ -384,53 +400,67 @@ at a time, switched by activation — does not reach this.
 ## Build vs. separate repo
 
 Keep the host protocol, the environment/session API, the catalog/projection, and
-target resolution **in Lightspeed**. The boundary is already clean: a sandbox
-provider is "an implementation that provisions a backend and speaks the host
+target resolution **in Lightspeed**. The boundary is already clean: a provider is
+"an implementation that provisions or exposes a backend and speaks the host
 protocol" via the `HostTransport::Provider{provider_type}` /
-`HostTargetCreateRequest::Provider` arms that already exist. Provider
+`HostTargetCreateRequest::{Sandbox, AttachedHost, Provider}` arms. Provider
 *implementations* may live elsewhere if they need an independent release cadence
 or a non-Rust runtime; the `host-protocol` crate is exactly the seam that makes
-that a later, cheap move. Do not start by extracting the standup into a separate
-product-shaped repo — that pulls the agent-facing model out with it for no gain.
+that a later, cheap move. The first implementation lives in this repository as
+`crates/host-bridge`, but it is still a standalone binary with its own lifecycle,
+not part of the Lightspeed CLI.
 
 The engine stays where the architecture rules put it: it knows semantic target
 identity, not lifecycle, credentials, leases, workers, or provider APIs.
 
-## Implementation path (proposed)
+## Implementation status
 
-1. **Runtime projection + instructive failures first** (no new provider, no new
-   core state). Add `ContextEntryKind::{VfsCatalog, EnvironmentCatalog,
-   EnvironmentActive}`, the snapshot schemas, and publish them from gateway/worker
-   code. Make exec fail with the "no active environment / VFS has no shell" error
-   when appropriate. Prove the agent-facing design against the existing
-   `InlineToolRuntime` with VFS + a local environment.
-2. **A `SessionEnvironmentManager` in `temporal-server`** that composes VFS mounts
-   and the active environment target into the `ToolTargets` the runtime resolves
-   against, and republishes the entries whenever VFS mounts, the
-   environment set, or the active selection change. `ActivateEnvironment` lowers
-   to the `env` default target.
-3. **Change hosted VFS behavior** from "VFS pretends to be `host:local` with no
-   executor" to "VFS is the layer-1-only filesystem; an active environment
-   supplies the shell and its own routes." This is the fix for the original
-   failure.
-4. **Session API for environments:** list / read / activate / deactivate are
-   implemented. Create-or-attach and close remain pending; keep
-   provider-specific sandbox specs opaque at the API boundary, like provider
-   params.
-5. **Optional core promotion.** Add `EnvironmentState` + attach/detach/activate
-   events only once the runtime projection has stabilized or deterministic
-   planning needs environment facts.
-6. **One provider adapter, early but minimal** — only to exercise the protocol
-   boundary. The agent should learn "a sandbox with exec and `/workspace`", never
-   the specific provider.
+Implemented:
+
+1. **Environment-ready tools refactor (P75).** Split file tools from environment
+   action tools, renamed the old host target namespace out of model-facing
+   routing, kept shared file tools on the generic `FileSystem` trait, and kept
+   host-protocol as the backend wire boundary.
+2. **Runtime projection (P76).** Added
+   `ContextEntryKind::{VfsCatalog, EnvironmentCatalog, EnvironmentActive}`, the
+   projection schemas, provider-neutral rendering, and instructive no-shell
+   failures.
+3. **Session environment manager and active runtime wiring (P77-P78).** Added one
+   runtime owner that composes VFS mounts, active environment routes, context
+   republication, and `ToolTargets`; activation lowers to the `env` default
+   target used by process tools.
+4. **Public session environment API (P79-P80).** Added list/read/create/attach/
+   activate/deactivate/close, provider registry records, provider
+   register/heartbeat/unregister, and gateway lifecycle wiring through
+   host-protocol controllers.
+5. **First real provider (P81).** Added the standalone `host-bridge` binary and
+   CLI helpers. The live bridge test proves a session can attach and activate a
+   bridge provider and that exec/file tools can operate on the same attached host
+   filesystem.
+6. **VFS-first collision precedence.** Implemented the decision above: VFS mount
+   routes shadow active-environment routes on collision, active environments can
+   be mounted broadly, and file-tool cwd follows the active environment cwd when
+   one is active.
+
+Remaining:
+
+1. **Sandbox/VM provider.** Implement a provider that actually provisions isolated
+   coding environments rather than attaching to an already-running OS.
+2. **Provider lifecycle hardening.** Tighten leases, stale/offline sweeping,
+   auth/policy, observability, and cleanup semantics for production operation.
+3. **Optional core promotion.** Add `EnvironmentState` + attach/detach/activate
+   events only once deterministic planning needs environment facts or clients
+   need an event-sourced environment timeline.
+4. **Additional surfaces.** Computer-use/browser environments remain future
+   extensions of the environment action model.
 
 ## North star
 
 The model should always know its topology — that it has a VFS reachable by file
 tools with no shell; whether an execution environment is active and what it can
-do; and, for the workspace, whether file edits and shell edits are the same
-state. The engine should only record the deterministic target identity used for
-each side effect. That preserves Lightspeed's advantage over guest-OS agents — a
-durable virtual filesystem coexisting with a swappable, capability-typed
-execution environment — without turning the deterministic core into a sandbox
-manager.
+do; and which fs-tool paths, if any, are the same state as the active
+environment's shell. The engine should only record the deterministic target
+identity used for each side effect. That preserves Lightspeed's advantage over
+guest-OS agents — a durable virtual filesystem coexisting with a swappable,
+capability-typed execution environment — without turning the deterministic core
+into a sandbox manager.
