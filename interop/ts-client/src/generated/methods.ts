@@ -23,6 +23,16 @@ export const METHODS = [
   "skills/active",
   "skills/activate",
   "skills/deactivate",
+  "session/environments/list",
+  "session/environments/read",
+  "session/environments/create",
+  "session/environments/attach",
+  "session/environments/activate",
+  "session/environments/deactivate",
+  "session/environments/close",
+  "environmentProviders/register",
+  "environmentProviders/heartbeat",
+  "environmentProviders/unregister",
   "blob/put",
   "blob/put_many",
   "blob/get",
@@ -146,6 +156,46 @@ export interface MethodMap {
   "skills/deactivate": {
     params: Api.SkillDeactivateParams;
     result: Api.AgentApiOutcomeOfSkillDeactivateResponse;
+  };
+  "session/environments/list": {
+    params: Api.SessionEnvironmentListParams;
+    result: Api.AgentApiOutcomeOfSessionEnvironmentListResponse;
+  };
+  "session/environments/read": {
+    params: Api.SessionEnvironmentReadParams;
+    result: Api.AgentApiOutcomeOfSessionEnvironmentReadResponse;
+  };
+  "session/environments/create": {
+    params: Api.SessionEnvironmentCreateParams;
+    result: Api.AgentApiOutcomeOfSessionEnvironmentCreateResponse;
+  };
+  "session/environments/attach": {
+    params: Api.SessionEnvironmentAttachParams;
+    result: Api.AgentApiOutcomeOfSessionEnvironmentAttachResponse;
+  };
+  "session/environments/activate": {
+    params: Api.SessionEnvironmentActivateParams;
+    result: Api.AgentApiOutcomeOfSessionEnvironmentActivateResponse;
+  };
+  "session/environments/deactivate": {
+    params: Api.SessionEnvironmentDeactivateParams;
+    result: Api.AgentApiOutcomeOfSessionEnvironmentDeactivateResponse;
+  };
+  "session/environments/close": {
+    params: Api.SessionEnvironmentCloseParams;
+    result: Api.AgentApiOutcomeOfSessionEnvironmentCloseResponse;
+  };
+  "environmentProviders/register": {
+    params: Api.EnvironmentProviderRegisterParams;
+    result: Api.AgentApiOutcomeOfEnvironmentProviderRegisterResponse;
+  };
+  "environmentProviders/heartbeat": {
+    params: Api.EnvironmentProviderHeartbeatParams;
+    result: Api.AgentApiOutcomeOfEnvironmentProviderHeartbeatResponse;
+  };
+  "environmentProviders/unregister": {
+    params: Api.EnvironmentProviderUnregisterParams;
+    result: Api.AgentApiOutcomeOfEnvironmentProviderUnregisterResponse;
   };
   "blob/put": {
     params: Api.BlobPutParams;
@@ -354,6 +404,36 @@ export const rpc = {
   },
   skillsDeactivate(client: RpcCaller, params: Api.SkillDeactivateParams): Promise<Api.AgentApiOutcomeOfSkillDeactivateResponse> {
     return client.call("skills/deactivate", params);
+  },
+  sessionEnvironmentsList(client: RpcCaller, params: Api.SessionEnvironmentListParams): Promise<Api.AgentApiOutcomeOfSessionEnvironmentListResponse> {
+    return client.call("session/environments/list", params);
+  },
+  sessionEnvironmentsRead(client: RpcCaller, params: Api.SessionEnvironmentReadParams): Promise<Api.AgentApiOutcomeOfSessionEnvironmentReadResponse> {
+    return client.call("session/environments/read", params);
+  },
+  sessionEnvironmentsCreate(client: RpcCaller, params: Api.SessionEnvironmentCreateParams): Promise<Api.AgentApiOutcomeOfSessionEnvironmentCreateResponse> {
+    return client.call("session/environments/create", params);
+  },
+  sessionEnvironmentsAttach(client: RpcCaller, params: Api.SessionEnvironmentAttachParams): Promise<Api.AgentApiOutcomeOfSessionEnvironmentAttachResponse> {
+    return client.call("session/environments/attach", params);
+  },
+  sessionEnvironmentsActivate(client: RpcCaller, params: Api.SessionEnvironmentActivateParams): Promise<Api.AgentApiOutcomeOfSessionEnvironmentActivateResponse> {
+    return client.call("session/environments/activate", params);
+  },
+  sessionEnvironmentsDeactivate(client: RpcCaller, params: Api.SessionEnvironmentDeactivateParams): Promise<Api.AgentApiOutcomeOfSessionEnvironmentDeactivateResponse> {
+    return client.call("session/environments/deactivate", params);
+  },
+  sessionEnvironmentsClose(client: RpcCaller, params: Api.SessionEnvironmentCloseParams): Promise<Api.AgentApiOutcomeOfSessionEnvironmentCloseResponse> {
+    return client.call("session/environments/close", params);
+  },
+  environmentProvidersRegister(client: RpcCaller, params: Api.EnvironmentProviderRegisterParams): Promise<Api.AgentApiOutcomeOfEnvironmentProviderRegisterResponse> {
+    return client.call("environmentProviders/register", params);
+  },
+  environmentProvidersHeartbeat(client: RpcCaller, params: Api.EnvironmentProviderHeartbeatParams): Promise<Api.AgentApiOutcomeOfEnvironmentProviderHeartbeatResponse> {
+    return client.call("environmentProviders/heartbeat", params);
+  },
+  environmentProvidersUnregister(client: RpcCaller, params: Api.EnvironmentProviderUnregisterParams): Promise<Api.AgentApiOutcomeOfEnvironmentProviderUnregisterResponse> {
+    return client.call("environmentProviders/unregister", params);
   },
   blobPut(client: RpcCaller, params: Api.BlobPutParams): Promise<Api.AgentApiOutcomeOfBlobPutResponse> {
     return client.call("blob/put", params);

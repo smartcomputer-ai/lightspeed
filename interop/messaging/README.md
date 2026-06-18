@@ -8,8 +8,9 @@ inbound traffic, submits addressed messages as runs, appends unaddressed group
 chatter as session context, and sends assistant replies back to the channel.
 
 Access is gated by **sender handle**, and conversations bind to **session
-recipes** that configure model, tools, mounted workspaces/snapshots, and linked
-MCP servers. See [Access control and bindings](#access-control-and-bindings).
+recipes** that configure model, tools, mounted workspaces/snapshots, linked MCP
+servers, and attached execution environments. See
+[Access control and bindings](#access-control-and-bindings).
 
 ## How a message flows
 
@@ -82,10 +83,10 @@ chats only.
 
 The bridge does not provision skills or system prompts directly. Instead a
 **recipe** points a session at a model, a tool set, mounted VFS
-workspaces/snapshots, and linked MCP servers. The core then discovers
-`.lightspeed/prompts/` instructions and the skill catalog *from the mounts*, and
-the agent activates skills itself. Recipes and bindings live in the JSON file at
-`BRIDGE_CONFIG`. A complete, runnable example is in
+workspaces/snapshots, linked MCP servers, and optional execution environments.
+The core then discovers `.lightspeed/prompts/` instructions and the skill
+catalog *from the mounts*, and the agent activates skills itself. Recipes and
+bindings live in the JSON file at `BRIDGE_CONFIG`. A complete, runnable example is in
 [`bridge.config.example.json`](bridge.config.example.json) — copy it to
 `bridge.config.json` and point `BRIDGE_CONFIG` at it:
 
@@ -97,13 +98,16 @@ the agent activates skills itself. Recipes and bindings live in the JSON file at
     "personal": {
       "config": {
         "model": { "providerId": "anthropic", "apiKind": "anthropic_messages", "model": "..." },
-        "tools": { "messaging": true, "host": "readWrite", "webSearch": true }
+        "tools": { "messaging": true, "filesystem": "edit", "webSearch": true }
       },
       "mounts": [
         { "mountPath": "/workspace", "source": { "workspaceId": "lukas-ws" }, "access": "readWrite" }
       ],
       "mcp": [
         { "serverId": "github-mcp", "allowedTools": ["search_issues"], "approval": "never" }
+      ],
+      "environments": [
+        { "envId": "devbox", "providerId": "hetzner-devbox", "targetId": "local", "activate": true }
       ]
     }
   },
@@ -130,10 +134,15 @@ the agent activates skills itself. Recipes and bindings live in the JSON file at
   snapshot out of band (`vfs/workspace/create`, `vfs/snapshot/commit`).
 - **`mcp`** is the `session/mcp/link` surface; the server must already be created
   and authenticated (`mcp/servers/create`). The recipe references it by id.
+- **`environments`** attaches existing provider targets to the session through
+  `session/environments/attach`. The provider must already be online. `envId`
+  and `providerId` are required, `targetId` defaults to `local`, and `activate`
+  defaults to `true`. At most one environment may have `activate: true`; `envs`
+  is accepted as a short alias.
 
 A conversation with no matching binding (or a matching binding with no recipe)
-gets the default: a per-conversation session id, no mounts, no MCP, messaging
-tool only.
+gets the default: a per-conversation session id, no mounts, no MCP, no
+environments, messaging tool only.
 
 ## Shape
 
@@ -146,7 +155,8 @@ tool only.
 - `src/runtime.ts` — orchestration: bindings, dedupe, per-conversation
   serialization, denied handling, control commands.
 - `src/lightspeed.ts` — `session/start` + recipe provisioning (mounts, MCP
-  links), `context/append`, `run/start`, awaitRun, and reply extraction.
+  links, environments), `context/append`, `run/start`, awaitRun, and reply
+  extraction.
 - `src/store.ts` — bindings (chat → session, recipe, activation, cursor) plus
   message dedupe records in `.bridge-state.json`.
 - `src/telegram.ts` — grammY adapter with native mention/reply detection.

@@ -49,13 +49,23 @@ export interface RecipeMcpLink {
   deferLoading?: boolean;
 }
 
+/// One execution environment to attach into a recipe's sessions. The provider
+/// must already be online; the bridge binds an existing provider target.
+export interface RecipeEnvironment {
+  envId: string;
+  providerId: string;
+  targetId: string;
+  activate: boolean;
+}
+
 /// A named provisioning recipe applied once when a bound session is first
 /// created: start with `config` (model + tools), mount workspaces/snapshots,
-/// then link MCP servers.
+/// link MCP servers, then attach/activate execution environments.
 export interface SessionRecipe {
   config?: SessionConfigInput;
   mounts: RecipeMount[];
   mcp: RecipeMcpLink[];
+  environments?: RecipeEnvironment[];
 }
 
 export type BindingScope = "direct" | "group";
@@ -377,6 +387,7 @@ function parseRecipe(name: string, raw: unknown): SessionRecipe {
   const recipe: SessionRecipe = {
     mounts: parseMounts(name, record.mounts),
     mcp: parseMcpLinks(name, record.mcp),
+    environments: parseEnvironments(name, record),
   };
   if (record.config !== undefined && record.config !== null) {
     if (typeof record.config !== "object" || Array.isArray(record.config)) {
@@ -385,6 +396,49 @@ function parseRecipe(name: string, raw: unknown): SessionRecipe {
     recipe.config = record.config as SessionConfigInput;
   }
   return recipe;
+}
+
+function parseEnvironments(recipe: string, record: Record<string, unknown>): RecipeEnvironment[] {
+  if (record.environments !== undefined && record.envs !== undefined) {
+    throw new Error(`recipe "${recipe}" must use environments or envs, not both`);
+  }
+  const raw = record.environments ?? record.envs;
+  if (raw === undefined || raw === null) {
+    return [];
+  }
+  if (!Array.isArray(raw)) {
+    throw new Error(`recipe "${recipe}".environments must be an array`);
+  }
+  const environments = raw.map((entry, index) => parseEnvironment(recipe, index, entry));
+  const activeCount = environments.filter((environment) => environment.activate).length;
+  if (activeCount > 1) {
+    throw new Error(`recipe "${recipe}".environments may activate at most one environment`);
+  }
+  return environments;
+}
+
+function parseEnvironment(recipe: string, index: number, raw: unknown): RecipeEnvironment {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new Error(`recipe "${recipe}".environments[${index}] must be an object`);
+  }
+  const record = raw as Record<string, unknown>;
+  const envId = optionalString(record.envId);
+  if (envId === undefined) {
+    throw new Error(`recipe "${recipe}".environments[${index}] needs an envId`);
+  }
+  const providerId = optionalString(record.providerId);
+  if (providerId === undefined) {
+    throw new Error(`recipe "${recipe}".environments[${index}] needs a providerId`);
+  }
+  if (record.activate !== undefined && typeof record.activate !== "boolean") {
+    throw new Error(`recipe "${recipe}".environments[${index}].activate must be a boolean`);
+  }
+  return {
+    envId,
+    providerId,
+    targetId: optionalString(record.targetId) ?? "local",
+    activate: typeof record.activate === "boolean" ? record.activate : true,
+  };
 }
 
 function parseMounts(recipe: string, raw: unknown): RecipeMount[] {

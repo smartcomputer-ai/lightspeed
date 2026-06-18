@@ -1,14 +1,16 @@
 import {
   LightspeedClient,
+  LightspeedRpcError,
   type EventCursor,
   type InputItem,
   type RunStatus,
   type SessionConfigInput,
+  type SessionEnvironmentView,
   type SessionItemView,
   type SessionView,
   type VfsMountSourceInput,
 } from "@lightspeed/agent-client";
-import type { LightspeedBridgeConfig, SessionRecipe } from "./config.js";
+import type { LightspeedBridgeConfig, RecipeEnvironment, SessionRecipe } from "./config.js";
 import { stableSubmissionId } from "./ids.js";
 import { mediaKindForMime } from "./media.js";
 import type { JsonBridgeStore } from "./store.js";
@@ -60,9 +62,9 @@ export class LightspeedSessionBridge {
   ) {}
 
   /// Starts the session (if not already) and applies the recipe once: the
-  /// session config (model + tools), then workspace/snapshot mounts, then MCP
-  /// links. The core discovers prompts and the skill catalog from the mounts,
-  /// so the bridge never activates skills or sets instructions itself.
+  /// session config (model + tools), workspace/snapshot mounts, MCP links, and
+  /// execution environment bindings. The core discovers prompts and the skill
+  /// catalog from the mounts, so the bridge never activates skills itself.
   /// session/start is idempotent and the config only applies on creation;
   /// mounts and links are guarded by `startedSessions` so they run once.
   async ensureSession(sessionId: string, recipe?: SessionRecipe | null): Promise<void> {
@@ -94,7 +96,48 @@ export class LightspeedSessionBridge {
         ...(link.deferLoading !== undefined ? { deferLoading: link.deferLoading } : {}),
       });
     }
+    for (const environment of recipe?.environments ?? []) {
+      await this.ensureEnvironment(sessionId, environment);
+    }
     this.startedSessions.add(sessionId);
+  }
+
+  private async ensureEnvironment(
+    sessionId: string,
+    environment: RecipeEnvironment,
+  ): Promise<void> {
+    const existing = await this.readEnvironment(sessionId, environment.envId);
+    if (!existing) {
+      await this.client.call("session/environments/attach", {
+        sessionId,
+        envId: environment.envId,
+        providerId: environment.providerId,
+        request: { type: "target", targetId: environment.targetId },
+        activate: environment.activate,
+      });
+      return;
+    }
+    if (environment.activate && !existing.active) {
+      await this.client.call("session/environments/activate", {
+        sessionId,
+        envId: environment.envId,
+      });
+    }
+  }
+
+  private async readEnvironment(
+    sessionId: string,
+    envId: string,
+  ): Promise<SessionEnvironmentView | null> {
+    try {
+      const response = await this.client.call("session/environments/read", { sessionId, envId });
+      return response.result.environment;
+    } catch (error) {
+      if (error instanceof LightspeedRpcError && error.kind === "not_found") {
+        return null;
+      }
+      throw error;
+    }
   }
 
   /// Appends unaddressed room chatter as session context without starting a
@@ -142,8 +185,10 @@ export class LightspeedSessionBridge {
     const started = await this.client.startRun(turn.sessionId, input, { submissionId });
     const run = started.result.run;
 
-    const binding = await this.store.getBinding(turn.conversationKey);
-    let cursor = binding?.cursor ?? null;
+    // Do not seed this from bridge state. That cursor is process-local run
+    // progress, not a durable chat cursor; starting after a terminal event can
+    // make awaitRun long-poll forever even though the run is already complete.
+    let cursor: EventCursor | null = null;
     const terminalStatus = terminalRunStatus(run.status);
     if (terminalStatus === "running") {
       const awaited = await this.client.awaitRun(turn.sessionId, run.id, {
@@ -152,11 +197,9 @@ export class LightspeedSessionBridge {
         waitMs: this.config.waitMs,
         heartbeat: async (nextCursor) => {
           cursor = nextCursor;
-          await this.store.updateCursor(turn.conversationKey, nextCursor);
         },
       });
       cursor = awaited.cursor;
-      await this.store.updateCursor(turn.conversationKey, cursor);
       if (awaited.state.status === "failed") {
         throw new Error(`Lightspeed run failed: ${awaited.state.message}`);
       }

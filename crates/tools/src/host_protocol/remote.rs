@@ -37,6 +37,8 @@ use crate::{
     },
 };
 
+static NEXT_PROCESS_EXECUTOR_ID: AtomicU64 = AtomicU64::new(1);
+
 pub struct RemoteHostConnection<T> {
     client: Arc<AsyncMutex<HostDataClient<T>>>,
     capabilities: HostCapabilities,
@@ -81,8 +83,10 @@ where
         if !self.capabilities.process_start {
             return None;
         }
+        let process_id_prefix = NEXT_PROCESS_EXECUTOR_ID.fetch_add(1, Ordering::Relaxed);
         Some(RemoteProcessExecutor {
             client: self.client.clone(),
+            process_id_prefix,
             next_process_id: Arc::new(AtomicU64::new(1)),
             next_seq_by_process: Arc::new(StdMutex::new(BTreeMap::new())),
         })
@@ -241,6 +245,7 @@ where
 #[derive(Clone)]
 pub struct RemoteProcessExecutor<T> {
     client: Arc<AsyncMutex<HostDataClient<T>>>,
+    process_id_prefix: u64,
     next_process_id: Arc<AtomicU64>,
     next_seq_by_process: Arc<StdMutex<BTreeMap<String, u64>>>,
 }
@@ -326,7 +331,7 @@ where
 impl<T> RemoteProcessExecutor<T> {
     fn next_process_id(&self) -> ProcessId {
         let id = self.next_process_id.fetch_add(1, Ordering::Relaxed);
-        ProcessId::new(format!("proc-{id}"))
+        ProcessId::new(format!("proc-{}-{id}", self.process_id_prefix))
     }
 
     fn next_seq_for(&self, process_id: &str) -> ProcessExecResult<Option<u64>> {
@@ -645,14 +650,18 @@ mod tests {
             .await
             .expect("run process");
 
+        let process_id = sent.lock().expect("sent lock")[0]["params"]["processId"]
+            .as_str()
+            .expect("process id")
+            .to_owned();
         assert_eq!(output.status, ProcessStatus::Running);
-        assert_eq!(output.handle, Some(ProcessHandle::new("proc-1")));
+        assert_eq!(output.handle, Some(ProcessHandle::new(process_id.clone())));
         assert_eq!(output.stdout.bytes, b"ok\n");
         assert_eq!(output.stderr.bytes, b"warn\n");
 
         let output = process
             .write_stdin(WriteProcessStdinRequest {
-                handle: ProcessHandle::new("proc-1"),
+                handle: ProcessHandle::new(process_id.clone()),
                 input: b"input\n".to_vec(),
                 close_stdin: true,
                 yield_time_ms: Some(10),
@@ -667,11 +676,72 @@ mod tests {
 
         let sent = sent.lock().expect("sent lock");
         assert_eq!(sent[0]["method"], "process/start");
+        assert_eq!(sent[0]["params"]["processId"], process_id);
         assert_eq!(sent[0]["params"]["pipeStdin"], true);
         assert_eq!(sent[1]["method"], "process/read");
         assert_eq!(sent[2]["method"], "process/write");
         assert_eq!(sent[3]["method"], "process/read");
         assert_eq!(sent[3]["params"]["afterSeq"], 3);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn remote_process_executors_use_distinct_process_id_prefixes() {
+        let (transport_a, sent_a) = MockTransport::new([
+            json!({ "jsonrpc": "2.0", "id": 1, "result": { "processId": "unused" } }),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "result": { "chunks": [], "closed": true, "exited": true, "exitCode": 0, "nextSeq": 0 }
+            }),
+        ]);
+        let (transport_b, sent_b) = MockTransport::new([
+            json!({ "jsonrpc": "2.0", "id": 1, "result": { "processId": "unused" } }),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "result": { "chunks": [], "closed": true, "exited": true, "exitCode": 0, "nextSeq": 0 }
+            }),
+        ]);
+        let process_a = RemoteHostConnection::new(
+            HostDataClient::new(transport_a),
+            HostCapabilities::filesystem(true, true).with_process(),
+        )
+        .process_executor()
+        .expect("process executor a");
+        let process_b = RemoteHostConnection::new(
+            HostDataClient::new(transport_b),
+            HostCapabilities::filesystem(true, true).with_process(),
+        )
+        .process_executor()
+        .expect("process executor b");
+
+        for process in [&process_a, &process_b] {
+            process
+                .run_process(ProcessRequest {
+                    argv: vec!["true".to_owned()],
+                    cwd: None,
+                    env: BTreeMap::new(),
+                    stdin: None,
+                    timeout_ms: Some(1_000),
+                    yield_time_ms: Some(1),
+                    max_output_bytes: Some(128),
+                })
+                .await
+                .expect("run process");
+        }
+
+        let process_id_a = sent_a.lock().expect("sent a lock")[0]["params"]["processId"]
+            .as_str()
+            .expect("process id a")
+            .to_owned();
+        let process_id_b = sent_b.lock().expect("sent b lock")[0]["params"]["processId"]
+            .as_str()
+            .expect("process id b")
+            .to_owned();
+
+        assert_ne!(process_id_a, process_id_b);
+        assert!(process_id_a.starts_with("proc-"));
+        assert!(process_id_b.starts_with("proc-"));
     }
 
     #[tokio::test(flavor = "current_thread")]
