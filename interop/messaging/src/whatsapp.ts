@@ -12,6 +12,7 @@ import {
 } from "baileys";
 import qrcode from "qrcode-terminal";
 import type { OutboundMessageView } from "@lightspeed/agent-client";
+import { cleanChannelMessageId } from "./channel_id.js";
 import { resolveInboundAccess, type WhatsAppBridgeConfig } from "./config.js";
 import type { BridgeRouting } from "./telegram.js";
 import { stableHash } from "./ids.js";
@@ -157,20 +158,22 @@ async function deliverWhatsAppPayload(
         return lastId !== undefined ? { channelMessageId: lastId } : {};
       }
       case "react": {
+        const messageId = cleanChannelMessageId(payload.messageId);
         await sock.sendMessage(jid, {
           react: {
             text: payload.emoji,
-            key: { remoteJid: jid, id: payload.messageId, fromMe: false },
+            key: { remoteJid: jid, id: messageId, fromMe: false },
           },
         });
         return {};
       }
       case "edit": {
+        const messageId = cleanChannelMessageId(payload.messageId);
         await sock.sendMessage(jid, {
           text: renderWhatsAppText(payload.text),
-          edit: { remoteJid: jid, id: payload.messageId, fromMe: true },
+          edit: { remoteJid: jid, id: messageId, fromMe: true },
         });
-        return { channelMessageId: payload.messageId };
+        return { channelMessageId: messageId };
       }
     }
   } catch (error) {
@@ -317,6 +320,9 @@ async function handleWhatsAppMessage(
     },
     setTyping: async () => {
       await sock.sendPresenceUpdate("composing", remoteJid);
+    },
+    clearTyping: async () => {
+      await sock.sendPresenceUpdate("paused", remoteJid);
     },
   });
 }

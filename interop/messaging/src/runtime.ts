@@ -63,6 +63,9 @@ export interface HandleInboundOptions {
   /// Fires the channel's typing indicator; re-invoked periodically while a
   /// turn is running.
   setTyping?: () => Promise<void>;
+  /// Clears the channel's typing indicator after the turn completes. Channels
+  /// without an explicit clear action can omit this and rely on expiry.
+  clearTyping?: () => Promise<void>;
 }
 
 export interface MessagingBridgeRuntimeOptions {
@@ -78,6 +81,7 @@ interface PendingTurn {
   text: string;
   sendReply: (text: string) => Promise<void>;
   setTyping?: (() => Promise<void>) | undefined;
+  clearTyping?: (() => Promise<void>) | undefined;
 }
 
 const TYPING_INTERVAL_MS = 4_500;
@@ -89,9 +93,29 @@ const TYPING_MAX_MS = 3 * 60_000;
 function startTypingLoop(
   setTyping: () => Promise<void>,
   log: (message: string) => void,
-): () => void {
+  clearTyping?: () => Promise<void>,
+): () => Promise<void> {
+  let lastTyping = Promise.resolve();
+  let stopped = false;
+  const clear = async () => {
+    if (!clearTyping) {
+      return;
+    }
+    try {
+      await clearTyping();
+    } catch (error) {
+      log(
+        `bridge: clear typing action failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  };
   const fire = () => {
-    setTyping().catch((error) => {
+    if (stopped) {
+      return;
+    }
+    lastTyping = setTyping().catch((error) => {
       log(
         `bridge: typing action failed: ${error instanceof Error ? error.message : String(error)}`,
       );
@@ -102,12 +126,19 @@ function startTypingLoop(
   const timer = setInterval(() => {
     if (Date.now() - startedAt > TYPING_MAX_MS) {
       clearInterval(timer);
+      stopped = true;
+      void lastTyping.then(clear, clear);
       return;
     }
     fire();
   }, TYPING_INTERVAL_MS);
   timer.unref?.();
-  return () => clearInterval(timer);
+  return async () => {
+    stopped = true;
+    clearInterval(timer);
+    await lastTyping;
+    await clear();
+  };
 }
 
 export class MessagingBridgeRuntime {
@@ -233,6 +264,7 @@ export class MessagingBridgeRuntime {
           text: classification.text,
           sendReply: options.sendReply,
           setTyping: options.setTyping,
+          clearTyping: options.clearTyping,
         });
         return;
       }
@@ -326,7 +358,9 @@ export class MessagingBridgeRuntime {
     if (!first) {
       return;
     }
-    const stopTyping = first.setTyping ? startTypingLoop(first.setTyping, this.log) : null;
+    const stopTyping = first.setTyping
+      ? startTypingLoop(first.setTyping, this.log, first.clearTyping)
+      : null;
     try {
       // Buffered room context lands before the turn so the run sees it.
       await this.rooms.drain(key).catch(() => undefined);
@@ -391,7 +425,7 @@ export class MessagingBridgeRuntime {
       }
       this.log(`bridge: failed batch in ${key}: ${errorText}`);
     } finally {
-      stopTyping?.();
+      await stopTyping?.();
     }
   }
 

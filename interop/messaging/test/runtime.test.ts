@@ -319,6 +319,26 @@ describe("MessagingBridgeRuntime", () => {
     expect(replies).toHaveLength(1);
   });
 
+  it("clears the typing indicator when a turn completes silently", async () => {
+    const typingEvents: string[] = [];
+    lightspeed.messagingToolUsed = true;
+    await runtime.handleInbound(inbound({ isDirect: true, text: "quiet ack" }), policy, {
+      ...io(),
+      setTyping: async () => {
+        typingEvents.push("set");
+      },
+      clearTyping: async () => {
+        typingEvents.push("clear");
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await runtime.flush();
+
+    expect(typingEvents[0]).toBe("set");
+    expect(typingEvents.at(-1)).toBe("clear");
+    expect(replies).toHaveLength(0);
+  });
+
   it("suppresses final-text delivery when the run used messaging tools", async () => {
     lightspeed.messagingToolUsed = true;
     await runtime.handleInbound(
