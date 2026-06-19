@@ -113,7 +113,7 @@ bindings live in the JSON file at `BRIDGE_CONFIG`. A complete, runnable example 
   },
 
   "bindings": [
-    { "match": { "channel": "telegram", "handle": "@lukas" }, "recipe": "personal", "sessionKey": "lukas" },
+    { "match": { "channel": "telegram", "handle": ["@lukas", "6071843755"] }, "recipe": "personal", "sessionKey": "lukas" },
     { "match": { "channel": "telegram", "chatId": "-100123", "scope": "group" }, "recipe": "personal", "sessionKey": "eng-room" },
     { "match": { "channel": "*" } }
   ]
@@ -122,7 +122,8 @@ bindings live in the JSON file at `BRIDGE_CONFIG`. A complete, runnable example 
 
 - **Bindings** are evaluated top-to-bottom, first match wins. `match` filters by
   `channel` (`telegram` | `whatsapp` | `*`), and optional `handle`, `chatId`,
-  and `scope` (`direct` | `group`).
+  and `scope` (`direct` | `group`). `handle` may be one string or an array of
+  aliases for the same sender.
 - **`sessionKey`** ties conversations to a session. Conversations sharing a key
   share one session (e.g. a team and its members); omit it and each
   conversation gets its own. There is no `/new` — a conversation always resolves

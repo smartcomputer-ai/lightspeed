@@ -83,6 +83,26 @@ describe("parseBindings", () => {
     ]);
   });
 
+  it("parses handle arrays", () => {
+    const bindings = parseBindings(
+      [
+        {
+          match: { channel: "telegram", handle: ["@lukas", "6071843755"] },
+          recipe: "personal",
+          sessionKey: "lukas",
+        },
+      ],
+      recipes,
+    );
+    expect(bindings).toEqual<BindingRule[]>([
+      {
+        match: { channel: "telegram", handle: ["@lukas", "6071843755"] },
+        recipe: "personal",
+        sessionKey: "lukas",
+      },
+    ]);
+  });
+
   it("rejects a binding referencing an undefined recipe", () => {
     expect(() => parseBindings([{ match: { channel: "*" }, recipe: "ghost" }], recipes)).toThrow(
       /not defined in recipes/,
@@ -105,6 +125,25 @@ describe("resolveBinding", () => {
       resolveBinding(
         { channel: "telegram", handles: ["123", "Lukas"], chatId: "dm", scope: "direct" },
         bindings,
+      ),
+    ).toEqual({ recipe: "personal", sessionKey: "lukas" });
+  });
+
+  it("matches any configured handle in a binding handle array", () => {
+    const arrayBindings = parseBindings(
+      [
+        {
+          match: { channel: "telegram", handle: ["@lukas", "6071843755"] },
+          recipe: "personal",
+          sessionKey: "lukas",
+        },
+      ],
+      parseRecipes({ personal: {} }),
+    );
+    expect(
+      resolveBinding(
+        { channel: "telegram", handles: ["6071843755"], chatId: "dm", scope: "direct" },
+        arrayBindings,
       ),
     ).toEqual({ recipe: "personal", sessionKey: "lukas" });
   });

@@ -69,12 +69,13 @@ export interface SessionRecipe {
 }
 
 export type BindingScope = "direct" | "group";
+export type BindingHandleMatch = string | string[];
 
 export interface BindingMatch {
   /// Channel to match, or `*` for any channel.
   channel: "telegram" | "whatsapp" | "*";
-  /// Sender handle (telegram id/@username, whatsapp jid). Omit to match any.
-  handle?: string;
+  /// Sender handle(s) (telegram id/@username, whatsapp jid). Omit to match any.
+  handle?: BindingHandleMatch;
   /// Channel chat id (telegram chat id, whatsapp jid). Omit to match any.
   chatId?: string;
   /// Restrict to direct or group conversations. Omit to match either.
@@ -335,7 +336,7 @@ function bindingMatches(match: BindingMatch, query: BindingQuery): boolean {
   if (match.chatId !== undefined && match.chatId !== query.chatId) {
     return false;
   }
-  if (match.handle !== undefined && !handleMatchesAny(match.handle, query.handles)) {
+  if (match.handle !== undefined && !bindingHandleMatches(match.handle, query.handles)) {
     return false;
   }
   return true;
@@ -349,6 +350,14 @@ export function handleMatches(configured: string, actual: string): boolean {
 
 function handleMatchesAny(configured: string, actuals: readonly string[]): boolean {
   return actuals.some((actual) => handleMatches(configured, actual));
+}
+
+function bindingHandleMatches(
+  configured: BindingHandleMatch,
+  actuals: readonly string[],
+): boolean {
+  const handles = Array.isArray(configured) ? configured : [configured];
+  return handles.some((handle) => handleMatchesAny(handle, actuals));
 }
 
 /// True when none of the sender's handles appears in `allowFrom`, given
@@ -572,7 +581,7 @@ function parseBinding(
     throw new Error(`bindings[${index}].recipe "${recipe}" is not defined in recipes`);
   }
   const matchRule: BindingMatch = { channel };
-  const handle = optionalString(match.handle);
+  const handle = optionalStringOrStringArray(match.handle);
   if (handle !== undefined) matchRule.handle = handle;
   const chatId = optionalString(match.chatId);
   if (chatId !== undefined) matchRule.chatId = chatId;
@@ -590,6 +599,16 @@ function optionalString(value: unknown): string | undefined {
   }
   const text = String(value).trim();
   return text === "" ? undefined : text;
+}
+
+function optionalStringOrStringArray(value: unknown): string | string[] | undefined {
+  if (Array.isArray(value)) {
+    const items = value
+      .map((entry) => optionalString(entry))
+      .filter((entry): entry is string => entry !== undefined);
+    return items.length > 0 ? items : undefined;
+  }
+  return optionalString(value);
 }
 
 function csv(value: string | undefined, fallback: readonly string[] | undefined): string[] {
