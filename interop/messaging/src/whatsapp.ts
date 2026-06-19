@@ -86,6 +86,9 @@ export async function startWhatsAppBridge(
         );
       }
       if (update.connection === "close") {
+        if (sock === nextSock) {
+          sock = null;
+        }
         const statusCode = (update.lastDisconnect?.error as { output?: { statusCode?: number } })
           ?.output?.statusCode;
         if (statusCode === DisconnectReason.loggedOut) {

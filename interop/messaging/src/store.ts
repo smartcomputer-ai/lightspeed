@@ -53,7 +53,13 @@ export class JsonBridgeStore {
     const state = await this.load();
     const existing = state.bindings[key];
     if (existing) {
-      return existing;
+      const next = refreshBinding(existing, init);
+      if (next === existing) {
+        return existing;
+      }
+      state.bindings[key] = next;
+      await this.persist();
+      return next;
     }
     const next: BindingState = {
       channel: init.channel,
@@ -180,6 +186,36 @@ export class JsonBridgeStore {
     });
     await this.writeChain;
   }
+}
+
+function refreshBinding(existing: BindingState, init: BindingInit): BindingState {
+  const recipe = init.recipe ?? null;
+  const threadId = init.threadId;
+  const changed =
+    existing.channel !== init.channel ||
+    existing.accountId !== init.accountId ||
+    existing.chatId !== init.chatId ||
+    existing.threadId !== threadId ||
+    existing.sessionId !== init.sessionId ||
+    (existing.recipe ?? null) !== recipe;
+  if (!changed) {
+    return existing;
+  }
+  const next: BindingState = {
+    ...existing,
+    channel: init.channel,
+    accountId: init.accountId,
+    chatId: init.chatId,
+    sessionId: init.sessionId,
+    recipe,
+    updatedAtMs: Date.now(),
+  };
+  if (threadId === undefined) {
+    delete next.threadId;
+  } else {
+    next.threadId = threadId;
+  }
+  return next;
 }
 
 function pruneMessages(state: BridgeState): void {
