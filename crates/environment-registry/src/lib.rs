@@ -550,6 +550,8 @@ impl SessionEnvironmentCapabilities {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionEnvironmentFsRoute {
     pub path: HostPath,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_path: Option<HostPath>,
     pub access: SessionEnvironmentFsRouteAccess,
     pub same_state_as_active_env: Option<EnvironmentId>,
 }
@@ -560,6 +562,15 @@ impl SessionEnvironmentFsRoute {
             return Err(EnvironmentRegistryError::InvalidInput {
                 message: format!("environment fs route path must be absolute: {}", self.path),
             });
+        }
+        if let Some(source_path) = self.source_path.as_ref() {
+            if !source_path.is_absolute() {
+                return Err(EnvironmentRegistryError::InvalidInput {
+                    message: format!(
+                        "environment fs route source_path must be absolute: {source_path}"
+                    ),
+                });
+            }
         }
         Ok(())
     }
@@ -1196,6 +1207,7 @@ mod tests {
             cwd: Some(HostPath::new("/workspace").expect("cwd")),
             fs_routes: vec![SessionEnvironmentFsRoute {
                 path: HostPath::new("/workspace").expect("route"),
+                source_path: None,
                 access: SessionEnvironmentFsRouteAccess::ReadWrite,
                 same_state_as_active_env: Some(EnvironmentId::new(env_id)),
             }],

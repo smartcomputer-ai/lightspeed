@@ -3,10 +3,11 @@ use super::*;
 use environment_registry::{
     CreateSessionEnvironmentBinding, EnvironmentId as RegistryEnvironmentId,
     EnvironmentProviderKind as RegistryProviderKind, EnvironmentProviderRecord,
-    EnvironmentProviderStatus as RegistryProviderStatus, SessionEnvironmentBindingRecord,
-    SessionEnvironmentBindingStatus, SessionEnvironmentCapabilities, SessionEnvironmentFsRoute,
-    SessionEnvironmentFsRouteAccess, SessionEnvironmentKind, UpdateEnvironmentTargetStatus,
-    UpdateSessionEnvironmentBindingStatus, UpsertEnvironmentTargetRecord,
+    EnvironmentProviderStatus as RegistryProviderStatus, EnvironmentTargetRecord,
+    SessionEnvironmentBindingRecord, SessionEnvironmentBindingStatus,
+    SessionEnvironmentCapabilities, SessionEnvironmentFsRoute, SessionEnvironmentFsRouteAccess,
+    SessionEnvironmentKind, UpdateEnvironmentTargetStatus, UpdateSessionEnvironmentBindingStatus,
+    UpsertEnvironmentTargetRecord,
 };
 use host_protocol::{
     control::targets::{
@@ -14,7 +15,7 @@ use host_protocol::{
         HostTargetAttachRequest, HostTargetCreateRequest, HostTargetStatus, HostTargetSummary,
         SandboxTargetSpec,
     },
-    shared::{HostCapabilities, HostPath, HostTargetId},
+    shared::{HostPath, HostTargetId},
 };
 use tools::targets::ENV_TARGET_NAMESPACE;
 
@@ -265,13 +266,13 @@ impl GatewayAgentApi {
                 session_id,
                 env_id: env_id.clone(),
                 provider_id: provider.provider_id,
-                target_id: target.target_id,
+                target_id: target.target_id.clone(),
                 kind,
                 status: binding_status_from_target(target.status),
                 capabilities,
                 connection,
                 cwd: cwd.clone(),
-                fs_routes: fs_routes_for_binding(&env_id, &cwd, &target.capabilities)?,
+                fs_routes: fs_routes_for_binding(&env_id, &target)?,
                 created_at_ms: now,
             },
         )
@@ -489,14 +490,24 @@ fn binding_status_from_target(status: HostTargetStatus) -> SessionEnvironmentBin
 
 fn fs_routes_for_binding(
     env_id: &RegistryEnvironmentId,
-    _cwd: &Option<HostPath>,
-    capabilities: &HostCapabilities,
+    target: &EnvironmentTargetRecord,
 ) -> Result<Vec<SessionEnvironmentFsRoute>, AgentApiError> {
+    let capabilities = &target.capabilities;
     if !capabilities.filesystem_read {
         return Ok(Vec::new());
     }
+    let source_path = target
+        .metadata
+        .get("fsRoot")
+        .map(|path| {
+            HostPath::new(path).map_err(|error| {
+                AgentApiError::rejected(format!("invalid environment fsRoot metadata: {error}"))
+            })
+        })
+        .transpose()?;
     Ok(vec![SessionEnvironmentFsRoute {
         path: HostPath::root(),
+        source_path,
         access: if capabilities.filesystem_write {
             SessionEnvironmentFsRouteAccess::ReadWrite
         } else {

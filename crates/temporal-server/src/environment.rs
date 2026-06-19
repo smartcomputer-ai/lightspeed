@@ -288,9 +288,10 @@ fn scoped_route_fs(
     route: &FsRoute,
     fs: Arc<dyn FileSystem>,
 ) -> Result<Arc<dyn FileSystem>, FsError> {
+    let source_path = route.source_path.as_ref().unwrap_or(&route.path);
     let scoped = match route.access {
-        FsRouteAccess::ReadOnly => ScopedFileSystem::read_only_from_arc(route.path.clone(), fs)?,
-        FsRouteAccess::ReadWrite => ScopedFileSystem::read_write_from_arc(route.path.clone(), fs)?,
+        FsRouteAccess::ReadOnly => ScopedFileSystem::read_only_from_arc(source_path.clone(), fs)?,
+        FsRouteAccess::ReadWrite => ScopedFileSystem::read_write_from_arc(source_path.clone(), fs)?,
     };
     Ok(Arc::new(scoped))
 }
@@ -379,6 +380,15 @@ fn fs_route_from_binding(
     Ok(FsRoute {
         path: FsPath::new(route.path.as_str())
             .map_err(|error| RuntimeEnvironmentBindingError::InvalidFsRoute(error.to_string()))?,
+        source_path: route
+            .source_path
+            .as_ref()
+            .map(|path| {
+                FsPath::new(path.as_str()).map_err(|error| {
+                    RuntimeEnvironmentBindingError::InvalidFsRoute(error.to_string())
+                })
+            })
+            .transpose()?,
         access: match route.access {
             SessionEnvironmentFsRouteAccess::ReadOnly => FsRouteAccess::ReadOnly,
             SessionEnvironmentFsRouteAccess::ReadWrite => FsRouteAccess::ReadWrite,
@@ -480,6 +490,7 @@ mod tests {
                 )
                 .with_fs_routes(vec![FsRoute {
                     path: FsPath::new("/workspace").expect("route path"),
+                    source_path: None,
                     access: FsRouteAccess::ReadWrite,
                     source: FsRouteSource::HostFilesystem {
                         target: environment_target("local"),
@@ -565,6 +576,7 @@ mod tests {
                 .with_fs_context(fs_context)
                 .with_fs_routes(vec![FsRoute {
                     path: FsPath::new("/workspace").expect("route path"),
+                    source_path: None,
                     access: FsRouteAccess::ReadWrite,
                     source: FsRouteSource::HostFilesystem {
                         target: environment_target("local"),
@@ -624,28 +636,28 @@ mod tests {
         let env_fs = InMemoryFileSystem::full_access();
         env_fs
             .create_directory(
-                &FsPath::new("/skills").expect("env skills path"),
-                CreateDirectoryOptions::single(),
+                &FsPath::new("/host/workspace/skills").expect("env skills path"),
+                CreateDirectoryOptions::recursive(),
             )
             .await
             .expect("create env skills");
         env_fs
             .write_file(
-                &FsPath::new("/skills/SKILL.md").expect("env skill path"),
+                &FsPath::new("/host/workspace/skills/SKILL.md").expect("env skill path"),
                 b"from environment".to_vec(),
             )
             .await
             .expect("write env skill");
         env_fs
             .create_directory(
-                &FsPath::new("/repo").expect("repo path"),
+                &FsPath::new("/host/workspace/repo").expect("repo path"),
                 CreateDirectoryOptions::single(),
             )
             .await
             .expect("create repo");
         env_fs
             .write_file(
-                &FsPath::new("/repo/Cargo.toml").expect("repo file"),
+                &FsPath::new("/host/workspace/repo/Cargo.toml").expect("repo file"),
                 b"from environment repo".to_vec(),
             )
             .await
@@ -675,6 +687,7 @@ mod tests {
                 .with_fs_context(env_fs_context)
                 .with_fs_routes(vec![FsRoute {
                     path: FsPath::root(),
+                    source_path: Some(FsPath::new("/host/workspace").expect("source path")),
                     access: FsRouteAccess::ReadWrite,
                     source: FsRouteSource::HostFilesystem {
                         target: environment_target("local"),
@@ -710,6 +723,16 @@ mod tests {
                 .expect("read repo"),
             "from environment repo"
         );
+        let root_entries = ctx
+            .fs
+            .read_directory(&FsPath::root())
+            .await
+            .expect("read root directory")
+            .into_iter()
+            .map(|entry| entry.file_name)
+            .collect::<Vec<_>>();
+        assert!(root_entries.contains(&"repo".to_owned()));
+        assert!(root_entries.contains(&"skills".to_owned()));
         assert_eq!(ctx.fs_cwd.as_ref().map(FsPath::as_str), Some("/repo"));
     }
 

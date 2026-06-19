@@ -125,6 +125,8 @@ impl EnvironmentActive {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FsRoute {
     pub path: FsPath,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_path: Option<FsPath>,
     pub access: FsRouteAccess,
     pub source: FsRouteSource,
     pub same_state_as_active_env: Option<String>,
@@ -452,6 +454,7 @@ fn fs_route_from_vfs_mount(record: &VfsMountRecord) -> Result<FsRoute, Environme
     };
     Ok(FsRoute {
         path,
+        source_path: None,
         access: record.access.into(),
         source,
         same_state_as_active_env: None,
@@ -626,6 +629,7 @@ mod tests {
         };
         let active_route = FsRoute {
             path: FsPath::new("/workspace").expect("active route"),
+            source_path: None,
             access: FsRouteAccess::ReadWrite,
             source: FsRouteSource::FusedWorkspace {
                 env_id: "local".to_owned(),

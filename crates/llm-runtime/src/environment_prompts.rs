@@ -214,6 +214,7 @@ mod tests {
             0,
             vec![FsRoute {
                 path: tools::fs::FsPath::new("/workspace").unwrap(),
+                source_path: None,
                 access: FsRouteAccess::ReadWrite,
                 source: FsRouteSource::VfsWorkspace {
                     workspace_id: "workspace_1".to_owned(),

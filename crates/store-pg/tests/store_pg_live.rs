@@ -569,6 +569,7 @@ async fn pg_live_environment_registry_crud_and_session_bindings() {
             cwd: Some(HostPath::new("/workspace").expect("cwd")),
             fs_routes: vec![SessionEnvironmentFsRoute {
                 path: HostPath::new("/workspace").expect("route"),
+                source_path: None,
                 access: SessionEnvironmentFsRouteAccess::ReadWrite,
                 same_state_as_active_env: Some(env_id.clone()),
             }],
