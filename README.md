@@ -1,11 +1,11 @@
 # Lightspeed
 
-Lightspeed is a powerful agent harness for [durable workflow engines](https://www.restate.dev/what-is-durable-execution). It's built around a deterministic core and data structures that work well with various workflow runtimes. It fully supports [Temporal](https://temporal.io/), others are coming soon: [Restate](https://www.restate.dev/), [Inngest](https://www.inngest.com/), Hatchet, AWS Step Functions, etc. The core is written in Rust. The production data backend is Postgres and optional S3.
+Lightspeed is a powerful agent harness built around a deterministic core and data structures designed to run inside [durable workflow engines](https://www.restate.dev/what-is-durable-execution). [Temporal](https://temporal.io/) is fully supported today; others are coming soon: [Restate](https://www.restate.dev/), [Inngest](https://www.inngest.com/), Hatchet, AWS Step Functions, etc. The core is written in Rust. The production data backend is Postgres and optional S3.
 
 ## Why?
 Frontier agent harnesses like Claude Code, Codex, OpenCode, OpenClaw are designed to run inside a guest OS and need an entire OS process for themselves. These agents are difficult to scale and secure.
 
-It's an upcoming pattern wanting to ["separate the harness from compute"](https://openai.com/index/the-next-evolution-of-the-agents-sdk/#:~:text=long%2Drunning%20task.-,Separating%20harness%20from%20compute%20for%20security%2C%20durability%2C%20and%20scale,-Agent%20systems%20should) for **security**, and partially for **scale**. Further, it's also a pattern to run agents inside workflow engines, for **durability** and easier **scale**. This is especially interesting for agents running in enterprise settings.
+There's an emerging pattern to ["separate the harness from compute"](https://openai.com/index/the-next-evolution-of-the-agents-sdk/#:~:text=long%2Drunning%20task.-,Separating%20harness%20from%20compute%20for%20security%2C%20durability%2C%20and%20scale,-Agent%20systems%20should) for **security**, and partially for **scale**. Further, it's also a pattern to run agents inside workflow engines, for **durability** and easier **scale**. This is especially interesting for agents running in enterprise settings.
 
 Further, most agent SDKs are not designed for workflow engines: they do not separate the deterministic core from effects such as LLM or tool calls, and they pass too much data between the core workflow logic and the effectful "tasks" or "activities"–e.g. passing the entire chat history back and forth–creating various issues for the workflow runtimes.
 
@@ -14,28 +14,28 @@ Further, most agent SDKs are not designed for workflow engines: they do not sepa
 We also acknowledge that the current iteration of frontier models are optimized to the hilt (via RL) to accomplish most tasks under the assumption that they fully control a POSIX-compatible OS. So, just giving the agent access to some MCPs or provider native tools, will not yield the same results as when the agent has full access to an OS. Therefore, a central goal is to bridge that gap with various features where the agent can still use or borrow sandboxes, permanent VMs, or other computers.
 
 ## Features
-What constituters an "agent harness" is a rapidly expanding set of table-stakes features. Here is a list of where we are at:
+What constitutes an "agent harness" is a rapidly expanding set of table-stakes features. Here is a list of where we are at:
 - [x] Broad frontier model support for OpenAI and Anthropic: native compaction, reasoning traces, advanced tool configurations and provider native tools, MCP, files, images, provider OAuth login, multiple API keys, etc.
-- [ ] Other model support via the "Completion API" standard (30% complete)
+- [ ] Other model support via the "Completion API" standard (in progress)
 - [x] Long-lasting and durable agent runs (weeks to months)
-- [ ] Sandboxes, including delegating work to standard coding agents inside sandboxes (70% complete)
+- [ ] Sandboxes, including delegating work to standard coding agents inside sandboxes (in progress)
 - [x] Virtual file system that allows the agent to use standard file tools (read, glob, patch. etc), without needing a full operating system attached
 - [x] Skills hosted on a virtual file system or inside sandboxes
 - [x] Flexible prompt and instruction configuration features
 - [x] Hosted MCP, including various authentication methods such as API keys, OAuth flows
-- [ ] Sub-agents (aka. "fleets"), letting agents start or manage other agents (0% complete)
-- [ ] Timers, schedules, wake-ups (0% complete)
-- [ ] Multi-tenant support (80% complete)
+- [ ] Sub-agents (aka. "fleets"), letting agents start or manage other agents (planned)
+- [ ] Timers, schedules, wake-ups (planned)
+- [ ] Multi-tenant support (in progress)
 - [x] CLI to connect to running agent sessions
 - [x] Bridge to various messaging platforms (WhatsApp, Telegram, others coming soon)
 
 ## Design
-At the heart of every agent is a carefully engineered state machine that manages what goes into the context window of the LLM. We start with that core and then layer various systems on top until we have a fully working agent.
+At the heart of every agent is a carefully engineered state machine that manages what goes into the context window of the LLM. We start with that core and then layer various systems on top until we have a complete, working agent.
 
 ### Deterministic Core
 The [core engine](crates/engine/src/core/components/) is implemented as an event-sourced deterministic finite state machine.
 
-When a command arrives, it is converted to an event, which is then recorded in the event log. The event is then applied to the core state. Then a "next step decider" figures out what to do next. If effects need to be issued, the decider outputs a list of effect _intents_, which then get later executed against the LLM providers or tool call surfaces. The results of these effects get sent back to the event log for to be recorded and then sent to the FSM, resulting in an event loop.
+When a command arrives, it is converted to an event, which is then recorded in the event log. The event is then applied to the core state. Then a "next step decider" figures out what to do next. If effects need to be issued, the decider outputs a list of effect _intents_, which then get later executed against the LLM providers or tool call surfaces. The results of these effects get sent back to the event log to be recorded and then sent to the FSM, resulting in an event loop.
 ```mermaid
 flowchart TD
   Command["User / API command"] --> Log
@@ -69,9 +69,9 @@ So, what are the things that need to feed into the LLM session?
 	- Actively managed transcript items: skill catalogs, memory subsystem, etc
 4) (not in the context window) LLM configurations such as model, reasoning efforts
 
-The main challenge is how to balance the what goes into the context window each turn, what to retain when compacting the context window (because it is full), and how to do all this with as much LLM caching consistency as possible.
+The main challenge is how to balance what goes into the context window each turn, what to retain when compacting the context window (because it is full), and how to do all this with as much LLM caching consistency as possible.
 
-Lightspeed adds the _absolute minimal_ abstraction over the LLM provider data structures and APIs. Many agent SDKs (e.g. LangChain) convert the provider specific data into a unified structure and then convert it back when they pass it back to the LLM. We, on the other hand, extract only the information that is need to decide and branch inside the deterministic core. The provider-native data is stored inside blobs inside content addressed storage.
+Lightspeed adds the _absolute minimal_ abstraction over the LLM provider data structures and APIs. Many agent SDKs (e.g. LangChain) convert the provider specific data into a unified structure and then convert it back when they pass it back to the LLM. We, on the other hand, extract only the information that is needed to decide and branch inside the deterministic core. The provider-native data is stored inside blobs inside content addressed storage.
 
 ### Offloading to CAS
 Workflow engines differentiate between the deterministic code that expresses the business logic and the code that executes effects such as database calls or API calls, usually called "activities" or "tasks". This introduces an important seam that need to be carefully managed. Specifically, the data that travels back and forth between workflow and activities needs to be kept to a minimum, because all those transitions are logged and stored (which is part of the magic that makes the workflows "durable").
