@@ -5,7 +5,7 @@ Lightspeed is a powerful agent harness built around a deterministic core and dat
 ## Why?
 Frontier agent harnesses like Claude Code, Codex, OpenCode, OpenClaw are designed to run inside a guest OS and need an entire OS process for themselves. These agents are difficult to scale and secure.
 
-There's an emerging pattern to ["separate the harness from compute"](https://openai.com/index/the-next-evolution-of-the-agents-sdk/#:~:text=long%2Drunning%20task.-,Separating%20harness%20from%20compute%20for%20security%2C%20durability%2C%20and%20scale,-Agent%20systems%20should) for **security**, and partially for **scale**. Further, it's also a pattern to run agents inside workflow engines, for **durability** and easier **scale**. This is especially interesting for agents running in enterprise settings.
+There's an emerging pattern to ["separate the harness from compute"](https://openai.com/index/the-next-evolution-of-the-agents-sdk/#:~:text=long%2Drunning%20task.-,Separating%20harness%20from%20compute%20for%20security%2C%20durability%2C%20and%20scale,-Agent%20systems%20should) for security, and partially for scale. Further, it's also a pattern to run agents inside workflow engines, for durability and easier scale. This is especially interesting for agents running in enterprise settings.
 
 Further, most agent SDKs are not designed for workflow engines: they do not separate the deterministic core from effects such as LLM or tool calls, and they pass too much data between the core workflow logic and the effectful "tasks" or "activities"–e.g. passing the entire chat history back and forth–creating various issues for the workflow runtimes.
 
@@ -34,6 +34,9 @@ At the heart of every agent is a carefully engineered state machine that manages
 
 ### Deterministic Core
 The [core engine](crates/engine/src/core/components/) is implemented as an event-sourced deterministic finite state machine.
+
+> [!NOTE]
+> The event log we are talking of here is separate from the Temporal event history (or other workflow). We are talking specifically of the events that constitute an agent's session state. These events are stored in Lightspeed's own Postgres event store.
 
 When a command arrives, it is converted to an event, which is then recorded in the event log. The event is then applied to the core state. Then a "next step decider" figures out what to do next. If effects need to be issued, the decider outputs a list of effect _intents_, which then get later executed against the LLM providers or tool call surfaces. The results of these effects get sent back to the event log to be recorded and then sent to the FSM, resulting in an event loop.
 ```mermaid
