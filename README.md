@@ -1,75 +1,129 @@
 # Lightspeed
 
-Lightspeed is a hosted agent product in progress, built around a deterministic,
-event-sourced engine and a Temporal-backed runtime.
+Lightspeed is a powerful agent harness for [durable workflow engines](https://www.restate.dev/what-is-durable-execution). It's built around a deterministic core and data structures that work well with various workflow runtimes. It fully supports [Temporal](https://temporal.io/), others are coming soon: [Restate](https://www.restate.dev/), [Inngest](https://www.inngest.com/), Hatchet, AWS Step Functions, etc. The core is written in Rust. The production data backend is Postgres and optional S3.
 
-The current focus is a small deterministic loop that can plan an agent session, record domain events, rebuild state by replaying a session log, and emit substrate-neutral actions for LLM/tool work.
+## Why?
+Frontier agent harnesses like Claude Code, Codex, OpenCode, OpenClaw are designed to run inside a guest OS and need an entire OS process for themselves. These agents are difficult to scale and secure.
 
-That shape is meant to work well for agents running in durable workflow systems such as Temporal, hosted services, or other controlled runtimes where the agent should not assume direct ownership of an OS process, sandbox, or VM (like most coding agents do nowadays).
+It's an upcoming pattern wanting to ["separate the harness from compute"](https://openai.com/index/the-next-evolution-of-the-agents-sdk/#:~:text=long%2Drunning%20task.-,Separating%20harness%20from%20compute%20for%20security%2C%20durability%2C%20and%20scale,-Agent%20systems%20should) for **security**, and partially for **scale**. Further, it's also a pattern to run agents inside workflow engines, for **durability** and easier **scale**. This is especially interesting for agents running in enterprise settings.
 
-## New Direction
-> Previously this repo hosted an implementation of the Attractor runtime according to StrongDM's [spec](https://github.com/strongdm/attractor), with the goal to build a dark software factory. 
+Further, most agent SDKs are not designed for workflow engines: they do not separate the deterministic core from effects such as LLM or tool calls, and they pass too much data between the core workflow logic and the effectful "tasks" or "activities"–e.g. passing the entire chat history back and forth–creating various issues for the workflow runtimes.
 
-We sinced moved towards building agents that orchestrate workflows directly, instead of deterministic workflow DAGs like Atrractor. But for that to work, agents have to be able to run outside sandboxes or VMs to orchestrate coding agents inside the guest-OSes.
+**The goal of Lightspeed is to build as powerful of an agent as Claude Code, Codex, or OpenClaw, but running _outside_ operating systems, thus separating the harness from compute. Plus, making this tenable for workflow engines**. This unlocks very scalable agent architectures–think thousands of agents that run for months.
 
-We belive running and coordination agents at scale are best managed by durable workflow engines like [Temporal](https://temporal.io/) or [Inngest](https://www.inngest.com/). Unfortunately there is no good agent runtimes or SDKs to build agents on such platforms. So this project is attempting to close this gap.
+We also acknowledge that the current iteration of frontier models are optimized to the hilt (via RL) to accomplish most tasks under the assumption that they fully control a POSIX-compatible OS. So, just giving the agent access to some MCPs or provider native tools, will not yield the same results as when the agent has full access to an OS. Therefore, a central goal is to bridge that gap with various features where the agent can still use or borrow sandboxes, permanent VMs, or other computers.
 
-## Design Principles
-- Keep the engine deterministic. `engine` owns the generic session log and
-  the built-in CoreAgent domain: commands, events, state, planning, action
-  emission, request/result helpers, and replay.
-- Execute side effects outside the core. LLM calls, filesystem tools,
-  environment actions, MCP, human input, timers, retries, and cancellation belong
-  in runtimes, adapters, workflow activities, or tool packages.
-- Speak provider APIs natively. `openai:responses`,
-  `openai:completions`, and `anthropic:messages` are different APIs with
-  different context rules, tool encodings, streaming events, cache behavior,
-  continuation semantics, and error shapes.
-- Parse only required reducer facts for deterministic branching. Provider-native data that the reducer does not need to branch on should remain opaque and blob-backed.
-- Keep provider request vocabulary out of the deterministic core. The engine
-  plans a provider-neutral generation intent (model route, context snapshot,
-  tools, tool choice, output limit) plus opaque `ProviderParams` transiently for
-  runtime execution; durable planned-turn events store only fingerprints and
-  revisions. `llm-runtime` adapters own the typed param schemas and materialize
-  provider-native wire requests. Params are validated against the adapter schema
-  at the admission boundary, before they enter the session log. Transport
-  configuration (endpoints, credentials, headers) is runtime deployment config
-  keyed by `provider_id` and never enters the log.
-- Store the rest of the user inputs, context, files, and model respones in content addressed storage and only pass refs to that data, so that the objects traveling between deterministic workflow and effexts stays thin and minimal.
-- Treat context management as a first-class agent concern. The core plans context windows, records context items, and leaves room for compaction as an explicit future operation.
-- Keep the client boundary stable. CLIs, TUIs, editors, hosted gateways, and future Temporal frontends should consume `api`, not reducer internals.
+## Features
+What constituters an "agent harness" is a rapidly expanding set of table-stakes features. Here is a list of where we are at:
+- [x] Broad frontier model support for OpenAI and Anthropic: native compaction, reasoning traces, advanced tool configurations and provider native tools, MCP, files, images, provider OAuth login, multiple API keys, etc.
+- [ ] Other model support via the "Completion API" standard (30% complete)
+- [x] Long-lasting and durable agent runs (weeks to months)
+- [ ] Sandboxes, including delegating work to standard coding agents inside sandboxes (70% complete)
+- [x] Virtual file system that allows the agent to use standard file tools (read, glob, patch. etc), without needing a full operating system attached
+- [x] Skills hosted on a virtual file system or inside sandboxes
+- [x] Flexible prompt and instruction configuration features
+- [x] Hosted MCP, including various authentication methods such as API keys, OAuth flows
+- [ ] Sub-agents (aka. "fleets"), letting agents start or manage other agents (0% complete)
+- [ ] Timers, schedules, wake-ups (0% complete)
+- [ ] Multi-tenant support (80% complete)
+- [x] CLI to connect to running agent sessions
+- [x] Bridge to various messaging platforms (WhatsApp, Telegram, others coming soon)
 
+## Design
+At the heart of every agent is a carefully engineered state machine that manages what goes into the context window of the LLM. We start with that core and then layer various systems on top until we have a fully working agent.
 
-## Workspace Crates
+### Deterministic Core
+The [core engine](crates/engine/src/core/components/) is implemented as an event-sourced deterministic finite state machine.
 
-| Crate | Path | Purpose |
-|-------|------|---------|
-| `engine` | `crates/engine` | Deterministic session kernel plus built-in CoreAgent: dynamic session log storage, CoreAgent command/event/state models, planning, codecs, and the substrate-neutral drive machine |
-| `api` | `crates/api` | Client-facing session/run/item API types, views, notifications, and the exported wire-contract artifacts under `interop/contract/` |
-| `api-projection` | `crates/api-projection` | Shared CoreAgent-to-`api` projection helpers for local and workflow-backed gateways |
-| `temporal-workflow` | `crates/temporal-workflow` | Temporal workflow, signals, queries, and activity request/response DTOs |
-| `temporal-server` | `crates/temporal-server` | Hosted runtime binary and modules for the Temporal worker, HTTP/JSON-RPC gateway, and combined local/small-deployment mode |
-| `test-support` | `crates/test-support` | Fast in-process runner harness for tests/evals; not a production runtime |
-| `tools` | `crates/tools` | Optional tool packages for session filesystems, environment actions, web, messaging, prompts, and skills |
-| `store-fs` | `crates/store-fs` | Filesystem-backed session log and content-addressed blob store adapters |
-| `store-pg` | `crates/store-pg` | PostgreSQL-backed session store, CAS catalog, MCP server catalog, environment registry, and encrypted auth storage |
-| `mcp-registry` | `crates/mcp-registry` | Provider-independent remote MCP server catalog DTOs, validation, and store traits |
-| `auth-registry` | `crates/auth-registry` | Generic auth grants/secrets/providers, OAuth + GitHub App drivers, and the refreshing/minting token broker |
-| `environment-registry` | `crates/environment-registry` | Environment provider, host target, and session environment binding DTOs plus store traits |
-| `eval` | `crates/eval` | Eval harness for agent/tool workflows |
-| `llm-runtime` | `crates/llm-runtime` | CoreAgent LLM runtime over provider-native clients |
-| `llm-clients` | `crates/llm-clients` | Provider-native OpenAI and Anthropic API clients |
-| `cli` | `crates/cli` | Command-line chat client for the API gateway |
+When a command arrives, it is converted to an event, which is then recorded in the event log. The event is then applied to the core state. Then a "next step decider" figures out what to do next. If effects need to be issued, the decider outputs a list of effect _intents_, which then get later executed against the LLM providers or tool call surfaces. The results of these effects get sent back to the event log for to be recorded and then sent to the FSM, resulting in an event loop.
+```mermaid
+flowchart TD
+  Command["User / API command"] --> Log
 
-## Project Docs
+  subgraph CoreBox["Deterministic Core"]
+    Log[("Event log")]
+    Core["Core FSM<br/>replay events -> state<br/>choose next step"]
+    Intent["Effect intent<br/>LLM, tool, compaction"]
+    Idle["Idle / complete"]
 
-- `docs/spec/` holds working design notes.
-- `docs/roadmap/` holds implementation plans and historical milestones.
+    Log --> Core
+    Core -->|needs outside work| Intent
+    Core -->|no work left| Idle
+  end
+
+  Intent --> Runtime["Runtime adapters<br/>perform real I/O"]
+  Runtime -->|result event| Log
+```
+This stack is entirely workflow engine agnostic, and it can be thoroughly tested in isolation by simulating the effect adapters.
+
+### Context Management & Provider APIs
+The purpose of the deterministic core is to decide what goes into the context window of the next LLM turn, plus the provider API configurations. Anything that does not pertain to this problem, needs to live elsewhere. In Lightspeed, we call the history and state of an individual context window a _session_.
+
+So, what are the things that need to feed into the LLM session?
+1) Top-level instructions (prompts/system messages)
+2) Configured tool definitions (including MCP)
+3) Transcript/message items, which can the split further:
+	- Inputs: user messages, business events
+	- LLM output items: responses, reasoning traces, tool calls, compaction traces
+	- Tool results
+	- Actively managed transcript items: skill catalogs, memory subsystem, etc
+4) (not in the context window) LLM configurations such as model, reasoning efforts
+
+The main challenge is how to balance the what goes into the context window each turn, what to retain when compacting the context window (because it is full), and how to do all this with as much LLM caching consistency as possible.
+
+Lightspeed adds the _absolute minimal_ abstraction over the LLM provider data structures and APIs. Many agent SDKs (e.g. LangChain) convert the provider specific data into a unified structure and then convert it back when they pass it back to the LLM. We, on the other hand, extract only the information that is need to decide and branch inside the deterministic core. The provider-native data is stored inside blobs inside content addressed storage.
+
+### Offloading to CAS
+Workflow engines differentiate between the deterministic code that expresses the business logic and the code that executes effects such as database calls or API calls, usually called "activities" or "tasks". This introduces an important seam that need to be carefully managed. Specifically, the data that travels back and forth between workflow and activities needs to be kept to a minimum, because all those transitions are logged and stored (which is part of the magic that makes the workflows "durable").
+
+```mermaid
+flowchart TD
+  Workflow["Durable workflow<br/>records and replays history"]
+
+  Workflow -->|small intent<br/>ids + blob refs| Activity["Activity<br/>LLM / tool / I/O"]
+  Activity -->|small result<br/>status + blob refs| Workflow
+
+  Workflow --> History[("Workflow history<br/>must stay small")]
+  Activity <--> Store[("Blob / CAS store<br/>large context, tool output,<br/>provider-native data")]
+```
+Lightspeed solves this by offloading all data that is not directly needed by the workflow logic to a content addressed storage (CAS) system. The structures that are passed between workflow and activities are extremely thin, keeping workflow state and log size small and efficient. So, instead of passing, say, the entire user input message to the LLM activity, we first store it in the CAS and then only pass a reference to the blob–and vice versa with model outputs.
+
+### Hosting inside a Workflow Runtime (e.g. Temporal)
+With the above pieces in place, running an agent inside a workflow runtime becomes feasible and pleasant. We just have to put it all together.
+
+```mermaid
+flowchart TD
+  Client["Client / CLI"] --> Gateway["Lightspeed API gateway<br/>temporal-server"]
+
+  Gateway --> Temporal["Temporal service<br/>durable workflow engine"]
+
+  subgraph Lightspeed["Lightspeed runtime"]
+    Workflow["Session workflow<br/>temporal-workflow"]
+    Core["Deterministic core<br/>crates/engine"]
+    Worker["Worker activities<br/>temporal-server"]
+    Runtime["Effect adapters<br/>llm-runtime + tools"]
+    Store[("Session log + CAS<br/>store-pg / store-fs")]
+  end
+
+  Temporal --> Workflow
+  Workflow --> Core
+  Core -->|effect intent| Workflow
+  Workflow --> Worker
+  Worker --> Runtime
+  Runtime --> Store
+  Worker -->|result event refs| Workflow
+  Workflow --> Store
+
+  Runtime --> External["LLM providers<br/>tools / environments"]
+```
+The Temporal workflow owns an instance of the deterministic core–aka a "session". It drives the core state machine until it is idle. When not idle, it sends the the effect intents via activities to real APIs and services, such as LLM providers. It also logs all events that constitute a session state in a Postgres store (or optionally an file system store, for testing). Small CAS blobs get stored in Postgres, large blobs go to S3 (also supporting different blob providers).
+
+Around the main stack, there is also a gateway API and CLI tooling to make interacting with the whole Lightspeed system easier.
+
 
 ## Quick Start
 
 Prerequisites:
-
 - Rust toolchain with edition 2024 support (e.g. [rustup](https://rustup.rs/))
 - Docker with Compose for the local Postgres, MinIO, and Temporal stack
 - `OPENAI_API_KEY` for live OpenAI-backed chat and eval runs
@@ -92,7 +146,7 @@ The hosted path runs three pieces locally:
 
 1. Docker infra: Postgres/CAS catalog, MinIO object storage, Temporal.
 2. `temporal-server`: registers the Temporal workflow/activities and exposes
-   the public JSON-RPC API on HTTP. Its binary is still named `server`, and it
+   the public JSON-RPC API on HTTP. Its binary is named `server`, and it
    can also run only the worker or only the gateway.
 3. `cli`: starts or resumes sessions and submits chat messages through the
    gateway.
@@ -157,30 +211,10 @@ For OpenAI-backed chat, the CLI sends typed session/run configuration through
 the API. Use `--model ...` on a command, or set `LIGHTSPEED_CHAT_MODEL`, if you want
 a specific model.
 
-To send one message and exit:
-
-```bash
-cargo run -p cli -- chat --new "hello from the hosted path"
-```
-
-The non-interactive command prints `connected session=...`; reuse that session
-ID to continue the same conversation:
-
-```bash
-cargo run -p cli -- chat --session session_1
-cargo run -p cli -- chat --session session_1 "continue the conversation"
-```
-
-To get machine-readable output for a one-shot run:
-
-```bash
-cargo run -p cli -- chat --new --json "summarize this repository"
-```
-
 To chat with a local directory mounted as a writable CAS-backed VFS workspace:
 
 ```bash
-cargo run -p cli -- chat --new --mount .
+cargo run -p cli -- chat --new --mount docs/
 ```
 
 The CLI snapshots the directory locally, uploads missing blobs, creates a VFS
@@ -194,41 +228,6 @@ The `cli` package builds the `lightspeed` binary, so installed usage is equivale
 lightspeed chat --new
 ```
 
-To upload a local directory as a CAS-backed VFS snapshot:
-
-```bash
-cargo run -p cli -- vfs snapshot .
-```
-
-The command walks the directory locally, uploads missing content-addressed blobs
-through the gateway, commits the VFS manifest, and prints the resulting
-`snapshotRef`. Use `--json` for a machine-readable summary.
-
-To materialize a snapshot back to a local directory:
-
-```bash
-cargo run -p cli -- vfs materialize sha256:... ./out
-```
-
-The command downloads only blobs needed for files that do not already match
-locally, writes under the selected destination, and refuses destination
-symlinks that could escape that directory.
-
-To create and mount VFS workspaces explicitly:
-
-```bash
-cargo run -p cli -- vfs workspace create sha256:...
-cargo run -p cli -- vfs workspace read workspace_...
-cargo run -p cli -- vfs workspace update --expected-revision 0 workspace_... sha256:...
-cargo run -p cli -- vfs workspace update workspace_... sha256:...
-cargo run -p cli -- vfs workspace delete workspace_...
-cargo run -p cli -- vfs mount put --session session_1 --path /workspace --workspace workspace_...
-cargo run -p cli -- vfs mount delete --session session_1 --path /workspace
-cargo run -p cli -- vfs mount list --session session_1
-```
-
-Snapshot mounts are read-only; workspace mounts can be read-only or read-write.
-
 ### Stop Or Reset Local Infra
 
 ```bash
@@ -241,39 +240,7 @@ To reset persisted local state while keeping containers available:
 local/reset.sh
 ```
 
-## Runtime Model
-
-At a high level, an agent session works like this:
-
-1. A client starts or opens a session through `api`.
-2. The runtime admits input as a command to the CoreAgent drive machine.
-3. The core emits append, LLM, or tool actions without performing I/O.
-4. The runtime or workflow substrate fulfills those actions through stores,
-   adapter traits, or workflow activities.
-5. Only committed session entries are resumed into the core state.
-6. `api-projection` projects internal events/state into client-facing
-   session, run, and item views.
-
-`test-support` owns an inline `SessionRunner` harness for tests and evals only.
-Durability and retry semantics belong in the Temporal hosted path, where core
-actions are fulfilled through activities.
-
-The hosted `run/start` path is asynchronous at the API boundary: it returns
-after the workflow has accepted and started or observed the run, while clients
-continue following `session/events/read` or refreshing `session/read` for tool
-activity and final output. `session/start` accepts a product-level config block
-for model, instructions, generation, context, and run defaults; instructions can
-be supplied as inline text or an existing CAS blob ref. `session/update` applies
-revision-checked patches to idle sessions without requiring clients to resubmit
-the full config. `run/start` accepts typed per-run model, generation, and limit
-overrides, and input can be supplied as inline text or an existing text CAS blob
-ref. The gateway owns API-to-command conversion for `run/start`: it writes
-inline run input to CAS or validates the supplied ref, builds
-`CoreAgentCommand::RequestRun`, wraps the encoded core command as a workflow
-admission, and signals the workflow.
-
 ## Testing
-
 Default deterministic tests:
 
 ```bash
@@ -286,53 +253,5 @@ Ignored live provider tests require API keys and may cost money:
 cargo test -p llm-clients -- --ignored
 ```
 
-## Wire Contract Schemas
-
-`interop/contract/` holds the committed machine-readable contract of the JSON-RPC
-gateway, generated from the `api` crate's types via schemars:
-
-- `api.schema.json` — draft-07 JSON Schema bundle of every wire type;
-- `methods.json` — method/notification manifest with refs into the bundle;
-- `openrpc.json` — OpenRPC document for docs tooling (not for codegen).
-
-The manifest is produced by the same macro that generates the JSON-RPC
-dispatcher, so it cannot drift from what the server serves. After changing
-`api` types, regenerate and commit:
-
-```bash
-cargo run -p api --bin export-schema
-```
-
-`cargo test -p api` fails while the committed artifacts are stale.
-
-Interop packages that consume this contract live under `interop/`, including
-the private TypeScript client in `interop/ts-client/` and the messaging bridge
-in `interop/messaging/`.
-
-## Environment Variables
-
-Local commands load a root `.env` file when present. Use
-[.env_example](.env_example) as the template for provider credentials, or set
-the same variables directly in your shell.
-
-| Variable | Purpose |
-|----------|---------|
-| `OPENAI_API_KEY` | OpenAI provider authentication |
-| `ANTHROPIC_API_KEY` | Anthropic provider authentication |
-| `OPENAI_BASE_URL` | Override OpenAI API endpoint |
-| `ANTHROPIC_BASE_URL` | Override Anthropic API endpoint |
-| `LIGHTSPEED_CHAT_PROVIDER` | Default chat provider ID |
-| `LIGHTSPEED_CHAT_API_KIND` | Default chat provider API kind |
-| `LIGHTSPEED_CHAT_MODEL` | Default chat model |
-| `LIGHTSPEED_CHAT_REASONING_EFFORT` | Default reasoning effort (OpenAI reasoning / Anthropic thinking) |
-| `LIGHTSPEED_CHAT_MAX_TOKENS` | Default max output token setting for chat runs |
-| `LIGHTSPEED_API_URL` | CLI JSON-RPC gateway URL |
-| `LIGHTSPEED_POSTGRES_URL` | PostgreSQL session/CAS database URL |
-| `LIGHTSPEED_PG_UNIVERSE_ID` | Hosted store universe UUID |
-| `LIGHTSPEED_TASK_QUEUE` | Temporal task queue override; defaults to `lightspeed-universe-{LIGHTSPEED_PG_UNIVERSE_ID}` |
-| `LIGHTSPEED_OBJECT_STORE_ENDPOINT` | S3-compatible object store endpoint |
-| `LIGHTSPEED_AUDIO_TRANSCODER` | Optional audio transcoder adapter; set to `ffmpeg` to enable non-provider audio container transcoding |
-| `LIGHTSPEED_FFMPEG_PATH` | Optional FFmpeg binary path when `LIGHTSPEED_AUDIO_TRANSCODER=ffmpeg`; defaults to `ffmpeg` |
-| `LIGHTSPEED_AUDIO_TRANSCODE_TIMEOUT_MS` | Optional FFmpeg transcode timeout in milliseconds; defaults to 30000 |
-| `RUST_LOG` | Server log filter. Defaults to app/Temporal info and dependency warnings; use `temporal_server=debug,temporal_workflow=debug` for more detail |
-| `LIGHTSPEED_LOG_FORMAT` | Server log format: `compact` (default), `pretty`, or `json` |
+## Contributing
+See [CONTRIBUTING.md](CONTRIBUTING.md)
