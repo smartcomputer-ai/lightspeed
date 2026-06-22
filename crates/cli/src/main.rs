@@ -1,6 +1,7 @@
 mod api_client;
 mod auth_cli;
 mod chat;
+mod env_cli;
 mod mcp_cli;
 mod skills_cli;
 mod vfs_cli;
@@ -28,6 +29,8 @@ enum Command {
     Mcp(mcp_cli::McpArgs),
     /// Manage auth grants and credentials.
     Auth(auth_cli::AuthArgs),
+    /// Manage session environments.
+    Env(env_cli::EnvArgs),
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -40,6 +43,7 @@ async fn main() -> Result<()> {
         Command::Skills(args) => skills_cli::handle(args).await,
         Command::Mcp(args) => mcp_cli::handle(args).await,
         Command::Auth(args) => auth_cli::handle(args).await,
+        Command::Env(args) => env_cli::handle(args).await,
     }
 }
 
@@ -232,6 +236,60 @@ mod tests {
         ])
         .expect("parse vfs mount put");
         assert!(matches!(cli.command, Command::Vfs(_)));
+    }
+
+    #[test]
+    fn env_list_parse_accepts_session() {
+        let cli = Cli::try_parse_from([
+            "lightspeed",
+            "env",
+            "list",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
+            "--session",
+            "session_1",
+        ])
+        .expect("parse env list");
+        assert!(matches!(cli.command, Command::Env(_)));
+    }
+
+    #[test]
+    fn env_attach_parse_accepts_host_bridge_target() {
+        let cli = Cli::try_parse_from([
+            "lightspeed",
+            "env",
+            "attach",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
+            "--session",
+            "session_1",
+            "--provider-id",
+            "my-host",
+            "--env-id",
+            "local-host",
+            "--target-id",
+            "local",
+            "--activate",
+        ])
+        .expect("parse env attach");
+        assert!(matches!(cli.command, Command::Env(_)));
+    }
+
+    #[test]
+    fn env_close_parse_accepts_detach_only() {
+        let cli = Cli::try_parse_from([
+            "lightspeed",
+            "env",
+            "close",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
+            "--session",
+            "session_1",
+            "--detach-only",
+            "local-host",
+        ])
+        .expect("parse env close");
+        assert!(matches!(cli.command, Command::Env(_)));
     }
 
     #[test]

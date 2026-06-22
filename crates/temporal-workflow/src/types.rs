@@ -216,9 +216,12 @@ pub struct ToolInvokeBatchActivityRequest {
 pub struct SkillCatalogRefreshActivityRequest {
     pub session_id: SessionId,
     pub active_catalog_ref: Option<BlobRef>,
+    pub active_vfs_catalog_ref: Option<BlobRef>,
+    pub active_environment_catalog_ref: Option<BlobRef>,
+    pub active_environment_active_ref: Option<BlobRef>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SkillCatalogRefreshActivityResult {
-    pub command: Option<CoreAgentCommand>,
+    pub commands: Vec<CoreAgentCommand>,
 }

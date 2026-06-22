@@ -49,22 +49,33 @@ export interface RecipeMcpLink {
   deferLoading?: boolean;
 }
 
+/// One execution environment to attach into a recipe's sessions. The provider
+/// must already be online; the bridge binds an existing provider target.
+export interface RecipeEnvironment {
+  envId: string;
+  providerId: string;
+  targetId: string;
+  activate: boolean;
+}
+
 /// A named provisioning recipe applied once when a bound session is first
 /// created: start with `config` (model + tools), mount workspaces/snapshots,
-/// then link MCP servers.
+/// link MCP servers, then attach/activate execution environments.
 export interface SessionRecipe {
   config?: SessionConfigInput;
   mounts: RecipeMount[];
   mcp: RecipeMcpLink[];
+  environments?: RecipeEnvironment[];
 }
 
 export type BindingScope = "direct" | "group";
+export type BindingHandleMatch = string | string[];
 
 export interface BindingMatch {
   /// Channel to match, or `*` for any channel.
   channel: "telegram" | "whatsapp" | "*";
-  /// Sender handle (telegram id/@username, whatsapp jid). Omit to match any.
-  handle?: string;
+  /// Sender handle(s) (telegram id/@username, whatsapp jid). Omit to match any.
+  handle?: BindingHandleMatch;
   /// Channel chat id (telegram chat id, whatsapp jid). Omit to match any.
   chatId?: string;
   /// Restrict to direct or group conversations. Omit to match either.
@@ -325,7 +336,7 @@ function bindingMatches(match: BindingMatch, query: BindingQuery): boolean {
   if (match.chatId !== undefined && match.chatId !== query.chatId) {
     return false;
   }
-  if (match.handle !== undefined && !handleMatchesAny(match.handle, query.handles)) {
+  if (match.handle !== undefined && !bindingHandleMatches(match.handle, query.handles)) {
     return false;
   }
   return true;
@@ -339,6 +350,14 @@ export function handleMatches(configured: string, actual: string): boolean {
 
 function handleMatchesAny(configured: string, actuals: readonly string[]): boolean {
   return actuals.some((actual) => handleMatches(configured, actual));
+}
+
+function bindingHandleMatches(
+  configured: BindingHandleMatch,
+  actuals: readonly string[],
+): boolean {
+  const handles = Array.isArray(configured) ? configured : [configured];
+  return handles.some((handle) => handleMatchesAny(handle, actuals));
 }
 
 /// True when none of the sender's handles appears in `allowFrom`, given
@@ -377,6 +396,7 @@ function parseRecipe(name: string, raw: unknown): SessionRecipe {
   const recipe: SessionRecipe = {
     mounts: parseMounts(name, record.mounts),
     mcp: parseMcpLinks(name, record.mcp),
+    environments: parseEnvironments(name, record),
   };
   if (record.config !== undefined && record.config !== null) {
     if (typeof record.config !== "object" || Array.isArray(record.config)) {
@@ -385,6 +405,49 @@ function parseRecipe(name: string, raw: unknown): SessionRecipe {
     recipe.config = record.config as SessionConfigInput;
   }
   return recipe;
+}
+
+function parseEnvironments(recipe: string, record: Record<string, unknown>): RecipeEnvironment[] {
+  if (record.environments !== undefined && record.envs !== undefined) {
+    throw new Error(`recipe "${recipe}" must use environments or envs, not both`);
+  }
+  const raw = record.environments ?? record.envs;
+  if (raw === undefined || raw === null) {
+    return [];
+  }
+  if (!Array.isArray(raw)) {
+    throw new Error(`recipe "${recipe}".environments must be an array`);
+  }
+  const environments = raw.map((entry, index) => parseEnvironment(recipe, index, entry));
+  const activeCount = environments.filter((environment) => environment.activate).length;
+  if (activeCount > 1) {
+    throw new Error(`recipe "${recipe}".environments may activate at most one environment`);
+  }
+  return environments;
+}
+
+function parseEnvironment(recipe: string, index: number, raw: unknown): RecipeEnvironment {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new Error(`recipe "${recipe}".environments[${index}] must be an object`);
+  }
+  const record = raw as Record<string, unknown>;
+  const envId = optionalString(record.envId);
+  if (envId === undefined) {
+    throw new Error(`recipe "${recipe}".environments[${index}] needs an envId`);
+  }
+  const providerId = optionalString(record.providerId);
+  if (providerId === undefined) {
+    throw new Error(`recipe "${recipe}".environments[${index}] needs a providerId`);
+  }
+  if (record.activate !== undefined && typeof record.activate !== "boolean") {
+    throw new Error(`recipe "${recipe}".environments[${index}].activate must be a boolean`);
+  }
+  return {
+    envId,
+    providerId,
+    targetId: optionalString(record.targetId) ?? "local",
+    activate: typeof record.activate === "boolean" ? record.activate : true,
+  };
 }
 
 function parseMounts(recipe: string, raw: unknown): RecipeMount[] {
@@ -518,7 +581,7 @@ function parseBinding(
     throw new Error(`bindings[${index}].recipe "${recipe}" is not defined in recipes`);
   }
   const matchRule: BindingMatch = { channel };
-  const handle = optionalString(match.handle);
+  const handle = optionalStringOrStringArray(match.handle);
   if (handle !== undefined) matchRule.handle = handle;
   const chatId = optionalString(match.chatId);
   if (chatId !== undefined) matchRule.chatId = chatId;
@@ -536,6 +599,16 @@ function optionalString(value: unknown): string | undefined {
   }
   const text = String(value).trim();
   return text === "" ? undefined : text;
+}
+
+function optionalStringOrStringArray(value: unknown): string | string[] | undefined {
+  if (Array.isArray(value)) {
+    const items = value
+      .map((entry) => optionalString(entry))
+      .filter((entry): entry is string => entry !== undefined);
+    return items.length > 0 ? items : undefined;
+  }
+  return optionalString(value);
 }
 
 function csv(value: string | undefined, fallback: readonly string[] | undefined): string[] {

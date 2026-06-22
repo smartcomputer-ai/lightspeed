@@ -69,17 +69,20 @@ export type ToolTargetRequirementView =
  * via the `definition` "AgentApiErrorKind".
  */
 export type AgentApiErrorKind =
-  | "invalid_request"
-  | "not_found"
-  | "conflict"
-  | "rejected"
-  | "unsupported_audio_mime"
-  | "audio_blob_too_large"
-  | "audio_duration_too_long"
-  | "transcoder_unavailable"
-  | "transcode_failure"
-  | "transcription_failure"
-  | "internal";
+  | (
+      | "invalid_request"
+      | "not_found"
+      | "conflict"
+      | "rejected"
+      | "unsupported_audio_mime"
+      | "audio_blob_too_large"
+      | "audio_duration_too_long"
+      | "transcoder_unavailable"
+      | "transcode_failure"
+      | "transcription_failure"
+      | "internal"
+    )
+  | "session_bootstrap_failed";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentNotification".
@@ -237,9 +240,9 @@ export type ToolChoiceModeConfig =
     };
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "HostToolMode".
+ * via the `definition` "FilesystemToolMode".
  */
-export type HostToolMode = "none" | "readOnly" | "edit";
+export type FilesystemToolMode = "none" | "readOnly" | "edit";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "InputItem".
@@ -484,6 +487,15 @@ export type ContextEntryKindView =
       type: "instructions";
     }
   | {
+      type: "vfsCatalog";
+    }
+  | {
+      type: "environmentCatalog";
+    }
+  | {
+      type: "environmentActive";
+    }
+  | {
       type: "skillCatalog";
     }
   | {
@@ -572,6 +584,67 @@ export type AuthProviderConfigView =
 export type AuthProviderStatus = "active" | "needsConfiguration" | "disabled";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "HostTransportView".
+ */
+export type HostTransportView =
+  | {
+      type: "webSocket";
+    }
+  | {
+      type: "http";
+    }
+  | {
+      type: "stdio";
+    }
+  | {
+      type: "ssh";
+    }
+  | {
+      providerType: string;
+      type: "provider";
+    };
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EnvironmentProviderKindView".
+ */
+export type EnvironmentProviderKindView = "sandbox" | "bridge" | "custom";
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EnvironmentProviderStatusView".
+ */
+export type EnvironmentProviderStatusView =
+  | "registering"
+  | "online"
+  | "stale"
+  | "offline"
+  | "disabled";
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "HostScopeView".
+ */
+export type HostScopeView =
+  | {
+      type: "default";
+    }
+  | {
+      sessionId: string;
+      type: "session";
+    };
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EnvironmentTargetStatusView".
+ */
+export type EnvironmentTargetStatusView =
+  | "creating"
+  | "starting"
+  | "ready"
+  | "stopped"
+  | "closing"
+  | "closed"
+  | "failed"
+  | "unknown";
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "McpServerAuthPolicy".
  */
 export type McpServerAuthPolicy =
@@ -640,6 +713,16 @@ export type OutboundPayloadView =
     };
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionEnvironmentKindView".
+ */
+export type SessionEnvironmentKindView = "sandbox" | "attachedHost";
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionEnvironmentStatusView".
+ */
+export type SessionEnvironmentStatusView = "attaching" | "ready" | "degraded" | "detached";
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SkillActivationScope".
  */
 export type SkillActivationScope = "run" | "session";
@@ -688,12 +771,12 @@ export type FieldPatchOfCompactionPolicyInput =
     };
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "FieldPatchOfHostToolMode".
+ * via the `definition` "FieldPatchOfFilesystemToolMode".
  */
-export type FieldPatchOfHostToolMode =
+export type FieldPatchOfFilesystemToolMode =
   | {
       op: "set";
-      value: HostToolMode;
+      value: FilesystemToolMode;
     }
   | {
       op: "clear";
@@ -733,6 +816,38 @@ export type FieldPatchOfuint32 =
     }
   | {
       op: "clear";
+    };
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "HostTargetAttachRequestView".
+ */
+export type HostTargetAttachRequestView =
+  | {
+      targetId: string;
+      type: "target";
+    }
+  | {
+      providerType: string;
+      spec: unknown;
+      type: "provider";
+    };
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "HostTargetCreateRequestView".
+ */
+export type HostTargetCreateRequestView =
+  | {
+      spec: SandboxTargetSpecView;
+      type: "sandbox";
+    }
+  | {
+      spec: AttachedHostSpecView;
+      type: "attachedHost";
+    }
+  | {
+      providerType: string;
+      spec: unknown;
+      type: "provider";
     };
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -937,7 +1052,7 @@ export interface RunDefaultsConfig {
  * via the `definition` "ToolConfigView".
  */
 export interface ToolConfigView {
-  host: HostToolMode;
+  filesystem: FilesystemToolMode;
   webFetch: boolean;
   webSearch: boolean;
 }
@@ -1499,6 +1614,126 @@ export interface ContextCompactResponse {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfEnvironmentProviderHeartbeatResponse".
+ */
+export interface AgentApiOutcomeOfEnvironmentProviderHeartbeatResponse {
+  notifications?: AgentNotification[];
+  result: EnvironmentProviderHeartbeatResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EnvironmentProviderHeartbeatResponse".
+ */
+export interface EnvironmentProviderHeartbeatResponse {
+  provider: EnvironmentProviderView;
+  targets?: EnvironmentTargetSummaryView[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EnvironmentProviderView".
+ */
+export interface EnvironmentProviderView {
+  capabilities: EnvironmentProviderCapabilitiesView;
+  controllerConnection: HostControllerConnectionView;
+  displayName?: string | null;
+  implementation: EnvironmentProviderImplementationView;
+  lastSeenMs: number;
+  leaseExpiresMs: number;
+  metadata?: {
+    [k: string]: string;
+  };
+  providerId: string;
+  providerKind: EnvironmentProviderKindView;
+  status: EnvironmentProviderStatusView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EnvironmentProviderCapabilitiesView".
+ */
+export interface EnvironmentProviderCapabilitiesView {
+  attachTarget?: boolean;
+  closeTarget?: boolean;
+  createTarget?: boolean;
+  getTarget?: boolean;
+  listTargets?: boolean;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "HostControllerConnectionView".
+ */
+export interface HostControllerConnectionView {
+  endpoint: string;
+  transport: HostTransportView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EnvironmentProviderImplementationView".
+ */
+export interface EnvironmentProviderImplementationView {
+  name: string;
+  version?: string | null;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EnvironmentTargetSummaryView".
+ */
+export interface EnvironmentTargetSummaryView {
+  capabilities: HostCapabilitiesView;
+  defaultCwd?: string | null;
+  displayName?: string | null;
+  metadata?: {
+    [k: string]: string;
+  };
+  scope: HostScopeView;
+  status: EnvironmentTargetStatusView;
+  targetId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "HostCapabilitiesView".
+ */
+export interface HostCapabilitiesView {
+  filesystemRead?: boolean;
+  filesystemWrite?: boolean;
+  processOutputNotifications?: boolean;
+  processOutputPolling?: boolean;
+  processPty?: boolean;
+  processStart?: boolean;
+  processStdin?: boolean;
+  processTerminate?: boolean;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfEnvironmentProviderRegisterResponse".
+ */
+export interface AgentApiOutcomeOfEnvironmentProviderRegisterResponse {
+  notifications?: AgentNotification[];
+  result: EnvironmentProviderRegisterResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EnvironmentProviderRegisterResponse".
+ */
+export interface EnvironmentProviderRegisterResponse {
+  provider: EnvironmentProviderView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfEnvironmentProviderUnregisterResponse".
+ */
+export interface AgentApiOutcomeOfEnvironmentProviderUnregisterResponse {
+  notifications?: AgentNotification[];
+  result: EnvironmentProviderUnregisterResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EnvironmentProviderUnregisterResponse".
+ */
+export interface EnvironmentProviderUnregisterResponse {
+  provider: EnvironmentProviderView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfInitializeResponse".
  */
 export interface AgentApiOutcomeOfInitializeResponse {
@@ -1732,6 +1967,146 @@ export interface AgentApiOutcomeOfSessionCloseResponse {
  */
 export interface SessionCloseResponse {
   session: SessionView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfSessionEnvironmentActivateResponse".
+ */
+export interface AgentApiOutcomeOfSessionEnvironmentActivateResponse {
+  notifications?: AgentNotification[];
+  result: SessionEnvironmentActivateResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionEnvironmentActivateResponse".
+ */
+export interface SessionEnvironmentActivateResponse {
+  activeEnvId?: string | null;
+  environment: SessionEnvironmentView;
+  environments?: SessionEnvironmentView[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionEnvironmentView".
+ */
+export interface SessionEnvironmentView {
+  active: boolean;
+  capabilities: SessionEnvironmentCapabilitiesView;
+  cwd?: string | null;
+  envId: string;
+  execTarget?: ToolExecutionTargetView | null;
+  kind: SessionEnvironmentKindView;
+  status: SessionEnvironmentStatusView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionEnvironmentCapabilitiesView".
+ */
+export interface SessionEnvironmentCapabilitiesView {
+  fsRead: boolean;
+  fsWrite: boolean;
+  network: boolean;
+  persistent: boolean;
+  processExec: boolean;
+  processStdin: boolean;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfSessionEnvironmentAttachResponse".
+ */
+export interface AgentApiOutcomeOfSessionEnvironmentAttachResponse {
+  notifications?: AgentNotification[];
+  result: SessionEnvironmentAttachResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionEnvironmentAttachResponse".
+ */
+export interface SessionEnvironmentAttachResponse {
+  activeEnvId?: string | null;
+  environment: SessionEnvironmentView;
+  environments?: SessionEnvironmentView[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfSessionEnvironmentCloseResponse".
+ */
+export interface AgentApiOutcomeOfSessionEnvironmentCloseResponse {
+  notifications?: AgentNotification[];
+  result: SessionEnvironmentCloseResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionEnvironmentCloseResponse".
+ */
+export interface SessionEnvironmentCloseResponse {
+  activeEnvId?: string | null;
+  environment: SessionEnvironmentView;
+  environments?: SessionEnvironmentView[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfSessionEnvironmentCreateResponse".
+ */
+export interface AgentApiOutcomeOfSessionEnvironmentCreateResponse {
+  notifications?: AgentNotification[];
+  result: SessionEnvironmentCreateResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionEnvironmentCreateResponse".
+ */
+export interface SessionEnvironmentCreateResponse {
+  activeEnvId?: string | null;
+  environment: SessionEnvironmentView;
+  environments?: SessionEnvironmentView[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfSessionEnvironmentDeactivateResponse".
+ */
+export interface AgentApiOutcomeOfSessionEnvironmentDeactivateResponse {
+  notifications?: AgentNotification[];
+  result: SessionEnvironmentDeactivateResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionEnvironmentDeactivateResponse".
+ */
+export interface SessionEnvironmentDeactivateResponse {
+  activeEnvId?: string | null;
+  environments?: SessionEnvironmentView[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfSessionEnvironmentListResponse".
+ */
+export interface AgentApiOutcomeOfSessionEnvironmentListResponse {
+  notifications?: AgentNotification[];
+  result: SessionEnvironmentListResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionEnvironmentListResponse".
+ */
+export interface SessionEnvironmentListResponse {
+  activeEnvId?: string | null;
+  environments?: SessionEnvironmentView[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfSessionEnvironmentReadResponse".
+ */
+export interface AgentApiOutcomeOfSessionEnvironmentReadResponse {
+  notifications?: AgentNotification[];
+  result: SessionEnvironmentReadResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionEnvironmentReadResponse".
+ */
+export interface SessionEnvironmentReadResponse {
+  environment: SessionEnvironmentView;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -2125,6 +2500,19 @@ export interface VfsWorkspaceUpdateResponse {
   workspace: VfsWorkspaceView;
 }
 /**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AttachedHostSpecView".
+ */
+export interface AttachedHostSpecView {
+  cwd?: string | null;
+  endpoint?: string | null;
+  labels?: {
+    [k: string]: string;
+  };
+  name?: string | null;
+  providerOptions?: unknown;
+}
+/**
  * Register an OAuth client configuration. `client_secret` is the second
  * deliberate inbound-plaintext path after `auth/grants/import`: it is
  * encrypted on receipt and never returned by any method. `Debug` output
@@ -2351,12 +2739,60 @@ export interface ContextConfigPatchInput {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EnvironmentProviderHeartbeatParams".
+ */
+export interface EnvironmentProviderHeartbeatParams {
+  leaseTtlMs?: number | null;
+  observedTargets?: EnvironmentTargetSummaryView[];
+  providerId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EnvironmentProviderRegisterParams".
+ */
+export interface EnvironmentProviderRegisterParams {
+  capabilities: EnvironmentProviderCapabilitiesView;
+  controllerConnection: HostControllerConnectionView;
+  displayName?: string | null;
+  implementation: EnvironmentProviderImplementationView;
+  leaseTtlMs: number;
+  metadata?: {
+    [k: string]: string;
+  };
+  providerId: string;
+  providerKind: EnvironmentProviderKindView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EnvironmentProviderUnregisterParams".
+ */
+export interface EnvironmentProviderUnregisterParams {
+  providerId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "GenerationConfigPatch".
  */
 export interface GenerationConfigPatch {
   maxOutputTokens?: FieldPatchOfuint32 | null;
   reasoningEffort?: ReasoningEffort | null;
   toolChoice?: FieldPatchOfToolChoiceConfig | null;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SandboxTargetSpecView".
+ */
+export interface SandboxTargetSpecView {
+  cwd?: string | null;
+  env?: {
+    [k: string]: string;
+  };
+  image?: string | null;
+  labels?: {
+    [k: string]: string;
+  };
+  providerOptions?: unknown;
+  template?: string | null;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -2516,7 +2952,7 @@ export interface SessionConfigInput {
  * via the `definition` "ToolConfigInput".
  */
 export interface ToolConfigInput {
-  host?: HostToolMode | null;
+  filesystem?: FilesystemToolMode | null;
   /**
    * Enables the messaging toolset (message_send/react/edit/noop) for
    * sessions bound to a chat channel.
@@ -2541,10 +2977,72 @@ export interface SessionConfigPatchInput {
  * via the `definition` "ToolConfigPatchInput".
  */
 export interface ToolConfigPatchInput {
-  host?: FieldPatchOfHostToolMode | null;
+  filesystem?: FieldPatchOfFilesystemToolMode | null;
   messaging?: FieldPatchOfboolean | null;
   webFetch?: FieldPatchOfboolean | null;
   webSearch?: FieldPatchOfboolean | null;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionEnvironmentActivateParams".
+ */
+export interface SessionEnvironmentActivateParams {
+  envId: string;
+  sessionId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionEnvironmentAttachParams".
+ */
+export interface SessionEnvironmentAttachParams {
+  activate?: boolean;
+  envId?: string | null;
+  providerId: string;
+  request: HostTargetAttachRequestView;
+  sessionId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionEnvironmentCloseParams".
+ */
+export interface SessionEnvironmentCloseParams {
+  closeTarget?: boolean | null;
+  envId: string;
+  force?: boolean;
+  sessionId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionEnvironmentCreateParams".
+ */
+export interface SessionEnvironmentCreateParams {
+  activate?: boolean;
+  envId?: string | null;
+  providerId: string;
+  request: HostTargetCreateRequestView;
+  sessionId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionEnvironmentDeactivateParams".
+ */
+export interface SessionEnvironmentDeactivateParams {
+  sessionId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionEnvironmentListParams".
+ */
+export interface SessionEnvironmentListParams {
+  sessionId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionEnvironmentReadParams".
+ */
+export interface SessionEnvironmentReadParams {
+  envId: string;
+  sessionId: string;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema

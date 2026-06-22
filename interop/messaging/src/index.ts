@@ -8,6 +8,7 @@ export type {
   InboundAccess,
   LightspeedBridgeConfig,
   MessagingBridgeConfig,
+  RecipeEnvironment,
   RecipeMcpLink,
   RecipeMount,
   ResolvedBinding,

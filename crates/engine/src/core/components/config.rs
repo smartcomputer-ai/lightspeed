@@ -176,7 +176,7 @@ pub struct ToolConfigPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub web_fetch: Option<OptionalConfigPatch<bool>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub host: Option<OptionalConfigPatch<HostToolMode>>,
+    pub filesystem: Option<OptionalConfigPatch<FilesystemToolMode>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub messaging: Option<OptionalConfigPatch<bool>>,
 }
@@ -185,14 +185,14 @@ impl ToolConfigPatch {
     pub fn apply_to(&self, config: &mut ToolConfig) {
         apply_optional_config_patch(&mut config.web_search, &self.web_search);
         apply_optional_config_patch(&mut config.web_fetch, &self.web_fetch);
-        apply_optional_config_patch(&mut config.host, &self.host);
+        apply_optional_config_patch(&mut config.filesystem, &self.filesystem);
         apply_optional_config_patch(&mut config.messaging, &self.messaging);
     }
 
     pub fn is_empty(&self) -> bool {
         self.web_search.is_none()
             && self.web_fetch.is_none()
-            && self.host.is_none()
+            && self.filesystem.is_none()
             && self.messaging.is_none()
     }
 }
@@ -295,7 +295,7 @@ pub struct ToolConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub web_fetch: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub host: Option<HostToolMode>,
+    pub filesystem: Option<FilesystemToolMode>,
     /// Enables the messaging toolset (message_send/react/edit/noop) for
     /// sessions bound to a chat channel.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -304,7 +304,7 @@ pub struct ToolConfig {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum HostToolMode {
+pub enum FilesystemToolMode {
     None,
     ReadOnly,
     Edit,

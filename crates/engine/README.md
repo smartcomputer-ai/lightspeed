@@ -5,7 +5,7 @@ session-scoped command, event, state, context, tooling, admission, projection,
 planning, workflow helpers, and the substrate-neutral CoreAgent drive machine
 used by local and Temporal substrates.
 
-The crate intentionally does not execute provider calls, host tools, shell
+The crate intentionally does not execute provider calls, runtime tools, shell
 commands, Temporal workflows, or production persistence. Those belong to local
 runtimes, workflow activities, adapter crates, and storage packages.
 

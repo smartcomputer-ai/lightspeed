@@ -11,7 +11,7 @@
     ]
   },
   "expect": {
-    "tool_called": ["host.read_file"],
+    "tool_called": ["fs.read_file"],
     "assistant_contains": ["FRUIT=pear-9421"],
     "tool_output_contains": ["pear-9421"]
   },
@@ -21,6 +21,6 @@
   },
   "run": {
     "max_tokens": 768,
-    "allowed_tools": ["host.read_file"]
+    "allowed_tools": ["fs.read_file"]
   }
 }

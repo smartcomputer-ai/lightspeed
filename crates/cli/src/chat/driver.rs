@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
 use api::{
-    AgentApiOutcome, EventCursor, GenerationConfig, HostToolMode, InputItem, ModelConfig,
+    AgentApiOutcome, EventCursor, FilesystemToolMode, GenerationConfig, InputItem, ModelConfig,
     ReasoningEffort as ApiReasoningEffort, RunStartConfig, RunStartParams, RunStartResponse,
     SessionConfigInput, SessionEventKindView, SessionEventView, SessionEventsReadParams,
     SessionItemView, SessionReadParams, SessionStartParams, SessionView, ToolBatchView,
@@ -67,9 +67,9 @@ pub(crate) struct ChatArgs {
     /// Disable guarded web fetch for this session.
     #[arg(long = "no-web-fetch")]
     no_web_fetch: bool,
-    /// Host tool mode for this session: edit, read-only, or none.
-    #[arg(long = "host-tools")]
-    host_tools: Option<String>,
+    /// Filesystem tool mode for this session: edit, read-only, or none.
+    #[arg(long = "filesystem-tools")]
+    filesystem_tools: Option<String>,
     /// Working directory for local file tools. Defaults to the current directory.
     #[arg(long)]
     workdir: Option<PathBuf>,
@@ -1371,21 +1371,21 @@ fn draft_settings(args: &ChatArgs) -> Result<ChatDraftSettings> {
         max_tokens: args.max_tokens,
         web_search: args.no_web_search.then_some(false),
         web_fetch: args.no_web_fetch.then_some(false),
-        host_tools: args
-            .host_tools
+        filesystem_tools: args
+            .filesystem_tools
             .as_deref()
-            .map(parse_host_tool_mode)
+            .map(parse_filesystem_tool_mode)
             .transpose()?,
     })
 }
 
-fn parse_host_tool_mode(value: &str) -> Result<HostToolMode> {
+fn parse_filesystem_tool_mode(value: &str) -> Result<FilesystemToolMode> {
     match value {
-        "edit" => Ok(HostToolMode::Edit),
-        "read-only" | "read_only" | "readonly" => Ok(HostToolMode::ReadOnly),
-        "none" | "off" | "disabled" => Ok(HostToolMode::None),
+        "edit" => Ok(FilesystemToolMode::Edit),
+        "read-only" | "read_only" | "readonly" => Ok(FilesystemToolMode::ReadOnly),
+        "none" | "off" | "disabled" => Ok(FilesystemToolMode::None),
         other => Err(anyhow!(
-            "invalid host tool mode '{other}'; expected edit, read-only, or none"
+            "invalid filesystem tool mode '{other}'; expected edit, read-only, or none"
         )),
     }
 }
@@ -1401,12 +1401,12 @@ fn model_config(settings: &ChatDraftSettings) -> ModelConfig {
 fn session_start_config(settings: &ChatDraftSettings) -> SessionConfigInput {
     let tools = if settings.web_search.is_some()
         || settings.web_fetch.is_some()
-        || settings.host_tools.is_some()
+        || settings.filesystem_tools.is_some()
     {
         Some(ToolConfigInput {
             web_search: settings.web_search,
             web_fetch: settings.web_fetch,
-            host: settings.host_tools,
+            filesystem: settings.filesystem_tools,
             messaging: None,
         })
     } else {
@@ -1831,7 +1831,7 @@ mod tests {
             max_tokens: None,
             web_search: None,
             web_fetch: None,
-            host_tools: None,
+            filesystem_tools: None,
         };
 
         let chains = project_active_tool_chains(&session, &settings);
@@ -1928,7 +1928,7 @@ mod tests {
             max_tokens: None,
             web_search: None,
             web_fetch: None,
-            host_tools: None,
+            filesystem_tools: None,
         };
 
         let turns = project_turns(&session, &settings);
@@ -1974,7 +1974,7 @@ mod tests {
             max_tokens: None,
             web_search: None,
             web_fetch: None,
-            host_tools: None,
+            filesystem_tools: None,
         };
 
         let turns = project_turns(&session, &settings);
@@ -2064,16 +2064,16 @@ mod tests {
     }
 
     #[test]
-    fn session_start_config_can_select_read_only_host_tools() {
+    fn session_start_config_can_select_read_only_filesystem_tools() {
         let mut args = chat_args_with_effort(None);
-        args.host_tools = Some("read-only".to_owned());
+        args.filesystem_tools = Some("read-only".to_owned());
         let settings = draft_settings(&args).expect("draft settings");
 
         let config = session_start_config(&settings);
 
         assert_eq!(
-            config.tools.expect("tools").host,
-            Some(HostToolMode::ReadOnly)
+            config.tools.expect("tools").filesystem,
+            Some(FilesystemToolMode::ReadOnly)
         );
     }
 
@@ -2102,7 +2102,7 @@ mod tests {
             max_tokens: None,
             no_web_search: false,
             no_web_fetch: false,
-            host_tools: None,
+            filesystem_tools: None,
             workdir: None,
             mount: None,
             mount_path: "/workspace".into(),

@@ -4,7 +4,7 @@
 //! CoreAgent domain: command/event/state vocabulary, provider-native LLM/tool
 //! request records, logical storage traits, deterministic planning contracts,
 //! and a substrate-neutral CoreAgent drive machine. It does not execute
-//! provider calls, host tools, process runners, Temporal workflows, or
+//! provider calls, runtime tools, process runners, Temporal workflows, or
 //! production persistence.
 
 pub mod blob;

@@ -10,6 +10,9 @@ use crate::{
 };
 
 const INSTRUCTIONS_KEY_PREFIX: &str = "instructions.";
+pub const VFS_CATALOG_CONTEXT_KEY: &str = "environment.vfs_catalog";
+pub const ENVIRONMENT_CATALOG_CONTEXT_KEY: &str = "environment.catalog";
+pub const ENVIRONMENT_ACTIVE_CONTEXT_KEY: &str = "environment.active";
 pub const SKILL_CATALOG_CONTEXT_KEY: &str = "skills.catalog";
 pub const SKILL_ACTIVATION_CONTEXT_KEY_PREFIX: &str = "skills.activation.";
 pub const SKILL_ACTIVATION_PROVIDER_KIND_RUN: &str = "lightspeed.skill.activation.run";
@@ -202,6 +205,9 @@ impl ContextEntryInput {
 pub enum ContextEntryKind {
     Message { role: ContextMessageRole },
     Instructions,
+    VfsCatalog,
+    EnvironmentCatalog,
+    EnvironmentActive,
     SkillCatalog,
     SkillActivation { skill_id: SkillId },
     ToolCall { call_id: ToolCallId, name: ToolName },
@@ -286,6 +292,17 @@ pub(crate) fn planned_context_entry_ids(state: &CoreAgentState) -> Vec<ContextEn
         entry_ids.push(entry.entry_id);
         seen.insert(entry.entry_id);
     }
+    for key in [
+        vfs_catalog_key(),
+        environment_catalog_key(),
+        environment_active_key(),
+    ] {
+        if let Some(entry) = current_key_entry(state, &key)
+            && seen.insert(entry.entry_id)
+        {
+            entry_ids.push(entry.entry_id);
+        }
+    }
 
     for entry in &state.context.entries {
         if seen.contains(&entry.entry_id) {
@@ -293,7 +310,11 @@ pub(crate) fn planned_context_entry_ids(state: &CoreAgentState) -> Vec<ContextEn
         }
 
         match &entry.kind {
-            ContextEntryKind::Instructions | ContextEntryKind::SkillCatalog => {}
+            ContextEntryKind::Instructions
+            | ContextEntryKind::SkillCatalog
+            | ContextEntryKind::VfsCatalog
+            | ContextEntryKind::EnvironmentCatalog
+            | ContextEntryKind::EnvironmentActive => {}
             _ => {
                 entry_ids.push(entry.entry_id);
                 seen.insert(entry.entry_id);
@@ -346,6 +367,9 @@ pub(crate) fn compactable_context_entry_ids(state: &CoreAgentState) -> Vec<Conte
                     ContextEntryKind::Instructions
                         | ContextEntryKind::SkillCatalog
                         | ContextEntryKind::SkillActivation { .. }
+                        | ContextEntryKind::VfsCatalog
+                        | ContextEntryKind::EnvironmentCatalog
+                        | ContextEntryKind::EnvironmentActive
                 )
             })
         })
@@ -577,6 +601,36 @@ fn validate_external_context_edit_entry(
         };
     }
 
+    if key.as_str() == VFS_CATALOG_CONTEXT_KEY {
+        return match &entry.kind {
+            ContextEntryKind::VfsCatalog => Ok(()),
+            _ => Err(DomainError::InvariantViolation(format!(
+                "VFS catalog context key {} cannot supply context entry kind {:?}",
+                key, entry.kind
+            ))),
+        };
+    }
+
+    if key.as_str() == ENVIRONMENT_CATALOG_CONTEXT_KEY {
+        return match &entry.kind {
+            ContextEntryKind::EnvironmentCatalog => Ok(()),
+            _ => Err(DomainError::InvariantViolation(format!(
+                "environment catalog context key {} cannot supply context entry kind {:?}",
+                key, entry.kind
+            ))),
+        };
+    }
+
+    if key.as_str() == ENVIRONMENT_ACTIVE_CONTEXT_KEY {
+        return match &entry.kind {
+            ContextEntryKind::EnvironmentActive => Ok(()),
+            _ => Err(DomainError::InvariantViolation(format!(
+                "active environment context key {} cannot supply context entry kind {:?}",
+                key, entry.kind
+            ))),
+        };
+    }
+
     if let Some(skill_id) = key
         .as_str()
         .strip_prefix(SKILL_ACTIVATION_CONTEXT_KEY_PREFIX)
@@ -606,6 +660,18 @@ fn validate_external_context_edit_entry(
         ContextEntryKind::Instructions => Err(DomainError::InvariantViolation(format!(
             "instruction context entry requires an {}* key, got {}",
             INSTRUCTIONS_KEY_PREFIX, key
+        ))),
+        ContextEntryKind::VfsCatalog => Err(DomainError::InvariantViolation(format!(
+            "VFS catalog context entry requires key {}, got {}",
+            VFS_CATALOG_CONTEXT_KEY, key
+        ))),
+        ContextEntryKind::EnvironmentCatalog => Err(DomainError::InvariantViolation(format!(
+            "environment catalog context entry requires key {}, got {}",
+            ENVIRONMENT_CATALOG_CONTEXT_KEY, key
+        ))),
+        ContextEntryKind::EnvironmentActive => Err(DomainError::InvariantViolation(format!(
+            "active environment context entry requires key {}, got {}",
+            ENVIRONMENT_ACTIVE_CONTEXT_KEY, key
         ))),
         _ => Err(DomainError::InvariantViolation(format!(
             "context edit cannot supply context entry kind {:?}",
@@ -891,7 +957,10 @@ fn is_provider_compaction_prunable_entry(state: &CoreAgentState, entry: &Context
     match entry.kind {
         ContextEntryKind::Instructions
         | ContextEntryKind::SkillCatalog
-        | ContextEntryKind::SkillActivation { .. } => false,
+        | ContextEntryKind::SkillActivation { .. }
+        | ContextEntryKind::VfsCatalog
+        | ContextEntryKind::EnvironmentCatalog
+        | ContextEntryKind::EnvironmentActive => false,
         ContextEntryKind::Message { .. }
         | ContextEntryKind::ToolCall { .. }
         | ContextEntryKind::ToolResult { .. }
@@ -930,6 +999,18 @@ fn current_key_entry<'a>(
 
 fn skill_catalog_key() -> ContextEntryKey {
     ContextEntryKey::new(SKILL_CATALOG_CONTEXT_KEY)
+}
+
+fn vfs_catalog_key() -> ContextEntryKey {
+    ContextEntryKey::new(VFS_CATALOG_CONTEXT_KEY)
+}
+
+fn environment_catalog_key() -> ContextEntryKey {
+    ContextEntryKey::new(ENVIRONMENT_CATALOG_CONTEXT_KEY)
+}
+
+fn environment_active_key() -> ContextEntryKey {
+    ContextEntryKey::new(ENVIRONMENT_ACTIVE_CONTEXT_KEY)
 }
 
 pub fn skill_activation_context_key(skill_id: &SkillId) -> ContextEntryKey {

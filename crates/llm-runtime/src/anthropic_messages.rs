@@ -457,6 +457,36 @@ async fn materialize_block(
         ContextEntryKind::Instructions => Err(LlmAdapterError::InvalidProviderRequest {
             message: "instruction context entries must materialize as the system prompt".to_owned(),
         }),
+        ContextEntryKind::VfsCatalog => {
+            let catalog =
+                crate::environment_prompts::read_vfs_catalog(blobs, &entry.content_ref).await?;
+            Ok((
+                am::MessageRole::User,
+                am::ContentBlockParam::text(crate::environment_prompts::vfs_catalog_text(&catalog)),
+            ))
+        }
+        ContextEntryKind::EnvironmentCatalog => {
+            let catalog =
+                crate::environment_prompts::read_environment_catalog(blobs, &entry.content_ref)
+                    .await?;
+            Ok((
+                am::MessageRole::User,
+                am::ContentBlockParam::text(crate::environment_prompts::environment_catalog_text(
+                    &catalog,
+                )),
+            ))
+        }
+        ContextEntryKind::EnvironmentActive => {
+            let active =
+                crate::environment_prompts::read_environment_active(blobs, &entry.content_ref)
+                    .await?;
+            Ok((
+                am::MessageRole::User,
+                am::ContentBlockParam::text(crate::environment_prompts::environment_active_text(
+                    &active,
+                )),
+            ))
+        }
         ContextEntryKind::SkillCatalog => {
             let catalog =
                 crate::skill_prompts::read_skill_catalog(blobs, &entry.content_ref).await?;

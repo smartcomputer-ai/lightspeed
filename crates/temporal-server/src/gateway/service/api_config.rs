@@ -127,8 +127,8 @@ pub(super) fn apply_tool_config(config: &mut engine::ToolConfig, tools: Option<T
     if let Some(web_fetch) = tools.web_fetch {
         config.web_fetch = Some(web_fetch);
     }
-    if let Some(host) = tools.host {
-        config.host = Some(host_tool_mode_from_api(host));
+    if let Some(filesystem) = tools.filesystem {
+        config.filesystem = Some(filesystem_tool_mode_from_api(filesystem));
     }
     if let Some(messaging) = tools.messaging {
         config.messaging = Some(messaging);
@@ -244,18 +244,18 @@ pub(super) fn tool_config_patch_from_api(
     engine::ToolConfigPatch {
         web_search: patch.web_search.map(optional_patch_from_api),
         web_fetch: patch.web_fetch.map(optional_patch_from_api),
-        host: patch
-            .host
-            .map(|patch| optional_patch_from_api_map(patch, host_tool_mode_from_api)),
+        filesystem: patch
+            .filesystem
+            .map(|patch| optional_patch_from_api_map(patch, filesystem_tool_mode_from_api)),
         messaging: patch.messaging.map(optional_patch_from_api),
     }
 }
 
-fn host_tool_mode_from_api(mode: api::HostToolMode) -> engine::HostToolMode {
+fn filesystem_tool_mode_from_api(mode: api::FilesystemToolMode) -> engine::FilesystemToolMode {
     match mode {
-        api::HostToolMode::None => engine::HostToolMode::None,
-        api::HostToolMode::ReadOnly => engine::HostToolMode::ReadOnly,
-        api::HostToolMode::Edit => engine::HostToolMode::Edit,
+        api::FilesystemToolMode::None => engine::FilesystemToolMode::None,
+        api::FilesystemToolMode::ReadOnly => engine::FilesystemToolMode::ReadOnly,
+        api::FilesystemToolMode::Edit => engine::FilesystemToolMode::Edit,
     }
 }
 

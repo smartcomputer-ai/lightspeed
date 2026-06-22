@@ -15,7 +15,7 @@
     ]
   },
   "expect": {
-    "tool_called": ["host.list_dir"],
+    "tool_called": ["fs.list_dir"],
     "assistant_contains": ["LIST=OK"],
     "tool_output_contains": ["a.txt", "b/"]
   },
@@ -25,6 +25,6 @@
   },
   "run": {
     "max_tokens": 768,
-    "allowed_tools": ["host.list_dir"]
+    "allowed_tools": ["fs.list_dir"]
   }
 }

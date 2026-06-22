@@ -271,6 +271,156 @@
       }
     },
     {
+      "method": "session/environments/list",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/SessionEnvironmentListParams"
+        },
+        "type": "SessionEnvironmentListParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfSessionEnvironmentListResponse"
+        },
+        "type": "AgentApiOutcome<SessionEnvironmentListResponse>"
+      }
+    },
+    {
+      "method": "session/environments/read",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/SessionEnvironmentReadParams"
+        },
+        "type": "SessionEnvironmentReadParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfSessionEnvironmentReadResponse"
+        },
+        "type": "AgentApiOutcome<SessionEnvironmentReadResponse>"
+      }
+    },
+    {
+      "method": "session/environments/create",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/SessionEnvironmentCreateParams"
+        },
+        "type": "SessionEnvironmentCreateParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfSessionEnvironmentCreateResponse"
+        },
+        "type": "AgentApiOutcome<SessionEnvironmentCreateResponse>"
+      }
+    },
+    {
+      "method": "session/environments/attach",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/SessionEnvironmentAttachParams"
+        },
+        "type": "SessionEnvironmentAttachParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfSessionEnvironmentAttachResponse"
+        },
+        "type": "AgentApiOutcome<SessionEnvironmentAttachResponse>"
+      }
+    },
+    {
+      "method": "session/environments/activate",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/SessionEnvironmentActivateParams"
+        },
+        "type": "SessionEnvironmentActivateParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfSessionEnvironmentActivateResponse"
+        },
+        "type": "AgentApiOutcome<SessionEnvironmentActivateResponse>"
+      }
+    },
+    {
+      "method": "session/environments/deactivate",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/SessionEnvironmentDeactivateParams"
+        },
+        "type": "SessionEnvironmentDeactivateParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfSessionEnvironmentDeactivateResponse"
+        },
+        "type": "AgentApiOutcome<SessionEnvironmentDeactivateResponse>"
+      }
+    },
+    {
+      "method": "session/environments/close",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/SessionEnvironmentCloseParams"
+        },
+        "type": "SessionEnvironmentCloseParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfSessionEnvironmentCloseResponse"
+        },
+        "type": "AgentApiOutcome<SessionEnvironmentCloseResponse>"
+      }
+    },
+    {
+      "method": "environmentProviders/register",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/EnvironmentProviderRegisterParams"
+        },
+        "type": "EnvironmentProviderRegisterParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentProviderRegisterResponse"
+        },
+        "type": "AgentApiOutcome<EnvironmentProviderRegisterResponse>"
+      }
+    },
+    {
+      "method": "environmentProviders/heartbeat",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/EnvironmentProviderHeartbeatParams"
+        },
+        "type": "EnvironmentProviderHeartbeatParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentProviderHeartbeatResponse"
+        },
+        "type": "AgentApiOutcome<EnvironmentProviderHeartbeatResponse>"
+      }
+    },
+    {
+      "method": "environmentProviders/unregister",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/EnvironmentProviderUnregisterParams"
+        },
+        "type": "EnvironmentProviderUnregisterParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentProviderUnregisterResponse"
+        },
+        "type": "AgentApiOutcome<EnvironmentProviderUnregisterResponse>"
+      }
+    },
+    {
       "method": "blob/put",
       "params": {
         "schema": {

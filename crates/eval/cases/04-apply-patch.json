@@ -11,7 +11,7 @@
     ]
   },
   "expect": {
-    "tool_called": ["host.apply_patch"],
+    "tool_called": ["fs.apply_patch"],
     "assistant_contains": ["PATCH=DONE"],
     "tool_output_contains": ["updated"],
     "files": [
@@ -27,6 +27,6 @@
   },
   "run": {
     "max_tokens": 1024,
-    "allowed_tools": ["host.read_file", "host.apply_patch"]
+    "allowed_tools": ["fs.read_file", "fs.apply_patch"]
   }
 }

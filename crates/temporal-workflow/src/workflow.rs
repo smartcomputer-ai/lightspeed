@@ -4,8 +4,9 @@ use engine::{
     ApplyEvent, BlobRef, CommandCodec, CommandError, ContextEntryInput, ContextEntryKey,
     ContextEntryKind, CoreAgentAction, CoreAgentCodec, CoreAgentCommand, CoreAgentDrive,
     CoreAgentDriveError, CoreAgentEntry, CoreAgentEventKind, CoreAgentState, CoreApplyEvent,
-    LlmGenerationRequest, RunEvent, SKILL_CATALOG_CONTEXT_KEY, SessionId, SessionPosition,
-    SubmissionId, ToolInvocationBatchRequest,
+    ENVIRONMENT_ACTIVE_CONTEXT_KEY, ENVIRONMENT_CATALOG_CONTEXT_KEY, LlmGenerationRequest,
+    RunEvent, SKILL_CATALOG_CONTEXT_KEY, SessionId, SessionPosition, SubmissionId,
+    ToolInvocationBatchRequest, VFS_CATALOG_CONTEXT_KEY,
 };
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
@@ -419,27 +420,51 @@ async fn refresh_skill_catalog_before_run(
             SkillCatalogRefreshActivityRequest {
                 session_id: drive.session_id().clone(),
                 active_catalog_ref: active_skill_catalog_ref(drive.state()),
+                active_vfs_catalog_ref: active_context_ref(
+                    drive.state(),
+                    VFS_CATALOG_CONTEXT_KEY,
+                    ContextEntryKind::VfsCatalog,
+                ),
+                active_environment_catalog_ref: active_context_ref(
+                    drive.state(),
+                    ENVIRONMENT_CATALOG_CONTEXT_KEY,
+                    ContextEntryKind::EnvironmentCatalog,
+                ),
+                active_environment_active_ref: active_context_ref(
+                    drive.state(),
+                    ENVIRONMENT_ACTIVE_CONTEXT_KEY,
+                    ContextEntryKind::EnvironmentActive,
+                ),
             },
             activity_options(),
         )
         .await
         .map_err(|error| anyhow::anyhow!("{error}"))?;
 
-    let Some(command) = result.command else {
-        return Ok(());
-    };
-    match admit_and_append_command(ctx, drive, command).await? {
-        CommandAdmissionResult::Accepted => Ok(()),
-        CommandAdmissionResult::Rejected(failure) => {
-            anyhow::bail!(
-                "skill catalog refresh command rejected: {}",
-                failure.message
-            )
+    for command in result.commands {
+        match admit_and_append_command(ctx, drive, command).await? {
+            CommandAdmissionResult::Accepted => {}
+            CommandAdmissionResult::Rejected(failure) => {
+                anyhow::bail!("run context refresh command rejected: {}", failure.message)
+            }
         }
     }
+    Ok(())
 }
 
 fn active_skill_catalog_ref(state: &CoreAgentState) -> Option<BlobRef> {
+    active_context_ref(
+        state,
+        SKILL_CATALOG_CONTEXT_KEY,
+        ContextEntryKind::SkillCatalog,
+    )
+}
+
+fn active_context_ref(
+    state: &CoreAgentState,
+    key: &'static str,
+    kind: ContextEntryKind,
+) -> Option<BlobRef> {
     state
         .context
         .entries
@@ -448,8 +473,8 @@ fn active_skill_catalog_ref(state: &CoreAgentState) -> Option<BlobRef> {
             entry
                 .key
                 .as_ref()
-                .is_some_and(|key| key.as_str() == SKILL_CATALOG_CONTEXT_KEY)
-                && matches!(entry.kind, ContextEntryKind::SkillCatalog)
+                .is_some_and(|entry_key| entry_key.as_str() == key)
+                && entry.kind == kind
         })
         .map(|entry| entry.content_ref.clone())
 }

@@ -6,26 +6,39 @@ use engine::{
     ToolInvocationBatchRequest, ToolInvocationBatchResult, ToolInvocationResult,
     storage::{BlobStore, BlobStoreError},
 };
+use environment_registry::{
+    EnvironmentRegistryError, SessionEnvironmentBindingRecord, SessionEnvironmentBindingStatus,
+    SessionEnvironmentBindingStore,
+};
+use host_client::{HostClientError, HostDataClient, WebSocketConnectOptions};
+use host_protocol::{
+    data::handshake::{InitializeParams, InitializedParams},
+    shared::{CURRENT_PROTOCOL_VERSION, HostConnectionSpec, HostTransport},
+};
 use messaging::OutboxStore;
 use serde_json::Value;
 use store_pg::PgStore;
 use tools::{
-    host::{
-        HostToolContext, InlineHostToolRuntime,
-        fs::{FsPath, MountedVfsFileSystem},
-    },
+    fs::{FsPath, FsToolContext, MountedVfsFileSystem},
+    host_protocol::RemoteHostConnection,
+    limits::ToolLimits,
     messaging::{MessagingToolExecutor, is_messaging_tool},
+    runtime::InlineToolRuntime,
     runtime::{ToolCatalog, ToolTarget},
-    toolset::{ToolsetConfig, ToolsetEnvironment, resolve_toolset},
+    toolset::{EnvironmentToolsetConfig, ToolsetConfig, ToolsetEnvironment, resolve_toolset},
     web::fetch::WebFetchToolConfig,
 };
 use vfs::{VfsCatalogError, VfsMountRecord, VfsMountStore, VfsWorkspaceStore};
+
+use crate::environment::{RuntimeEnvironment, SessionEnvironmentManager};
 
 #[derive(Clone)]
 pub struct SessionTools {
     blobs: Arc<dyn BlobStore>,
     workspace_store: Arc<dyn VfsWorkspaceStore>,
     mount_store: Arc<dyn VfsMountStore>,
+    environments: SessionEnvironmentManager,
+    environment_bindings: Option<Arc<dyn SessionEnvironmentBindingStore>>,
     messaging: Option<MessagingToolExecutor>,
 }
 
@@ -35,10 +48,13 @@ impl SessionTools {
         workspace_store: Arc<dyn VfsWorkspaceStore>,
         mount_store: Arc<dyn VfsMountStore>,
     ) -> Self {
+        let environments = SessionEnvironmentManager::new(blobs.clone(), mount_store.clone());
         Self {
             blobs,
             workspace_store,
             mount_store,
+            environments,
+            environment_bindings: None,
             messaging: None,
         }
     }
@@ -48,12 +64,28 @@ impl SessionTools {
         self
     }
 
+    pub fn with_environment_bindings(
+        mut self,
+        bindings: Arc<dyn SessionEnvironmentBindingStore>,
+    ) -> Self {
+        self.environment_bindings = Some(bindings);
+        self
+    }
+
+    pub fn with_environment(mut self, environment: RuntimeEnvironment) -> Self {
+        self.environments.insert_environment(environment);
+        self
+    }
+
     pub fn from_pg_store(store: Arc<PgStore>) -> Self {
         let blobs: Arc<dyn BlobStore> = store.clone();
         let workspace_store: Arc<dyn VfsWorkspaceStore> = store.clone();
         let mount_store: Arc<dyn VfsMountStore> = store.clone();
-        let outbox: Arc<dyn OutboxStore> = store;
-        Self::new(blobs, workspace_store, mount_store).with_messaging_outbox(outbox)
+        let outbox: Arc<dyn OutboxStore> = store.clone();
+        let environment_bindings: Arc<dyn SessionEnvironmentBindingStore> = store;
+        Self::new(blobs, workspace_store, mount_store)
+            .with_messaging_outbox(outbox)
+            .with_environment_bindings(environment_bindings)
     }
 
     async fn invoke_messaging_call(
@@ -123,31 +155,142 @@ impl SessionTools {
         }
     }
 
+    async fn environment_manager_for_session(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<SessionEnvironmentManager, CoreAgentIoError> {
+        let mut environments = self.environments.clone();
+        let Some(bindings) = &self.environment_bindings else {
+            return Ok(environments);
+        };
+        let bindings = bindings
+            .list_bindings_for_session(session_id)
+            .await
+            .map_err(map_environment_registry_error)?;
+        for binding in bindings {
+            if binding.status != SessionEnvironmentBindingStatus::Ready {
+                continue;
+            }
+            environments.insert_environment(self.runtime_environment_for_binding(binding).await?);
+        }
+        Ok(environments)
+    }
+
+    async fn runtime_environment_for_binding(
+        &self,
+        binding: SessionEnvironmentBindingRecord,
+    ) -> Result<RuntimeEnvironment, CoreAgentIoError> {
+        let mut client = connect_host_data_client(&binding.connection).await?;
+        let response = client
+            .initialize(&InitializeParams {
+                protocol_version: CURRENT_PROTOCOL_VERSION,
+                client_name: "lightspeed-temporal-server".to_owned(),
+                scope: binding.connection.scope.clone(),
+                resume_connection_id: None,
+            })
+            .await
+            .map_err(map_host_client_error)?;
+        if response.protocol_version != CURRENT_PROTOCOL_VERSION {
+            return Err(io_error(format!(
+                "unsupported host data protocol version {}; expected {CURRENT_PROTOCOL_VERSION}",
+                response.protocol_version
+            )));
+        }
+        let cwd = response
+            .default_cwd
+            .as_deref()
+            .or_else(|| binding.cwd.as_ref().map(|cwd| cwd.as_str()))
+            .map(FsPath::new)
+            .transpose()
+            .map_err(|error| io_error(format!("invalid host data default cwd: {error}")))?;
+        client
+            .initialized(&InitializedParams {})
+            .await
+            .map_err(map_host_client_error)?;
+
+        let mut connection = RemoteHostConnection::new(client, response.capabilities);
+        if let Some(cwd) = cwd {
+            connection = connection.with_cwd(cwd);
+        }
+        let (fs_context, environment_context) = connection.into_contexts(self.blobs.clone());
+        crate::environment::runtime_environment_from_binding_record(&binding, environment_context)
+            .map(|environment| environment.with_fs_context(fs_context))
+            .map_err(io_error)
+    }
+
     fn runtime_for_mounts(
         &self,
         mounts: Vec<VfsMountRecord>,
-    ) -> Result<InlineHostToolRuntime, CoreAgentIoError> {
-        let fs =
-            MountedVfsFileSystem::new(self.blobs.clone(), self.workspace_store.clone(), mounts)
-                .map_err(io_error)?;
-        let cwd = mounted_vfs_cwd(fs.mounts())?;
-        let ctx = HostToolContext::new(Arc::new(fs), None, self.blobs.clone()).with_cwd(cwd);
-        let catalog = workspace_catalog()?;
-        Ok(InlineHostToolRuntime::new(ctx, catalog))
-    }
-
-    fn targetless_runtime(&self) -> Result<InlineHostToolRuntime, CoreAgentIoError> {
-        let catalog = workspace_catalog()?;
-        Ok(InlineHostToolRuntime::with_targets_and_blob_store(
-            tools::host::HostToolTargets::new(),
+        environments: &SessionEnvironmentManager,
+        active_env_target: Option<&engine::ToolExecutionTarget>,
+    ) -> Result<InlineToolRuntime, CoreAgentIoError> {
+        let catalog = workspace_catalog(environments.has_environments())?;
+        let session_fs = if mounts.is_empty() {
+            None
+        } else {
+            let fs = MountedVfsFileSystem::new(
+                self.blobs.clone(),
+                self.workspace_store.clone(),
+                mounts.clone(),
+            )
+            .map_err(io_error)?;
+            let cwd = mounted_vfs_cwd(fs.mounts())?;
+            Some(FsToolContext::new(Arc::new(fs), self.blobs.clone()).with_cwd(cwd))
+        };
+        let targets = environments
+            .tool_targets(session_fs, &mounts, active_env_target)
+            .map_err(io_error)?;
+        Ok(InlineToolRuntime::with_targets_and_blob_store(
+            targets,
             self.blobs.clone(),
-            tools::host::context::HostToolLimits::default(),
+            ToolLimits::default(),
             catalog,
         ))
     }
 }
 
-fn workspace_catalog() -> Result<ToolCatalog, CoreAgentIoError> {
+async fn connect_host_data_client(
+    connection: &HostConnectionSpec,
+) -> Result<HostDataClient<host_client::WebSocketTransport>, CoreAgentIoError> {
+    match &connection.transport {
+        HostTransport::WebSocket => HostDataClient::connect(
+            &connection.endpoint,
+            WebSocketConnectOptions {
+                user_agent: Some("lightspeed-temporal-server".to_owned()),
+                ..WebSocketConnectOptions::default()
+            },
+        )
+        .await
+        .map_err(map_host_client_error),
+        HostTransport::Http => Err(unsupported_host_data_transport("http")),
+        HostTransport::Stdio => Err(unsupported_host_data_transport("stdio")),
+        HostTransport::Ssh => Err(unsupported_host_data_transport("ssh")),
+        HostTransport::Provider { provider_type } => Err(unsupported_host_data_transport(format!(
+            "provider:{provider_type}"
+        ))),
+    }
+}
+
+fn unsupported_host_data_transport(transport: impl std::fmt::Display) -> CoreAgentIoError {
+    io_error(format!(
+        "host data transport is not supported by this worker: {transport}"
+    ))
+}
+
+fn has_active_environment_fs(
+    environments: &SessionEnvironmentManager,
+    active_env_target: Option<&engine::ToolExecutionTarget>,
+) -> bool {
+    let Some(target) = active_env_target else {
+        return false;
+    };
+    target.namespace == tools::targets::ENV_TARGET_NAMESPACE
+        && environments
+            .environment(&target.id)
+            .is_some_and(|environment| environment.fs_context().is_some())
+}
+
+fn workspace_catalog(include_process_tools: bool) -> Result<ToolCatalog, CoreAgentIoError> {
     let mut catalog = ToolCatalog::new();
     for api_kind in [
         ProviderApiKind::OpenAiResponses,
@@ -156,6 +299,9 @@ fn workspace_catalog() -> Result<ToolCatalog, CoreAgentIoError> {
     ] {
         let target = ToolTarget::api_kind(api_kind);
         let mut config = ToolsetConfig::workspace();
+        if include_process_tools {
+            config.builtin.process = EnvironmentToolsetConfig::basic();
+        }
         config.web_fetch = WebFetchToolConfig::enabled();
         let toolset = resolve_toolset(ToolsetEnvironment { target: &target }, &config)
             .map_err(|error| io_error(format!("build mounted vfs tool catalog: {error}")))?;
@@ -198,12 +344,15 @@ impl CoreAgentTools for SessionTools {
             .list_mounts(&request.session_id)
             .await
             .map_err(map_catalog_error)?;
-        let no_mounts = mounts.is_empty();
-        let runtime = if no_mounts {
-            self.targetless_runtime()?
-        } else {
-            self.runtime_for_mounts(mounts)?
-        };
+        let active_env_target = request
+            .default_targets
+            .get(tools::targets::ENV_TARGET_NAMESPACE);
+        let environments = self
+            .environment_manager_for_session(&request.session_id)
+            .await?;
+        let has_session_fs =
+            !mounts.is_empty() || has_active_environment_fs(&environments, active_env_target);
+        let runtime = self.runtime_for_mounts(mounts, &environments, active_env_target)?;
 
         let mut results = Vec::with_capacity(request.calls.len());
         for call in &request.calls {
@@ -212,7 +361,12 @@ impl CoreAgentTools for SessionTools {
                     self.invoke_messaging_call(&request.session_id, request.run_id, call)
                         .await?,
                 );
-            } else if no_mounts && call.execution_target.is_some() {
+            } else if !has_session_fs
+                && call
+                    .execution_target
+                    .as_ref()
+                    .is_some_and(|target| target.namespace == tools::targets::FS_TARGET_NAMESPACE)
+            {
                 results.push(
                     failed_result(
                         self.blobs.as_ref(),
@@ -269,6 +423,14 @@ fn map_catalog_error(error: VfsCatalogError) -> CoreAgentIoError {
     io_error(format!("load VFS mounts: {error}"))
 }
 
+fn map_environment_registry_error(error: EnvironmentRegistryError) -> CoreAgentIoError {
+    io_error(format!("load session environment bindings: {error}"))
+}
+
+fn map_host_client_error(error: HostClientError) -> CoreAgentIoError {
+    io_error(format!("host data-plane call failed: {error}"))
+}
+
 fn map_blob_error(error: BlobStoreError) -> CoreAgentIoError {
     io_error(format!("write tool error blob: {error}"))
 }
@@ -283,9 +445,20 @@ fn io_error(error: impl std::fmt::Display) -> CoreAgentIoError {
 mod tests {
     use std::{collections::BTreeMap, sync::Mutex};
 
+    use crate::environment::RuntimeEnvironment;
     use engine::{
-        BlobRef, RunId, SessionId, ToolBatchId, ToolCallId, ToolExecutionTarget, ToolName, TurnId,
+        BlobRef, RunId, SessionId, ToolBatchId, ToolCallId, ToolName, TurnId,
         storage::InMemoryBlobStore,
+    };
+    use tools::environment::{
+        EnvironmentToolContext,
+        process::{
+            ProcessError, ProcessExecResult, ProcessExecutor, ProcessOutput, ProcessRequest,
+            ProcessStatus, StreamOutput, WriteProcessStdinRequest,
+        },
+        projection::{
+            EnvironmentCapabilities, EnvironmentKind, EnvironmentRecord, EnvironmentStatus,
+        },
     };
     use vfs::{
         CompareAndSetVfsWorkspaceHead, CreateInlineSnapshotRequest, CreateVfsWorkspaceRecord,
@@ -299,6 +472,37 @@ mod tests {
     struct TestCatalog {
         workspaces: Mutex<BTreeMap<VfsWorkspaceId, VfsWorkspaceRecord>>,
         mounts: Mutex<BTreeMap<SessionId, Vec<VfsMountRecord>>>,
+    }
+
+    #[derive(Default)]
+    struct RecordingProcessExecutor {
+        requests: Mutex<Vec<ProcessRequest>>,
+    }
+
+    #[async_trait]
+    impl ProcessExecutor for RecordingProcessExecutor {
+        async fn run_process(&self, request: ProcessRequest) -> ProcessExecResult<ProcessOutput> {
+            self.requests.lock().expect("process lock").push(request);
+            Ok(ProcessOutput {
+                status: ProcessStatus::Succeeded,
+                handle: None,
+                exit_code: Some(0),
+                stdout: StreamOutput {
+                    bytes: b"process ok".to_vec(),
+                    truncated: false,
+                },
+                stderr: StreamOutput::default(),
+            })
+        }
+
+        async fn write_stdin(
+            &self,
+            _request: WriteProcessStdinRequest,
+        ) -> ProcessExecResult<ProcessOutput> {
+            Err(ProcessError::Unsupported {
+                message: "not needed".to_owned(),
+            })
+        }
     }
 
     #[async_trait]
@@ -448,6 +652,31 @@ mod tests {
         (blobs, tools, session_id)
     }
 
+    fn test_environment(
+        blobs: Arc<InMemoryBlobStore>,
+        process: Arc<RecordingProcessExecutor>,
+    ) -> RuntimeEnvironment {
+        RuntimeEnvironment::new(
+            EnvironmentRecord {
+                env_id: "test".to_owned(),
+                kind: EnvironmentKind::AttachedHost,
+                capabilities: EnvironmentCapabilities {
+                    fs_read: true,
+                    fs_write: true,
+                    process_exec: true,
+                    process_stdin: true,
+                    network: false,
+                    persistent: false,
+                },
+                exec_target: Some(tools::targets::environment_target("test")),
+                cwd: Some(FsPath::new("/workspace").expect("cwd")),
+                status: EnvironmentStatus::Ready,
+            },
+            EnvironmentToolContext::new(Some(process), blobs)
+                .with_process_cwd(FsPath::new("/workspace").expect("process cwd")),
+        )
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn session_tools_read_session_workspace_mount() {
         let (blobs, tools, session_id) = session_tools_with_readme_mount().await;
@@ -462,11 +691,12 @@ mod tests {
                 run_id: RunId::new(1),
                 turn_id: TurnId::new(1),
                 batch_id: ToolBatchId::new(1),
+                default_targets: Default::default(),
                 calls: vec![engine::ToolInvocationRequest {
                     call_id: ToolCallId::new("call_1"),
                     tool_name: ToolName::new("read_file"),
                     arguments_ref,
-                    execution_target: Some(ToolExecutionTarget::new("host", "local")),
+                    execution_target: Some(tools::targets::session_fs_target()),
                 }],
             })
             .await
@@ -494,11 +724,12 @@ mod tests {
                 run_id: RunId::new(1),
                 turn_id: TurnId::new(1),
                 batch_id: ToolBatchId::new(1),
+                default_targets: Default::default(),
                 calls: vec![engine::ToolInvocationRequest {
                     call_id: ToolCallId::new("call_1"),
                     tool_name: ToolName::new("Read"),
                     arguments_ref,
-                    execution_target: Some(ToolExecutionTarget::new("host", "local")),
+                    execution_target: Some(tools::targets::session_fs_target()),
                 }],
             })
             .await
@@ -510,6 +741,78 @@ mod tests {
             .await
             .expect("output");
         assert!(output.contains("hello"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn session_tools_route_file_tools_to_vfs_and_process_tools_to_environment() {
+        let (blobs, tools, session_id) = session_tools_with_readme_mount().await;
+        let process = Arc::new(RecordingProcessExecutor::default());
+        let tools = tools.with_environment(test_environment(blobs.clone(), process.clone()));
+        let read_args = blobs
+            .put_bytes(br#"{"path":"README.md","offset":1,"limit":10}"#.to_vec())
+            .await
+            .expect("read arguments");
+        let process_args = blobs
+            .put_bytes(br#"{"argv":["echo","hello"]}"#.to_vec())
+            .await
+            .expect("process arguments");
+
+        let result = tools
+            .invoke_batch(ToolInvocationBatchRequest {
+                session_id,
+                run_id: RunId::new(1),
+                turn_id: TurnId::new(1),
+                batch_id: ToolBatchId::new(1),
+                default_targets: Default::default(),
+                calls: vec![
+                    engine::ToolInvocationRequest {
+                        call_id: ToolCallId::new("call_read"),
+                        tool_name: ToolName::new("read_file"),
+                        arguments_ref: read_args,
+                        execution_target: Some(tools::targets::session_fs_target()),
+                    },
+                    engine::ToolInvocationRequest {
+                        call_id: ToolCallId::new("call_process"),
+                        tool_name: ToolName::new("exec_command"),
+                        arguments_ref: process_args,
+                        execution_target: Some(tools::targets::environment_target("test")),
+                    },
+                ],
+            })
+            .await
+            .expect("invoke");
+
+        assert_eq!(result.results.len(), 2);
+        assert_eq!(result.results[0].status, ToolCallStatus::Succeeded);
+        if result.results[1].status != ToolCallStatus::Succeeded {
+            let error = blobs
+                .read_text(result.results[1].error_ref.as_ref().expect("process error"))
+                .await
+                .expect("process error text");
+            panic!("process tool failed: {error}");
+        }
+        let read_output = blobs
+            .read_text(result.results[0].output_ref.as_ref().expect("read output"))
+            .await
+            .expect("read output text");
+        assert!(read_output.contains("hello"));
+        let process_visible = blobs
+            .read_text(
+                result.results[1]
+                    .model_visible_output_ref
+                    .as_ref()
+                    .expect("process visible"),
+            )
+            .await
+            .expect("process visible text");
+        assert!(process_visible.contains("process ok"));
+        let requests = process.requests.lock().expect("process lock");
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            requests[0].argv,
+            vec!["echo".to_owned(), "hello".to_owned()]
+        );
+        assert_eq!(requests[0].cwd, Some(FsPath::new("/workspace").unwrap()));
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -536,6 +839,7 @@ mod tests {
                 run_id: RunId::new(9),
                 turn_id: TurnId::new(1),
                 batch_id: ToolBatchId::new(1),
+                default_targets: Default::default(),
                 calls: vec![
                     engine::ToolInvocationRequest {
                         call_id: ToolCallId::new("call_send"),
@@ -603,11 +907,12 @@ mod tests {
                 run_id: RunId::new(1),
                 turn_id: TurnId::new(1),
                 batch_id: ToolBatchId::new(1),
+                default_targets: Default::default(),
                 calls: vec![engine::ToolInvocationRequest {
                     call_id: ToolCallId::new("call_1"),
                     tool_name: ToolName::new("read_file"),
                     arguments_ref,
-                    execution_target: Some(ToolExecutionTarget::new("host", "local")),
+                    execution_target: Some(tools::targets::session_fs_target()),
                 }],
             })
             .await
@@ -637,6 +942,7 @@ mod tests {
                 run_id: RunId::new(1),
                 turn_id: TurnId::new(1),
                 batch_id: ToolBatchId::new(1),
+                default_targets: Default::default(),
                 calls: vec![engine::ToolInvocationRequest {
                     call_id: ToolCallId::new("call_1"),
                     tool_name: ToolName::new("web_fetch"),

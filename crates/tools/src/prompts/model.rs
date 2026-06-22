@@ -2,7 +2,7 @@ use engine::{BlobRef, ContextEntryKey};
 use serde::{Deserialize, Serialize};
 use vfs::{VfsMountAccess, VfsPath, VfsWorkspaceId};
 
-use crate::host::fs::FsPath;
+use crate::fs::FsPath;
 
 pub const PROMPT_INSTRUCTIONS_CONTEXT_KEY_PREFIX: &str = "instructions.100.prompts";
 pub const PROMPT_INSTRUCTIONS_PROVIDER_KIND: &str = "lightspeed.prompts.instructions";

@@ -8,6 +8,9 @@ temporal-workflow = { path = "../temporal-workflow" }
 api = { path = "../api" }
 api-projection = { path = "../api-projection" }
 engine = { path = "../engine" }
+environment-registry = { path = "../environment-registry" }
+host-client = { path = "../host-client" }
+host-protocol = { path = "../host-protocol" }
 vfs = { path = "../vfs" }
 anyhow = "1"
 async-trait = "0.1"
@@ -40,6 +43,7 @@ uuid = { version = "1", features = ["v4"] }
 [dev-dependencies]
 test-support = { path = "../test-support" }
 dotenvy = "0.15"
+tokio-tungstenite = { version = "0.26", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 
 [[bin]]
 name = "server"

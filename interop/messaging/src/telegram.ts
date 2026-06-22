@@ -6,6 +6,7 @@ import {
   type SessionRecipe,
   type TelegramBridgeConfig,
 } from "./config.js";
+import { cleanChannelMessageId } from "./channel_id.js";
 import { stableHash } from "./ids.js";
 import { shouldQuoteChunk, type ReplyToMode } from "./policy.js";
 import type { OutboundMessageView } from "@lightspeed/agent-client";
@@ -233,7 +234,7 @@ async function deliverTelegramPayload(
               ? { message_thread_id: threadId }
               : {}),
             ...(index === 0 && payload.replyTo !== undefined && payload.replyTo !== null
-              ? { reply_parameters: { message_id: Number(payload.replyTo) } }
+              ? { reply_parameters: { message_id: telegramMessageId(payload.replyTo) } }
               : {}),
           };
           const sent = await sendWithFormatting(
@@ -248,7 +249,7 @@ async function deliverTelegramPayload(
           : {};
       }
       case "react": {
-        await bot.api.setMessageReaction(chatId, Number(payload.messageId), [
+        await bot.api.setMessageReaction(chatId, telegramMessageId(payload.messageId), [
           { type: "emoji", emoji: payload.emoji as never },
         ]);
         return {};
@@ -256,10 +257,12 @@ async function deliverTelegramPayload(
       case "edit": {
         await sendWithFormatting(
           (text, parseMode) =>
-            bot.api.editMessageText(chatId, Number(payload.messageId), text, { ...parseMode }),
+            bot.api.editMessageText(chatId, telegramMessageId(payload.messageId), text, {
+              ...parseMode,
+            }),
           payload.text,
         );
-        return { channelMessageId: payload.messageId };
+        return { channelMessageId: cleanChannelMessageId(payload.messageId) };
       }
     }
   } catch (error) {
@@ -287,6 +290,9 @@ async function sendWithFormatting<T>(
 }
 
 function asDeliveryError(error: unknown): DeliveryError {
+  if (error instanceof DeliveryError) {
+    return error;
+  }
   const message = error instanceof Error ? error.message : String(error);
   // Telegram 4xx responses (bad message id, no permission, unsupported
   // reaction) will not succeed on retry; transport errors might.
@@ -294,6 +300,15 @@ function asDeliveryError(error: unknown): DeliveryError {
     message,
   );
   return new DeliveryError(`telegram delivery failed: ${message}`, retryable);
+}
+
+function telegramMessageId(messageId: string): number {
+  const clean = cleanChannelMessageId(messageId);
+  const parsed = Number(clean);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new DeliveryError(`invalid telegram message id: ${messageId}`, false);
+  }
+  return parsed;
 }
 
 async function downloadTelegramPhoto(

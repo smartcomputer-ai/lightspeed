@@ -10,7 +10,7 @@ use thiserror::Error;
 use vfs::VfsPath;
 
 use crate::{
-    host::fs::{FileSystem, FsError, FsPath},
+    fs::{FileSystem, FsError, FsPath},
     skills::{
         SkillCatalogBuildRecord, SkillCatalogRoot, SkillCatalogRootSource, SkillCatalogSnapshot,
         SkillCatalogSourceFingerprint, SkillCatalogSourceInput, SkillDependencies, SkillInterface,
@@ -640,14 +640,14 @@ trait RootReadDirectory {
     async fn fs_read_directory(
         &self,
         fs: &dyn FileSystem,
-    ) -> Result<Vec<crate::host::fs::ReadDirectoryEntry>, FsError>;
+    ) -> Result<Vec<crate::fs::ReadDirectoryEntry>, FsError>;
 }
 
 impl RootReadDirectory for SkillCatalogRoot {
     async fn fs_read_directory(
         &self,
         fs: &dyn FileSystem,
-    ) -> Result<Vec<crate::host::fs::ReadDirectoryEntry>, FsError> {
+    ) -> Result<Vec<crate::fs::ReadDirectoryEntry>, FsError> {
         fs.read_directory(&self.root_path).await
     }
 }
@@ -664,7 +664,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        host::fs::{CreateDirectoryOptions, FileSystem, InMemoryFileSystem},
+        fs::{CreateDirectoryOptions, FileSystem, InMemoryFileSystem},
         skills::{SkillScope, SkillTrustLevel},
     };
 

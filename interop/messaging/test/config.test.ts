@@ -13,22 +13,26 @@ describe("parseRecipes", () => {
   it("parses config, mounts with defaults, and mcp links", () => {
     const recipes = parseRecipes({
       personal: {
-        config: { tools: { host: "readOnly" } },
+        config: { tools: { filesystem: "readOnly" } },
         mounts: [
           { workspaceId: "ws-1" },
           { mountPath: "/snap", snapshotRef: "snap-1", access: "readOnly" },
         ],
         mcp: [{ serverId: "github", allowedTools: ["search"], approval: "never" }],
+        environments: [{ envId: "devbox", providerId: "hetzner-devbox" }],
       },
     });
     const personal = recipes.personal as SessionRecipe;
-    expect(personal.config).toEqual({ tools: { host: "readOnly" } });
+    expect(personal.config).toEqual({ tools: { filesystem: "readOnly" } });
     expect(personal.mounts).toEqual([
       { mountPath: "/workspace", source: { workspaceId: "ws-1" }, access: "readWrite" },
       { mountPath: "/snap", source: { snapshotRef: "snap-1" }, access: "readOnly" },
     ]);
     expect(personal.mcp).toEqual([
       { serverId: "github", allowedTools: ["search"], approval: "never" },
+    ]);
+    expect(personal.environments).toEqual([
+      { envId: "devbox", providerId: "hetzner-devbox", targetId: "local", activate: true },
     ]);
   });
 
@@ -40,6 +44,25 @@ describe("parseRecipes", () => {
 
   it("rejects an mcp link with no serverId", () => {
     expect(() => parseRecipes({ r: { mcp: [{ allowedTools: [] }] } })).toThrow(/serverId/);
+  });
+
+  it("accepts envs as an alias and rejects multiple active environments", () => {
+    expect(parseRecipes({ r: { envs: [{ envId: "devbox", providerId: "provider" }] } }).r)
+      .toMatchObject({
+        environments: [
+          { envId: "devbox", providerId: "provider", targetId: "local", activate: true },
+        ],
+      });
+    expect(() =>
+      parseRecipes({
+        r: {
+          environments: [
+            { envId: "devbox-a", providerId: "provider-a" },
+            { envId: "devbox-b", providerId: "provider-b" },
+          ],
+        },
+      }),
+    ).toThrow(/at most one environment/);
   });
 });
 
@@ -57,6 +80,26 @@ describe("parseBindings", () => {
     expect(bindings).toEqual<BindingRule[]>([
       { match: { channel: "telegram", handle: "@lukas" }, recipe: "personal", sessionKey: "lukas" },
       { match: { channel: "*" }, recipe: "support" },
+    ]);
+  });
+
+  it("parses handle arrays", () => {
+    const bindings = parseBindings(
+      [
+        {
+          match: { channel: "telegram", handle: ["@lukas", "6071843755"] },
+          recipe: "personal",
+          sessionKey: "lukas",
+        },
+      ],
+      recipes,
+    );
+    expect(bindings).toEqual<BindingRule[]>([
+      {
+        match: { channel: "telegram", handle: ["@lukas", "6071843755"] },
+        recipe: "personal",
+        sessionKey: "lukas",
+      },
     ]);
   });
 
@@ -82,6 +125,25 @@ describe("resolveBinding", () => {
       resolveBinding(
         { channel: "telegram", handles: ["123", "Lukas"], chatId: "dm", scope: "direct" },
         bindings,
+      ),
+    ).toEqual({ recipe: "personal", sessionKey: "lukas" });
+  });
+
+  it("matches any configured handle in a binding handle array", () => {
+    const arrayBindings = parseBindings(
+      [
+        {
+          match: { channel: "telegram", handle: ["@lukas", "6071843755"] },
+          recipe: "personal",
+          sessionKey: "lukas",
+        },
+      ],
+      parseRecipes({ personal: {} }),
+    );
+    expect(
+      resolveBinding(
+        { channel: "telegram", handles: ["6071843755"], chatId: "dm", scope: "direct" },
+        arrayBindings,
       ),
     ).toEqual({ recipe: "personal", sessionKey: "lukas" });
   });
@@ -127,7 +189,7 @@ describe("handleDenied", () => {
 });
 
 describe("resolveInboundAccess", () => {
-  const recipes = parseRecipes({ personal: { config: { tools: { host: "readOnly" } } } });
+  const recipes = parseRecipes({ personal: { config: { tools: { filesystem: "readOnly" } } } });
   const bindings = parseBindings(
     [{ match: { channel: "telegram", handle: "@lukas" }, recipe: "personal", sessionKey: "lukas" }],
     recipes,
@@ -143,7 +205,7 @@ describe("resolveInboundAccess", () => {
     expect(access.turnAllowed).toBe(true);
     expect(access.controlAllowed).toBe(true);
     expect(access.recipeName).toBe("personal");
-    expect(access.recipe?.config).toEqual({ tools: { host: "readOnly" } });
+    expect(access.recipe?.config).toEqual({ tools: { filesystem: "readOnly" } });
     expect(access.sessionKey).toBe("lukas");
   });
 

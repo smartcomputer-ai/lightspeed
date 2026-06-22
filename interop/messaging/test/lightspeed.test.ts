@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { LightspeedClient, SessionView } from "@lightspeed/agent-client";
+import { LightspeedRpcError, type LightspeedClient, type SessionView } from "@lightspeed/agent-client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { SessionRecipe } from "../src/config.js";
 import {
@@ -90,9 +90,45 @@ interface RecordedCall {
 
 class FakeClient {
   readonly calls: RecordedCall[] = [];
+  readonly environments = new Map<string, Record<string, unknown>>();
+
   async call(method: string, params: Record<string, unknown>): Promise<unknown> {
     this.calls.push({ method, params });
+    if (method === "session/environments/read") {
+      const environment = this.environments.get(String(params.envId));
+      if (!environment) {
+        throw new LightspeedRpcError({
+          code: -32004,
+          message: "environment not found",
+        });
+      }
+      return { result: { environment } };
+    }
+    if (method === "session/read") {
+      return { result: { session: sessionFixture() } };
+    }
     return { result: {} };
+  }
+
+  async startRun(
+    sessionId: string,
+    input: unknown[],
+    options: Record<string, unknown> = {},
+  ): Promise<unknown> {
+    this.calls.push({ method: "run/start", params: { sessionId, input, options } });
+    return { result: { run: { id: "run_1", input, items: [], status: "running" } } };
+  }
+
+  async awaitRun(
+    sessionId: string,
+    runId: string,
+    options: { after?: unknown } = {},
+  ): Promise<unknown> {
+    this.calls.push({
+      method: "awaitRun",
+      params: { sessionId, runId, after: options.after ?? null },
+    });
+    return { state: { status: "completed" }, cursor: { seq: 1 }, page: { result: {} } };
   }
 }
 
@@ -122,7 +158,7 @@ describe("LightspeedSessionBridge.ensureSession", () => {
   it("starts, mounts, and links once per session in order", async () => {
     const client = new FakeClient();
     const recipe: SessionRecipe = {
-      config: { tools: { host: "readOnly" } },
+      config: { tools: { filesystem: "readOnly" } },
       mounts: [
         { mountPath: "/workspace", source: { workspaceId: "ws-1" }, access: "readWrite" },
       ],
@@ -138,7 +174,7 @@ describe("LightspeedSessionBridge.ensureSession", () => {
       "session/mcp/link",
     ]);
     expect(client.calls[0]?.params.config).toEqual({
-      tools: { host: "readOnly", messaging: true },
+      tools: { filesystem: "readOnly", messaging: true },
     });
     expect(client.calls[1]?.params).toMatchObject({
       sessionId: "session_x",
@@ -158,5 +194,87 @@ describe("LightspeedSessionBridge.ensureSession", () => {
     await bridge(client).ensureSession("session_y");
     expect(client.calls.map((call) => call.method)).toEqual(["session/start"]);
     expect(client.calls[0]?.params.config).toEqual({ tools: { messaging: true } });
+  });
+
+  it("attaches a missing recipe environment", async () => {
+    const client = new FakeClient();
+    const recipe: SessionRecipe = {
+      mounts: [],
+      mcp: [],
+      environments: [
+        {
+          envId: "devbox",
+          providerId: "hetzner-devbox",
+          targetId: "local",
+          activate: true,
+        },
+      ],
+    };
+    await bridge(client).ensureSession("session_env", recipe);
+
+    expect(client.calls.map((call) => call.method)).toEqual([
+      "session/start",
+      "session/environments/read",
+      "session/environments/attach",
+    ]);
+    expect(client.calls[2]?.params).toMatchObject({
+      sessionId: "session_env",
+      envId: "devbox",
+      providerId: "hetzner-devbox",
+      request: { type: "target", targetId: "local" },
+      activate: true,
+    });
+  });
+
+  it("activates an existing inactive recipe environment", async () => {
+    const client = new FakeClient();
+    client.environments.set("devbox", { envId: "devbox", active: false });
+    const recipe: SessionRecipe = {
+      mounts: [],
+      mcp: [],
+      environments: [
+        {
+          envId: "devbox",
+          providerId: "hetzner-devbox",
+          targetId: "local",
+          activate: true,
+        },
+      ],
+    };
+    await bridge(client).ensureSession("session_env", recipe);
+
+    expect(client.calls.map((call) => call.method)).toEqual([
+      "session/start",
+      "session/environments/read",
+      "session/environments/activate",
+    ]);
+    expect(client.calls[2]?.params).toMatchObject({
+      sessionId: "session_env",
+      envId: "devbox",
+    });
+  });
+
+  it("awaits each submitted run from a fresh cursor", async () => {
+    const client = new FakeClient();
+    await store.getOrCreateBinding("conversation", {
+      channel: "telegram",
+      accountId: "default",
+      chatId: "chat",
+      sessionId: "session_submit",
+      activation: "dm",
+    });
+    await store.updateCursor("conversation", { seq: 99 });
+
+    const reply = await bridge(client).submitTurn({
+      provider: "telegram",
+      accountId: "default",
+      conversationKey: "conversation",
+      sessionId: "session_submit",
+      submissionParts: ["message_1"],
+      text: "hello",
+    });
+
+    expect(client.calls.find((call) => call.method === "awaitRun")?.params.after).toBeNull();
+    expect(reply.text).toBe("old answer");
   });
 });

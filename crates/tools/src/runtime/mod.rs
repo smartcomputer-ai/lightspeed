@@ -9,8 +9,10 @@ use serde_json::Value;
 
 use crate::error::{ToolError, ToolResult};
 
+pub mod inline;
 pub mod target;
 
+pub use inline::InlineToolRuntime;
 pub use target::ToolTarget;
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -19,7 +19,7 @@
     ]
   },
   "expect": {
-    "tool_called": ["host.glob"],
+    "tool_called": ["fs.glob"],
     "assistant_contains": ["GLOB=OK"],
     "tool_output_contains": ["configs/app.dev.toml", "configs/app.prod.toml"]
   },
@@ -29,6 +29,6 @@
   },
   "run": {
     "max_tokens": 768,
-    "allowed_tools": ["host.glob"]
+    "allowed_tools": ["fs.glob"]
   }
 }

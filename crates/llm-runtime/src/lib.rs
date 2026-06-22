@@ -6,6 +6,7 @@
 
 pub mod anthropic_messages;
 pub mod blob_io;
+mod environment_prompts;
 pub mod error;
 pub mod executor;
 pub mod openai_completions;

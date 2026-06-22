@@ -15,6 +15,10 @@ impl GatewayAgentApi {
             return Ok(loaded);
         }
 
+        self.refresh_environment_projection_for_idle_session(session_id, &loaded.state)
+            .await?;
+
+        let loaded = self.load_session_state(session_id).await?;
         self.refresh_prompt_instructions_for_idle_session(session_id, &loaded.state)
             .await?;
 

@@ -9,11 +9,11 @@ use std::collections::BTreeMap;
 use api::{
     ActiveToolsView, AgentApiError, CompactionPolicyInput, ContextConfigInput,
     ContextEntryInputView, ContextEntryKindView, ContextMessageRoleView, ContextView, EventCursor,
-    EventJoinsView, GenerationConfig, HostToolMode as ApiHostToolMode, InputItem, MediaKind,
-    ModelConfig, ProviderContextDisplayView, ProviderNativeToolExecutionView, ReasoningEffort,
-    RunDefaultsConfig, RunStatus as ApiRunStatus, RunView, SessionConfigView, SessionEventKindView,
-    SessionEventView, SessionItemView, SessionStatus as ApiSessionStatus, SessionView,
-    TokenEstimateQualityView, TokenEstimateView, ToolBatchView, ToolCallDisplayGroup,
+    EventJoinsView, FilesystemToolMode as ApiFilesystemToolMode, GenerationConfig, InputItem,
+    MediaKind, ModelConfig, ProviderContextDisplayView, ProviderNativeToolExecutionView,
+    ReasoningEffort, RunDefaultsConfig, RunStatus as ApiRunStatus, RunView, SessionConfigView,
+    SessionEventKindView, SessionEventView, SessionItemView, SessionStatus as ApiSessionStatus,
+    SessionView, TokenEstimateQualityView, TokenEstimateView, ToolBatchView, ToolCallDisplayGroup,
     ToolCallDisplayView, ToolCallEventView, ToolCallView, ToolChoiceConfig, ToolChoiceModeConfig,
     ToolConfigView, ToolEffectView, ToolExecutionTargetView, ToolItemStatus, ToolKindView,
     ToolParallelismView, ToolTargetRequirementView, ToolView,
@@ -186,6 +186,27 @@ impl<'a> CoreAgentProjector<'a> {
                     .clone()
                     .unwrap_or_else(|| "instructions".to_owned()),
             }),
+            ContextEntryKind::VfsCatalog => Ok(SessionItemView::SystemEvent {
+                id,
+                text: item
+                    .preview
+                    .clone()
+                    .unwrap_or_else(|| "VFS catalog".to_owned()),
+            }),
+            ContextEntryKind::EnvironmentCatalog => Ok(SessionItemView::SystemEvent {
+                id,
+                text: item
+                    .preview
+                    .clone()
+                    .unwrap_or_else(|| "environment catalog".to_owned()),
+            }),
+            ContextEntryKind::EnvironmentActive => Ok(SessionItemView::SystemEvent {
+                id,
+                text: item
+                    .preview
+                    .clone()
+                    .unwrap_or_else(|| "active environment".to_owned()),
+            }),
             ContextEntryKind::SkillCatalog => Ok(SessionItemView::SystemEvent {
                 id,
                 text: item
@@ -279,7 +300,7 @@ impl<'a> CoreAgentProjector<'a> {
             tools: ToolConfigView {
                 web_search: effective_web_search_enabled(config),
                 web_fetch: effective_web_fetch_enabled(config),
-                host: host_tool_mode_to_api(effective_host_tool_mode(config)),
+                filesystem: filesystem_tool_mode_to_api(effective_filesystem_tool_mode(config)),
             },
         })
     }
@@ -1074,15 +1095,18 @@ fn effective_web_fetch_enabled(config: &SessionConfig) -> bool {
     config.tools.web_fetch.unwrap_or(true)
 }
 
-fn effective_host_tool_mode(config: &SessionConfig) -> engine::HostToolMode {
-    config.tools.host.unwrap_or(engine::HostToolMode::Edit)
+fn effective_filesystem_tool_mode(config: &SessionConfig) -> engine::FilesystemToolMode {
+    config
+        .tools
+        .filesystem
+        .unwrap_or(engine::FilesystemToolMode::Edit)
 }
 
-fn host_tool_mode_to_api(mode: engine::HostToolMode) -> ApiHostToolMode {
+fn filesystem_tool_mode_to_api(mode: engine::FilesystemToolMode) -> ApiFilesystemToolMode {
     match mode {
-        engine::HostToolMode::None => ApiHostToolMode::None,
-        engine::HostToolMode::ReadOnly => ApiHostToolMode::ReadOnly,
-        engine::HostToolMode::Edit => ApiHostToolMode::Edit,
+        engine::FilesystemToolMode::None => ApiFilesystemToolMode::None,
+        engine::FilesystemToolMode::ReadOnly => ApiFilesystemToolMode::ReadOnly,
+        engine::FilesystemToolMode::Edit => ApiFilesystemToolMode::Edit,
     }
 }
 
@@ -1252,6 +1276,9 @@ fn context_entry_kind_to_api(kind: &ContextEntryKind) -> ContextEntryKindView {
             role: context_message_role_to_api(role),
         },
         ContextEntryKind::Instructions => ContextEntryKindView::Instructions,
+        ContextEntryKind::VfsCatalog => ContextEntryKindView::VfsCatalog,
+        ContextEntryKind::EnvironmentCatalog => ContextEntryKindView::EnvironmentCatalog,
+        ContextEntryKind::EnvironmentActive => ContextEntryKindView::EnvironmentActive,
         ContextEntryKind::SkillCatalog => ContextEntryKindView::SkillCatalog,
         ContextEntryKind::SkillActivation { skill_id } => ContextEntryKindView::SkillActivation {
             skill_id: skill_id.as_str().to_owned(),

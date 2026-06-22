@@ -20,7 +20,7 @@
         },
         "tools": {
           "messaging": true,
-          "host": "readWrite",
+          "filesystem": "edit",
           "webSearch": true,
           "webFetch": true
         }
@@ -38,6 +38,14 @@
           "allowedTools": ["search_issues", "get_issue"],
           "approval": "never"
         }
+      ],
+      "environments": [
+        {
+          "envId": "devbox",
+          "providerId": "hetzner-devbox",
+          "targetId": "local",
+          "activate": true
+        }
       ]
     },
 
@@ -52,7 +60,8 @@
           "access": "readOnly"
         }
       ],
-      "mcp": []
+      "mcp": [],
+      "environments": []
     }
   },
 

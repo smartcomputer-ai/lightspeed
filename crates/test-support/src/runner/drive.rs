@@ -10,6 +10,7 @@ use engine::{
     storage::{AppendSessionEvents, BlobStore, ReadSessionEvents},
 };
 use tools::{
+    environment::projection::{EnvironmentProjectionInput, prepare_environment_projection_refresh},
     prompts::{
         PromptAssemblyLimits, conventional_vfs_prompt_root_specs,
         prepare_prompt_instructions_publication, resolve_mounted_vfs_prompt_roots,
@@ -68,6 +69,24 @@ impl SessionRunner {
         else {
             return Ok(());
         };
+        self.admit_refresh_command(
+            drive,
+            observed_at_ms,
+            emitted_entries,
+            command,
+            "prompt instructions refresh",
+        )
+        .await
+    }
+
+    async fn admit_refresh_command(
+        &self,
+        drive: &mut CoreAgentDrive,
+        observed_at_ms: u64,
+        emitted_entries: &mut Vec<engine::CoreAgentEntry>,
+        command: CoreAgentCommand,
+        label: &'static str,
+    ) -> Result<(), RunnerError> {
         let action = drive.admit_command(command, observed_at_ms)?;
         match action {
             CoreAgentAction::AppendEvents {
@@ -89,9 +108,7 @@ impl SessionRunner {
             }
             CoreAgentAction::Idle | CoreAgentAction::Closed => Ok(()),
             other => Err(RunnerError::InvalidRequest {
-                message: format!(
-                    "prompt instructions refresh emitted unexpected action: {other:?}"
-                ),
+                message: format!("{label} emitted unexpected action: {other:?}"),
             }),
         }
     }
@@ -164,6 +181,12 @@ impl SessionRunner {
         let mut emitted_entries = Vec::new();
 
         if should_refresh_run_context_before_admitting(drive.state(), &request.command) {
+            self.refresh_environment_projection_before_run(
+                &mut drive,
+                request.observed_at_ms,
+                &mut emitted_entries,
+            )
+            .await?;
             self.refresh_prompt_instructions_before_run(
                 &mut drive,
                 request.observed_at_ms,
@@ -216,6 +239,54 @@ impl SessionRunner {
         })
     }
 
+    async fn refresh_environment_projection_before_run(
+        &self,
+        drive: &mut CoreAgentDrive,
+        observed_at_ms: u64,
+        emitted_entries: &mut Vec<engine::CoreAgentEntry>,
+    ) -> Result<(), RunnerError> {
+        let commands = self
+            .refresh_environment_projection_commands(drive.session_id(), drive.state())
+            .await?;
+        for command in commands {
+            self.admit_refresh_command(
+                drive,
+                observed_at_ms,
+                emitted_entries,
+                command,
+                "environment projection refresh",
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    async fn refresh_environment_projection_commands(
+        &self,
+        session_id: &SessionId,
+        state: &CoreAgentState,
+    ) -> Result<Vec<CoreAgentCommand>, RunnerError> {
+        let Some(mount_store) = self.stores.vfs_mount_store.as_ref() else {
+            return Ok(Vec::new());
+        };
+
+        let mounts = mount_store.list_mounts(session_id).await.map_err(|error| {
+            RunnerError::InvalidRequest {
+                message: format!("load VFS mounts for environment projection refresh: {error}"),
+            }
+        })?;
+        let refresh = prepare_environment_projection_refresh(
+            self.stores.blobs.as_ref(),
+            state,
+            EnvironmentProjectionInput::from_mounts(mounts),
+        )
+        .await
+        .map_err(|error| RunnerError::InvalidRequest {
+            message: format!("prepare environment projection refresh: {error}"),
+        })?;
+        Ok(refresh.commands)
+    }
+
     async fn refresh_skill_catalog_before_run(
         &self,
         drive: &mut CoreAgentDrive,
@@ -228,30 +299,14 @@ impl SessionRunner {
         else {
             return Ok(());
         };
-        let action = drive.admit_command(command, observed_at_ms)?;
-        match action {
-            CoreAgentAction::AppendEvents {
-                expected_head,
-                events,
-            } => {
-                let appended = self
-                    .stores
-                    .sessions
-                    .append(AppendSessionEvents {
-                        session_id: drive.session_id().clone(),
-                        expected_head,
-                        events,
-                    })
-                    .await?;
-                let entries = drive.resume_appended(appended.entries)?;
-                emitted_entries.extend(entries);
-                Ok(())
-            }
-            CoreAgentAction::Idle | CoreAgentAction::Closed => Ok(()),
-            other => Err(RunnerError::InvalidRequest {
-                message: format!("skill catalog refresh emitted unexpected action: {other:?}"),
-            }),
-        }
+        self.admit_refresh_command(
+            drive,
+            observed_at_ms,
+            emitted_entries,
+            command,
+            "skill catalog refresh",
+        )
+        .await
     }
 
     async fn refresh_skill_catalog_command(
@@ -622,8 +677,8 @@ mod tests {
         ContextCompactionStatus, ContextConfig, ContextEntryInput, ContextEntryKey,
         ContextEntryKind, ContextMessageRole, CoreAgentCommand, CoreAgentEventKind,
         FunctionToolSpec, LlmFinish, ModelSelection, ObservedToolCall, ProviderApiKind, RunConfig,
-        RunStatus, SessionConfig, SessionId, ToolCallResult, ToolExecutionTarget, ToolKind,
-        ToolName, ToolParallelism, ToolSpec, ToolTargetRequirement, TurnConfig, TurnEvent,
+        RunStatus, SessionConfig, SessionId, ToolCallResult, ToolKind, ToolName, ToolParallelism,
+        ToolSpec, ToolTargetRequirement, TurnConfig, TurnEvent,
         storage::{
             BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore,
         },
@@ -634,11 +689,9 @@ mod tests {
     };
     use tools::skills::{SkillCatalogSnapshot, SkillLocation};
     use tools::{
-        host::{
-            HostToolContext, InlineHostToolRuntime,
-            fs::{FileSystem, FsPath, MountedVfsFileSystem},
-            tools::ReadFileResult,
-        },
+        fs::tools::ReadFileResult,
+        fs::{FileSystem, FsPath, FsToolContext, MountedVfsFileSystem},
+        runtime::InlineToolRuntime,
         runtime::ToolTarget,
         toolset::{ToolsetConfig, ToolsetEnvironment, resolve_toolset},
     };
@@ -1114,6 +1167,111 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn request_run_refreshes_environment_projection_before_planning() {
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let vfs = Arc::new(TestVfsCatalog::default());
+        let stores = RunnerStores::new(sessions.clone(), blobs.clone())
+            .with_vfs_catalog(vfs.clone(), vfs.clone());
+        let session_id = SessionId::new("session-environment-projection");
+        sessions
+            .create_session(CreateSession {
+                session_id: session_id.clone(),
+                agent_handle: AgentHandle::new("lightspeed.default"),
+                created_at_ms: 1,
+            })
+            .await
+            .expect("create session");
+        let snapshot = create_inline_snapshot(
+            blobs.as_ref(),
+            CreateInlineSnapshotRequest::new(vec![
+                InlineFile::new("README.md", b"hello\n".to_vec()).unwrap(),
+            ]),
+        )
+        .await
+        .expect("create snapshot");
+        vfs.put_mount(VfsMountRecord {
+            session_id: session_id.clone(),
+            mount_path: VfsPath::parse("/workspace").unwrap(),
+            source: VfsMountSource::Snapshot {
+                snapshot_ref: snapshot.snapshot_ref,
+            },
+            access: VfsMountAccess::ReadOnly,
+        })
+        .await
+        .expect("mount workspace");
+        let llm = Arc::new(CaptureFinalLlm::default());
+        let runner = SessionRunner::new(stores, llm.clone());
+
+        runner
+            .drive_command(DriveCommand {
+                session_id: session_id.clone(),
+                observed_at_ms: 10,
+                command: CoreAgentCommand::OpenSession { config: config() },
+                max_steps: None,
+            })
+            .await
+            .expect("open session");
+        let outcome = runner
+            .drive_command(DriveCommand {
+                session_id: session_id.clone(),
+                observed_at_ms: 20,
+                command: CoreAgentCommand::RequestRun {
+                    submission_id: None,
+                    input: user_input(BlobRef::from_bytes(b"input")),
+                    run_config: run_config(),
+                },
+                max_steps: Some(64),
+            })
+            .await
+            .expect("drive request");
+
+        let vfs_entry = outcome
+            .state
+            .context
+            .entries
+            .iter()
+            .find(|entry| matches!(entry.kind, ContextEntryKind::VfsCatalog))
+            .expect("VFS catalog context entry");
+        let vfs_catalog: tools::environment::projection::VfsCatalog =
+            serde_json::from_slice(&blobs.read_bytes(&vfs_entry.content_ref).await.unwrap())
+                .expect("decode VFS catalog");
+        assert_eq!(vfs_catalog.routes.len(), 1);
+        assert_eq!(vfs_catalog.routes[0].path.as_str(), "/workspace");
+
+        let environment_entry = outcome
+            .state
+            .context
+            .entries
+            .iter()
+            .find(|entry| matches!(entry.kind, ContextEntryKind::EnvironmentCatalog))
+            .expect("environment catalog context entry");
+        let environment_catalog: tools::environment::projection::EnvironmentCatalogSnapshot =
+            serde_json::from_slice(
+                &blobs
+                    .read_bytes(&environment_entry.content_ref)
+                    .await
+                    .unwrap(),
+            )
+            .expect("decode environment catalog");
+        assert_eq!(environment_catalog.active_env_id, None);
+        assert!(environment_catalog.environments.is_empty());
+
+        let requests = llm.requests.lock().expect("requests lock");
+        let planned = &requests[0].request.context.entries;
+        assert!(
+            planned
+                .iter()
+                .any(|entry| matches!(entry.kind, ContextEntryKind::VfsCatalog))
+        );
+        assert!(
+            planned
+                .iter()
+                .any(|entry| matches!(entry.kind, ContextEntryKind::EnvironmentCatalog))
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn request_run_refreshes_conventional_vfs_skill_catalog_before_planning() {
         let sessions = Arc::new(InMemorySessionStore::new());
         let blobs = Arc::new(InMemoryBlobStore::new());
@@ -1461,8 +1619,8 @@ mod tests {
             vfs.list_mounts(&session_id).await.expect("list mounts"),
         )
         .expect("mounted fs");
-        let ctx = HostToolContext::new(Arc::new(mounted_fs), None, blob_store.clone())
-            .with_cwd(FsPath::root());
+        let ctx =
+            FsToolContext::new(Arc::new(mounted_fs), blob_store.clone()).with_cwd(FsPath::root());
         let target = ToolTarget::api_kind(ProviderApiKind::OpenAiResponses);
         let toolset = resolve_toolset(
             ToolsetEnvironment { target: &target },
@@ -1470,7 +1628,7 @@ mod tests {
         )
         .expect("toolset");
         let tool_set = toolset.tools.clone();
-        let tools = InlineHostToolRuntime::new(ctx, toolset.catalog);
+        let tools = InlineToolRuntime::with_session_filesystem(ctx, toolset.catalog);
         let runner = SessionRunner::new(
             stores,
             Arc::new(ReadFileThenFinalLlm {
@@ -1510,7 +1668,7 @@ mod tests {
                 session_id: session_id.clone(),
                 observed_at_ms: 13,
                 command: CoreAgentCommand::SetDefaultToolTarget {
-                    target: ToolExecutionTarget::new("host", "local"),
+                    target: tools::targets::session_fs_target(),
                 },
                 max_steps: None,
             })
@@ -1608,8 +1766,8 @@ mod tests {
             vfs.list_mounts(&session_id).await.expect("list mounts"),
         )
         .expect("mounted fs");
-        let ctx = HostToolContext::new(Arc::new(mounted_fs), None, blob_store.clone())
-            .with_cwd(FsPath::root());
+        let ctx =
+            FsToolContext::new(Arc::new(mounted_fs), blob_store.clone()).with_cwd(FsPath::root());
         let target = ToolTarget::api_kind(ProviderApiKind::OpenAiResponses);
         let toolset = resolve_toolset(
             ToolsetEnvironment { target: &target },
@@ -1617,7 +1775,7 @@ mod tests {
         )
         .expect("toolset");
         let tool_set = toolset.tools.clone();
-        let tools = InlineHostToolRuntime::new(ctx, toolset.catalog);
+        let tools = InlineToolRuntime::with_session_filesystem(ctx, toolset.catalog);
         let runner = SessionRunner::new(
             stores,
             Arc::new(ReadFileThenFinalLlm {
@@ -1657,7 +1815,7 @@ mod tests {
                 session_id: session_id.clone(),
                 observed_at_ms: 13,
                 command: CoreAgentCommand::SetDefaultToolTarget {
-                    target: ToolExecutionTarget::new("host", "local"),
+                    target: tools::targets::session_fs_target(),
                 },
                 max_steps: None,
             })

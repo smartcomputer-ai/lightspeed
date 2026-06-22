@@ -10,7 +10,7 @@ use thiserror::Error;
 use vfs::VfsPath;
 
 use crate::{
-    host::fs::{FileSystem, FsError, FsPath},
+    fs::{FileSystem, FsError, FsPath},
     prompts::{
         PROMPT_INSTRUCTIONS_CONTEXT_KEY_PREFIX, PROMPT_INSTRUCTIONS_PROVIDER_KIND,
         PROMPT_SOURCE_FINGERPRINT_SCHEMA_VERSION, PromptAssemblyLimits, PromptInstructionsReport,
@@ -849,7 +849,7 @@ mod tests {
     use vfs::VfsMountAccess;
 
     use super::*;
-    use crate::host::fs::{CreateDirectoryOptions, InMemoryFileSystem};
+    use crate::fs::{CreateDirectoryOptions, InMemoryFileSystem};
 
     #[tokio::test]
     async fn builds_prompt_instructions_from_conventional_files() {

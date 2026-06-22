@@ -536,6 +536,7 @@ pub fn next_tool_batch_request(
         run_id: batch.run_id,
         turn_id: batch.turn_id,
         batch_id: batch.batch_id,
+        default_targets: state.tooling.routing.default_targets.clone(),
         calls,
     }))
 }

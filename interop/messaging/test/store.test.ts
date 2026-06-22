@@ -48,4 +48,27 @@ describe("JsonBridgeStore bindings", () => {
     const again = await store.getOrCreateBinding("conv-1", { ...init, activation: "always" });
     expect(again.activation).toBe("silent");
   });
+
+  it("refreshes routing-owned fields on existing bindings", async () => {
+    const store = new JsonBridgeStore(filePath);
+    await store.getOrCreateBinding("conv-1", {
+      ...init,
+      sessionId: "bridge_old",
+      recipe: null,
+    });
+    await store.updateBinding("conv-1", { activation: "silent" });
+
+    const refreshed = await store.getOrCreateBinding("conv-1", {
+      ...init,
+      chatId: "chat-2",
+      sessionId: "bridge_new",
+      recipe: "anna",
+      activation: "always",
+    });
+
+    expect(refreshed.chatId).toBe("chat-2");
+    expect(refreshed.sessionId).toBe("bridge_new");
+    expect(refreshed.recipe).toBe("anna");
+    expect(refreshed.activation).toBe("silent");
+  });
 });
