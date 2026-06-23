@@ -1408,6 +1408,7 @@ fn session_start_config(settings: &ChatDraftSettings) -> SessionConfigInput {
             web_fetch: settings.web_fetch,
             filesystem: settings.filesystem_tools,
             messaging: None,
+            fleet: None,
         })
     } else {
         None

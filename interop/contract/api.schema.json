@@ -7571,6 +7571,13 @@
             }
           ]
         },
+        "fleet": {
+          "description": "Enables the Fleet subagent control-plane tools (agent_spawn/read/list/cancel).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "messaging": {
           "description": "Enables the messaging toolset (message_send/react/edit/noop) for\nsessions bound to a chat channel.",
           "type": [
@@ -7599,6 +7606,16 @@
           "anyOf": [
             {
               "$ref": "#/definitions/FieldPatchOfFilesystemToolMode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fleet": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/FieldPatchOfboolean"
             },
             {
               "type": "null"
@@ -7643,6 +7660,9 @@
         "filesystem": {
           "$ref": "#/definitions/FilesystemToolMode"
         },
+        "fleet": {
+          "type": "boolean"
+        },
         "webFetch": {
           "type": "boolean"
         },
@@ -7653,7 +7673,8 @@
       "required": [
         "webSearch",
         "webFetch",
-        "filesystem"
+        "filesystem",
+        "fleet"
       ],
       "type": "object"
     },

@@ -5,6 +5,7 @@
 
 pub mod config;
 pub mod environment;
+pub mod fleet;
 pub mod gateway;
 pub mod worker;
 

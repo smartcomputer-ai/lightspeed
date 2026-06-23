@@ -571,6 +571,9 @@ impl GatewayAgentApi {
         if session_config.tools.messaging.unwrap_or(false) {
             config.messaging = tools::messaging::MessagingToolsetConfig::enabled();
         }
+        if session_config.tools.fleet.unwrap_or(false) {
+            config.fleet = tools::fleet::FleetToolsetConfig::enabled();
+        }
         if include_process_tools {
             config.builtin.process = tools::toolset::EnvironmentToolsetConfig::basic();
         }

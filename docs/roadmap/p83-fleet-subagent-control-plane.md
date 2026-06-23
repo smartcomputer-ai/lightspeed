@@ -2,6 +2,9 @@
 
 **Status**
 - Proposed 2026-06-23.
+- Partial implementation 2026-06-23: G1-G3 are implemented (contracts/config
+  gate, model-visible Fleet specs, and the spawn service slice). G4-G7 remain
+  pending.
 - Builds on **P82 (Session Graph — Clone, Fork, And Links)** for the underlying
   clone/fork/link store primitives, the Temporal-backed `AgentSessionWorkflow`,
   the `api` session/run surface, environment/provider work from P79-P81, and
@@ -414,7 +417,7 @@ workflows by default.
 Assumes P82 store methods (`create_cloned_session`, `create_forked_session`, the
 fork cut-point helper, fork read resolution, link CRUD) are available.
 
-### G1. Contracts And Config Gate
+### G1. Contracts And Config Gate — Done 2026-06-23
 
 - Finalize the v1 tool DTOs: `child_session_id?`, `input`, tagged `source`,
   `fork`, `fork_at_seq`, `vfs`, `environment`, `config_overrides`, `lifecycle`.
@@ -423,7 +426,11 @@ fork cut-point helper, fork read resolution, link CRUD) are available.
 - Add strict schemas that deny unknown fields and do not advertise deferred
   values (`environment = isolate`, blank source, display labels).
 
-### G2. Model-Visible Tools
+Implementation note: `config_overrides` is present in the DTO as the future patch
+hook but is rejected by the current spawn service until G4 defines patch
+application.
+
+### G2. Model-Visible Tools — Done 2026-06-23
 
 - Add the small Fleet tool package: `agent_spawn`, `agent_list`, `agent_read`,
   `agent_cancel`.
@@ -432,7 +439,11 @@ fork cut-point helper, fork read resolution, link CRUD) are available.
 - Keep the surface small; do not expose generic session/run/VFS/environment APIs
   to the model.
 
-### G3. Fleet Service
+Implementation note: tool specs are exposed only when `tools.fleet = true`.
+Hosted execution routing from `SessionTools` is still G5, so this gate should not
+be enabled in production sessions until the executor is wired.
+
+### G3. Fleet Service — Done 2026-06-23
 
 - Add a runtime service that validates the request, resolves the `source` session
   (self, a spawned child, or a linked session — trusted by id in v1), derives or
@@ -445,6 +456,13 @@ fork cut-point helper, fork read resolution, link CRUD) are available.
   Reuse the existing run-admission `submission_id` pattern for the child run.
 - Use internal `AgentApiService` calls, not HTTP loopback, when in the same
   process.
+
+Implementation note: the current service supports clone and fork spawn, safe fork
+cut-point selection, explicit child ids, deterministic derived child ids,
+parent->child link metadata validation, child workflow/session start, and
+optional immediate child run admission. `vfs = share` and `environment = share`
+are supported through P82's verbatim resource copy. `vfs = isolate` is rejected
+until G4.
 
 ### G4. Child Session Configuration And Resources
 

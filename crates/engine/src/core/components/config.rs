@@ -179,6 +179,8 @@ pub struct ToolConfigPatch {
     pub filesystem: Option<OptionalConfigPatch<FilesystemToolMode>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub messaging: Option<OptionalConfigPatch<bool>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fleet: Option<OptionalConfigPatch<bool>>,
 }
 
 impl ToolConfigPatch {
@@ -187,6 +189,7 @@ impl ToolConfigPatch {
         apply_optional_config_patch(&mut config.web_fetch, &self.web_fetch);
         apply_optional_config_patch(&mut config.filesystem, &self.filesystem);
         apply_optional_config_patch(&mut config.messaging, &self.messaging);
+        apply_optional_config_patch(&mut config.fleet, &self.fleet);
     }
 
     pub fn is_empty(&self) -> bool {
@@ -194,6 +197,7 @@ impl ToolConfigPatch {
             && self.web_fetch.is_none()
             && self.filesystem.is_none()
             && self.messaging.is_none()
+            && self.fleet.is_none()
     }
 }
 
@@ -300,6 +304,9 @@ pub struct ToolConfig {
     /// sessions bound to a chat channel.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub messaging: Option<bool>,
+    /// Enables the Fleet subagent control-plane tools (agent_spawn/read/list/cancel).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fleet: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

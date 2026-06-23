@@ -635,6 +635,9 @@ pub struct ToolConfigInput {
     /// sessions bound to a chat channel.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub messaging: Option<bool>,
+    /// Enables the Fleet subagent control-plane tools (agent_spawn/read/list/cancel).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fleet: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -722,6 +725,8 @@ pub struct ToolConfigPatchInput {
     pub filesystem: Option<FieldPatch<FilesystemToolMode>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub messaging: Option<FieldPatch<bool>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fleet: Option<FieldPatch<bool>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -2918,6 +2923,7 @@ pub struct ToolConfigView {
     pub web_search: bool,
     pub web_fetch: bool,
     pub filesystem: FilesystemToolMode,
+    pub fleet: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

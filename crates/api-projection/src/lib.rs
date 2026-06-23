@@ -301,6 +301,7 @@ impl<'a> CoreAgentProjector<'a> {
                 web_search: effective_web_search_enabled(config),
                 web_fetch: effective_web_fetch_enabled(config),
                 filesystem: filesystem_tool_mode_to_api(effective_filesystem_tool_mode(config)),
+                fleet: effective_fleet_enabled(config),
             },
         })
     }
@@ -1100,6 +1101,10 @@ fn effective_filesystem_tool_mode(config: &SessionConfig) -> engine::FilesystemT
         .tools
         .filesystem
         .unwrap_or(engine::FilesystemToolMode::Edit)
+}
+
+fn effective_fleet_enabled(config: &SessionConfig) -> bool {
+    config.tools.fleet.unwrap_or(false)
 }
 
 fn filesystem_tool_mode_to_api(mode: engine::FilesystemToolMode) -> ApiFilesystemToolMode {
