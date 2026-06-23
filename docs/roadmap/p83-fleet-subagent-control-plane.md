@@ -17,8 +17,9 @@ The first implementation should support the happy path:
 
 1. A parent agent calls a small Fleet tool such as `agent_spawn`.
 2. Lightspeed validates policy and derives or validates a child identity.
-3. Lightspeed creates the child as an ordinary session backed by its own
-   `AgentSessionWorkflow`, cloning or forking the source via the P82 primitives.
+3. Lightspeed creates the child as an ordinary top-level session backed by its
+   own `AgentSessionWorkflow`, cloning or forking the source via the P82
+   primitives and linking it to the caller in the Fleet graph.
 4. Lightspeed applies the child run configuration.
 5. Lightspeed starts the child run with the requested task.
 6. The parent receives a durable child handle it can inspect or task later.
@@ -74,6 +75,12 @@ Default subagents are **top-level Lightspeed sessions**, not Temporal Child
 Workflows. Temporal remains an implementation substrate behind the API/runtime
 boundary. A child agent gets its own workflow id, session log, config revision,
 run ids, and inspectable status.
+
+In Fleet terminology, "child" is a session-graph relationship, not a Temporal
+workflow topology. A v1 `agent_spawn` always records a caller -> child link, even
+though the spawned agent is an ordinary top-level session/workflow. Unlinked
+standalone sessions remain an external/session API concern, not a model-visible
+Fleet tool behavior.
 
 ## Runtime Shape
 
@@ -168,8 +175,10 @@ Defaults:
   can clone what" below. This enables "agent A spawns B, then clones B into C
   and D": A names B as the source. The inherited setup (config, MCP links, all
   log-borne state) comes from the *source's* live state, not the caller's.
-  Blank/no-source children are deferred until there is a concrete default-config
-  story.
+  Blank/no-source or profile/template-based children are deferred until there is
+  a concrete default-config and resource-setup story. When they land, they still
+  create linked Fleet children; they just do not derive their setup from the
+  caller/source session.
 - `fork`: when false (default), clone semantics (P82 clone — fresh log, config
   copied). `true` selects history fork (P82 fork — events inherited by reference
   to the branch point). The branch point defaults to the P82 safe cut (largest
@@ -213,6 +222,11 @@ effectively trusts the named `source` id and records the lineage. Turning the
 access edge into a hard check (caller must be self, spawner, or linked to the
 source) is part of the deferred capability-policy work; the rule above is the
 intended semantics.
+
+Every v1 `agent_spawn` creates or reuses a parent -> child link from the caller
+to the spawned session. The Fleet tool does not create unlinked standalone
+sessions. If a human client or gateway needs a truly standalone session, it uses
+the existing session API outside this model-visible Fleet surface.
 
 ### `agent_read` / `agent_list`
 
@@ -488,8 +502,9 @@ fork cut-point helper, fork read resolution, link CRUD) are available.
 
 - `agent_configure` (semantic self/child config patches) and `agent_task`
   (follow-up tasking of existing agents).
-- Blank/no-source child creation.
+- Blank/no-source and profile/template-based child creation.
 - Human labels/display names/task names.
+- Unlinked standalone session creation from inside Fleet tools.
 - `environment = isolate` behavior.
 - `agent_type` / `role` / persona typing and named profiles.
 - Capability-based policy, proposals-requiring-approval, and enforcement of
@@ -515,6 +530,8 @@ fork cut-point helper, fork read resolution, link CRUD) are available.
 - `source` is a tagged enum, so a real session id named `self` is unambiguous.
 - VFS `share` and `isolate` are implemented; environment sharing is implemented
   and environment isolation is not accepted by v1 schemas.
+- Every v1 spawn records a caller -> child session link; unlinked standalone
+  session creation is not exposed through `agent_spawn`.
 - The child is visible through normal session/read behavior and through
   Fleet-level `agent_read`.
 - `agent_read` returns full effective config and supports bounded recent
