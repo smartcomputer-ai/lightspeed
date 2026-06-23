@@ -54,7 +54,7 @@ The model-visible surface is small and semantic. v1 ships four tools:
 ```text
 agent_spawn     create a child by cloning/forking a source and start its run
 agent_list      list related/child sessions with compact status
-agent_read      read one session's status and config summary (no transcript)
+agent_read      read one session's status, config, resources, and recent activity
 agent_cancel    cancel an active run or close a child
 ```
 
@@ -216,11 +216,32 @@ intended semantics.
 
 ### `agent_read` / `agent_list`
 
-Read Fleet-level status and compact session/run projections.
+Read Fleet-level status and compact session/run projections. `agent_list` stays
+compact by default. `agent_read` is the inspection tool for one agent and should
+return enough state for a supervisor to understand what the child is, what it can
+do, and what it is currently doing.
 
-These tools should not dump full transcripts by default. The caller must request
-specific fields such as status, config summary, active run, children, or recent
-events.
+`agent_read` returns these fields by default:
+
+- lifecycle/status;
+- active run summary and recent completed run summaries;
+- full effective `SessionConfig`;
+- active tool names and default targets;
+- VFS mounts and environment bindings;
+- lineage/source fields and direct session links.
+
+Transcript/activity is available but bounded. Full transcript dumps are not a
+default because they can grow without limit and crowd out the useful control
+state. The caller can request a recent window, for example:
+
+```text
+recent_transcript?      { turns?: int, events?: int }
+recent_events?          { limit: int }
+```
+
+The default `agent_read` should include a small recent activity window when it is
+cheap and bounded, enough to answer "what is going on?" without requiring a
+separate transcript read. Larger history reads remain explicit and paged.
 
 ### `agent_cancel`
 
@@ -370,8 +391,9 @@ workflows by default.
   read source mounts/workspaces, create deterministic child workspaces from
   source heads, and rewrite child mounts before child run admission.
 - `agent_read` / `agent_list` reuse gateway projection helpers and P82
-  `session_links` queries. They should project compact status and lineage, not
-  transcript dumps.
+  `session_links` queries. `agent_read` returns full effective config plus
+  compact resources, lineage, status, and bounded recent transcript/activity.
+  `agent_list` stays compact.
 
 ## Implementation Steps
 
@@ -434,7 +456,12 @@ fork cut-point helper, fork read resolution, link CRUD) are available.
 
 - Project `sessions` (incl. P82 lineage) and `session_links` into `agent_read`
   and `agent_list`, with compact child run status.
-- Do not require full transcript reads for normal parent status checks.
+- Make `agent_read` return full effective config by default, not just a summary.
+- Include resource summaries: active tools/default targets, VFS mounts, and
+  environment bindings.
+- Support bounded recent transcript/activity selectors so parent agents can
+  inspect what a child is doing without reading the entire log.
+- Keep full-history transcript reads explicit and paged.
 
 ### G7. Tests
 
@@ -451,6 +478,9 @@ fork cut-point helper, fork read resolution, link CRUD) are available.
   is idempotent.
 - Environment policy test: `share` copies bindings; unsupported isolation is
   rejected by schema/validation.
+- Projection tests: `agent_read` returns full effective config, resource
+  summaries, lineage, and bounded recent transcript/activity; `agent_list`
+  remains compact.
 - Ignored Temporal/Postgres live test proving a parent tool call starts a
   separate child `AgentSessionWorkflow` and child run.
 
@@ -487,6 +517,8 @@ fork cut-point helper, fork read resolution, link CRUD) are available.
   and environment isolation is not accepted by v1 schemas.
 - The child is visible through normal session/read behavior and through
   Fleet-level `agent_read`.
+- `agent_read` returns full effective config and supports bounded recent
+  transcript/activity inspection.
 - The parent can cancel the child.
 - The model-visible tool surface stays small (4 tools) and does not expose the
   full session API.
