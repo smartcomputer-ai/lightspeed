@@ -1,24 +1,45 @@
-# Roadmap to Usable Agent
+# Lightspeed Roadmap
 
-- [x] vfs
-- [x] skills (P63 first cut)
-- [x] compaction (P64 provider-native)
-- [x] vfs watches (inject/update on change)
-- [x] prompt management (ala claw)
-- [x] search & web requests ([P66 first cut](p66-minimal-web-access.md))
-- [x] direct remote MCP ([P67 proposed](p67-direct-remote-mcp.md))
-- [x] remote MCP registry/linking ([P68 proposed](p68-remote-mcp-registry-linking.md))
-- [x] generic auth/token broker ([P69 proposed](p69-generic-auth-token-broker.md))
-- [x] external integration surface: api schema, ts/py clients, idempotent runs, long-poll events ([P70 proposed](p70-external-integration-surface.md))
-- [x] messaging channel gateway: activation policy, room context, delivery outbox, messaging tools, media input ([P71 G1–G5 first cuts done](p71-messaging-channel-gateway.md))
-    - authetication/password/allowlists
-    - session binding & consistency (what about /new)
-    - cross session knowledge
-- [ ] audio transcription preprocessing ([P72 proposed](p72-audio-transcription-preprocessing.md))
-- [ ] session rehydration payload limit ([P73 proposed](p73-session-rehydration-payload-limit.md))
-- [ ] environment-ready tools refactor ([P75 proposed](p75-environment-ready-tools-refactor.md))
-- [ ] guest OS host bridge runner ([P81 proposed](p81-guest-os-bridge-runner.md))
-- (go live)
-- timers/schedules/cron
-- vms/sandboxes
-- fleet
+## Core
+- [ ] cleanup of CoreAgent structures (which were designed to expand the event types because we wanted Lightspeed to be a library)
+- [ ] do we need to keep agent_id in session meta data (in tables)?
+
+## Fleet (sub-agents)
+- [ ] add apis needed to control fleet (fix re-entrancy issue)
+- [ ] decide on first design
+- [ ] run coding agent (CC or Codex) on sandbox
+
+## Provider Integrations
+- [ ] support and test completions api
+   - test with OAI
+   - test with open router
+   - test with self-hosted model
+- [ ] incremental tool discovery support (at least OAI)
+
+## Environmnets & Sandboxes
+- [ ] Finalize sandbox protocol (look at Codex's protocol)
+- [ ] Write first sandbox integration
+- [ ] Allow agent to request new sandbox/env
+
+## Message Bridge
+- [ ] Password/code-based login in channel (instead of whitelisting)
+- [ ] Support Slack
+
+## Security Auth
+- [ ] Provider OAuth login
+- [ ] Send secrets to sandbox/VM/env
+- [ ] Design capability based model for agents
+
+## MCP
+- [ ] Support MCP tunnels to model providers
+
+## Framework/SDK
+- [ ] Temporal service design: ensure ls can be used as a Temporal service by other workflows
+- [ ] Workflows as tools (register a workflow as a tool, route to workflow)
+- [ ] Multi-tenant support in worker
+- [ ] Python SDK
+     - [ ] API Client
+     - [ ] Workflow helpers
+- [ ] TypeScript SDK
+     - [x] API Client
+     - [ ] Workflow helpers
