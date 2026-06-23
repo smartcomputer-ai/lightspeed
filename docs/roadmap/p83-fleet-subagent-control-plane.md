@@ -16,7 +16,7 @@ Let an agent safely create, configure, task, inspect, and cancel other agents.
 The first implementation should support the happy path:
 
 1. A parent agent calls a small Fleet tool such as `agent_spawn`.
-2. Lightspeed validates policy and reserves a child identity.
+2. Lightspeed validates policy and derives or validates a child identity.
 3. Lightspeed creates the child as an ordinary session backed by its own
    `AgentSessionWorkflow`, cloning or forking the source via the P82 primitives.
 4. Lightspeed applies the child run configuration.
@@ -115,6 +115,20 @@ revision, and run state. Product typing (`agent_type`, `role`, personas) is not
 needed to prove the spawn loop and is deferred until there is product pressure
 for it.
 
+Spawn identity is `child_session_id`, not a model-facing task label. The caller
+may provide `child_session_id` when it needs a stable durable handle. If omitted,
+the runtime derives one deterministically from the parent tool invocation
+identity:
+
+```text
+parent_session_id + parent_run_id + turn_id + tool_batch_id + tool_call_id
+```
+
+The derived value is hashed/encoded into a valid `SessionId`. This makes tool
+activity retries safe without relying on model-generated labels. Human display
+names, task labels, and roles are metadata concerns and deferred until there is a
+durable metadata model for them.
+
 ## Tool Contracts
 
 ### `agent_spawn`
@@ -124,35 +138,48 @@ Creates a child agent and optionally starts its first run.
 Input shape:
 
 ```text
-task_name
+child_session_id?       explicit durable child session id
 input
-source?                 self | none | <session_id>   (default: self)
+source?                 tagged source enum            (default: { kind: self })
 fork?                   bool                          (default: false)
 fork_at_seq?            int                           (default: auto safe cut)
-vfs?                    share | isolate  (default: share, isolate deferred)
-environment?            share | isolate  (default: share, isolate deferred)
+vfs?                    share | isolate               (default: share)
+environment?            share                         (default: share)
 config_overrides?
 lifecycle?
 ```
 
 Defaults:
 
-- `source`: the session the child is cloned/forked from. `self` (the common case)
-  uses the caller; `none` starts a blank child; `<session_id>` uses another
-  session the caller may access — see "Who can clone what" below. This enables
-  "agent A spawns B, then clones B into C and D": A names B as the source. The
-  inherited setup (config, MCP links, all log-borne state) comes from the
-  *source's* live state, not the caller's.
+- `child_session_id`: optional explicit durable handle. If absent, the runtime
+  derives a deterministic id from the parent session/run/turn/tool-call identity.
+  A retry with the same tool call therefore targets the same child session.
+- `source`: the session the child is cloned/forked from. This must be a tagged
+  enum, never a string sentinel, so a real session id named `self` is not
+  ambiguous:
+
+  ```json
+  { "kind": "self" }
+  { "kind": "session", "session_id": "self" }
+  ```
+
+  `{ "kind": "self" }` (the common case) uses the caller. `{ "kind": "session",
+  "session_id": "..." }` uses another session the caller may access — see "Who
+  can clone what" below. This enables "agent A spawns B, then clones B into C
+  and D": A names B as the source. The inherited setup (config, MCP links, all
+  log-borne state) comes from the *source's* live state, not the caller's.
+  Blank/no-source children are deferred until there is a concrete default-config
+  story.
 - `fork`: when false (default), clone semantics (P82 clone — fresh log, config
   copied). `true` selects history fork (P82 fork — events inherited by reference
   to the branch point). The branch point defaults to the P82 safe cut (largest
   seq not inside an open run), so a fork triggered mid-spawn never inherits a
   dangling tool call. An explicit `fork_at_seq` overrides it but is rejected if
   it lands inside an open run.
-- `vfs` / `environment`: `share` — the two per-session side-table resources are
-  copied from the source verbatim (P82 default). They are independent knobs: a
-  child may share the workspace but isolate the environment, or vice versa.
-  `isolate` is reserved (see Resource Sharing).
+- `vfs`: `share` copies mounts verbatim. `isolate` gives the child its own
+  writable VFS workspaces while preserving immutable snapshot mounts.
+- `environment`: v1 accepts only `share`, so environment bindings are copied
+  verbatim and point at the same live targets. Environment isolation is deferred.
 - `lifecycle.run_immediately`: true.
 
 Output:
@@ -163,8 +190,12 @@ child_run_id?
 status
 ```
 
-`submission_id` is derived from the parent session/run/tool-call identity so
-activity retries do not create duplicate children.
+Spawn idempotency is anchored by the child session id. When `child_session_id` is
+omitted, the derived id is stable for the parent tool call. When it is supplied,
+the service verifies an existing child with that id belongs to the same spawn
+request before returning it. The child run `submission_id` is also derived from
+the parent session/run/tool-call identity so run admission retries return the
+same child run instead of starting a second one.
 
 ### Who can clone what
 
@@ -172,7 +203,7 @@ The P82 clone/fork primitive takes any source session id; nothing requires the
 source to be the caller. The Fleet service decides who may name which source. An
 agent may clone or fork:
 
-- **itself** (`source = self`), the default;
+- **itself** (`source = { "kind": "self" }`), the default;
 - **a child it spawned** (provable from the spawn link);
 - **any session it has a `session_link` to** — this is the access edge the links
   table exists for, and it is what lets A clone a peer B that A did not spawn.
@@ -206,33 +237,34 @@ reason?
 ## Resource Sharing: `vfs` and `environment`
 
 P82's clone primitive copies the full set of `vfs_mounts` and
-`session_environment_bindings` rows verbatim. P83 exposes whether that copy
-**shares** the underlying mutable resource or **isolates** it, as two independent
-spawn knobs (a child may share the workspace but run in its own environment, or
-vice versa; collapsing them into one flag would make the uncommon case
-unexpressible).
+`session_environment_bindings` rows verbatim. P83 exposes the selected resource
+policy on each axis. v1 implements `share` and `isolate` for VFS, but implements
+only `share` for environments because creating fresh equivalent environment
+targets is provider-specific lifecycle work.
 
 Each axis applies uniformly across the whole set of that session's rows.
 
-v1 defaults both to **`share`** (the verbatim copy — child points at the same
-mutable resource as the source):
+v1 defaults both axes to **`share`**:
 
 - `vfs = share`: for every mount, child points at the same `workspace_id` head
   (or the same snapshot digest).
 - `environment = share`: for every binding, child points at the same live
   `target_id`.
 
-`isolate` is reserved per axis but its implementation is deferred:
+v1 also implements **`vfs = isolate`**:
 
-- `vfs = isolate`: for each mount, fork `workspace`-kind mounts to a new
-  `workspace_id` off the same base. `snapshot`-kind mounts are immutable CAS
-  refs — sharing and isolating are identical, so they are always copied as-is.
-- `environment = isolate`: for each binding, request a fresh target from *that
-  binding's* provider, so the child gets its own parallel set of environments.
+- For each `workspace`-kind mount, create a deterministic child `workspace_id`
+  from `child_session_id + mount_path`, read the source workspace head, and
+  create the child workspace with that head as its starting snapshot. The child
+  mount is then rewritten to point at the child workspace. Future child writes
+  advance only the child workspace head.
+- `snapshot`-kind mounts are immutable CAS refs. Sharing and isolating are
+  equivalent for them, so they are copied as-is.
+- The rewrite must be idempotent so a retry after child-session creation but
+  before run admission can safely finish applying the policy.
 
-The shared default is fine for helper agents sharing context; `isolate` is the
-right choice for independent workers, which is why the knobs exist from day one
-even though the behavior lands later.
+`environment = isolate` is not accepted by the v1 schema. It is deferred until
+environment providers expose a way to request fresh equivalent targets.
 
 ## Configuration Model
 
@@ -242,7 +274,7 @@ inherit-then-patch rule). Child configuration is compiled as:
 1. The source session's current `SessionConfig` and MCP links, inherited via the
    log (P82 clone/fork mechanics).
 2. The source session's `vfs_mounts` and `session_environment_bindings`, copied
-   per the `vfs` / `environment` knobs above.
+   per the policies above (`vfs = share|isolate`, `environment = share` only).
 3. Explicit `config_overrides` from the spawn request, applied as a patch *after*
    open — never as a rewrite of inherited state.
 
@@ -263,20 +295,38 @@ are a later refinement, not part of v1.
 ## Policy
 
 Capability-based policy is deferred. v1 gates the Fleet tools behind a single
-per-session "may control fleet" flag and treats `session_links` as plain,
-unenforced data. The richer capability matrix (per-operation grants, proposals
-requiring approval, target-relation checks) is future work once there is product
-pressure for it.
+per-session "may control fleet" flag, represented in session tool config (for
+example `tools.fleet = true`), and treats `session_links` as plain, unenforced
+data. Adding this flag means updating the engine `ToolConfig`, API config
+input/patch/view types, API projection, gateway config conversion, and committed
+contract artifacts. The richer capability matrix (per-operation grants,
+proposals requiring approval, target-relation checks) is future work once there
+is product pressure for it.
 
 ## Reentrancy
 
 Do not expose a generic "call the session API" tool to the model.
 
 When an agent spawns another agent, the tool call becomes a Fleet intent handled
-by the runtime. The runtime admits any resulting session commands through normal
-session/run boundaries. (Self-configuration arrives with the deferred
-`agent_configure` tool; the same rule applies — changes take effect at the next
-safe boundary, never by mutating the running model step in place.)
+by the runtime outside the deterministic engine. The parent session records only
+the normal tool-call result. Child session creation, resource-policy application,
+workflow start, and child run admission are side effects owned by the hosted
+runtime/tool activity.
+
+Rules:
+
+- `agent_spawn` must never mutate the currently running parent step in place.
+- A spawn from `source = { "kind": "self" }` is allowed while the parent has an
+  active run. If `fork = true`, P82's safe cut excludes the in-flight parent run,
+  including the spawning tool call, so the child never inherits dangling tool
+  state.
+- `agent_spawn` must not use itself as a generic backdoor to call arbitrary
+  `session/*` or `run/*` operations on the parent. Self-configuration is deferred
+  to `agent_configure` and applies only at a safe boundary.
+- Idempotency is required across tool activity retries. Reusing the deterministic
+  child id must return the existing child only when the recorded source/link
+  metadata matches the same spawn request; a collision with unrelated metadata is
+  rejected.
 
 ## Temporal Behavior
 
@@ -295,56 +345,112 @@ helper work where parent close/cancel behavior should govern the child. Fleet
 subagents are durable product resources, so they should be top-level session
 workflows by default.
 
+## Implementation Map
+
+- Tool contracts/spec bundles live in `crates/tools/src/fleet/`. This crate should define the model-visible JSON
+  schemas, strict argument DTOs, output DTOs, tool names, and `ToolSpecBundle`
+  helpers. It should not depend on PostgreSQL or Temporal.
+- Toolset exposure is wired through `crates/tools/src/toolset.rs` with a
+  `FleetToolsetConfig`. The gateway's session-toolset assembly enables it from
+  the per-session config gate.
+- Hosted execution lives in `temporal-server`, for example
+  `crates/temporal-server/src/fleet.rs` plus worker wiring. `FleetService` owns
+  the runtime behavior: source resolution, deterministic child id derivation,
+  P82 clone/fork calls, VFS policy application, link upsert, workflow start, and
+  child run admission.
+- `SessionTools` in `crates/temporal-server/src/worker/session_tools.rs` routes
+  `agent_*` calls to the Fleet executor directly, similar to the existing
+  messaging fast path. The generic `InlineToolRuntime` currently executes only
+  builtins/web-fetch style bindings, so exposing Fleet specs in the toolset is
+  not enough by itself.
+- Clone/fork opening config uses the source session's replayed CoreAgent state
+  and `core_agent_clone_opening_events`. Store-level clone/fork/link operations
+  stay the P82 primitives.
+- VFS isolation uses the existing `VfsWorkspaceStore` and `VfsMountStore` APIs:
+  read source mounts/workspaces, create deterministic child workspaces from
+  source heads, and rewrite child mounts before child run admission.
+- `agent_read` / `agent_list` reuse gateway projection helpers and P82
+  `session_links` queries. They should project compact status and lineage, not
+  transcript dumps.
+
 ## Implementation Steps
 
 Assumes P82 store methods (`create_cloned_session`, `create_forked_session`, the
 fork cut-point helper, fork read resolution, link CRUD) are available.
 
-### G1. Fleet Service
+### G1. Contracts And Config Gate
 
-- Add a runtime service that validates the request, resolves the `source` session
-  (self, a spawned child, or a linked session — trusted by id in v1), reserves a
-  child id, records the parent→child link and the child's `source_session_id`
-  (+ `source_seq` when `fork = true`) lineage, clones or forks the source via the
-  P82 store methods, and admits the child run.
-- For `fork = true`, obtain the safe `source_seq` from the P82 cut-point helper;
-  validate any explicit `fork_at_seq` is not inside an open run.
-- Make spawn idempotent by a service-layer `submission_id`, reusing the existing
-  run-admission idempotency pattern.
-- Use internal `AgentApiService` calls, not HTTP loopback, when in the same
-  process.
+- Finalize the v1 tool DTOs: `child_session_id?`, `input`, tagged `source`,
+  `fork`, `fork_at_seq`, `vfs`, `environment`, `config_overrides`, `lifecycle`.
+- Add the per-session Fleet tool gate to engine/API config and regenerate
+  committed API contract artifacts.
+- Add strict schemas that deny unknown fields and do not advertise deferred
+  values (`environment = isolate`, blank source, display labels).
 
 ### G2. Model-Visible Tools
 
 - Add the small Fleet tool package: `agent_spawn`, `agent_list`, `agent_read`,
   `agent_cancel`.
-- Gate the tools behind a single per-session "may control fleet" flag.
-- Keep schemas tight and deny unknown fields.
+- Wire Fleet specs into `ToolsetConfig` / `resolve_toolset` only when the
+  per-session Fleet gate is enabled.
+- Keep the surface small; do not expose generic session/run/VFS/environment APIs
+  to the model.
 
-### G3. Child Session Configuration
+### G3. Fleet Service
+
+- Add a runtime service that validates the request, resolves the `source` session
+  (self, a spawned child, or a linked session — trusted by id in v1), derives or
+  validates the child id, records the parent->child link and the child's
+  `source_session_id` (+ `source_seq` when `fork = true`) lineage, clones or
+  forks the source via the P82 store methods, and admits the child run.
+- For `fork = true`, obtain the safe `source_seq` from the P82 cut-point helper;
+  validate any explicit `fork_at_seq` is not inside an open run.
+- Make spawn idempotent by deterministic child id plus link metadata validation.
+  Reuse the existing run-admission `submission_id` pattern for the child run.
+- Use internal `AgentApiService` calls, not HTTP loopback, when in the same
+  process.
+
+### G4. Child Session Configuration And Resources
 
 - Compile the child's opening config from the source's live config plus explicit
   spawn overrides applied as a patch after open. The source may be the caller or
   any session the caller may use; the child inherits the source's setup.
-- Apply the `vfs` / `environment` knobs over the P82 verbatim copy (v1: both
-  `share`).
+- Apply resource policies after P82's verbatim resource copy and before child run
+  admission: `vfs = share|isolate`, `environment = share`.
+- Reject unsupported v1 policy values clearly.
 - Do not store secrets or resolved credentials.
 
-### G4. Projection And Inspection
+### G5. Hosted Runtime Wiring
+
+- Wire `SessionTools` to detect Fleet tool names and route them to a Fleet tool
+  executor with the parent `session_id`, `run_id`, `turn_id`, `batch_id`, and
+  `call_id`.
+- Ensure Fleet tool execution uses the same blob/result shape as other tools and
+  returns compact model-visible handles/status.
+- Keep all Fleet side effects out of `engine` and deterministic workflow reducer
+  code.
+
+### G6. Projection And Inspection
 
 - Project `sessions` (incl. P82 lineage) and `session_links` into `agent_read`
   and `agent_list`, with compact child run status.
 - Do not require full transcript reads for normal parent status checks.
 
-### G5. Tests
+### G7. Tests
 
-- Unit-test validation, idempotency, capability checks, and config compilation.
+- Unit-test validation, idempotency, capability checks, strict schema behavior,
+  deterministic child-id derivation, and config compilation.
 - In-process runner test: a parent spawns a clone child and receives a handle.
 - In-process runner test: a parent spawns a child cloned from a *different* named
   source (the "A clones C from B" flow).
 - Fork-via-spawn test: forking from inside the spawning tool call yields a
   provider-valid child (the in-flight spawning run is not inherited, so the
   child's first turn has no dangling tool call).
+- VFS policy tests: `share` keeps workspace ids, `isolate` creates deterministic
+  child workspaces from source heads, snapshot mounts remain unchanged, and retry
+  is idempotent.
+- Environment policy test: `share` copies bindings; unsupported isolation is
+  rejected by schema/validation.
 - Ignored Temporal/Postgres live test proving a parent tool call starts a
   separate child `AgentSessionWorkflow` and child run.
 
@@ -352,7 +458,9 @@ fork cut-point helper, fork read resolution, link CRUD) are available.
 
 - `agent_configure` (semantic self/child config patches) and `agent_task`
   (follow-up tasking of existing agents).
-- `vfs = isolate` / `environment = isolate` behavior.
+- Blank/no-source child creation.
+- Human labels/display names/task names.
+- `environment = isolate` behavior.
 - `agent_type` / `role` / persona typing and named profiles.
 - Capability-based policy, proposals-requiring-approval, and enforcement of
   `session_links`.
@@ -372,6 +480,11 @@ fork cut-point helper, fork read resolution, link CRUD) are available.
 - A parent agent can fork a source via spawn, and a fork triggered from inside the
   spawning tool call yields a provider-valid child (no dangling tool call).
 - Retrying the same spawn tool call does not create a duplicate child.
+- `child_session_id` may be supplied explicitly; otherwise it is derived
+  deterministically from the parent tool invocation identity.
+- `source` is a tagged enum, so a real session id named `self` is unambiguous.
+- VFS `share` and `isolate` are implemented; environment sharing is implemented
+  and environment isolation is not accepted by v1 schemas.
 - The child is visible through normal session/read behavior and through
   Fleet-level `agent_read`.
 - The parent can cancel the child.
