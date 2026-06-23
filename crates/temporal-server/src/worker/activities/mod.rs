@@ -5,6 +5,7 @@ use store_pg::PgStore;
 use temporalio_macros::activities;
 use temporalio_sdk::activities::{ActivityContext, ActivityError};
 
+use crate::fleet::FleetChildRuntime;
 use crate::worker::{
     ACTIVITY_APPEND_EVENTS, ACTIVITY_CONTEXT_COMPACT, ACTIVITY_CREATE_OR_LOAD_SESSION,
     ACTIVITY_LLM_GENERATE, ACTIVITY_PREPROCESS_RUN_INPUT, ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB,
@@ -53,6 +54,15 @@ impl WorkerActivities {
     pub fn from_pg_store_with_default_runtime(store: Arc<PgStore>) -> anyhow::Result<Self> {
         Ok(Self::new(
             ActivityState::from_pg_store_with_default_runtime(store)?,
+        ))
+    }
+
+    pub fn from_pg_store_with_default_runtime_and_fleet(
+        store: Arc<PgStore>,
+        fleet_runtime: Arc<dyn FleetChildRuntime>,
+    ) -> anyhow::Result<Self> {
+        Ok(Self::new(
+            ActivityState::from_pg_store_with_default_runtime_and_fleet(store, fleet_runtime)?,
         ))
     }
 }

@@ -4,6 +4,7 @@ use anyhow::Context;
 use clap::{Args, Parser, Subcommand};
 use temporal_server::{
     config::{pg_store_from_env, task_queue_from_env},
+    fleet::AgentApiFleetRuntime,
     gateway::{
         DEFAULT_GATEWAY_BIND, DEFAULT_MAX_REQUEST_BODY_BYTES, DEFAULT_TEMPORAL_NAMESPACE,
         DEFAULT_TEMPORAL_TARGET, GatewayAgentApi, GatewayServerConfig, gateway_router,
@@ -179,7 +180,19 @@ async fn run_both(args: BothArgs) -> anyhow::Result<()> {
     )
     .await?;
     let store = pg_store_from_env().await?;
-    let activities = WorkerActivities::from_pg_store_with_default_runtime(store.clone())?;
+    let api = Arc::new(
+        GatewayAgentApi::builder(client.clone(), store.clone())
+            .with_task_queue(task_queue.clone())
+            .with_public_base_url(
+                args.public_base_url
+                    .clone()
+                    .unwrap_or_else(|| format!("http://{}", args.bind)),
+            )
+            .build(),
+    );
+    let fleet_runtime = Arc::new(AgentApiFleetRuntime::new(api.clone()));
+    let activities =
+        WorkerActivities::from_pg_store_with_default_runtime_and_fleet(store, fleet_runtime)?;
     let mut temporal_worker =
         worker::worker_with_activities(&runtime, client.clone(), task_queue.clone(), activities)?;
     let shutdown_worker = temporal_worker.shutdown_handle();
@@ -194,16 +207,6 @@ async fn run_both(args: BothArgs) -> anyhow::Result<()> {
         "temporal worker polling"
     );
 
-    let api = Arc::new(
-        GatewayAgentApi::builder(client, store)
-            .with_task_queue(task_queue)
-            .with_public_base_url(
-                args.public_base_url
-                    .clone()
-                    .unwrap_or_else(|| format!("http://{}", args.bind)),
-            )
-            .build(),
-    );
     let app = gateway_router(api, args.max_request_body_bytes);
     let listener = tokio::net::TcpListener::bind(args.bind).await?;
     tracing::info!(target: "temporal_server", bind = %args.bind, "gateway listening");

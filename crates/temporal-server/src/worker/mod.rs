@@ -10,6 +10,8 @@ use temporalio_common::{telemetry::TelemetryOptions, worker::WorkerTaskTypes};
 use temporalio_sdk::{Worker, WorkerOptions};
 use temporalio_sdk_core::{CoreRuntime, RuntimeOptions};
 
+use crate::{config::pg_store_from_env, fleet::AgentApiFleetRuntime, gateway::GatewayAgentApi};
+
 pub use activities::{
     ActivityState, AudioTranscodeError, AudioTranscodeOutput, AudioTranscodeRequest,
     AudioTranscoder, AudioTranscriber, AudioTranscription, AudioTranscriptionError,
@@ -65,7 +67,15 @@ pub fn worker_with_activities(
 pub async fn run_worker(config: WorkerServerConfig) -> anyhow::Result<()> {
     let runtime = core_runtime()?;
     let client = connect_temporal(&config.temporal_target, &config.namespace).await?;
-    let activities = WorkerActivities::from_env().await?;
+    let store = pg_store_from_env().await?;
+    let api = std::sync::Arc::new(
+        GatewayAgentApi::builder(client.clone(), store.clone())
+            .with_task_queue(config.task_queue.clone())
+            .build(),
+    );
+    let fleet_runtime = std::sync::Arc::new(AgentApiFleetRuntime::new(api));
+    let activities =
+        WorkerActivities::from_pg_store_with_default_runtime_and_fleet(store, fleet_runtime)?;
     let mut worker =
         worker_with_activities(&runtime, client, config.task_queue.clone(), activities)?;
     tracing::info!(

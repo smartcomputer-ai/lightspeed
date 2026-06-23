@@ -2,9 +2,9 @@
 
 **Status**
 - Proposed 2026-06-23.
-- Partial implementation 2026-06-23: G1-G3 are implemented (contracts/config
-  gate, model-visible Fleet specs, and the spawn service slice). G4-G7 remain
-  pending.
+- Partial implementation 2026-06-23: G1-G5 are implemented (contracts/config
+  gate, model-visible Fleet specs, spawn service, child config/resource
+  policies, and hosted tool routing). G6-G7 remain pending.
 - Builds on **P82 (Session Graph — Clone, Fork, And Links)** for the underlying
   clone/fork/link store primitives, the Temporal-backed `AgentSessionWorkflow`,
   the `api` session/run surface, environment/provider work from P79-P81, and
@@ -426,9 +426,9 @@ fork cut-point helper, fork read resolution, link CRUD) are available.
 - Add strict schemas that deny unknown fields and do not advertise deferred
   values (`environment = isolate`, blank source, display labels).
 
-Implementation note: `config_overrides` is present in the DTO as the future patch
-hook but is rejected by the current spawn service until G4 defines patch
-application.
+Implementation note: `config_overrides` is accepted as a session config patch and
+is applied by the hosted Fleet service after child workflow start and before the
+first child run.
 
 ### G2. Model-Visible Tools — Done 2026-06-23
 
@@ -439,9 +439,9 @@ application.
 - Keep the surface small; do not expose generic session/run/VFS/environment APIs
   to the model.
 
-Implementation note: tool specs are exposed only when `tools.fleet = true`.
-Hosted execution routing from `SessionTools` is still G5, so this gate should not
-be enabled in production sessions until the executor is wired.
+Implementation note: tool specs are exposed only when `tools.fleet = true`, and
+hosted `SessionTools` routes Fleet calls to the Fleet executor when the worker is
+constructed with the Postgres/Temporal runtime.
 
 ### G3. Fleet Service — Done 2026-06-23
 
@@ -461,10 +461,10 @@ Implementation note: the current service supports clone and fork spawn, safe for
 cut-point selection, explicit child ids, deterministic derived child ids,
 parent->child link metadata validation, child workflow/session start, and
 optional immediate child run admission. `vfs = share` and `environment = share`
-are supported through P82's verbatim resource copy. `vfs = isolate` is rejected
-until G4.
+are supported through P82's verbatim resource copy; `vfs = isolate` is handled by
+the G4 resource-policy pass.
 
-### G4. Child Session Configuration And Resources
+### G4. Child Session Configuration And Resources — Done 2026-06-23
 
 - Compile the child's opening config from the source's live config plus explicit
   spawn overrides applied as a patch after open. The source may be the caller or
@@ -474,7 +474,14 @@ until G4.
 - Reject unsupported v1 policy values clearly.
 - Do not store secrets or resolved credentials.
 
-### G5. Hosted Runtime Wiring
+Implementation note: `vfs = isolate` rewrites copied workspace mounts to
+deterministic child workspaces based on `child_session_id + mount_path`; snapshot
+mounts stay shared. `environment = share` remains the only accepted environment
+policy. `config_overrides` is applied after child workflow start and before the
+first child run; ordinary spawn retries with matching Fleet link metadata skip
+the pre-run setup pass and reuse the deterministic child run submission id.
+
+### G5. Hosted Runtime Wiring — Done 2026-06-23
 
 - Wire `SessionTools` to detect Fleet tool names and route them to a Fleet tool
   executor with the parent `session_id`, `run_id`, `turn_id`, `batch_id`, and
@@ -483,6 +490,12 @@ until G4.
   returns compact model-visible handles/status.
 - Keep all Fleet side effects out of `engine` and deterministic workflow reducer
   code.
+
+Implementation note: hosted workers inject a Fleet executor into `SessionTools`
+when constructed from the Postgres/Temporal runtime. `agent_spawn` is executable
+through the tool activity path. `agent_list`, `agent_read`, and `agent_cancel`
+are routed to the Fleet executor and currently return a clear not-implemented
+tool failure until G6 adds projection/inspection/cancel behavior.
 
 ### G6. Projection And Inspection
 

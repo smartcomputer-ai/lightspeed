@@ -19,6 +19,7 @@ use messaging::OutboxStore;
 use serde_json::Value;
 use store_pg::PgStore;
 use tools::{
+    fleet::is_fleet_tool,
     fs::{FsPath, FsToolContext, MountedVfsFileSystem},
     host_protocol::RemoteHostConnection,
     limits::ToolLimits,
@@ -30,7 +31,10 @@ use tools::{
 };
 use vfs::{VfsCatalogError, VfsMountRecord, VfsMountStore, VfsWorkspaceStore};
 
-use crate::environment::{RuntimeEnvironment, SessionEnvironmentManager};
+use crate::{
+    environment::{RuntimeEnvironment, SessionEnvironmentManager},
+    fleet::{FleetChildRuntime, FleetService, FleetToolExecutor},
+};
 
 #[derive(Clone)]
 pub struct SessionTools {
@@ -40,6 +44,7 @@ pub struct SessionTools {
     environments: SessionEnvironmentManager,
     environment_bindings: Option<Arc<dyn SessionEnvironmentBindingStore>>,
     messaging: Option<MessagingToolExecutor>,
+    fleet: Option<FleetToolExecutor>,
 }
 
 impl SessionTools {
@@ -56,11 +61,23 @@ impl SessionTools {
             environments,
             environment_bindings: None,
             messaging: None,
+            fleet: None,
         }
     }
 
     pub fn with_messaging_outbox(mut self, outbox: Arc<dyn OutboxStore>) -> Self {
         self.messaging = Some(MessagingToolExecutor::new(outbox));
+        self
+    }
+
+    pub fn with_fleet_runtime(
+        mut self,
+        sessions: Arc<dyn engine::storage::SessionStore>,
+        runtime: Arc<dyn FleetChildRuntime>,
+    ) -> Self {
+        let service = FleetService::new(sessions, runtime)
+            .with_vfs_stores(self.workspace_store.clone(), self.mount_store.clone());
+        self.fleet = Some(FleetToolExecutor::new(self.blobs.clone(), service));
         self
     }
 
@@ -86,6 +103,14 @@ impl SessionTools {
         Self::new(blobs, workspace_store, mount_store)
             .with_messaging_outbox(outbox)
             .with_environment_bindings(environment_bindings)
+    }
+
+    pub fn from_pg_store_with_fleet_runtime(
+        store: Arc<PgStore>,
+        runtime: Arc<dyn FleetChildRuntime>,
+    ) -> Self {
+        let sessions: Arc<dyn engine::storage::SessionStore> = store.clone();
+        Self::from_pg_store(store).with_fleet_runtime(sessions, runtime)
     }
 
     async fn invoke_messaging_call(
@@ -153,6 +178,34 @@ impl SessionTools {
                 failed_result(self.blobs.as_ref(), call.call_id.clone(), error.to_string()).await
             }
         }
+    }
+
+    async fn invoke_fleet_call(
+        &self,
+        request: &ToolInvocationBatchRequest,
+        call: &engine::ToolInvocationRequest,
+    ) -> Result<ToolInvocationResult, CoreAgentIoError> {
+        let Some(executor) = &self.fleet else {
+            return failed_result(
+                self.blobs.as_ref(),
+                call.call_id.clone(),
+                "Fleet tools are not configured on this runtime",
+            )
+            .await;
+        };
+        executor
+            .invoke(
+                crate::fleet::FleetInvocationContext {
+                    parent_session_id: request.session_id.clone(),
+                    parent_run_id: request.run_id,
+                    turn_id: request.turn_id,
+                    batch_id: request.batch_id,
+                    call_id: call.call_id.clone(),
+                    observed_at_ms: now_unix_ms()?,
+                },
+                call,
+            )
+            .await
     }
 
     async fn environment_manager_for_session(
@@ -318,18 +371,22 @@ impl CoreAgentTools for SessionTools {
         &self,
         request: ToolInvocationBatchRequest,
     ) -> Result<ToolInvocationBatchResult, CoreAgentIoError> {
-        let has_non_messaging = request
+        let has_generic_runtime_call = request
             .calls
             .iter()
-            .any(|call| !is_messaging_tool(&call.tool_name));
-        if !has_non_messaging {
-            // Messaging-only batches skip VFS/runtime setup entirely.
+            .any(|call| !is_messaging_tool(&call.tool_name) && !is_fleet_tool(&call.tool_name));
+        if !has_generic_runtime_call {
+            // Messaging/Fleet-only batches skip generic VFS/runtime setup entirely.
             let mut results = Vec::with_capacity(request.calls.len());
             for call in &request.calls {
-                results.push(
-                    self.invoke_messaging_call(&request.session_id, request.run_id, call)
-                        .await?,
-                );
+                if is_messaging_tool(&call.tool_name) {
+                    results.push(
+                        self.invoke_messaging_call(&request.session_id, request.run_id, call)
+                            .await?,
+                    );
+                } else {
+                    results.push(self.invoke_fleet_call(&request, call).await?);
+                }
             }
             return Ok(ToolInvocationBatchResult {
                 run_id: request.run_id,
@@ -361,6 +418,8 @@ impl CoreAgentTools for SessionTools {
                     self.invoke_messaging_call(&request.session_id, request.run_id, call)
                         .await?,
                 );
+            } else if is_fleet_tool(&call.tool_name) {
+                results.push(self.invoke_fleet_call(&request, call).await?);
             } else if !has_session_fs
                 && call
                     .execution_target
@@ -435,6 +494,14 @@ fn map_blob_error(error: BlobStoreError) -> CoreAgentIoError {
     io_error(format!("write tool error blob: {error}"))
 }
 
+fn now_unix_ms() -> Result<u64, CoreAgentIoError> {
+    let duration = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| io_error(format!("system clock is before unix epoch: {error}")))?;
+    u64::try_from(duration.as_millis())
+        .map_err(|_| io_error("current timestamp does not fit in u64 milliseconds"))
+}
+
 fn io_error(error: impl std::fmt::Display) -> CoreAgentIoError {
     CoreAgentIoError::Failed {
         message: error.to_string(),
@@ -448,7 +515,7 @@ mod tests {
     use crate::environment::RuntimeEnvironment;
     use engine::{
         BlobRef, RunId, SessionId, ToolBatchId, ToolCallId, ToolName, TurnId,
-        storage::InMemoryBlobStore,
+        storage::{CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
     };
     use tools::environment::{
         EnvironmentToolContext,
@@ -477,6 +544,40 @@ mod tests {
     #[derive(Default)]
     struct RecordingProcessExecutor {
         requests: Mutex<Vec<ProcessRequest>>,
+    }
+
+    #[derive(Default)]
+    struct FakeFleetRuntime {
+        started_runs: Mutex<Vec<(SessionId, String, engine::SubmissionId)>>,
+    }
+
+    #[async_trait]
+    impl FleetChildRuntime for FakeFleetRuntime {
+        async fn start_session(&self, _session_id: &SessionId) -> Result<(), api::AgentApiError> {
+            Ok(())
+        }
+
+        async fn patch_session_config(
+            &self,
+            _session_id: &SessionId,
+            _patch: serde_json::Value,
+        ) -> Result<(), api::AgentApiError> {
+            Ok(())
+        }
+
+        async fn start_run(
+            &self,
+            session_id: &SessionId,
+            input: String,
+            submission_id: engine::SubmissionId,
+        ) -> Result<String, api::AgentApiError> {
+            self.started_runs.lock().expect("fleet lock").push((
+                session_id.clone(),
+                input,
+                submission_id,
+            ));
+            Ok("run_1".to_owned())
+        }
     }
 
     #[async_trait]
@@ -891,6 +992,77 @@ mod tests {
                 text: "hello from the agent".to_owned(),
                 reply_to: Some("4123".to_owned()),
             }
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn fleet_tools_spawn_without_generic_vfs_runtime_setup() {
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let parent = SessionId::new("parent");
+        sessions
+            .create_session(CreateSession {
+                session_id: parent.clone(),
+                agent_handle: crate::fleet::default_agent_handle(),
+                created_at_ms: 1,
+            })
+            .await
+            .expect("create parent");
+        let mut state = engine::CoreAgentState::new();
+        state.lifecycle.config = Some(crate::worker::default_session_config(
+            engine::ModelSelection {
+                api_kind: engine::ProviderApiKind::OpenAiResponses,
+                provider_id: "test".to_owned(),
+                model: "test-model".to_owned(),
+            },
+        ));
+        let opening_events =
+            engine::core_agent_clone_opening_events(&state, 2).expect("opening events");
+        sessions
+            .append(engine::storage::AppendSessionEvents {
+                session_id: parent.clone(),
+                expected_head: None,
+                events: opening_events,
+            })
+            .await
+            .expect("open parent");
+
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let catalog = Arc::new(TestCatalog::default());
+        let fleet_runtime = Arc::new(FakeFleetRuntime::default());
+        let session_store: Arc<dyn SessionStore> = sessions;
+        let tools = SessionTools::new(blobs.clone(), catalog.clone(), catalog)
+            .with_fleet_runtime(session_store, fleet_runtime.clone());
+        let arguments_ref = blobs
+            .put_bytes(br#"{"input":"do child work"}"#.to_vec())
+            .await
+            .expect("arguments");
+
+        let result = tools
+            .invoke_batch(ToolInvocationBatchRequest {
+                session_id: parent,
+                run_id: RunId::new(9),
+                turn_id: TurnId::new(1),
+                batch_id: ToolBatchId::new(1),
+                default_targets: Default::default(),
+                calls: vec![engine::ToolInvocationRequest {
+                    call_id: ToolCallId::new("call_spawn"),
+                    tool_name: ToolName::new(::tools::fleet::AGENT_SPAWN_TOOL_NAME),
+                    arguments_ref,
+                    execution_target: None,
+                }],
+            })
+            .await
+            .expect("invoke");
+
+        assert_eq!(result.results[0].status, ToolCallStatus::Succeeded);
+        let output_ref = result.results[0].output_ref.as_ref().expect("output");
+        let output: ::tools::fleet::AgentSpawnOutput =
+            serde_json::from_slice(&blobs.read_bytes(output_ref).await.expect("read output"))
+                .expect("decode output");
+        assert!(output.child_session_id.starts_with("agent_"));
+        assert_eq!(
+            fleet_runtime.started_runs.lock().expect("fleet lock")[0].1,
+            "do child work"
         );
     }
 
