@@ -3,10 +3,11 @@
 ## Core
 - [ ] cleanup of CoreAgent structures (which were designed to expand the event types because we wanted Lightspeed to be a library)
 - [ ] do we need to keep agent_id in session meta data (in tables)?
+- [ ] optimize: we're rading all session events to get latest state, this will get expensve in the future
 
 ## Fleet (sub-agents)
 - [x] [P82](p82-session-graph-fork-clone.md) — session graph foundation: clone, fork (by-reference), and links in the store
-- [x] [P83](p83-fleet-subagent-control-plane.md) — agent-facing Fleet control plane (spawn/read/list/cancel) on top of P82
+- [x] [P83](p83-fleet-subagent-control-plane.md) — agent-facing Fleet control plane (spawn/task/read/list/cancel) on top of P82
 - [ ] configure agent
 - [ ] agent profiles
 - [ ] start new sessions with profiles and ad-hoc profiles

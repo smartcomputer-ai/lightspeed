@@ -3,7 +3,7 @@
 **Status**
 - Proposed 2026-06-23.
 - Completed 2026-06-23: G1-G7 are implemented (contracts/config gate,
-  model-visible Fleet specs, spawn service, child config/resource policies,
+  model-visible Fleet specs, spawn/task service, child config/resource policies,
   hosted tool routing, projection/inspection/cancel behavior, deterministic
   tests, and an ignored Temporal/Postgres live smoke).
 - Builds on **P82 (Session Graph — Clone, Fork, And Links)** for the underlying
@@ -54,10 +54,11 @@ service that drives them:
 Use a **Fleet control plane** in front of the existing session/run API and the
 P82 primitives.
 
-The model-visible surface is small and semantic. v1 ships four tools:
+The model-visible surface is small and semantic. v1 ships five tools:
 
 ```text
 agent_spawn     create a child by cloning/forking a source and start its run
+agent_task      deliver follow-up work and start a run on an existing agent
 agent_list      list related/child sessions with compact status
 agent_read      read one session's status, config, resources, and recent activity
 agent_cancel    cancel an active run or close a child
@@ -67,7 +68,6 @@ Deferred to later passes (kept out of v1 to keep the surface tight):
 
 ```text
 agent_configure   semantic config patch compiled into session/tool/env/mcp ops
-agent_task        deliver follow-up work and start a run on an existing agent
 agent_capabilities once policy is real; a static description suffices in v1
 ```
 
@@ -230,6 +230,23 @@ Every v1 `agent_spawn` creates or reuses a parent -> child link from the caller
 to the spawned session. The Fleet tool does not create unlinked standalone
 sessions. If a human client or gateway needs a truly standalone session, it uses
 the existing session API outside this model-visible Fleet surface.
+
+### `agent_task`
+
+Starts follow-up work on an existing Fleet agent session.
+
+Input shape:
+
+```text
+target_agent_id
+input
+```
+
+The target must already be a session. v1 trusts the named target id in the same
+way `agent_read` and `agent_cancel` do; capability-policy enforcement is
+deferred. The service uses the normal hosted `run/start` path with a
+deterministic submission id derived from the parent tool invocation and target
+agent id, so tool-activity retries do not admit duplicate runs.
 
 ### `agent_read` / `agent_list`
 
@@ -441,8 +458,8 @@ creation.
 
 ### G2. Model-Visible Tools — Done 2026-06-23
 
-- Add the small Fleet tool package: `agent_spawn`, `agent_list`, `agent_read`,
-  `agent_cancel`.
+- Add the small Fleet tool package: `agent_spawn`, `agent_task`, `agent_list`,
+  `agent_read`, `agent_cancel`.
 - Wire Fleet specs into `ToolsetConfig` / `resolve_toolset` only when the
   per-session Fleet gate is enabled.
 - Keep the surface small; do not expose generic session/run/VFS/environment APIs
@@ -458,7 +475,8 @@ constructed with the Postgres/Temporal runtime.
   (self, a spawned child, or a linked session — trusted by id in v1), derives or
   validates the child id, records the parent->child link and the child's
   `source_session_id` (+ `source_seq` when `fork = true`) lineage, clones or
-  forks the source via the P82 store methods, and admits the child run.
+  forks the source via the P82 store methods, and admits the child run. Also
+  support follow-up `agent_task` run admission on existing target sessions.
 - For `fork = true`, obtain the safe `source_seq` from the P82 cut-point helper;
   validate any explicit `fork_at_seq` is not inside an open run.
 - Make spawn idempotent by deterministic child id plus link metadata validation.
@@ -468,10 +486,11 @@ constructed with the Postgres/Temporal runtime.
 
 Implementation note: the current service supports clone and fork spawn, safe fork
 cut-point selection, explicit child ids, deterministic derived child ids,
-parent->child link metadata validation, child workflow/session start, and
-optional immediate child run admission. `vfs = share` and `environment = share`
-are supported through P82's verbatim resource copy; `vfs = isolate` is handled by
-the G4 resource-policy pass.
+parent->child link metadata validation, child workflow/session start, optional
+immediate child run admission, and follow-up `agent_task` run admission with
+deterministic submission ids. `vfs = share` and `environment = share` are
+supported through P82's verbatim resource copy; `vfs = isolate` is handled by the
+G4 resource-policy pass.
 
 ### G4. Child Session Configuration And Resources — Done 2026-06-23
 
@@ -500,10 +519,9 @@ setup pass and reuse the deterministic child run submission id.
   code.
 
 Implementation note: hosted workers inject a Fleet executor into `SessionTools`
-when constructed from the Postgres/Temporal runtime. `agent_spawn` is executable
-through the tool activity path, and `agent_list`, `agent_read`, and
-`agent_cancel` now route to the Fleet executor with normal tool-result blobs and
-model-visible summaries.
+when constructed from the Postgres/Temporal runtime. `agent_spawn`, `agent_task`,
+`agent_list`, `agent_read`, and `agent_cancel` route to the Fleet executor with
+normal tool-result blobs and model-visible summaries.
 
 ### G6. Projection And Inspection — Done 2026-06-23
 
@@ -546,16 +564,15 @@ uses the hosted run/session API for active-run cancellation and session close.
 
 Implementation note: deterministic coverage now includes strict Fleet schemas,
 spawn idempotency, explicit-id collision handling, VFS isolation, hosted
-`SessionTools` routing, `agent_read`, `agent_list`, and `agent_cancel`. The
-ignored live smoke
+`SessionTools` routing, `agent_task`, `agent_read`, `agent_list`, and
+`agent_cancel`. The ignored live smoke
 `temporal_live_fleet_executor_spawns_child_workflow_and_run` exercises the real
 Fleet executor against the Postgres/Temporal runtime and verifies the child
-workflow plus child run complete.
+workflow plus initial and follow-up child runs complete.
 
 ## Deferred
 
-- `agent_configure` (semantic self/child config patches) and `agent_task`
-  (follow-up tasking of existing agents).
+- `agent_configure` (semantic self/child config patches).
 - Blank/no-source and profile/template-based child creation.
 - Human labels/display names/task names.
 - Unlinked standalone session creation from inside Fleet tools.
@@ -586,6 +603,8 @@ workflow plus child run complete.
   and environment isolation is not accepted by v1 schemas.
 - Every v1 spawn records a caller -> child session link; unlinked standalone
   session creation is not exposed through `agent_spawn`.
+- The parent can task an existing child/agent with follow-up work and receives
+  the admitted run handle.
 - The child is visible through normal session/read behavior and through
   Fleet-level `agent_read`.
 - `agent_read` returns full effective config and supports bounded recent

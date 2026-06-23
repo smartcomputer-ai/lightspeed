@@ -32,7 +32,9 @@ use temporal_workflow::{AgentAdmission, AgentAdmissionFailureKind, AgentSessionW
 use temporalio_client::{
     Client, WorkflowQueryOptions, WorkflowSignalOptions, WorkflowTerminateOptions,
 };
-use tools::fleet::{AGENT_SPAWN_TOOL_NAME, AgentSpawnOutput};
+use tools::fleet::{
+    AGENT_SPAWN_TOOL_NAME, AGENT_TASK_TOOL_NAME, AgentSpawnOutput, AgentTaskOutput,
+};
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires local/up.sh or compatible Temporal + Postgres env"]
@@ -362,6 +364,41 @@ async fn run_fleet_spawn_live_client(
 
     let run = wait_for_terminal_run(api.as_ref(), &child_session_id, child_run_id).await?;
     let output_text = final_assistant_text(&run).expect("child assistant output");
+    assert!(output_text.contains("Fake agent completed run"));
+
+    let task_args = serde_json::json!({
+        "target_agent_id": child_session_id.as_str(),
+        "input": "child follow-up live task"
+    });
+    let arguments_ref = blobs.put_bytes(serde_json::to_vec(&task_args)?).await?;
+    let task_result = executor
+        .invoke(
+            FleetInvocationContext {
+                parent_session_id: session_id.clone(),
+                parent_run_id: RunId::new(1),
+                turn_id: TurnId::new(1),
+                batch_id: ToolBatchId::new(2),
+                call_id: ToolCallId::new("call_live_2"),
+                observed_at_ms,
+            },
+            &ToolInvocationRequest {
+                call_id: ToolCallId::new("call_live_2"),
+                tool_name: ToolName::new(AGENT_TASK_TOOL_NAME),
+                arguments_ref,
+                execution_target: None,
+            },
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+    assert_eq!(task_result.status, ToolCallStatus::Succeeded);
+    let output_ref = task_result.output_ref.expect("task output ref");
+    let task_output: AgentTaskOutput =
+        serde_json::from_slice(&blobs.read_bytes(&output_ref).await?)?;
+    assert_eq!(task_output.target_agent_id, child_session_id.as_str());
+    assert_ne!(task_output.run_id, child_run_id);
+    let follow_up_run =
+        wait_for_terminal_run(api.as_ref(), &child_session_id, &task_output.run_id).await?;
+    let output_text = final_assistant_text(&follow_up_run).expect("follow-up assistant output");
     assert!(output_text.contains("Fake agent completed run"));
 
     let child_handle =

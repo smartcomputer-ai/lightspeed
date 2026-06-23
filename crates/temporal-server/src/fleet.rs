@@ -23,10 +23,10 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use tools::fleet::{
     AGENT_CANCEL_TOOL_NAME, AGENT_LIST_TOOL_NAME, AGENT_READ_TOOL_NAME, AGENT_SPAWN_TOOL_NAME,
-    AgentCancelArgs, AgentCancelOutput, AgentCancelScope, AgentLineageView, AgentLinkView,
-    AgentListArgs, AgentListDirection, AgentListItem, AgentListOutput, AgentReadArgs,
-    AgentReadOutput, AgentSpawnArgs, AgentSpawnOutput, AgentSpawnSource, EnvironmentPolicy,
-    VfsPolicy,
+    AGENT_TASK_TOOL_NAME, AgentCancelArgs, AgentCancelOutput, AgentCancelScope, AgentLineageView,
+    AgentLinkView, AgentListArgs, AgentListDirection, AgentListItem, AgentListOutput,
+    AgentReadArgs, AgentReadOutput, AgentSpawnArgs, AgentSpawnOutput, AgentSpawnSource,
+    AgentTaskArgs, AgentTaskOutput, EnvironmentPolicy, VfsPolicy,
 };
 use vfs::{
     CreateVfsWorkspaceRecord, VfsCatalogError, VfsMountSource, VfsMountStore, VfsPath,
@@ -145,6 +145,30 @@ impl FleetService {
             } else {
                 "reused".to_owned()
             },
+        })
+    }
+
+    pub async fn task(
+        &self,
+        context: FleetInvocationContext,
+        args: AgentTaskArgs,
+    ) -> Result<AgentTaskOutput, AgentApiError> {
+        validate_task_args(&args)?;
+        let target_agent_id = parse_session_id(&args.target_agent_id, "target_agent_id")?;
+        self.load_session_required(&target_agent_id).await?;
+        self.runtime.start_session(&target_agent_id).await?;
+        let run_id = self
+            .runtime
+            .start_run(
+                &target_agent_id,
+                args.input,
+                task_submission_id(&context, &target_agent_id),
+            )
+            .await?;
+        Ok(AgentTaskOutput {
+            target_agent_id: target_agent_id.as_str().to_owned(),
+            run_id,
+            status: "started".to_owned(),
         })
     }
 
@@ -736,6 +760,7 @@ impl FleetToolExecutor {
     ) -> Result<ToolInvocationResult, CoreAgentIoError> {
         match call.tool_name.as_str() {
             AGENT_SPAWN_TOOL_NAME => self.invoke_spawn(context, call).await,
+            AGENT_TASK_TOOL_NAME => self.invoke_task(context, call).await,
             AGENT_LIST_TOOL_NAME => self.invoke_list(context, call).await,
             AGENT_READ_TOOL_NAME => self.invoke_read(call).await,
             AGENT_CANCEL_TOOL_NAME => self.invoke_cancel(call).await,
@@ -764,6 +789,24 @@ impl FleetToolExecutor {
                     spawn_model_visible_text(&output),
                 )
                 .await
+            }
+            Err(error) => {
+                fleet_failed_result(self.blobs.as_ref(), call.call_id.clone(), error.to_string())
+                    .await
+            }
+        }
+    }
+
+    async fn invoke_task(
+        &self,
+        context: FleetInvocationContext,
+        call: &ToolInvocationRequest,
+    ) -> Result<ToolInvocationResult, CoreAgentIoError> {
+        let args: AgentTaskArgs = self.decode_args(call).await?;
+        match self.service.task(context, args).await {
+            Ok(output) => {
+                let visible = task_model_visible_text(&output);
+                self.succeeded(call.call_id.clone(), &output, visible).await
             }
             Err(error) => {
                 fleet_failed_result(self.blobs.as_ref(), call.call_id.clone(), error.to_string())
@@ -876,6 +919,15 @@ fn validate_spawn_args(args: &AgentSpawnArgs) -> Result<(), AgentApiError> {
     if args.environment != EnvironmentPolicy::Share {
         return Err(AgentApiError::invalid_request(
             "agent_spawn environment policy must be share",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_task_args(args: &AgentTaskArgs) -> Result<(), AgentApiError> {
+    if args.input.trim().is_empty() {
+        return Err(AgentApiError::invalid_request(
+            "agent_task input must not be empty",
         ));
     }
     Ok(())
@@ -1033,6 +1085,20 @@ fn child_run_submission_id(context: &FleetInvocationContext) -> SubmissionId {
     ))
 }
 
+fn task_submission_id(
+    context: &FleetInvocationContext,
+    target_agent_id: &SessionId,
+) -> SubmissionId {
+    SubmissionId::new(format!(
+        "fleet_task_{}",
+        digest_suffix(&format!(
+            "{}:{}",
+            spawn_request_material(context),
+            target_agent_id
+        ))
+    ))
+}
+
 fn spawn_request_material(context: &FleetInvocationContext) -> String {
     format!(
         "{}:{}:{}:{}:{}",
@@ -1132,6 +1198,13 @@ fn spawn_model_visible_text(output: &AgentSpawnOutput) -> String {
             output.child_session_id, output.status
         ),
     }
+}
+
+fn task_model_visible_text(output: &AgentTaskOutput) -> String {
+    format!(
+        "Agent {} started follow-up run {}.",
+        output.target_agent_id, output.run_id
+    )
 }
 
 fn list_model_visible_text(output: &AgentListOutput) -> String {
@@ -1602,6 +1675,42 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn task_starts_follow_up_run_with_deterministic_submission_id() {
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let target = open_source_session(sessions.as_ref()).await;
+        let runtime = Arc::new(FakeRuntime::default());
+        let service = FleetService::new(sessions, runtime.clone());
+
+        let output = service
+            .task(
+                context(target.clone()),
+                AgentTaskArgs {
+                    target_agent_id: target.as_str().to_owned(),
+                    input: "do more work".to_owned(),
+                },
+            )
+            .await
+            .expect("task");
+
+        assert_eq!(output.target_agent_id, target.as_str());
+        assert_eq!(output.run_id, "run_1");
+        assert_eq!(output.status, "started");
+        assert_eq!(
+            runtime.started_sessions.lock().expect("lock").as_slice(),
+            &[target.clone()]
+        );
+        let started_runs = runtime.started_runs.lock().expect("lock");
+        assert_eq!(started_runs.len(), 1);
+        assert_eq!(started_runs[0].0, target);
+        assert_eq!(started_runs[0].1, "do more work");
+        assert!(
+            started_runs[0].2.as_str().starts_with("fleet_task_"),
+            "submission id should be Fleet-derived, got {}",
+            started_runs[0].2
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn list_returns_linked_children_with_compact_status() {
         let sessions = Arc::new(InMemorySessionStore::new());
         let parent = open_source_session(sessions.as_ref()).await;
@@ -1842,6 +1951,44 @@ mod tests {
         let visible_ref = result.model_visible_output_ref.expect("visible");
         let visible = blobs.read_text(&visible_ref).await.expect("read visible");
         assert!(visible.contains("Read agent parent"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn fleet_executor_runs_task_and_writes_output_blobs() {
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let target = open_source_session(sessions.as_ref()).await;
+        let blobs = Arc::new(engine::storage::InMemoryBlobStore::new());
+        let runtime = Arc::new(FakeRuntime::default());
+        let service = FleetService::new(sessions, runtime);
+        let executor = FleetToolExecutor::new(blobs.clone(), service);
+        let arguments_ref = blobs
+            .put_bytes(br#"{"target_agent_id":"parent","input":"do more work"}"#.to_vec())
+            .await
+            .expect("args");
+
+        let result = executor
+            .invoke(
+                context(target),
+                &ToolInvocationRequest {
+                    call_id: ToolCallId::new("call_1"),
+                    tool_name: ToolName::new(AGENT_TASK_TOOL_NAME),
+                    arguments_ref,
+                    execution_target: None,
+                },
+            )
+            .await
+            .expect("invoke");
+
+        assert_eq!(result.status, ToolCallStatus::Succeeded);
+        let output_ref = result.output_ref.expect("output");
+        let output: AgentTaskOutput =
+            serde_json::from_slice(&blobs.read_bytes(&output_ref).await.expect("read output"))
+                .expect("decode output");
+        assert_eq!(output.target_agent_id, "parent");
+        assert_eq!(output.run_id, "run_1");
+        let visible_ref = result.model_visible_output_ref.expect("visible");
+        let visible = blobs.read_text(&visible_ref).await.expect("read visible");
+        assert!(visible.contains("follow-up run"));
     }
 
     fn spawn_args(input: &str) -> AgentSpawnArgs {

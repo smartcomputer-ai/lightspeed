@@ -12,6 +12,7 @@ use crate::{
 };
 
 pub const AGENT_SPAWN_TOOL_NAME: &str = "agent_spawn";
+pub const AGENT_TASK_TOOL_NAME: &str = "agent_task";
 pub const AGENT_LIST_TOOL_NAME: &str = "agent_list";
 pub const AGENT_READ_TOOL_NAME: &str = "agent_read";
 pub const AGENT_CANCEL_TOOL_NAME: &str = "agent_cancel";
@@ -39,6 +40,7 @@ pub fn is_fleet_tool(tool_name: &ToolName) -> bool {
     matches!(
         tool_name.as_str(),
         AGENT_SPAWN_TOOL_NAME
+            | AGENT_TASK_TOOL_NAME
             | AGENT_LIST_TOOL_NAME
             | AGENT_READ_TOOL_NAME
             | AGENT_CANCEL_TOOL_NAME
@@ -112,6 +114,13 @@ fn default_run_immediately() -> bool {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub struct AgentTaskArgs {
+    pub target_agent_id: String,
+    pub input: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct AgentReadArgs {
     pub target_agent_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -176,6 +185,14 @@ pub struct AgentSpawnOutput {
     pub child_session_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub child_run_id: Option<String>,
+    pub status: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentTaskOutput {
+    pub target_agent_id: String,
+    pub run_id: String,
     pub status: String,
 }
 
@@ -262,6 +279,11 @@ pub fn fleet_tool_bundles(config: &FleetToolsetConfig) -> ToolResult<Vec<ToolSpe
             spawn_input_schema(),
         )?,
         function_bundle(
+            AGENT_TASK_TOOL_NAME,
+            "Start follow-up work on an existing Fleet agent session.",
+            task_input_schema(),
+        )?,
+        function_bundle(
             AGENT_LIST_TOOL_NAME,
             "List related Fleet agents with compact status. Use agent_read for details on one agent.",
             list_input_schema(),
@@ -282,6 +304,7 @@ pub fn fleet_tool_bundles(config: &FleetToolsetConfig) -> ToolResult<Vec<ToolSpe
 pub fn fleet_tool_bindings(execution: ToolExecutionMode) -> Vec<ToolBinding> {
     [
         AGENT_SPAWN_TOOL_NAME,
+        AGENT_TASK_TOOL_NAME,
         AGENT_LIST_TOOL_NAME,
         AGENT_READ_TOOL_NAME,
         AGENT_CANCEL_TOOL_NAME,
@@ -417,6 +440,24 @@ fn read_input_schema() -> Value {
     })
 }
 
+fn task_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "target_agent_id": {
+                "type": "string",
+                "description": "Existing Fleet agent/session id to task."
+            },
+            "input": {
+                "type": "string",
+                "description": "Follow-up task text for the target agent run."
+            }
+        },
+        "required": ["target_agent_id", "input"],
+        "additionalProperties": false
+    })
+}
+
 fn list_input_schema() -> Value {
     json!({
         "type": "object",
@@ -530,6 +571,16 @@ mod tests {
             }
         }))
         .expect_err("raw API config patches are not part of agent_spawn");
+    }
+
+    #[test]
+    fn task_rejects_unknown_fields() {
+        serde_json::from_value::<AgentTaskArgs>(json!({
+            "target_agent_id": "child",
+            "input": "do more work",
+            "priority": "high"
+        }))
+        .expect_err("unknown fields are denied");
     }
 
     #[test]
