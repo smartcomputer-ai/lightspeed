@@ -6,7 +6,7 @@ use api::{
     AgentApiError, AgentApiService, EventCursor, InputItem, RunCancelParams, RunStartParams,
     RunStatus as ApiRunStatus, SessionCloseParams, SessionEnvironmentListParams,
     SessionEnvironmentListResponse, SessionEventsReadParams, SessionEventsReadResponse,
-    SessionReadParams, SessionStartParams, SessionUpdateParams, SessionView,
+    SessionReadParams, SessionStartParams, SessionView,
 };
 use api_projection::{MAX_EVENT_PAGE_LIMIT, read_all_session_entries, replay_core_agent_state};
 use async_trait::async_trait;
@@ -114,11 +114,6 @@ impl FleetService {
         }
 
         self.runtime.start_session(&child_session_id).await?;
-        if !skip_pre_run_setup && let Some(config_overrides) = args.config_overrides.clone() {
-            self.runtime
-                .patch_session_config(&child_session_id, config_overrides)
-                .await?;
-        }
         self.upsert_spawn_link(
             &context,
             &source_session_id,
@@ -584,12 +579,6 @@ pub struct FleetInvocationContext {
 pub trait FleetChildRuntime: Send + Sync {
     async fn start_session(&self, session_id: &SessionId) -> Result<(), AgentApiError>;
 
-    async fn patch_session_config(
-        &self,
-        session_id: &SessionId,
-        patch: Value,
-    ) -> Result<(), AgentApiError>;
-
     async fn start_run(
         &self,
         session_id: &SessionId,
@@ -639,24 +628,6 @@ impl FleetChildRuntime for AgentApiFleetRuntime {
                 session_id: Some(session_id.as_str().to_owned()),
                 cwd: None,
                 config: None,
-            })
-            .await?;
-        Ok(())
-    }
-
-    async fn patch_session_config(
-        &self,
-        session_id: &SessionId,
-        patch: Value,
-    ) -> Result<(), AgentApiError> {
-        let patch = serde_json::from_value(patch).map_err(|error| {
-            AgentApiError::invalid_request(format!("invalid config_overrides: {error}"))
-        })?;
-        self.api
-            .update_session(SessionUpdateParams {
-                session_id: session_id.as_str().to_owned(),
-                expected_config_revision: None,
-                patch,
             })
             .await?;
         Ok(())
@@ -1255,7 +1226,6 @@ mod tests {
     #[derive(Default)]
     struct FakeRuntime {
         started_sessions: Mutex<Vec<SessionId>>,
-        patched_sessions: Mutex<Vec<(SessionId, Value)>>,
         started_runs: Mutex<Vec<(SessionId, String, SubmissionId)>>,
         sessions: Mutex<BTreeMap<SessionId, SessionView>>,
         events: Mutex<BTreeMap<SessionId, Vec<api::SessionEventView>>>,
@@ -1271,18 +1241,6 @@ mod tests {
                 .lock()
                 .expect("lock")
                 .push(session_id.clone());
-            Ok(())
-        }
-
-        async fn patch_session_config(
-            &self,
-            session_id: &SessionId,
-            patch: Value,
-        ) -> Result<(), AgentApiError> {
-            self.patched_sessions
-                .lock()
-                .expect("lock")
-                .push((session_id.clone(), patch));
             Ok(())
         }
 
@@ -1526,47 +1484,6 @@ mod tests {
             .expect_err("explicit collision must be rejected");
 
         assert_eq!(error.kind, api::AgentApiErrorKind::Conflict);
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn spawn_applies_config_overrides_before_first_run() {
-        let sessions = Arc::new(InMemorySessionStore::new());
-        let source = open_source_session(sessions.as_ref()).await;
-        let runtime = Arc::new(FakeRuntime::default());
-        let service = FleetService::new(sessions, runtime.clone());
-        let output = service
-            .spawn(
-                context(source),
-                serde_json::from_value(json!({
-                    "input": "do work",
-                    "config_overrides": {
-                        "tools": {
-                            "fleet": { "op": "set", "value": true }
-                        }
-                    }
-                }))
-                .expect("args"),
-            )
-            .await
-            .expect("spawn");
-
-        let child = SessionId::new(output.child_session_id);
-        assert_eq!(
-            runtime.patched_sessions.lock().expect("lock").as_slice(),
-            &[(
-                child.clone(),
-                json!({
-                    "tools": {
-                        "fleet": { "op": "set", "value": true }
-                    }
-                })
-            )]
-        );
-        assert_eq!(
-            runtime.started_runs.lock().expect("lock")[0].0,
-            child,
-            "run starts after patch target is established"
-        );
     }
 
     #[tokio::test(flavor = "current_thread")]

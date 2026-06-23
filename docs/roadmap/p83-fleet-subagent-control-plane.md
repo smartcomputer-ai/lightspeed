@@ -156,7 +156,6 @@ fork?                   bool                          (default: false)
 fork_at_seq?            int                           (default: auto safe cut)
 vfs?                    share | isolate               (default: share)
 environment?            share                         (default: share)
-config_overrides?
 lifecycle?
 ```
 
@@ -311,20 +310,24 @@ environment providers expose a way to request fresh equivalent targets.
 
 ## Configuration Model
 
-A spawned child **starts from the source's full setup, then patches** (the P82
-inherit-then-patch rule). Child configuration is compiled as:
+A spawned child **inherits the source's full setup**. Child configuration is
+compiled as:
 
 1. The source session's current `SessionConfig` and MCP links, inherited via the
    log (P82 clone/fork mechanics).
 2. The source session's `vfs_mounts` and `session_environment_bindings`, copied
    per the policies above (`vfs = share|isolate`, `environment = share` only).
-3. Explicit `config_overrides` from the spawn request, applied as a patch *after*
-   open — never as a rewrite of inherited state.
 
 This deliberately uses the source's *live* config, not its session-start config.
 Secrets and resolved credentials are never copied or stored on Fleet metadata
 (P82: a clone inherits only the `grant_id` / `provider_id` reference and mints
 its own token at call time).
+
+`agent_spawn` does not accept ad hoc config patches in v1. Raw API config patch
+syntax is intentionally kept out of model-visible Fleet tools to avoid mixing
+tool snake_case with API camelCase and to avoid a second patch dialect. Follow-up
+configuration belongs in a future `agent_configure` tool or profile-based
+creation flow.
 
 Beta auth caveat: grants are `principal_kind = 'universe_default'`, so a clone
 inherits the source's full auth reach by construction. There is no per-session or
@@ -425,15 +428,16 @@ fork cut-point helper, fork read resolution, link CRUD) are available.
 ### G1. Contracts And Config Gate — Done 2026-06-23
 
 - Finalize the v1 tool DTOs: `child_session_id?`, `input`, tagged `source`,
-  `fork`, `fork_at_seq`, `vfs`, `environment`, `config_overrides`, `lifecycle`.
+  `fork`, `fork_at_seq`, `vfs`, `environment`, `lifecycle`.
 - Add the per-session Fleet tool gate to engine/API config and regenerate
   committed API contract artifacts.
 - Add strict schemas that deny unknown fields and do not advertise deferred
   values (`environment = isolate`, blank source, display labels).
 
-Implementation note: `config_overrides` is accepted as a session config patch and
-is applied by the hosted Fleet service after child workflow start and before the
-first child run.
+Implementation note: an earlier draft accepted raw `config_overrides`, but the
+completed v1 surface removed it. `agent_spawn` inherits source config only;
+configuration changes are deferred to `agent_configure` or profile-based
+creation.
 
 ### G2. Model-Visible Tools — Done 2026-06-23
 
@@ -471,9 +475,9 @@ the G4 resource-policy pass.
 
 ### G4. Child Session Configuration And Resources — Done 2026-06-23
 
-- Compile the child's opening config from the source's live config plus explicit
-  spawn overrides applied as a patch after open. The source may be the caller or
-  any session the caller may use; the child inherits the source's setup.
+- Compile the child's opening config from the source's live config. The source
+  may be the caller or any session the caller may use; the child inherits the
+  source's setup.
 - Apply resource policies after P82's verbatim resource copy and before child run
   admission: `vfs = share|isolate`, `environment = share`.
 - Reject unsupported v1 policy values clearly.
@@ -482,9 +486,8 @@ the G4 resource-policy pass.
 Implementation note: `vfs = isolate` rewrites copied workspace mounts to
 deterministic child workspaces based on `child_session_id + mount_path`; snapshot
 mounts stay shared. `environment = share` remains the only accepted environment
-policy. `config_overrides` is applied after child workflow start and before the
-first child run; ordinary spawn retries with matching Fleet link metadata skip
-the pre-run setup pass and reuse the deterministic child run submission id.
+policy. Ordinary spawn retries with matching Fleet link metadata skip the pre-run
+setup pass and reuse the deterministic child run submission id.
 
 ### G5. Hosted Runtime Wiring — Done 2026-06-23
 
@@ -542,9 +545,9 @@ uses the hosted run/session API for active-run cancellation and session close.
   separate child `AgentSessionWorkflow` and child run.
 
 Implementation note: deterministic coverage now includes strict Fleet schemas,
-spawn idempotency, explicit-id collision handling, config patch ordering, VFS
-isolation, hosted `SessionTools` routing, `agent_read`, `agent_list`, and
-`agent_cancel`. The ignored live smoke
+spawn idempotency, explicit-id collision handling, VFS isolation, hosted
+`SessionTools` routing, `agent_read`, `agent_list`, and `agent_cancel`. The
+ignored live smoke
 `temporal_live_fleet_executor_spawns_child_workflow_and_run` exercises the real
 Fleet executor against the Postgres/Temporal runtime and verifies the child
 workflow plus child run complete.

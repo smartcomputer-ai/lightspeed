@@ -61,8 +61,6 @@ pub struct AgentSpawnArgs {
     pub vfs: VfsPolicy,
     #[serde(default)]
     pub environment: EnvironmentPolicy,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub config_overrides: Option<Value>,
     #[serde(default)]
     pub lifecycle: AgentSpawnLifecycle,
 }
@@ -392,10 +390,6 @@ fn spawn_input_schema() -> Value {
                 "enum": ["share"],
                 "default": "share"
             },
-            "config_overrides": {
-                "type": ["object", "null"],
-                "description": "Reserved for semantic config patches after clone/fork."
-            },
             "lifecycle": {
                 "type": "object",
                 "properties": {
@@ -523,6 +517,19 @@ mod tests {
             "task_name": "old contract"
         }))
         .expect_err("unknown fields are denied");
+    }
+
+    #[test]
+    fn spawn_rejects_config_overrides() {
+        serde_json::from_value::<AgentSpawnArgs>(json!({
+            "input": "do work",
+            "config_overrides": {
+                "tools": {
+                    "fleet": { "op": "set", "value": true }
+                }
+            }
+        }))
+        .expect_err("raw API config patches are not part of agent_spawn");
     }
 
     #[test]

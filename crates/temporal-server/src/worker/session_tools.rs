@@ -557,14 +557,6 @@ mod tests {
             Ok(())
         }
 
-        async fn patch_session_config(
-            &self,
-            _session_id: &SessionId,
-            _patch: serde_json::Value,
-        ) -> Result<(), api::AgentApiError> {
-            Ok(())
-        }
-
         async fn start_run(
             &self,
             session_id: &SessionId,
