@@ -154,7 +154,6 @@ pub struct AgentCancelArgs {
 #[serde(rename_all = "snake_case")]
 pub enum AgentCancelScope {
     ActiveRun,
-    QueuedRuns,
     Session,
 }
 
@@ -180,6 +179,78 @@ pub struct AgentSpawnOutput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub child_run_id: Option<String>,
     pub status: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentLineageView {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_agent_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_seq: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentLinkView {
+    pub from_agent_id: String,
+    pub to_agent_id: String,
+    pub relationship: String,
+    pub created_at_ms: u64,
+    #[serde(default)]
+    pub metadata: Value,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentListItem {
+    pub agent_id: String,
+    pub relationship: String,
+    pub created_at_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at_ms: Option<u64>,
+    pub lineage: AgentLineageView,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentListOutput {
+    pub target_agent_id: String,
+    pub direction: AgentListDirection,
+    #[serde(default)]
+    pub agents: Vec<AgentListItem>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentReadOutput {
+    pub agent_id: String,
+    pub session: Value,
+    pub lineage: AgentLineageView,
+    #[serde(default)]
+    pub links: Vec<AgentLinkView>,
+    #[serde(default)]
+    pub environments: Value,
+    #[serde(default)]
+    pub recent_events: Vec<Value>,
+    #[serde(default)]
+    pub recent_transcript: Vec<Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentCancelOutput {
+    pub target_agent_id: String,
+    pub scope: AgentCancelScope,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<Value>,
 }
 
 pub fn fleet_tool_bundles(config: &FleetToolsetConfig) -> ToolResult<Vec<ToolSpecBundle>> {
@@ -383,7 +454,7 @@ fn cancel_input_schema() -> Value {
             "target_agent_id": { "type": "string" },
             "scope": {
                 "type": "string",
-                "enum": ["active_run", "queued_runs", "session"]
+                "enum": ["active_run", "session"]
             },
             "reason": { "type": ["string", "null"] }
         },
@@ -452,6 +523,17 @@ mod tests {
             "task_name": "old contract"
         }))
         .expect_err("unknown fields are denied");
+    }
+
+    #[test]
+    fn cancel_rejects_queued_runs_scope() {
+        let error = serde_json::from_value::<AgentCancelArgs>(json!({
+            "target_agent_id": "child",
+            "scope": "queued_runs"
+        }))
+        .expect_err("queued run cancellation is not part of v1");
+
+        assert!(error.to_string().contains("unknown variant"));
     }
 
     #[test]

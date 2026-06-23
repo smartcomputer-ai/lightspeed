@@ -578,6 +578,75 @@ mod tests {
             ));
             Ok("run_1".to_owned())
         }
+
+        async fn read_session(
+            &self,
+            session_id: &SessionId,
+        ) -> Result<api::SessionView, api::AgentApiError> {
+            Ok(fleet_test_session(session_id, api::SessionStatus::Idle))
+        }
+
+        async fn read_session_events(
+            &self,
+            _session_id: &SessionId,
+            _after: Option<u64>,
+            _limit: u32,
+        ) -> Result<api::SessionEventsReadResponse, api::AgentApiError> {
+            Ok(api::SessionEventsReadResponse {
+                events: Vec::new(),
+                next_cursor: None,
+                head_cursor: None,
+                complete: true,
+                gap: None,
+            })
+        }
+
+        async fn list_session_environments(
+            &self,
+            _session_id: &SessionId,
+        ) -> Result<api::SessionEnvironmentListResponse, api::AgentApiError> {
+            Ok(api::SessionEnvironmentListResponse {
+                active_env_id: None,
+                environments: Vec::new(),
+            })
+        }
+
+        async fn cancel_run(
+            &self,
+            _session_id: &SessionId,
+            run_id: &str,
+        ) -> Result<api::RunView, api::AgentApiError> {
+            Ok(api::RunView {
+                id: run_id.to_owned(),
+                status: api::RunStatus::Cancelled,
+                input: Vec::new(),
+                items: Vec::new(),
+                tool_batches: Vec::new(),
+            })
+        }
+
+        async fn close_session(
+            &self,
+            session_id: &SessionId,
+        ) -> Result<api::SessionView, api::AgentApiError> {
+            Ok(fleet_test_session(session_id, api::SessionStatus::Closed))
+        }
+    }
+
+    fn fleet_test_session(session_id: &SessionId, status: api::SessionStatus) -> api::SessionView {
+        api::SessionView {
+            id: session_id.as_str().to_owned(),
+            status,
+            cwd: None,
+            config_revision: 0,
+            config: None,
+            created_at_ms: 1,
+            updated_at_ms: 1,
+            runs: Vec::new(),
+            active_context: api::ContextView::default(),
+            active_tools: api::ActiveToolsView::default(),
+            vfs_mounts: Vec::new(),
+        }
     }
 
     #[async_trait]

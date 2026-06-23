@@ -2,9 +2,10 @@
 
 **Status**
 - Proposed 2026-06-23.
-- Partial implementation 2026-06-23: G1-G5 are implemented (contracts/config
-  gate, model-visible Fleet specs, spawn service, child config/resource
-  policies, and hosted tool routing). G6-G7 remain pending.
+- Completed 2026-06-23: G1-G7 are implemented (contracts/config gate,
+  model-visible Fleet specs, spawn service, child config/resource policies,
+  hosted tool routing, projection/inspection/cancel behavior, deterministic
+  tests, and an ignored Temporal/Postgres live smoke).
 - Builds on **P82 (Session Graph — Clone, Fork, And Links)** for the underlying
   clone/fork/link store primitives, the Temporal-backed `AgentSessionWorkflow`,
   the `api` session/run surface, environment/provider work from P79-P81, and
@@ -268,9 +269,13 @@ Input shape:
 
 ```text
 target_agent_id
-scope                   active_run | queued_runs | session
+scope                   active_run | session
 reason?
 ```
+
+v1 deliberately does not advertise queued-run cancellation because the engine
+does not yet expose a safe queued-admission removal command. The supported
+control operations are active-run cancellation and session close.
 
 ## Resource Sharing: `vfs` and `environment`
 
@@ -493,11 +498,11 @@ the pre-run setup pass and reuse the deterministic child run submission id.
 
 Implementation note: hosted workers inject a Fleet executor into `SessionTools`
 when constructed from the Postgres/Temporal runtime. `agent_spawn` is executable
-through the tool activity path. `agent_list`, `agent_read`, and `agent_cancel`
-are routed to the Fleet executor and currently return a clear not-implemented
-tool failure until G6 adds projection/inspection/cancel behavior.
+through the tool activity path, and `agent_list`, `agent_read`, and
+`agent_cancel` now route to the Fleet executor with normal tool-result blobs and
+model-visible summaries.
 
-### G6. Projection And Inspection
+### G6. Projection And Inspection — Done 2026-06-23
 
 - Project `sessions` (incl. P82 lineage) and `session_links` into `agent_read`
   and `agent_list`, with compact child run status.
@@ -508,7 +513,14 @@ tool failure until G6 adds projection/inspection/cancel behavior.
   inspect what a child is doing without reading the entire log.
 - Keep full-history transcript reads explicit and paged.
 
-### G7. Tests
+Implementation note: `agent_read` wraps the normal `session/read` projection
+(including full effective config, runs, active tools, context, and VFS mounts)
+and adds P82 lineage, direct links, environment bindings, bounded recent event
+windows, and a bounded recent transcript window. `agent_list` uses Fleet
+parent/child links and returns compact status/active-run fields. `agent_cancel`
+uses the hosted run/session API for active-run cancellation and session close.
+
+### G7. Tests — Done 2026-06-23
 
 - Unit-test validation, idempotency, capability checks, strict schema behavior,
   deterministic child-id derivation, and config compilation.
@@ -528,6 +540,14 @@ tool failure until G6 adds projection/inspection/cancel behavior.
   remains compact.
 - Ignored Temporal/Postgres live test proving a parent tool call starts a
   separate child `AgentSessionWorkflow` and child run.
+
+Implementation note: deterministic coverage now includes strict Fleet schemas,
+spawn idempotency, explicit-id collision handling, config patch ordering, VFS
+isolation, hosted `SessionTools` routing, `agent_read`, `agent_list`, and
+`agent_cancel`. The ignored live smoke
+`temporal_live_fleet_executor_spawns_child_workflow_and_run` exercises the real
+Fleet executor against the Postgres/Temporal runtime and verifies the child
+workflow plus child run complete.
 
 ## Deferred
 
@@ -567,7 +587,7 @@ tool failure until G6 adds projection/inspection/cancel behavior.
   Fleet-level `agent_read`.
 - `agent_read` returns full effective config and supports bounded recent
   transcript/activity inspection.
-- The parent can cancel the child.
+- The parent can cancel a child's active run or close the child session.
 - The model-visible tool surface stays small (4 tools) and does not expose the
   full session API.
 - No Fleet side effects are performed inside `engine`.

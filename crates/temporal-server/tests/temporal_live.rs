@@ -1,16 +1,20 @@
 mod support;
 
+use std::sync::Arc;
+
 use api::{
     AgentApiErrorKind, AgentApiService, ContextAppendEntry, ContextAppendParams, InitializeParams,
     InputItem, McpServerCreateParams, McpServerDeleteParams, McpServerListParams,
     McpServerReadParams, McpServerStatus, RemoteMcpApprovalPolicy, RemoteMcpTransport,
     RunStartParams, SessionConfigInput, SessionEventsReadParams, SessionItemView,
     SessionMcpLinkParams, SessionMcpListParams, SessionMcpUnlinkParams, SessionReadParams,
-    SessionStartParams, SessionStatus,
+    SessionStartParams, SessionStatus, ToolConfigInput,
 };
 use api_projection::model_to_api;
 use engine::{
-    CommandCodec, CoreAgentCodec, CoreAgentCommand, DynamicCommand, SessionId, storage::BlobStore,
+    CommandCodec, CoreAgentCodec, CoreAgentCommand, DynamicCommand, RunId, SessionId, ToolBatchId,
+    ToolCallId, ToolCallStatus, ToolInvocationRequest, ToolName, TurnId,
+    storage::{BlobStore, SessionStore},
 };
 use support::live::{
     LIVE_TEST_LOCK, fake_worker_activities, final_assistant_text, openai_live_model,
@@ -18,12 +22,17 @@ use support::live::{
     wait_for_admission_failure, wait_for_session_status, wait_for_terminal_run,
 };
 use temporal_server::{
-    default_model_from_env, gateway::GatewayAgentApi, pg_store_from_env, worker::WorkerActivities,
+    default_model_from_env,
+    fleet::{AgentApiFleetRuntime, FleetInvocationContext, FleetService, FleetToolExecutor},
+    gateway::GatewayAgentApi,
+    pg_store_from_env,
+    worker::WorkerActivities,
 };
 use temporal_workflow::{AgentAdmission, AgentAdmissionFailureKind, AgentSessionWorkflow};
 use temporalio_client::{
     Client, WorkflowQueryOptions, WorkflowSignalOptions, WorkflowTerminateOptions,
 };
+use tools::fleet::{AGENT_SPAWN_TOOL_NAME, AgentSpawnOutput};
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires local/up.sh or compatible Temporal + Postgres env"]
@@ -100,6 +109,17 @@ async fn temporal_live_mcp_registry_and_session_links_materialize() -> anyhow::R
 
     let activities = fake_worker_activities().await?;
     run_with_live_worker(activities, run_mcp_registry_live_client).await
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires local/up.sh or compatible Temporal + Postgres env"]
+async fn temporal_live_fleet_executor_spawns_child_workflow_and_run() -> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().expect("live test lock");
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+
+    let activities = fake_worker_activities().await?;
+    run_with_live_worker(activities, run_fleet_spawn_live_client).await
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -251,6 +271,120 @@ async fn run_fake_live_client(
                 .build(),
         )
         .await;
+    Ok(())
+}
+
+async fn run_fleet_spawn_live_client(
+    client: Client,
+    task_queue: String,
+    session_id: SessionId,
+) -> anyhow::Result<()> {
+    let store = pg_store_from_env().await?;
+    let model = default_model_from_env();
+    let api = Arc::new(
+        GatewayAgentApi::builder(client.clone(), store.clone())
+            .with_task_queue(task_queue)
+            .with_default_model(model.clone())
+            .with_max_steps_per_input(128)
+            .build(),
+    );
+
+    api.start_session(SessionStartParams {
+        session_id: Some(session_id.as_str().to_owned()),
+        cwd: None,
+        config: Some(SessionConfigInput {
+            model: Some(model_to_api(&model)),
+            tools: Some(ToolConfigInput {
+                fleet: Some(true),
+                ..ToolConfigInput::default()
+            }),
+            ..SessionConfigInput::default()
+        }),
+    })
+    .await?;
+
+    let blobs: Arc<dyn BlobStore> = store.clone();
+    let sessions: Arc<dyn SessionStore> = store.clone();
+    let fleet_runtime = Arc::new(AgentApiFleetRuntime::new(api.clone()));
+    let service = FleetService::new(sessions, fleet_runtime);
+    let executor = FleetToolExecutor::new(blobs.clone(), service);
+    let arguments_ref = blobs
+        .put_bytes(br#"{"input":"child live task"}"#.to_vec())
+        .await?;
+    let observed_at_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_millis() as u64;
+    let result = executor
+        .invoke(
+            FleetInvocationContext {
+                parent_session_id: session_id.clone(),
+                parent_run_id: RunId::new(1),
+                turn_id: TurnId::new(1),
+                batch_id: ToolBatchId::new(1),
+                call_id: ToolCallId::new("call_live_1"),
+                observed_at_ms,
+            },
+            &ToolInvocationRequest {
+                call_id: ToolCallId::new("call_live_1"),
+                tool_name: ToolName::new(AGENT_SPAWN_TOOL_NAME),
+                arguments_ref,
+                execution_target: None,
+            },
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+    assert_eq!(result.status, ToolCallStatus::Succeeded);
+    let output_ref = result.output_ref.expect("spawn output ref");
+    let output: AgentSpawnOutput = serde_json::from_slice(&blobs.read_bytes(&output_ref).await?)?;
+    let child_run_id = output
+        .child_run_id
+        .as_deref()
+        .expect("spawn should start child run");
+    let child_session_id = SessionId::try_new(output.child_session_id.clone())?;
+
+    let child = api
+        .read_session(SessionReadParams {
+            session_id: child_session_id.as_str().to_owned(),
+        })
+        .await?;
+    assert_eq!(child.result.session.id, child_session_id.as_str());
+    assert_eq!(
+        child
+            .result
+            .session
+            .config
+            .as_ref()
+            .expect("child config")
+            .tools
+            .fleet,
+        true
+    );
+
+    let run = wait_for_terminal_run(api.as_ref(), &child_session_id, child_run_id).await?;
+    let output_text = final_assistant_text(&run).expect("child assistant output");
+    assert!(output_text.contains("Fake agent completed run"));
+
+    let child_handle =
+        client.get_workflow_handle::<AgentSessionWorkflow>(child_session_id.as_str());
+    let status = child_handle
+        .query(
+            AgentSessionWorkflow::status,
+            (),
+            WorkflowQueryOptions::default(),
+        )
+        .await?;
+    assert_eq!(status.last_error, None);
+
+    for id in [session_id.as_str(), child_session_id.as_str()] {
+        let handle = client.get_workflow_handle::<AgentSessionWorkflow>(id);
+        let _ = handle
+            .terminate(
+                WorkflowTerminateOptions::builder()
+                    .reason("fleet live test cleanup")
+                    .build(),
+            )
+            .await;
+    }
     Ok(())
 }
 

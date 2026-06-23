@@ -3,8 +3,10 @@
 use std::sync::Arc;
 
 use api::{
-    AgentApiError, AgentApiService, InputItem, RunStartParams, SessionStartParams,
-    SessionUpdateParams,
+    AgentApiError, AgentApiService, EventCursor, InputItem, RunCancelParams, RunStartParams,
+    RunStatus as ApiRunStatus, SessionCloseParams, SessionEnvironmentListParams,
+    SessionEnvironmentListResponse, SessionEventsReadParams, SessionEventsReadResponse,
+    SessionReadParams, SessionStartParams, SessionUpdateParams, SessionView,
 };
 use api_projection::{MAX_EVENT_PAGE_LIMIT, read_all_session_entries, replay_core_agent_state};
 use async_trait::async_trait;
@@ -17,10 +19,14 @@ use engine::{
         SessionLinkDirection, SessionRecord, SessionStore, SessionStoreError, UpsertSessionLink,
     },
 };
+use serde::Serialize;
 use serde_json::{Value, json};
 use tools::fleet::{
     AGENT_CANCEL_TOOL_NAME, AGENT_LIST_TOOL_NAME, AGENT_READ_TOOL_NAME, AGENT_SPAWN_TOOL_NAME,
-    AgentSpawnArgs, AgentSpawnOutput, AgentSpawnSource, EnvironmentPolicy, VfsPolicy,
+    AgentCancelArgs, AgentCancelOutput, AgentCancelScope, AgentLineageView, AgentLinkView,
+    AgentListArgs, AgentListDirection, AgentListItem, AgentListOutput, AgentReadArgs,
+    AgentReadOutput, AgentSpawnArgs, AgentSpawnOutput, AgentSpawnSource, EnvironmentPolicy,
+    VfsPolicy,
 };
 use vfs::{
     CreateVfsWorkspaceRecord, VfsCatalogError, VfsMountSource, VfsMountStore, VfsPath,
@@ -28,6 +34,12 @@ use vfs::{
 };
 
 pub const FLEET_CHILD_RELATIONSHIP: &str = "fleet_child";
+const DEFAULT_AGENT_LIST_LIMIT: usize = 20;
+const MAX_AGENT_LIST_LIMIT: usize = 100;
+const DEFAULT_RECENT_EVENT_LIMIT: u32 = 20;
+const DEFAULT_RECENT_TRANSCRIPT_EVENT_LIMIT: u32 = 20;
+const MAX_RECENT_EVENT_LIMIT: u32 = 100;
+const MAX_DIRECT_LINKS: usize = 100;
 
 #[derive(Clone)]
 pub struct FleetService {
@@ -139,6 +151,164 @@ impl FleetService {
                 "reused".to_owned()
             },
         })
+    }
+
+    pub async fn list(
+        &self,
+        context: FleetInvocationContext,
+        args: AgentListArgs,
+    ) -> Result<AgentListOutput, AgentApiError> {
+        let target_agent_id = match args.target_agent_id.as_deref() {
+            Some(agent_id) => parse_session_id(agent_id, "target_agent_id")?,
+            None => context.parent_session_id,
+        };
+        self.load_session_required(&target_agent_id).await?;
+        let limit = bounded_list_limit(args.limit)?;
+        let link_direction = match args.direction {
+            AgentListDirection::Children => SessionLinkDirection::Outgoing,
+            AgentListDirection::Parents => SessionLinkDirection::Incoming,
+        };
+        let links = self
+            .sessions
+            .list_links(ListSessionLinks {
+                session_id: target_agent_id.clone(),
+                direction: link_direction,
+                relationship: Some(FLEET_CHILD_RELATIONSHIP.to_owned()),
+                limit,
+            })
+            .await
+            .map_err(map_session_store_error)?;
+
+        let mut agents = Vec::with_capacity(links.len());
+        for link in links {
+            let agent_id = match args.direction {
+                AgentListDirection::Children => link.to_session_id.clone(),
+                AgentListDirection::Parents => link.from_session_id.clone(),
+            };
+            let record = self.load_session_required(&agent_id).await?;
+            let session = self.runtime.read_session(&agent_id).await?;
+            agents.push(AgentListItem {
+                agent_id: agent_id.as_str().to_owned(),
+                relationship: link.relationship,
+                created_at_ms: link.created_at_ms,
+                status: Some(api_status_name(&session.status)),
+                active_run_id: active_run_id(&session),
+                updated_at_ms: Some(record.updated_at_ms),
+                lineage: lineage_view(&record),
+            });
+        }
+
+        Ok(AgentListOutput {
+            target_agent_id: target_agent_id.as_str().to_owned(),
+            direction: args.direction,
+            agents,
+        })
+    }
+
+    pub async fn read(&self, args: AgentReadArgs) -> Result<AgentReadOutput, AgentApiError> {
+        let target_agent_id = parse_session_id(&args.target_agent_id, "target_agent_id")?;
+        let record = self.load_session_required(&target_agent_id).await?;
+        let session = self.runtime.read_session(&target_agent_id).await?;
+        let environments = self
+            .runtime
+            .list_session_environments(&target_agent_id)
+            .await?;
+        let links = self.direct_links(&target_agent_id).await?;
+        let recent_event_limit = recent_event_limit(args.recent_events.as_ref())?;
+        let recent_transcript_limit = recent_transcript_limit(args.recent_transcript.as_ref())?;
+        let recent_event_after = recent_after(&record, recent_event_limit);
+        let recent_transcript_after = recent_after(&record, recent_transcript_limit);
+        let recent_events = self
+            .runtime
+            .read_session_events(&target_agent_id, recent_event_after, recent_event_limit)
+            .await?;
+        let recent_transcript = self
+            .runtime
+            .read_session_events(
+                &target_agent_id,
+                recent_transcript_after,
+                recent_transcript_limit,
+            )
+            .await?;
+
+        Ok(AgentReadOutput {
+            agent_id: target_agent_id.as_str().to_owned(),
+            session: to_json_value(session)?,
+            lineage: lineage_view(&record),
+            links,
+            environments: to_json_value(environments)?,
+            recent_events: to_json_values(recent_events.events)?,
+            recent_transcript: to_json_values(transcript_events(
+                recent_transcript.events,
+                args.recent_transcript.as_ref(),
+            ))?,
+        })
+    }
+
+    pub async fn cancel(&self, args: AgentCancelArgs) -> Result<AgentCancelOutput, AgentApiError> {
+        let target_agent_id = parse_session_id(&args.target_agent_id, "target_agent_id")?;
+        self.load_session_required(&target_agent_id).await?;
+
+        match args.scope {
+            AgentCancelScope::ActiveRun => {
+                let session = self.runtime.read_session(&target_agent_id).await?;
+                let run_id = active_run_id(&session).ok_or_else(|| {
+                    AgentApiError::rejected(format!(
+                        "agent {} has no active run to cancel",
+                        target_agent_id
+                    ))
+                })?;
+                let run = self.runtime.cancel_run(&target_agent_id, &run_id).await?;
+                Ok(AgentCancelOutput {
+                    target_agent_id: target_agent_id.as_str().to_owned(),
+                    scope: args.scope,
+                    status: "cancelled".to_owned(),
+                    run: Some(to_json_value(run)?),
+                    session: None,
+                })
+            }
+            AgentCancelScope::Session => {
+                let session = self.runtime.close_session(&target_agent_id).await?;
+                Ok(AgentCancelOutput {
+                    target_agent_id: target_agent_id.as_str().to_owned(),
+                    scope: args.scope,
+                    status: "closed".to_owned(),
+                    run: None,
+                    session: Some(to_json_value(session)?),
+                })
+            }
+        }
+    }
+
+    async fn direct_links(
+        &self,
+        target_agent_id: &SessionId,
+    ) -> Result<Vec<AgentLinkView>, AgentApiError> {
+        let mut links = Vec::new();
+        for direction in [
+            SessionLinkDirection::Outgoing,
+            SessionLinkDirection::Incoming,
+        ] {
+            let records = self
+                .sessions
+                .list_links(ListSessionLinks {
+                    session_id: target_agent_id.clone(),
+                    direction,
+                    relationship: None,
+                    limit: MAX_DIRECT_LINKS,
+                })
+                .await
+                .map_err(map_session_store_error)?;
+            links.extend(records.into_iter().map(link_view));
+        }
+        links.sort_by(|left, right| {
+            left.created_at_ms
+                .cmp(&right.created_at_ms)
+                .then_with(|| left.from_agent_id.cmp(&right.from_agent_id))
+                .then_with(|| left.to_agent_id.cmp(&right.to_agent_id))
+                .then_with(|| left.relationship.cmp(&right.relationship))
+        });
+        Ok(links)
     }
 
     fn resolve_source(
@@ -426,6 +596,28 @@ pub trait FleetChildRuntime: Send + Sync {
         input: String,
         submission_id: SubmissionId,
     ) -> Result<String, AgentApiError>;
+
+    async fn read_session(&self, session_id: &SessionId) -> Result<SessionView, AgentApiError>;
+
+    async fn read_session_events(
+        &self,
+        session_id: &SessionId,
+        after: Option<u64>,
+        limit: u32,
+    ) -> Result<SessionEventsReadResponse, AgentApiError>;
+
+    async fn list_session_environments(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<SessionEnvironmentListResponse, AgentApiError>;
+
+    async fn cancel_run(
+        &self,
+        session_id: &SessionId,
+        run_id: &str,
+    ) -> Result<api::RunView, AgentApiError>;
+
+    async fn close_session(&self, session_id: &SessionId) -> Result<SessionView, AgentApiError>;
 }
 
 #[derive(Clone)]
@@ -487,6 +679,72 @@ impl FleetChildRuntime for AgentApiFleetRuntime {
             .await?;
         Ok(response.result.run.id)
     }
+
+    async fn read_session(&self, session_id: &SessionId) -> Result<SessionView, AgentApiError> {
+        let response = self
+            .api
+            .read_session(SessionReadParams {
+                session_id: session_id.as_str().to_owned(),
+            })
+            .await?;
+        Ok(response.result.session)
+    }
+
+    async fn read_session_events(
+        &self,
+        session_id: &SessionId,
+        after: Option<u64>,
+        limit: u32,
+    ) -> Result<SessionEventsReadResponse, AgentApiError> {
+        let response = self
+            .api
+            .read_session_events(SessionEventsReadParams {
+                session_id: session_id.as_str().to_owned(),
+                after: after.map(|seq| EventCursor { seq }),
+                limit: Some(limit),
+                wait_ms: Some(0),
+            })
+            .await?;
+        Ok(response.result)
+    }
+
+    async fn list_session_environments(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<SessionEnvironmentListResponse, AgentApiError> {
+        let response = self
+            .api
+            .list_session_environments(SessionEnvironmentListParams {
+                session_id: session_id.as_str().to_owned(),
+            })
+            .await?;
+        Ok(response.result)
+    }
+
+    async fn cancel_run(
+        &self,
+        session_id: &SessionId,
+        run_id: &str,
+    ) -> Result<api::RunView, AgentApiError> {
+        let response = self
+            .api
+            .cancel_run(RunCancelParams {
+                session_id: session_id.as_str().to_owned(),
+                run_id: run_id.to_owned(),
+            })
+            .await?;
+        Ok(response.result.run)
+    }
+
+    async fn close_session(&self, session_id: &SessionId) -> Result<SessionView, AgentApiError> {
+        let response = self
+            .api
+            .close_session(SessionCloseParams {
+                session_id: session_id.as_str().to_owned(),
+            })
+            .await?;
+        Ok(response.result.session)
+    }
 }
 
 #[derive(Clone)]
@@ -507,14 +765,9 @@ impl FleetToolExecutor {
     ) -> Result<ToolInvocationResult, CoreAgentIoError> {
         match call.tool_name.as_str() {
             AGENT_SPAWN_TOOL_NAME => self.invoke_spawn(context, call).await,
-            AGENT_LIST_TOOL_NAME | AGENT_READ_TOOL_NAME | AGENT_CANCEL_TOOL_NAME => {
-                fleet_failed_result(
-                    self.blobs.as_ref(),
-                    call.call_id.clone(),
-                    format!("{} is not implemented until P83 G6", call.tool_name),
-                )
-                .await
-            }
+            AGENT_LIST_TOOL_NAME => self.invoke_list(context, call).await,
+            AGENT_READ_TOOL_NAME => self.invoke_read(call).await,
+            AGENT_CANCEL_TOOL_NAME => self.invoke_cancel(call).await,
             other => {
                 fleet_failed_result(
                     self.blobs.as_ref(),
@@ -534,31 +787,99 @@ impl FleetToolExecutor {
         let args: AgentSpawnArgs = self.decode_args(call).await?;
         match self.service.spawn(context, args).await {
             Ok(output) => {
-                let output_ref = self
-                    .blobs
-                    .put_bytes(serde_json::to_vec(&output).map_err(io_error)?)
-                    .await
-                    .map_err(map_blob_error)?;
-                let visible = spawn_model_visible_text(&output);
-                let visible_ref = self
-                    .blobs
-                    .put_bytes(visible.into_bytes())
-                    .await
-                    .map_err(map_blob_error)?;
-                Ok(ToolInvocationResult {
-                    call_id: call.call_id.clone(),
-                    status: ToolCallStatus::Succeeded,
-                    output_ref: Some(output_ref),
-                    model_visible_output_ref: Some(visible_ref),
-                    error_ref: None,
-                    effects: Vec::new(),
-                })
+                self.succeeded(
+                    call.call_id.clone(),
+                    &output,
+                    spawn_model_visible_text(&output),
+                )
+                .await
             }
             Err(error) => {
                 fleet_failed_result(self.blobs.as_ref(), call.call_id.clone(), error.to_string())
                     .await
             }
         }
+    }
+
+    async fn invoke_list(
+        &self,
+        context: FleetInvocationContext,
+        call: &ToolInvocationRequest,
+    ) -> Result<ToolInvocationResult, CoreAgentIoError> {
+        let args: AgentListArgs = self.decode_args(call).await?;
+        match self.service.list(context, args).await {
+            Ok(output) => {
+                let visible = list_model_visible_text(&output);
+                self.succeeded(call.call_id.clone(), &output, visible).await
+            }
+            Err(error) => {
+                fleet_failed_result(self.blobs.as_ref(), call.call_id.clone(), error.to_string())
+                    .await
+            }
+        }
+    }
+
+    async fn invoke_read(
+        &self,
+        call: &ToolInvocationRequest,
+    ) -> Result<ToolInvocationResult, CoreAgentIoError> {
+        let args: AgentReadArgs = self.decode_args(call).await?;
+        match self.service.read(args).await {
+            Ok(output) => {
+                let visible = read_model_visible_text(&output);
+                self.succeeded(call.call_id.clone(), &output, visible).await
+            }
+            Err(error) => {
+                fleet_failed_result(self.blobs.as_ref(), call.call_id.clone(), error.to_string())
+                    .await
+            }
+        }
+    }
+
+    async fn invoke_cancel(
+        &self,
+        call: &ToolInvocationRequest,
+    ) -> Result<ToolInvocationResult, CoreAgentIoError> {
+        let args: AgentCancelArgs = self.decode_args(call).await?;
+        match self.service.cancel(args).await {
+            Ok(output) => {
+                let visible = cancel_model_visible_text(&output);
+                self.succeeded(call.call_id.clone(), &output, visible).await
+            }
+            Err(error) => {
+                fleet_failed_result(self.blobs.as_ref(), call.call_id.clone(), error.to_string())
+                    .await
+            }
+        }
+    }
+
+    async fn succeeded<T>(
+        &self,
+        call_id: ToolCallId,
+        output: &T,
+        visible: String,
+    ) -> Result<ToolInvocationResult, CoreAgentIoError>
+    where
+        T: Serialize,
+    {
+        let output_ref = self
+            .blobs
+            .put_bytes(serde_json::to_vec(output).map_err(io_error)?)
+            .await
+            .map_err(map_blob_error)?;
+        let visible_ref = self
+            .blobs
+            .put_bytes(visible.into_bytes())
+            .await
+            .map_err(map_blob_error)?;
+        Ok(ToolInvocationResult {
+            call_id,
+            status: ToolCallStatus::Succeeded,
+            output_ref: Some(output_ref),
+            model_visible_output_ref: Some(visible_ref),
+            error_ref: None,
+            effects: Vec::new(),
+        })
     }
 
     async fn decode_args<T>(&self, call: &ToolInvocationRequest) -> Result<T, CoreAgentIoError>
@@ -587,6 +908,134 @@ fn validate_spawn_args(args: &AgentSpawnArgs) -> Result<(), AgentApiError> {
         ));
     }
     Ok(())
+}
+
+fn bounded_list_limit(limit: Option<u32>) -> Result<usize, AgentApiError> {
+    let limit = limit.unwrap_or(DEFAULT_AGENT_LIST_LIMIT as u32);
+    if limit == 0 {
+        return Err(AgentApiError::invalid_request(
+            "agent_list limit must be at least 1",
+        ));
+    }
+    Ok((limit as usize).min(MAX_AGENT_LIST_LIMIT))
+}
+
+fn recent_event_limit(
+    selector: Option<&tools::fleet::RecentEventsSelector>,
+) -> Result<u32, AgentApiError> {
+    let limit = selector.map_or(DEFAULT_RECENT_EVENT_LIMIT, |selector| selector.limit);
+    bounded_recent_limit(limit, "recent_events.limit")
+}
+
+fn recent_transcript_limit(
+    selector: Option<&tools::fleet::RecentTranscriptSelector>,
+) -> Result<u32, AgentApiError> {
+    let Some(selector) = selector else {
+        return Ok(DEFAULT_RECENT_TRANSCRIPT_EVENT_LIMIT);
+    };
+    let limit = match (selector.events, selector.turns) {
+        (Some(events), _) => events,
+        (None, Some(_)) => MAX_RECENT_EVENT_LIMIT,
+        (None, None) => DEFAULT_RECENT_TRANSCRIPT_EVENT_LIMIT,
+    };
+    bounded_recent_limit(limit, "recent_transcript")
+}
+
+fn bounded_recent_limit(limit: u32, field: &str) -> Result<u32, AgentApiError> {
+    if limit == 0 {
+        return Err(AgentApiError::invalid_request(format!(
+            "{field} must be at least 1"
+        )));
+    }
+    Ok(limit.min(MAX_RECENT_EVENT_LIMIT))
+}
+
+fn recent_after(record: &SessionRecord, limit: u32) -> Option<u64> {
+    let head_seq = record.head.as_ref()?.seq.as_u64();
+    let after = head_seq.saturating_sub(limit as u64);
+    (after > 0).then_some(after)
+}
+
+fn active_run_id(session: &SessionView) -> Option<String> {
+    session
+        .runs
+        .iter()
+        .find(|run| matches!(run.status, ApiRunStatus::Running))
+        .map(|run| run.id.clone())
+}
+
+fn lineage_view(record: &SessionRecord) -> AgentLineageView {
+    AgentLineageView {
+        source_agent_id: record
+            .source_session_id
+            .as_ref()
+            .map(|session_id| session_id.as_str().to_owned()),
+        source_seq: record.source_seq.map(EventSeq::as_u64),
+    }
+}
+
+fn link_view(record: engine::storage::SessionLinkRecord) -> AgentLinkView {
+    AgentLinkView {
+        from_agent_id: record.from_session_id.as_str().to_owned(),
+        to_agent_id: record.to_session_id.as_str().to_owned(),
+        relationship: record.relationship,
+        created_at_ms: record.created_at_ms,
+        metadata: record.metadata,
+    }
+}
+
+fn api_status_name<T: Serialize>(value: &T) -> String {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "unknown".to_owned())
+}
+
+fn to_json_value<T: Serialize>(value: T) -> Result<Value, AgentApiError> {
+    serde_json::to_value(value)
+        .map_err(|error| AgentApiError::internal(format!("failed to encode Fleet output: {error}")))
+}
+
+fn to_json_values<T: Serialize>(values: Vec<T>) -> Result<Vec<Value>, AgentApiError> {
+    values.into_iter().map(to_json_value).collect()
+}
+
+fn transcript_events(
+    events: Vec<api::SessionEventView>,
+    selector: Option<&tools::fleet::RecentTranscriptSelector>,
+) -> Vec<api::SessionEventView> {
+    let Some(turns) = selector.and_then(|selector| selector.turns) else {
+        return events;
+    };
+    if selector.and_then(|selector| selector.events).is_some() {
+        return events;
+    }
+    let mut selected_turn_ids = Vec::new();
+    for event in events.iter().rev() {
+        let Some(turn_id) = event.joins.turn_id.as_deref() else {
+            continue;
+        };
+        if selected_turn_ids.iter().any(|selected| selected == turn_id) {
+            continue;
+        }
+        selected_turn_ids.push(turn_id.to_owned());
+        if selected_turn_ids.len() >= turns as usize {
+            break;
+        }
+    }
+    if selected_turn_ids.is_empty() {
+        return events;
+    }
+    events
+        .into_iter()
+        .filter(|event| {
+            event
+                .joins
+                .turn_id
+                .as_ref()
+                .is_some_and(|turn_id| selected_turn_ids.contains(turn_id))
+        })
+        .collect()
 }
 
 fn parse_session_id(value: &str, field: &str) -> Result<SessionId, AgentApiError> {
@@ -714,6 +1163,48 @@ fn spawn_model_visible_text(output: &AgentSpawnOutput) -> String {
     }
 }
 
+fn list_model_visible_text(output: &AgentListOutput) -> String {
+    format!(
+        "Found {} {} agent(s) for {}.",
+        output.agents.len(),
+        match output.direction {
+            AgentListDirection::Children => "child",
+            AgentListDirection::Parents => "parent",
+        },
+        output.target_agent_id
+    )
+}
+
+fn read_model_visible_text(output: &AgentReadOutput) -> String {
+    let status = output
+        .session
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    format!(
+        "Read agent {}: status {}, {} link(s), {} recent event(s).",
+        output.agent_id,
+        status,
+        output.links.len(),
+        output.recent_events.len()
+    )
+}
+
+fn cancel_model_visible_text(output: &AgentCancelOutput) -> String {
+    match output.scope {
+        AgentCancelScope::ActiveRun => format!(
+            "Agent {} active run cancellation status: {}.",
+            output.target_agent_id, output.status
+        ),
+        AgentCancelScope::Session => {
+            format!(
+                "Agent {} session status: {}.",
+                output.target_agent_id, output.status
+            )
+        }
+    }
+}
+
 async fn fleet_failed_result(
     blobs: &dyn BlobStore,
     call_id: ToolCallId,
@@ -766,6 +1257,11 @@ mod tests {
         started_sessions: Mutex<Vec<SessionId>>,
         patched_sessions: Mutex<Vec<(SessionId, Value)>>,
         started_runs: Mutex<Vec<(SessionId, String, SubmissionId)>>,
+        sessions: Mutex<BTreeMap<SessionId, SessionView>>,
+        events: Mutex<BTreeMap<SessionId, Vec<api::SessionEventView>>>,
+        environments: Mutex<BTreeMap<SessionId, SessionEnvironmentListResponse>>,
+        cancelled_runs: Mutex<Vec<(SessionId, String)>>,
+        closed_sessions: Mutex<Vec<SessionId>>,
     }
 
     #[async_trait]
@@ -802,6 +1298,89 @@ mod tests {
                 submission_id,
             ));
             Ok("run_1".to_owned())
+        }
+
+        async fn read_session(&self, session_id: &SessionId) -> Result<SessionView, AgentApiError> {
+            Ok(self
+                .sessions
+                .lock()
+                .expect("lock")
+                .get(session_id)
+                .cloned()
+                .unwrap_or_else(|| {
+                    api_session_view(session_id, api::SessionStatus::Idle, Vec::new())
+                }))
+        }
+
+        async fn read_session_events(
+            &self,
+            session_id: &SessionId,
+            after: Option<u64>,
+            limit: u32,
+        ) -> Result<SessionEventsReadResponse, AgentApiError> {
+            let all_events = self
+                .events
+                .lock()
+                .expect("lock")
+                .get(session_id)
+                .cloned()
+                .unwrap_or_default();
+            let events: Vec<_> = all_events
+                .iter()
+                .filter(|event| after.is_none_or(|after| event.cursor.seq > after))
+                .take(limit as usize)
+                .cloned()
+                .collect();
+            Ok(SessionEventsReadResponse {
+                next_cursor: events.last().map(|event| event.cursor),
+                head_cursor: all_events.last().map(|event| event.cursor),
+                events,
+                complete: true,
+                gap: None,
+            })
+        }
+
+        async fn list_session_environments(
+            &self,
+            session_id: &SessionId,
+        ) -> Result<SessionEnvironmentListResponse, AgentApiError> {
+            Ok(self
+                .environments
+                .lock()
+                .expect("lock")
+                .get(session_id)
+                .cloned()
+                .unwrap_or_else(|| SessionEnvironmentListResponse {
+                    active_env_id: None,
+                    environments: Vec::new(),
+                }))
+        }
+
+        async fn cancel_run(
+            &self,
+            session_id: &SessionId,
+            run_id: &str,
+        ) -> Result<api::RunView, AgentApiError> {
+            self.cancelled_runs
+                .lock()
+                .expect("lock")
+                .push((session_id.clone(), run_id.to_owned()));
+            Ok(api_run_view(run_id, ApiRunStatus::Cancelled))
+        }
+
+        async fn close_session(
+            &self,
+            session_id: &SessionId,
+        ) -> Result<SessionView, AgentApiError> {
+            self.closed_sessions
+                .lock()
+                .expect("lock")
+                .push(session_id.clone());
+            Ok(api_session_view(
+                session_id,
+                api::SessionStatus::Closed,
+                Vec::new(),
+            ))
         }
     }
 
@@ -1105,6 +1684,249 @@ mod tests {
         assert!(visible.contains("started run"));
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn list_returns_linked_children_with_compact_status() {
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let parent = open_source_session(sessions.as_ref()).await;
+        let child = SessionId::new("child");
+        sessions
+            .create_cloned_session(CreateClonedSession {
+                source_session_id: parent.clone(),
+                session_id: child.clone(),
+                agent_handle: default_agent_handle(),
+                created_at_ms: 20,
+                opening_events: Vec::new(),
+            })
+            .await
+            .expect("child");
+        sessions
+            .upsert_link(UpsertSessionLink {
+                from_session_id: parent.clone(),
+                to_session_id: child.clone(),
+                relationship: FLEET_CHILD_RELATIONSHIP.to_owned(),
+                created_at_ms: 21,
+                metadata: json!({ "kind": "fleet_spawn" }),
+            })
+            .await
+            .expect("link");
+        let runtime = Arc::new(FakeRuntime::default());
+        runtime.sessions.lock().expect("lock").insert(
+            child.clone(),
+            api_session_view(
+                &child,
+                api::SessionStatus::Active,
+                vec![api_run_view("run_7", ApiRunStatus::Running)],
+            ),
+        );
+        let service = FleetService::new(sessions, runtime);
+
+        let output = service
+            .list(
+                context(parent.clone()),
+                AgentListArgs {
+                    target_agent_id: None,
+                    direction: AgentListDirection::Children,
+                    limit: Some(10),
+                },
+            )
+            .await
+            .expect("list");
+
+        assert_eq!(output.target_agent_id, "parent");
+        assert_eq!(output.agents.len(), 1);
+        let agent = &output.agents[0];
+        assert_eq!(agent.agent_id, "child");
+        assert_eq!(agent.relationship, FLEET_CHILD_RELATIONSHIP);
+        assert_eq!(agent.status.as_deref(), Some("active"));
+        assert_eq!(agent.active_run_id.as_deref(), Some("run_7"));
+        assert_eq!(
+            agent.lineage.source_agent_id.as_deref(),
+            Some(parent.as_str())
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn read_returns_session_lineage_resources_links_and_recent_activity() {
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let parent = open_source_session(sessions.as_ref()).await;
+        let child = SessionId::new("child");
+        sessions
+            .create_cloned_session(CreateClonedSession {
+                source_session_id: parent.clone(),
+                session_id: child.clone(),
+                agent_handle: default_agent_handle(),
+                created_at_ms: 20,
+                opening_events: Vec::new(),
+            })
+            .await
+            .expect("child");
+        sessions
+            .append(engine::storage::AppendSessionEvents {
+                session_id: child.clone(),
+                expected_head: None,
+                events: vec![
+                    dynamic_test_event(30, "lightspeed.test.1"),
+                    dynamic_test_event(31, "lightspeed.test.2"),
+                    dynamic_test_event(32, "lightspeed.test.3"),
+                ],
+            })
+            .await
+            .expect("append child events");
+        sessions
+            .upsert_link(UpsertSessionLink {
+                from_session_id: parent,
+                to_session_id: child.clone(),
+                relationship: FLEET_CHILD_RELATIONSHIP.to_owned(),
+                created_at_ms: 21,
+                metadata: json!({ "kind": "fleet_spawn" }),
+            })
+            .await
+            .expect("link");
+        let runtime = Arc::new(FakeRuntime::default());
+        runtime.sessions.lock().expect("lock").insert(
+            child.clone(),
+            api_session_view(&child, api::SessionStatus::Idle, Vec::new()),
+        );
+        runtime.events.lock().expect("lock").insert(
+            child.clone(),
+            vec![
+                api_event(&child, 1),
+                api_event(&child, 2),
+                api_event(&child, 3),
+            ],
+        );
+        runtime.environments.lock().expect("lock").insert(
+            child.clone(),
+            SessionEnvironmentListResponse {
+                active_env_id: Some("env_1".to_owned()),
+                environments: Vec::new(),
+            },
+        );
+        let service = FleetService::new(sessions, runtime);
+
+        let output = service
+            .read(AgentReadArgs {
+                target_agent_id: child.as_str().to_owned(),
+                recent_transcript: Some(tools::fleet::RecentTranscriptSelector {
+                    turns: Some(1),
+                    events: None,
+                }),
+                recent_events: Some(tools::fleet::RecentEventsSelector { limit: 2 }),
+            })
+            .await
+            .expect("read");
+
+        assert_eq!(output.agent_id, "child");
+        assert_eq!(output.session["id"], "child");
+        assert_eq!(output.session["config"]["tools"]["fleet"], true);
+        assert_eq!(output.lineage.source_agent_id.as_deref(), Some("parent"));
+        assert_eq!(output.links.len(), 1);
+        assert_eq!(output.environments["activeEnvId"], "env_1");
+        assert_eq!(output.recent_events.len(), 2);
+        assert_eq!(output.recent_events[0]["cursor"]["seq"], 2);
+        assert_eq!(output.recent_transcript.len(), 3);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn cancel_active_run_uses_runtime_active_run() {
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let child = open_source_session(sessions.as_ref()).await;
+        let runtime = Arc::new(FakeRuntime::default());
+        runtime.sessions.lock().expect("lock").insert(
+            child.clone(),
+            api_session_view(
+                &child,
+                api::SessionStatus::Active,
+                vec![api_run_view("run_3", ApiRunStatus::Running)],
+            ),
+        );
+        let service = FleetService::new(sessions, runtime.clone());
+
+        let output = service
+            .cancel(AgentCancelArgs {
+                target_agent_id: child.as_str().to_owned(),
+                scope: AgentCancelScope::ActiveRun,
+                reason: Some("test".to_owned()),
+            })
+            .await
+            .expect("cancel");
+
+        assert_eq!(output.status, "cancelled");
+        assert_eq!(output.run.as_ref().expect("run")["id"], "run_3");
+        assert_eq!(
+            runtime.cancelled_runs.lock().expect("lock").as_slice(),
+            &[(child, "run_3".to_owned())]
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn cancel_session_uses_runtime_close() {
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let child = open_source_session(sessions.as_ref()).await;
+        let runtime = Arc::new(FakeRuntime::default());
+        let service = FleetService::new(sessions, runtime.clone());
+
+        let output = service
+            .cancel(AgentCancelArgs {
+                target_agent_id: child.as_str().to_owned(),
+                scope: AgentCancelScope::Session,
+                reason: None,
+            })
+            .await
+            .expect("close");
+
+        assert_eq!(output.status, "closed");
+        assert_eq!(
+            output.session.as_ref().expect("session")["status"],
+            "closed"
+        );
+        assert_eq!(
+            runtime.closed_sessions.lock().expect("lock").as_slice(),
+            &[child]
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn fleet_executor_runs_read_and_writes_output_blobs() {
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let child = open_source_session(sessions.as_ref()).await;
+        let blobs = Arc::new(engine::storage::InMemoryBlobStore::new());
+        let runtime = Arc::new(FakeRuntime::default());
+        runtime.sessions.lock().expect("lock").insert(
+            child.clone(),
+            api_session_view(&child, api::SessionStatus::Idle, Vec::new()),
+        );
+        let service = FleetService::new(sessions, runtime);
+        let executor = FleetToolExecutor::new(blobs.clone(), service);
+        let arguments_ref = blobs
+            .put_bytes(br#"{"target_agent_id":"parent"}"#.to_vec())
+            .await
+            .expect("args");
+
+        let result = executor
+            .invoke(
+                context(child),
+                &ToolInvocationRequest {
+                    call_id: ToolCallId::new("call_1"),
+                    tool_name: ToolName::new(AGENT_READ_TOOL_NAME),
+                    arguments_ref,
+                    execution_target: None,
+                },
+            )
+            .await
+            .expect("invoke");
+
+        assert_eq!(result.status, ToolCallStatus::Succeeded);
+        let output_ref = result.output_ref.expect("output");
+        let output: AgentReadOutput =
+            serde_json::from_slice(&blobs.read_bytes(&output_ref).await.expect("read output"))
+                .expect("decode output");
+        assert_eq!(output.agent_id, "parent");
+        let visible_ref = result.model_visible_output_ref.expect("visible");
+        let visible = blobs.read_text(&visible_ref).await.expect("read visible");
+        assert!(visible.contains("Read agent parent"));
+    }
+
     fn spawn_args(input: &str) -> AgentSpawnArgs {
         serde_json::from_value(json!({ "input": input })).expect("args")
     }
@@ -1169,6 +1991,75 @@ mod tests {
             tools: ToolConfig::default(),
         });
         state
+    }
+
+    fn api_session_view(
+        session_id: &SessionId,
+        status: api::SessionStatus,
+        runs: Vec<api::RunView>,
+    ) -> SessionView {
+        SessionView {
+            id: session_id.as_str().to_owned(),
+            status,
+            cwd: Some("/workspace".to_owned()),
+            config_revision: 1,
+            config: Some(api::SessionConfigView {
+                model: api::ModelConfig {
+                    provider_id: "test".to_owned(),
+                    api_kind: "openaiResponses".to_owned(),
+                    model: "test-model".to_owned(),
+                },
+                generation: api::GenerationConfig::default(),
+                context: api::ContextConfigInput::default(),
+                run_defaults: api::RunDefaultsConfig::default(),
+                tools: api::ToolConfigView {
+                    web_search: false,
+                    web_fetch: false,
+                    filesystem: api::FilesystemToolMode::Edit,
+                    fleet: true,
+                },
+            }),
+            created_at_ms: 1,
+            updated_at_ms: 2,
+            runs,
+            active_context: api::ContextView::default(),
+            active_tools: api::ActiveToolsView::default(),
+            vfs_mounts: Vec::new(),
+        }
+    }
+
+    fn api_run_view(run_id: &str, status: ApiRunStatus) -> api::RunView {
+        api::RunView {
+            id: run_id.to_owned(),
+            status,
+            input: Vec::new(),
+            items: Vec::new(),
+            tool_batches: Vec::new(),
+        }
+    }
+
+    fn api_event(session_id: &SessionId, seq: u64) -> api::SessionEventView {
+        api::SessionEventView {
+            cursor: api::EventCursor { seq },
+            session_id: session_id.as_str().to_owned(),
+            observed_at_ms: seq,
+            joins: api::EventJoinsView::default(),
+            kind: api::SessionEventKindView::SessionConfigChanged {
+                model: None,
+                revision: seq,
+            },
+        }
+    }
+
+    fn dynamic_test_event(
+        at_ms: u64,
+        kind: &'static str,
+    ) -> engine::storage::DynamicUncommittedSessionEvent {
+        engine::storage::DynamicUncommittedSessionEvent {
+            observed_at_ms: at_ms,
+            joins: Default::default(),
+            event: engine::DynamicEvent::new(kind, 1, Value::Object(Default::default())),
+        }
     }
 
     #[derive(Default)]
