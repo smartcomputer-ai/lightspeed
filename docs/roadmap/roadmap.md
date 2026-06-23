@@ -5,6 +5,8 @@
 - [ ] do we need to keep agent_id in session meta data (in tables)?
 
 ## Fleet (sub-agents)
+- [ ] [P82](p82-session-graph-fork-clone.md) — session graph foundation: clone, fork (by-reference), and links in the store
+- [ ] [P83](p83-fleet-subagent-control-plane.md) — agent-facing Fleet control plane (spawn/read/list/cancel) on top of P82
 - [ ] add apis needed to control fleet (fix re-entrancy issue)
 - [ ] decide on first design
 - [ ] run coding agent (CC or Codex) on sandbox
