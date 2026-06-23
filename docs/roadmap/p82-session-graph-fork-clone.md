@@ -2,12 +2,25 @@
 
 **Status**
 - Proposed 2026-06-23.
+- Completed 2026-06-23.
 - Foundation layer. Builds on the current `api` session/run surface, the
   event-sourced session log, and the `store-pg` schema.
 - Split out of the original Fleet plan: this doc is the **session-graph
   primitive** (store, schema, read algorithm) with no agent-facing surface. The
   model-visible control plane that consumes it is **P83 (Fleet Subagent Control
   Plane)**.
+
+**Completion Notes**
+- `SessionStore` now exposes clone, fork, safe fork-point, and session-link
+  primitives. `SessionRecord` carries `source_session_id` / `source_seq`.
+- `store-pg` persists lineage, copies `vfs_mounts` and
+  `session_environment_bindings`, reads fork chains by reference, clamps parent
+  tails, and stores directed `session_links`.
+- `InMemorySessionStore` implements the same fork/link/read behavior for
+  deterministic tests and in-process runner coverage.
+- `CoreAgent` adds `core_agent_clone_opening_events(...)` so hosts can replay a
+  source session and materialize clone opening events from the live config,
+  tool set, and default tool targets while keeping `SessionStore` domain-neutral.
 
 ## Goal
 
@@ -44,7 +57,8 @@ Two nullable columns record where a session's content came from:
 ```text
 source_session_id   content origin; NULL for a fresh root session
 source_seq          NULL  -> config-only clone, child log starts at seq 1
-                    set   -> history fork, child log continues at source_seq + 1
+                    set   -> history fork; 0 is an empty prefix, otherwise
+                             child log continues at source_seq + 1
 ```
 
 - **Clone**: a new session whose opening config is built from the source
@@ -191,8 +205,10 @@ Default fork point:
   `ConfigChanged`, context appends, compaction summaries). These are real
   inherited history and are not dropped.
 - Exclude only the in-flight run. Concretely, `source_seq` = the seq just before
-  the active run's first event (`Run::Accepted`/`Started`). The active run is in
-  `runs.active`, so this is a state lookup, not a log scan.
+  the active run's first event (`Run::Accepted`/`Started`). The implemented
+  store helper scans CoreAgent run boundary events in the effective log to find
+  non-terminal run ranges while keeping the `SessionStore` contract
+  domain-neutral.
 - If there is no active run at all (forking a quiescent session), the cut is
   simply the head — nothing is open. Excluding the in-flight run is just the
   special case where one exists.
@@ -229,7 +245,7 @@ the same chain resolution, not a change to the storage model.
 
 - Add `source_session_id` / `source_seq` columns to `sessions` and the
   `session_links` table in `001_core.sql` (done).
-- Add lineage columns to the `store-pg` session record reads/writes.
+- Add lineage columns to the `store-pg` session record reads/writes (done).
 
 ### G2. Side-Table Copy Helper (Mounts And Env Bindings)
 
@@ -239,7 +255,7 @@ history inheritance (fork) brings them along. They must be copied explicitly.
 
 - Add a store helper `copy_session_resources(source_session_id, child_session_id)`
   that copies the **full set** of `vfs_mounts` rows and the **full set** of
-  `session_environment_bindings` rows from source to child.
+  `session_environment_bindings` rows from source to child (done).
 - Copy **verbatim** (rows point at the same `workspace_id` / `target_id` as the
   source). The share-vs-isolate policy that may instead fork a workspace or
   request a fresh target is **P83**; P82 only does the literal copy.
@@ -247,52 +263,57 @@ history inheritance (fork) brings them along. They must be copied explicitly.
   `environment_providers/targets`, `vfs_workspaces`): the same-universe child
   already resolves them.
 - Both `create_cloned_session` and `create_forked_session` call this helper after
-  the child row exists.
-- Unit-test that a child with N source mounts and M source bindings ends up with
+  the child row exists (done).
+- Live-test that a child with N source mounts and M source bindings ends up with
   exactly those N + M rows, pointing at the same workspace/target ids, and that no
-  catalog rows are touched.
+  catalog rows are touched (done in ignored `store-pg` live test).
 
 ### G3. Clone And Link Store Methods
 
 - Extend `SessionStore` with `create_cloned_session(source, config_source)` and
-  link CRUD (`upsert_link` / `list_links`).
+  link CRUD (`upsert_link` / `list_links`) (done).
 - Implement clone in `store-pg`: open a fresh child session at seq 1 with the
   source session's live config and MCP links (from the log), then call the G2
-  side-table copy helper. Do nothing for universe-scoped catalogs.
+  side-table copy helper. Do nothing for universe-scoped catalogs (done; callers
+  pass opening events materialized with `core_agent_clone_opening_events`).
 - Unit-test clone (opens at seq 1 with the source's config and the copied
   side-table rows) and a manual link between two pre-existing sessions (persists,
-  reads back, direction preserved).
+  reads back, direction preserved) (done via in-memory unit and ignored
+  `store-pg` live coverage).
 
 ### G4. Fork Creation
 
-- Extend `SessionStore` with `create_forked_session(source, source_seq)`.
+- Extend `SessionStore` with `create_forked_session(source, source_seq)` (done).
 - Write the child row with `source_session_id` + `source_seq`, seed its head from
   `source_seq` so the first append lands at `source_seq + 1`. No event copying.
   Then call the G2 side-table copy helper (mounts/env bindings are not inherited
-  by the by-reference history).
+  by the by-reference history) (done).
 - Add the safe-cut-point helper: given a source session, return the largest
-  `source_seq` not inside an open run, applying the empty-prefix fallbacks.
+  `source_seq` not inside an open run, applying the empty-prefix fallbacks
+  (done).
 - Unit-test fork creation (`source_seq` round-trips, first append is
   `source_seq + 1`, side-table rows copied) and the cut-point helper (excludes an
   in-flight run, keeps standalone non-run events, falls back to session start /
-  source `source_seq`, rejects an explicit seq inside an open run).
+  source `source_seq`, rejects an explicit seq inside an open run) (done via
+  in-memory unit and ignored `store-pg` live coverage).
 
 ### G5. Fork Read Resolution
 
 - Implement chain-aware reads in `store-pg` behind `SessionStore`: `read_after`
   and `head` resolve the `source_session_id` chain recursively, stitching
   `parent[1..source_seq] ++ ... ++ self[source_seq+1..]` into one contiguous seq
-  line, clamping each upstream segment to its child's `source_seq`.
+  line, clamping each upstream segment to its child's `source_seq` (done).
 - Keep this fully behind the store trait: engine/workflow rehydration is unchanged
-  and unaware of forks.
+  and unaware of forks (done).
 - Unit-test multi-level forks (fork of a fork), a window spanning a cut point, and
-  clamping (parent appends after the fork are invisible to the child).
+  clamping (parent appends after the fork are invisible to the child) (done).
 
 ### G6. Rehydration Check
 
 - Confirm a forked session rehydrates `CoreAgentState` correctly from its stitched
   log (config from the inherited `Opened`, no dangling tool batch), via an
-  in-process runner test that forks a session and runs one turn on the child.
+  in-process runner test that forks a session and runs one turn on the child
+  (done).
 
 ## Deferred
 

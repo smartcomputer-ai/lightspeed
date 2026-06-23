@@ -17,7 +17,9 @@ pub use blobs::{
     CachedBlobStore, InMemoryBlobCache, InMemoryBlobStore, SessionBlobRoot, ensure_engine_blobs,
 };
 pub use session::{
-    AppendSessionEvents, AppendSessionEventsResult, CreateSession, InMemorySessionStore,
-    ListAgentSessions, ReadSessionEvents, SessionPage, SessionRecord, SessionStore,
-    SessionStoreError,
+    AppendSessionEvents, AppendSessionEventsResult, CreateClonedSession, CreateForkedSession,
+    CreateSession, InMemorySessionStore, ListAgentSessions, ListSessionLinks, ReadSessionEvents,
+    SessionLinkDirection, SessionLinkRecord, SessionPage, SessionRecord, SessionStore,
+    SessionStoreError, UpsertSessionLink, largest_safe_fork_seq, validate_fork_point,
+    validate_relationship,
 };

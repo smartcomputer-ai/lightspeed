@@ -680,7 +680,8 @@ mod tests {
         RunStatus, SessionConfig, SessionId, ToolCallResult, ToolKind, ToolName, ToolParallelism,
         ToolSpec, ToolTargetRequirement, TurnConfig, TurnEvent,
         storage::{
-            BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore,
+            BlobStore, CreateForkedSession, CreateSession, InMemoryBlobStore, InMemorySessionStore,
+            SessionStore,
         },
     };
     use tools::prompts::{
@@ -1269,6 +1270,82 @@ mod tests {
                 .iter()
                 .any(|entry| matches!(entry.kind, ContextEntryKind::EnvironmentCatalog))
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn forked_session_rehydrates_inherited_opened_event_and_runs() {
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let stores = RunnerStores::new(sessions.clone(), blobs.clone());
+        let source_id = SessionId::new("source-session");
+        let child_id = SessionId::new("child-session");
+        sessions
+            .create_session(CreateSession {
+                session_id: source_id.clone(),
+                agent_handle: AgentHandle::new("lightspeed.default"),
+                created_at_ms: 1,
+            })
+            .await
+            .expect("create source");
+        let llm = Arc::new(CaptureFinalLlm::default());
+        let runner = SessionRunner::new(stores, llm.clone());
+        let session_config = config();
+        runner
+            .drive_command(DriveCommand {
+                session_id: source_id.clone(),
+                observed_at_ms: 10,
+                command: CoreAgentCommand::OpenSession {
+                    config: session_config.clone(),
+                },
+                max_steps: None,
+            })
+            .await
+            .expect("open source");
+
+        let fork_seq = sessions
+            .safe_fork_seq(&source_id)
+            .await
+            .expect("compute safe fork seq");
+        assert_eq!(fork_seq, engine::EventSeq::new(1));
+        sessions
+            .create_forked_session(CreateForkedSession {
+                source_session_id: source_id,
+                session_id: child_id.clone(),
+                agent_handle: AgentHandle::new("lightspeed.default"),
+                source_seq: fork_seq,
+                created_at_ms: 20,
+            })
+            .await
+            .expect("create fork");
+
+        let outcome = runner
+            .drive_command(DriveCommand {
+                session_id: child_id,
+                observed_at_ms: 30,
+                command: CoreAgentCommand::RequestRun {
+                    submission_id: None,
+                    input: user_input(BlobRef::from_bytes(b"child input")),
+                    run_config: run_config(),
+                },
+                max_steps: Some(64),
+            })
+            .await
+            .expect("run child");
+
+        assert!(outcome.accepted);
+        assert_eq!(outcome.state.lifecycle.config, Some(session_config));
+        assert!(outcome.state.runs.active.is_none());
+        assert_eq!(outcome.state.runs.completed.len(), 1);
+        assert_eq!(
+            outcome
+                .emitted_entries
+                .first()
+                .expect("child emitted entries")
+                .position
+                .seq,
+            engine::EventSeq::new(2)
+        );
+        assert_eq!(llm.requests.lock().expect("requests").len(), 1);
     }
 
     #[tokio::test(flavor = "current_thread")]

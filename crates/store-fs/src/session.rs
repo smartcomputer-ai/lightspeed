@@ -151,6 +151,8 @@ impl SessionStore for FsSessionStore {
             session_id: request.session_id.clone(),
             agent_handle: request.agent_handle,
             head: None,
+            source_session_id: None,
+            source_seq: None,
             created_at_ms: request.created_at_ms,
             updated_at_ms: request.created_at_ms,
         };

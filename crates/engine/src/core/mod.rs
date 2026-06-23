@@ -12,6 +12,7 @@ pub mod domain;
 pub mod drive;
 pub mod io;
 pub mod planning;
+pub mod session_graph;
 pub mod transition;
 pub mod workflow;
 
@@ -23,4 +24,5 @@ pub use domain::*;
 pub use drive::*;
 pub use io::*;
 pub use planning::*;
+pub use session_graph::*;
 pub use transition::*;

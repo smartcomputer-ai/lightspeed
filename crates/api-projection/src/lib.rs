@@ -1331,6 +1331,10 @@ pub fn map_session_store_error(error: SessionStoreError) -> AgentApiError {
         SessionStoreError::InvalidLimit { limit } => {
             AgentApiError::invalid_request(format!("invalid page limit: {limit}"))
         }
+        SessionStoreError::InvalidForkPoint { .. }
+        | SessionStoreError::InvalidRelationship { .. } => {
+            AgentApiError::invalid_request(error.to_string())
+        }
         SessionStoreError::ExpectedHeadMismatch { .. } => {
             AgentApiError::conflict(error.to_string())
         }

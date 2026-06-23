@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     -- source_session_id records the content origin; NULL for a fresh root
     -- session. source_seq distinguishes the two cases:
     --   NULL  -> config-only clone; child log starts at seq 1.
-    --   set   -> history fork; the child's effective log is the parent's events
+    --   set   -> history fork; 0 means an empty inherited prefix, otherwise
+    --            the child's effective log is the parent's events
     --            1..source_seq (read by reference, recursively if the parent is
     --            itself a fork) followed by this session's own rows, which start
     --            at source_seq + 1. The parent's events ARE NOT copied; the seq
@@ -58,8 +59,8 @@ CREATE TABLE IF NOT EXISTS sessions (
         CHECK (agent_handle ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$'),
     CONSTRAINT sessions_head_seq_positive
         CHECK (head_seq IS NULL OR head_seq > 0),
-    CONSTRAINT sessions_source_seq_positive
-        CHECK (source_seq IS NULL OR source_seq > 0),
+    CONSTRAINT sessions_source_seq_nonnegative
+        CHECK (source_seq IS NULL OR source_seq >= 0),
     CONSTRAINT sessions_source_seq_requires_source
         CHECK (source_seq IS NULL OR source_session_id IS NOT NULL),
     CONSTRAINT sessions_source_not_self
@@ -75,9 +76,71 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS sessions_agent_handle_session_id_idx
     ON sessions (universe_id, agent_handle, session_id);
 
+ALTER TABLE sessions
+    ADD COLUMN IF NOT EXISTS source_session_id text;
+
+ALTER TABLE sessions
+    ADD COLUMN IF NOT EXISTS source_seq bigint;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'sessions'::regclass
+          AND conname = 'sessions_source_session_id_fkey'
+    ) THEN
+        ALTER TABLE sessions
+            ADD CONSTRAINT sessions_source_session_id_fkey
+            FOREIGN KEY (universe_id, source_session_id)
+            REFERENCES sessions (universe_id, session_id) ON DELETE SET NULL;
+    END IF;
+END
+$$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'sessions'::regclass
+          AND conname = 'sessions_source_seq_requires_source'
+    ) THEN
+        ALTER TABLE sessions
+            ADD CONSTRAINT sessions_source_seq_requires_source
+            CHECK (source_seq IS NULL OR source_session_id IS NOT NULL);
+    END IF;
+END
+$$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'sessions'::regclass
+          AND conname = 'sessions_source_not_self'
+    ) THEN
+        ALTER TABLE sessions
+            ADD CONSTRAINT sessions_source_not_self
+            CHECK (source_session_id IS NULL OR source_session_id <> session_id);
+    END IF;
+END
+$$;
+
 CREATE INDEX IF NOT EXISTS sessions_source_session_id_idx
     ON sessions (universe_id, source_session_id)
     WHERE source_session_id IS NOT NULL;
+
+ALTER TABLE sessions
+    DROP CONSTRAINT IF EXISTS sessions_source_seq_positive;
+
+ALTER TABLE sessions
+    DROP CONSTRAINT IF EXISTS sessions_source_seq_nonnegative;
+
+ALTER TABLE sessions
+    ADD CONSTRAINT sessions_source_seq_nonnegative
+        CHECK (source_seq IS NULL OR source_seq >= 0);
 
 -- Directed, typed relationships between sessions. A link means
 -- "from_session_id can <relationship> to_session_id" — for example which
