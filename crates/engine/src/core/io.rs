@@ -19,8 +19,8 @@ use thiserror::Error;
 
 use crate::{
     BlobRef, ContextCompactionRequest, ContextCompactionResult, ContextEntryInput,
-    LlmGenerationFacts, LlmGenerationStatus, LlmRequest, RunId, SessionId, ToolBatchId, ToolCallId,
-    ToolCallStatus, ToolExecutionTarget, ToolName, TurnId,
+    LlmGenerationFacts, LlmGenerationStatus, LlmRequest, RunId, SessionId, ToolBatchId,
+    ToolBatchResumeDirective, ToolCallId, ToolCallStatus, ToolExecutionTarget, ToolName, TurnId,
 };
 
 #[async_trait]
@@ -46,7 +46,7 @@ pub trait CoreAgentTools: Send + Sync {
     async fn invoke_batch(
         &self,
         request: ToolInvocationBatchRequest,
-    ) -> Result<ToolInvocationBatchResult, CoreAgentIoError>;
+    ) -> Result<ToolBatchOutcome, CoreAgentIoError>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -107,6 +107,33 @@ impl ToolInvocationBatchResult {
             });
         }
         Ok(results.remove(0))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum ToolBatchOutcome {
+    Completed {
+        result: ToolInvocationBatchResult,
+    },
+    Deferred {
+        batch_id: ToolBatchId,
+        resume_directive: ToolBatchResumeDirective,
+    },
+}
+
+impl ToolBatchOutcome {
+    pub fn completed(result: ToolInvocationBatchResult) -> Self {
+        Self::Completed { result }
+    }
+
+    pub fn completed_result(self) -> Result<ToolInvocationBatchResult, CoreAgentIoError> {
+        match self {
+            Self::Completed { result } => Ok(result),
+            Self::Deferred { batch_id, .. } => Err(CoreAgentIoError::Failed {
+                message: format!("tool batch {batch_id} deferred instead of completing"),
+            }),
+        }
     }
 }
 

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use engine::{
-    CoreAgentIoError, CoreAgentTools, ProviderApiKind, SessionId, ToolCallStatus,
+    CoreAgentIoError, CoreAgentTools, ProviderApiKind, SessionId, ToolBatchOutcome, ToolCallStatus,
     ToolInvocationBatchRequest, ToolInvocationBatchResult, ToolInvocationResult,
     storage::{BlobStore, BlobStoreError},
 };
@@ -19,7 +19,7 @@ use messaging::OutboxStore;
 use serde_json::Value;
 use store_pg::PgStore;
 use tools::{
-    fleet::is_fleet_tool,
+    fleet::{AGENT_WAIT_TOOL_NAME, is_fleet_tool},
     fs::{FsPath, FsToolContext, MountedVfsFileSystem},
     host_protocol::RemoteHostConnection,
     limits::ToolLimits,
@@ -208,6 +208,46 @@ impl SessionTools {
             .await
     }
 
+    async fn invoke_lone_agent_wait_batch(
+        &self,
+        request: ToolInvocationBatchRequest,
+    ) -> Result<ToolBatchOutcome, CoreAgentIoError> {
+        let Some(executor) = &self.fleet else {
+            let call = request.calls.first().ok_or_else(|| {
+                io_error("agent_wait batch had no calls after planner invocation")
+            })?;
+            let result = failed_result(
+                self.blobs.as_ref(),
+                call.call_id.clone(),
+                "Fleet tools are not configured on this runtime",
+            )
+            .await?;
+            return Ok(ToolBatchOutcome::completed(ToolInvocationBatchResult {
+                run_id: request.run_id,
+                turn_id: request.turn_id,
+                batch_id: request.batch_id,
+                results: vec![result],
+            }));
+        };
+        let call = request
+            .calls
+            .first()
+            .ok_or_else(|| io_error("agent_wait batch had no calls after planner invocation"))?;
+        executor
+            .invoke_wait_batch(
+                crate::fleet::FleetInvocationContext {
+                    parent_session_id: request.session_id.clone(),
+                    parent_run_id: request.run_id,
+                    turn_id: request.turn_id,
+                    batch_id: request.batch_id,
+                    call_id: call.call_id.clone(),
+                    observed_at_ms: now_unix_ms()?,
+                },
+                call,
+            )
+            .await
+    }
+
     async fn environment_manager_for_session(
         &self,
         session_id: &SessionId,
@@ -370,7 +410,14 @@ impl CoreAgentTools for SessionTools {
     async fn invoke_batch(
         &self,
         request: ToolInvocationBatchRequest,
-    ) -> Result<ToolInvocationBatchResult, CoreAgentIoError> {
+    ) -> Result<ToolBatchOutcome, CoreAgentIoError> {
+        let has_agent_wait_call = request
+            .calls
+            .iter()
+            .any(|call| call.tool_name.as_str() == AGENT_WAIT_TOOL_NAME);
+        if has_agent_wait_call && request.calls.len() == 1 {
+            return self.invoke_lone_agent_wait_batch(request).await;
+        }
         let has_generic_runtime_call = request
             .calls
             .iter()
@@ -388,12 +435,12 @@ impl CoreAgentTools for SessionTools {
                     results.push(self.invoke_fleet_call(&request, call).await?);
                 }
             }
-            return Ok(ToolInvocationBatchResult {
+            return Ok(ToolBatchOutcome::completed(ToolInvocationBatchResult {
                 run_id: request.run_id,
                 turn_id: request.turn_id,
                 batch_id: request.batch_id,
                 results,
-            });
+            }));
         }
 
         let mounts = self
@@ -438,12 +485,12 @@ impl CoreAgentTools for SessionTools {
                 results.push(runtime.invoke_call(call).await?);
             }
         }
-        Ok(ToolInvocationBatchResult {
+        Ok(ToolBatchOutcome::completed(ToolInvocationBatchResult {
             run_id: request.run_id,
             turn_id: request.turn_id,
             batch_id: request.batch_id,
             results,
-        })
+        }))
     }
 }
 
@@ -548,7 +595,7 @@ mod tests {
 
     #[derive(Default)]
     struct FakeFleetRuntime {
-        started_runs: Mutex<Vec<(SessionId, String, engine::SubmissionId)>>,
+        started_runs: Mutex<Vec<(SessionId, Vec<api::InputItem>, engine::SubmissionId)>>,
     }
 
     #[async_trait]
@@ -560,7 +607,7 @@ mod tests {
         async fn start_run(
             &self,
             session_id: &SessionId,
-            input: String,
+            input: Vec<api::InputItem>,
             submission_id: engine::SubmissionId,
         ) -> Result<String, api::AgentApiError> {
             self.started_runs.lock().expect("fleet lock").push((
@@ -862,7 +909,9 @@ mod tests {
                 }],
             })
             .await
-            .expect("invoke");
+            .expect("invoke")
+            .completed_result()
+            .expect("completed batch");
 
         assert_eq!(result.results[0].status, ToolCallStatus::Succeeded);
         let output = blobs
@@ -895,7 +944,9 @@ mod tests {
                 }],
             })
             .await
-            .expect("invoke");
+            .expect("invoke")
+            .completed_result()
+            .expect("completed batch");
 
         assert_eq!(result.results[0].status, ToolCallStatus::Succeeded);
         let output = blobs
@@ -942,7 +993,9 @@ mod tests {
                 ],
             })
             .await
-            .expect("invoke");
+            .expect("invoke")
+            .completed_result()
+            .expect("completed batch");
 
         assert_eq!(result.results.len(), 2);
         assert_eq!(result.results[0].status, ToolCallStatus::Succeeded);
@@ -1018,7 +1071,9 @@ mod tests {
                 ],
             })
             .await
-            .expect("invoke");
+            .expect("invoke")
+            .completed_result()
+            .expect("completed batch");
 
         assert_eq!(result.results.len(), 2);
         assert!(
@@ -1113,7 +1168,9 @@ mod tests {
                 }],
             })
             .await
-            .expect("invoke");
+            .expect("invoke")
+            .completed_result()
+            .expect("completed batch");
 
         assert_eq!(result.results[0].status, ToolCallStatus::Succeeded);
         let output_ref = result.results[0].output_ref.as_ref().expect("output");
@@ -1123,8 +1180,64 @@ mod tests {
         assert!(output.child_session_id.starts_with("agent_"));
         assert_eq!(
             fleet_runtime.started_runs.lock().expect("fleet lock")[0].1,
-            "do child work"
+            vec![api::InputItem::Text {
+                text: "do child work".to_owned()
+            }]
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn agent_wait_in_mixed_batch_fails_without_deferring() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let catalog = Arc::new(TestCatalog::default());
+        let sessions: Arc<dyn SessionStore> = Arc::new(InMemorySessionStore::new());
+        let fleet_runtime = Arc::new(FakeFleetRuntime::default());
+        let tools = SessionTools::new(blobs.clone(), catalog.clone(), catalog)
+            .with_fleet_runtime(sessions, fleet_runtime);
+        let wait_args = blobs
+            .put_bytes(br#"{"waits":[{"target_session_id":"child","run_id":"run_1"}]}"#.to_vec())
+            .await
+            .expect("wait args");
+        let read_args = blobs
+            .put_bytes(br#"{"path":"README.md"}"#.to_vec())
+            .await
+            .expect("read args");
+
+        let result = tools
+            .invoke_batch(ToolInvocationBatchRequest {
+                session_id: SessionId::new("parent"),
+                run_id: RunId::new(9),
+                turn_id: TurnId::new(1),
+                batch_id: ToolBatchId::new(1),
+                default_targets: Default::default(),
+                calls: vec![
+                    engine::ToolInvocationRequest {
+                        call_id: ToolCallId::new("call_wait"),
+                        tool_name: ToolName::new(::tools::fleet::AGENT_WAIT_TOOL_NAME),
+                        arguments_ref: wait_args,
+                        execution_target: None,
+                    },
+                    engine::ToolInvocationRequest {
+                        call_id: ToolCallId::new("call_read"),
+                        tool_name: ToolName::new("read_file"),
+                        arguments_ref: read_args,
+                        execution_target: Some(tools::targets::session_fs_target()),
+                    },
+                ],
+            })
+            .await
+            .expect("invoke")
+            .completed_result()
+            .expect("completed batch");
+
+        assert_eq!(result.results.len(), 2);
+        assert_eq!(result.results[0].status, ToolCallStatus::Failed);
+        let wait_error = blobs
+            .read_text(result.results[0].error_ref.as_ref().expect("wait error"))
+            .await
+            .expect("wait error text");
+        assert!(wait_error.contains("agent_wait must be the only call"));
+        assert_eq!(result.results[1].status, ToolCallStatus::Failed);
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1149,7 +1262,9 @@ mod tests {
                 }],
             })
             .await
-            .expect("invoke");
+            .expect("invoke")
+            .completed_result()
+            .expect("completed batch");
 
         assert_eq!(result.results[0].status, ToolCallStatus::Failed);
         let error = blobs
@@ -1184,7 +1299,9 @@ mod tests {
                 }],
             })
             .await
-            .expect("invoke");
+            .expect("invoke")
+            .completed_result()
+            .expect("completed batch");
 
         assert_eq!(result.results[0].status, ToolCallStatus::Failed);
         let error = blobs

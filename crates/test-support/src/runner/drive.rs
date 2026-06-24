@@ -5,8 +5,9 @@ use engine::{
     ContextCompactionStatus, CoreAgentAction, CoreAgentCommand, CoreAgentDrive,
     CoreAgentDriveError, CoreAgentIoError, CoreAgentLlm, CoreAgentState, CoreAgentTools,
     CoreApplyEvent, EventSeq, LlmFinish, LlmGenerationFacts, LlmGenerationRequest,
-    LlmGenerationResult, LlmGenerationStatus, SKILL_CATALOG_CONTEXT_KEY, SessionId, ToolCallStatus,
-    ToolInvocationBatchRequest, ToolInvocationBatchResult, ToolInvocationResult,
+    LlmGenerationResult, LlmGenerationStatus, SKILL_CATALOG_CONTEXT_KEY, SessionId,
+    ToolBatchOutcome, ToolCallStatus, ToolInvocationBatchRequest, ToolInvocationBatchResult,
+    ToolInvocationResult,
     storage::{AppendSessionEvents, BlobStore, ReadSessionEvents},
 };
 use tools::{
@@ -484,28 +485,28 @@ impl SessionRunner {
                     action = drive.resume_context_compaction(result, observed_at_ms)?;
                 }
                 CoreAgentAction::InvokeTools { request } => {
-                    let result = match self.tools.as_deref() {
+                    let outcome = match self.tools.as_deref() {
                         Some(tools) => match tools.invoke_batch(request.clone()).await {
-                            Ok(result) => result,
-                            Err(error) => {
+                            Ok(outcome) => outcome,
+                            Err(error) => ToolBatchOutcome::completed(
                                 failed_tool_batch_result(
                                     self.stores.blobs.as_ref(),
                                     &request,
                                     error.to_string(),
                                 )
-                                .await?
-                            }
+                                .await?,
+                            ),
                         },
-                        None => {
+                        None => ToolBatchOutcome::completed(
                             failed_tool_batch_result(
                                 self.stores.blobs.as_ref(),
                                 &request,
                                 "test-support tool runtime unavailable",
                             )
-                            .await?
-                        }
+                            .await?,
+                        ),
                     };
-                    action = drive.resume_tool_batch(result, observed_at_ms)?;
+                    action = drive.resume_tool_batch_outcome(outcome, observed_at_ms)?;
                 }
                 CoreAgentAction::Idle => return Ok(RunnerQuiescence::Idle),
                 CoreAgentAction::Closed => return Ok(RunnerQuiescence::Closed),

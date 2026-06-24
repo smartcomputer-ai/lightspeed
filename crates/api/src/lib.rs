@@ -635,7 +635,7 @@ pub struct ToolConfigInput {
     /// sessions bound to a chat channel.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub messaging: Option<bool>,
-    /// Enables the Fleet subagent control-plane tools (agent_spawn/read/list/cancel).
+    /// Enables the Fleet subagent control-plane tools (agent_spawn/send/read/list/cancel).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fleet: Option<bool>,
 }
@@ -1241,6 +1241,16 @@ pub enum SessionEventKindView {
         status: ToolItemStatus,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         effects: Vec<ToolEffectView>,
+    },
+    ToolBatchDeferred {
+        run_id: RunId,
+        turn_id: String,
+        batch_id: String,
+    },
+    ToolBatchResumed {
+        run_id: RunId,
+        turn_id: String,
+        batch_id: String,
     },
     ToolBatchCompleted {
         run_id: RunId,

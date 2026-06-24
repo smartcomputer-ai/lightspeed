@@ -6,6 +6,9 @@
   model-visible Fleet specs, spawn/task service, child config/resource policies,
   hosted tool routing, projection/inspection/cancel behavior, deterministic
   tests, and an ignored Temporal/Postgres live smoke).
+- Superseded in part by P84 first cut (2026-06-24): `agent_task` was replaced
+  by graph-shaped `agent_send`, and address fields were renamed from
+  `*_agent_id` aliases to `*_session_id`.
 - Builds on **P82 (Session Graph — Clone, Fork, And Links)** for the underlying
   clone/fork/link store primitives, the Temporal-backed `AgentSessionWorkflow`,
   the `api` session/run surface, environment/provider work from P79-P81, and
@@ -519,9 +522,10 @@ setup pass and reuse the deterministic child run submission id.
   code.
 
 Implementation note: hosted workers inject a Fleet executor into `SessionTools`
-when constructed from the Postgres/Temporal runtime. `agent_spawn`, `agent_task`,
-`agent_list`, `agent_read`, and `agent_cancel` route to the Fleet executor with
-normal tool-result blobs and model-visible summaries.
+when constructed from the Postgres/Temporal runtime. P83 originally routed
+`agent_spawn`, `agent_task`, `agent_list`, `agent_read`, and `agent_cancel` to the
+Fleet executor with normal tool-result blobs and model-visible summaries. P84's
+first cut replaced `agent_task` with `agent_send`.
 
 ### G6. Projection And Inspection — Done 2026-06-23
 
@@ -564,8 +568,9 @@ uses the hosted run/session API for active-run cancellation and session close.
 
 Implementation note: deterministic coverage now includes strict Fleet schemas,
 spawn idempotency, explicit-id collision handling, VFS isolation, hosted
-`SessionTools` routing, `agent_task`, `agent_read`, `agent_list`, and
-`agent_cancel`. The ignored live smoke
+`SessionTools` routing, `agent_read`, `agent_list`, and `agent_cancel`. P83's
+`agent_task` coverage was replaced by P84 `agent_send` coverage. The ignored live
+smoke
 `temporal_live_fleet_executor_spawns_child_workflow_and_run` exercises the real
 Fleet executor against the Postgres/Temporal runtime and verifies the child
 workflow plus initial and follow-up child runs complete.
@@ -583,14 +588,13 @@ workflow plus initial and follow-up child runs complete.
 - Per-grant / less-privileged child auth scoping.
 - Completion and important-update notifications back to the parent; rich
   `wait_agent` semantics. (Now owned by **P84 — Fleet Wait, Subscriptions, And
-  Send**: `agent_wait` (terminal-only, via a generic `RunSubscription` plus an
-  engine deferred-tool primitive) + `agent_send`, the latter unifying `agent_task`
-  with child->parent callbacks.)
-- Naming cleanup: the address-an-existing-agent DTOs here use `target_agent_id` /
-  `agent_id` / `source_agent_id` / `from_agent_id` / `to_agent_id`, which alias
-  the session id. P84 standardizes the Fleet surface on `session_id` and renames
-  these (see P84 "Naming Cleanup"); it is a wire-contract change applied with
-  P84's S1.
+  Send**: the first cut shipped `agent_send`, which unified `agent_task` with
+  child->parent callbacks; `agent_wait` remains pending and will use a generic
+  `RunSubscription` plus an engine deferred-tool primitive.)
+- Naming cleanup: P84's first cut standardized the Fleet surface on `session_id`
+  and renamed the address-an-existing-agent DTOs that originally used
+  `target_agent_id` / `agent_id` / `source_agent_id` / `from_agent_id` /
+  `to_agent_id` aliases.
 - Temporal Child Workflow execution mode.
 - Raw session API tools for privileged debugging.
 - Sanitized forks (owned by P82's deferred list).

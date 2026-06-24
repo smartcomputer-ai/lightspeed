@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::{
     ActiveRun, BlobRef, ContextEntry, ContextEntryInput, ContextEntryKind, ContextEntrySource,
@@ -53,6 +54,17 @@ pub enum Event {
         turn_id: TurnId,
         batch_id: ToolBatchId,
         result: ToolCallResult,
+    },
+    BatchDeferred {
+        run_id: RunId,
+        turn_id: TurnId,
+        batch_id: ToolBatchId,
+        resume_directive: ToolBatchResumeDirective,
+    },
+    BatchResumed {
+        run_id: RunId,
+        turn_id: TurnId,
+        batch_id: ToolBatchId,
     },
     BatchCompleted {
         run_id: RunId,
@@ -757,7 +769,40 @@ pub struct ActiveToolBatch {
     pub batch_id: ToolBatchId,
     pub run_id: RunId,
     pub turn_id: TurnId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parked: Option<ToolBatchResumeDirective>,
     pub calls: Vec<ToolCallState>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolBatchResumeDirective {
+    pub api_kind: String,
+    pub version: u32,
+    pub body: Value,
+}
+
+impl ToolBatchResumeDirective {
+    pub fn new(api_kind: impl Into<String>, body: Value) -> Self {
+        Self {
+            api_kind: api_kind.into(),
+            version: 1,
+            body,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), DomainError> {
+        if self.api_kind.is_empty() {
+            return Err(DomainError::InvariantViolation(
+                "tool batch resume directive api_kind must not be empty".to_owned(),
+            ));
+        }
+        if self.version == 0 {
+            return Err(DomainError::InvariantViolation(
+                "tool batch resume directive version must be positive".to_owned(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -866,6 +911,9 @@ fn decide_active_tool_batch_invocations(
     let batch = active_run.tool_batches.get(&batch_id).ok_or_else(|| {
         DomainError::InvariantViolation(format!("active tool batch {} is missing", batch_id))
     })?;
+    if batch.parked.is_some() {
+        return Ok(Vec::new());
+    }
     if batch.run_id != active_run.run_id {
         return Err(DomainError::InvariantViolation(format!(
             "active tool batch {} run id {} does not match active run {}",
@@ -928,6 +976,9 @@ fn decide_active_tool_batch_completion(
     let batch = active_run.tool_batches.get(&batch_id).ok_or_else(|| {
         DomainError::InvariantViolation(format!("active tool batch {} is missing", batch_id))
     })?;
+    if batch.parked.is_some() {
+        return Ok(Vec::new());
+    }
     if !batch
         .calls
         .iter()
@@ -1158,6 +1209,7 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
                         batch_id: *batch_id,
                         run_id: *run_id,
                         turn_id: *turn_id,
+                        parked: None,
                         calls: call_states,
                     },
                 );
@@ -1190,6 +1242,23 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
             batch_id,
             result,
         } => complete_tool_call(state, *run_id, *turn_id, *batch_id, result),
+        Event::BatchDeferred {
+            run_id,
+            turn_id,
+            batch_id,
+            resume_directive,
+        } => defer_tool_batch(
+            state,
+            *run_id,
+            *turn_id,
+            *batch_id,
+            resume_directive.clone(),
+        ),
+        Event::BatchResumed {
+            run_id,
+            turn_id,
+            batch_id,
+        } => resume_deferred_tool_batch(state, *run_id, *turn_id, *batch_id),
         Event::BatchCompleted {
             run_id,
             turn_id,
@@ -1415,6 +1484,11 @@ fn complete_tool_batch(
                 "completed tool batch does not match run/turn".into(),
             ));
         }
+        if batch.parked.is_some() {
+            return Err(DomainError::InvariantViolation(
+                "deferred tool batch cannot complete before it is resumed".into(),
+            ));
+        }
 
         let mut results = Vec::with_capacity(batch.calls.len());
         for call_state in &batch.calls {
@@ -1457,6 +1531,97 @@ fn complete_tool_batch(
         },
     );
     active_run.active_tool_batch_id = None;
+    Ok(())
+}
+
+fn defer_tool_batch(
+    state: &mut CoreAgentState,
+    run_id: RunId,
+    turn_id: TurnId,
+    batch_id: ToolBatchId,
+    resume_directive: ToolBatchResumeDirective,
+) -> Result<(), DomainError> {
+    resume_directive.validate()?;
+    let active_run = crate::core::components::run::active_run_mut(state, run_id)?;
+    if active_run.status != RunStatus::Active {
+        return Err(DomainError::InvariantViolation(
+            "tool batches can only defer for active runs".into(),
+        ));
+    }
+    if active_run.active_turn_id.is_some() {
+        return Err(DomainError::InvariantViolation(
+            "tool batches cannot defer while a turn is active".into(),
+        ));
+    }
+    if active_run.active_tool_batch_id != Some(batch_id) {
+        return Err(DomainError::InvariantViolation(
+            "deferred tool batch does not match active tool batch".into(),
+        ));
+    }
+    let batch = active_run.tool_batches.get_mut(&batch_id).ok_or_else(|| {
+        DomainError::InvariantViolation(format!("tool batch {} is missing", batch_id))
+    })?;
+    if batch.run_id != run_id || batch.turn_id != turn_id {
+        return Err(DomainError::InvariantViolation(
+            "deferred tool batch does not match run/turn".into(),
+        ));
+    }
+    if batch.parked.is_some() {
+        return Err(DomainError::InvariantViolation(format!(
+            "tool batch {} is already deferred",
+            batch_id
+        )));
+    }
+    if !batch
+        .calls
+        .iter()
+        .any(|call_state| call_state.status == ToolCallStatus::Pending)
+    {
+        return Err(DomainError::InvariantViolation(
+            "tool batch deferral requires at least one pending call".into(),
+        ));
+    }
+    if batch.calls.iter().any(|call_state| {
+        matches!(
+            call_state.status,
+            ToolCallStatus::Observed | ToolCallStatus::Accepted
+        )
+    }) {
+        return Err(DomainError::InvariantViolation(
+            "tool batch deferral requires all invocable calls to be pending".into(),
+        ));
+    }
+    batch.parked = Some(resume_directive);
+    Ok(())
+}
+
+fn resume_deferred_tool_batch(
+    state: &mut CoreAgentState,
+    run_id: RunId,
+    turn_id: TurnId,
+    batch_id: ToolBatchId,
+) -> Result<(), DomainError> {
+    let active_run = crate::core::components::run::active_run_mut(state, run_id)?;
+    if active_run.active_tool_batch_id != Some(batch_id) {
+        return Err(DomainError::InvariantViolation(
+            "resumed tool batch does not match active tool batch".into(),
+        ));
+    }
+    let batch = active_run.tool_batches.get_mut(&batch_id).ok_or_else(|| {
+        DomainError::InvariantViolation(format!("tool batch {} is missing", batch_id))
+    })?;
+    if batch.run_id != run_id || batch.turn_id != turn_id {
+        return Err(DomainError::InvariantViolation(
+            "resumed tool batch does not match run/turn".into(),
+        ));
+    }
+    if batch.parked.is_none() {
+        return Err(DomainError::InvariantViolation(format!(
+            "tool batch {} is not deferred",
+            batch_id
+        )));
+    }
+    batch.parked = None;
     Ok(())
 }
 
@@ -1510,6 +1675,11 @@ fn start_tool_call(
     if batch.run_id != run_id || batch.turn_id != turn_id {
         return Err(DomainError::InvariantViolation(
             "tool call start does not match tool batch run/turn".into(),
+        ));
+    }
+    if batch.parked.is_some() {
+        return Err(DomainError::InvariantViolation(
+            "deferred tool batch cannot start calls".into(),
         ));
     }
     let call_state = batch
@@ -1623,6 +1793,11 @@ fn complete_tool_call(
     if batch.run_id != run_id || batch.turn_id != turn_id {
         return Err(DomainError::InvariantViolation(
             "tool call completion does not match tool batch run/turn".into(),
+        ));
+    }
+    if batch.parked.is_some() {
+        return Err(DomainError::InvariantViolation(
+            "deferred tool batch must be resumed before calls complete".into(),
         ));
     }
     let call_state = batch

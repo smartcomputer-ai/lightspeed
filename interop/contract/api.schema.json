@@ -6271,6 +6271,54 @@
               "type": "string"
             },
             "type": {
+              "const": "toolBatchDeferred",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "runId",
+            "turnId",
+            "batchId"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "batchId": {
+              "type": "string"
+            },
+            "runId": {
+              "type": "string"
+            },
+            "turnId": {
+              "type": "string"
+            },
+            "type": {
+              "const": "toolBatchResumed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "runId",
+            "turnId",
+            "batchId"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "batchId": {
+              "type": "string"
+            },
+            "runId": {
+              "type": "string"
+            },
+            "turnId": {
+              "type": "string"
+            },
+            "type": {
               "const": "toolBatchCompleted",
               "type": "string"
             }
@@ -7572,7 +7620,7 @@
           ]
         },
         "fleet": {
-          "description": "Enables the Fleet subagent control-plane tools (agent_spawn/read/list/cancel).",
+          "description": "Enables the Fleet subagent control-plane tools (agent_spawn/send/read/list/cancel).",
           "type": [
             "boolean",
             "null"

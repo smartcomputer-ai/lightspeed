@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 
 use engine::{
-    BlobRef, ContextEntryInput, CoreAgentCommand, CoreAgentState, DynamicCommand, RunStatus,
-    SessionConfig, SessionId, SessionPosition, SubmissionId,
+    BlobRef, ContextEntryInput, CoreAgentCommand, CoreAgentState, DynamicCommand, RunId, RunStatus,
+    SessionConfig, SessionId, SessionPosition, SubmissionId, ToolBatchId, ToolCallId,
+    ToolInvocationBatchResult, TurnId,
     storage::{DynamicUncommittedSessionEvent, SessionRecord},
 };
 use serde::{Deserialize, Serialize};
@@ -26,6 +27,12 @@ pub struct AgentSessionStatus {
     pub session_id: String,
     pub initialized: bool,
     pub pending_admissions: usize,
+    #[serde(default)]
+    pub pending_tool_batch_resumes: usize,
+    #[serde(default)]
+    pub active_waits: usize,
+    #[serde(default)]
+    pub run_subscriptions: usize,
     pub active_run: Option<AgentActiveRunSummary>,
     pub queued_runs: Vec<AgentQueuedRunSummary>,
     pub completed_runs: Vec<AgentCompletedRunSummary>,
@@ -82,6 +89,128 @@ pub struct AgentCompletedRunSummary {
     pub submission_id: Option<SubmissionId>,
     pub output_ref: Option<BlobRef>,
     pub failure_message_ref: Option<BlobRef>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunSubscription {
+    pub subscription_id: String,
+    pub subscriber_workflow_id: String,
+    pub correlation_token: String,
+    pub run_id: RunId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunTerminalNotification {
+    pub correlation_token: String,
+    pub run_id: RunId,
+    pub status: RunStatus,
+    pub output_ref: Option<BlobRef>,
+    pub failure_message_ref: Option<BlobRef>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingRunTerminalNotification {
+    pub subscription: RunSubscription,
+    pub notification: RunTerminalNotification,
+}
+
+pub const FLEET_AGENT_WAIT_DIRECTIVE_KIND: &str = "lightspeed.fleet.agent_wait";
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentWaitDirective {
+    pub call_id: ToolCallId,
+    pub mode: AgentWaitMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
+    #[serde(default)]
+    pub handles: Vec<AgentWaitHandle>,
+    #[serde(default)]
+    pub results: Vec<AgentWaitHandleResult>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentWaitMode {
+    #[default]
+    All,
+    Any,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentWaitHandle {
+    pub target_session_id: SessionId,
+    pub run_id: RunId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentWaitHandleResult {
+    pub target_session_id: String,
+    pub run_id: String,
+    pub status: AgentWaitHandleStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<AgentWaitRunResult>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentWaitHandleStatus {
+    Pending,
+    Terminal,
+    Error,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentWaitRunResult {
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_ref: Option<BlobRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_message_ref: Option<BlobRef>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentWaitOutput {
+    pub outcome: AgentWaitOutcome,
+    #[serde(default)]
+    pub results: Vec<AgentWaitHandleResult>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentWaitOutcome {
+    Terminal,
+    Timeout,
+    Error,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActiveWaitRecord {
+    pub batch_id: ToolBatchId,
+    pub run_id: RunId,
+    pub turn_id: TurnId,
+    pub call_id: ToolCallId,
+    pub mode: AgentWaitMode,
+    #[serde(default)]
+    pub handles: Vec<AgentWaitHandle>,
+    #[serde(default)]
+    pub results: Vec<AgentWaitHandleResult>,
+    #[serde(default)]
+    pub subscriptions: Vec<ActiveWaitSubscription>,
+    pub deadline_ms: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActiveWaitSubscription {
+    pub target_session_id: SessionId,
+    pub subscription: RunSubscription,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingToolBatchResume {
+    pub batch_id: ToolBatchId,
+    pub result: ToolInvocationBatchResult,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

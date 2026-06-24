@@ -282,6 +282,11 @@ impl AdmitCommand for CoreAdmitCommand {
                     }),
                 )])
             }
+            CoreAgentCommand::ResumeToolBatch { batch_id, result } => {
+                require_open(state)?;
+                crate::core::drive::resume_deferred_tool_batch_proposals(state, batch_id, result)
+                    .map_err(command_rejection_from_domain)
+            }
             CoreAgentCommand::ReplaceTools {
                 expected_revision,
                 tools,

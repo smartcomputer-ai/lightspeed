@@ -576,6 +576,25 @@ impl<'a> CoreAgentProjector<'a> {
                     status: core_tool_status_to_api_status(result.status),
                     effects: tool_effects_to_api(&result.effects),
                 }),
+                ToolEvent::BatchDeferred {
+                    run_id,
+                    turn_id,
+                    batch_id,
+                    ..
+                } => Ok(SessionEventKindView::ToolBatchDeferred {
+                    run_id: api_run_id(*run_id),
+                    turn_id: api_turn_id(*turn_id),
+                    batch_id: api_tool_batch_id(*batch_id),
+                }),
+                ToolEvent::BatchResumed {
+                    run_id,
+                    turn_id,
+                    batch_id,
+                } => Ok(SessionEventKindView::ToolBatchResumed {
+                    run_id: api_run_id(*run_id),
+                    turn_id: api_turn_id(*turn_id),
+                    batch_id: api_tool_batch_id(*batch_id),
+                }),
                 ToolEvent::BatchCompleted {
                     run_id,
                     turn_id,

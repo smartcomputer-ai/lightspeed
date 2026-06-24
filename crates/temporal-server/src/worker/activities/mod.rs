@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use engine::{BlobRef, ContextCompactionResult, LlmGenerationResult, ToolInvocationBatchResult};
+use engine::{BlobRef, ContextCompactionResult, LlmGenerationResult, ToolBatchOutcome};
 use store_pg::PgStore;
 use temporalio_macros::activities;
 use temporalio_sdk::activities::{ActivityContext, ActivityError};
@@ -163,6 +163,7 @@ mod tests {
         .await
         .expect("invoke fake tool");
 
+        let invoked = invoked.completed_result().expect("completed tool batch");
         let result = invoked.results.first().expect("tool result");
         assert_eq!(result.status, ToolCallStatus::Succeeded);
         let output_ref = result.output_ref.as_ref().expect("output ref");
@@ -283,7 +284,7 @@ impl WorkerActivities {
         self: Arc<Self>,
         _ctx: ActivityContext,
         request: ToolInvokeBatchActivityRequest,
-    ) -> Result<ToolInvocationBatchResult, ActivityError> {
+    ) -> Result<ToolBatchOutcome, ActivityError> {
         tools::invoke_batch(self.state.tools(), request).await
     }
 

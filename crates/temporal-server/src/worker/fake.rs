@@ -4,9 +4,9 @@ use async_trait::async_trait;
 use engine::{
     ContextEntryInput, ContextEntryKind, ContextMessageRole, CoreAgentIoError, CoreAgentLlm,
     CoreAgentTools, LlmFinish, LlmGenerationFacts, LlmGenerationRequest, LlmGenerationResult,
-    LlmGenerationStatus, ObservedToolCall, ToolCallId, ToolCallStatus, ToolInvocationBatchRequest,
-    ToolInvocationBatchResult, ToolInvocationResult, ToolKind, ToolName, ToolTargetRequirement,
-    storage::BlobStore,
+    LlmGenerationStatus, ObservedToolCall, ToolBatchOutcome, ToolCallId, ToolCallStatus,
+    ToolInvocationBatchRequest, ToolInvocationBatchResult, ToolInvocationResult, ToolKind,
+    ToolName, ToolTargetRequirement, storage::BlobStore,
 };
 use serde_json::Value;
 
@@ -139,7 +139,7 @@ impl CoreAgentTools for FakeTools {
     async fn invoke_batch(
         &self,
         request: ToolInvocationBatchRequest,
-    ) -> Result<ToolInvocationBatchResult, CoreAgentIoError> {
+    ) -> Result<ToolBatchOutcome, CoreAgentIoError> {
         let mut results = Vec::with_capacity(request.calls.len());
         for call in &request.calls {
             let args = self
@@ -171,12 +171,12 @@ impl CoreAgentTools for FakeTools {
                 effects: Vec::new(),
             });
         }
-        Ok(ToolInvocationBatchResult {
+        Ok(ToolBatchOutcome::completed(ToolInvocationBatchResult {
             run_id: request.run_id,
             turn_id: request.turn_id,
             batch_id: request.batch_id,
             results,
-        })
+        }))
     }
 }
 

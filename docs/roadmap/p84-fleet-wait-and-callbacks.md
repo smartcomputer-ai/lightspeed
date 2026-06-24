@@ -2,6 +2,22 @@
 
 **Status**
 - Proposed 2026-06-24.
+- First cut completed 2026-06-24: Fleet now exposes `agent_send` instead of
+  `agent_task`, uses `session_id` field names across the model-visible Fleet
+  DTOs, supports graph-edge send delivery (`to: parent | session`), injects
+  `report_back` instructions, and updates deterministic + ignored live Fleet
+  coverage for the send path.
+- S2 completed 2026-06-24: the engine now has a generic deferred-tool-batch
+  primitive (`ToolBatchOutcome::Deferred`, parked `ActiveToolBatch`,
+  `ResumeToolBatch`, durable deferred/resumed facts) and Temporal/test runtimes
+  consume tool batch outcomes.
+- S3/S5 implementation completed 2026-06-24: `agent_wait` is exposed in the Fleet
+  tool bundle, preflights handles, returns inline for already-satisfied joins,
+  defers lone running waits through the generic parked-batch primitive, and the
+  workflow records active waits, subscribes targets, handles terminal/error/timeout
+  resolution, and resumes the parked batch. Deterministic coverage and ignored
+  Temporal/Postgres coverage for the parked wait path are in place; replay and
+  signal-failure coverage remain future hardening work.
 - Builds on **P83 (Fleet Subagent Control Plane)** — the `agent_*` tool surface,
   the `FleetService`/`FleetToolExecutor`, hosted `SessionTools` routing, and the
   parent->child links. It also builds on the Temporal-backed
@@ -470,7 +486,7 @@ agent_send   deliver a message to another session, admitting a run on it
 
 This subsumes and **replaces P83's `agent_task`**, and absorbs the child->parent
 callback. "Task a child", "report to a parent", and "ping a sibling" are now the
-same verb with a different `to` and `kind`.
+same verb with a different `to` and message text/payload.
 
 Input shape:
 
@@ -479,7 +495,6 @@ to        tagged enum (see below)                addressing
 text                                             human/agent-readable message
 input?    structured input items                 run input (defaults to text)
 payload?  opaque JSON                             structured data for the receiver
-kind?     task | progress | question | result    sender-chosen framing (default: task)
 ```
 
 Output shape:
@@ -521,11 +536,7 @@ never ambiguous:
 graph; the tool just rides the edges that exist.
 
 - send is allowed iff a `session_link` connects caller and `target_session_id`
-  (the spawn parent->child edge, or any other link that exists);
-- `kind` (`task | progress | question | result`) is **pure sender-chosen
-  framing** — the runtime never forces or rewrites it based on direction. A peer
-  may `task` a peer; a child may send a `result` up. The receiver decides how to
-  react.
+  (the spawn parent->child edge, or any other link that exists).
 
 There is no built-in "subordinate must not command supervisor" in v1, because
 that is a *policy over edges*, not a property of the send tool. Directional edge
@@ -543,24 +554,17 @@ to C. This is a *reachability* gap, not a design compromise — the moment a
 link-installation action exists, arbitrary topologies light up with no change to
 `agent_send`. Listed in Deferred.
 
-### Framing (`kind`) Tells The Receiver How To Read It
-
-The admitted run carries a `kind` (`task | progress | question | result`) and an
-origin marking it a Fleet send. The receiver reads `task` as new work and
-`progress` / `question` / `result` as an incoming report. This is the *only*
-semantic difference between "tasking" and "notifying" — a sender-chosen field,
-not a separate tool and not a direction the runtime infers.
-
 ### Send Metadata Storage: A Text Envelope (No API Change)
 
 `RunStartParams.input` carries only `text` / `textRef` / `media`; it has no slot
-for `kind` / `payload`. v1 encodes them into a **structured envelope inside a
-single prepended text item**, which the receiver parses — so `agent_send` ships on
-the existing run-admission contract with **no `api` wire-type change**:
+for Fleet send metadata. v1 encodes `from_session_id` and optional `payload` into
+a **structured envelope inside a single prepended text item**, which the receiver
+parses — so `agent_send` ships on the existing run-admission contract with **no
+`api` wire-type change**:
 
 ```text
 input = [
-  text-item: envelope { fleet_send: { from_session_id, kind, payload? },
+  text-item: envelope { fleet_send: { from_session_id, payload? },
                         text: "<the message>" },   // ALWAYS prepended, exactly one
   ...any items/media from the caller's `input?`, unchanged, in order
 ]
@@ -574,9 +578,9 @@ parses the first item as the envelope and treats the remainder as ordinary input
 `text` is the convenience case (no `input?`): it becomes the envelope's `text`
 field, and there are no trailing items.
 
-A first-class structured input item (`InputItem::AgentMessage { from, kind,
-payload }`) is the cleaner long-term shape but is deferred — it would touch `api`
-wire types, contract artifacts, and projection.
+A first-class structured input item (`InputItem::AgentMessage { from, payload }`)
+is the cleaner long-term shape but is deferred — it would touch `api` wire types,
+contract artifacts, and projection.
 
 ### Resolution And Idempotency
 
@@ -609,19 +613,22 @@ not about *permission* — it is about *expectation*. A callback only happens if
 child knows it is expected to make one, and when.
 
 `report_back` directive (optional on `agent_spawn`, and on an `agent_send` that
-kicks off a child's work):
+kicks off another session's work):
 
 ```text
 report_back?  {
-  on            terminal | milestones | question   (what warrants a report)
-  instructions? string                             (extra guidance for the child)
+  instructions? string   extra guidance for when/how to report back
 }
 ```
 
 When present, the Fleet service **injects a report-back instruction** into the
 child's input — a short note like *"You are a subagent of <parent>. `agent_send
 { to: parent }` when you finish (and if you hit a blocking question), with a
-concise result."* parameterized by `on` and `instructions`.
+concise result."* plus any caller-provided `instructions`.
+
+`report_back` has no runtime trigger enum in v1. It is deliberately only an
+instruction directive; terminal/milestone/question timing belongs in free-form
+instructions until the runtime actually enforces or observes those states.
 
 `report_back` is **instruction-injection only — it does not patch the child's tool
 config.** P83 deliberately inherits the source's config and avoids config
@@ -753,7 +760,7 @@ rename and the new tools land in one contract revision.
 
 ## Implementation Map
 
-- `crates/tools/src/fleet/`: add the `agent_send` DTO (tagged `to`, `kind`,
+- `crates/tools/src/fleet/`: add the `agent_send` DTO (tagged `to`,
   `text`/`input`/`payload`) replacing `agent_task`, and the `agent_wait` DTO
   (`waits: [{target_session_id, run_id}]`, `mode: all|any`, optional `timeout_ms`);
   add the optional `report_back` directive to `agent_spawn`. Strict schemas; tool
@@ -793,7 +800,7 @@ rename and the new tools land in one contract revision.
 - `crates/temporal-server/src/`:
   - `fleet.rs`: `agent_send` resolution (`parent` via link / `session` by id),
     `session_link` edge check (else `not_reachable`), envelope-encode
-    `kind`/`payload`, admit recipient run with derived `submission_id`;
+    `payload`, admit recipient run with derived `submission_id`;
     `report_back` instruction injection (no config patch); `agent_wait` **validate**
     (`minItems`, dedupe handles, `maxItems` fan-in) + **preflight** (read each
     handle's run status; return inline if already satisfied, else `Deferred`) and
@@ -808,16 +815,17 @@ rename and the new tools land in one contract revision.
 
 ## Implementation Steps
 
-### S1. Tool Contracts + Naming Cleanup
-- `agent_send` DTO (tagged `to`, `kind`, payload envelope) replacing `agent_task`;
-  `agent_wait` DTO (`waits: [{target_session_id, run_id}]`, `mode: all|any`,
-  optional `timeout_ms`, terminal-only); optional `report_back` on `agent_spawn`.
-  Strict schemas; Fleet bundle.
+### S1. Tool Contracts + Naming Cleanup — Done 2026-06-24
+- `agent_send` DTO (tagged `to`, payload envelope) replacing `agent_task`;
+  optional `report_back` on `agent_spawn` / `agent_send`. Strict schemas; Fleet
+  bundle.
 - Naming cleanup: rename `target_agent_id` / `agent_id` / `source_agent_id` /
   `from_agent_id` / `to_agent_id` to their `session_id` forms across the P83 tools.
 - Regenerate committed contract artifacts once, covering both.
+- `agent_wait` DTO (`waits: [{target_session_id, run_id}]`, `mode: all|any`,
+  optional `timeout_ms`, terminal-only) is exposed in the Fleet bundle.
 
-### S2. Engine Deferred-Tool-Batch Primitive
+### S2. Engine Deferred-Tool-Batch Primitive — Done 2026-06-24
 - `ToolBatchOutcome::Deferred { batch_id, resume_directive }` (opaque blob); a
   **`parked` flag on `ActiveToolBatch`** so `drive.next_action` does not re-emit the
   invocation or complete the batch while parked (no new `ToolCallStatus`);
@@ -828,76 +836,87 @@ rename and the new tools land in one contract revision.
   duplicate-resume no-op; `validate` still passes on the resumed terminal result;
   inline batches unaffected.
 
-### S3. Workflow Select Loop + RunSubscription + Wait
-- Widen the main loop to select over `pending_admissions` and the nearest
+Implementation note: the tool runtime trait now returns `ToolBatchOutcome`.
+Existing inline tools return `Completed`; deferred-capable tools can return
+`Deferred` without adding Fleet vocabulary to the engine.
+
+### S3. Workflow Select Loop + RunSubscription + Wait — Done 2026-06-24
+- Done: widen the main loop to select over `pending_admissions` and the nearest
   active-wait **deadline** timer (workflow-computed absolute `deadline_ms`, not
   stored as a future), draining a pending-resolution queue into `ResumeToolBatch`.
-- `subscribe_run` / `unsubscribe_run` signals (fixed typed `run_terminal` callback)
-  and a `once`-only subscription registry; **subscribe-after-terminal** fires
-  immediately without storing; terminal fan-out best-effort then remove; the three
-  signal-failure behaviors. (No `persistent` mode in v1.)
-- Continue-as-new guard: block idle compaction while a subscription or active wait
-  exists.
-- `agent_wait` parking: **record the active wait first** (deadline =
+- Done: `subscribe_run` / `unsubscribe_run` signals (fixed typed `run_terminal`
+  callback) and a `once`-only subscription registry; **subscribe-after-terminal**
+  fires immediately without storing; terminal fan-out best-effort then remove; the
+  fan-out loop does not fail the target on callback signal failure. (No
+  `persistent` mode in v1.)
+- Done: continue-as-new guard blocks idle compaction while a subscription, active
+  wait, pending terminal notification, or pending tool-batch resume exists.
+- Done: `agent_wait` parking: **record the active wait first** (deadline =
   `workflow_time + timeout_ms`), **then** subscribe each still-running handle;
   accumulate arrivals/errors; resolve on `all`/`any`/deadline via `ResumeToolBatch`
   applying the **mode-specific error rules**; race/duplicate resolved by `batch_id`
   + handle.
 
-### S4. agent_send + report_back
+### S4. agent_send + report_back — Done 2026-06-24
 - `agent_send`: resolve `to`, require a `session_link` edge (`not_reachable`
-  else), envelope-encode `kind`/`payload`, admit recipient run with derived
-  submission id; the `to: child` case subsumes the old `agent_task`.
+  else), envelope-encode `from_session_id`/`payload`, admit recipient run with
+  derived submission id; the `to: child` case subsumes the old `agent_task`.
 - `report_back`: inject the report-back instruction into the child input (no
   config patch).
 - Idempotency by recipient `submission_id`.
 
+Implementation note: `agent_send` is async and uses the existing hosted
+`run/start` path. It prepends exactly one text envelope item and appends any
+caller-supplied structured input items unchanged.
+
 ### S5. Tests
-- Engine unit: a lone-call batch returning `Deferred` parks the turn
+- Engine unit — Done 2026-06-24: a lone-call batch returning `Deferred` parks the turn
   (`active_tool_batch_id` set, `parked` flag set, no `CallCompleted`); **`next_action`
   does not re-emit the parked invocation**; `ResumeToolBatch` clears `parked`,
   resolves it, and the turn continues; the resumed terminal result passes
   `validate_tool_batch_result`; duplicate `ResumeToolBatch` is a no-op; inline
   batches unaffected.
-- Mixed-batch rejection: an `agent_wait` emitted alongside other calls resolves the
-  `agent_wait` call as model-visible `Failed`; the rest of the batch completes
-  normally.
-- `agent_wait` validation: empty `waits` rejected (`minItems`); duplicate
-  `{target_session_id, run_id}` rejected; over-cap fan-in rejected.
-- Workflow subscription: `subscribe_run` fires exactly once via the `run_terminal`
-  signal on terminal and is removed; **`subscribe_run` against an already-terminal
-  run fires immediately and stores nothing** (the race); **record-before-subscribe**
-  — a synchronous `run_terminal` arriving for an already-terminal handle is matched
-  to the active wait, not dropped as unknown; terminal fan-out re-emits idempotently
-  after a simulated restart; a fan-out signal failure does **not** fail the target
-  run; a registered subscription (or active wait) **blocks continue-as-new** at idle.
-- Workflow loop/timer: the select resolves a `run_terminal` signal and a deadline
-  timer into `ResumeToolBatch`; **the workflow computes `deadline_ms` from
-  `timeout_ms`** and the timer is derived from it (an unrelated admission does
-  **not** extend it; restart does **not** reset it); **no timer armed when
-  `timeout_ms` absent**; race resolves once by `batch_id`.
-- `agent_wait` join + error semantics: `mode = all` resolves only when every handle
-  is terminal, and **any handle error resolves overall `error` immediately**;
-  `mode = any` resolves on the first arrival, and **a handle error is non-fatal
-  until no viable handle remains** (one errored + one running still defers; all
-  errored → `error`); **preflight short-circuit** returns inline when all handles
-  are already terminal (fast-child case); `timeout` carries partial results; a
-  handle terminal-with-`Failed`-status is a normal arrival, not `error`.
+- Mixed-batch rejection — Done 2026-06-24: an `agent_wait` emitted alongside other
+  calls resolves the `agent_wait` call as model-visible `Failed`; the rest of the
+  batch completes normally.
+- `agent_wait` validation — Done 2026-06-24: empty `waits` rejected (`minItems`);
+  duplicate `{target_session_id, run_id}` rejected; over-cap fan-in rejected.
+- Workflow subscription — Done 2026-06-24: `subscribe_run` fires exactly
+  once via the `run_terminal` signal on terminal and is removed; **`subscribe_run`
+  against an already-terminal run fires immediately and stores nothing** (the
+  race); terminal fan-out removes matching subscriptions once; `run_terminal` is
+  idempotently recorded on active waits by correlation token; a registered
+  subscription, active wait, pending terminal notification, or pending resume
+  **blocks continue-as-new** at idle. Pending coverage: replay/idempotent fan-out
+  and signal-failure live coverage through the actual `agent_wait` path.
+- Workflow loop/timer — Done 2026-06-24: the select resolves a pending
+  admission, pending terminal notification, pending tool-batch resume, or due active
+  wait deadline, and constructs actual `agent_wait` results from deadline expiry
+  and arrivals.
+- `agent_wait` join + error semantics — Done 2026-06-24: `mode = all` resolves only
+  when every handle is terminal, and **any handle error resolves overall `error`
+  immediately**; `mode = any` resolves on the first arrival, and **a handle error
+  is non-fatal until no viable handle remains** (one errored + one running still
+  defers; all errored → `error`); **preflight short-circuit** returns inline when
+  all handles are already terminal (fast-child case); `timeout` carries partial
+  results; a handle terminal-with-`Failed`-status is a normal arrival, not `error`.
 - `agent_send` routing: `to: session` to a spawned child admits a run (old
   `agent_task` behavior); `to: parent` resolves the link and admits a parent run;
   `to: parent` from a root session and a send with no link edge both return
-  `not_reachable`; `kind`/`payload` round-trip through the prepended envelope item;
+  `not_reachable`; `payload` round-trips through the prepended envelope item;
   retried send does not double-admit.
 - `report_back`: injects the instruction into the child input; does **not** mutate
   child tool config.
 - Mode I in-process: parent spawns a child with `report_back`, goes idle, child
   `agent_send { to: parent }` wakes it as a fresh run.
-- Mode W in-process: parent spawns two children, `agent_wait { waits:[h1,h2],
-  mode: all }`, both complete, the targets' `RunSubscription`s resolve the parent's
-  parked batch with both run summaries.
-- Ignored Temporal/Postgres live: a real parent workflow parks on `agent_wait`, a
-  child workflow completes and signals the parent via `run_terminal`, the parent
-  resumes; separately, a child `agent_send { to: parent }` wakes an idle parent.
+- Mode W in-process — Pending coverage: parent spawns two children,
+  `agent_wait { waits:[h1,h2], mode: all }`, both complete, the targets'
+  `RunSubscription`s resolve the parent's parked batch with both run summaries.
+- Ignored Temporal/Postgres live — Done 2026-06-24 for Mode W: a real parent
+  workflow parks on `agent_wait`, a child workflow completes and signals the
+  parent via `run_terminal`, the parent resumes, and the final parent output sees
+  the terminal wait result. Pending coverage: child `agent_send { to: parent }`
+  wakes an idle parent.
 
 ## Deferred
 
@@ -980,9 +999,9 @@ rename and the new tools land in one contract revision.
   `target_agent_id` / `*_agent_id`. The P83 tools are renamed in the same contract
   revision.
 - Inter-agent delivery is **one tool, `agent_send`**, addressing any linked session
-  (`to: parent | session(target_session_id)`), `kind` sender-chosen, no up/down
-  asymmetry; it replaces P83's `agent_task` and the child->parent callback.
-  `kind`/`payload` ride a text envelope with no `api` wire change.
+  (`to: parent | session(target_session_id)`), with no up/down asymmetry; it
+  replaces P83's `agent_task` and the child->parent callback. `from_session_id`
+  and optional `payload` ride a text envelope with no `api` wire change.
 - A send to a session with no link edge returns `not_reachable`; arbitrary A-wired
   B->C topologies are expressible by the design and unlocked by the deferred
   link-installation action.

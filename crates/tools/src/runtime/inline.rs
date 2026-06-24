@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use engine::{
-    CoreAgentIoError, CoreAgentTools, ToolCallStatus, ToolInvocationBatchRequest,
+    CoreAgentIoError, CoreAgentTools, ToolBatchOutcome, ToolCallStatus, ToolInvocationBatchRequest,
     ToolInvocationBatchResult, ToolInvocationRequest, ToolInvocationResult, ToolName,
     storage::BlobStore,
 };
@@ -367,17 +367,17 @@ impl CoreAgentTools for InlineToolRuntime {
     async fn invoke_batch(
         &self,
         request: ToolInvocationBatchRequest,
-    ) -> Result<ToolInvocationBatchResult, CoreAgentIoError> {
+    ) -> Result<ToolBatchOutcome, CoreAgentIoError> {
         let mut results = Vec::with_capacity(request.calls.len());
         for call in request.calls {
             results.push(self.invoke_call(&call).await?);
         }
-        Ok(ToolInvocationBatchResult {
+        Ok(ToolBatchOutcome::completed(ToolInvocationBatchResult {
             run_id: request.run_id,
             turn_id: request.turn_id,
             batch_id: request.batch_id,
             results,
-        })
+        }))
     }
 }
 
@@ -600,6 +600,8 @@ mod tests {
             .invoke_batch(batch_request(call(args_ref, "read_file")))
             .await
             .expect("invoke batch")
+            .completed_result()
+            .expect("completed batch")
             .single_result()
             .expect("single result");
 
@@ -640,7 +642,9 @@ mod tests {
             },
         )
         .await
-        .expect("invoke batch");
+        .expect("invoke batch")
+        .completed_result()
+        .expect("completed batch");
 
         assert_eq!(result.results.len(), 1);
         assert_eq!(result.results[0].status, ToolCallStatus::Succeeded);
@@ -670,6 +674,8 @@ mod tests {
             .invoke_batch(batch_request(call_with_target(args_ref, "web_fetch", None)))
             .await
             .expect("invoke batch")
+            .completed_result()
+            .expect("completed batch")
             .single_result()
             .expect("single result");
 
@@ -714,6 +720,8 @@ mod tests {
             )))
             .await
             .expect("invoke batch")
+            .completed_result()
+            .expect("completed batch")
             .single_result()
             .expect("single result");
 
@@ -755,6 +763,8 @@ mod tests {
             )))
             .await
             .expect("invoke batch")
+            .completed_result()
+            .expect("completed batch")
             .single_result()
             .expect("single result");
 
@@ -793,6 +803,8 @@ mod tests {
             )))
             .await
             .expect("invoke batch")
+            .completed_result()
+            .expect("completed batch")
             .single_result()
             .expect("single result");
 
@@ -818,6 +830,8 @@ mod tests {
             )))
             .await
             .expect("invoke batch")
+            .completed_result()
+            .expect("completed batch")
             .single_result()
             .expect("single result");
 
@@ -854,6 +868,8 @@ mod tests {
                 )))
                 .await
                 .expect("invoke batch")
+                .completed_result()
+                .expect("completed batch")
                 .single_result()
                 .expect("single result");
 

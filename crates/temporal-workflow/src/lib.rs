@@ -21,13 +21,17 @@ pub use config::{
 pub use rehydrate::{ReducedSession, RehydrateError, reduce_session_entries};
 pub use temporal_helpers::connect_temporal;
 pub use types::{
-    AgentActiveRunSummary, AgentAdmission, AgentAdmissionFailure, AgentAdmissionFailureKind,
-    AgentCompletedRunSummary, AgentQueuedRunSummary, AgentSessionArgs, AgentSessionStatus,
-    AppendEventsRequest, ContextCompactActivityRequest, CreateOrLoadSessionRequest,
-    CreateOrLoadSessionResult, LlmGenerateActivityRequest, PreprocessRunInputActivityRequest,
-    PreprocessRunInputActivityResult, PreprocessRunInputFailure, PreprocessRunInputFailureKind,
-    PreprocessRunInputOutcome, PutBlobRequest, ReadBlobRequest, ReadBlobResult,
-    SessionBootstrapPayloadTooLarge, SkillCatalogRefreshActivityRequest,
-    SkillCatalogRefreshActivityResult, ToolInvokeBatchActivityRequest,
+    ActiveWaitRecord, ActiveWaitSubscription, AgentActiveRunSummary, AgentAdmission,
+    AgentAdmissionFailure, AgentAdmissionFailureKind, AgentCompletedRunSummary,
+    AgentQueuedRunSummary, AgentSessionArgs, AgentSessionStatus, AgentWaitDirective,
+    AgentWaitHandle, AgentWaitHandleResult, AgentWaitHandleStatus, AgentWaitMode, AgentWaitOutcome,
+    AgentWaitOutput, AgentWaitRunResult, AppendEventsRequest, ContextCompactActivityRequest,
+    CreateOrLoadSessionRequest, CreateOrLoadSessionResult, FLEET_AGENT_WAIT_DIRECTIVE_KIND,
+    LlmGenerateActivityRequest, PendingRunTerminalNotification, PendingToolBatchResume,
+    PreprocessRunInputActivityRequest, PreprocessRunInputActivityResult, PreprocessRunInputFailure,
+    PreprocessRunInputFailureKind, PreprocessRunInputOutcome, PutBlobRequest, ReadBlobRequest,
+    ReadBlobResult, RunSubscription, RunTerminalNotification, SessionBootstrapPayloadTooLarge,
+    SkillCatalogRefreshActivityRequest, SkillCatalogRefreshActivityResult,
+    ToolInvokeBatchActivityRequest,
 };
 pub use workflow::AgentSessionWorkflow;

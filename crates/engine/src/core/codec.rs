@@ -183,6 +183,8 @@ fn is_core_agent_event_envelope_kind(kind: &str) -> bool {
             | "lightspeed.core.tool.batch_started"
             | "lightspeed.core.tool.call_started"
             | "lightspeed.core.tool.call_completed"
+            | "lightspeed.core.tool.batch_deferred"
+            | "lightspeed.core.tool.batch_resumed"
             | "lightspeed.core.tool.batch_completed"
     )
 }
@@ -239,6 +241,8 @@ fn core_agent_event_envelope_kind(event: &CoreAgentEvent) -> &'static str {
             ToolEvent::BatchStarted { .. } => "lightspeed.core.tool.batch_started",
             ToolEvent::CallStarted { .. } => "lightspeed.core.tool.call_started",
             ToolEvent::CallCompleted { .. } => "lightspeed.core.tool.call_completed",
+            ToolEvent::BatchDeferred { .. } => "lightspeed.core.tool.batch_deferred",
+            ToolEvent::BatchResumed { .. } => "lightspeed.core.tool.batch_resumed",
             ToolEvent::BatchCompleted { .. } => "lightspeed.core.tool.batch_completed",
         },
     }
