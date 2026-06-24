@@ -1627,6 +1627,63 @@ mod tests {
     }
 
     #[test]
+    fn all_mode_active_wait_resolves_after_all_child_notifications_arrive() {
+        let mut wait = active_wait_record(7, "token_1");
+        let second_target_session_id = SessionId::new("target_session_two");
+        let second_run_id = RunId::new(2);
+        wait.handles.push(crate::AgentWaitHandle {
+            target_session_id: second_target_session_id.clone(),
+            run_id: second_run_id,
+        });
+        wait.results.push(crate::AgentWaitHandleResult {
+            target_session_id: second_target_session_id.as_str().to_owned(),
+            run_id: api_run_id(second_run_id),
+            status: AgentWaitHandleStatus::Pending,
+            run: None,
+            error: None,
+        });
+        wait.subscriptions.push(ActiveWaitSubscription {
+            target_session_id: second_target_session_id,
+            subscription: RunSubscription {
+                subscription_id: "sub_wait_two".to_owned(),
+                subscriber_workflow_id: "subscriber_session".to_owned(),
+                correlation_token: "token_2".to_owned(),
+                run_id: second_run_id,
+            },
+        });
+
+        let mut workflow = AgentSessionWorkflow::default();
+        workflow.active_waits.insert(7, wait);
+        assert_eq!(
+            active_wait_nontimer_resolution(workflow.active_waits.get(&7).expect("active wait")),
+            None
+        );
+
+        workflow.record_run_terminal(terminal_notification("token_1", 1, RunStatus::Completed));
+        let wait = workflow.active_waits.get(&7).expect("active wait");
+        assert_eq!(active_wait_nontimer_resolution(wait), None);
+        assert_eq!(
+            wait.results
+                .iter()
+                .filter(|result| result.status == AgentWaitHandleStatus::Terminal)
+                .count(),
+            1
+        );
+
+        workflow.record_run_terminal(terminal_notification("token_2", 2, RunStatus::Completed));
+        let wait = workflow.active_waits.get(&7).expect("active wait");
+        assert_eq!(
+            active_wait_nontimer_resolution(wait),
+            Some(AgentWaitOutcome::Terminal)
+        );
+        assert!(
+            wait.results
+                .iter()
+                .all(|result| result.status == AgentWaitHandleStatus::Terminal)
+        );
+    }
+
+    #[test]
     fn continue_as_new_is_blocked_by_waits_subscriptions_and_pending_work() {
         let mut workflow = AgentSessionWorkflow::default();
         assert!(workflow_state_allows_continue_as_new(&workflow));

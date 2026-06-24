@@ -18,6 +18,9 @@
   resolution, and resumes the parked batch. Deterministic coverage and ignored
   Temporal/Postgres coverage for the parked wait path are in place; replay and
   signal-failure coverage remain future hardening work.
+- P84 first cut completed 2026-06-24: Mode W (`agent_wait`) and Mode I
+  (`agent_send` report-back) are covered by deterministic/in-process tests and
+  ignored Temporal/Postgres live tests.
 - Builds on **P83 (Fleet Subagent Control Plane)** — the `agent_*` tool surface,
   the `FleetService`/`FleetToolExecutor`, hosted `SessionTools` routing, and the
   parent->child links. It also builds on the Temporal-backed
@@ -283,7 +286,9 @@ parked). Because `once` subscriptions are short-lived (one run to terminal), thi
 only briefly defers history compaction — acceptable. This is also a second reason
 `persistent` is deferred: an indefinitely-living subscription would either block
 continue-as-new forever or require threading subscription state through
-continue-as-new.
+continue-as-new. The v1 implementation takes the conservative path: it blocks
+idle continue-as-new while reactive state is live, and defers the carry path until
+there is real history pressure or persistent/broader subscriptions.
 
 ### Engine: A Generic Deferred-Tool-Batch Primitive (Not Fleet-Specific)
 
@@ -887,8 +892,8 @@ caller-supplied structured input items unchanged.
   race); terminal fan-out removes matching subscriptions once; `run_terminal` is
   idempotently recorded on active waits by correlation token; a registered
   subscription, active wait, pending terminal notification, or pending resume
-  **blocks continue-as-new** at idle. Pending coverage: replay/idempotent fan-out
-  and signal-failure live coverage through the actual `agent_wait` path.
+  **blocks continue-as-new** at idle. Future hardening coverage: replay/idempotent
+  fan-out and signal-failure live coverage through the actual `agent_wait` path.
 - Workflow loop/timer — Done 2026-06-24: the select resolves a pending
   admission, pending terminal notification, pending tool-batch resume, or due active
   wait deadline, and constructs actual `agent_wait` results from deadline expiry
@@ -909,14 +914,14 @@ caller-supplied structured input items unchanged.
   child tool config.
 - Mode I in-process: parent spawns a child with `report_back`, goes idle, child
   `agent_send { to: parent }` wakes it as a fresh run.
-- Mode W in-process — Pending coverage: parent spawns two children,
-  `agent_wait { waits:[h1,h2], mode: all }`, both complete, the targets'
-  `RunSubscription`s resolve the parent's parked batch with both run summaries.
+- Mode W in-process — Done 2026-06-24: an `all` wait over two child/run handles
+  records both subscribed terminal notifications, remains parked after the first,
+  and resolves only after both are terminal.
 - Ignored Temporal/Postgres live — Done 2026-06-24 for Mode W: a real parent
   workflow parks on `agent_wait`, a child workflow completes and signals the
   parent via `run_terminal`, the parent resumes, and the final parent output sees
-  the terminal wait result. Pending coverage: child `agent_send { to: parent }`
-  wakes an idle parent.
+  the terminal wait result. Done 2026-06-24 for Mode I: a child
+  `agent_send { to: parent }` wakes an idle parent as a fresh run.
 
 ## Deferred
 
@@ -930,6 +935,12 @@ caller-supplied structured input items unchanged.
   on every run terminal, survive continue-as-new) so an agent can stand-subscribe
   to another's run lifecycle (every completion, goal-mode terminal, etc.); adding
   it is additive to the v1 record.
+- **Reactive-state carry across continue-as-new.** v1 blocks idle
+  continue-as-new while `active_waits`, `run_subscriptions`, pending terminal
+  notifications, or pending tool-batch resumes exist. A later hardening step can
+  carry those records through `AgentSessionArgs` and rehydrate by preflighting
+  then re-subscribing, so duplicate or boundary-crossing terminal notifications
+  remain harmless.
 - **Graph wiring / link installation.** A v2 `agent_link` action (or a spawn-time
   `links:` field) that installs `session_link` edges to named peers, so a
   supervisor can wire B->C and C->A and make those sends reachable. v1
