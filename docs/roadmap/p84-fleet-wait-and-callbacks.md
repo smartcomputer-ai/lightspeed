@@ -79,70 +79,100 @@ subscription and (optionally) one durable timer.
 
 ### Tool Surface
 
-One new model-visible Fleet tool:
+One new model-visible Fleet tool. `agent_wait` is the **structured-concurrency
+join** over runs: a run handle is `{ target_session_id, run_id }` (the
+`JoinHandle`), and `agent_wait` is `join` over one or many of them. This is
+deliberately the Tokio / async-task model — `agent_spawn` / `agent_send` are
+`spawn` (they hand back a `run_id`), and `agent_wait` is `join` / `join_all` /
+`select`.
 
 ```text
-agent_wait   block until a target session's run reaches a terminal state,
-             or an optional timeout elapses
+agent_wait   join one or more in-flight runs: block until they reach terminal
+             (all of them, or the first), or an optional timeout elapses
 ```
 
 Input shape:
 
 ```text
-target_session_id
-run_id           the run to wait on (REQUIRED — see "Which Run")
-timeout_ms?      int   (default: none — wait until terminal, however long)
+waits        [ { target_session_id, run_id }, ... ]   one or more run handles
+mode         all | any                                (default: all)
+timeout_ms?  int                                      (default: none)
 ```
 
-- The wait resolves when the named run reaches `Completed`, `Failed`, or
-  `Cancelled` (`crates/engine/src/core/components/run.rs:88`). This is observed
-  from the target itself (see Runtime Shape), so it works even if the child never
-  calls `agent_send` or crashes mid-task and is retried.
-- `timeout_ms` is **optional** with **no default**: absent, the wait is
-  indefinite (no timer armed) and costs only an idle workflow plus a durable
-  subscription. When set, it is backed by `ctx.timer` in the parent workflow —
-  durable across restart, valid for days. On timeout the tool resolves with
-  `outcome = "timeout"` (not an error), so the supervisor can wait again, read,
-  or cancel.
+- `mode = all` (default) — `join_all`: resolve when **every** named run is
+  terminal.
+- `mode = any` — `select`: resolve when the **first** named run is terminal
+  (the result reports which).
+- Each run resolves on `Completed`, `Failed`, or `Cancelled`
+  (`crates/engine/src/core/components/run.rs:88`), observed from the target itself
+  (see Runtime Shape) — so it works even if a child never calls `agent_send` or
+  crashes mid-task and is retried.
+- `timeout_ms` is **optional** with **no default**: absent, the wait is indefinite
+  (no timer armed) and costs an idle workflow plus the durable subscriptions. When
+  set, it is backed by a single `ctx.timer` keyed to an absolute deadline (see
+  "Timer"). On timeout the tool resolves with `outcome = "timeout"` carrying
+  whatever partial results have arrived.
 
-`until = activity` (wake on mid-run progress, not just terminal) is **deferred**
-— see Deferred. v1 waits for terminal only; a supervisor that wants intermittent
-progress polls `agent_read`, or uses Mode I so the child pushes updates via
-`agent_send`.
+`waits` validation (strict schema, rejected before deferring):
+
+- **`minItems = 1`** — an empty join is meaningless.
+- **No duplicate handles** — duplicate `{target_session_id, run_id}` entries are
+  rejected (they would create two subscriptions for one run and double-count
+  arrivals).
+- **`maxItems` fan-in cap** (e.g. 32) — bounds the number of subscriptions a
+  single wait installs and the workflow-history cost of fanning out/​collecting
+  them. A supervisor needing more joins in batches.
+
+Each handle requires an explicit `run_id`. A supervisor already holds it
+(`agent_spawn` returns `child_run_id`; `agent_send` returns `run_id`). Requiring
+it avoids the race a "current active run" default would introduce (a run completes
+and the target immediately starts another, so a default latches the wrong one).
+
+Mid-run progress (`until = activity`) is **deferred** — v1 joins on terminal only;
+a supervisor wanting intermittent progress polls `agent_read` or uses Mode I so
+the child pushes updates via `agent_send`.
 
 Output shape:
 
 ```text
-target_session_id
-run_id
-outcome          terminal | timeout | error
-run?             compact run summary (status, output ref) when terminal
-error?           message, set when outcome = error
+outcome      terminal | timeout | error      overall result of the join
+results      [ { target_session_id, run_id, status, run?, error? }, ... ]
+             per-handle results (status: terminal | pending | error)
 ```
 
-`outcome` is always one of the three; `agent_wait` never raises a tool *failure*
-for these states (a supervisor can branch on `outcome` instead of catching an
-error). `error` is for "the wait could not be established or observed," distinct
-from `terminal` carrying a `Failed` run status (which is a normal, expected
-result).
+- `mode = all` + every handle terminal → `outcome = terminal`.
+- `mode = any` + at least one terminal → `outcome = terminal`; the resolved
+  handle's `results` entry is `terminal`, others may be `pending`.
+- `outcome = timeout` → the timer won first; `results` carries partial state
+  (some `terminal`, some `pending`).
+- `outcome = error` → the join could not be established/observed for at least one
+  handle in a way that prevents a meaningful result; per-handle `error` says which.
+- `agent_wait` never raises a tool *failure* for these states — the supervisor
+  branches on `outcome` / per-handle `status`. A handle that is `terminal` with a
+  `Failed` run status is a normal result, **not** `error` (which is reserved for
+  "could not establish/observe the wait").
 
-### Which Run
+### Already-Finished Runs Resolve Immediately (Join A Completed Handle)
 
-`agent_wait` **requires an explicit `run_id`**. A supervisor that spawned or
-tasked a child already holds it (`agent_spawn` returns `child_run_id`;
-`agent_send` returns `run_id`). Requiring it removes the race a "current active
-run" default would introduce (the run completes and the target immediately starts
-another, so a default latches the wrong one).
+A child can be **fast enough to finish before `agent_wait` is even called** — the
+async equivalent of joining an already-completed `JoinHandle`. This must return
+immediately, never park forever. So `agent_wait` **preflights** every handle
+synchronously in the tool activity (reading each target's run status via the
+existing projection/query) **before deferring**:
 
-Behavior for edge states is defined, never a hang:
+- handles already **terminal** at preflight → recorded as done immediately, no
+  subscription created;
+- **unknown / never-existed** run, or **errored / unreachable** target → that
+  handle's result is `error`, no subscription;
+- a **closing / closed** target with the run not terminal → `terminal` with its
+  last known status if any, else `error`.
 
-- named run already **terminal** at call time → `outcome = terminal`, resolve
-  immediately with its summary, no parking;
-- named run **unknown / never existed** on the target → `outcome = error`
-  immediately (not a hang);
-- target session **closing / closed** with the run not terminal → `outcome =
-  terminal` with the run's last known status if it has one, else `outcome = error`;
-- target workflow **errored / unreachable** → `outcome = error`.
+If, after preflight, the join is **already satisfied** (`all` and every handle
+terminal/error; or `any` and at least one terminal), `agent_wait` returns
+**inline** and never defers. Otherwise it defers, subscribing only to the handles
+still running. The narrow race — a run going terminal *between* preflight and the
+target processing `subscribe_run` — is closed by the subscribe handler firing
+immediately for an already-terminal run (below).
 
 ### Runtime Shape: `RunSubscription` (Generic, Target-Signals-Subscriber)
 
@@ -161,33 +191,41 @@ replay). v1 is **`once`-only**:
 ```text
 subscription_id          deterministic id (subscriber-derived)
 subscriber_workflow_id   any workflow id (not necessarily a session)
-signal_name              the signal to send on the subscriber
 correlation_token        opaque, subscriber-chosen (echoed back; lets the
-                         subscriber match the notification to its waiter)
+                         subscriber match the notification to a specific wait/handle)
 run_id                   the specific run to fire on (required in v1)
 ```
 
+The callback uses a **single fixed, typed signal** (`run_terminal`) on the
+subscriber, not a per-subscription `signal_name`. The SDK's
+`external_workflow().signal(SignalDef, input)` wants a typed `SignalDefinition`;
+a free-string signal name would need an untyped signal mechanism we do not have a
+real second user for yet. So v1 fixes the callback signal and keeps the *target*
+generic (any `subscriber_workflow_id`, opaque `correlation_token`). A
+parameterized signal name can come with the first non-session subscriber that
+needs a different one (Deferred).
+
 - v1 semantics are **fire once on that run's terminal, then remove the
-  subscription** — this is exactly what `agent_wait` needs.
+  subscription** — exactly what a join handle needs.
 - A future *persistent* mode (fire on every run terminal, never remove) is
   **deferred and not stored or tested in v1.** It would have to survive
-  `continue_as_new` (see note below) and outlive runs, which is real extra
-  machinery with no v1 user. The primitive is intentionally shaped so that adding
-  a `mode` field later is additive, but v1 ships neither the field nor the
-  behavior.
+  `continue_as_new` (see note below) and outlive runs — real extra machinery with
+  no v1 user. Adding a `mode` field later is additive; v1 ships neither.
 
-**Subscribe-after-terminal race.** The `subscribe_run` handler must check the run
-*at registration time*: if the named run is **already terminal**, fire the
-subscriber signal immediately and do **not** store the subscription. Only a
-still-running target stores it for later. This closes the window where the run
-goes terminal between the waiter's `Deferred` and the target processing
-`subscribe_run` — otherwise the waiter would park forever.
+**Subscribe-after-terminal race.** The `subscribe_run` handler checks the run *at
+registration time*: if the named run is **already terminal**, fire the
+`run_terminal` signal immediately and do **not** store the subscription. Only a
+still-running target stores it. This closes the window where the run goes terminal
+between the waiter's preflight and the target processing `subscribe_run`.
 
 On a run reaching terminal, the target workflow iterates its subscriptions and,
 for each match, calls
-`ctx.external_workflow(subscriber_workflow_id, None).signal(signal_name, { correlation_token, run_id, status, output_ref })`,
+`ctx.external_workflow(subscriber_workflow_id, None).signal(run_terminal, { correlation_token, run_id, status, output_ref })`,
 then removes the (once) subscription. Because this is workflow code it is durable:
-a restart replays the terminal transition and re-emits the signal idempotently.
+a restart replays the terminal transition and re-emits the signal idempotently. A
+**fan-out signal failure must not fail the target run** — the target attempts the
+signal best-effort and proceeds; a subscriber that never hears back relies on its
+own timeout (below).
 
 New signals on the session workflow:
 
@@ -195,6 +233,30 @@ New signals on the session workflow:
 subscribe_run(RunSubscription)        register; fire-immediately if already terminal
 unsubscribe_run(subscription_id)      remove it (waiter timed out / gave up)
 ```
+
+**Signal-failure behavior** (all three made explicit so implementation does not
+guess):
+
+- **Parent `subscribe_run` send fails** (target unreachable / not found): the
+  waiter cannot establish that handle's wait, so it resolves that handle as
+  `error` (and, for `mode = all`, that makes the overall `outcome = error`). It
+  does not park hoping the target appears.
+- **Target `run_terminal` fan-out fails:** best-effort, **must not fail the target
+  run** — the target logs and proceeds. Crucially, the SDK's
+  `external_workflow().signal` to a *live* subscriber is durable (Temporal retries
+  delivery), so the only way a fan-out is permanently lost is if the **subscriber
+  workflow is gone or cancelled** — in which case the wait is moot anyway (no one
+  is parked). So a fan-out failure does **not** silently strand a healthy
+  indefinite waiter; this does **not** require the waiter to set a timeout. The one
+  residual case — a genuinely lost notification to a still-parked indefinite waiter
+  — is not auto-recovered; the supervisor's recourse is `agent_cancel` on its own
+  wait or re-issuing `agent_wait` (which re-preflights and sees the now-terminal
+  run immediately). (Earlier wording said "the waiter falls back on its timeout,"
+  which wrongly implied a timeout is required; indefinite waits remain
+  first-class.)
+- **Timeout `unsubscribe_run` fails:** best-effort and ignored — a stale
+  subscription on the target is harmless (it is `once`; it fires or is GC'd when
+  that run is long terminal), and the waiter has already resolved.
 
 **Continue-as-new safety.** A live subscription is workflow state that is **not**
 in `AgentSessionArgs`, so the current `continue_as_new(&args)` at idle
@@ -207,99 +269,177 @@ only briefly defers history compaction — acceptable. This is also a second rea
 continue-as-new forever or require threading subscription state through
 continue-as-new.
 
-### Engine: A Generic Deferred-Tool Primitive (Not Fleet-Specific)
+### Engine: A Generic Deferred-Tool-Batch Primitive (Not Fleet-Specific)
 
 `agent_wait` is a tool whose result is not produced inline by the tool activity —
-it is produced later, when the subscription fires. Rather than hard-code Fleet
-await semantics into the deterministic core, the engine gains a **generic
-deferred-tool** capability keyed on tool-call metadata. `agent_wait` is one user
-of it; nothing in the engine knows about Fleet.
+it is produced later, when the joined runs reach terminal. The engine gains a
+**generic deferred capability**, keyed on tool-call metadata; `agent_wait` is one
+user and nothing in the engine knows about Fleet.
 
-- A tool invocation may resolve to
-  `ToolOutcome::Deferred { call_id, resume_directive }` instead of a normal result.
-  The engine records the call as parked and does **not** emit its result — the turn
-  cannot complete until it is resumed.
-  - `resume_directive` is an **opaque, runtime-owned blob ref** (an
-    `api_kind` + versioned body, like P83's `ProviderParams`). The engine stores
-    and replays it but **never interprets it**. The Fleet executor encodes the
-    wait specifics into it (`target_session_id`, `run_id`, `timeout_ms`,
-    `signal_name`); the parent workflow's Fleet handler decodes it to drive the
-    subscribe/timer. This is what lets the workflow act on a deferral the *tool
-    activity* decoded, without leaking Fleet vocabulary (`target`/`run_id`/`kind`)
-    into the deterministic core. The engine sees only `{ call_id, opaque blob }`.
-- A new command `ResumeToolCall { call_id, result }` (delivered via the existing
-  `submit_admission` signal path) supplies the deferred result and lets the turn
-  continue. This is the deferred sibling of `resume_tool_batch`
-  (`crates/engine/src/core/drive.rs:162`).
-- Durable reducer facts record "tool call deferred" (with the opaque directive)
-  and "tool call resumed" so the
-  parked turn replays.
+This must fit the engine's existing batch contract precisely
+(`crates/engine/src/core/`):
 
-The engine stays deterministic and wall-clock-free: it only knows *"this call is
-deferred; resume it with a result."* Which tool, what it is waiting on, timers,
-and subscriptions all live in the runtime/workflow.
+- A run has **one `active_tool_batch_id` at a time** (`run.rs:70`), and a batch
+  completes **all-or-nothing**: `validate_tool_batch_result` (`drive.rs:579`)
+  requires **every** call in the batch to have a *terminal* `ToolCallStatus`
+  (`Succeeded | Failed | Cancelled`; `tooling.rs:788`) before the turn proceeds.
+  There is no `Deferred` call status, and adding one would mean teaching
+  `validate` and the turn planner about a non-terminal-but-ok call.
+
+So v1 models deferral at the **batch** level, not by inventing a `Deferred` call
+status — which keeps the per-call terminal contract intact:
+
+- **`agent_wait` must be the only call in its batch.** When the model emits
+  `agent_wait` alongside other tool calls, the runtime resolves the `agent_wait`
+  call as `Failed` with a model-visible message ("`agent_wait` must be the only
+  call in its batch"), and the batch completes normally; the model re-issues the
+  wait alone. (Waiting on *many* runs is the `waits: [...]` argument, not multiple
+  batched calls — so this restriction does not block the common fan-out join.)
+- A **single-call `agent_wait` batch** may return
+  `ToolBatchOutcome::Deferred { batch_id, resume_directive }` instead of a result.
+  The engine records the **batch as parked**: `active_tool_batch_id` stays set, no
+  `CallCompleted` is emitted yet, and the turn cannot advance — reusing the
+  existing "a batch is in flight" state rather than a new call status.
+  - **Parked invariant (no re-emit).** A parked batch must not be re-issued. Today
+    the planner skips planning while `active_tool_batch_id.is_some()` (`turn.rs`),
+    but it also must not re-emit the *original* `InvokeTools` for this batch. Add an
+    explicit **`parked` flag (carrying the `resume_directive`) on `ActiveToolBatch`**
+    (`run.rs`): while set, `drive.next_action` neither re-emits the invocation nor
+    treats the batch as completable — it can only be cleared by `ResumeToolBatch`.
+    This is the durable marker that distinguishes "batch parked, awaiting resume"
+    from "batch in flight in an activity."
+  - `resume_directive` is an **opaque, runtime-owned blob** (`api_kind` +
+    versioned body, like P83's `ProviderParams`). The engine stores/replays it but
+    **never interprets it**. The Fleet executor encodes the wait specifics
+    (`waits[]`, `mode`, `timeout_ms`); the parent workflow's Fleet handler decodes
+    it. So the workflow can act on a deferral the *tool activity* decoded, with no
+    Fleet vocabulary in the core.
+- A new command `ResumeToolBatch { batch_id, result }` (delivered via the existing
+  `submit_admission` path) supplies the parked batch's single-call terminal result
+  and lets the turn proceed through the **normal** `tool_batch_result_proposals`
+  path (`drive.rs:544`) — the eventual result *is* terminal, so `validate` is
+  satisfied. This is the deferred sibling of `resume_tool_batch` (`drive.rs:162`).
+- Durable reducer facts record "tool batch deferred" (with the opaque directive)
+  and "tool batch resumed" so the parked turn replays.
+
+The engine stays deterministic and wall-clock-free: it knows only *"this batch is
+parked; resume it with a result."* Joins, timers, and subscriptions live in the
+runtime/workflow.
 
 ### Flow
 
 ```text
-parent model calls agent_wait
-  -> tool execution returns ToolOutcome::Deferred { call_id, resume_directive }
-     (the runtime decides to defer; directive encodes target/run/timeout)
-  -> parent workflow, on seeing the deferred call, decodes resume_directive and:
-       * subscribe_run on the TARGET workflow:
-           ctx.external_workflow(target_id).signal(subscribe_run, {
-             subscriber_workflow_id = parent_id, signal_name = "resume_wait",
-             correlation_token = call_id, run_id })
-       * records an ACTIVE WAIT in workflow state: { call_id, target_id, run_id,
-         timer_handle? } (durable; see continue-as-new note)
-       * if timeout_ms set: arms ctx.timer(timeout_ms) as a concurrent branch
-  -> resolution, whichever fires first (see loop below):
-       (a) resume_wait signal from target { correlation_token=call_id, status,
-           output_ref } -> resolution = terminal
-       (b) the armed timer future completes -> resolution = timeout,
-           and the workflow unsubscribe_runs on the target
-  -> the resolution becomes a local ResumeToolCall { call_id, result }, fed to
-     drive.resume_tool_call; the deferred agent_wait resolves and the turn
-     continues.
+parent model calls agent_wait { waits: [h1..hN], mode, timeout_ms? }
+  -> tool activity PREFLIGHTS each handle (reads target run status):
+       * if the join is already satisfied -> return an INLINE batch result
+         (no deferral); else -> ToolBatchOutcome::Deferred { batch_id,
+         resume_directive }, directive encoding the still-running handles, the
+         per-handle preflight errors, mode, and timeout_ms (NOT an absolute
+         deadline — the activity has no deterministic workflow clock)
+  -> parent workflow, on the deferred batch, decodes resume_directive and:
+       * FIRST records the durable ACTIVE WAIT (before any subscribe):
+           { batch_id, mode, handles[], arrived[], errored[], deadline_ms? }
+         where deadline_ms = workflow_time + timeout_ms (the WORKFLOW computes the
+         absolute deadline; see Timer). Recording first means a synchronous
+         run_terminal for an already-terminal handle is matched, not dropped as
+         unknown.
+       * THEN, for each still-running handle h: subscribe_run on h.target
+           ctx.external_workflow(h.target).signal(subscribe_run, {
+             subscriber_workflow_id = parent_id,
+             correlation_token = (batch_id, h), run_id = h.run_id })
+         a subscribe send-failure marks h errored (see error rules).
+  -> resolutions accumulate (see loop), applying the mode-specific rules below:
+       (a) run_terminal signal { correlation_token=(batch_id,h), status,.. }
+           -> mark h arrived
+       (b) subscribe failure / handle error -> mark h errored
+       (c) deadline timer fires -> satisfied as timeout (partial results)
+       After each, re-evaluate satisfaction by mode (see "Error propagation").
+  -> on satisfied: unsubscribe_run any still-open handles (best-effort), build
+     the agent_wait result, emit ResumeToolBatch { batch_id, result }; the parked
+     batch completes and the turn continues.
 ```
+
+#### Error propagation is mode-specific
+
+A handle can fail to even establish (unknown run, unreachable target, failed
+`subscribe_run` send) — distinct from a run completing with a `Failed` status.
+Satisfaction is re-evaluated after every arrival/error/timeout:
+
+- **`mode = all`**: any handle that **errors** resolves the whole join as
+  `outcome = error` **immediately** — `all` cannot succeed if one leg is
+  unobservable, so there is no point waiting on the rest. (A handle that *arrives*
+  terminal-with-`Failed`-status is **not** an error; it is a normal arrival, and
+  `all` still needs the others.)
+- **`mode = any`**: a handle error is **not** fatal while other handles are still
+  viable (running or not-yet-errored) — `any` only needs one to succeed. The join
+  resolves `outcome = error` only when **every** handle has errored (no viable
+  handle remains). The first handle to *arrive* terminal resolves `outcome =
+  terminal` and wins regardless of other handles' errors.
+- **timeout** (either mode) resolves `outcome = timeout` with whatever partial
+  `results` exist (some arrived, some errored, some still pending), independent of
+  the above.
 
 #### Workflow loop mechanics (the select, made explicit)
 
 The current loop awaits only `pending_admissions`
 (`crates/temporal-workflow/src/workflow.rs:69`). A timer firing is **not** an
-admission, so the loop must be widened to observe both. The workflow keeps a
-small set of **active waits** and a **pending-resolution queue**:
+admission, so the loop must be widened to observe both. The workflow keeps a set
+of **active waits** and a **pending-resolution queue**:
 
-- For each active wait with a timeout, the workflow holds the `ctx.timer(..)`
-  future. The top of the loop does a **select over: (1) the `wait_condition` for
-  new `pending_admissions`, and (2) any armed timer future completing.** Both are
-  `CancellableFuture`s, so they compose in a `select!`.
-- A `resume_wait` **signal** is delivered like any other signal: its handler
-  pushes a `(call_id, terminal-resolution)` onto the pending-resolution queue and
-  marks the loop wakeable (same mechanism as `pending_admissions`).
-- A **timer** branch winning the select pushes a `(call_id, timeout-resolution)`
-  onto the same queue and cancels/forgets that wait's subscription.
+- The top of the loop does a **select over: (1) the `wait_condition` for new
+  `pending_admissions`, and (2) the nearest active wait's deadline timer.** Both
+  are `CancellableFuture`s, so they compose in a `select!`.
+- A `run_terminal` **signal** is delivered like any other signal: its handler
+  records `(batch_id, handle)` as arrived in the active wait, and marks the loop
+  wakeable. When that wait becomes satisfied (`any` → first arrival; `all` → all
+  arrived), it pushes a `(batch_id, resolution)` onto the pending-resolution queue.
+- A **deadline timer** winning the select pushes a `(batch_id, timeout)`
+  resolution with whatever partial results have arrived.
 - After the select returns, the loop drains the pending-resolution queue into
-  `ResumeToolCall` admissions, then processes admissions as today.
+  `ResumeToolBatch` admissions (unsubscribing any still-open handles best-effort),
+  then processes admissions as today.
 
-So timer and signal funnel into **one queue**, the loop awaits **admissions OR
-timers**, and there is exactly one place that converts a resolution into a
-`ResumeToolCall`. This replaces the vague "start a timer then return to
-wait_condition," which would never observe the timer.
+So timer and signal funnel into **one queue**, the loop awaits **admissions OR the
+deadline**, and there is exactly one place that converts a resolution into a
+`ResumeToolBatch`.
 
-`call_id`-keyed idempotency: a duplicate `resume_wait` (target replayed) or a
-timer that fires after the wait was already resolved is dropped, because no active
-wait with that `call_id` remains.
+##### Timer: workflow-computed absolute deadline, not stored as a future
+
+`deadline_ms` is computed **by the workflow**, not the tool activity: the activity
+returns only `timeout_ms` in the directive (it has no deterministic workflow
+clock), and the workflow sets `deadline_ms = workflow_time() + timeout_ms`
+(`workflow.rs:688`'s `workflow_time_ms`) when it records the active wait. This
+keeps the absolute deadline on the deterministic side.
+
+The active-wait record stores **durable metadata only** — `{ batch_id, mode,
+handles[], arrived[], errored[], deadline_ms? }` — and **not** a `ctx.timer`
+future (a future is not serializable durable state). On each loop pass, if a wait
+has a `deadline_ms`, the select arms `ctx.timer(deadline_ms - now)` for the
+**nearest** deadline. Because the timer is keyed to an *absolute* deadline:
+
+- a worker restart re-derives the remaining duration from `deadline_ms` on replay
+  — the timeout does not reset;
+- an **unrelated admission** (a signal, a new run) that wakes the loop does **not**
+  re-arm a fresh full-duration `timeout_ms` — it re-arms toward the same
+  `deadline_ms`, so the deadline never drifts outward.
+
+`batch_id`/handle-keyed idempotency: a duplicate `run_terminal` (target replayed)
+or a deadline firing after the wait was already satisfied is dropped, because the
+active wait is gone (or the handle is already marked arrived).
 
 ### Crash / Resume Safety (No DB, No Reconciler)
 
 Every piece is durable by Temporal replay:
 
-- the **deferred tool call** is a reducer fact in the parent session log;
+- the **parked tool batch** (and its opaque resume directive) is a reducer fact in
+  the parent session log;
+- the **active wait** `{ batch_id, mode, handles[], arrived[], errored[],
+  deadline_ms? }` is parent workflow state, replayed on restart;
 - the **`RunSubscription`** is workflow state on the target, replayed on restart;
-- the target's terminal-transition → subscriber-signal happens **in workflow
+- the target's terminal-transition → `run_terminal` signal happens **in workflow
   code**, so a restart replays it and re-signals idempotently;
-- the **timer** is a Temporal timer, durable by construction.
+- the **timer** is a Temporal timer derived from the absolute `deadline_ms`, durable
+  by construction and non-drifting.
 
 This is the fix for the watcher-durability gap an earlier draft had ("an activity
 registers a watcher" — a completed activity does not rerun on replay): the watch
@@ -512,16 +652,39 @@ a blocking `wait` flag. "Send work and get the result back" is composed:
 
 ```text
 agent_send { to: { kind: session, target_session_id: id }, text } -> { run_id }
-agent_wait { target_session_id: id, run_id } -> { outcome, run }
+agent_wait { waits: [ { target_session_id: id, run_id } ] } -> { outcome, results }
+```
+
+Fan-out then join is the same shape with more handles:
+
+```text
+r1 = agent_send { to: session(B), text }   -> run_id
+r2 = agent_send { to: session(C), text }   -> run_id
+agent_wait { waits: [ {B, r1}, {C, r2} ], mode: all }   // join_all
 ```
 
 This keeps blocking semantics in exactly one place (`agent_wait` / the deferred
-tool call) — one parked-turn code path to reason about, test, and make crash-safe.
+tool batch) — one parked-turn code path to reason about, test, and make
+crash-safe.
 
 ## Are We Overbuilding? (`wait` vs `send` vs future `subscribe`)
 
-Three mechanisms could look redundant. They are not — they differ on push-vs-pull
-and on duration, and they share machinery rather than duplicating it:
+The clarifying frame is **structured concurrency over runs** — this is the agent
+analogue of threads / async tasks, and the pieces map onto a well-understood model
+rather than being novel invention:
+
+| async tasks | Fleet |
+|---|---|
+| `spawn(task)` → `JoinHandle` | `agent_spawn` / `agent_send` → `run_id` |
+| `handle.await` / `join` | `agent_wait { waits: [h] }` |
+| `join_all` / `select!` | `agent_wait { mode: all | any }` |
+| join a completed handle | `agent_wait` preflight resolves inline |
+| a channel `send` between tasks | `agent_send` |
+
+So the surface is "spawn, join, message" — the same trio every task runtime has.
+
+Three mechanisms could still look redundant. They are not — they differ on
+push-vs-pull and on duration, and they share machinery rather than duplicating it:
 
 | | direction | initiated by | fires | carries |
 |---|---|---|---|---|
@@ -592,76 +755,94 @@ rename and the new tools land in one contract revision.
 
 - `crates/tools/src/fleet/`: add the `agent_send` DTO (tagged `to`, `kind`,
   `text`/`input`/`payload`) replacing `agent_task`, and the `agent_wait` DTO
-  (`target_session_id`, required `run_id`, optional `timeout_ms`); add the optional
-  `report_back` directive to `agent_spawn`. Strict schemas; tool names;
-  `ToolSpecBundle` entries. No Postgres/Temporal deps here.
+  (`waits: [{target_session_id, run_id}]`, `mode: all|any`, optional `timeout_ms`);
+  add the optional `report_back` directive to `agent_spawn`. Strict schemas; tool
+  names; `ToolSpecBundle` entries. No Postgres/Temporal deps here.
 - `crates/engine/src/core/`:
-  - Add the **generic deferred-tool** primitive: a tool result may be
-    `ToolOutcome::Deferred { call_id, resume_directive }` where `resume_directive`
-    is an **opaque runtime blob** the engine stores/replays but never interprets; a
-    new `ResumeToolCall { call_id, result }` command (sibling of
-    `resume_tool_batch`, `drive.rs:162`) resolves it and continues the turn; durable
-    defer/resume reducer facts so the parked turn replays. No Fleet-specific or
-    wait-specific logic in the engine.
+  - Add the **generic deferred-tool-batch** primitive that fits the existing batch
+    contract: a single-call batch may return
+    `ToolBatchOutcome::Deferred { batch_id, resume_directive }` (opaque runtime blob
+    the engine stores/replays but never interprets); add a **`parked` flag (holding
+    the directive) on `ActiveToolBatch`** (`run.rs`) so `drive.next_action` neither
+    re-emits the `InvokeTools` invocation nor treats the batch as completable while
+    parked — no new `ToolCallStatus`; a new `ResumeToolBatch { batch_id, result }`
+    command clears `parked` and resolves through the normal
+    `tool_batch_result_proposals` path (`drive.rs:544`), whose terminal result
+    satisfies `validate_tool_batch_result` (`drive.rs:579`); durable
+    deferred/resumed reducer facts. No Fleet/wait logic in the engine.
 - `crates/temporal-workflow/src/workflow.rs`:
   - **Widen the main loop** (`:69`) from `wait_condition(pending_admissions)` to a
-    **select over `pending_admissions` and any armed `ctx.timer`**, draining a
-    pending-resolution queue into `ResumeToolCall` admissions each pass.
-  - **`RunSubscription`** support (`once`-only): `subscribe_run` /
-    `unsubscribe_run` signals; store subscriptions in workflow state; the
-    `subscribe_run` handler **fires immediately and does not store** if the named
-    run is already terminal; on a run reaching terminal, iterate matching
-    subscriptions, `ctx.external_workflow(subscriber).signal(..)`, and remove them.
-    Generic — not tied to Fleet.
-  - **`agent_wait` parking**: on the deferred `agent_wait` call, decode the opaque
-    directive, `subscribe_run` on the target, record an active wait, optionally arm
-    `ctx.timer(timeout_ms)`, and resolve via `ResumeToolCall` when the `resume_wait`
-    signal or the timer wins (then `unsubscribe_run`).
+    **select over `pending_admissions` and the nearest active-wait deadline timer**,
+    draining a pending-resolution queue into `ResumeToolBatch` admissions each pass.
+  - **`RunSubscription`** support (`once`-only, fixed typed `run_terminal` signal):
+    `subscribe_run` / `unsubscribe_run` signals; store subscriptions in workflow
+    state; the `subscribe_run` handler **fires immediately and does not store** if
+    the run is already terminal; on a run reaching terminal, iterate matching
+    subscriptions, `ctx.external_workflow(subscriber).signal(run_terminal, ..)`
+    best-effort, and remove them. Generic — not tied to Fleet.
+  - **`agent_wait` parking**: on the deferred batch, decode the directive,
+    **record the durable active wait first** `{ batch_id, mode, handles[],
+    arrived[], errored[], deadline_ms? }` (deadline computed by the workflow =
+    `workflow_time + timeout_ms`; **no timer future stored**), **then**
+    `subscribe_run` on each still-running handle (record-before-subscribe so a
+    synchronous `run_terminal` is matched, not dropped); apply the mode-specific
+    error rules; resolve via `ResumeToolBatch` on satisfied (`all`/`any`/timeout);
+    unsubscribe open handles best-effort.
   - **Continue-as-new guard**: extend `can_continue_as_new_at_idle` (`:724`) to be
-    false while any `RunSubscription` or active wait exists, so idle compaction
-    never drops parked-wait state.
+    false while any `RunSubscription` or active wait exists.
 - `crates/temporal-server/src/`:
   - `fleet.rs`: `agent_send` resolution (`parent` via link / `session` by id),
     `session_link` edge check (else `not_reachable`), envelope-encode
     `kind`/`payload`, admit recipient run with derived `submission_id`;
-    `report_back` instruction injection (no config patch); the `agent_wait`
-    deferral that triggers the workflow subscribe/timer path. The old `agent_task`
-    path becomes a plain `agent_send` to a child.
-  - `worker/session_tools.rs`: route `agent_send` and `agent_wait`; `agent_wait`
-    returns `Deferred` rather than an inline result, so the batch path must handle
-    a deferred call.
+    `report_back` instruction injection (no config patch); `agent_wait` **validate**
+    (`minItems`, dedupe handles, `maxItems` fan-in) + **preflight** (read each
+    handle's run status; return inline if already satisfied, else `Deferred`) and
+    the encode of the resume directive (`waits`, per-handle preflight errors,
+    `mode`, `timeout_ms` — **not** an absolute deadline; the workflow computes that).
+    The old `agent_task` path becomes a plain `agent_send` to a child.
+  - `worker/session_tools.rs`: route `agent_send` and `agent_wait`; **reject** an
+    `agent_wait` batched with other calls (model-visible `Failed`); a lone
+    `agent_wait` may return `Deferred`, so the batch path must handle a parked batch.
   - `gateway/service/workflow.rs`: reuse `signal_submit_admission` for the
-    `agent_send` recipient run and `ResumeToolCall`.
+    `agent_send` recipient run and `ResumeToolBatch`.
 
 ## Implementation Steps
 
 ### S1. Tool Contracts + Naming Cleanup
 - `agent_send` DTO (tagged `to`, `kind`, payload envelope) replacing `agent_task`;
-  `agent_wait` DTO (required `run_id`, optional `timeout_ms`, terminal-only);
-  optional `report_back` on `agent_spawn`. Strict schemas; Fleet bundle.
+  `agent_wait` DTO (`waits: [{target_session_id, run_id}]`, `mode: all|any`,
+  optional `timeout_ms`, terminal-only); optional `report_back` on `agent_spawn`.
+  Strict schemas; Fleet bundle.
 - Naming cleanup: rename `target_agent_id` / `agent_id` / `source_agent_id` /
   `from_agent_id` / `to_agent_id` to their `session_id` forms across the P83 tools.
 - Regenerate committed contract artifacts once, covering both.
 
-### S2. Engine Deferred-Tool Primitive
-- `ToolOutcome::Deferred { call_id, resume_directive }` (opaque directive blob),
-  `ResumeToolCall` command, `drive.resume_tool_call`, durable defer/resume reducer
-  facts. Generic; no Fleet/wait coupling — the engine never decodes the directive.
-  Engine unit tests for defer → resume → turn-continues, duplicate-resume no-op,
-  and inline tools unaffected.
+### S2. Engine Deferred-Tool-Batch Primitive
+- `ToolBatchOutcome::Deferred { batch_id, resume_directive }` (opaque blob); a
+  **`parked` flag on `ActiveToolBatch`** so `drive.next_action` does not re-emit the
+  invocation or complete the batch while parked (no new `ToolCallStatus`);
+  `ResumeToolBatch` clears `parked` and resolves through the normal
+  `tool_batch_result_proposals` path; durable deferred/resumed reducer facts.
+  Generic; engine never decodes the directive. Unit tests: lone-call batch parks →
+  `next_action` does **not** re-emit it → `ResumeToolBatch` continues the turn;
+  duplicate-resume no-op; `validate` still passes on the resumed terminal result;
+  inline batches unaffected.
 
 ### S3. Workflow Select Loop + RunSubscription + Wait
-- Widen the main loop to select over `pending_admissions` and armed timers, with a
-  pending-resolution queue drained into `ResumeToolCall`.
-- `subscribe_run` / `unsubscribe_run` signals and a `once`-only subscription
-  registry in session workflow state; **subscribe-after-terminal** fires
-  immediately without storing; terminal fan-out via `external_workflow().signal`
-  then remove. (No `persistent` mode in v1.)
+- Widen the main loop to select over `pending_admissions` and the nearest
+  active-wait **deadline** timer (workflow-computed absolute `deadline_ms`, not
+  stored as a future), draining a pending-resolution queue into `ResumeToolBatch`.
+- `subscribe_run` / `unsubscribe_run` signals (fixed typed `run_terminal` callback)
+  and a `once`-only subscription registry; **subscribe-after-terminal** fires
+  immediately without storing; terminal fan-out best-effort then remove; the three
+  signal-failure behaviors. (No `persistent` mode in v1.)
 - Continue-as-new guard: block idle compaction while a subscription or active wait
   exists.
-- `agent_wait` parking: decode the directive, subscribe on the target, optional
-  `ctx.timer`, resolve via `ResumeToolCall`; timer-vs-signal race resolved by
-  `call_id`.
+- `agent_wait` parking: **record the active wait first** (deadline =
+  `workflow_time + timeout_ms`), **then** subscribe each still-running handle;
+  accumulate arrivals/errors; resolve on `all`/`any`/deadline via `ResumeToolBatch`
+  applying the **mode-specific error rules**; race/duplicate resolved by `batch_id`
+  + handle.
 
 ### S4. agent_send + report_back
 - `agent_send`: resolve `to`, require a `session_link` edge (`not_reachable`
@@ -672,35 +853,50 @@ rename and the new tools land in one contract revision.
 - Idempotency by recipient `submission_id`.
 
 ### S5. Tests
-- Engine unit: a deferred tool call parks the turn; `ResumeToolCall` resolves the
-  exact call and the turn continues; duplicate `ResumeToolCall` is a no-op; a tool
-  that returns inline is unaffected.
-- Workflow subscription: `subscribe_run` fires exactly once on terminal and is
-  removed; **`subscribe_run` against an already-terminal run fires immediately and
-  stores nothing** (the race); terminal fan-out re-emits idempotently after a
-  simulated restart; a registered subscription (or active wait) **blocks
-  continue-as-new** at idle.
-- Workflow loop/timer: the select resolves a `resume_wait` signal and an armed
-  `ctx.timer` into `ResumeToolCall`; `ctx.timer` fires `timeout` only when
-  `timeout_ms` is set, and **no timer is armed when it is absent** (indefinite
-  wait); timer-vs-signal race resolves exactly once by `call_id`.
-- `agent_wait` outcomes: requires `run_id`; already-terminal → `terminal`
-  immediately without parking; unknown run / errored-or-unreachable target →
-  `error`; closing session → `terminal` (last status) or `error`; never a hang.
+- Engine unit: a lone-call batch returning `Deferred` parks the turn
+  (`active_tool_batch_id` set, `parked` flag set, no `CallCompleted`); **`next_action`
+  does not re-emit the parked invocation**; `ResumeToolBatch` clears `parked`,
+  resolves it, and the turn continues; the resumed terminal result passes
+  `validate_tool_batch_result`; duplicate `ResumeToolBatch` is a no-op; inline
+  batches unaffected.
+- Mixed-batch rejection: an `agent_wait` emitted alongside other calls resolves the
+  `agent_wait` call as model-visible `Failed`; the rest of the batch completes
+  normally.
+- `agent_wait` validation: empty `waits` rejected (`minItems`); duplicate
+  `{target_session_id, run_id}` rejected; over-cap fan-in rejected.
+- Workflow subscription: `subscribe_run` fires exactly once via the `run_terminal`
+  signal on terminal and is removed; **`subscribe_run` against an already-terminal
+  run fires immediately and stores nothing** (the race); **record-before-subscribe**
+  — a synchronous `run_terminal` arriving for an already-terminal handle is matched
+  to the active wait, not dropped as unknown; terminal fan-out re-emits idempotently
+  after a simulated restart; a fan-out signal failure does **not** fail the target
+  run; a registered subscription (or active wait) **blocks continue-as-new** at idle.
+- Workflow loop/timer: the select resolves a `run_terminal` signal and a deadline
+  timer into `ResumeToolBatch`; **the workflow computes `deadline_ms` from
+  `timeout_ms`** and the timer is derived from it (an unrelated admission does
+  **not** extend it; restart does **not** reset it); **no timer armed when
+  `timeout_ms` absent**; race resolves once by `batch_id`.
+- `agent_wait` join + error semantics: `mode = all` resolves only when every handle
+  is terminal, and **any handle error resolves overall `error` immediately**;
+  `mode = any` resolves on the first arrival, and **a handle error is non-fatal
+  until no viable handle remains** (one errored + one running still defers; all
+  errored → `error`); **preflight short-circuit** returns inline when all handles
+  are already terminal (fast-child case); `timeout` carries partial results; a
+  handle terminal-with-`Failed`-status is a normal arrival, not `error`.
 - `agent_send` routing: `to: session` to a spawned child admits a run (old
   `agent_task` behavior); `to: parent` resolves the link and admits a parent run;
   `to: parent` from a root session and a send with no link edge both return
-  `not_reachable`; `kind`/`payload` round-trip through the envelope; retried send
-  does not double-admit.
+  `not_reachable`; `kind`/`payload` round-trip through the prepended envelope item;
+  retried send does not double-admit.
 - `report_back`: injects the instruction into the child input; does **not** mutate
   child tool config.
 - Mode I in-process: parent spawns a child with `report_back`, goes idle, child
   `agent_send { to: parent }` wakes it as a fresh run.
-- Mode W in-process: parent spawns a child, `agent_wait(run_id)`, child completes,
-  the target's `RunSubscription` resolves the parent's parked turn with the run
-  summary.
+- Mode W in-process: parent spawns two children, `agent_wait { waits:[h1,h2],
+  mode: all }`, both complete, the targets' `RunSubscription`s resolve the parent's
+  parked batch with both run summaries.
 - Ignored Temporal/Postgres live: a real parent workflow parks on `agent_wait`, a
-  child workflow completes and signals the parent via `RunSubscription`, the parent
+  child workflow completes and signals the parent via `run_terminal`, the parent
   resumes; separately, a child `agent_send { to: parent }` wakes an idle parent.
 
 ## Deferred
@@ -737,26 +933,49 @@ rename and the new tools land in one contract revision.
   (Mode W plus at most one durable timer), and survive worker restart by replay.
 - `agent_wait` parks the parent turn without holding a Temporal worker slot or a
   blocking tool activity; there is no ~6-minute ceiling.
-- `agent_wait` resolves with `outcome ∈ { terminal, timeout, error }` — never a
+- `agent_wait` is a **join over run handles**: `waits: [{target_session_id,
+  run_id}]` (validated: `minItems=1`, no duplicate handles, bounded `maxItems`)
+  with `mode: all` (join_all) / `any` (select). It resolves with
+  `outcome ∈ { terminal, timeout, error }` plus per-handle `results` — never a
   raised tool failure for those states. `timeout_ms` is optional with no default
-  (indefinite when omitted); timeout is a normal outcome.
-- `agent_wait` **requires `run_id`**; already-terminal / unknown / closing /
-  errored targets resolve immediately with the defined `outcome`, never a hang.
-  The **subscribe-after-terminal** race is closed (registering against an
-  already-terminal run fires immediately).
-- Waiting uses a **generic, fire-once `RunSubscription`** on the target workflow
-  that any subscriber workflow can use — not an `agent_wait`-specific or
-  session-only construct. No `persistent` mode is stored or tested in v1.
-- The parent **workflow loop selects over admissions and armed timers** (not
-  `pending_admissions` alone), draining resolutions into `ResumeToolCall`. A
-  registered subscription or active wait **blocks idle continue-as-new** so parked
-  state is never dropped.
-- The engine gains only a **generic deferred-tool** primitive
-  (`Deferred { call_id, opaque resume_directive }` + `ResumeToolCall`); the engine
-  never decodes the directive, no Fleet or wait semantics live in the deterministic
-  core, and no DB table or reconciler process is introduced.
-- Crash safety is by Temporal replay alone: deferred-call reducer fact, target
-  workflow subscription state, in-workflow terminal fan-out, and durable timer.
+  (indefinite when omitted).
+- **Error propagation is mode-specific**: `all` resolves `error` as soon as any
+  handle errors; `any` resolves `error` only when every handle has errored (one
+  errored + one running still defers).
+- **Already-finished runs resolve immediately**: `agent_wait` preflights every
+  handle and returns inline (no parking) when the join is already satisfied — the
+  fast-child / join-a-completed-handle case. The parent **records the active wait
+  before subscribing**, and the subscribe handler fires immediately for an
+  already-terminal run, so a synchronous `run_terminal` is never dropped.
+- A handle that is `terminal` with a `Failed` run status is a normal result;
+  `error` is reserved for "could not establish/observe the wait" (unknown run,
+  unreachable target, failed subscribe).
+- **`agent_wait` must be the only call in its batch**; emitted alongside other
+  tool calls it returns a model-visible `Failed` ("must be called alone"). Waiting
+  on many runs is the `waits: [...]` argument, not multiple batched calls.
+- Waiting uses a **generic, fire-once `RunSubscription`** (fixed typed
+  `run_terminal` callback) on the target workflow that any subscriber workflow can
+  use — not an `agent_wait`-specific or session-only construct. No `persistent`
+  mode is stored or tested in v1.
+- The parent **workflow loop selects over admissions and the deadline timer** (not
+  `pending_admissions` alone), draining resolutions into `ResumeToolBatch`. The
+  **workflow computes `deadline_ms = workflow_time + timeout_ms`** (the activity
+  passes only `timeout_ms`); the timer does not drift on unrelated admissions or
+  reset on restart. A registered subscription or active wait **blocks idle
+  continue-as-new** so parked state is never dropped.
+- The engine gains only a **generic deferred-tool-batch** primitive
+  (`ToolBatchOutcome::Deferred { batch_id, opaque resume_directive }` +
+  `ResumeToolBatch`), modeled as a **parked batch** with an explicit `parked` flag
+  on `ActiveToolBatch` (no new `ToolCallStatus`); while parked, `next_action`
+  **does not re-emit the invocation**, and resolution flows through the normal
+  terminal-result path. The engine never decodes the directive; no Fleet/wait
+  semantics in the core; no DB table or reconciler.
+- The three signal-failure behaviors hold: parent subscribe-failure → handle
+  `error`; target fan-out failure → does not fail the target run; timeout
+  unsubscribe → best-effort.
+- Crash safety is by Temporal replay alone: deferred-batch reducer fact, target
+  workflow subscription state, in-workflow terminal fan-out, and absolute-deadline
+  timer.
 - The entire Fleet surface uses **`session_id`**; no tool exposes `agent_id` /
   `target_agent_id` / `*_agent_id`. The P83 tools are renamed in the same contract
   revision.
