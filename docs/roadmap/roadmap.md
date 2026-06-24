@@ -8,7 +8,7 @@
 ## Fleet (sub-agents)
 - [x] [P82](p82-session-graph-fork-clone.md) — session graph foundation: clone, fork (by-reference), and links in the store
 - [x] [P83](p83-fleet-subagent-control-plane.md) — agent-facing Fleet control plane (spawn/task/read/list/cancel) on top of P82
-- [ ] configure agent
+- [ ] [P84](p84-fleet-wait-and-callbacks.md) — `agent_wait` (workflow-level await: terminal/activity/timeout) and `agent_send` (graph-shaped send along any link, replaces `agent_task` + callbacks)
 - [ ] agent profiles
 - [ ] start new sessions with profiles and ad-hoc profiles
 - [ ] run coding agent (CC or Codex) on sandbox

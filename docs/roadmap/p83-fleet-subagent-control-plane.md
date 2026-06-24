@@ -582,7 +582,14 @@ workflow plus initial and follow-up child runs complete.
   `session_links`.
 - Per-grant / less-privileged child auth scoping.
 - Completion and important-update notifications back to the parent; rich
-  `wait_agent` semantics.
+  `wait_agent` semantics. (Now owned by **P84 — Fleet Wait And Callbacks**:
+  `agent_wait` + `agent_send`, the latter unifying `agent_task` with
+  child->parent callbacks.)
+- Naming cleanup: the address-an-existing-agent DTOs here use `target_agent_id` /
+  `agent_id` / `source_agent_id` / `from_agent_id` / `to_agent_id`, which alias
+  the session id. P84 standardizes the Fleet surface on `session_id` and renames
+  these (see P84 "Naming Cleanup"); it is a wire-contract change applied with
+  P84's S1.
 - Temporal Child Workflow execution mode.
 - Raw session API tools for privileged debugging.
 - Sanitized forks (owned by P82's deferred list).
