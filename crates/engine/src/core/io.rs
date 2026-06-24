@@ -19,8 +19,9 @@ use thiserror::Error;
 
 use crate::{
     BlobRef, ContextCompactionRequest, ContextCompactionResult, ContextEntryInput,
-    LlmGenerationFacts, LlmGenerationStatus, LlmRequest, RunId, SessionId, ToolBatchId,
-    ToolBatchResumeDirective, ToolCallId, ToolCallStatus, ToolExecutionTarget, ToolName, TurnId,
+    ContextEntryKind, LlmGenerationFacts, LlmGenerationStatus, LlmRequest, RunId, SessionId,
+    ToolBatchId, ToolBatchResumeDirective, ToolCallId, ToolCallStatus, ToolExecutionTarget,
+    ToolName, TurnId,
 };
 
 #[async_trait]
@@ -150,10 +151,32 @@ pub struct ToolInvocationResult {
     pub call_id: ToolCallId,
     pub status: ToolCallStatus,
     pub output_ref: Option<BlobRef>,
-    pub model_visible_output_ref: Option<BlobRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub model_visible_context_entries: Vec<ContextEntryInput>,
     pub error_ref: Option<BlobRef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<ToolEffect>,
+}
+
+impl ToolInvocationResult {
+    pub fn tool_result_context_entry(
+        call_id: &ToolCallId,
+        status: ToolCallStatus,
+        content_ref: BlobRef,
+    ) -> ContextEntryInput {
+        ContextEntryInput {
+            kind: ContextEntryKind::ToolResult {
+                call_id: call_id.clone(),
+                is_error: status.is_error(),
+            },
+            content_ref,
+            media_type: None,
+            preview: None,
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Error)]

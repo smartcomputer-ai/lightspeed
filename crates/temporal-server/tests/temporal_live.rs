@@ -371,10 +371,23 @@ impl CoreAgentLlm for FleetWaitScriptedLlm {
             .await?
         {
             if tool_result.contains("agent_wait resolved") {
+                let final_output = self
+                    .latest_text_for_kind(&request, |kind| {
+                        matches!(
+                            kind,
+                            ContextEntryKind::Message {
+                                role: ContextMessageRole::User
+                            }
+                        )
+                    })
+                    .await?
+                    .unwrap_or_default();
                 return self
                     .final_result(
                         &request,
-                        format!("wait completed after agent_wait: {tool_result}"),
+                        format!(
+                            "wait completed after agent_wait: {tool_result}\n\nagent final output: {final_output}"
+                        ),
                     )
                     .await;
             }
@@ -906,6 +919,10 @@ async fn run_fleet_wait_live_client(
     assert!(
         parent_output.contains("outcome terminal"),
         "expected terminal wait result in parent output, got: {parent_output}"
+    );
+    assert!(
+        parent_output.contains("slow child completed"),
+        "expected child final output in parent output, got: {parent_output}"
     );
 
     let parent_handle = client.get_workflow_handle::<AgentSessionWorkflow>(session_id.as_str());
@@ -1569,21 +1586,12 @@ async fn run_admission_failure_live_client(
         .await
         .expect_err("closed session run/start should be rejected");
     assert!(matches!(error.kind, AgentApiErrorKind::Rejected));
-    wait_for_admission_failure(
-        &client,
-        &session_id,
-        AgentAdmissionFailureKind::RejectedCommand,
-    )
-    .await?;
-
-    let status = handle
-        .query(
-            AgentSessionWorkflow::status,
-            (),
-            WorkflowQueryOptions::default(),
-        )
+    let session = api
+        .read_session(SessionReadParams {
+            session_id: session_id.as_str().to_owned(),
+        })
         .await?;
-    assert_eq!(status.last_error, None);
+    assert_eq!(session.result.session.status, SessionStatus::Closed);
 
     let _ = handle
         .terminate(

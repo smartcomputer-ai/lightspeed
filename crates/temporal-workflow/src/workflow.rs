@@ -3,12 +3,13 @@ use std::{collections::BTreeMap, time::UNIX_EPOCH};
 
 use engine::{
     ApplyEvent, BlobRef, CommandCodec, CommandError, ContextEntryInput, ContextEntryKey,
-    ContextEntryKind, CoreAgentAction, CoreAgentCodec, CoreAgentCommand, CoreAgentDrive,
-    CoreAgentDriveError, CoreAgentEntry, CoreAgentEventKind, CoreAgentState, CoreAgentStatus,
-    CoreApplyEvent, ENVIRONMENT_ACTIVE_CONTEXT_KEY, ENVIRONMENT_CATALOG_CONTEXT_KEY,
-    LlmGenerationRequest, RunEvent, RunStatus, SKILL_CATALOG_CONTEXT_KEY, SessionId,
-    SessionPosition, SubmissionId, ToolCallStatus, ToolEvent, ToolInvocationBatchRequest,
-    ToolInvocationBatchResult, ToolInvocationResult, VFS_CATALOG_CONTEXT_KEY,
+    ContextEntryKind, ContextMessageRole, CoreAgentAction, CoreAgentCodec, CoreAgentCommand,
+    CoreAgentDrive, CoreAgentDriveError, CoreAgentEntry, CoreAgentEventKind, CoreAgentState,
+    CoreAgentStatus, CoreApplyEvent, ENVIRONMENT_ACTIVE_CONTEXT_KEY,
+    ENVIRONMENT_CATALOG_CONTEXT_KEY, LlmGenerationRequest, RunEvent, RunStatus,
+    SKILL_CATALOG_CONTEXT_KEY, SessionId, SessionPosition, SubmissionId, ToolCallStatus, ToolEvent,
+    ToolInvocationBatchRequest, ToolInvocationBatchResult, ToolInvocationResult,
+    VFS_CATALOG_CONTEXT_KEY,
 };
 use futures::{FutureExt, pin_mut, select};
 use temporalio_macros::{workflow, workflow_methods};
@@ -20,13 +21,14 @@ use crate::{
     ActiveWaitRecord, ActiveWaitSubscription, AgentActiveRunSummary, AgentAdmission,
     AgentAdmissionFailure, AgentAdmissionFailureKind, AgentCompletedRunSummary,
     AgentQueuedRunSummary, AgentSessionArgs, AgentSessionStatus, AgentWaitDirective,
-    AgentWaitHandleStatus, AgentWaitMode, AgentWaitOutcome, AgentWaitOutput, AgentWaitRunResult,
-    AppendEventsRequest, CreateOrLoadSessionRequest, DEFAULT_CONTINUE_AS_NEW_HISTORY_THRESHOLD,
-    FLEET_AGENT_WAIT_DIRECTIVE_KIND, LlmGenerateActivityRequest, PendingRunTerminalNotification,
-    PendingToolBatchResume, PreprocessRunInputActivityRequest, PreprocessRunInputFailure,
-    PreprocessRunInputFailureKind, PreprocessRunInputOutcome, PutBlobRequest, RunSubscription,
-    RunTerminalNotification, SkillCatalogRefreshActivityRequest, ToolInvokeBatchActivityRequest,
-    WorkflowActivities, activity_options, default_instructions,
+    AgentWaitHandleResult, AgentWaitHandleStatus, AgentWaitMode, AgentWaitOutcome, AgentWaitOutput,
+    AgentWaitRunResult, AppendEventsRequest, CreateOrLoadSessionRequest,
+    DEFAULT_CONTINUE_AS_NEW_HISTORY_THRESHOLD, FLEET_AGENT_WAIT_DIRECTIVE_KIND,
+    LlmGenerateActivityRequest, PendingRunTerminalNotification, PendingToolBatchResume,
+    PreprocessRunInputActivityRequest, PreprocessRunInputFailure, PreprocessRunInputFailureKind,
+    PreprocessRunInputOutcome, PutBlobRequest, RunSubscription, RunTerminalNotification,
+    SkillCatalogRefreshActivityRequest, ToolInvokeBatchActivityRequest, WorkflowActivities,
+    activity_options, default_instructions,
 };
 
 const DEFAULT_MAX_STEPS_PER_INPUT: usize = 256;
@@ -81,6 +83,9 @@ impl AgentSessionWorkflow {
         }
 
         loop {
+            if workflow_state_should_complete(ctx) {
+                return Ok(());
+            }
             wait_for_workflow_work(ctx).await;
             if let Err(error) = flush_pending_terminal_notifications(ctx).await {
                 record_error(ctx, &error);
@@ -100,6 +105,9 @@ impl AgentSessionWorkflow {
             {
                 record_error(ctx, &error);
                 return Err(anyhow::anyhow!("{error}").into());
+            }
+            if workflow_state_should_complete(ctx) {
+                return Ok(());
             }
             if can_continue_as_new_at_idle(ctx, &args) {
                 ctx.continue_as_new(&args, ContinueAsNewOptions::default())?;
@@ -452,7 +460,28 @@ fn wait_correlation_token(
     )
 }
 
-fn wait_model_visible_text(output: &AgentWaitOutput) -> String {
+async fn wait_model_visible_context_entries(
+    ctx: &mut WorkflowContext<AgentSessionWorkflow>,
+    call_id: &engine::ToolCallId,
+    output: &AgentWaitOutput,
+) -> anyhow::Result<Vec<ContextEntryInput>> {
+    let summary_ref = put_blob_bytes(ctx, wait_model_visible_summary(output).into_bytes()).await?;
+    let mut entries = vec![ToolInvocationResult::tool_result_context_entry(
+        call_id,
+        ToolCallStatus::Succeeded,
+        summary_ref,
+    )];
+    for result in output
+        .results
+        .iter()
+        .filter(|result| result.status == AgentWaitHandleStatus::Terminal)
+    {
+        append_wait_terminal_visible_context_entries(ctx, &mut entries, result).await?;
+    }
+    Ok(entries)
+}
+
+fn wait_model_visible_summary(output: &AgentWaitOutput) -> String {
     let terminal = output
         .results
         .iter()
@@ -472,6 +501,80 @@ fn wait_model_visible_text(output: &AgentWaitOutput) -> String {
         "agent_wait resolved with outcome {} (terminal: {terminal}, pending: {pending}, errors: {errors}).",
         wait_outcome_name(output.outcome)
     )
+}
+
+async fn append_wait_terminal_visible_context_entries(
+    ctx: &mut WorkflowContext<AgentSessionWorkflow>,
+    entries: &mut Vec<ContextEntryInput>,
+    result: &AgentWaitHandleResult,
+) -> anyhow::Result<()> {
+    let mut prefix = String::from("Agent run final output");
+    prefix.push_str("\ntarget_session_id: ");
+    prefix.push_str(&result.target_session_id);
+    prefix.push_str("\nrun_id: ");
+    prefix.push_str(&result.run_id);
+
+    let Some(run) = result.run.as_ref() else {
+        prefix.push_str("\nstatus: terminal\n\nNo run details were recorded.");
+        append_wait_text_message(ctx, entries, prefix).await?;
+        return Ok(());
+    };
+    prefix.push_str("\nstatus: ");
+    prefix.push_str(&run.status);
+    append_wait_text_message(ctx, entries, prefix).await?;
+
+    if let Some(output_ref) = run.output_ref.as_ref() {
+        entries.push(wait_user_message(
+            output_ref.clone(),
+            Some("Agent run final output"),
+        ));
+    } else if let Some(failure_ref) = run.failure_message_ref.as_ref() {
+        entries.push(wait_user_message(
+            failure_ref.clone(),
+            Some("Agent run failure message"),
+        ));
+    } else {
+        append_wait_text_message(ctx, entries, "No final output was recorded.").await?;
+    }
+    Ok(())
+}
+
+async fn append_wait_text_message(
+    ctx: &mut WorkflowContext<AgentSessionWorkflow>,
+    entries: &mut Vec<ContextEntryInput>,
+    text: impl Into<String>,
+) -> anyhow::Result<()> {
+    let text = text.into();
+    let content_ref = put_blob_bytes(ctx, text.clone().into_bytes()).await?;
+    entries.push(wait_user_message(content_ref, Some(&text)));
+    Ok(())
+}
+
+fn wait_user_message(content_ref: BlobRef, preview: Option<&str>) -> ContextEntryInput {
+    ContextEntryInput {
+        kind: ContextEntryKind::Message {
+            role: ContextMessageRole::User,
+        },
+        content_ref,
+        media_type: None,
+        preview: preview.map(|value| value.chars().take(160).collect()),
+        provider_kind: None,
+        provider_item_id: None,
+        token_estimate: None,
+    }
+}
+
+async fn put_blob_bytes(
+    ctx: &mut WorkflowContext<AgentSessionWorkflow>,
+    bytes: Vec<u8>,
+) -> anyhow::Result<BlobRef> {
+    ctx.start_activity(
+        WorkflowActivities::put_blob,
+        PutBlobRequest { bytes },
+        activity_options(),
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!("{error}"))
 }
 
 fn wait_outcome_name(outcome: AgentWaitOutcome) -> &'static str {
@@ -1141,16 +1244,8 @@ async fn build_wait_tool_batch_result(
         )
         .await
         .map_err(|error| anyhow::anyhow!("{error}"))?;
-    let visible_ref = ctx
-        .start_activity(
-            WorkflowActivities::put_blob,
-            PutBlobRequest {
-                bytes: wait_model_visible_text(&output).into_bytes(),
-            },
-            activity_options(),
-        )
-        .await
-        .map_err(|error| anyhow::anyhow!("{error}"))?;
+    let model_visible_context_entries =
+        wait_model_visible_context_entries(ctx, &wait.call_id, &output).await?;
     Ok(ToolInvocationBatchResult {
         run_id: wait.run_id,
         turn_id: wait.turn_id,
@@ -1159,7 +1254,7 @@ async fn build_wait_tool_batch_result(
             call_id: wait.call_id,
             status: ToolCallStatus::Succeeded,
             output_ref: Some(output_ref),
-            model_visible_output_ref: Some(visible_ref),
+            model_visible_context_entries,
             error_ref: None,
             effects: Vec::new(),
         }],
@@ -1423,7 +1518,8 @@ fn can_continue_as_new_at_idle(
     ctx: &WorkflowContext<AgentSessionWorkflow>,
     args: &AgentSessionArgs,
 ) -> bool {
-    ctx.state(workflow_state_allows_continue_as_new)
+    !workflow_state_should_complete(ctx)
+        && ctx.state(workflow_state_allows_continue_as_new)
         && should_continue_as_new(
             ctx.continue_as_new_suggested(),
             ctx.history_length(),
@@ -1437,6 +1533,22 @@ fn workflow_state_allows_continue_as_new(state: &AgentSessionWorkflow) -> bool {
         && state.pending_terminal_notifications.is_empty()
         && state.active_waits.is_empty()
         && state.run_subscriptions.is_empty()
+}
+
+fn workflow_state_should_complete(ctx: &WorkflowContext<AgentSessionWorkflow>) -> bool {
+    ctx.state(workflow_state_is_closed_and_quiescent)
+}
+
+fn workflow_state_is_closed_and_quiescent(state: &AgentSessionWorkflow) -> bool {
+    state.initialized
+        && state.core_state.lifecycle.status == CoreAgentStatus::Closed
+        && state.pending_admissions.is_empty()
+        && state.pending_tool_batch_resumes.is_empty()
+        && state.pending_terminal_notifications.is_empty()
+        && state.active_waits.is_empty()
+        && state.run_subscriptions.is_empty()
+        && state.core_state.runs.active.is_none()
+        && state.core_state.runs.queued.is_empty()
 }
 
 fn should_continue_as_new(
@@ -1747,6 +1859,32 @@ mod tests {
         workflow.run_subscriptions.clear();
 
         assert!(workflow_state_allows_continue_as_new(&workflow));
+    }
+
+    #[test]
+    fn closed_quiescent_workflow_can_complete() {
+        let mut workflow = AgentSessionWorkflow::default();
+        assert!(!workflow_state_is_closed_and_quiescent(&workflow));
+
+        workflow.initialized = true;
+        workflow.core_state.lifecycle.status = CoreAgentStatus::Closed;
+        assert!(workflow_state_is_closed_and_quiescent(&workflow));
+
+        workflow.pending_tool_batch_resumes.push(pending_resume(1));
+        assert!(!workflow_state_is_closed_and_quiescent(&workflow));
+        workflow.pending_tool_batch_resumes.clear();
+
+        workflow
+            .active_waits
+            .insert(7, active_wait_record(7, "token_1"));
+        assert!(!workflow_state_is_closed_and_quiescent(&workflow));
+        workflow.active_waits.clear();
+
+        workflow.subscribe_to_run(run_subscription("sub_1", "token_1", 1));
+        assert!(!workflow_state_is_closed_and_quiescent(&workflow));
+        workflow.run_subscriptions.clear();
+
+        assert!(workflow_state_is_closed_and_quiescent(&workflow));
     }
 
     #[test]

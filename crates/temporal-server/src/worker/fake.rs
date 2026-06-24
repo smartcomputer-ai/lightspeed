@@ -166,7 +166,13 @@ impl CoreAgentTools for FakeTools {
                 call_id: call.call_id.clone(),
                 status: ToolCallStatus::Succeeded,
                 output_ref: Some(output_ref.clone()),
-                model_visible_output_ref: Some(output_ref),
+                model_visible_context_entries: vec![
+                    ToolInvocationResult::tool_result_context_entry(
+                        &call.call_id,
+                        ToolCallStatus::Succeeded,
+                        output_ref,
+                    ),
+                ],
                 error_ref: None,
                 effects: Vec::new(),
             });

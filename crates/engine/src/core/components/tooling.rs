@@ -858,7 +858,8 @@ pub struct ToolCallResult {
     pub call_id: ToolCallId,
     pub status: ToolCallStatus,
     pub output_ref: Option<BlobRef>,
-    pub model_visible_output_ref: Option<BlobRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub model_visible_context_entries: Vec<ContextEntryInput>,
     pub error_ref: Option<BlobRef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<ToolEffect>,
@@ -869,38 +870,111 @@ pub(crate) fn tool_result_context_item_exists(
     run_id: RunId,
     turn_id: TurnId,
     result: &ToolCallResult,
+    provider_kind: Option<&str>,
 ) -> bool {
-    let Some(expected_ref) = tool_result_context_ref(result) else {
-        return false;
-    };
+    tool_result_context_inputs(result, provider_kind).is_ok_and(|inputs| {
+        inputs
+            .iter()
+            .all(|input| tool_result_context_input_exists(state, run_id, turn_id, result, input))
+    })
+}
+
+fn tool_result_context_input_exists(
+    state: &CoreAgentState,
+    run_id: RunId,
+    turn_id: TurnId,
+    result: &ToolCallResult,
+    input: &ContextEntryInput,
+) -> bool {
     state.context.entries.iter().any(|entry| {
-        matches!(
-            (&entry.source, &entry.kind),
+        if !matches!(
+            &entry.source,
+            ContextEntrySource::Tool {
+                run_id: item_run_id,
+                turn_id: item_turn_id,
+                ..
+            } if *item_run_id == run_id && *item_turn_id == turn_id
+        ) {
+            return false;
+        }
+        if entry.kind != input.kind
+            || entry.content_ref != input.content_ref
+            || entry.media_type != input.media_type
+            || entry.preview != input.preview
+            || entry.provider_kind != input.provider_kind
+            || entry.provider_item_id != input.provider_item_id
+            || entry.token_estimate != input.token_estimate
+        {
+            return false;
+        }
+        match (&entry.kind, &input.kind) {
             (
-                ContextEntrySource::Tool {
-                    run_id: item_run_id,
-                    turn_id: item_turn_id,
-                    ..
-                },
                 ContextEntryKind::ToolResult {
                     call_id: item_call_id,
                     is_error,
                 },
-            ) if *item_run_id == run_id
-                && *item_turn_id == turn_id
-                && item_call_id == &result.call_id
-                && *is_error == result.status.is_error()
-                && entry.content_ref == *expected_ref
-        )
+                ContextEntryKind::ToolResult { .. },
+            ) => item_call_id == &result.call_id && *is_error == result.status.is_error(),
+            _ => true,
+        }
     })
 }
 
-pub(crate) fn tool_result_context_ref(result: &ToolCallResult) -> Option<&BlobRef> {
-    result
-        .model_visible_output_ref
-        .as_ref()
-        .or(result.error_ref.as_ref())
-        .or(result.output_ref.as_ref())
+fn tool_result_context_inputs(
+    result: &ToolCallResult,
+    provider_kind: Option<&str>,
+) -> Result<Vec<ContextEntryInput>, DomainError> {
+    let mut inputs = result.model_visible_context_entries.clone();
+    if inputs.is_empty() {
+        return Err(DomainError::InvariantViolation(
+            "terminal tool result is missing model-visible context entries".to_owned(),
+        ));
+    }
+    validate_model_visible_tool_entries(result, &inputs)?;
+    if !inputs
+        .iter()
+        .any(|entry| matches!(entry.kind, ContextEntryKind::ToolResult { .. }))
+    {
+        return Err(DomainError::InvariantViolation(
+            "terminal tool result is missing a tool-result context entry".to_owned(),
+        ));
+    }
+    for input in &mut inputs {
+        if matches!(input.kind, ContextEntryKind::ToolResult { .. })
+            && input.provider_kind.is_none()
+        {
+            input.provider_kind = provider_kind.map(ToOwned::to_owned);
+        }
+    }
+    Ok(inputs)
+}
+
+fn validate_model_visible_tool_entries(
+    result: &ToolCallResult,
+    entries: &[ContextEntryInput],
+) -> Result<(), DomainError> {
+    for entry in entries {
+        match &entry.kind {
+            ContextEntryKind::ToolResult { call_id, is_error } => {
+                if call_id != &result.call_id || *is_error != result.status.is_error() {
+                    return Err(DomainError::InvariantViolation(
+                        "tool-result context entry does not match terminal tool result".to_owned(),
+                    ));
+                }
+            }
+            ContextEntryKind::Message {
+                role: crate::ContextMessageRole::User,
+            }
+            | ContextEntryKind::ProviderOpaque => {}
+            _ => {
+                return Err(DomainError::InvariantViolation(format!(
+                    "terminal tool result cannot add model-visible context entry kind {:?}",
+                    entry.kind
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn decide_active_tool_batch_invocations(
@@ -1033,34 +1107,21 @@ fn tool_result_context_entries(
             )
             .into());
         }
-        if tool_result_context_item_exists(state, batch.run_id, batch.turn_id, result) {
-            continue;
-        }
-        let content_ref = tool_result_context_ref(result).cloned().ok_or_else(|| {
-            DomainError::InvariantViolation(
-                "terminal tool result is missing a model-visible ref".to_owned(),
-            )
-        })?;
-        inputs.push((
-            None,
-            ContextEntrySource::Tool {
-                run_id: batch.run_id,
-                turn_id: batch.turn_id,
-                batch_id: Some(batch.batch_id),
-            },
-            ContextEntryInput {
-                kind: ContextEntryKind::ToolResult {
-                    call_id: result.call_id.clone(),
-                    is_error: result.status.is_error(),
+        for input in tool_result_context_inputs(result, call_state.call.provider_kind.as_deref())? {
+            if tool_result_context_input_exists(state, batch.run_id, batch.turn_id, result, &input)
+            {
+                continue;
+            }
+            inputs.push((
+                None,
+                ContextEntrySource::Tool {
+                    run_id: batch.run_id,
+                    turn_id: batch.turn_id,
+                    batch_id: Some(batch.batch_id),
                 },
-                content_ref,
-                media_type: None,
-                preview: None,
-                provider_kind: call_state.call.provider_kind.clone(),
-                provider_item_id: None,
-                token_estimate: None,
-            },
-        ));
+                input,
+            ));
+        }
     }
     context_entries_from_inputs(state, inputs).map_err(Into::into)
 }
@@ -1447,11 +1508,23 @@ pub fn unavailable_tool_result_ref() -> BlobRef {
 
 fn unavailable_tool_result(call: &ObservedToolCall) -> ToolCallResult {
     let error_ref = unavailable_tool_result_ref();
+    let status = ToolCallStatus::Unavailable;
     ToolCallResult {
         call_id: call.call_id.clone(),
-        status: ToolCallStatus::Unavailable,
+        status,
         output_ref: None,
-        model_visible_output_ref: Some(error_ref.clone()),
+        model_visible_context_entries: vec![ContextEntryInput {
+            kind: ContextEntryKind::ToolResult {
+                call_id: call.call_id.clone(),
+                is_error: status.is_error(),
+            },
+            content_ref: error_ref.clone(),
+            media_type: None,
+            preview: None,
+            provider_kind: call.provider_kind.clone(),
+            provider_item_id: None,
+            token_estimate: None,
+        }],
         error_ref: Some(error_ref),
         effects: Vec::new(),
     }
@@ -1507,7 +1580,13 @@ fn complete_tool_batch(
                     "terminal tool call result does not match call state".into(),
                 ));
             }
-            if !tool_result_context_item_exists(state, run_id, turn_id, &result) {
+            if !tool_result_context_item_exists(
+                state,
+                run_id,
+                turn_id,
+                &result,
+                call_state.call.provider_kind.as_deref(),
+            ) {
                 return Err(DomainError::InvariantViolation(
                     "tool batch cannot complete before result context items are recorded".into(),
                 ));
@@ -1933,7 +2012,21 @@ mod tests {
         let result = unavailable_tool_result(&call);
 
         let expected = BlobRef::from_bytes(UNAVAILABLE_TOOL_RESULT_CONTENT.as_bytes());
-        assert_eq!(result.model_visible_output_ref, Some(expected.clone()));
+        assert_eq!(
+            result.model_visible_context_entries,
+            vec![ContextEntryInput {
+                kind: ContextEntryKind::ToolResult {
+                    call_id: call.call_id.clone(),
+                    is_error: true,
+                },
+                content_ref: expected.clone(),
+                media_type: None,
+                preview: None,
+                provider_kind: None,
+                provider_item_id: None,
+                token_estimate: None,
+            }]
+        );
         assert_eq!(result.error_ref, Some(expected));
         assert_eq!(result.status, ToolCallStatus::Unavailable);
     }

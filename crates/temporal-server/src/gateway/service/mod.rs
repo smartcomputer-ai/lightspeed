@@ -630,6 +630,17 @@ impl GatewayAgentApi {
             })?,
             None => self.allocate_session_id(),
         };
+        if client_supplied_id {
+            match self.load_session_state(&session_id).await {
+                Ok(loaded) if loaded.state.lifecycle.status == CoreAgentStatus::Closed => {
+                    let session = self.project_session_by_id(&session_id).await?;
+                    return Ok(AgentApiOutcome::new(SessionStartResponse { session }));
+                }
+                Ok(_) => {}
+                Err(error) if is_not_found(&error) => {}
+                Err(error) => return Err(error),
+            }
+        }
         let session_config = self.session_config_for_start(config.clone()).await?;
         self.write_session_metadata(
             session_id.clone(),
@@ -1021,6 +1032,7 @@ impl AgentApiService for GatewayAgentApi {
             AgentApiError::invalid_request(format!("invalid session id: {error}"))
         })?;
         let loaded = self.load_session_state(&session_id).await?;
+        self.require_open_idle_session(&session_id, &loaded, "context compaction")?;
         let baseline_revision = loaded.state.context.revision;
         let baseline_failures = self
             .query_status_optional(&session_id)
@@ -1071,6 +1083,7 @@ impl AgentApiService for GatewayAgentApi {
         }
 
         let loaded = self.load_session_state(&session_id).await?;
+        self.require_open_idle_session(&session_id, &loaded, "context append")?;
         let mut applied_keys = Vec::new();
         let mut unchanged_keys = Vec::new();
         let mut pending = Vec::new();
@@ -1216,6 +1229,11 @@ impl AgentApiService for GatewayAgentApi {
                 }
                 ExistingRunSubmission::Reject => Err(duplicate_submission_error(&submission_id)),
             };
+        }
+        if loaded.state.lifecycle.status != CoreAgentStatus::Open {
+            return Err(AgentApiError::rejected(format!(
+                "session is not open: {session_id}"
+            )));
         }
         let status_before_signal = self.query_status_optional(&session_id).await?;
         let baseline_admission_failures = status_before_signal

@@ -833,7 +833,7 @@ fn invocation_result_to_call_result(result: ToolInvocationResult) -> ToolCallRes
         call_id: result.call_id,
         status: result.status,
         output_ref: result.output_ref,
-        model_visible_output_ref: result.model_visible_output_ref,
+        model_visible_context_entries: result.model_visible_context_entries,
         error_ref: result.error_ref,
         effects: result.effects,
     }
@@ -1182,7 +1182,13 @@ mod tests {
                 call_id: request.calls[0].call_id.clone(),
                 status: ToolCallStatus::Succeeded,
                 output_ref: Some(BlobRef::from_bytes(b"wait completed")),
-                model_visible_output_ref: Some(BlobRef::from_bytes(b"wait completed")),
+                model_visible_context_entries: vec![
+                    ToolInvocationResult::tool_result_context_entry(
+                        &request.calls[0].call_id,
+                        ToolCallStatus::Succeeded,
+                        BlobRef::from_bytes(b"wait completed"),
+                    ),
+                ],
                 error_ref: None,
                 effects: vec![ToolEffect {
                     kind: "test".to_owned(),
@@ -3053,6 +3059,53 @@ mod tests {
             entry.event.kind,
             CoreAgentEventKind::Tool(ToolEvent::BatchCompleted { .. })
         )));
+    }
+
+    #[test]
+    fn tool_batch_result_materializes_extra_model_visible_entries() {
+        let session_id = SessionId::new("session-extra-tool-context");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let request = drive_to_single_tool_invocation(&mut drive);
+        let tool_result_ref = BlobRef::from_bytes(b"wait completed");
+        let extra_ref = BlobRef::from_bytes(b"extra visible message");
+        let mut result = completed_tool_result(&request);
+        result.results[0]
+            .model_visible_context_entries
+            .push(message_input(ContextMessageRole::User, extra_ref.clone()));
+
+        let completed = drive
+            .resume_tool_batch_outcome(ToolBatchOutcome::completed(result), 90)
+            .expect("complete inline batch");
+        commit_action(&mut drive, completed);
+        for observed_at_ms in 91..100 {
+            if drive.state().context.entries.iter().any(|entry| {
+                matches!(
+                    entry.kind,
+                    ContextEntryKind::Message {
+                        role: ContextMessageRole::User
+                    }
+                ) && entry.content_ref == extra_ref
+            }) {
+                break;
+            }
+            let action = drive
+                .next_action(observed_at_ms, 64)
+                .expect("materialize result context");
+            commit_action(&mut drive, action);
+        }
+
+        assert!(drive.state().context.entries.iter().any(|entry| {
+            matches!(entry.kind, ContextEntryKind::ToolResult { .. })
+                && entry.content_ref == tool_result_ref
+        }));
+        assert!(drive.state().context.entries.iter().any(|entry| {
+            matches!(
+                entry.kind,
+                ContextEntryKind::Message {
+                    role: ContextMessageRole::User
+                }
+            ) && entry.content_ref == extra_ref
+        }));
     }
 
     fn request_run_with_submission(

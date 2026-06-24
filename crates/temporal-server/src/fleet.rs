@@ -11,10 +11,10 @@ use api::{
 use api_projection::{MAX_EVENT_PAGE_LIMIT, read_all_session_entries, replay_core_agent_state};
 use async_trait::async_trait;
 use engine::{
-    AgentHandle, BlobRef, CoreAgentIoError, EventSeq, RunId, SessionId, SubmissionId, ToolBatchId,
-    ToolBatchOutcome, ToolBatchResumeDirective, ToolCallId, ToolCallStatus,
-    ToolInvocationBatchResult, ToolInvocationRequest, ToolInvocationResult, TurnId,
-    core_agent_clone_opening_events,
+    AgentHandle, BlobRef, ContextEntryInput, ContextEntryKind, ContextMessageRole,
+    CoreAgentIoError, EventSeq, RunId, SessionId, SubmissionId, ToolBatchId, ToolBatchOutcome,
+    ToolBatchResumeDirective, ToolCallId, ToolCallStatus, ToolInvocationBatchResult,
+    ToolInvocationRequest, ToolInvocationResult, TurnId, core_agent_clone_opening_events,
     storage::{
         BlobStore, BlobStoreError, CreateClonedSession, CreateForkedSession, ListSessionLinks,
         SessionLinkDirection, SessionRecord, SessionStore, SessionStoreError, UpsertSessionLink,
@@ -251,6 +251,14 @@ impl FleetService {
                     run_id,
                     error.to_string(),
                 ));
+                continue;
+            }
+            if let Some(result) = self
+                .wait_result_from_store(&target_session_id, run_id)
+                .await?
+                && result.status == AgentWaitHandleStatus::Terminal
+            {
+                results.push(result);
                 continue;
             }
             if let Err(error) = self.runtime.start_session(&target_session_id, false).await {
@@ -1087,10 +1095,24 @@ impl FleetToolExecutor {
             .await
         {
             Ok(FleetWaitPreflight::Completed(output)) => {
-                let visible = wait_model_visible_text(&output);
-                let result = self
-                    .succeeded(call.call_id.clone(), &output, visible)
-                    .await?;
+                let output_ref = self
+                    .blobs
+                    .put_bytes(serde_json::to_vec(&output).map_err(io_error)?)
+                    .await
+                    .map_err(map_blob_error)?;
+                let result = ToolInvocationResult {
+                    call_id: call.call_id.clone(),
+                    status: ToolCallStatus::Succeeded,
+                    output_ref: Some(output_ref),
+                    model_visible_context_entries: wait_model_visible_context_entries(
+                        self.blobs.as_ref(),
+                        &call.call_id,
+                        &output,
+                    )
+                    .await?,
+                    error_ref: None,
+                    effects: Vec::new(),
+                };
                 Ok(ToolBatchOutcome::completed(ToolInvocationBatchResult {
                     run_id: context.parent_run_id,
                     turn_id: context.turn_id,
@@ -1237,11 +1259,16 @@ impl FleetToolExecutor {
             .put_bytes(visible.into_bytes())
             .await
             .map_err(map_blob_error)?;
+        let model_visible_context_entries = vec![ToolInvocationResult::tool_result_context_entry(
+            &call_id,
+            ToolCallStatus::Succeeded,
+            visible_ref,
+        )];
         Ok(ToolInvocationResult {
             call_id,
             status: ToolCallStatus::Succeeded,
             output_ref: Some(output_ref),
-            model_visible_output_ref: Some(visible_ref),
+            model_visible_context_entries,
             error_ref: None,
             effects: Vec::new(),
         })
@@ -1863,7 +1890,31 @@ fn send_model_visible_text(output: &AgentSendOutput) -> String {
     }
 }
 
-fn wait_model_visible_text(output: &AgentWaitOutput) -> String {
+async fn wait_model_visible_context_entries(
+    blobs: &dyn BlobStore,
+    call_id: &ToolCallId,
+    output: &AgentWaitOutput,
+) -> Result<Vec<ContextEntryInput>, CoreAgentIoError> {
+    let summary_ref = blobs
+        .put_bytes(wait_model_visible_summary(output).into_bytes())
+        .await
+        .map_err(map_blob_error)?;
+    let mut entries = vec![ToolInvocationResult::tool_result_context_entry(
+        call_id,
+        ToolCallStatus::Succeeded,
+        summary_ref,
+    )];
+    for result in output
+        .results
+        .iter()
+        .filter(|result| result.status == AgentWaitHandleStatus::Terminal)
+    {
+        append_wait_terminal_visible_context_entries(blobs, &mut entries, result).await?;
+    }
+    Ok(entries)
+}
+
+fn wait_model_visible_summary(output: &AgentWaitOutput) -> String {
     let terminal = output
         .results
         .iter()
@@ -1883,6 +1934,70 @@ fn wait_model_visible_text(output: &AgentWaitOutput) -> String {
         "agent_wait resolved with outcome {} (terminal: {terminal}, pending: {pending}, errors: {errors}).",
         wait_outcome_name(output.outcome)
     )
+}
+
+async fn append_wait_terminal_visible_context_entries(
+    blobs: &dyn BlobStore,
+    entries: &mut Vec<ContextEntryInput>,
+    result: &AgentWaitHandleResult,
+) -> Result<(), CoreAgentIoError> {
+    let mut prefix = String::from("Agent run final output");
+    prefix.push_str("\ntarget_session_id: ");
+    prefix.push_str(&result.target_session_id);
+    prefix.push_str("\nrun_id: ");
+    prefix.push_str(&result.run_id);
+
+    let Some(run) = result.run.as_ref() else {
+        prefix.push_str("\nstatus: terminal\n\nNo run details were recorded.");
+        append_wait_text_message(blobs, entries, prefix).await?;
+        return Ok(());
+    };
+    prefix.push_str("\nstatus: ");
+    prefix.push_str(&run.status);
+    append_wait_text_message(blobs, entries, prefix).await?;
+
+    if let Some(output_ref) = run.output_ref.as_ref() {
+        entries.push(wait_user_message(
+            output_ref.clone(),
+            Some("Agent run final output"),
+        ));
+    } else if let Some(failure_ref) = run.failure_message_ref.as_ref() {
+        entries.push(wait_user_message(
+            failure_ref.clone(),
+            Some("Agent run failure message"),
+        ));
+    } else {
+        append_wait_text_message(blobs, entries, "No final output was recorded.").await?;
+    }
+    Ok(())
+}
+
+async fn append_wait_text_message(
+    blobs: &dyn BlobStore,
+    entries: &mut Vec<ContextEntryInput>,
+    text: impl Into<String>,
+) -> Result<(), CoreAgentIoError> {
+    let text = text.into();
+    let content_ref = blobs
+        .put_bytes(text.clone().into_bytes())
+        .await
+        .map_err(map_blob_error)?;
+    entries.push(wait_user_message(content_ref, Some(&text)));
+    Ok(())
+}
+
+fn wait_user_message(content_ref: BlobRef, preview: Option<&str>) -> ContextEntryInput {
+    ContextEntryInput {
+        kind: ContextEntryKind::Message {
+            role: ContextMessageRole::User,
+        },
+        content_ref,
+        media_type: None,
+        preview: preview.map(|value| value.chars().take(160).collect()),
+        provider_kind: None,
+        provider_item_id: None,
+        token_estimate: None,
+    }
 }
 
 fn wait_outcome_name(outcome: AgentWaitOutcome) -> &'static str {
@@ -1944,11 +2059,16 @@ async fn fleet_failed_result(
         .put_bytes(message.into().into_bytes())
         .await
         .map_err(map_blob_error)?;
+    let model_visible_context_entries = vec![ToolInvocationResult::tool_result_context_entry(
+        &call_id,
+        ToolCallStatus::Failed,
+        error_ref.clone(),
+    )];
     Ok(ToolInvocationResult {
         call_id,
         status: ToolCallStatus::Failed,
         output_ref: None,
-        model_visible_output_ref: Some(error_ref.clone()),
+        model_visible_context_entries,
         error_ref: Some(error_ref),
         effects: Vec::new(),
     })
@@ -1981,6 +2101,17 @@ mod tests {
     use vfs::{CompareAndSetVfsWorkspaceHead, VfsMountAccess, VfsMountRecord, VfsWorkspaceRecord};
 
     use super::*;
+
+    fn visible_tool_result_ref(result: &ToolInvocationResult) -> BlobRef {
+        result
+            .model_visible_context_entries
+            .iter()
+            .find_map(|entry| {
+                matches!(entry.kind, ContextEntryKind::ToolResult { .. })
+                    .then(|| entry.content_ref.clone())
+            })
+            .expect("visible tool result")
+    }
 
     #[derive(Default)]
     struct FakeRuntime {
@@ -2380,12 +2511,12 @@ mod tests {
             .expect("invoke");
 
         assert_eq!(result.status, ToolCallStatus::Succeeded);
-        let output_ref = result.output_ref.expect("output");
+        let output_ref = result.output_ref.as_ref().expect("output");
         let output: AgentSpawnOutput =
-            serde_json::from_slice(&blobs.read_bytes(&output_ref).await.expect("read output"))
+            serde_json::from_slice(&blobs.read_bytes(output_ref).await.expect("read output"))
                 .expect("decode output");
         assert!(output.child_session_id.starts_with("agent_"));
-        let visible_ref = result.model_visible_output_ref.expect("visible");
+        let visible_ref = visible_tool_result_ref(&result);
         let visible = blobs.read_text(&visible_ref).await.expect("read visible");
         assert!(visible.contains("started run"));
     }
@@ -2901,6 +3032,115 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn fleet_executor_lone_wait_includes_child_final_output() {
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let parent = open_source_session(sessions.as_ref()).await;
+        let child = create_linked_child(sessions.as_ref(), &parent).await;
+        let blobs = Arc::new(engine::storage::InMemoryBlobStore::new());
+        append_completed_run_with_output(
+            sessions.as_ref(),
+            blobs.as_ref(),
+            &child,
+            RunId::new(1),
+            "full child answer\nwith every line",
+        )
+        .await;
+        let runtime = Arc::new(FakeRuntime::default());
+        let service = FleetService::new(sessions, runtime.clone());
+        let executor = FleetToolExecutor::new(blobs.clone(), service);
+        let arguments_ref = blobs
+            .put_bytes(
+                format!(
+                    r#"{{"waits":[{{"target_session_id":"{}","run_id":"run_1"}}]}}"#,
+                    child.as_str()
+                )
+                .into_bytes(),
+            )
+            .await
+            .expect("args");
+
+        let outcome = executor
+            .invoke_wait_batch(
+                context(parent),
+                &ToolInvocationRequest {
+                    call_id: ToolCallId::new("call_wait"),
+                    tool_name: ToolName::new(AGENT_WAIT_TOOL_NAME),
+                    arguments_ref,
+                    execution_target: None,
+                },
+            )
+            .await
+            .expect("invoke");
+
+        let ToolBatchOutcome::Completed { result } = outcome else {
+            panic!("wait should complete from stored terminal run");
+        };
+        if result.results[0].status != ToolCallStatus::Succeeded {
+            let error = match result.results[0].error_ref.as_ref() {
+                Some(error_ref) => Some(blobs.read_text(error_ref).await.expect("read error")),
+                None => None,
+            };
+            panic!("wait failed: {error:?}");
+        }
+        let output_ref = result.results[0].output_ref.as_ref().unwrap_or_else(|| {
+            panic!(
+                "missing output: error_ref={:?}",
+                result.results[0].error_ref.as_ref()
+            )
+        });
+        let output: AgentWaitOutput =
+            serde_json::from_slice(&blobs.read_bytes(output_ref).await.expect("read output"))
+                .expect("decode output");
+        if output.outcome != AgentWaitOutcome::Terminal {
+            panic!("unexpected wait output: {output:?}");
+        }
+        assert_eq!(
+            output.results[0]
+                .run
+                .as_ref()
+                .and_then(|run| run.output_ref.as_ref())
+                .map(BlobRef::as_str),
+            Some(BlobRef::from_bytes(b"full child answer\nwith every line").as_str())
+        );
+        let wait_result = &result.results[0];
+        let summary_ref = visible_tool_result_ref(wait_result);
+        let summary = blobs.read_text(&summary_ref).await.expect("read summary");
+        assert!(summary.contains("agent_wait resolved with outcome terminal"));
+        assert!(!summary.contains("full child answer"));
+        let visible_messages = wait_result
+            .model_visible_context_entries
+            .iter()
+            .filter(|entry| matches!(entry.kind, ContextEntryKind::Message { .. }))
+            .collect::<Vec<_>>();
+        let metadata = visible_messages
+            .iter()
+            .find(|entry| {
+                entry
+                    .preview
+                    .as_deref()
+                    .is_some_and(|text| text.contains("Agent run final output"))
+            })
+            .expect("metadata message");
+        let metadata = blobs
+            .read_text(&metadata.content_ref)
+            .await
+            .expect("read metadata");
+        assert!(metadata.contains("target_session_id: child"));
+        assert!(metadata.contains("run_id: run_1"));
+        let child_output_ref = BlobRef::from_bytes(b"full child answer\nwith every line");
+        let child_output_entry = visible_messages
+            .iter()
+            .find(|entry| entry.content_ref == child_output_ref)
+            .expect("child output entry");
+        let child_output = blobs
+            .read_text(&child_output_entry.content_ref)
+            .await
+            .expect("read child output");
+        assert_eq!(child_output, "full child answer\nwith every line");
+        assert!(runtime.started_sessions.lock().expect("lock").is_empty());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn fleet_executor_runs_read_and_writes_output_blobs() {
         let sessions = Arc::new(InMemorySessionStore::new());
         let child = open_source_session(sessions.as_ref()).await;
@@ -2931,12 +3171,12 @@ mod tests {
             .expect("invoke");
 
         assert_eq!(result.status, ToolCallStatus::Succeeded);
-        let output_ref = result.output_ref.expect("output");
+        let output_ref = result.output_ref.as_ref().expect("output");
         let output: AgentReadOutput =
-            serde_json::from_slice(&blobs.read_bytes(&output_ref).await.expect("read output"))
+            serde_json::from_slice(&blobs.read_bytes(output_ref).await.expect("read output"))
                 .expect("decode output");
         assert_eq!(output.session_id, "parent");
-        let visible_ref = result.model_visible_output_ref.expect("visible");
+        let visible_ref = visible_tool_result_ref(&result);
         let visible = blobs.read_text(&visible_ref).await.expect("read visible");
         assert!(visible.contains("Read agent parent"));
     }
@@ -2975,13 +3215,13 @@ mod tests {
             .expect("invoke");
 
         assert_eq!(result.status, ToolCallStatus::Succeeded);
-        let output_ref = result.output_ref.expect("output");
+        let output_ref = result.output_ref.as_ref().expect("output");
         let output: AgentSendOutput =
-            serde_json::from_slice(&blobs.read_bytes(&output_ref).await.expect("read output"))
+            serde_json::from_slice(&blobs.read_bytes(output_ref).await.expect("read output"))
                 .expect("decode output");
         assert_eq!(output.target_session_id.as_deref(), Some(child.as_str()));
         assert_eq!(output.run_id.as_deref(), Some("run_1"));
-        let visible_ref = result.model_visible_output_ref.expect("visible");
+        let visible_ref = visible_tool_result_ref(&result);
         let visible = blobs.read_text(&visible_ref).await.expect("read visible");
         assert!(visible.contains("Delivered message"));
     }
@@ -3044,6 +3284,65 @@ mod tests {
             .await
             .expect("link");
         child
+    }
+
+    async fn append_completed_run_with_output(
+        sessions: &InMemorySessionStore,
+        blobs: &engine::storage::InMemoryBlobStore,
+        session_id: &SessionId,
+        run_id: RunId,
+        output: &str,
+    ) {
+        let output_ref = blobs
+            .put_bytes(output.as_bytes().to_vec())
+            .await
+            .expect("put output");
+        let mut events =
+            core_agent_clone_opening_events(&open_state(), 22).expect("opening events");
+        events.extend([
+            core_uncommitted_event(
+                30,
+                engine::CoreAgentEventKind::Run(engine::RunEvent::Accepted {
+                    run_id,
+                    submission_id: None,
+                    input: Vec::new(),
+                    run_config: RunConfig::default(),
+                    config_revision: 0,
+                }),
+            ),
+            core_uncommitted_event(
+                31,
+                engine::CoreAgentEventKind::Run(engine::RunEvent::Started { run_id }),
+            ),
+            core_uncommitted_event(
+                32,
+                engine::CoreAgentEventKind::Run(engine::RunEvent::Completed {
+                    run_id,
+                    output_ref: Some(output_ref),
+                }),
+            ),
+        ]);
+        sessions
+            .append(engine::storage::AppendSessionEvents {
+                session_id: session_id.clone(),
+                expected_head: None,
+                events,
+            })
+            .await
+            .expect("append completed run");
+    }
+
+    fn core_uncommitted_event(
+        observed_at_ms: u64,
+        kind: engine::CoreAgentEventKind,
+    ) -> engine::storage::DynamicUncommittedSessionEvent {
+        engine::CoreAgentCodec
+            .encode_uncommitted(&engine::UncommittedCoreAgentEvent {
+                observed_at_ms,
+                joins: Default::default(),
+                event: engine::CoreAgentEvent { kind },
+            })
+            .expect("encode core event")
     }
 
     fn text_item(item: &InputItem) -> &str {

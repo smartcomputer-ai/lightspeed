@@ -169,7 +169,13 @@ impl SessionTools {
                     call_id: call.call_id.clone(),
                     status: ToolCallStatus::Succeeded,
                     output_ref: Some(output_ref),
-                    model_visible_output_ref: Some(visible_ref),
+                    model_visible_context_entries: vec![
+                        ToolInvocationResult::tool_result_context_entry(
+                            &call.call_id,
+                            ToolCallStatus::Succeeded,
+                            visible_ref,
+                        ),
+                    ],
                     error_ref: None,
                     effects: output.effects,
                 })
@@ -516,10 +522,14 @@ async fn failed_result(
         .await
         .map_err(map_blob_error)?;
     Ok(ToolInvocationResult {
-        call_id,
+        call_id: call_id.clone(),
         status: ToolCallStatus::Failed,
         output_ref: None,
-        model_visible_output_ref: Some(error_ref.clone()),
+        model_visible_context_entries: vec![ToolInvocationResult::tool_result_context_entry(
+            &call_id,
+            ToolCallStatus::Failed,
+            error_ref.clone(),
+        )],
         error_ref: Some(error_ref),
         effects: Vec::new(),
     })
@@ -561,7 +571,7 @@ mod tests {
 
     use crate::environment::RuntimeEnvironment;
     use engine::{
-        BlobRef, RunId, SessionId, ToolBatchId, ToolCallId, ToolName, TurnId,
+        BlobRef, ContextEntryKind, RunId, SessionId, ToolBatchId, ToolCallId, ToolName, TurnId,
         storage::{CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
     };
     use tools::environment::{
@@ -581,6 +591,17 @@ mod tests {
     };
 
     use super::*;
+
+    fn visible_tool_result_ref(result: &ToolInvocationResult) -> BlobRef {
+        result
+            .model_visible_context_entries
+            .iter()
+            .find_map(|entry| {
+                matches!(entry.kind, ContextEntryKind::ToolResult { .. })
+                    .then(|| entry.content_ref.clone())
+            })
+            .expect("visible ref")
+    }
 
     #[derive(Default)]
     struct TestCatalog {
@@ -1015,13 +1036,9 @@ mod tests {
             .await
             .expect("read output text");
         assert!(read_output.contains("hello"));
+        let process_visible_ref = visible_tool_result_ref(&result.results[1]);
         let process_visible = blobs
-            .read_text(
-                result.results[1]
-                    .model_visible_output_ref
-                    .as_ref()
-                    .expect("process visible"),
-            )
+            .read_text(&process_visible_ref)
             .await
             .expect("process visible text");
         assert!(process_visible.contains("process ok"));
@@ -1086,15 +1103,8 @@ mod tests {
                 .iter()
                 .all(|call| call.status == ToolCallStatus::Succeeded)
         );
-        let visible = blobs
-            .read_text(
-                result.results[0]
-                    .model_visible_output_ref
-                    .as_ref()
-                    .expect("visible ref"),
-            )
-            .await
-            .expect("visible text");
+        let visible_ref = visible_tool_result_ref(&result.results[0]);
+        let visible = blobs.read_text(&visible_ref).await.expect("visible text");
         assert!(visible.contains("Enqueued"));
 
         let pending = outbox
