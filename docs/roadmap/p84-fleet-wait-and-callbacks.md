@@ -1,12 +1,11 @@
-# P84: Fleet Wait And Callbacks
+# P84: Fleet Wait, Subscriptions, And Send
 
 **Status**
 - Proposed 2026-06-24.
 - Builds on **P83 (Fleet Subagent Control Plane)** — the `agent_*` tool surface,
   the `FleetService`/`FleetToolExecutor`, hosted `SessionTools` routing, and the
   parent->child links. It also builds on the Temporal-backed
-  `AgentSessionWorkflow` (run admission via the `submit_admission` signal) and the
-  messaging outbox spine (P71).
+  `AgentSessionWorkflow` (run admission via the `submit_admission` signal).
 - This doc owns two P83-deferred items: *"Completion and important-update
   notifications back to the parent; rich `wait_agent` semantics."*
 
@@ -14,245 +13,297 @@
 
 Give a supervisor agent two missing capabilities:
 
-1. **Wait** — block until the target run reaches a terminal state, or the target
-   produces new activity, or an (optional, possibly multi-day) timeout elapses —
-   instead of open-coded polling of `agent_read`.
-2. **Callbacks** — let a child agent push a note back to its parent (progress, a
-   question, a result) so the parent wakes and reacts, instead of the parent
-   having to poll.
+1. **Wait** — block until a target run reaches a terminal state, or an optional
+   (possibly multi-day) timeout elapses — instead of open-coded polling of
+   `agent_read`.
+2. **Send** — let one agent deliver a message to another (a child reporting to a
+   parent, a parent tasking a child, a peer pinging a peer) so the recipient
+   wakes and reacts.
 
-Both must slot cleanly into the Temporal runtime, support **hours-to-days**
-waits cheaply, and must not put blocking, side-effectful, or wall-clock logic
-into `engine`.
+Both must slot cleanly into the Temporal runtime, support **hours-to-days** waits
+cheaply, and keep wall-clock / side-effect logic out of the deterministic
+`engine` core.
+
+## Temporal Primitives We Rely On (Confirmed)
+
+The Temporal Rust SDK (`temporalio-sdk` 0.4.0) exposes, **from workflow code**,
+all the durable primitives this design needs — the repo simply has not used them
+yet:
+
+- `ctx.timer(TimerOptions { duration, .. })` — a durable timer; survives worker
+  restart by replay; can sleep for days/months; resource-light
+  (`workflow_context.rs:716`).
+- `ctx.external_workflow(workflow_id, run_id).signal(SignalDef, input)` — a
+  workflow can **signal another workflow** directly and durably
+  (`workflow_context.rs:799`, `:2007`).
+- `ctx.child_workflow(...)` — child workflows (`workflow_context.rs:748`).
+- `ctx.wait_condition(..)`, `ctx.continue_as_new(..)` — already used today.
+
+So waits and cross-workflow wakeups are **Temporal-native and durable-by-replay**.
+No new database table, no reconciler process, and no long-blocking tool activity
+is required. (An earlier draft mistakenly assumed timers/cross-signal were
+unavailable and proposed either a DB watcher or a bounded poll; both are
+unnecessary.)
 
 ## Two Ways To Wait — Both Are First-Class
 
 A top-level agent kicks off large tasks that can take hours or days. There are
-two fundamentally different ways for it to wait for the result, and we support
-both because they fit different situations:
+two ways for it to wait, and we support both:
 
 | | **Idle-and-be-woken** (Mode I) | **Explicit `agent_wait`** (Mode W) |
 |---|---|---|
-| Parent state | run goes **terminal**; workflow parks idle | run **parked mid-turn** on a declared await |
-| Waiting "on" | nothing specific — any business event resumes it | a named target + condition + optional bound |
-| Who delivers | child `agent_send { to: parent }` (or any future event) | runtime watcher / workflow timer |
-| Child must cooperate? | **yes** — child must be told to report back | **no** — runtime observes the child's log |
-| Cost while waiting | free (idle workflow) | free (idle workflow + one durable timer) |
+| Parent state | run goes **terminal**; workflow parks idle | run **parked mid-turn** on a subscription |
+| Waiting "on" | nothing specific — any admission resumes it | a named target run reaching terminal |
+| Who wakes it | the child's `agent_send` (or any business event) | the target workflow, via a `RunSubscription` |
+| Child must cooperate? | **yes** — child must be told to report back | **no** — the target fires on its own terminal |
+| Cost while waiting | free (idle workflow) | free (idle workflow + at most one durable timer) |
 | Result lands as | a **new run** on the parent | resolution of the **same parked turn** |
-| Best for | long autonomous fan-out; parent free meanwhile | "I can't continue until I have this answer" |
+| Best for | long fan-out; parent free to do other work | "I can't continue until this finishes" |
 
 The enabling runtime fact (already true today): **an idle session is just a
 workflow parked on `wait_condition(pending_admissions)`
 (`crates/temporal-workflow/src/workflow.rs:69`). It holds no worker, lives
 indefinitely across `continue_as_new`, and any `submit_admission` wakes it —
-hours or days later.** So both modes are cheap for arbitrarily long waits: Mode I
-costs an idle workflow, Mode W costs an idle workflow plus one durable Temporal
-timer.
-
-Both modes funnel through **one delivery spine** — an admission against the
-parent session. The parent picks its mode per task:
+hours or days later.** Mode I rides this directly; Mode W adds a durable
+subscription and (optionally) one durable timer.
 
 - **Mode I (default for big async tasks):** spawn the child with a `report_back`
-  directive, let the parent run go idle, and be woken by the child's
-  `agent_send { to: parent }`. Cheaper and more flexible — the parent can do other
-  work, the callback can carry a rich payload or a mid-task question, and it
-  survives compaction / continue-as-new naturally.
-- **Mode W (for tight dependencies):** call `agent_wait`, parking the turn until a
-  declared condition fires. The result is delivered back *into the same turn*.
+  directive, let the parent run go idle, and be woken by the child's `agent_send`.
+  Cheaper and more flexible — the parent can do other work meanwhile, and the
+  callback can carry a result or a mid-task question.
+- **Mode W (for tight dependencies):** call `agent_wait` to park the current turn
+  until the named target run is terminal. The result is delivered back *into the
+  same turn*.
 
-Mode W's `until = activity` resolves on exactly the kind of event Mode I's
-`agent_send { to: parent }` produces, so the two interoperate with no special
-wiring.
-
-## The Core Insight
-
-The two features look different but reduce to **one primitive that already
-exists**: `submit_admission(AgentAdmission { command })`, the single signal that
-wakes an `AgentSessionWorkflow` and feeds it a `CoreAgentCommand`
-(`crates/temporal-workflow/src/workflow.rs:83`,
-`crates/temporal-server/src/gateway/service/workflow.rs:28`).
-
-- A **callback** is the child's runtime admitting a `RequestRun` on the *parent*
-  session. The parent wakes as a normal new run. No new transport.
-- A **wait** is the parent parking the current turn until a future admission
-  resumes it. The thing that resumes it is a small new admission command
-  (`ResumeAwait`) delivered by the same signal path — emitted either by the
-  child reaching terminal state or by a Temporal timer firing for the timeout.
-
-So both features share the admission spine. We are not inventing a callback bus
-or a second messaging system; we are applying the existing wake primitive in two
-directions (child->parent for callbacks, runtime->self for wait resumption).
-
-## Why Not A Blocking Tool Activity
-
-The obvious shortcut — make `wait_agent` a tool that long-polls the child inside
-its tool activity — is rejected:
-
-- Tool calls run as one batched Temporal activity with a **360s start-to-close
-  timeout** and no heartbeat (`crates/temporal-workflow/src/config.rs:11`,
-  `:53`). A wait longer than ~6 minutes cannot complete in one activity, and any
-  wait holds a worker slot for its full duration.
-- The runtime uses **no Temporal timers and no cross-workflow signaling today**;
-  the workflow blocks only on `wait_condition(pending_admissions)`. A
-  long-blocking activity is exactly the anti-pattern the P83 reentrancy rules
-  warn against ("starting/awaiting other work is a side effect; it belongs in the
-  workflow, not inside a tool activity that pretends to be synchronous").
-
-The user-selected design instead makes the *workflow* await, with the tool call
-returning a parked result and the turn resuming on a signal or timer. This keeps
-waits unbounded in wall-clock time, cheap (no held worker), and Temporal-native.
-
-## Part A: Wait (Workflow-Level Await)
+## Part A: Wait
 
 ### Tool Surface
 
 One new model-visible Fleet tool:
 
 ```text
-agent_wait   block until a target agent's run is terminal, it produces new
-             activity, or a timeout elapses
+agent_wait   block until a target session's run reaches a terminal state,
+             or an optional timeout elapses
 ```
 
-An explicit wait must declare two things: **what** it is waiting for (the resolve
-condition) and **how long** it is willing to wait (an optional, possibly
-multi-day, bound). Input shape:
+Input shape:
 
 ```text
 target_session_id
-run_id?          pin the wait to a specific run (see "Which run")
-until            terminal | activity            (default: terminal)
-since_seq?       int (event cursor; activity mode only)
-timeout_ms?      int                            (default: none — wait indefinitely)
+run_id           the run to wait on (REQUIRED — see "Which Run")
+timeout_ms?      int   (default: none — wait until terminal, however long)
 ```
 
-- `until = terminal`: resume when the target run reaches `Completed`, `Failed`,
-  or `Cancelled` (`crates/engine/src/core/components/run.rs:88`). The runtime
-  *observes* this from the target's log, so it works even if the child never
-  cooperates (never sends `to: parent`, or crashes mid-task).
-- `until = activity`: resume when the target's session event log advances past
-  `since_seq` (any new event), so a supervisor can react to incremental progress,
-  not just completion. `since_seq` defaults to the target head observed at call
-  time.
-- `timeout_ms`: **optional**, with **no default — the wait is indefinite** unless
-  a bound is given. This matches hours-to-days tasks: the parent stays
-  parked-but-free until the condition fires. A bound, when set, is backed by a
-  durable Temporal timer (also free; survives restart; fires after arbitrary
-  duration). On timeout the tool resolves with `outcome = "timeout"` rather than
-  erroring, so the supervisor decides whether to wait again, read, or cancel.
+- The wait resolves when the named run reaches `Completed`, `Failed`, or
+  `Cancelled` (`crates/engine/src/core/components/run.rs:88`). This is observed
+  from the target itself (see Runtime Shape), so it works even if the child never
+  calls `agent_send` or crashes mid-task and is retried.
+- `timeout_ms` is **optional** with **no default**: absent, the wait is
+  indefinite (no timer armed) and costs only an idle workflow plus a durable
+  subscription. When set, it is backed by `ctx.timer` in the parent workflow —
+  durable across restart, valid for days. On timeout the tool resolves with
+  `outcome = "timeout"` (not an error), so the supervisor can wait again, read,
+  or cancel.
 
-There is **no ~6-minute ceiling**: the wait is a parked workflow turn plus an
-optional timer, not a blocking tool activity. (An earlier draft floated a 5-min
-cap inherited from the rejected blocking-activity design; it does not apply.)
+`until = activity` (wake on mid-run progress, not just terminal) is **deferred**
+— see Deferred. v1 waits for terminal only; a supervisor that wants intermittent
+progress polls `agent_read`, or uses Mode I so the child pushes updates via
+`agent_send`.
 
 Output shape:
 
 ```text
 target_session_id
-outcome          terminal | activity | timeout
-run?             compact run summary (status, output ref) when known
-last_seq         event cursor reached (for chaining the next agent_wait)
+run_id
+outcome          terminal | timeout | error
+run?             compact run summary (status, output ref) when terminal
+error?           message, set when outcome = error
 ```
 
-Because timeout is a normal outcome and `last_seq` is returned, "wait longer" is
-just another `agent_wait` with the new cursor.
+`outcome` is always one of the three; `agent_wait` never raises a tool *failure*
+for these states (a supervisor can branch on `outcome` instead of catching an
+error). `error` is for "the wait could not be established or observed," distinct
+from `terminal` carrying a `Failed` run status (which is a normal, expected
+result).
 
 ### Which Run
 
-`agent_wait` waits on the target's **current active run** by default. A supervisor
-that spawned/tasked a child holds the `child_run_id` / `run_id` from
-`agent_spawn` / `agent_send`; an optional `run_id` selector pins the wait to that
-specific run so a race (run completes, target immediately starts another) cannot
-make the wait latch onto the wrong run. If the named run is already terminal at
-call time, `agent_wait` returns immediately — no parking.
+`agent_wait` **requires an explicit `run_id`**. A supervisor that spawned or
+tasked a child already holds it (`agent_spawn` returns `child_run_id`;
+`agent_send` returns `run_id`). Requiring it removes the race a "current active
+run" default would introduce (the run completes and the target immediately starts
+another, so a default latches the wrong one).
 
-### Runtime Shape (Parked Turn)
+Behavior for edge states is defined, never a hang:
 
-The engine gains one new action and one new resume command. This is the same
-async-effect pattern the drive already uses for `InvokeTools`
-(`crates/engine/src/core/drive.rs:25`, `:162`), generalized so the *resumer* is
-an external admission rather than the tool activity's return value.
+- named run already **terminal** at call time → `outcome = terminal`, resolve
+  immediately with its summary, no parking;
+- named run **unknown / never existed** on the target → `outcome = error`
+  immediately (not a hang);
+- target session **closing / closed** with the run not terminal → `outcome =
+  terminal` with the run's last known status if it has one, else `outcome = error`;
+- target workflow **errored / unreachable** → `outcome = error`.
 
-New `CoreAgentAction` variant:
+### Runtime Shape: `RunSubscription` (Generic, Target-Signals-Subscriber)
+
+The target session workflow is the thing that **knows best** when its run is
+terminal — so it is the thing that notifies waiters. A waiter registers a durable
+**`RunSubscription`** on the target; when a run reaches terminal, the target
+signals each matching subscriber. No separate watcher process, no polling, no DB.
+
+This is built as a **general primitive**, not an `agent_wait`-specific one, so
+other workflows (future supervisors, goal-mode runners, external orchestrators)
+can subscribe to a session's run lifecycle the same way.
+
+`RunSubscription` record (held in the target session workflow state, durable by
+replay). v1 is **`once`-only**:
 
 ```text
-AwaitExternal {
-    await_id            deterministic id (parent session/run/turn/tool-call)
-    awaited             { session_id, run_id?, until, since_seq? }
-    timeout_ms
-}
+subscription_id          deterministic id (subscriber-derived)
+subscriber_workflow_id   any workflow id (not necessarily a session)
+signal_name              the signal to send on the subscriber
+correlation_token        opaque, subscriber-chosen (echoed back; lets the
+                         subscriber match the notification to its waiter)
+run_id                   the specific run to fire on (required in v1)
 ```
 
-New `CoreAgentCommand` variant (delivered via `submit_admission`):
+- v1 semantics are **fire once on that run's terminal, then remove the
+  subscription** — this is exactly what `agent_wait` needs.
+- A future *persistent* mode (fire on every run terminal, never remove) is
+  **deferred and not stored or tested in v1.** It would have to survive
+  `continue_as_new` (see note below) and outlive runs, which is real extra
+  machinery with no v1 user. The primitive is intentionally shaped so that adding
+  a `mode` field later is additive, but v1 ships neither the field nor the
+  behavior.
+
+**Subscribe-after-terminal race.** The `subscribe_run` handler must check the run
+*at registration time*: if the named run is **already terminal**, fire the
+subscriber signal immediately and do **not** store the subscription. Only a
+still-running target stores it for later. This closes the window where the run
+goes terminal between the waiter's `Deferred` and the target processing
+`subscribe_run` — otherwise the waiter would park forever.
+
+On a run reaching terminal, the target workflow iterates its subscriptions and,
+for each match, calls
+`ctx.external_workflow(subscriber_workflow_id, None).signal(signal_name, { correlation_token, run_id, status, output_ref })`,
+then removes the (once) subscription. Because this is workflow code it is durable:
+a restart replays the terminal transition and re-emits the signal idempotently.
+
+New signals on the session workflow:
 
 ```text
-ResumeAwait {
-    await_id
-    outcome             terminal | activity | timeout
-    run_summary?        opaque blob ref
-    last_seq?
-}
+subscribe_run(RunSubscription)        register; fire-immediately if already terminal
+unsubscribe_run(subscription_id)      remove it (waiter timed out / gave up)
 ```
 
-Flow:
+**Continue-as-new safety.** A live subscription is workflow state that is **not**
+in `AgentSessionArgs`, so the current `continue_as_new(&args)` at idle
+(`workflow.rs:78`) would silently drop it. v1 must prevent that: extend
+`can_continue_as_new_at_idle` (`workflow.rs:724`) to be false while any
+`RunSubscription` is registered (and, on the waiter side, while any active wait is
+parked). Because `once` subscriptions are short-lived (one run to terminal), this
+only briefly defers history compaction — acceptable. This is also a second reason
+`persistent` is deferred: an indefinitely-living subscription would either block
+continue-as-new forever or require threading subscription state through
+continue-as-new.
+
+### Engine: A Generic Deferred-Tool Primitive (Not Fleet-Specific)
+
+`agent_wait` is a tool whose result is not produced inline by the tool activity —
+it is produced later, when the subscription fires. Rather than hard-code Fleet
+await semantics into the deterministic core, the engine gains a **generic
+deferred-tool** capability keyed on tool-call metadata. `agent_wait` is one user
+of it; nothing in the engine knows about Fleet.
+
+- A tool invocation may resolve to
+  `ToolOutcome::Deferred { call_id, resume_directive }` instead of a normal result.
+  The engine records the call as parked and does **not** emit its result — the turn
+  cannot complete until it is resumed.
+  - `resume_directive` is an **opaque, runtime-owned blob ref** (an
+    `api_kind` + versioned body, like P83's `ProviderParams`). The engine stores
+    and replays it but **never interprets it**. The Fleet executor encodes the
+    wait specifics into it (`target_session_id`, `run_id`, `timeout_ms`,
+    `signal_name`); the parent workflow's Fleet handler decodes it to drive the
+    subscribe/timer. This is what lets the workflow act on a deferral the *tool
+    activity* decoded, without leaking Fleet vocabulary (`target`/`run_id`/`kind`)
+    into the deterministic core. The engine sees only `{ call_id, opaque blob }`.
+- A new command `ResumeToolCall { call_id, result }` (delivered via the existing
+  `submit_admission` signal path) supplies the deferred result and lets the turn
+  continue. This is the deferred sibling of `resume_tool_batch`
+  (`crates/engine/src/core/drive.rs:162`).
+- Durable reducer facts record "tool call deferred" (with the opaque directive)
+  and "tool call resumed" so the
+  parked turn replays.
+
+The engine stays deterministic and wall-clock-free: it only knows *"this call is
+deferred; resume it with a result."* Which tool, what it is waiting on, timers,
+and subscriptions all live in the runtime/workflow.
+
+### Flow
 
 ```text
 parent model calls agent_wait
-  -> CoreAgent plans an AwaitExternal action (NOT InvokeTools)
-  -> workflow loop sees AwaitExternal:
-       * records the await as pending (in workflow state + durable event)
-       * registers a watcher (see below) — a SIDE EFFECT, done in the workflow,
-         not the engine
-       * does NOT block the loop; returns to wait_condition
-  -> later, a ResumeAwait admission arrives via submit_admission
-  -> drive.resume_await(cmd) emits the tool result for the original agent_wait
-     call (Succeeded, output = outcome/run/last_seq) and continues the turn
+  -> tool execution returns ToolOutcome::Deferred { call_id, resume_directive }
+     (the runtime decides to defer; directive encodes target/run/timeout)
+  -> parent workflow, on seeing the deferred call, decodes resume_directive and:
+       * subscribe_run on the TARGET workflow:
+           ctx.external_workflow(target_id).signal(subscribe_run, {
+             subscriber_workflow_id = parent_id, signal_name = "resume_wait",
+             correlation_token = call_id, run_id })
+       * records an ACTIVE WAIT in workflow state: { call_id, target_id, run_id,
+         timer_handle? } (durable; see continue-as-new note)
+       * if timeout_ms set: arms ctx.timer(timeout_ms) as a concurrent branch
+  -> resolution, whichever fires first (see loop below):
+       (a) resume_wait signal from target { correlation_token=call_id, status,
+           output_ref } -> resolution = terminal
+       (b) the armed timer future completes -> resolution = timeout,
+           and the workflow unsubscribe_runs on the target
+  -> the resolution becomes a local ResumeToolCall { call_id, result }, fed to
+     drive.resume_tool_call; the deferred agent_wait resolves and the turn
+     continues.
 ```
 
-Key point: `AwaitExternal` is the engine telling the runtime *"I am parked on
-await_id; wake me with a ResumeAwait."* The engine stays deterministic and
-wall-clock-free. Producing the resume is the runtime's job.
+#### Workflow loop mechanics (the select, made explicit)
 
-### Producing The Resume (Watcher + Timer)
+The current loop awaits only `pending_admissions`
+(`crates/temporal-workflow/src/workflow.rs:69`). A timer firing is **not** an
+admission, so the loop must be widened to observe both. The workflow keeps a
+small set of **active waits** and a **pending-resolution queue**:
 
-The hosted runtime owns two resume sources for each parked await. Both end in the
-same `submit_admission(ResumeAwait)` call against the **parent** workflow
-(`workflow_id == parent_session_id`):
+- For each active wait with a timeout, the workflow holds the `ctx.timer(..)`
+  future. The top of the loop does a **select over: (1) the `wait_condition` for
+  new `pending_admissions`, and (2) any armed timer future completing.** Both are
+  `CancellableFuture`s, so they compose in a `select!`.
+- A `resume_wait` **signal** is delivered like any other signal: its handler
+  pushes a `(call_id, terminal-resolution)` onto the pending-resolution queue and
+  marks the loop wakeable (same mechanism as `pending_admissions`).
+- A **timer** branch winning the select pushes a `(call_id, timeout-resolution)`
+  onto the same queue and cancels/forgets that wait's subscription.
+- After the select returns, the loop drains the pending-resolution queue into
+  `ResumeToolCall` admissions, then processes admissions as today.
 
-1. **Completion / activity watcher.** A runtime task (in `temporal-server`, not
-   the workflow) watches the target via the existing long-poll
-   (`read_session_events` with `wait_ms`, already capped and blessed —
-   `gateway/service/mod.rs`). When the target run goes terminal (`until =
-   terminal`) or any event lands past `since_seq` (`until = activity`), it signals
-   `ResumeAwait { outcome: terminal|activity, ... }` to the parent.
+So timer and signal funnel into **one queue**, the loop awaits **admissions OR
+timers**, and there is exactly one place that converts a resolution into a
+`ResumeToolCall`. This replaces the vague "start a timer then return to
+wait_condition," which would never observe the timer.
 
-2. **Timeout timer (only when `timeout_ms` is set).** Implemented as a Temporal
-   timer in the *parent* workflow (this introduces the first use of
-   `ctx.timer`/sleep in this codebase). When the timer fires first, the workflow
-   itself produces `ResumeAwait { outcome: timeout }` locally — no signal
-   round-trip, because the workflow is already running. When `timeout_ms` is
-   absent (the default), **no timer is armed and the await is indefinite** — it
-   resolves only via the watcher. An indefinite await costs exactly an idle
-   workflow plus a persisted pending-await record; it can park for days. Whichever
-   source fires first wins; `await_id` makes the resume idempotent so the loser is
-   dropped.
+`call_id`-keyed idempotency: a duplicate `resume_wait` (target replayed) or a
+timer that fires after the wait was already resolved is dropped, because no active
+wait with that `call_id` remains.
 
-Putting the timeout on a workflow timer (deterministic, replay-safe) and the
-completion watch on a runtime task (side-effecting I/O) respects the
-engine/runtime boundary: the workflow decides *when to give up*, the runtime
-observes *what the child did*.
+### Crash / Resume Safety (No DB, No Reconciler)
 
-Idempotency: `await_id` is derived deterministically from the parent
-session/run/turn/tool-call identity (the same scheme P83 uses for child ids,
-P83 "Identity Model"). A duplicate `ResumeAwait` for an already-resolved await is
-a no-op. A watcher that restarts re-reads from the persisted `since_seq`.
+Every piece is durable by Temporal replay:
 
-### Crash / Resume Safety
+- the **deferred tool call** is a reducer fact in the parent session log;
+- the **`RunSubscription`** is workflow state on the target, replayed on restart;
+- the target's terminal-transition → subscriber-signal happens **in workflow
+  code**, so a restart replays it and re-signals idempotently;
+- the **timer** is a Temporal timer, durable by construction.
 
-The pending await is a durable workflow-state fact (and a session-log event), so
-a worker restart replays it and re-registers the watcher. The watcher is
-stateless beyond `(target, since_seq, until)`, all of which are in the persisted
-await record. The Temporal timer survives restart by construction. There is no
-in-memory-only wait state.
+This is the fix for the watcher-durability gap an earlier draft had ("an activity
+registers a watcher" — a completed activity does not rerun on replay): the watch
+is not an activity, it is the target workflow's own durable terminal handler.
 
 ## Part B: Sending Between Agents (`agent_send`)
 
@@ -266,9 +317,9 @@ There is no second transport.
 Two direction-locked tools (`agent_task` down, `agent_notify` up) bake a **tree**
 into the surface: every edge is parent->child or child->parent. But real agent
 structures are a **general graph**. A spawns B and C, then tells B to message C (a
-sibling edge), or arranges for C to report to A (which C's own parent might not
-be). With direction-locked tools, "B messages C" is not expressible and "C
-messages A" only works when A is literally C's parent.
+sibling edge), or arranges for C to report to A. With direction-locked tools, "B
+messages C" is not expressible and "C messages A" only works when A is literally
+C's parent.
 
 So P84 collapses inter-agent delivery into **one tool whose recipient is just a
 session you are allowed to reach** — the edge is data, not vocabulary:
@@ -306,7 +357,7 @@ and there is no separate agent identity in v1. So the Fleet surface uses
 **`session_id` everywhere** — no second `agent_id`-flavored name for the same
 value. (P83's shipped DTOs drifted into a mix of `target_agent_id` / `agent_id` /
 `from_agent_id`; that is being corrected to `session_id` across all agent tools —
-see "Naming Cleanup" below. P84 is written in the target convention.)
+see "Naming Cleanup". P84 is written in the target convention.)
 
 `to` is tagged (mirroring P83's `source` enum) so a real id named `parent` is
 never ambiguous:
@@ -321,57 +372,79 @@ never ambiguous:
 - `parent`: **convenience sugar** that resolves the caller's parent via the P83
   parent->child link, so a child need not carry its parent's id. It is *not* a
   privileged direction — just a named lookup of one edge. A root session sending
-  `to: parent` gets `status = not_reachable` (no parent edge), not an error.
+  `to: parent` gets `status = not_reachable`, not an error.
 
 ### Permission Is "Is There An Edge?", Not "Which Way Does It Point?"
 
 `agent_send` is permitted to any session the caller has a `session_link` to —
 **any direction, no up/down asymmetry**. The topology lives entirely in the link
-graph; the tool just rides the edges that exist. Concretely:
+graph; the tool just rides the edges that exist.
 
 - send is allowed iff a `session_link` connects caller and `target_session_id`
   (the spawn parent->child edge, or any other link that exists);
 - `kind` (`task | progress | question | result`) is **pure sender-chosen
-  framing** — the runtime never forces or rewrites it based on edge direction. A
-  peer may `task` a peer; a child may send a `result` up; a parent may ask a
-  `question` down. The receiver decides how to react.
+  framing** — the runtime never forces or rewrites it based on direction. A peer
+  may `task` a peer; a child may send a `result` up. The receiver decides how to
+  react.
 
-This is the deliberate consequence of treating the structure as a graph: there is
-no built-in notion of "subordinate must not command supervisor" in v1, because
-that is a *policy over edges*, not a property of the send tool. Hardening edges
-with directionality, command-vs-report rights, and per-relationship grants is the
-**P83-deferred capability-policy work**; v1 trusts a present edge, exactly as P83
-`agent_read` / `agent_cancel` already trust a named target id.
+There is no built-in "subordinate must not command supervisor" in v1, because
+that is a *policy over edges*, not a property of the send tool. Directional edge
+rights and per-relationship grants are the **P83-deferred capability-policy
+work**; v1 trusts a present edge, exactly as P83 `agent_read` / `agent_cancel`
+already trust a named target id.
 
 ### v1 Wires Only Spawn Edges (Graph Is Expressible, Not Yet Fully Reachable)
 
 The send *semantics* are graph-general, but v1 only auto-creates **one** kind of
-edge: the parent->child link on `agent_spawn`. So in v1 a caller can send to its
-spawned children and (via `to: parent`, or `report_back`) to its parent, but an
-A-arranged **B->C sibling** edge is not yet reachable: nothing in v1 installs a
-link from B to C.
-
-This is a *reachability* gap, not a design compromise — the moment a
+edge: the parent->child link on `agent_spawn`. So a caller can send to its spawned
+children and (via `to: parent` / `report_back`) to its parent, but an A-arranged
+**B->C sibling** edge is not yet reachable: nothing in v1 installs a link from B
+to C. This is a *reachability* gap, not a design compromise — the moment a
 link-installation action exists, arbitrary topologies light up with no change to
-`agent_send`. A v2 `agent_link` / spawn-time `links:` field (deferred) lets A
-install B->C and C->A edges so the supervisor composes the graph and the children
-just send along it. Listed in Deferred.
+`agent_send`. Listed in Deferred.
 
 ### Framing (`kind`) Tells The Receiver How To Read It
 
 The admitted run carries a `kind` (`task | progress | question | result`) and an
 origin marking it a Fleet send. The receiver reads `task` as new work and
 `progress` / `question` / `result` as an incoming report. This is the *only*
-semantic difference between "tasking" and "notifying" now — a sender-chosen field,
+semantic difference between "tasking" and "notifying" — a sender-chosen field,
 not a separate tool and not a direction the runtime infers.
+
+### Send Metadata Storage: A Text Envelope (No API Change)
+
+`RunStartParams.input` carries only `text` / `textRef` / `media`; it has no slot
+for `kind` / `payload`. v1 encodes them into a **structured envelope inside a
+single prepended text item**, which the receiver parses — so `agent_send` ships on
+the existing run-admission contract with **no `api` wire-type change**:
+
+```text
+input = [
+  text-item: envelope { fleet_send: { from_session_id, kind, payload? },
+                        text: "<the message>" },   // ALWAYS prepended, exactly one
+  ...any items/media from the caller's `input?`, unchanged, in order
+]
+```
+
+Composition rule, stated to avoid drift: the envelope is **always exactly one
+text item, prepended to the front of the run input.** If the `agent_send` caller
+also supplied a structured `input?` (multiple items, media), those follow the
+envelope item verbatim; the envelope never merges into or wraps them. A receiver
+parses the first item as the envelope and treats the remainder as ordinary input.
+`text` is the convenience case (no `input?`): it becomes the envelope's `text`
+field, and there are no trailing items.
+
+A first-class structured input item (`InputItem::AgentMessage { from, kind,
+payload }`) is the cleaner long-term shape but is deferred — it would touch `api`
+wire types, contract artifacts, and projection.
 
 ### Resolution And Idempotency
 
 The Fleet service resolves `to` to a recipient session id (`parent` via the link,
 `session` by id), checks a `session_link` edge connects caller and recipient
 (else `status = not_reachable`), then admits a `RequestRun` on it via the normal
-hosted run path, with input carrying `text` / `input` / `payload` and the
-`kind`/origin metadata. The recipient wakes as an ordinary new run.
+hosted run path with the envelope input and origin metadata. The recipient wakes
+as an ordinary new run.
 
 The recipient run's `submission_id` is derived from the sender
 session/run/turn/tool-call identity (P83's scheme), so a tool-activity retry
@@ -390,11 +463,10 @@ signalling uses admission directly.
 
 ### The Child Must Be *Told* To Report Back (`report_back`)
 
-Permission to message the parent already exists by construction: the spawn
-creates the parent->child edge, and `agent_send` may ride any edge. So
-`report_back` is not about *permission* — it is about *expectation*. A callback
-only happens if the child knows it is expected to make one, and when; otherwise a
-child with the fleet tools enabled simply might not think to report.
+Permission to message the parent already exists by construction: the spawn creates
+the parent->child edge, and `agent_send` may ride any edge. So `report_back` is
+not about *permission* — it is about *expectation*. A callback only happens if the
+child knows it is expected to make one, and when.
 
 `report_back` directive (optional on `agent_spawn`, and on an `agent_send` that
 kicks off a child's work):
@@ -406,32 +478,82 @@ report_back?  {
 }
 ```
 
-When present, the Fleet service, as it admits the child run:
+When present, the Fleet service **injects a report-back instruction** into the
+child's input — a short note like *"You are a subagent of <parent>. `agent_send
+{ to: parent }` when you finish (and if you hit a blocking question), with a
+concise result."* parameterized by `on` and `instructions`.
 
-1. **Ensures `agent_send` is enabled** on the child (it usually already is via the
-   `tools.fleet` gate; `report_back` makes the dependency explicit).
-2. **Injects a report-back instruction** into the child's input — a short note
-   like *"You are a subagent of <parent>. `agent_send { to: parent }` when you
-   finish (and if you hit a blocking question), with a concise result."*
-   parameterized by `on` and `instructions`.
-
-So the child learns both **how** (the tool, addressing `to: parent`) and **when**
-(the injected instruction). This makes Mode I (idle-parent callbacks) reliable
-instead of relying on the child's unprompted judgment.
+`report_back` is **instruction-injection only — it does not patch the child's tool
+config.** P83 deliberately inherits the source's config and avoids config
+patching, and `tools.fleet` today gates the whole Fleet surface at once. So the
+child has `agent_send` iff its inherited config already enables `tools.fleet`; if
+it does not, `report_back` simply has no tool to lean on. A narrower per-capability
+Fleet gate (e.g. a send-only sub-capability) is part of the P83-deferred policy
+work and is not introduced here.
 
 `report_back` is the *declared-cooperation* path. It is complementary to
-`agent_wait until=terminal`, the *observed* path (runtime watches the child's
-log, no child cooperation needed). A robust supervisor often uses both:
-`report_back` so the child can volunteer progress and questions, plus a terminal
-wait/observe as the backstop in case the child finishes without reporting.
+`agent_wait`, the *observed* path (the target fires on its own terminal, no child
+cooperation needed). A robust supervisor often uses both: `report_back` so the
+child can volunteer progress and questions, plus a terminal wait as the backstop
+in case the child finishes without reporting.
 
 ### Send + Wait Compose
 
-A `to: parent` `agent_send` lands as a new parent run — exactly the "new
-activity" an `agent_wait(until = activity)` is parked on. So a parent can spawn a
-child with `report_back`, `agent_wait` on it, and the child's send resolves the
-wait via the activity watcher — through the same admission/event spine, with no
-special wiring between the features.
+A child `agent_send { to: parent }` lands as a new parent run — so an **idle**
+parent (Mode I) wakes and reacts. A parent that instead used `agent_wait`
+(Mode W) is resolved by the target's terminal, independently of whether the child
+also sent anything. The two are complementary, through the same admission/run
+spine, with no special wiring.
+
+## agent_send Is Async; Synchronous Is Composed
+
+`agent_send` admits a run and returns the handle immediately. It does **not** grow
+a blocking `wait` flag. "Send work and get the result back" is composed:
+
+```text
+agent_send { to: { kind: session, target_session_id: id }, text } -> { run_id }
+agent_wait { target_session_id: id, run_id } -> { outcome, run }
+```
+
+This keeps blocking semantics in exactly one place (`agent_wait` / the deferred
+tool call) — one parked-turn code path to reason about, test, and make crash-safe.
+
+## Are We Overbuilding? (`wait` vs `send` vs future `subscribe`)
+
+Three mechanisms could look redundant. They are not — they differ on push-vs-pull
+and on duration, and they share machinery rather than duplicating it:
+
+| | direction | initiated by | fires | carries |
+|---|---|---|---|---|
+| `agent_send` | push | sender | when the sender decides | a message / payload |
+| `agent_wait` | pull (block) | waiter | target run terminal | nothing — just unblocks |
+| `agent_subscribe` (future) | pull (standing) | subscriber | every terminal | a terminal notification |
+
+Key point: **`agent_wait` and a future `agent_subscribe` are the same
+`RunSubscription` primitive at different durations** — `agent_wait` is "subscribe,
+block, fire-once, unsubscribe"; a future tool would be "subscribe persistently, do
+not block, get woken each time." We build one primitive now (fire-once) and expose
+the standing-subscription variant later — additively, not as a second mechanism.
+`agent_send` is the distinct **push** path (a child volunteering content) vs. the
+**pull** lifecycle notifications. They are complementary; a child that finishes and
+wants to hand back a *result* uses `agent_send`, while a parent that just needs to
+know *when* uses the subscription. So: not overbuilt, provided we ship only
+`agent_wait` (fire-once) now and keep the `RunSubscription` surface minimal.
+
+## Tool Surface After P84
+
+```text
+agent_spawn    (P83)            create a child; optional report_back
+agent_list     (P83)
+agent_read     (P83)
+agent_cancel   (P83)
+agent_send     (P84, replaces agent_task) deliver to parent | session(target_session_id)
+agent_wait     (P84)            block until a target run is terminal (or timeout)
+```
+
+Six tools (P83's `agent_task` folds into `agent_send`), all still gated behind the
+per-session `tools.fleet` flag (P83 "Policy"). No generic session/run API is
+exposed.
 
 ## Naming Cleanup: `session_id` Everywhere (Applies To All Agent Tools)
 
@@ -439,8 +561,7 @@ A Fleet agent *is* a session — `agent_id == session_id`, with no separate agen
 identity in v1 (P83 "Identity Model"). The shipped P83 DTOs nonetheless drifted
 into a second, `agent_id`-flavored name for the same value on the
 address-an-existing-agent surface. P84 standardizes the whole Fleet surface on
-**`session_id`** and corrects the existing P83 tools to match, so the model never
-sees two names for one identity.
+**`session_id`** and corrects the existing P83 tools to match.
 
 ### Rule
 
@@ -462,202 +583,193 @@ sees two names for one identity.
 
 This is a **wire-contract change**: it touches the strict JSON schemas, the
 committed contract artifacts under `interop/contract/`, the hosted Fleet executor
-in `crates/temporal-server/src/fleet.rs` that builds these DTOs, and the
-deterministic Fleet tests that assert field names. Regenerate artifacts via
-`cargo run -p api --bin export-schema` and update P83's tool-contract prose
-(`agent_task` etc.) to the new names. P84's `agent_send` / `agent_wait` are
-authored in the target convention from the start, so no P84 rename is needed.
-
-This cleanup is bundled into P84's S1 (contracts) so the rename and the new tools
-land in one contract revision rather than two.
-
-## agent_send Is Async; Synchronous Is Composed
-
-`agent_send` admits a run and returns the handle immediately. It does **not**
-grow a blocking `wait` flag. "Send work and get the result back" is composed:
-
-```text
-agent_send { to: { kind: session, target_session_id: id }, text } -> { run_id }
-agent_wait { target_session_id: id, run_id, until: terminal } -> { outcome, run }
-```
-
-This keeps blocking semantics in exactly one place (`agent_wait` /
-`AwaitExternal`) — one parked-turn code path to reason about, test, and make
-crash-safe, not two.
-
-## Tool Surface After P84
-
-```text
-agent_spawn    (P83)            create a child; optional report_back
-agent_list     (P83)
-agent_read     (P83)
-agent_cancel   (P83)
-agent_send     (P84, replaces agent_task) deliver to parent | session(target_session_id)
-agent_wait     (P84)            block on target terminal/activity/timeout
-```
-
-Six tools (P83's `agent_task` folds into `agent_send`), all still gated behind
-the per-session `tools.fleet` flag (P83
-"Policy"). No generic session/run API is exposed.
+in `crates/temporal-server/src/fleet.rs`, and the deterministic Fleet tests that
+assert field names. Regenerate artifacts via `cargo run -p api --bin
+export-schema` and update P83's tool-contract prose. Bundled into P84's S1 so the
+rename and the new tools land in one contract revision.
 
 ## Implementation Map
 
-- `crates/tools/src/fleet/`: add the `agent_send` DTO (tagged `to` enum, `kind`,
-  `text`/`input`/`payload`) — replacing P83's `agent_task` — and the `agent_wait`
-  DTO; add the optional `report_back` directive to `agent_spawn`. Strict schemas
-  (deny unknown fields; do not advertise selectors not yet implemented), tool
-  names, `ToolSpecBundle` entries. No Postgres/Temporal deps here.
+- `crates/tools/src/fleet/`: add the `agent_send` DTO (tagged `to`, `kind`,
+  `text`/`input`/`payload`) replacing `agent_task`, and the `agent_wait` DTO
+  (`target_session_id`, required `run_id`, optional `timeout_ms`); add the optional
+  `report_back` directive to `agent_spawn`. Strict schemas; tool names;
+  `ToolSpecBundle` entries. No Postgres/Temporal deps here.
 - `crates/engine/src/core/`:
-  - Add `CoreAgentAction::AwaitExternal` (`drive.rs:25`) and a planner path that
-    emits it when an `agent_wait` tool call is admitted instead of running it as a
-    tool batch. The parked tool call's result is *deferred*, not produced inline.
-  - Add `CoreAgentCommand::ResumeAwait` (`components/command.rs:46` neighborhood)
-    and `drive.resume_await(...)` (sibling of `resume_tool_batch`,
-    `drive.rs:162`) that emits the deferred tool result for the original
-    `agent_wait` call and continues the turn.
-  - Add durable run/turn events for "await opened" / "await resolved" so the
-    parked state replays. Keep these reducer facts minimal.
-  - Engine stays deterministic: no I/O, no timers, no watching. It only emits
-    `AwaitExternal` and consumes `ResumeAwait`.
+  - Add the **generic deferred-tool** primitive: a tool result may be
+    `ToolOutcome::Deferred { call_id, resume_directive }` where `resume_directive`
+    is an **opaque runtime blob** the engine stores/replays but never interprets; a
+    new `ResumeToolCall { call_id, result }` command (sibling of
+    `resume_tool_batch`, `drive.rs:162`) resolves it and continues the turn; durable
+    defer/resume reducer facts so the parked turn replays. No Fleet-specific or
+    wait-specific logic in the engine.
 - `crates/temporal-workflow/src/workflow.rs`:
-  - Handle `AwaitExternal`: record the pending await in workflow state, start a
-    Temporal timer for `timeout_ms`, and request the runtime watcher (via an
-    activity) — without blocking the admission loop.
-  - On timer fire, queue a local `ResumeAwait { outcome: timeout }`.
-  - `ResumeAwait` arrives through the existing `submit_admission` signal or the
-    local timer path and flows into `drive.resume_await`.
+  - **Widen the main loop** (`:69`) from `wait_condition(pending_admissions)` to a
+    **select over `pending_admissions` and any armed `ctx.timer`**, draining a
+    pending-resolution queue into `ResumeToolCall` admissions each pass.
+  - **`RunSubscription`** support (`once`-only): `subscribe_run` /
+    `unsubscribe_run` signals; store subscriptions in workflow state; the
+    `subscribe_run` handler **fires immediately and does not store** if the named
+    run is already terminal; on a run reaching terminal, iterate matching
+    subscriptions, `ctx.external_workflow(subscriber).signal(..)`, and remove them.
+    Generic — not tied to Fleet.
+  - **`agent_wait` parking**: on the deferred `agent_wait` call, decode the opaque
+    directive, `subscribe_run` on the target, record an active wait, optionally arm
+    `ctx.timer(timeout_ms)`, and resolve via `ResumeToolCall` when the `resume_wait`
+    signal or the timer wins (then `unsubscribe_run`).
+  - **Continue-as-new guard**: extend `can_continue_as_new_at_idle` (`:724`) to be
+    false while any `RunSubscription` or active wait exists, so idle compaction
+    never drops parked-wait state.
 - `crates/temporal-server/src/`:
-  - `fleet.rs`: `agent_send` resolution — resolve the `to` enum (`parent` via the
-    P83 link, `session` by `target_session_id`), check a `session_link` edge exists
-    between caller and recipient (else `not_reachable`; no up/down classification),
-    admit a recipient run with derived `submission_id` and sender-chosen
-    `kind`/origin framing; `report_back` application on `agent_spawn` (inject the
-    report-back instruction, ensure `agent_send` enabled); the await **watcher**
-    task that long-polls the target and signals `ResumeAwait` to the parent
-    workflow. The existing `agent_task` path becomes a plain `agent_send` to a child.
-  - `worker/session_tools.rs`: route `agent_send` and `agent_wait` like the other
-    Fleet tools; `agent_wait` produces an `AwaitExternal` plan rather than a normal
-    tool result, so the fast-path must recognize it does not return inline.
-  - `gateway/service/workflow.rs`: reuse `signal_submit_admission` for both the
-    `agent_send` recipient run and the `ResumeAwait` resume.
+  - `fleet.rs`: `agent_send` resolution (`parent` via link / `session` by id),
+    `session_link` edge check (else `not_reachable`), envelope-encode
+    `kind`/`payload`, admit recipient run with derived `submission_id`;
+    `report_back` instruction injection (no config patch); the `agent_wait`
+    deferral that triggers the workflow subscribe/timer path. The old `agent_task`
+    path becomes a plain `agent_send` to a child.
+  - `worker/session_tools.rs`: route `agent_send` and `agent_wait`; `agent_wait`
+    returns `Deferred` rather than an inline result, so the batch path must handle
+    a deferred call.
+  - `gateway/service/workflow.rs`: reuse `signal_submit_admission` for the
+    `agent_send` recipient run and `ResumeToolCall`.
 
 ## Implementation Steps
 
 ### S1. Tool Contracts + Naming Cleanup
-- `agent_send` DTO (tagged `to`, `kind`, payloads) replacing `agent_task`;
-  `agent_wait` DTO; optional `report_back` on `agent_spawn`. Strict schemas; add
-  to the Fleet bundle.
+- `agent_send` DTO (tagged `to`, `kind`, payload envelope) replacing `agent_task`;
+  `agent_wait` DTO (required `run_id`, optional `timeout_ms`, terminal-only);
+  optional `report_back` on `agent_spawn`. Strict schemas; Fleet bundle.
 - Naming cleanup: rename `target_agent_id` / `agent_id` / `source_agent_id` /
-  `from_agent_id` / `to_agent_id` to their `session_id` forms across the existing
-  P83 tools (see "Naming Cleanup"), updating the Fleet executor DTOs, P83 prose,
-  and tests.
-- Regenerate committed contract artifacts (`cargo run -p api --bin export-schema`)
-  once, covering both the new tools and the rename.
+  `from_agent_id` / `to_agent_id` to their `session_id` forms across the P83 tools.
+- Regenerate committed contract artifacts once, covering both.
 
-### S2. Engine Await Primitive
-- `AwaitExternal` action, `ResumeAwait` command, `resume_await`, durable
-  await-open/await-resolve events, deferred tool-result emission for the parked
-  `agent_wait` call. Deterministic; no runtime deps.
+### S2. Engine Deferred-Tool Primitive
+- `ToolOutcome::Deferred { call_id, resume_directive }` (opaque directive blob),
+  `ResumeToolCall` command, `drive.resume_tool_call`, durable defer/resume reducer
+  facts. Generic; no Fleet/wait coupling — the engine never decodes the directive.
+  Engine unit tests for defer → resume → turn-continues, duplicate-resume no-op,
+  and inline tools unaffected.
 
-### S3. Workflow Await Handling
-- Handle `AwaitExternal` (record pending, start timeout timer, request watcher);
-  feed `ResumeAwait` (signal or timer) into `resume_await`; replay-safe pending
-  await on restart.
+### S3. Workflow Select Loop + RunSubscription + Wait
+- Widen the main loop to select over `pending_admissions` and armed timers, with a
+  pending-resolution queue drained into `ResumeToolCall`.
+- `subscribe_run` / `unsubscribe_run` signals and a `once`-only subscription
+  registry in session workflow state; **subscribe-after-terminal** fires
+  immediately without storing; terminal fan-out via `external_workflow().signal`
+  then remove. (No `persistent` mode in v1.)
+- Continue-as-new guard: block idle compaction while a subscription or active wait
+  exists.
+- `agent_wait` parking: decode the directive, subscribe on the target, optional
+  `ctx.timer`, resolve via `ResumeToolCall`; timer-vs-signal race resolved by
+  `call_id`.
 
-### S4. Runtime Watcher + agent_send + report_back
-- The watcher task (long-poll target, signal `ResumeAwait` on terminal/activity).
-- `agent_send`: resolve `to` (`parent` | `session(target_session_id)`), require a
-  `session_link` edge (any direction; `not_reachable` otherwise), admit recipient
-  run with derived submission id and sender-chosen `kind`/origin framing (a send to
-  a child subsumes the old `agent_task`).
-- `report_back` application: inject the report-back instruction into the child
-  input and ensure `agent_send` is enabled.
-- Idempotency by `await_id` and recipient `submission_id`.
+### S4. agent_send + report_back
+- `agent_send`: resolve `to`, require a `session_link` edge (`not_reachable`
+  else), envelope-encode `kind`/`payload`, admit recipient run with derived
+  submission id; the `to: child` case subsumes the old `agent_task`.
+- `report_back`: inject the report-back instruction into the child input (no
+  config patch).
+- Idempotency by recipient `submission_id`.
 
 ### S5. Tests
-- Engine unit: `AwaitExternal` is planned for `agent_wait`; `ResumeAwait`
-  resolves the exact parked call; duplicate `ResumeAwait` is a no-op; a wait on an
-  already-terminal run resolves immediately without parking.
-- Workflow: timeout timer fires `ResumeAwait { timeout }` when `timeout_ms` is
-  set; **no timer is armed when it is absent** and the await stays pending
-  indefinitely until the watcher resolves it; watcher resume beats the timer (and
-  vice versa) deterministically by `await_id`; pending await replays after a
-  simulated restart.
-- `agent_send` routing: `to: session` to a spawned child admits a recipient run
-  (the old `agent_task` behavior); `to: parent` resolves the link and admits a
-  parent run; `to: parent` from a root session returns `not_reachable`; a send to a
-  session the caller has **no** link to returns `not_reachable`; `kind` is carried
-  through verbatim (a child may send `kind: task` up — not rejected in v1).
-- Mode W in-process: parent spawns a child, `agent_wait(until=terminal)`, child
-  completes, parent's wait resolves with the child's run summary.
-- Mode I in-process: parent spawns a child with `report_back`, parent run goes
-  **idle** (no `agent_wait`), child `agent_send { to: parent }` admits a fresh
-  parent run that wakes the idle parent.
-- `report_back`: a child spawned with `report_back` has `agent_send` enabled and a
-  report-back instruction in its input; a child spawned without it has no injected
-  instruction (but, having the spawn edge, could still send to its parent if it
-  chose to).
-- Cross-mode: a child `agent_send { to: parent }` also resolves a parent
-  `agent_wait(until=activity)`.
-- Idempotency: a retried `agent_send` does not double-admit the recipient run;
-  retried `agent_wait` re-registers the same `await_id`.
-- Ignored Temporal/Postgres live: real parent workflow parks on `agent_wait`,
-  child workflow completes, parent resumes; separately, a child
-  `agent_send { to: parent }` wakes the parent workflow with a new run.
+- Engine unit: a deferred tool call parks the turn; `ResumeToolCall` resolves the
+  exact call and the turn continues; duplicate `ResumeToolCall` is a no-op; a tool
+  that returns inline is unaffected.
+- Workflow subscription: `subscribe_run` fires exactly once on terminal and is
+  removed; **`subscribe_run` against an already-terminal run fires immediately and
+  stores nothing** (the race); terminal fan-out re-emits idempotently after a
+  simulated restart; a registered subscription (or active wait) **blocks
+  continue-as-new** at idle.
+- Workflow loop/timer: the select resolves a `resume_wait` signal and an armed
+  `ctx.timer` into `ResumeToolCall`; `ctx.timer` fires `timeout` only when
+  `timeout_ms` is set, and **no timer is armed when it is absent** (indefinite
+  wait); timer-vs-signal race resolves exactly once by `call_id`.
+- `agent_wait` outcomes: requires `run_id`; already-terminal → `terminal`
+  immediately without parking; unknown run / errored-or-unreachable target →
+  `error`; closing session → `terminal` (last status) or `error`; never a hang.
+- `agent_send` routing: `to: session` to a spawned child admits a run (old
+  `agent_task` behavior); `to: parent` resolves the link and admits a parent run;
+  `to: parent` from a root session and a send with no link edge both return
+  `not_reachable`; `kind`/`payload` round-trip through the envelope; retried send
+  does not double-admit.
+- `report_back`: injects the instruction into the child input; does **not** mutate
+  child tool config.
+- Mode I in-process: parent spawns a child with `report_back`, goes idle, child
+  `agent_send { to: parent }` wakes it as a fresh run.
+- Mode W in-process: parent spawns a child, `agent_wait(run_id)`, child completes,
+  the target's `RunSubscription` resolves the parent's parked turn with the run
+  summary.
+- Ignored Temporal/Postgres live: a real parent workflow parks on `agent_wait`, a
+  child workflow completes and signals the parent via `RunSubscription`, the parent
+  resumes; separately, a child `agent_send { to: parent }` wakes an idle parent.
 
 ## Deferred
 
-- Fan-in waits (`agent_wait` on a *set* of targets, resolve on first/all). v1
-  waits on one target; a supervisor loops.
+- **`until = activity` / mid-run progress waits.** v1 waits for terminal only;
+  intermittent progress is covered by polling `agent_read` or by Mode I
+  (child-pushed `agent_send`). A later `agent_wait` mode (or `agent_subscribe`)
+  can wake on activity, with the per-waiter event cursor living on the watcher
+  side.
+- **`agent_subscribe` (standing `RunSubscription`).** v1 is fire-once only — no
+  `mode` field is stored or tested. A future tool adds a persistent variant (fire
+  on every run terminal, survive continue-as-new) so an agent can stand-subscribe
+  to another's run lifecycle (every completion, goal-mode terminal, etc.); adding
+  it is additive to the v1 record.
 - **Graph wiring / link installation.** A v2 `agent_link` action (or a spawn-time
   `links:` field) that installs `session_link` edges to named peers, so a
-  supervisor A can wire B->C and C->A and have those sends reachable. v1 only
-  auto-creates the spawn parent->child edge, so A-arranged sibling sends are
-  *expressible but not yet reachable*. This is the main follow-up that turns the
-  flat send model into the full arbitrary-topology graph.
-- Directional edge policy: command-vs-report rights, "subordinate may not task
-  supervisor", per-relationship grants — the P83-deferred capability work. v1
-  permits a send along any existing edge with sender-chosen `kind`.
+  supervisor can wire B->C and C->A and make those sends reachable. v1
+  auto-creates only the spawn parent->child edge.
+- **Directional edge policy.** Command-vs-report rights, "subordinate may not task
+  supervisor", per-relationship grants, and a narrower send-only Fleet
+  sub-capability — the P83-deferred capability work.
+- **First-class `InputItem::AgentMessage`** typed send metadata (replacing the v1
+  text envelope) — touches `api` wire types, contract artifacts, and projection.
 - Structured typed message channels / schemas beyond `text` + opaque `payload`.
 - Back-pressure / rate limits on `agent_send` (reuse the messaging rate-cap shape
   if abuse appears).
-- Push notifications to external channels on child terminal (that is the
-  messaging outbox's job, wired separately).
-- Cancelling a parked await explicitly (today: it resolves on timeout or the
-  parent is cancelled). A dedicated cancel can come with capability policy.
+- Cancelling a parked `agent_wait` explicitly (today: it resolves on timeout, on
+  terminal, or when the parent is cancelled).
 
 ## Acceptance Criteria
 
-- **Both wait modes work.** A parent can either (Mode I) go idle and be woken by a
-  child callback, or (Mode W) `agent_wait` to park its current turn — and both
-  hold for hours-to-days at the cost of an idle workflow (plus, for a bounded
-  Mode W wait, one durable timer).
-- A parent can `agent_wait` on a child and the parent turn parks without holding a
-  Temporal worker slot or a tool activity. There is no ~6-minute ceiling.
-- `agent_wait` resolves on the target run reaching terminal state, on new target
-  activity past a cursor, or on timeout. **`timeout_ms` is optional with no
-  default; when omitted the wait is indefinite** (no timer armed). Timeout is a
-  normal outcome, not an error, and returns a cursor for chaining.
-- The await survives a worker restart (durable pending await + replayable timer +
-  stateless watcher).
-- The entire Fleet surface uses **`session_id`** for agent identity; no tool
-  exposes `agent_id` / `target_agent_id` / `*_agent_id`. The P83 tools are renamed
-  accordingly in the same contract revision.
-- Inter-agent delivery is **one tool, `agent_send`**, addressing any session the
-  caller has a `session_link` to — **no up/down asymmetry**; `kind` is
-  sender-chosen framing. It replaces P83's `agent_task` and the child->parent
-  callback. The topology is the link graph, not the tool vocabulary.
-- A send to a session with no link edge returns `not_reachable`; v1 auto-wires
-  only the spawn parent->child edge, and arbitrary A-wired B->C topologies are
-  expressible by the design and unlocked by the deferred link-installation action.
-- `report_back` makes a child *report* (injects the when/how instruction); the
-  child can reach its parent regardless, because the spawn edge exists.
-- A child can `agent_send { to: parent }`; the parent wakes as a normal new run
-  (Mode I) or resolves a parked `agent_wait(until=activity)` (cross-mode); a root
-  session's `to: parent` returns `not_reachable` instead of erroring.
+- **Both wait modes work and hold for hours-to-days cheaply.** Mode I (idle +
+  child `agent_send`) and Mode W (`agent_wait`) each cost only an idle workflow
+  (Mode W plus at most one durable timer), and survive worker restart by replay.
+- `agent_wait` parks the parent turn without holding a Temporal worker slot or a
+  blocking tool activity; there is no ~6-minute ceiling.
+- `agent_wait` resolves with `outcome ∈ { terminal, timeout, error }` — never a
+  raised tool failure for those states. `timeout_ms` is optional with no default
+  (indefinite when omitted); timeout is a normal outcome.
+- `agent_wait` **requires `run_id`**; already-terminal / unknown / closing /
+  errored targets resolve immediately with the defined `outcome`, never a hang.
+  The **subscribe-after-terminal** race is closed (registering against an
+  already-terminal run fires immediately).
+- Waiting uses a **generic, fire-once `RunSubscription`** on the target workflow
+  that any subscriber workflow can use — not an `agent_wait`-specific or
+  session-only construct. No `persistent` mode is stored or tested in v1.
+- The parent **workflow loop selects over admissions and armed timers** (not
+  `pending_admissions` alone), draining resolutions into `ResumeToolCall`. A
+  registered subscription or active wait **blocks idle continue-as-new** so parked
+  state is never dropped.
+- The engine gains only a **generic deferred-tool** primitive
+  (`Deferred { call_id, opaque resume_directive }` + `ResumeToolCall`); the engine
+  never decodes the directive, no Fleet or wait semantics live in the deterministic
+  core, and no DB table or reconciler process is introduced.
+- Crash safety is by Temporal replay alone: deferred-call reducer fact, target
+  workflow subscription state, in-workflow terminal fan-out, and durable timer.
+- The entire Fleet surface uses **`session_id`**; no tool exposes `agent_id` /
+  `target_agent_id` / `*_agent_id`. The P83 tools are renamed in the same contract
+  revision.
+- Inter-agent delivery is **one tool, `agent_send`**, addressing any linked session
+  (`to: parent | session(target_session_id)`), `kind` sender-chosen, no up/down
+  asymmetry; it replaces P83's `agent_task` and the child->parent callback.
+  `kind`/`payload` ride a text envelope with no `api` wire change.
+- A send to a session with no link edge returns `not_reachable`; arbitrary A-wired
+  B->C topologies are expressible by the design and unlocked by the deferred
+  link-installation action.
+- `report_back` injects the report-back instruction only and does **not** patch
+  child tool config.
 - `agent_send` is async; synchronous behavior is composed from `agent_send` +
   `agent_wait`.
-- No wall-clock, blocking, or watcher logic lives in `engine`; resumption is
-  always a `ResumeAwait` admission delivered by the runtime or a workflow timer.
 - The model-visible Fleet surface stays small (6 tools) and exposes no generic
   session/run API.
