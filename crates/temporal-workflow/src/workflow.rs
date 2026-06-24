@@ -4,11 +4,11 @@ use std::{collections::BTreeMap, time::UNIX_EPOCH};
 use engine::{
     ApplyEvent, BlobRef, CommandCodec, CommandError, ContextEntryInput, ContextEntryKey,
     ContextEntryKind, CoreAgentAction, CoreAgentCodec, CoreAgentCommand, CoreAgentDrive,
-    CoreAgentDriveError, CoreAgentEntry, CoreAgentEventKind, CoreAgentState, CoreApplyEvent,
-    ENVIRONMENT_ACTIVE_CONTEXT_KEY, ENVIRONMENT_CATALOG_CONTEXT_KEY, LlmGenerationRequest,
-    RunEvent, RunStatus, SKILL_CATALOG_CONTEXT_KEY, SessionId, SessionPosition, SubmissionId,
-    ToolCallStatus, ToolEvent, ToolInvocationBatchRequest, ToolInvocationBatchResult,
-    ToolInvocationResult, VFS_CATALOG_CONTEXT_KEY,
+    CoreAgentDriveError, CoreAgentEntry, CoreAgentEventKind, CoreAgentState, CoreAgentStatus,
+    CoreApplyEvent, ENVIRONMENT_ACTIVE_CONTEXT_KEY, ENVIRONMENT_CATALOG_CONTEXT_KEY,
+    LlmGenerationRequest, RunEvent, RunStatus, SKILL_CATALOG_CONTEXT_KEY, SessionId,
+    SessionPosition, SubmissionId, ToolCallStatus, ToolEvent, ToolInvocationBatchRequest,
+    ToolInvocationBatchResult, ToolInvocationResult, VFS_CATALOG_CONTEXT_KEY,
 };
 use futures::{FutureExt, pin_mut, select};
 use temporalio_macros::{workflow, workflow_methods};
@@ -1225,7 +1225,10 @@ async fn drive_until_idle(
                 let outcome = call_tool_invoke_batch(ctx, request).await?;
                 action = drive.resume_tool_batch_outcome(outcome, workflow_time_ms(ctx))?;
             }
-            CoreAgentAction::Idle | CoreAgentAction::Closed => return Ok(()),
+            CoreAgentAction::Idle | CoreAgentAction::Closed => {
+                maybe_close_on_terminal(ctx, args, drive).await?;
+                return Ok(());
+            }
             CoreAgentAction::StepLimitReached => {
                 // Deferred for G4: step limits can happen after partial run progress.
                 // Keep treating them as workflow failures until resume semantics are explicit.
@@ -1233,6 +1236,34 @@ async fn drive_until_idle(
             }
         }
     }
+}
+
+async fn maybe_close_on_terminal(
+    ctx: &mut WorkflowContext<AgentSessionWorkflow>,
+    args: &AgentSessionArgs,
+    drive: &mut CoreAgentDrive,
+) -> anyhow::Result<()> {
+    if !should_close_on_terminal(args, drive.state()) {
+        return Ok(());
+    }
+    match admit_and_append_command(ctx, drive, CoreAgentCommand::CloseSession).await? {
+        CommandAdmissionResult::Accepted => Ok(()),
+        CommandAdmissionResult::Rejected(failure) => {
+            anyhow::bail!(
+                "close_on_terminal CloseSession was rejected: {}",
+                failure.message
+            )
+        }
+    }
+}
+
+fn should_close_on_terminal(args: &AgentSessionArgs, state: &CoreAgentState) -> bool {
+    args.close_on_terminal
+        && state.lifecycle.status == CoreAgentStatus::Open
+        && !state.runs.completed.is_empty()
+        && state.runs.active.is_none()
+        && state.runs.queued.is_empty()
+        && !state.context.pending_compaction
 }
 
 async fn append_events(
@@ -1719,6 +1750,33 @@ mod tests {
     }
 
     #[test]
+    fn close_on_terminal_requires_idle_open_session_with_completed_run() {
+        let args = agent_session_args_with_close_on_terminal(true);
+        let mut state = CoreAgentState::new();
+        assert!(!should_close_on_terminal(&args, &state));
+
+        state.lifecycle.status = CoreAgentStatus::Open;
+        assert!(!should_close_on_terminal(&args, &state));
+
+        state.runs.completed.push(RunRecord {
+            run_id: RunId::new(1),
+            status: RunStatus::Completed,
+            submission_id: None,
+            submission_digest: None,
+            output_ref: None,
+            failure: None,
+        });
+        assert!(should_close_on_terminal(&args, &state));
+        assert!(!should_close_on_terminal(
+            &agent_session_args_with_close_on_terminal(false),
+            &state
+        ));
+
+        state.lifecycle.status = CoreAgentStatus::Closed;
+        assert!(!should_close_on_terminal(&args, &state));
+    }
+
+    #[test]
     fn continue_as_new_policy_uses_server_suggestion() {
         assert!(should_continue_as_new(true, 1, Some(10)));
     }
@@ -1769,6 +1827,21 @@ mod tests {
 
     fn admission(command: DynamicCommand) -> AgentAdmission {
         AgentAdmission { command }
+    }
+
+    fn agent_session_args_with_close_on_terminal(close_on_terminal: bool) -> AgentSessionArgs {
+        AgentSessionArgs {
+            session_id: SessionId::new("session_test"),
+            session_config: crate::default_session_config(engine::ModelSelection {
+                api_kind: engine::ProviderApiKind::OpenAiResponses,
+                provider_id: "openai".to_owned(),
+                model: "gpt-test".to_owned(),
+            }),
+            instructions_ref: None,
+            max_steps_per_input: None,
+            continue_as_new_history_threshold: None,
+            close_on_terminal,
+        }
     }
 
     fn run_subscription(

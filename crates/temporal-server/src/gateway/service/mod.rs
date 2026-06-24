@@ -584,6 +584,7 @@ impl GatewayAgentApi {
         &self,
         session_id: SessionId,
         session_config: SessionConfig,
+        close_on_terminal: bool,
     ) -> AgentSessionArgs {
         AgentSessionArgs {
             session_id,
@@ -591,7 +592,80 @@ impl GatewayAgentApi {
             instructions_ref: self.instructions_ref.clone(),
             max_steps_per_input: self.max_steps_per_input,
             continue_as_new_history_threshold: self.continue_as_new_history_threshold,
+            close_on_terminal,
         }
+    }
+
+    pub(crate) async fn start_session_for_fleet(
+        &self,
+        session_id: &SessionId,
+        close_on_terminal: bool,
+    ) -> Result<(), AgentApiError> {
+        self.start_session_internal(
+            SessionStartParams {
+                session_id: Some(session_id.as_str().to_owned()),
+                cwd: None,
+                config: None,
+            },
+            close_on_terminal,
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn start_session_internal(
+        &self,
+        params: SessionStartParams,
+        close_on_terminal: bool,
+    ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError> {
+        let SessionStartParams {
+            session_id,
+            cwd,
+            config,
+        } = params;
+        let client_supplied_id = session_id.is_some();
+        let session_id = match session_id {
+            Some(session_id) => SessionId::try_new(session_id).map_err(|error| {
+                AgentApiError::invalid_request(format!("invalid session id: {error}"))
+            })?,
+            None => self.allocate_session_id(),
+        };
+        let session_config = self.session_config_for_start(config.clone()).await?;
+        self.write_session_metadata(
+            session_id.clone(),
+            GatewaySessionMetadata {
+                cwd,
+                ..self.session_metadata(&session_id)?
+            },
+        )?;
+        let started = self
+            .client
+            .start_workflow(
+                AgentSessionWorkflow::run,
+                self.workflow_args(session_id.clone(), session_config, close_on_terminal),
+                WorkflowStartOptions::new(self.task_queue.clone(), session_id.as_str()).build(),
+            )
+            .await
+            .map_err(map_workflow_start_error);
+        match started {
+            Ok(_) => {}
+            Err(error)
+                if matches!(error.kind, AgentApiErrorKind::Conflict) && client_supplied_id =>
+            {
+                let loaded = self.load_session_state(&session_id).await?;
+                if loaded.state.lifecycle.status == CoreAgentStatus::Closed {
+                    let session = self.project_session_by_id(&session_id).await?;
+                    return Ok(AgentApiOutcome::new(SessionStartResponse { session }));
+                }
+                let session = self.wait_for_open_session(&session_id).await?;
+                return Ok(AgentApiOutcome::new(SessionStartResponse { session }));
+            }
+            Err(error) => return Err(error),
+        }
+        self.wait_for_open_session(&session_id).await?;
+        let loaded = self.load_session_state(&session_id).await?;
+        let session = self.configure_session_toolset(&session_id, &loaded).await?;
+        Ok(AgentApiOutcome::new(SessionStartResponse { session }))
     }
 
     fn projector(&self) -> CoreAgentProjector<'_> {
@@ -719,54 +793,7 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: SessionStartParams,
     ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError> {
-        let SessionStartParams {
-            session_id,
-            cwd,
-            config,
-        } = params;
-        let client_supplied_id = session_id.is_some();
-        let session_id = match session_id {
-            Some(session_id) => SessionId::try_new(session_id).map_err(|error| {
-                AgentApiError::invalid_request(format!("invalid session id: {error}"))
-            })?,
-            None => self.allocate_session_id(),
-        };
-        let session_config = self.session_config_for_start(config.clone()).await?;
-        self.write_session_metadata(
-            session_id.clone(),
-            GatewaySessionMetadata {
-                cwd,
-                ..self.session_metadata(&session_id)?
-            },
-        )?;
-        let started = self
-            .client
-            .start_workflow(
-                AgentSessionWorkflow::run,
-                self.workflow_args(session_id.clone(), session_config),
-                WorkflowStartOptions::new(self.task_queue.clone(), session_id.as_str()).build(),
-            )
-            .await
-            .map_err(map_workflow_start_error);
-        match started {
-            Ok(_) => {}
-            Err(error)
-                if matches!(error.kind, AgentApiErrorKind::Conflict) && client_supplied_id =>
-            {
-                let loaded = self.load_session_state(&session_id).await?;
-                if loaded.state.lifecycle.status == CoreAgentStatus::Closed {
-                    let session = self.project_session_by_id(&session_id).await?;
-                    return Ok(AgentApiOutcome::new(SessionStartResponse { session }));
-                }
-                let session = self.wait_for_open_session(&session_id).await?;
-                return Ok(AgentApiOutcome::new(SessionStartResponse { session }));
-            }
-            Err(error) => return Err(error),
-        }
-        self.wait_for_open_session(&session_id).await?;
-        let loaded = self.load_session_state(&session_id).await?;
-        let session = self.configure_session_toolset(&session_id, &loaded).await?;
-        Ok(AgentApiOutcome::new(SessionStartResponse { session }))
+        self.start_session_internal(params, false).await
     }
 
     async fn update_session(

@@ -600,7 +600,11 @@ mod tests {
 
     #[async_trait]
     impl FleetChildRuntime for FakeFleetRuntime {
-        async fn start_session(&self, _session_id: &SessionId) -> Result<(), api::AgentApiError> {
+        async fn start_session(
+            &self,
+            _session_id: &SessionId,
+            _close_on_terminal: bool,
+        ) -> Result<(), api::AgentApiError> {
             Ok(())
         }
 

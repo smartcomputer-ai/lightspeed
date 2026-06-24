@@ -15,6 +15,8 @@ pub struct AgentSessionArgs {
     pub instructions_ref: Option<BlobRef>,
     pub max_steps_per_input: Option<u32>,
     pub continue_as_new_history_threshold: Option<u32>,
+    #[serde(default)]
+    pub close_on_terminal: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

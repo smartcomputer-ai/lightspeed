@@ -102,18 +102,25 @@ pub enum EnvironmentPolicy {
 pub struct AgentSpawnLifecycle {
     #[serde(default = "default_run_immediately")]
     pub run_immediately: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub close_on_terminal: bool,
 }
 
 impl Default for AgentSpawnLifecycle {
     fn default() -> Self {
         Self {
             run_immediately: true,
+            close_on_terminal: false,
         }
     }
 }
 
 fn default_run_immediately() -> bool {
     true
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -526,7 +533,12 @@ fn spawn_input_schema() -> Value {
             "lifecycle": {
                 "type": "object",
                 "properties": {
-                    "run_immediately": { "type": "boolean", "default": true }
+                    "run_immediately": { "type": "boolean", "default": true },
+                    "close_on_terminal": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "When true, close the spawned child session after its started run reaches a terminal state and no queued work remains."
+                    }
                 },
                 "additionalProperties": false,
                 "default": { "run_immediately": true }
@@ -825,6 +837,20 @@ mod tests {
         .expect("decode args");
 
         assert_eq!(args.report_back.expect("report_back").instructions, None);
+    }
+
+    #[test]
+    fn spawn_accepts_close_on_terminal_lifecycle() {
+        let args: AgentSpawnArgs = serde_json::from_value(json!({
+            "input": "do work",
+            "lifecycle": {
+                "close_on_terminal": true
+            }
+        }))
+        .expect("decode args");
+
+        assert!(args.lifecycle.run_immediately);
+        assert!(args.lifecycle.close_on_terminal);
     }
 
     #[test]

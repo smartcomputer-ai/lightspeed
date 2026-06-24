@@ -6,7 +6,7 @@ use api::{
     AgentApiError, AgentApiService, EventCursor, InputItem, MediaKind, RunCancelParams,
     RunStartParams, RunStatus as ApiRunStatus, SessionCloseParams, SessionEnvironmentListParams,
     SessionEnvironmentListResponse, SessionEventsReadParams, SessionEventsReadResponse,
-    SessionReadParams, SessionStartParams, SessionView,
+    SessionReadParams, SessionView,
 };
 use api_projection::{MAX_EVENT_PAGE_LIMIT, read_all_session_entries, replay_core_agent_state};
 use async_trait::async_trait;
@@ -40,6 +40,8 @@ use vfs::{
     CreateVfsWorkspaceRecord, VfsCatalogError, VfsMountSource, VfsMountStore, VfsPath,
     VfsWorkspaceId, VfsWorkspaceStore,
 };
+
+use crate::gateway::GatewayAgentApi;
 
 pub const FLEET_CHILD_RELATIONSHIP: &str = "fleet_child";
 const DEFAULT_AGENT_LIST_LIMIT: usize = 20;
@@ -122,7 +124,9 @@ impl FleetService {
                 .await?;
         }
 
-        self.runtime.start_session(&child_session_id).await?;
+        self.runtime
+            .start_session(&child_session_id, args.lifecycle.close_on_terminal)
+            .await?;
         self.upsert_spawn_link(
             &context,
             &source_session_id,
@@ -183,7 +187,9 @@ impl FleetService {
             });
         }
         self.load_session_required(&target_session_id).await?;
-        self.runtime.start_session(&target_session_id).await?;
+        self.runtime
+            .start_session(&target_session_id, false)
+            .await?;
         let input = send_run_input(&context, &args)?;
         let run_id = self
             .runtime
@@ -247,7 +253,7 @@ impl FleetService {
                 ));
                 continue;
             }
-            if let Err(error) = self.runtime.start_session(&target_session_id).await {
+            if let Err(error) = self.runtime.start_session(&target_session_id, false).await {
                 results.push(wait_error_result(
                     &target_session_id,
                     run_id,
@@ -883,7 +889,11 @@ pub struct FleetInvocationContext {
 
 #[async_trait]
 pub trait FleetChildRuntime: Send + Sync {
-    async fn start_session(&self, session_id: &SessionId) -> Result<(), AgentApiError>;
+    async fn start_session(
+        &self,
+        session_id: &SessionId,
+        close_on_terminal: bool,
+    ) -> Result<(), AgentApiError>;
 
     async fn start_run(
         &self,
@@ -917,24 +927,24 @@ pub trait FleetChildRuntime: Send + Sync {
 
 #[derive(Clone)]
 pub struct AgentApiFleetRuntime {
-    api: Arc<dyn AgentApiService>,
+    api: Arc<GatewayAgentApi>,
 }
 
 impl AgentApiFleetRuntime {
-    pub fn new(api: Arc<dyn AgentApiService>) -> Self {
+    pub fn new(api: Arc<GatewayAgentApi>) -> Self {
         Self { api }
     }
 }
 
 #[async_trait]
 impl FleetChildRuntime for AgentApiFleetRuntime {
-    async fn start_session(&self, session_id: &SessionId) -> Result<(), AgentApiError> {
+    async fn start_session(
+        &self,
+        session_id: &SessionId,
+        close_on_terminal: bool,
+    ) -> Result<(), AgentApiError> {
         self.api
-            .start_session(SessionStartParams {
-                session_id: Some(session_id.as_str().to_owned()),
-                cwd: None,
-                config: None,
-            })
+            .start_session_for_fleet(session_id, close_on_terminal)
             .await?;
         Ok(())
     }
@@ -1260,6 +1270,11 @@ fn validate_spawn_args(args: &AgentSpawnArgs) -> Result<(), AgentApiError> {
     if args.environment != EnvironmentPolicy::Share {
         return Err(AgentApiError::invalid_request(
             "agent_spawn environment policy must be share",
+        ));
+    }
+    if args.lifecycle.close_on_terminal && !args.lifecycle.run_immediately {
+        return Err(AgentApiError::invalid_request(
+            "agent_spawn lifecycle.close_on_terminal requires lifecycle.run_immediately",
         ));
     }
     Ok(())
@@ -1969,7 +1984,7 @@ mod tests {
 
     #[derive(Default)]
     struct FakeRuntime {
-        started_sessions: Mutex<Vec<SessionId>>,
+        started_sessions: Mutex<Vec<(SessionId, bool)>>,
         started_runs: Mutex<Vec<(SessionId, Vec<InputItem>, SubmissionId)>>,
         sessions: Mutex<BTreeMap<SessionId, SessionView>>,
         events: Mutex<BTreeMap<SessionId, Vec<api::SessionEventView>>>,
@@ -1980,11 +1995,15 @@ mod tests {
 
     #[async_trait]
     impl FleetChildRuntime for FakeRuntime {
-        async fn start_session(&self, session_id: &SessionId) -> Result<(), AgentApiError> {
+        async fn start_session(
+            &self,
+            session_id: &SessionId,
+            close_on_terminal: bool,
+        ) -> Result<(), AgentApiError> {
             self.started_sessions
                 .lock()
                 .expect("lock")
-                .push(session_id.clone());
+                .push((session_id.clone(), close_on_terminal));
             Ok(())
         }
 
@@ -2139,10 +2158,36 @@ mod tests {
 
         assert_eq!(
             runtime.started_sessions.lock().expect("lock").as_slice(),
-            &[links[0].to_session_id.clone()]
+            &[(links[0].to_session_id.clone(), false)]
         );
         assert_eq!(output.child_run_id.as_deref(), Some("run_1"));
         assert_eq!(output.status, "created");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn spawn_close_on_terminal_is_passed_to_child_runtime() {
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let source = open_source_session(&sessions).await;
+        let runtime = Arc::new(FakeRuntime::default());
+        let service = FleetService::new(sessions, runtime.clone());
+
+        service
+            .spawn(
+                context(source),
+                serde_json::from_value(json!({
+                    "input": "one-off task",
+                    "lifecycle": {
+                        "close_on_terminal": true
+                    }
+                }))
+                .expect("spawn args"),
+            )
+            .await
+            .expect("spawn");
+
+        let started = runtime.started_sessions.lock().expect("lock");
+        assert_eq!(started.len(), 1);
+        assert!(started[0].1);
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -2374,7 +2419,7 @@ mod tests {
         assert_eq!(output.status, AgentSendStatus::Delivered);
         assert_eq!(
             runtime.started_sessions.lock().expect("lock").as_slice(),
-            &[child.clone()]
+            &[(child.clone(), false)]
         );
         let started_runs = runtime.started_runs.lock().expect("lock");
         assert_eq!(started_runs.len(), 1);

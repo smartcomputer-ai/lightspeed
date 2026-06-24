@@ -982,6 +982,9 @@ async fn run_fleet_send_report_back_live_client(
     let executor = FleetToolExecutor::new(blobs.clone(), service);
     let spawn_args = serde_json::json!({
         "input": "REPORT_TO_PARENT live task",
+        "lifecycle": {
+            "close_on_terminal": true
+        },
         "report_back": {
             "instructions": "Send exactly: mode i live result"
         }
@@ -1033,6 +1036,7 @@ async fn run_fleet_send_report_back_live_client(
     .await?;
     let parent_output = final_assistant_text(&parent_run).expect("parent assistant output");
     assert_eq!(parent_output, "parent received mode i live result");
+    wait_for_session_status(api.as_ref(), &child_session_id, SessionStatus::Closed).await?;
 
     let parent_status = client
         .get_workflow_handle::<AgentSessionWorkflow>(session_id.as_str())

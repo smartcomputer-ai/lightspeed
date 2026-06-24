@@ -8,7 +8,8 @@
 ## Fleet (sub-agents)
 - [x] [P82](p82-session-graph-fork-clone.md) — session graph foundation: clone, fork (by-reference), and links in the store
 - [x] [P83](p83-fleet-subagent-control-plane.md) — agent-facing Fleet control plane (spawn/task/read/list/cancel) on top of P82
-- [ ] [P84](p84-fleet-wait-and-callbacks.md) — implementation landed: `agent_send`, generic deferred tool batches, `RunSubscription` workflow primitives, and `agent_wait` DTO/preflight/parking/resume; ignored live/replay coverage for parked waits remains pending
+- [x] [P84](p84-fleet-wait-and-callbacks.md) — first cut complete: `agent_send`, generic deferred tool batches, `RunSubscription` workflow primitives, `agent_wait` DTO/preflight/parking/resume, and live Mode I/Mode W coverage
+- [x] [Appendix: Fleet one-off child lifecycle](appendix-fleet-one-off-lifecycle.md) — `agent_spawn.lifecycle.close_on_terminal` for ephemeral delegation sessions
 - [ ] agent profiles
 - [ ] start new sessions with profiles and ad-hoc profiles
 - [ ] run coding agent (CC or Codex) on sandbox
