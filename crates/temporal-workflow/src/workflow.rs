@@ -1,3 +1,5 @@
+mod environment_job_waits;
+
 use std::time::Duration;
 use std::{collections::BTreeMap, time::UNIX_EPOCH};
 
@@ -18,17 +20,18 @@ use temporalio_sdk::{
 };
 
 use crate::{
-    ActiveWaitRecord, ActiveWaitSubscription, AgentActiveRunSummary, AgentAdmission,
-    AgentAdmissionFailure, AgentAdmissionFailureKind, AgentCompletedRunSummary,
+    ActiveEnvironmentJobWait, ActiveWaitRecord, ActiveWaitSubscription, AgentActiveRunSummary,
+    AgentAdmission, AgentAdmissionFailure, AgentAdmissionFailureKind, AgentCompletedRunSummary,
     AgentQueuedRunSummary, AgentSessionArgs, AgentSessionStatus, AgentWaitDirective,
     AgentWaitHandleResult, AgentWaitHandleStatus, AgentWaitMode, AgentWaitOutcome, AgentWaitOutput,
-    AgentWaitRunResult, AppendEventsRequest, CreateOrLoadSessionRequest,
-    DEFAULT_CONTINUE_AS_NEW_HISTORY_THRESHOLD, FLEET_AGENT_WAIT_DIRECTIVE_KIND,
-    LlmGenerateActivityRequest, PendingRunTerminalNotification, PendingToolBatchResume,
-    PreprocessRunInputActivityRequest, PreprocessRunInputFailure, PreprocessRunInputFailureKind,
-    PreprocessRunInputOutcome, PutBlobRequest, RunSubscription, RunTerminalNotification,
-    SkillCatalogRefreshActivityRequest, ToolInvokeBatchActivityRequest, WorkflowActivities,
-    activity_options, default_instructions,
+    AgentWaitRunResult, AppendEventsRequest, CheckEnvironmentJobWaitActivityRequest,
+    CheckEnvironmentJobWaitActivityResult, CreateOrLoadSessionRequest,
+    DEFAULT_CONTINUE_AS_NEW_HISTORY_THRESHOLD, EnvironmentJobChanged,
+    FLEET_AGENT_WAIT_DIRECTIVE_KIND, LlmGenerateActivityRequest, PendingRunTerminalNotification,
+    PendingToolBatchResume, PreprocessRunInputActivityRequest, PreprocessRunInputFailure,
+    PreprocessRunInputFailureKind, PreprocessRunInputOutcome, PutBlobRequest, RunSubscription,
+    RunTerminalNotification, SkillCatalogRefreshActivityRequest, ToolInvokeBatchActivityRequest,
+    WorkflowActivities, activity_options, default_instructions,
 };
 
 const DEFAULT_MAX_STEPS_PER_INPUT: usize = 256;
@@ -43,6 +46,7 @@ pub struct AgentSessionWorkflow {
     pending_tool_batch_resumes: Vec<PendingToolBatchResume>,
     pending_terminal_notifications: Vec<PendingRunTerminalNotification>,
     active_waits: BTreeMap<u64, ActiveWaitRecord>,
+    active_environment_job_waits: BTreeMap<u64, ActiveEnvironmentJobWait>,
     run_subscriptions: BTreeMap<String, RunSubscription>,
     run_submissions: BTreeMap<u64, Option<SubmissionId>>,
     admission_failures: Vec<AgentAdmissionFailure>,
@@ -61,6 +65,7 @@ impl Default for AgentSessionWorkflow {
             pending_tool_batch_resumes: Vec::new(),
             pending_terminal_notifications: Vec::new(),
             active_waits: BTreeMap::new(),
+            active_environment_job_waits: BTreeMap::new(),
             run_subscriptions: BTreeMap::new(),
             run_submissions: BTreeMap::new(),
             admission_failures: Vec::new(),
@@ -92,6 +97,10 @@ impl AgentSessionWorkflow {
                 return Err(anyhow::anyhow!("{error}").into());
             }
             if let Err(error) = process_satisfied_active_waits(ctx).await {
+                record_error(ctx, &error);
+                return Err(anyhow::anyhow!("{error}").into());
+            }
+            if let Err(error) = environment_job_waits::process_due(ctx).await {
                 record_error(ctx, &error);
                 return Err(anyhow::anyhow!("{error}").into());
             }
@@ -151,6 +160,15 @@ impl AgentSessionWorkflow {
         self.record_run_terminal(notification);
     }
 
+    #[signal(name = "environment_job_changed")]
+    pub fn environment_job_changed(
+        &mut self,
+        _ctx: &mut SyncWorkflowContext<Self>,
+        changed: EnvironmentJobChanged,
+    ) {
+        self.record_environment_job_changed(changed);
+    }
+
     #[query(name = "status")]
     pub fn status(&self, _ctx: &WorkflowContextView) -> AgentSessionStatus {
         self.status_snapshot()
@@ -188,6 +206,10 @@ impl AgentSessionWorkflow {
         for wait in self.active_waits.values_mut() {
             mark_wait_terminal_arrival(wait, &notification);
         }
+    }
+
+    pub fn record_environment_job_changed(&mut self, changed: EnvironmentJobChanged) {
+        environment_job_waits::record_changed(self, changed);
     }
 
     fn queue_terminal_notifications_for_entries(&mut self, entries: &[CoreAgentEntry]) {
@@ -230,7 +252,7 @@ impl AgentSessionWorkflow {
             initialized: self.initialized,
             pending_admissions: self.pending_admissions.len(),
             pending_tool_batch_resumes: self.pending_tool_batch_resumes.len(),
-            active_waits: self.active_waits.len(),
+            active_waits: self.active_waits.len() + self.active_environment_job_waits.len(),
             run_subscriptions: self.run_subscriptions.len(),
             active_run: self
                 .core_state
@@ -1015,7 +1037,7 @@ async fn wait_for_workflow_work(ctx: &mut WorkflowContext<AgentSessionWorkflow>)
         return;
     }
 
-    let Some(deadline_ms) = nearest_active_wait_deadline_ms(ctx) else {
+    let Some(deadline_ms) = nearest_workflow_wake_ms(ctx) else {
         ctx.wait_condition(|state| workflow_state_has_immediate_work(state))
             .await;
         return;
@@ -1046,8 +1068,7 @@ enum WorkflowWake {
 fn workflow_has_immediate_work(ctx: &WorkflowContext<AgentSessionWorkflow>, now: u64) -> bool {
     ctx.state(|state| {
         workflow_state_has_immediate_work(state)
-            || nearest_active_wait_deadline_ms_for_state(state)
-                .is_some_and(|deadline| deadline <= now)
+            || nearest_workflow_wake_ms_for_state(state).is_some_and(|deadline| deadline <= now)
     })
 }
 
@@ -1059,18 +1080,25 @@ fn workflow_state_has_immediate_work(state: &AgentSessionWorkflow) -> bool {
             .active_waits
             .values()
             .any(|wait| active_wait_nontimer_resolution(wait).is_some())
+        || environment_job_waits::has_immediate_work(state)
 }
 
-fn nearest_active_wait_deadline_ms(ctx: &WorkflowContext<AgentSessionWorkflow>) -> Option<u64> {
-    ctx.state(nearest_active_wait_deadline_ms_for_state)
+fn nearest_workflow_wake_ms(ctx: &WorkflowContext<AgentSessionWorkflow>) -> Option<u64> {
+    ctx.state(nearest_workflow_wake_ms_for_state)
 }
 
-fn nearest_active_wait_deadline_ms_for_state(state: &AgentSessionWorkflow) -> Option<u64> {
-    state
+fn nearest_workflow_wake_ms_for_state(state: &AgentSessionWorkflow) -> Option<u64> {
+    let fleet_deadline = state
         .active_waits
         .values()
         .filter_map(|wait| wait.deadline_ms)
-        .min()
+        .min();
+    let job_deadline = environment_job_waits::nearest_wake_ms(state);
+    match (fleet_deadline, job_deadline) {
+        (Some(left), Some(right)) => Some(left.min(right)),
+        (Some(value), None) | (None, Some(value)) => Some(value),
+        (None, None) => None,
+    }
 }
 
 async fn flush_pending_terminal_notifications(
@@ -1387,6 +1415,12 @@ async fn append_events(
         .iter()
         .filter_map(|entry| wait_directive_for_event(&entry.event.kind).transpose())
         .collect::<anyhow::Result<Vec<_>>>()?;
+    let deferred_environment_job_waits = entries
+        .iter()
+        .filter_map(|entry| {
+            environment_job_waits::directive_for_event(&entry.event.kind).transpose()
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
     ctx.state_mut(|state| -> anyhow::Result<()> {
         apply_entries(
             &CoreApplyEvent,
@@ -1401,6 +1435,9 @@ async fn append_events(
     })?;
     for wait in deferred_waits {
         install_deferred_wait(ctx, wait).await?;
+    }
+    for wait in deferred_environment_job_waits {
+        environment_job_waits::install(ctx, wait);
     }
     Ok(entries)
 }
@@ -1452,6 +1489,23 @@ async fn call_tool_invoke_batch(
     ctx.start_activity(
         WorkflowActivities::tool_invoke_batch,
         ToolInvokeBatchActivityRequest { request },
+        activity_options(),
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!("{error}"))
+}
+
+async fn check_environment_job_wait(
+    ctx: &mut WorkflowContext<AgentSessionWorkflow>,
+    wait: ActiveEnvironmentJobWait,
+    observed_at_ms: u64,
+) -> anyhow::Result<CheckEnvironmentJobWaitActivityResult> {
+    ctx.start_activity(
+        WorkflowActivities::check_environment_job_wait,
+        CheckEnvironmentJobWaitActivityRequest {
+            wait,
+            observed_at_ms,
+        },
         activity_options(),
     )
     .await
@@ -1532,6 +1586,7 @@ fn workflow_state_allows_continue_as_new(state: &AgentSessionWorkflow) -> bool {
         && state.pending_tool_batch_resumes.is_empty()
         && state.pending_terminal_notifications.is_empty()
         && state.active_waits.is_empty()
+        && state.active_environment_job_waits.is_empty()
         && state.run_subscriptions.is_empty()
 }
 
@@ -1546,6 +1601,7 @@ fn workflow_state_is_closed_and_quiescent(state: &AgentSessionWorkflow) -> bool 
         && state.pending_tool_batch_resumes.is_empty()
         && state.pending_terminal_notifications.is_empty()
         && state.active_waits.is_empty()
+        && state.active_environment_job_waits.is_empty()
         && state.run_subscriptions.is_empty()
         && state.core_state.runs.active.is_none()
         && state.core_state.runs.queued.is_empty()
@@ -1827,6 +1883,38 @@ mod tests {
     }
 
     #[test]
+    fn environment_job_wait_wake_hint_marks_matching_wait_due() {
+        let mut workflow = AgentSessionWorkflow::default();
+        workflow
+            .active_environment_job_waits
+            .insert(9, active_environment_job_wait(9, 42_000));
+
+        workflow.record_environment_job_changed(EnvironmentJobChanged {
+            session_id: "session_1".to_owned(),
+            env_id: "env_1".to_owned(),
+            job_id: "job_1".to_owned(),
+        });
+
+        let wait = workflow
+            .active_environment_job_waits
+            .get(&9)
+            .expect("active job wait");
+        assert_eq!(wait.next_check_at_ms, 0);
+        assert!(workflow_state_has_immediate_work(&workflow));
+    }
+
+    #[test]
+    fn environment_job_wait_advance_clamps_to_deadline() {
+        let mut wait = active_environment_job_wait(9, 42_000);
+        wait.deadline_ms = Some(43_000);
+
+        environment_job_waits::advance(&mut wait, 42_500);
+
+        assert_eq!(wait.poll_attempt, 1);
+        assert_eq!(wait.next_check_at_ms, 43_000);
+    }
+
+    #[test]
     fn continue_as_new_is_blocked_by_waits_subscriptions_and_pending_work() {
         let mut workflow = AgentSessionWorkflow::default();
         assert!(workflow_state_allows_continue_as_new(&workflow));
@@ -1854,6 +1942,12 @@ mod tests {
         assert!(!workflow_state_allows_continue_as_new(&workflow));
         workflow.active_waits.clear();
 
+        workflow
+            .active_environment_job_waits
+            .insert(9, active_environment_job_wait(9, 42_000));
+        assert!(!workflow_state_allows_continue_as_new(&workflow));
+        workflow.active_environment_job_waits.clear();
+
         workflow.subscribe_to_run(run_subscription("sub_1", "token_1", 1));
         assert!(!workflow_state_allows_continue_as_new(&workflow));
         workflow.run_subscriptions.clear();
@@ -1879,6 +1973,12 @@ mod tests {
             .insert(7, active_wait_record(7, "token_1"));
         assert!(!workflow_state_is_closed_and_quiescent(&workflow));
         workflow.active_waits.clear();
+
+        workflow
+            .active_environment_job_waits
+            .insert(9, active_environment_job_wait(9, 42_000));
+        assert!(!workflow_state_is_closed_and_quiescent(&workflow));
+        workflow.active_environment_job_waits.clear();
 
         workflow.subscribe_to_run(run_subscription("sub_1", "token_1", 1));
         assert!(!workflow_state_is_closed_and_quiescent(&workflow));
@@ -2039,6 +2139,30 @@ mod tests {
                 },
             }],
             deadline_ms: None,
+        }
+    }
+
+    fn active_environment_job_wait(
+        batch_id: u64,
+        next_check_at_ms: u64,
+    ) -> ActiveEnvironmentJobWait {
+        ActiveEnvironmentJobWait {
+            batch_id: ToolBatchId::new(batch_id),
+            run_id: RunId::new(10),
+            turn_id: TurnId::new(20),
+            call_id: engine::ToolCallId::new("call_job_wait"),
+            handles: vec![crate::EnvironmentJobHandle {
+                session_id: "session_1".to_owned(),
+                env_id: "env_1".to_owned(),
+                job_id: "job_1".to_owned(),
+            }],
+            mode: crate::EnvironmentJobWaitMode::All,
+            terminal_policy: crate::EnvironmentJobWaitTerminalPolicy::AnyTerminal,
+            output_bytes: Some(1024),
+            include_artifacts: false,
+            deadline_ms: None,
+            next_check_at_ms,
+            poll_attempt: 0,
         }
     }
 

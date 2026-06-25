@@ -21,9 +21,12 @@ use host_protocol::{
     shared::{CURRENT_PROTOCOL_VERSION, HostConnectionSpec, HostTransport, JobId},
 };
 use messaging::OutboxStore;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use store_pg::PgStore;
+use temporal_workflow::{
+    ENVIRONMENT_JOB_WAIT_DIRECTIVE_KIND, EnvironmentJobHandle, EnvironmentJobWaitDirective,
+    EnvironmentJobWaitMode, EnvironmentJobWaitTerminalPolicy,
+};
 use tools::{
     environment::jobs::{
         JOB_CANCEL_TOOL_NAME, JOB_READ_TOOL_NAME, JOB_START_TOOL_NAME, JOB_WAIT_TOOL_NAME,
@@ -48,20 +51,6 @@ use crate::{
     environment::{RuntimeEnvironment, SessionEnvironmentManager},
     fleet::{FleetChildRuntime, FleetService, FleetToolExecutor},
 };
-
-pub const ENVIRONMENT_JOB_WAIT_DIRECTIVE_KIND: &str = "lightspeed.environment.job_wait";
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EnvironmentJobWaitDirective {
-    pub handles: Vec<JobHandle>,
-    pub mode: JobWaitMode,
-    pub terminal_policy: JobWaitTerminalPolicy,
-    pub output_bytes: Option<usize>,
-    pub include_artifacts: bool,
-    pub deadline_ms: Option<u64>,
-    pub next_check_at_ms: u64,
-    pub poll_attempt: u32,
-}
 
 #[derive(Clone)]
 pub struct SessionTools {
@@ -305,6 +294,20 @@ impl SessionTools {
             .environment_manager_for_session(&request.session_id)
             .await?;
         let args: JobWaitArgs = self.read_tool_args(call).await?;
+        if args.jobs.is_empty() {
+            let result = failed_result(
+                self.blobs.as_ref(),
+                call.call_id.clone(),
+                "job_wait requires at least one job",
+            )
+            .await?;
+            return Ok(ToolBatchOutcome::completed(ToolInvocationBatchResult {
+                run_id: request.run_id,
+                turn_id: request.turn_id,
+                batch_id: request.batch_id,
+                results: vec![result],
+            }));
+        }
         match self
             .preflight_environment_job_wait(&request, call, &environments, active_env_target, args)
             .await?
@@ -621,23 +624,21 @@ impl SessionTools {
             let tool_result = self.succeeded_tool_result(call, &result, visible).await?;
             return Ok(EnvironmentJobWaitPreflight::Completed(tool_result));
         }
-        let now = now_unix_ms()?;
-        let deadline_ms = args.timeout_ms.map(|timeout| now.saturating_add(timeout));
         let handles = result
             .jobs
             .iter()
             .filter_map(|entry| entry.handle.clone())
+            .map(environment_job_handle_from_tool_handle)
             .collect::<Vec<_>>();
         Ok(EnvironmentJobWaitPreflight::Deferred(
             EnvironmentJobWaitDirective {
+                call_id: call.call_id.clone(),
                 handles,
-                mode: args.mode,
-                terminal_policy: args.terminal_policy,
+                mode: environment_job_wait_mode(args.mode),
+                terminal_policy: environment_job_wait_terminal_policy(args.terminal_policy),
+                timeout_ms: args.timeout_ms,
                 output_bytes: args.output_bytes,
                 include_artifacts: args.include_artifacts,
-                deadline_ms,
-                next_check_at_ms: now.saturating_add(2_000),
-                poll_attempt: 0,
             },
         ))
     }
@@ -1159,6 +1160,30 @@ fn handle_from_record(record: &JobHandleRecord) -> JobHandle {
         session_id: record.session_id.as_str().to_owned(),
         env_id: record.env_id.as_str().to_owned(),
         job_id: record.job_id.clone(),
+    }
+}
+
+fn environment_job_handle_from_tool_handle(handle: JobHandle) -> EnvironmentJobHandle {
+    EnvironmentJobHandle {
+        session_id: handle.session_id,
+        env_id: handle.env_id,
+        job_id: handle.job_id.as_str().to_owned(),
+    }
+}
+
+fn environment_job_wait_mode(mode: JobWaitMode) -> EnvironmentJobWaitMode {
+    match mode {
+        JobWaitMode::All => EnvironmentJobWaitMode::All,
+        JobWaitMode::Any => EnvironmentJobWaitMode::Any,
+    }
+}
+
+fn environment_job_wait_terminal_policy(
+    policy: JobWaitTerminalPolicy,
+) -> EnvironmentJobWaitTerminalPolicy {
+    match policy {
+        JobWaitTerminalPolicy::AnyTerminal => EnvironmentJobWaitTerminalPolicy::AnyTerminal,
+        JobWaitTerminalPolicy::AllSucceeded => EnvironmentJobWaitTerminalPolicy::AllSucceeded,
     }
 }
 

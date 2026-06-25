@@ -2,9 +2,12 @@
 
 **Status**
 - Proposed 2026-06-25.
-- G1-G4 implemented 2026-06-25 with the revised v1 shape:
+- G1-G5 implemented 2026-06-25 with the revised v1 shape:
   namespace-scoped provider jobs, optional per-job `queue_key`, explicit
   dependencies, no `deck_id`/group id, and no model-provided idempotency key.
+  G5 adds Temporal-owned parked `job_wait` polling, absolute workflow
+  deadlines, a short provider-read check activity, wake-hint signal plumbing,
+  and continue-as-new blocking while environment job waits are active.
 - Builds on **P75-P81 (Environments)** for the `fs`/`env` namespace split,
   active environment projection, provider registry, host protocol, and
   `host-bridge`.
@@ -491,7 +494,7 @@ Temporal workflow                  = parked wait state and timers
 The provider owns:
 
 - dependency scheduling;
-- serial-lane ordering;
+- queue-key ordering;
 - process start/exit/cancel;
 - retained stdout/stderr;
 - whether a job survived a bridge/provider restart;
@@ -924,11 +927,17 @@ Job handle records must still avoid accidental leakage:
 
 ### G5. Workflow Wait Integration
 
+- Implemented 2026-06-25. The workflow owns active environment job waits,
+  records only durable wait metadata, wakes on absolute poll/deadline times,
+  calls `check_environment_job_wait`, and resumes the original parked tool
+  batch when the wait is ready or timed out. Provider wake hints are accepted
+  through `environment_job_changed` and force a fresh read; they are not treated
+  as authoritative job state.
 - Add a `lightspeed.environment.job_wait` resume directive.
-- Refactor `crates/temporal-workflow/src/workflow.rs` before adding job waits:
-  keep the logic in workflow code, but split the existing Fleet
-  wait/subscription machinery and new environment job wait machinery into
-  focused modules instead of continuing to grow the single workflow file.
+- Split the environment job wait machinery into
+  `crates/temporal-workflow/src/workflow/environment_job_waits.rs`; the main
+  workflow loop owns generic wake selection and the existing Fleet
+  wait/subscription path remains in `workflow.rs`.
 - Add workflow-local `ActiveEnvironmentJobWait` state with absolute
   `deadline_ms?` and `next_check_at_ms`.
 - Add a short `check_environment_job_wait` activity that resolves handles,
