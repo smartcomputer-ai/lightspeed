@@ -1,9 +1,5 @@
 import { readFile } from "node:fs/promises";
-import type {
-  RemoteMcpApprovalPolicy,
-  SessionConfigInput,
-  VfsMountAccess,
-} from "@lightspeed/agent-client";
+import type { InlineAgentProfile, ProfileSource } from "@lightspeed/agent-client";
 import type { GroupActivation, ReplyToMode } from "./policy.js";
 
 export interface LightspeedBridgeConfig {
@@ -26,48 +22,6 @@ export interface BridgeRuntimeConfig {
   roomBudget: number;
 }
 
-/// One workspace/snapshot to mount into a recipe's sessions. The core
-/// discovers `.lightspeed/prompts/` instructions and the skill catalog under
-/// workspace mounts, so a recipe configures prompts and skills purely by what
-/// it mounts; the bridge never activates skills itself.
-export interface RecipeMount {
-  mountPath: string;
-  source: { workspaceId: string } | { snapshotRef: string };
-  access: VfsMountAccess;
-}
-
-/// One MCP server to link into a recipe's sessions. The server must already be
-/// created and authenticated (`mcp/servers/create`); the recipe references it
-/// by id and passes the link surface through unchanged.
-export interface RecipeMcpLink {
-  serverId: string;
-  serverLabel?: string;
-  toolId?: string;
-  allowedTools?: string[];
-  approval?: RemoteMcpApprovalPolicy;
-  authGrantId?: string;
-  deferLoading?: boolean;
-}
-
-/// One execution environment to attach into a recipe's sessions. The provider
-/// must already be online; the bridge binds an existing provider target.
-export interface RecipeEnvironment {
-  envId: string;
-  providerId: string;
-  targetId: string;
-  activate: boolean;
-}
-
-/// A named provisioning recipe applied once when a bound session is first
-/// created: start with `config` (model + tools), mount workspaces/snapshots,
-/// link MCP servers, then attach/activate execution environments.
-export interface SessionRecipe {
-  config?: SessionConfigInput;
-  mounts: RecipeMount[];
-  mcp: RecipeMcpLink[];
-  environments?: RecipeEnvironment[];
-}
-
 export type BindingScope = "direct" | "group";
 export type BindingHandleMatch = string | string[];
 
@@ -82,13 +36,13 @@ export interface BindingMatch {
   scope?: BindingScope;
 }
 
-/// A rule mapping matched conversations to a recipe and a session key.
+/// A rule mapping matched conversations to a profile and a session key.
 /// Bindings are evaluated top-to-bottom, first match wins.
 export interface BindingRule {
   match: BindingMatch;
-  /// Recipe name from `recipes`. Omitted/unknown means the default recipe
-  /// (no mounts, no mcp, messaging tool only).
-  recipe?: string;
+  /// Agent profile source for matched conversations. A string is treated as a
+  /// named profile id; an object is passed through as a ProfileSource.
+  profile?: ProfileSource;
   /// Stable key used to derive the bound session id. Conversations sharing a
   /// key share a session. Omitted means the bridge derives a per-conversation
   /// key, so each conversation gets its own session.
@@ -132,21 +86,16 @@ export interface MessagingBridgeConfig {
   store: {
     path: string;
   };
-  recipes: Record<string, SessionRecipe>;
   bindings: BindingRule[];
   telegram?: TelegramBridgeConfig;
   whatsapp?: WhatsAppBridgeConfig;
 }
 
-/// Defaults applied to a recipe mount when `mountPath`/`access` are omitted.
-const DEFAULT_MOUNT_PATH = "/workspace";
-const DEFAULT_MOUNT_ACCESS: VfsMountAccess = "readWrite";
-
 type PartialConfig = Partial<{
   lightspeed: Partial<LightspeedBridgeConfig>;
   runtime: Partial<BridgeRuntimeConfig>;
   store: Partial<{ path: string }>;
-  recipes: Record<string, unknown>;
+  recipes: unknown;
   bindings: unknown[];
   telegram: Partial<TelegramBridgeConfig>;
   whatsapp: Partial<WhatsAppBridgeConfig>;
@@ -181,8 +130,10 @@ export async function loadBridgeConfig(env: NodeJS.ProcessEnv = process.env): Pr
     ),
     roomBudget: parsePositiveInt(env.BRIDGE_ROOM_BUDGET, fileConfig.runtime?.roomBudget ?? 50),
   };
-  const recipes = parseRecipes(fileConfig.recipes);
-  const bindings = parseBindings(fileConfig.bindings, recipes);
+  if (fileConfig.recipes !== undefined) {
+    throw new Error("recipes are no longer supported; use bindings[].profile");
+  }
+  const bindings = parseBindings(fileConfig.bindings);
   const telegramToken = env.TELEGRAM_BOT_TOKEN ?? fileConfig.telegram?.botToken ?? "";
   const telegramEnabled =
     parseBoolean(env.TELEGRAM_ENABLED, fileConfig.telegram?.enabled ?? Boolean(telegramToken));
@@ -194,7 +145,6 @@ export async function loadBridgeConfig(env: NodeJS.ProcessEnv = process.env): Pr
     store: {
       path: env.BRIDGE_STATE_PATH ?? fileConfig.store?.path ?? ".bridge-state.json",
     },
-    recipes,
     bindings,
   };
   if (telegramEnabled) {
@@ -277,13 +227,13 @@ export interface ChannelAccessConfig {
 }
 
 /// Everything the runtime needs from config for one inbound message: whether
-/// the sender may take a turn or run control commands, and which recipe and
+/// the sender may take a turn or run control commands, and which profile and
 /// session key the conversation binds to.
 export interface InboundAccess {
   turnAllowed: boolean;
   controlAllowed: boolean;
-  recipeName: string | null;
-  recipe: SessionRecipe | null;
+  profileLabel: string | null;
+  profile: ProfileSource | null;
   sessionKey: string | null;
 }
 
@@ -291,7 +241,6 @@ export function resolveInboundAccess(
   query: BindingQuery,
   access: ChannelAccessConfig,
   bindings: readonly BindingRule[],
-  recipes: Record<string, SessionRecipe>,
 ): InboundAccess {
   const binding = resolveBinding(query, bindings);
   return {
@@ -302,28 +251,33 @@ export function resolveInboundAccess(
       access.controlAllowFrom.length > 0
         ? !handleDenied(access.controlAllowFrom, query.handles)
         : query.scope === "direct",
-    recipeName: binding.recipe,
-    recipe: binding.recipe != null ? recipes[binding.recipe] ?? null : null,
+    profileLabel: binding.profileLabel,
+    profile: binding.profile,
     sessionKey: binding.sessionKey,
   };
 }
 
 export interface ResolvedBinding {
-  recipe: string | null;
+  profile: ProfileSource | null;
+  profileLabel: string | null;
   sessionKey: string | null;
 }
 
-/// Finds the first binding rule matching the conversation. Returns the recipe
-/// name (or null for the default recipe) and the configured session key (or
+/// Finds the first binding rule matching the conversation. Returns the profile
+/// source (or null for the default profile) and the configured session key (or
 /// null, meaning the bridge derives a per-conversation key). When no rule
-/// matches, returns the default recipe with a derived key.
+/// matches, returns the default profile with a derived key.
 export function resolveBinding(query: BindingQuery, bindings: readonly BindingRule[]): ResolvedBinding {
   for (const rule of bindings) {
     if (bindingMatches(rule.match, query)) {
-      return { recipe: rule.recipe ?? null, sessionKey: rule.sessionKey ?? null };
+      return {
+        profile: rule.profile ?? null,
+        profileLabel: labelForProfile(rule.profile),
+        sessionKey: rule.sessionKey ?? null,
+      };
     }
   }
-  return { recipe: null, sessionKey: null };
+  return { profile: null, profileLabel: null, sessionKey: null };
 }
 
 function bindingMatches(match: BindingMatch, query: BindingQuery): boolean {
@@ -374,192 +328,17 @@ function normalizeHandle(handle: string): string {
   return handle.trim().toLowerCase().replace(/^@/, "");
 }
 
-export function parseRecipes(raw: unknown): Record<string, SessionRecipe> {
-  if (raw === undefined || raw === null) {
-    return {};
-  }
-  if (typeof raw !== "object" || Array.isArray(raw)) {
-    throw new Error("recipes must be an object keyed by recipe name");
-  }
-  const recipes: Record<string, SessionRecipe> = {};
-  for (const [name, value] of Object.entries(raw as Record<string, unknown>)) {
-    recipes[name] = parseRecipe(name, value);
-  }
-  return recipes;
-}
-
-function parseRecipe(name: string, raw: unknown): SessionRecipe {
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-    throw new Error(`recipe "${name}" must be an object`);
-  }
-  const record = raw as Record<string, unknown>;
-  const recipe: SessionRecipe = {
-    mounts: parseMounts(name, record.mounts),
-    mcp: parseMcpLinks(name, record.mcp),
-    environments: parseEnvironments(name, record),
-  };
-  if (record.config !== undefined && record.config !== null) {
-    if (typeof record.config !== "object" || Array.isArray(record.config)) {
-      throw new Error(`recipe "${name}".config must be an object`);
-    }
-    recipe.config = record.config as SessionConfigInput;
-  }
-  return recipe;
-}
-
-function parseEnvironments(recipe: string, record: Record<string, unknown>): RecipeEnvironment[] {
-  if (record.environments !== undefined && record.envs !== undefined) {
-    throw new Error(`recipe "${recipe}" must use environments or envs, not both`);
-  }
-  const raw = record.environments ?? record.envs;
-  if (raw === undefined || raw === null) {
-    return [];
-  }
-  if (!Array.isArray(raw)) {
-    throw new Error(`recipe "${recipe}".environments must be an array`);
-  }
-  const environments = raw.map((entry, index) => parseEnvironment(recipe, index, entry));
-  const activeCount = environments.filter((environment) => environment.activate).length;
-  if (activeCount > 1) {
-    throw new Error(`recipe "${recipe}".environments may activate at most one environment`);
-  }
-  return environments;
-}
-
-function parseEnvironment(recipe: string, index: number, raw: unknown): RecipeEnvironment {
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-    throw new Error(`recipe "${recipe}".environments[${index}] must be an object`);
-  }
-  const record = raw as Record<string, unknown>;
-  const envId = optionalString(record.envId);
-  if (envId === undefined) {
-    throw new Error(`recipe "${recipe}".environments[${index}] needs an envId`);
-  }
-  const providerId = optionalString(record.providerId);
-  if (providerId === undefined) {
-    throw new Error(`recipe "${recipe}".environments[${index}] needs a providerId`);
-  }
-  if (record.activate !== undefined && typeof record.activate !== "boolean") {
-    throw new Error(`recipe "${recipe}".environments[${index}].activate must be a boolean`);
-  }
-  return {
-    envId,
-    providerId,
-    targetId: optionalString(record.targetId) ?? "local",
-    activate: typeof record.activate === "boolean" ? record.activate : true,
-  };
-}
-
-function parseMounts(recipe: string, raw: unknown): RecipeMount[] {
-  if (raw === undefined || raw === null) {
-    return [];
-  }
-  if (!Array.isArray(raw)) {
-    throw new Error(`recipe "${recipe}".mounts must be an array`);
-  }
-  return raw.map((entry, index) => parseMount(recipe, index, entry));
-}
-
-function parseMount(recipe: string, index: number, raw: unknown): RecipeMount {
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-    throw new Error(`recipe "${recipe}".mounts[${index}] must be an object`);
-  }
-  const record = raw as Record<string, unknown>;
-  const workspaceId = optionalString(record.workspaceId);
-  const snapshotRef = optionalString(record.snapshotRef);
-  const nestedSource = record.source as Record<string, unknown> | undefined;
-  const source =
-    workspaceId !== undefined
-      ? { workspaceId }
-      : snapshotRef !== undefined
-        ? { snapshotRef }
-        : nestedSource && optionalString(nestedSource.workspaceId) !== undefined
-          ? { workspaceId: optionalString(nestedSource.workspaceId) as string }
-          : nestedSource && optionalString(nestedSource.snapshotRef) !== undefined
-            ? { snapshotRef: optionalString(nestedSource.snapshotRef) as string }
-            : null;
-  if (!source) {
-    throw new Error(
-      `recipe "${recipe}".mounts[${index}] needs a workspaceId or snapshotRef`,
-    );
-  }
-  const access = optionalString(record.access);
-  if (access !== undefined && access !== "readOnly" && access !== "readWrite") {
-    throw new Error(
-      `recipe "${recipe}".mounts[${index}].access must be readOnly or readWrite`,
-    );
-  }
-  return {
-    mountPath: optionalString(record.mountPath) ?? DEFAULT_MOUNT_PATH,
-    source,
-    access: (access as VfsMountAccess | undefined) ?? DEFAULT_MOUNT_ACCESS,
-  };
-}
-
-function parseMcpLinks(recipe: string, raw: unknown): RecipeMcpLink[] {
-  if (raw === undefined || raw === null) {
-    return [];
-  }
-  if (!Array.isArray(raw)) {
-    throw new Error(`recipe "${recipe}".mcp must be an array`);
-  }
-  return raw.map((entry, index) => parseMcpLink(recipe, index, entry));
-}
-
-function parseMcpLink(recipe: string, index: number, raw: unknown): RecipeMcpLink {
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-    throw new Error(`recipe "${recipe}".mcp[${index}] must be an object`);
-  }
-  const record = raw as Record<string, unknown>;
-  const serverId = optionalString(record.serverId);
-  if (serverId === undefined) {
-    throw new Error(`recipe "${recipe}".mcp[${index}] needs a serverId`);
-  }
-  const approval = optionalString(record.approval);
-  if (
-    approval !== undefined &&
-    approval !== "providerDefault" &&
-    approval !== "always" &&
-    approval !== "never"
-  ) {
-    throw new Error(
-      `recipe "${recipe}".mcp[${index}].approval must be providerDefault, always, or never`,
-    );
-  }
-  const allowedTools = record.allowedTools;
-  const link: RecipeMcpLink = { serverId };
-  const serverLabel = optionalString(record.serverLabel);
-  if (serverLabel !== undefined) link.serverLabel = serverLabel;
-  const toolId = optionalString(record.toolId);
-  if (toolId !== undefined) link.toolId = toolId;
-  if (Array.isArray(allowedTools)) {
-    link.allowedTools = allowedTools.map((tool) => String(tool));
-  }
-  if (approval !== undefined) link.approval = approval as RemoteMcpApprovalPolicy;
-  const authGrantId = optionalString(record.authGrantId);
-  if (authGrantId !== undefined) link.authGrantId = authGrantId;
-  if (typeof record.deferLoading === "boolean") link.deferLoading = record.deferLoading;
-  return link;
-}
-
-export function parseBindings(
-  raw: unknown,
-  recipes: Record<string, SessionRecipe>,
-): BindingRule[] {
+export function parseBindings(raw: unknown): BindingRule[] {
   if (raw === undefined || raw === null) {
     return [];
   }
   if (!Array.isArray(raw)) {
     throw new Error("bindings must be an array");
   }
-  return raw.map((entry, index) => parseBinding(index, entry, recipes));
+  return raw.map((entry, index) => parseBinding(index, entry));
 }
 
-function parseBinding(
-  index: number,
-  raw: unknown,
-  recipes: Record<string, SessionRecipe>,
-): BindingRule {
+function parseBinding(index: number, raw: unknown): BindingRule {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     throw new Error(`bindings[${index}] must be an object`);
   }
@@ -576,10 +355,10 @@ function parseBinding(
   if (scope !== undefined && scope !== "direct" && scope !== "group") {
     throw new Error(`bindings[${index}].match.scope must be direct or group`);
   }
-  const recipe = optionalString(record.recipe);
-  if (recipe !== undefined && !(recipe in recipes)) {
-    throw new Error(`bindings[${index}].recipe "${recipe}" is not defined in recipes`);
+  if (record.recipe !== undefined) {
+    throw new Error(`bindings[${index}].recipe is no longer supported; use bindings[${index}].profile`);
   }
+  const profile = parseOptionalProfileSource(record.profile, `bindings[${index}].profile`);
   const matchRule: BindingMatch = { channel };
   const handle = optionalStringOrStringArray(match.handle);
   if (handle !== undefined) matchRule.handle = handle;
@@ -587,10 +366,46 @@ function parseBinding(
   if (chatId !== undefined) matchRule.chatId = chatId;
   if (scope !== undefined) matchRule.scope = scope as BindingScope;
   const rule: BindingRule = { match: matchRule };
-  if (recipe !== undefined) rule.recipe = recipe;
+  if (profile !== undefined) rule.profile = profile;
   const sessionKey = optionalString(record.sessionKey);
   if (sessionKey !== undefined) rule.sessionKey = sessionKey;
   return rule;
+}
+
+function parseOptionalProfileSource(raw: unknown, path: string): ProfileSource | undefined {
+  if (raw === undefined || raw === null) {
+    return undefined;
+  }
+  const named = optionalString(raw);
+  if (named !== undefined && typeof raw !== "object") {
+    return { kind: "named", profileId: named };
+  }
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error(`${path} must be a profile id string or ProfileSource object`);
+  }
+  const record = raw as Record<string, unknown>;
+  const kind = optionalString(record.kind);
+  if (kind === "named") {
+    const profileId = optionalString(record.profileId ?? record.profile_id);
+    if (profileId === undefined) {
+      throw new Error(`${path}.profileId is required for named profiles`);
+    }
+    return { kind: "named", profileId };
+  }
+  if (kind === "inline") {
+    if (typeof record.profile !== "object" || record.profile === null || Array.isArray(record.profile)) {
+      throw new Error(`${path}.profile must be an object for inline profiles`);
+    }
+    return { kind: "inline", profile: record.profile as InlineAgentProfile };
+  }
+  throw new Error(`${path}.kind must be named or inline`);
+}
+
+function labelForProfile(profile: ProfileSource | undefined): string | null {
+  if (!profile) {
+    return null;
+  }
+  return profile.kind === "named" ? profile.profileId : "inline";
 }
 
 function optionalString(value: unknown): string | undefined {

@@ -1,12 +1,19 @@
 use async_trait::async_trait;
 use engine::{
-    session::{AgentHandle, DynamicSessionEntry, EventSeq, SessionId, SessionPosition},
+    session::{
+        AgentHandle, DynamicSessionEntry, DynamicUncommittedSessionEvent, EventSeq, SessionId,
+        SessionPosition,
+    },
     storage::{
-        AppendSessionEvents, AppendSessionEventsResult, CreateSession, ListAgentSessions,
-        ReadSessionEvents, SessionPage, SessionRecord, SessionStore, SessionStoreError,
+        AppendSessionEvents, AppendSessionEventsResult, CreateClonedSession, CreateForkedSession,
+        CreateSession, ListAgentSessions, ListSessionLinks, ReadSessionEvents,
+        SessionLinkDirection, SessionLinkRecord, SessionPage, SessionRecord, SessionStore,
+        SessionStoreError, UpsertSessionLink, largest_safe_fork_seq, validate_fork_point,
+        validate_relationship,
     },
 };
-use sqlx::Row;
+use sqlx::{Postgres, Row, Transaction};
+use uuid::Uuid;
 
 use crate::{
     PgStore,
@@ -15,6 +22,16 @@ use crate::{
         session_store_error, u64_to_i64, usize_to_session_i64,
     },
 };
+
+const SESSION_COLUMNS: &str = r#"
+    session_id,
+    agent_handle,
+    head_seq,
+    source_session_id,
+    source_seq,
+    created_at_ms,
+    updated_at_ms
+"#;
 
 impl PgStore {
     async fn append_inner(
@@ -26,19 +43,20 @@ impl PgStore {
             .begin()
             .await
             .map_err(|error| session_sql_error("begin append transaction", error))?;
-        let row = sqlx::query(
+        let query = format!(
             r#"
-            SELECT session_id, agent_handle, head_seq, created_at_ms, updated_at_ms
+            SELECT {SESSION_COLUMNS}
             FROM sessions
             WHERE universe_id = $1 AND session_id = $2
             FOR UPDATE
             "#,
-        )
-        .bind(self.config.universe_id)
-        .bind(request.session_id.as_str())
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(|error| session_sql_error("load session for append", error))?;
+        );
+        let row = sqlx::query(&query)
+            .bind(self.config.universe_id)
+            .bind(request.session_id.as_str())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|error| session_sql_error("load session for append", error))?;
 
         let Some(row) = row else {
             return Err(SessionStoreError::SessionNotFound {
@@ -116,6 +134,247 @@ impl PgStore {
             head,
         })
     }
+
+    pub async fn copy_session_resources(
+        &self,
+        source_session_id: &SessionId,
+        child_session_id: &SessionId,
+    ) -> Result<(), SessionStoreError> {
+        self.ensure_universe()
+            .await
+            .map_err(|error| session_store_error("ensure universe", error))?;
+        let mut tx = self.pool.begin().await.map_err(|error| {
+            session_sql_error("begin copy session resources transaction", error)
+        })?;
+        lock_session(
+            &mut tx,
+            self.config.universe_id,
+            source_session_id,
+            "copy resources source",
+        )
+        .await?;
+        lock_session(
+            &mut tx,
+            self.config.universe_id,
+            child_session_id,
+            "copy resources child",
+        )
+        .await?;
+        copy_session_resources_in_tx(
+            &mut tx,
+            self.config.universe_id,
+            source_session_id,
+            child_session_id,
+        )
+        .await?;
+        tx.commit()
+            .await
+            .map_err(|error| session_sql_error("commit copy session resources", error))?;
+        Ok(())
+    }
+
+    async fn read_all_effective_events(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Vec<DynamicSessionEntry>, SessionStoreError> {
+        let head = self
+            .load_session(session_id)
+            .await?
+            .ok_or_else(|| SessionStoreError::SessionNotFound {
+                session_id: session_id.clone(),
+            })?
+            .head
+            .map_or(0, |head| head.seq.as_u64());
+        let mut entries = Vec::new();
+        let mut after = 0;
+        while after < head {
+            let page = self.read_effective_window(session_id, after, 512).await?;
+            if page.is_empty() {
+                return Err(SessionStoreError::Store {
+                    message: format!(
+                        "session {session_id} effective log has a gap after seq {after}"
+                    ),
+                });
+            }
+            after = page
+                .last()
+                .expect("page checked non-empty")
+                .position
+                .seq
+                .as_u64();
+            entries.extend(page);
+        }
+        Ok(entries)
+    }
+
+    async fn read_effective_window(
+        &self,
+        session_id: &SessionId,
+        after: u64,
+        limit: usize,
+    ) -> Result<Vec<DynamicSessionEntry>, SessionStoreError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let record = self.load_session(session_id).await?.ok_or_else(|| {
+            SessionStoreError::SessionNotFound {
+                session_id: session_id.clone(),
+            }
+        })?;
+        let head = record.head.as_ref().map_or(0, |head| head.seq.as_u64());
+        let segments = self.resolve_segments(&record.session_id, head).await?;
+        let mut selected = Vec::with_capacity(limit);
+        for segment in segments {
+            if selected.len() >= limit {
+                break;
+            }
+            let lower = segment.after.max(after);
+            if segment.through <= lower {
+                continue;
+            }
+            let remaining = limit.saturating_sub(selected.len());
+            let mut entries = self
+                .read_local_segment(&segment.session_id, lower, segment.through, remaining)
+                .await?;
+            selected.append(&mut entries);
+        }
+        Ok(selected)
+    }
+
+    async fn resolve_segments(
+        &self,
+        session_id: &SessionId,
+        max_seq: u64,
+    ) -> Result<Vec<SessionSegment>, SessionStoreError> {
+        enum Task {
+            Resolve {
+                session_id: SessionId,
+                max_seq: u64,
+            },
+            Local {
+                session_id: SessionId,
+                after: u64,
+                through: u64,
+            },
+        }
+
+        let mut tasks = vec![Task::Resolve {
+            session_id: session_id.clone(),
+            max_seq,
+        }];
+        let mut segments = Vec::new();
+        let mut depth = 0usize;
+
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Local {
+                    session_id,
+                    after,
+                    through,
+                } => {
+                    if through > after {
+                        segments.push(SessionSegment {
+                            session_id,
+                            after,
+                            through,
+                        });
+                    }
+                }
+                Task::Resolve {
+                    session_id,
+                    max_seq,
+                } => {
+                    depth = depth.saturating_add(1);
+                    if depth > 256 {
+                        return Err(SessionStoreError::Store {
+                            message: format!(
+                                "session lineage chain is too deep while resolving {session_id}"
+                            ),
+                        });
+                    }
+                    let record = self.load_session_required(&session_id).await?;
+                    if let (Some(source_session_id), Some(source_seq)) =
+                        (record.source_session_id.clone(), record.source_seq)
+                    {
+                        let branch_seq = source_seq.as_u64();
+                        if max_seq <= branch_seq {
+                            tasks.push(Task::Resolve {
+                                session_id: source_session_id,
+                                max_seq,
+                            });
+                        } else {
+                            tasks.push(Task::Local {
+                                session_id,
+                                after: branch_seq,
+                                through: max_seq,
+                            });
+                            tasks.push(Task::Resolve {
+                                session_id: source_session_id,
+                                max_seq: branch_seq,
+                            });
+                        }
+                    } else {
+                        tasks.push(Task::Local {
+                            session_id,
+                            after: 0,
+                            through: max_seq,
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(segments)
+    }
+
+    async fn read_local_segment(
+        &self,
+        session_id: &SessionId,
+        after: u64,
+        through: u64,
+        limit: usize,
+    ) -> Result<Vec<DynamicSessionEntry>, SessionStoreError> {
+        let rows = sqlx::query(
+            r#"
+            SELECT entry_json
+            FROM session_events
+            WHERE universe_id = $1
+              AND session_id = $2
+              AND seq > $3
+              AND seq <= $4
+            ORDER BY seq
+            LIMIT $5
+            "#,
+        )
+        .bind(self.config.universe_id)
+        .bind(session_id.as_str())
+        .bind(u64_to_i64(after, "read_after seq")?)
+        .bind(u64_to_i64(through, "read through seq")?)
+        .bind(usize_to_session_i64(limit, "read_after limit")?)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| session_sql_error("read session event segment", error))?;
+
+        rows.iter().map(session_entry_from_row).collect()
+    }
+
+    async fn load_session_required(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<SessionRecord, SessionStoreError> {
+        self.load_session(session_id)
+            .await?
+            .ok_or_else(|| SessionStoreError::SessionNotFound {
+                session_id: session_id.clone(),
+            })
+    }
+}
+
+#[derive(Clone, Debug)]
+struct SessionSegment {
+    session_id: SessionId,
+    after: u64,
+    through: u64,
 }
 
 #[async_trait]
@@ -128,7 +387,7 @@ impl SessionStore for PgStore {
             .await
             .map_err(|error| session_store_error("ensure universe", error))?;
         let created_at_ms = u64_to_i64(request.created_at_ms, "created_at_ms")?;
-        let row = sqlx::query(
+        let query = format!(
             r#"
             INSERT INTO sessions (
                 universe_id,
@@ -139,16 +398,17 @@ impl SessionStore for PgStore {
             )
             VALUES ($1, $2, $3, $4, $4)
             ON CONFLICT (universe_id, session_id) DO NOTHING
-            RETURNING session_id, agent_handle, head_seq, created_at_ms, updated_at_ms
+            RETURNING {SESSION_COLUMNS}
             "#,
-        )
-        .bind(self.config.universe_id)
-        .bind(request.session_id.as_str())
-        .bind(request.agent_handle.as_str())
-        .bind(created_at_ms)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|error| session_sql_error("create session", error))?;
+        );
+        let row = sqlx::query(&query)
+            .bind(self.config.universe_id)
+            .bind(request.session_id.as_str())
+            .bind(request.agent_handle.as_str())
+            .bind(created_at_ms)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|error| session_sql_error("create session", error))?;
 
         let Some(row) = row else {
             return Err(SessionStoreError::SessionAlreadyExists {
@@ -162,18 +422,19 @@ impl SessionStore for PgStore {
         &self,
         session_id: &SessionId,
     ) -> Result<Option<SessionRecord>, SessionStoreError> {
-        let row = sqlx::query(
+        let query = format!(
             r#"
-            SELECT session_id, agent_handle, head_seq, created_at_ms, updated_at_ms
+            SELECT {SESSION_COLUMNS}
             FROM sessions
             WHERE universe_id = $1 AND session_id = $2
             "#,
-        )
-        .bind(self.config.universe_id)
-        .bind(session_id.as_str())
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|error| session_sql_error("load session", error))?;
+        );
+        let row = sqlx::query(&query)
+            .bind(self.config.universe_id)
+            .bind(session_id.as_str())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|error| session_sql_error("load session", error))?;
 
         row.as_ref().map(session_record_from_row).transpose()
     }
@@ -183,23 +444,321 @@ impl SessionStore for PgStore {
         request: ListAgentSessions,
     ) -> Result<Vec<SessionRecord>, SessionStoreError> {
         let limit = usize_to_session_i64(request.limit, "session list limit")?;
-        let rows = sqlx::query(
+        let query = format!(
             r#"
-            SELECT session_id, agent_handle, head_seq, created_at_ms, updated_at_ms
+            SELECT {SESSION_COLUMNS}
             FROM sessions
             WHERE universe_id = $1 AND agent_handle = $2
             ORDER BY session_id
             LIMIT $3
             "#,
-        )
-        .bind(self.config.universe_id)
-        .bind(request.agent_handle.as_str())
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|error| session_sql_error("list agent sessions", error))?;
+        );
+        let rows = sqlx::query(&query)
+            .bind(self.config.universe_id)
+            .bind(request.agent_handle.as_str())
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|error| session_sql_error("list agent sessions", error))?;
 
         rows.iter().map(session_record_from_row).collect()
+    }
+
+    async fn create_cloned_session(
+        &self,
+        request: CreateClonedSession,
+    ) -> Result<SessionRecord, SessionStoreError> {
+        self.ensure_universe()
+            .await
+            .map_err(|error| session_store_error("ensure universe", error))?;
+        let created_at_ms = u64_to_i64(request.created_at_ms, "created_at_ms")?;
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|error| session_sql_error("begin clone transaction", error))?;
+
+        lock_session(
+            &mut tx,
+            self.config.universe_id,
+            &request.source_session_id,
+            "clone source",
+        )
+        .await?;
+        let query = format!(
+            r#"
+            INSERT INTO sessions (
+                universe_id,
+                session_id,
+                agent_handle,
+                source_session_id,
+                source_seq,
+                created_at_ms,
+                updated_at_ms
+            )
+            VALUES ($1, $2, $3, $4, NULL, $5, $5)
+            ON CONFLICT (universe_id, session_id) DO NOTHING
+            RETURNING {SESSION_COLUMNS}
+            "#,
+        );
+        let row = sqlx::query(&query)
+            .bind(self.config.universe_id)
+            .bind(request.session_id.as_str())
+            .bind(request.agent_handle.as_str())
+            .bind(request.source_session_id.as_str())
+            .bind(created_at_ms)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|error| session_sql_error("create cloned session", error))?;
+
+        let Some(row) = row else {
+            return Err(SessionStoreError::SessionAlreadyExists {
+                session_id: request.session_id,
+            });
+        };
+        let record = session_record_from_row(&row)?;
+        copy_session_resources_in_tx(
+            &mut tx,
+            self.config.universe_id,
+            &request.source_session_id,
+            &record.session_id,
+        )
+        .await?;
+        let (record, _) = append_events_in_tx(
+            &mut tx,
+            self.config.universe_id,
+            record,
+            request.opening_events,
+        )
+        .await?;
+        tx.commit()
+            .await
+            .map_err(|error| session_sql_error("commit clone transaction", error))?;
+        Ok(record)
+    }
+
+    async fn create_forked_session(
+        &self,
+        request: CreateForkedSession,
+    ) -> Result<SessionRecord, SessionStoreError> {
+        self.ensure_universe()
+            .await
+            .map_err(|error| session_store_error("ensure universe", error))?;
+        let source_entries = self
+            .read_all_effective_events(&request.source_session_id)
+            .await?;
+        let source_head = self
+            .head(&request.source_session_id)
+            .await?
+            .map_or(0, |head| head.seq.as_u64());
+        validate_fork_point(
+            &request.source_session_id,
+            request.source_seq,
+            &source_entries,
+            source_head,
+        )?;
+
+        let created_at_ms = u64_to_i64(request.created_at_ms, "created_at_ms")?;
+        let source_seq_u64 = request.source_seq.as_u64();
+        let head_seq = if source_seq_u64 == 0 {
+            None
+        } else {
+            Some(u64_to_i64(source_seq_u64, "fork head_seq")?)
+        };
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|error| session_sql_error("begin fork transaction", error))?;
+        lock_session(
+            &mut tx,
+            self.config.universe_id,
+            &request.source_session_id,
+            "fork source",
+        )
+        .await?;
+        let query = format!(
+            r#"
+            INSERT INTO sessions (
+                universe_id,
+                session_id,
+                agent_handle,
+                head_seq,
+                source_session_id,
+                source_seq,
+                created_at_ms,
+                updated_at_ms
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
+            ON CONFLICT (universe_id, session_id) DO NOTHING
+            RETURNING {SESSION_COLUMNS}
+            "#,
+        );
+        let row = sqlx::query(&query)
+            .bind(self.config.universe_id)
+            .bind(request.session_id.as_str())
+            .bind(request.agent_handle.as_str())
+            .bind(head_seq)
+            .bind(request.source_session_id.as_str())
+            .bind(u64_to_i64(source_seq_u64, "source_seq")?)
+            .bind(created_at_ms)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|error| session_sql_error("create forked session", error))?;
+
+        let Some(row) = row else {
+            return Err(SessionStoreError::SessionAlreadyExists {
+                session_id: request.session_id,
+            });
+        };
+        let record = session_record_from_row(&row)?;
+        copy_session_resources_in_tx(
+            &mut tx,
+            self.config.universe_id,
+            &request.source_session_id,
+            &record.session_id,
+        )
+        .await?;
+        tx.commit()
+            .await
+            .map_err(|error| session_sql_error("commit fork transaction", error))?;
+        Ok(record)
+    }
+
+    async fn safe_fork_seq(&self, session_id: &SessionId) -> Result<EventSeq, SessionStoreError> {
+        let entries = self.read_all_effective_events(session_id).await?;
+        let head = self
+            .head(session_id)
+            .await?
+            .map_or(0, |head| head.seq.as_u64());
+        Ok(largest_safe_fork_seq(&entries, head))
+    }
+
+    async fn upsert_link(
+        &self,
+        request: UpsertSessionLink,
+    ) -> Result<SessionLinkRecord, SessionStoreError> {
+        validate_relationship(&request.relationship)?;
+        self.ensure_universe()
+            .await
+            .map_err(|error| session_store_error("ensure universe", error))?;
+        self.load_session_required(&request.from_session_id).await?;
+        self.load_session_required(&request.to_session_id).await?;
+        let metadata = validate_link_metadata(request.metadata)?;
+        let row = sqlx::query(
+            r#"
+            INSERT INTO session_links (
+                universe_id,
+                from_session_id,
+                to_session_id,
+                relationship,
+                created_at_ms,
+                metadata
+            )
+            VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT (universe_id, from_session_id, to_session_id, relationship)
+            DO UPDATE SET
+                created_at_ms = EXCLUDED.created_at_ms,
+                metadata = EXCLUDED.metadata
+            RETURNING
+                from_session_id,
+                to_session_id,
+                relationship,
+                created_at_ms,
+                metadata
+            "#,
+        )
+        .bind(self.config.universe_id)
+        .bind(request.from_session_id.as_str())
+        .bind(request.to_session_id.as_str())
+        .bind(&request.relationship)
+        .bind(u64_to_i64(request.created_at_ms, "link created_at_ms")?)
+        .bind(metadata)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|error| session_sql_error("upsert session link", error))?;
+        session_link_from_row(&row)
+    }
+
+    async fn list_links(
+        &self,
+        request: ListSessionLinks,
+    ) -> Result<Vec<SessionLinkRecord>, SessionStoreError> {
+        if request.limit == 0 {
+            return Err(SessionStoreError::InvalidLimit { limit: 0 });
+        }
+        self.load_session_required(&request.session_id).await?;
+        let limit = usize_to_session_i64(request.limit, "session link list limit")?;
+        let rows = match (request.direction, request.relationship.as_ref()) {
+            (SessionLinkDirection::Outgoing, Some(relationship)) => {
+                sqlx::query(
+                    r#"
+                    SELECT from_session_id, to_session_id, relationship, created_at_ms, metadata
+                    FROM session_links
+                    WHERE universe_id = $1 AND from_session_id = $2 AND relationship = $3
+                    ORDER BY to_session_id, relationship
+                    LIMIT $4
+                    "#,
+                )
+                .bind(self.config.universe_id)
+                .bind(request.session_id.as_str())
+                .bind(relationship)
+                .bind(limit)
+                .fetch_all(&self.pool)
+                .await
+            }
+            (SessionLinkDirection::Outgoing, None) => {
+                sqlx::query(
+                    r#"
+                    SELECT from_session_id, to_session_id, relationship, created_at_ms, metadata
+                    FROM session_links
+                    WHERE universe_id = $1 AND from_session_id = $2
+                    ORDER BY to_session_id, relationship
+                    LIMIT $3
+                    "#,
+                )
+                .bind(self.config.universe_id)
+                .bind(request.session_id.as_str())
+                .bind(limit)
+                .fetch_all(&self.pool)
+                .await
+            }
+            (SessionLinkDirection::Incoming, Some(relationship)) => {
+                sqlx::query(
+                    r#"
+                    SELECT from_session_id, to_session_id, relationship, created_at_ms, metadata
+                    FROM session_links
+                    WHERE universe_id = $1 AND to_session_id = $2 AND relationship = $3
+                    ORDER BY from_session_id, relationship
+                    LIMIT $4
+                    "#,
+                )
+                .bind(self.config.universe_id)
+                .bind(request.session_id.as_str())
+                .bind(relationship)
+                .bind(limit)
+                .fetch_all(&self.pool)
+                .await
+            }
+            (SessionLinkDirection::Incoming, None) => {
+                sqlx::query(
+                    r#"
+                    SELECT from_session_id, to_session_id, relationship, created_at_ms, metadata
+                    FROM session_links
+                    WHERE universe_id = $1 AND to_session_id = $2
+                    ORDER BY from_session_id, relationship
+                    LIMIT $3
+                    "#,
+                )
+                .bind(self.config.universe_id)
+                .bind(request.session_id.as_str())
+                .bind(limit)
+                .fetch_all(&self.pool)
+                .await
+            }
+        }
+        .map_err(|error| session_sql_error("list session links", error))?;
+        rows.iter().map(session_link_from_row).collect()
     }
 
     async fn append(
@@ -216,59 +775,11 @@ impl SessionStore for PgStore {
         if request.limit == 0 {
             return Err(SessionStoreError::InvalidLimit { limit: 0 });
         }
-        let exists = sqlx::query(
-            r#"
-            SELECT 1
-            FROM sessions
-            WHERE universe_id = $1 AND session_id = $2
-            "#,
-        )
-        .bind(self.config.universe_id)
-        .bind(request.session_id.as_str())
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|error| session_sql_error("check session existence", error))?
-        .is_some();
-        if !exists {
-            return Err(SessionStoreError::SessionNotFound {
-                session_id: request.session_id,
-            });
-        }
 
         let after = request.after.map_or(0, |seq| seq.as_u64());
-        let rows = sqlx::query(
-            r#"
-            SELECT entry_json
-            FROM session_events
-            WHERE universe_id = $1 AND session_id = $2 AND seq > $3
-            ORDER BY seq
-            LIMIT $4
-            "#,
-        )
-        .bind(self.config.universe_id)
-        .bind(request.session_id.as_str())
-        .bind(u64_to_i64(after, "read_after seq")?)
-        .bind(usize_to_session_i64(
-            request.limit.saturating_add(1),
-            "read_after limit",
-        )?)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|error| session_sql_error("read session events", error))?;
-
-        let mut selected = Vec::with_capacity(rows.len().min(request.limit));
-        for row in rows {
-            let entry_json: serde_json::Value = row
-                .try_get("entry_json")
-                .map_err(|error| session_sql_error("decode session event json", error))?;
-            let entry =
-                serde_json::from_value::<DynamicSessionEntry>(entry_json).map_err(|error| {
-                    SessionStoreError::Store {
-                        message: format!("decode session event entry: {error}"),
-                    }
-                })?;
-            selected.push(entry);
-        }
+        let mut selected = self
+            .read_effective_window(&request.session_id, after, request.limit.saturating_add(1))
+            .await?;
 
         let complete = selected.len() <= request.limit;
         if !complete {
@@ -314,6 +825,18 @@ fn session_record_from_row(
     let head_seq = row
         .try_get::<Option<i64>, _>("head_seq")
         .map_err(|error| session_sql_error("decode session head", error))?;
+    let source_session_id = row
+        .try_get::<Option<String>, _>("source_session_id")
+        .map_err(|error| session_sql_error("decode source session id", error))?
+        .map(SessionId::parse)
+        .transpose()
+        .map_err(|error| SessionStoreError::Store {
+            message: format!("decode source session id: {error}"),
+        })?;
+    let source_seq = row
+        .try_get::<Option<i64>, _>("source_seq")
+        .map_err(|error| session_sql_error("decode source seq", error))
+        .and_then(optional_event_seq_from_i64)?;
     let created_at_ms = row
         .try_get::<i64, _>("created_at_ms")
         .map_err(|error| session_sql_error("decode created_at_ms", error))
@@ -334,7 +857,274 @@ fn session_record_from_row(
         session_id,
         agent_handle,
         head,
+        source_session_id,
+        source_seq,
         created_at_ms,
         updated_at_ms,
     })
+}
+
+fn optional_event_seq_from_i64(seq: Option<i64>) -> Result<Option<EventSeq>, SessionStoreError> {
+    seq.map(|seq| {
+        i64_to_u64(seq, "source_seq")
+            .map(EventSeq::new)
+            .map_err(|message| SessionStoreError::Store { message })
+    })
+    .transpose()
+}
+
+fn session_entry_from_row(
+    row: &sqlx::postgres::PgRow,
+) -> Result<DynamicSessionEntry, SessionStoreError> {
+    let entry_json: serde_json::Value = row
+        .try_get("entry_json")
+        .map_err(|error| session_sql_error("decode session event json", error))?;
+    serde_json::from_value::<DynamicSessionEntry>(entry_json).map_err(|error| {
+        SessionStoreError::Store {
+            message: format!("decode session event entry: {error}"),
+        }
+    })
+}
+
+fn validate_link_metadata(
+    metadata: serde_json::Value,
+) -> Result<serde_json::Value, SessionStoreError> {
+    if metadata.is_object() {
+        Ok(metadata)
+    } else {
+        Err(SessionStoreError::Store {
+            message: "session link metadata must be a JSON object".to_owned(),
+        })
+    }
+}
+
+fn session_link_from_row(
+    row: &sqlx::postgres::PgRow,
+) -> Result<SessionLinkRecord, SessionStoreError> {
+    let from_session_id = row
+        .try_get::<String, _>("from_session_id")
+        .map_err(|error| session_sql_error("decode link from session id", error))
+        .and_then(|value| {
+            SessionId::parse(value).map_err(|error| SessionStoreError::Store {
+                message: format!("decode link from session id: {error}"),
+            })
+        })?;
+    let to_session_id = row
+        .try_get::<String, _>("to_session_id")
+        .map_err(|error| session_sql_error("decode link to session id", error))
+        .and_then(|value| {
+            SessionId::parse(value).map_err(|error| SessionStoreError::Store {
+                message: format!("decode link to session id: {error}"),
+            })
+        })?;
+    let created_at_ms = row
+        .try_get::<i64, _>("created_at_ms")
+        .map_err(|error| session_sql_error("decode link created_at_ms", error))
+        .and_then(|value| {
+            i64_to_u64(value, "link created_at_ms")
+                .map_err(|message| SessionStoreError::Store { message })
+        })?;
+    Ok(SessionLinkRecord {
+        from_session_id,
+        to_session_id,
+        relationship: row
+            .try_get("relationship")
+            .map_err(|error| session_sql_error("decode link relationship", error))?,
+        created_at_ms,
+        metadata: row
+            .try_get("metadata")
+            .map_err(|error| session_sql_error("decode link metadata", error))?,
+    })
+}
+
+async fn lock_session(
+    tx: &mut Transaction<'_, Postgres>,
+    universe_id: Uuid,
+    session_id: &SessionId,
+    action: &'static str,
+) -> Result<SessionRecord, SessionStoreError> {
+    let query = format!(
+        r#"
+        SELECT {SESSION_COLUMNS}
+        FROM sessions
+        WHERE universe_id = $1 AND session_id = $2
+        FOR UPDATE
+        "#,
+    );
+    let row = sqlx::query(&query)
+        .bind(universe_id)
+        .bind(session_id.as_str())
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(|error| session_sql_error(action, error))?;
+    let Some(row) = row else {
+        return Err(SessionStoreError::SessionNotFound {
+            session_id: session_id.clone(),
+        });
+    };
+    session_record_from_row(&row)
+}
+
+async fn copy_session_resources_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    universe_id: Uuid,
+    source_session_id: &SessionId,
+    child_session_id: &SessionId,
+) -> Result<(), SessionStoreError> {
+    sqlx::query(
+        r#"
+        INSERT INTO vfs_mounts (
+            universe_id,
+            session_id,
+            mount_path,
+            source_kind,
+            snapshot_digest,
+            workspace_id,
+            access
+        )
+        SELECT
+            universe_id,
+            $3,
+            mount_path,
+            source_kind,
+            snapshot_digest,
+            workspace_id,
+            access
+        FROM vfs_mounts
+        WHERE universe_id = $1 AND session_id = $2
+        ON CONFLICT (universe_id, session_id, mount_path) DO UPDATE
+        SET
+            source_kind = EXCLUDED.source_kind,
+            snapshot_digest = EXCLUDED.snapshot_digest,
+            workspace_id = EXCLUDED.workspace_id,
+            access = EXCLUDED.access
+        "#,
+    )
+    .bind(universe_id)
+    .bind(source_session_id.as_str())
+    .bind(child_session_id.as_str())
+    .execute(&mut **tx)
+    .await
+    .map_err(|error| session_sql_error("copy vfs mounts", error))?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO session_environment_bindings (
+            universe_id,
+            session_id,
+            env_id,
+            provider_id,
+            target_id,
+            exec_target_json,
+            kind,
+            status,
+            capabilities_json,
+            connection_json,
+            cwd,
+            fs_routes_json,
+            created_at_ms,
+            updated_at_ms
+        )
+        SELECT
+            universe_id,
+            $3,
+            env_id,
+            provider_id,
+            target_id,
+            exec_target_json,
+            kind,
+            status,
+            capabilities_json,
+            connection_json,
+            cwd,
+            fs_routes_json,
+            created_at_ms,
+            updated_at_ms
+        FROM session_environment_bindings
+        WHERE universe_id = $1 AND session_id = $2
+        ON CONFLICT (universe_id, session_id, env_id) DO UPDATE
+        SET
+            provider_id = EXCLUDED.provider_id,
+            target_id = EXCLUDED.target_id,
+            exec_target_json = EXCLUDED.exec_target_json,
+            kind = EXCLUDED.kind,
+            status = EXCLUDED.status,
+            capabilities_json = EXCLUDED.capabilities_json,
+            connection_json = EXCLUDED.connection_json,
+            cwd = EXCLUDED.cwd,
+            fs_routes_json = EXCLUDED.fs_routes_json,
+            created_at_ms = EXCLUDED.created_at_ms,
+            updated_at_ms = EXCLUDED.updated_at_ms
+        "#,
+    )
+    .bind(universe_id)
+    .bind(source_session_id.as_str())
+    .bind(child_session_id.as_str())
+    .execute(&mut **tx)
+    .await
+    .map_err(|error| session_sql_error("copy session environment bindings", error))?;
+
+    Ok(())
+}
+
+async fn append_events_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    universe_id: Uuid,
+    mut record: SessionRecord,
+    events: Vec<DynamicUncommittedSessionEvent>,
+) -> Result<(SessionRecord, Vec<DynamicSessionEntry>), SessionStoreError> {
+    let mut committed = Vec::with_capacity(events.len());
+    for event in events {
+        let next_seq = EventSeq::new(
+            record
+                .head
+                .as_ref()
+                .map_or(1, |position| position.seq.as_u64().saturating_add(1)),
+        );
+        let position = SessionPosition { seq: next_seq };
+        let entry = DynamicSessionEntry {
+            position: position.clone(),
+            observed_at_ms: event.observed_at_ms,
+            joins: event.joins,
+            event: event.event,
+        };
+        let entry_json =
+            serde_json::to_value(&entry).map_err(|error| SessionStoreError::Store {
+                message: format!("serialize session entry: {error}"),
+            })?;
+        sqlx::query(
+            r#"
+            INSERT INTO session_events (universe_id, session_id, entry_json)
+            VALUES ($1, $2, $3)
+            "#,
+        )
+        .bind(universe_id)
+        .bind(record.session_id.as_str())
+        .bind(entry_json)
+        .execute(&mut **tx)
+        .await
+        .map_err(|error| session_sql_error("insert session event", error))?;
+        record.head = Some(position);
+        record.updated_at_ms = entry.observed_at_ms;
+        committed.push(entry);
+    }
+
+    if let Some(last) = committed.last() {
+        sqlx::query(
+            r#"
+            UPDATE sessions
+            SET head_seq = $3, updated_at_ms = $4
+            WHERE universe_id = $1 AND session_id = $2
+            "#,
+        )
+        .bind(universe_id)
+        .bind(record.session_id.as_str())
+        .bind(event_seq_to_i64(last.position.seq)?)
+        .bind(u64_to_i64(last.observed_at_ms, "updated_at_ms")?)
+        .execute(&mut **tx)
+        .await
+        .map_err(|error| session_sql_error("update session head", error))?;
+    }
+
+    Ok((record, committed))
 }

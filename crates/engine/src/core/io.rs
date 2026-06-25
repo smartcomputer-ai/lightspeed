@@ -19,8 +19,9 @@ use thiserror::Error;
 
 use crate::{
     BlobRef, ContextCompactionRequest, ContextCompactionResult, ContextEntryInput,
-    LlmGenerationFacts, LlmGenerationStatus, LlmRequest, RunId, SessionId, ToolBatchId, ToolCallId,
-    ToolCallStatus, ToolExecutionTarget, ToolName, TurnId,
+    ContextEntryKind, LlmGenerationFacts, LlmGenerationStatus, LlmRequest, RunId, SessionId,
+    ToolBatchId, ToolBatchResumeDirective, ToolCallId, ToolCallStatus, ToolExecutionTarget,
+    ToolName, TurnId,
 };
 
 #[async_trait]
@@ -46,7 +47,7 @@ pub trait CoreAgentTools: Send + Sync {
     async fn invoke_batch(
         &self,
         request: ToolInvocationBatchRequest,
-    ) -> Result<ToolInvocationBatchResult, CoreAgentIoError>;
+    ) -> Result<ToolBatchOutcome, CoreAgentIoError>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -111,6 +112,33 @@ impl ToolInvocationBatchResult {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum ToolBatchOutcome {
+    Completed {
+        result: ToolInvocationBatchResult,
+    },
+    Deferred {
+        batch_id: ToolBatchId,
+        resume_directive: ToolBatchResumeDirective,
+    },
+}
+
+impl ToolBatchOutcome {
+    pub fn completed(result: ToolInvocationBatchResult) -> Self {
+        Self::Completed { result }
+    }
+
+    pub fn completed_result(self) -> Result<ToolInvocationBatchResult, CoreAgentIoError> {
+        match self {
+            Self::Completed { result } => Ok(result),
+            Self::Deferred { batch_id, .. } => Err(CoreAgentIoError::Failed {
+                message: format!("tool batch {batch_id} deferred instead of completing"),
+            }),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct ToolEffect {
     pub kind: String,
@@ -123,10 +151,32 @@ pub struct ToolInvocationResult {
     pub call_id: ToolCallId,
     pub status: ToolCallStatus,
     pub output_ref: Option<BlobRef>,
-    pub model_visible_output_ref: Option<BlobRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub model_visible_context_entries: Vec<ContextEntryInput>,
     pub error_ref: Option<BlobRef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<ToolEffect>,
+}
+
+impl ToolInvocationResult {
+    pub fn tool_result_context_entry(
+        call_id: &ToolCallId,
+        status: ToolCallStatus,
+        content_ref: BlobRef,
+    ) -> ContextEntryInput {
+        ContextEntryInput {
+            kind: ContextEntryKind::ToolResult {
+                call_id: call_id.clone(),
+                is_error: status.is_error(),
+            },
+            content_ref,
+            media_type: None,
+            preview: None,
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Error)]

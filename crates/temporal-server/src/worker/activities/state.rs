@@ -19,6 +19,7 @@ use vfs::{VfsMountStore, VfsWorkspaceStore};
 
 use crate::{
     config::pg_store_from_env,
+    fleet::FleetChildRuntime,
     worker::{BrokerSecretResolver, SessionTools, StoredProviderKeyResolver},
 };
 
@@ -148,6 +149,25 @@ impl ActivityState {
         Ok(state)
     }
 
+    pub fn from_pg_store_with_default_runtime_and_fleet(
+        store: Arc<PgStore>,
+        fleet_runtime: Arc<dyn FleetChildRuntime>,
+    ) -> anyhow::Result<Self> {
+        let blobs: Arc<dyn BlobStore> = store.clone();
+        let broker = registry_token_broker(store.clone())?;
+        let secrets: Arc<dyn SecretResolver> = Arc::new(BrokerSecretResolver::new(broker.clone()));
+        let provider_keys = stored_provider_key_resolver(store.clone(), broker);
+        let transcriber = default_audio_transcriber(provider_keys.clone())?;
+        let transcoder = default_audio_transcoder_from_env()?;
+        let llm = default_llm_runtime(blobs, Some(secrets), Some(provider_keys))?;
+        let tools = session_tools_with_fleet(store.clone(), fleet_runtime);
+        let mut state = Self::from_pg_store(store, llm, tools).with_audio_transcriber(transcriber);
+        if let Some(transcoder) = transcoder {
+            state = state.with_audio_transcoder(transcoder);
+        }
+        Ok(state)
+    }
+
     pub async fn from_env() -> anyhow::Result<Self> {
         let store = pg_store_from_env().await?;
         Self::from_pg_store_with_default_runtime(store)
@@ -176,6 +196,16 @@ impl ActivityState {
 
 fn session_tools(store: Arc<PgStore>) -> Arc<dyn CoreAgentTools> {
     Arc::new(SessionTools::from_pg_store(store))
+}
+
+fn session_tools_with_fleet(
+    store: Arc<PgStore>,
+    fleet_runtime: Arc<dyn FleetChildRuntime>,
+) -> Arc<dyn CoreAgentTools> {
+    Arc::new(SessionTools::from_pg_store_with_fleet_runtime(
+        store,
+        fleet_runtime,
+    ))
 }
 
 fn stored_provider_key_resolver(

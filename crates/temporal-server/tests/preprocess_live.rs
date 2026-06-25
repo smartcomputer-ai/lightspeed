@@ -99,6 +99,7 @@ async fn run_audio_preprocess_live_client(
             model: Some(model_to_api(&model)),
             ..SessionConfigInput::default()
         }),
+        profile: None,
     })
     .await?;
 
@@ -186,6 +187,7 @@ async fn run_transcodable_audio_preprocess_live_client(
             model: Some(model_to_api(&model)),
             ..SessionConfigInput::default()
         }),
+        profile: None,
     })
     .await?;
 

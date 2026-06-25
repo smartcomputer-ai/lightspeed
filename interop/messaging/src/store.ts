@@ -9,8 +9,8 @@ export interface BindingState {
   chatId: string;
   threadId?: string;
   sessionId: string;
-  /// Recipe applied when the bound session was created (null = default).
-  recipe?: string | null;
+  /// Profile label applied when the bound session was created (null = default).
+  profileLabel?: string | null;
   activation: ActivationPolicy;
   cursor?: EventCursor | null;
   updatedAtMs: number;
@@ -22,7 +22,7 @@ export interface BindingInit {
   chatId: string;
   threadId?: string;
   sessionId: string;
-  recipe?: string | null;
+  profileLabel?: string | null;
   activation: ActivationPolicy;
 }
 
@@ -67,7 +67,7 @@ export class JsonBridgeStore {
       chatId: init.chatId,
       ...(init.threadId !== undefined ? { threadId: init.threadId } : {}),
       sessionId: init.sessionId,
-      recipe: init.recipe ?? null,
+      profileLabel: init.profileLabel ?? null,
       activation: init.activation,
       updatedAtMs: Date.now(),
     };
@@ -189,7 +189,7 @@ export class JsonBridgeStore {
 }
 
 function refreshBinding(existing: BindingState, init: BindingInit): BindingState {
-  const recipe = init.recipe ?? null;
+  const profileLabel = init.profileLabel ?? null;
   const threadId = init.threadId;
   const changed =
     existing.channel !== init.channel ||
@@ -197,7 +197,7 @@ function refreshBinding(existing: BindingState, init: BindingInit): BindingState
     existing.chatId !== init.chatId ||
     existing.threadId !== threadId ||
     existing.sessionId !== init.sessionId ||
-    (existing.recipe ?? null) !== recipe;
+    (existing.profileLabel ?? null) !== profileLabel;
   if (!changed) {
     return existing;
   }
@@ -207,7 +207,7 @@ function refreshBinding(existing: BindingState, init: BindingInit): BindingState
     accountId: init.accountId,
     chatId: init.chatId,
     sessionId: init.sessionId,
-    recipe,
+    profileLabel,
     updatedAtMs: Date.now(),
   };
   if (threadId === undefined) {

@@ -9,6 +9,7 @@ members = [
     "crates/environment-registry",
     "crates/engine",
     "crates/mcp-registry",
+    "crates/profile-registry",
     "crates/messaging",
     "crates/vfs",
     "crates/api-projection",

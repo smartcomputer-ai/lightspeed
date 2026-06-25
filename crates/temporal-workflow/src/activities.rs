@@ -1,4 +1,4 @@
-use engine::{BlobRef, ContextCompactionResult, LlmGenerationResult, ToolInvocationBatchResult};
+use engine::{BlobRef, ContextCompactionResult, LlmGenerationResult, ToolBatchOutcome};
 use temporalio_macros::activities;
 use temporalio_sdk::activities::{ActivityContext, ActivityError};
 
@@ -84,7 +84,7 @@ impl WorkflowActivities {
     pub async fn tool_invoke_batch(
         _ctx: ActivityContext,
         _request: ToolInvokeBatchActivityRequest,
-    ) -> Result<ToolInvocationBatchResult, ActivityError> {
+    ) -> Result<ToolBatchOutcome, ActivityError> {
         unimplemented!("workflow activity definition only")
     }
 

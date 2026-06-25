@@ -402,16 +402,28 @@ impl GatewayAgentApi {
                     // Running but the interaction missed it: keep not-found
                     // semantics; the caller will typically retry/poll.
                     AgentApiError::not_found("agent workflow not found")
+                } else if self.session_is_closed(session_id).await.unwrap_or(false) {
+                    AgentApiError::rejected(format!("session is not open: {session_id}"))
                 } else {
                     session_bootstrap_failed_error(session_id, None)
                 }
             }
             // Truly absent: there is no execution for this session id.
-            Err(WorkflowInteractionError::NotFound(_)) => {
-                AgentApiError::not_found("agent workflow not found")
-            }
+            Err(WorkflowInteractionError::NotFound(_)) => match self
+                .session_is_closed(session_id)
+                .await
+            {
+                Ok(true) => AgentApiError::rejected(format!("session is not open: {session_id}")),
+                _ => AgentApiError::not_found("agent workflow not found"),
+            },
             Err(error) => map_workflow_interaction_error(error),
         }
+    }
+
+    async fn session_is_closed(&self, session_id: &SessionId) -> Result<bool, AgentApiError> {
+        self.load_session_state(session_id)
+            .await
+            .map(|loaded| loaded.state.lifecycle.status == CoreAgentStatus::Closed)
     }
 }
 

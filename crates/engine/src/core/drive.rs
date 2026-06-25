@@ -6,6 +6,8 @@
 //! substrates fulfill emitted actions and resume the drive with committed
 //! entries or execution results.
 
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -16,8 +18,9 @@ use crate::{
     CoreAgentEventProposal, CoreAgentJoins, CoreAgentState, CoreAgentStatus, CoreApplyEvent,
     CorePlanner, DomainError, LlmFinish, LlmGenerationRequest, LlmGenerationResult,
     LlmGenerationStatus, LlmRequest, PlanNext, PlanningError, SessionId, SessionPosition,
-    ToolCallResult, ToolCallStatus, ToolEvent, ToolInvocationBatchRequest,
-    ToolInvocationBatchResult, ToolInvocationRequest, TurnEvent, TurnId, TurnOutcome,
+    ToolBatchId, ToolBatchOutcome, ToolBatchResumeDirective, ToolCallResult, ToolCallStatus,
+    ToolEvent, ToolInvocationBatchRequest, ToolInvocationBatchResult, ToolInvocationRequest,
+    ToolInvocationResult, TurnEvent, TurnId, TurnOutcome,
     core::components::context::context_entries_from_inputs,
     session::{DynamicSessionEntry, DynamicUncommittedSessionEvent},
 };
@@ -164,7 +167,33 @@ impl CoreAgentDrive {
         result: ToolInvocationBatchResult,
         observed_at_ms: u64,
     ) -> Result<CoreAgentAction, CoreAgentDriveError> {
-        let proposals = tool_batch_result_proposals(result)?;
+        let proposals = tool_batch_result_proposals(&self.state, result)?;
+        self.append_action(proposals, observed_at_ms)
+    }
+
+    pub fn resume_tool_batch_outcome(
+        &mut self,
+        outcome: ToolBatchOutcome,
+        observed_at_ms: u64,
+    ) -> Result<CoreAgentAction, CoreAgentDriveError> {
+        match outcome {
+            ToolBatchOutcome::Completed { result } => {
+                self.resume_tool_batch(result, observed_at_ms)
+            }
+            ToolBatchOutcome::Deferred {
+                batch_id,
+                resume_directive,
+            } => self.defer_tool_batch(batch_id, resume_directive, observed_at_ms),
+        }
+    }
+
+    pub fn defer_tool_batch(
+        &mut self,
+        batch_id: ToolBatchId,
+        resume_directive: ToolBatchResumeDirective,
+        observed_at_ms: u64,
+    ) -> Result<CoreAgentAction, CoreAgentDriveError> {
+        let proposals = tool_batch_deferred_proposals(&self.state, batch_id, resume_directive)?;
         self.append_action(proposals, observed_at_ms)
     }
 
@@ -517,6 +546,9 @@ pub fn next_tool_batch_request(
     let batch = active_run.tool_batches.get(&batch_id).ok_or_else(|| {
         DomainError::InvariantViolation(format!("active tool batch {} is missing", batch_id))
     })?;
+    if batch.parked.is_some() {
+        return Ok(None);
+    }
     let calls = batch
         .calls
         .iter()
@@ -541,19 +573,121 @@ pub fn next_tool_batch_request(
     }))
 }
 
+pub fn tool_batch_deferred_proposals(
+    state: &CoreAgentState,
+    batch_id: ToolBatchId,
+    resume_directive: ToolBatchResumeDirective,
+) -> Result<Vec<CoreAgentEventProposal>, DomainError> {
+    resume_directive.validate()?;
+    let active_run = state
+        .runs
+        .active
+        .as_ref()
+        .ok_or_else(|| DomainError::InvariantViolation("no active run".into()))?;
+    if active_run.active_tool_batch_id != Some(batch_id) {
+        return Err(DomainError::InvariantViolation(
+            "deferred tool batch does not match active tool batch".into(),
+        ));
+    }
+    let batch = active_run.tool_batches.get(&batch_id).ok_or_else(|| {
+        DomainError::InvariantViolation(format!("tool batch {} is missing", batch_id))
+    })?;
+    if batch.parked.is_some() {
+        return Err(DomainError::InvariantViolation(format!(
+            "tool batch {} is already deferred",
+            batch_id
+        )));
+    }
+    if !batch
+        .calls
+        .iter()
+        .any(|call_state| call_state.status == ToolCallStatus::Pending)
+    {
+        return Err(DomainError::InvariantViolation(
+            "tool batch deferral requires at least one pending call".into(),
+        ));
+    }
+    if batch.calls.iter().any(|call_state| {
+        matches!(
+            call_state.status,
+            ToolCallStatus::Observed | ToolCallStatus::Accepted
+        )
+    }) {
+        return Err(DomainError::InvariantViolation(
+            "tool batch deferral requires all invocable calls to be pending".into(),
+        ));
+    }
+    let joins = CoreAgentJoins {
+        run_id: Some(batch.run_id),
+        turn_id: Some(batch.turn_id),
+        tool_batch_id: Some(batch.batch_id),
+        ..CoreAgentJoins::default()
+    };
+    Ok(vec![CoreAgentEventProposal::new(
+        joins,
+        CoreAgentEventKind::Tool(ToolEvent::BatchDeferred {
+            run_id: batch.run_id,
+            turn_id: batch.turn_id,
+            batch_id: batch.batch_id,
+            resume_directive,
+        }),
+    )])
+}
+
 pub fn tool_batch_result_proposals(
+    state: &CoreAgentState,
     result: ToolInvocationBatchResult,
 ) -> Result<Vec<CoreAgentEventProposal>, DomainError> {
     validate_tool_batch_result(&result)?;
-    Ok(result
+    validate_result_matches_active_tool_batch(state, &result, false)?;
+    Ok(tool_call_completed_proposals(result))
+}
+
+pub fn resume_deferred_tool_batch_proposals(
+    state: &CoreAgentState,
+    batch_id: ToolBatchId,
+    result: ToolInvocationBatchResult,
+) -> Result<Vec<CoreAgentEventProposal>, DomainError> {
+    if result.batch_id != batch_id {
+        return Err(DomainError::InvariantViolation(format!(
+            "resume command batch id {} does not match result batch id {}",
+            batch_id, result.batch_id
+        )));
+    }
+    validate_tool_batch_result(&result)?;
+    if deferred_resume_is_duplicate(state, batch_id, &result)? {
+        return Ok(Vec::new());
+    }
+    validate_result_matches_active_tool_batch(state, &result, true)?;
+    let joins = CoreAgentJoins {
+        run_id: Some(result.run_id),
+        turn_id: Some(result.turn_id),
+        tool_batch_id: Some(result.batch_id),
+        ..CoreAgentJoins::default()
+    };
+    let mut proposals = vec![CoreAgentEventProposal::new(
+        joins,
+        CoreAgentEventKind::Tool(ToolEvent::BatchResumed {
+            run_id: result.run_id,
+            turn_id: result.turn_id,
+            batch_id: result.batch_id,
+        }),
+    )];
+    proposals.extend(tool_call_completed_proposals(result));
+    Ok(proposals)
+}
+
+fn tool_call_completed_proposals(result: ToolInvocationBatchResult) -> Vec<CoreAgentEventProposal> {
+    result
         .results
         .into_iter()
         .map(|result_item| {
+            let call_id = result_item.call_id.clone();
             let joins = CoreAgentJoins {
                 run_id: Some(result.run_id),
                 turn_id: Some(result.turn_id),
                 tool_batch_id: Some(result.batch_id),
-                tool_call_id: Some(result_item.call_id.clone()),
+                tool_call_id: Some(call_id),
                 ..CoreAgentJoins::default()
             };
             CoreAgentEventProposal::new(
@@ -562,22 +696,22 @@ pub fn tool_batch_result_proposals(
                     run_id: result.run_id,
                     turn_id: result.turn_id,
                     batch_id: result.batch_id,
-                    result: ToolCallResult {
-                        call_id: result_item.call_id,
-                        status: result_item.status,
-                        output_ref: result_item.output_ref,
-                        model_visible_output_ref: result_item.model_visible_output_ref,
-                        error_ref: result_item.error_ref,
-                        effects: result_item.effects,
-                    },
+                    result: invocation_result_to_call_result(result_item),
                 }),
             )
         })
-        .collect())
+        .collect()
 }
 
 fn validate_tool_batch_result(result: &ToolInvocationBatchResult) -> Result<(), DomainError> {
+    let mut seen = BTreeSet::new();
     for result in &result.results {
+        if !seen.insert(result.call_id.clone()) {
+            return Err(DomainError::InvariantViolation(format!(
+                "duplicate tool invocation result for call {}",
+                result.call_id
+            )));
+        }
         if !matches!(
             result.status,
             ToolCallStatus::Succeeded | ToolCallStatus::Failed | ToolCallStatus::Cancelled
@@ -590,6 +724,121 @@ fn validate_tool_batch_result(result: &ToolInvocationBatchResult) -> Result<(), 
     Ok(())
 }
 
+fn validate_result_matches_active_tool_batch(
+    state: &CoreAgentState,
+    result: &ToolInvocationBatchResult,
+    require_parked: bool,
+) -> Result<(), DomainError> {
+    let active_run = state
+        .runs
+        .active
+        .as_ref()
+        .ok_or_else(|| DomainError::InvariantViolation("no active run".into()))?;
+    if active_run.run_id != result.run_id
+        || active_run.active_tool_batch_id != Some(result.batch_id)
+    {
+        return Err(DomainError::InvariantViolation(
+            "tool invocation result does not match active tool batch".into(),
+        ));
+    }
+    let batch = active_run
+        .tool_batches
+        .get(&result.batch_id)
+        .ok_or_else(|| {
+            DomainError::InvariantViolation(format!("tool batch {} is missing", result.batch_id))
+        })?;
+    if batch.turn_id != result.turn_id {
+        return Err(DomainError::InvariantViolation(
+            "tool invocation result does not match active turn".into(),
+        ));
+    }
+    match (require_parked, batch.parked.is_some()) {
+        (true, false) => {
+            return Err(DomainError::InvariantViolation(format!(
+                "tool batch {} is not deferred",
+                result.batch_id
+            )));
+        }
+        (false, true) => {
+            return Err(DomainError::InvariantViolation(
+                "deferred tool batch must be resumed by command".into(),
+            ));
+        }
+        _ => {}
+    }
+    for result_item in &result.results {
+        let call_state = batch
+            .calls
+            .iter()
+            .find(|call_state| call_state.call.call_id == result_item.call_id)
+            .ok_or_else(|| {
+                DomainError::InvariantViolation(format!(
+                    "tool invocation result references missing call {}",
+                    result_item.call_id
+                ))
+            })?;
+        if call_state.status != ToolCallStatus::Pending {
+            return Err(DomainError::InvariantViolation(
+                "tool invocation result requires pending tool calls".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn deferred_resume_is_duplicate(
+    state: &CoreAgentState,
+    batch_id: ToolBatchId,
+    result: &ToolInvocationBatchResult,
+) -> Result<bool, DomainError> {
+    let Some(active_run) = state.runs.active.as_ref() else {
+        return Ok(false);
+    };
+    let requested_results = invocation_results_to_call_results(&result.results);
+    if let Some(completed) = active_run.completed_tool_batches.get(&batch_id) {
+        if completed.run_id != result.run_id || completed.turn_id != result.turn_id {
+            return Err(DomainError::InvariantViolation(
+                "duplicate resume result does not match completed tool batch".into(),
+            ));
+        }
+        return Ok(completed.results == requested_results);
+    }
+    let Some(batch) = active_run.tool_batches.get(&batch_id) else {
+        return Ok(false);
+    };
+    if batch.parked.is_some() {
+        return Ok(false);
+    }
+    let actual_results = batch
+        .calls
+        .iter()
+        .filter_map(|call_state| call_state.result.clone())
+        .collect::<Vec<_>>();
+    if actual_results.is_empty() {
+        return Ok(false);
+    }
+    Ok(actual_results == requested_results)
+}
+
+fn invocation_results_to_call_results(results: &[ToolInvocationResult]) -> Vec<ToolCallResult> {
+    results
+        .iter()
+        .cloned()
+        .map(invocation_result_to_call_result)
+        .collect()
+}
+
+fn invocation_result_to_call_result(result: ToolInvocationResult) -> ToolCallResult {
+    ToolCallResult {
+        call_id: result.call_id,
+        status: result.status,
+        output_ref: result.output_ref,
+        model_visible_context_entries: result.model_visible_context_entries,
+        error_ref: result.error_ref,
+        effects: result.effects,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -597,12 +846,14 @@ mod tests {
         BlobRef, CommandRejectionKind, CompactionPolicy, ContextCompactionStatus,
         ContextCompactionTrigger, ContextConfig, ContextConfigPatch, ContextEntry, ContextEntryId,
         ContextEntryInput, ContextEntryKey, ContextEntryKind, ContextRemovalReason,
-        ContextRewriteReason, CoreAgentCommand, LlmGenerationFacts, ModelSelection,
-        OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, OptionalConfigPatch, ProviderApiKind, RunConfig,
-        RunFailureKind, RunStatus, SKILL_ACTIVATION_PROVIDER_KIND_RUN, SKILL_CATALOG_CONTEXT_KEY,
-        SessionConfig, SessionConfigPatch, SkillId, TokenEstimate, TokenEstimateQuality,
-        ToolChoice, ToolChoiceMode, ToolName, TurnConfig, TurnConfigPatch, TurnStatus,
-        skill_activation_context_key,
+        ContextRewriteReason, CoreAgentCommand, FunctionToolSpec, LlmGenerationFacts,
+        ModelSelection, OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, ObservedToolCall,
+        OptionalConfigPatch, ProviderApiKind, RunConfig, RunFailureKind, RunStatus,
+        SKILL_ACTIVATION_PROVIDER_KIND_RUN, SKILL_CATALOG_CONTEXT_KEY, SessionConfig,
+        SessionConfigPatch, SkillId, TokenEstimate, TokenEstimateQuality, ToolBatchOutcome,
+        ToolBatchResumeDirective, ToolChoice, ToolChoiceMode, ToolEffect, ToolInvocationResult,
+        ToolKind, ToolName, ToolParallelism, ToolSpec, ToolTargetRequirement, TurnConfig,
+        TurnConfigPatch, TurnStatus, skill_activation_context_key,
     };
 
     fn config() -> SessionConfig {
@@ -839,6 +1090,127 @@ mod tests {
 
     fn drive_until_generate(drive: &mut CoreAgentDrive) -> LlmGenerationRequest {
         drive_until_generate_with_planned_event(drive).1
+    }
+
+    fn test_tool_spec(tool_name: &str) -> ToolSpec {
+        ToolSpec {
+            name: ToolName::new(tool_name),
+            kind: ToolKind::Function(FunctionToolSpec {
+                model_name: None,
+                description_ref: None,
+                input_schema_ref: BlobRef::from_bytes(br#"{"type":"object"}"#),
+                output_schema_ref: None,
+                strict: None,
+                provider_options_ref: None,
+            }),
+            parallelism: ToolParallelism::ParallelSafe,
+            target_requirement: ToolTargetRequirement::None,
+        }
+    }
+
+    fn install_test_tool(drive: &mut CoreAgentDrive, tool_name: &str) {
+        let spec = test_tool_spec(tool_name);
+        let action = drive
+            .admit_command(
+                CoreAgentCommand::ReplaceTools {
+                    expected_revision: Some(drive.state().tooling.revision),
+                    tools: std::collections::BTreeMap::from([(spec.name.clone(), spec)]),
+                },
+                15,
+            )
+            .expect("replace tools");
+        commit_action(drive, action);
+    }
+
+    fn drive_until_tool_batch_request(
+        drive: &mut CoreAgentDrive,
+        request: LlmGenerationRequest,
+        tool_name: &str,
+    ) -> ToolInvocationBatchRequest {
+        let tool_call = ObservedToolCall {
+            call_id: crate::ToolCallId::new("call_wait"),
+            tool_name: ToolName::new(tool_name),
+            provider_kind: None,
+            arguments_ref: BlobRef::from_bytes(br#"{"wait":true}"#),
+            native_call_ref: None,
+        };
+        let resumed = drive
+            .resume_generation(
+                LlmGenerationResult {
+                    run_id: request.run_id,
+                    turn_id: request.turn_id,
+                    status: LlmGenerationStatus::Succeeded,
+                    failure_ref: None,
+                    context_entries: Vec::new(),
+                    facts: LlmGenerationFacts {
+                        provider_response_id: Some("resp-tool".to_owned()),
+                        finish: LlmFinish::ToolCalls,
+                        usage: None,
+                        tool_calls: vec![tool_call],
+                        context_token_estimate: None,
+                    },
+                },
+                80,
+            )
+            .expect("resume generation");
+        commit_action(drive, resumed);
+
+        for observed_at_ms in 81..120 {
+            let action = drive.next_action(observed_at_ms, 64).expect("next action");
+            if let CoreAgentAction::InvokeTools { request } = action {
+                return request;
+            }
+            commit_action(drive, action);
+        }
+        panic!("drive did not emit a tool invocation");
+    }
+
+    fn drive_to_single_tool_invocation(drive: &mut CoreAgentDrive) -> ToolInvocationBatchRequest {
+        open_session(drive);
+        install_test_tool(drive, "agent_wait");
+        request_run(drive, BlobRef::from_bytes(b"input"));
+        let request = drive_until_generate(drive);
+        drive_until_tool_batch_request(drive, request, "agent_wait")
+    }
+
+    fn completed_tool_result(request: &ToolInvocationBatchRequest) -> ToolInvocationBatchResult {
+        ToolInvocationBatchResult {
+            run_id: request.run_id,
+            turn_id: request.turn_id,
+            batch_id: request.batch_id,
+            results: vec![ToolInvocationResult {
+                call_id: request.calls[0].call_id.clone(),
+                status: ToolCallStatus::Succeeded,
+                output_ref: Some(BlobRef::from_bytes(b"wait completed")),
+                model_visible_context_entries: vec![
+                    ToolInvocationResult::tool_result_context_entry(
+                        &request.calls[0].call_id,
+                        ToolCallStatus::Succeeded,
+                        BlobRef::from_bytes(b"wait completed"),
+                    ),
+                ],
+                error_ref: None,
+                effects: vec![ToolEffect {
+                    kind: "test".to_owned(),
+                    data: Default::default(),
+                }],
+            }],
+        }
+    }
+
+    fn wait_resume_directive() -> ToolBatchResumeDirective {
+        ToolBatchResumeDirective::new(
+            "fleet.agent_wait",
+            serde_json::json!({
+                "waits": [
+                    {
+                        "target_session_id": "child",
+                        "run_id": 1
+                    }
+                ],
+                "mode": "all"
+            }),
+        )
     }
 
     fn drive_until_generate_with_planned_event(
@@ -2536,6 +2908,204 @@ mod tests {
             drive.next_action(32, 8).expect("next"),
             CoreAgentAction::Idle
         ));
+    }
+
+    #[test]
+    fn deferred_tool_batch_parks_and_next_action_does_not_reemit_invocation() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let request = drive_to_single_tool_invocation(&mut drive);
+
+        let deferred = drive
+            .resume_tool_batch_outcome(
+                ToolBatchOutcome::Deferred {
+                    batch_id: request.batch_id,
+                    resume_directive: wait_resume_directive(),
+                },
+                90,
+            )
+            .expect("defer tool batch");
+        let entries = commit_action(&mut drive, deferred);
+        assert!(matches!(
+            entries[0].event.kind,
+            CoreAgentEventKind::Tool(ToolEvent::BatchDeferred { .. })
+        ));
+
+        let active_run = drive.state().runs.active.as_ref().expect("active run");
+        let batch = active_run
+            .tool_batches
+            .get(&request.batch_id)
+            .expect("active tool batch");
+        assert!(batch.parked.is_some());
+        assert_eq!(batch.calls[0].status, ToolCallStatus::Pending);
+
+        assert!(matches!(
+            drive.next_action(91, 64).expect("next action"),
+            CoreAgentAction::Idle
+        ));
+    }
+
+    #[test]
+    fn resume_tool_batch_command_clears_parked_batch_and_is_retry_safe() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let request = drive_to_single_tool_invocation(&mut drive);
+        let deferred = drive
+            .resume_tool_batch_outcome(
+                ToolBatchOutcome::Deferred {
+                    batch_id: request.batch_id,
+                    resume_directive: wait_resume_directive(),
+                },
+                90,
+            )
+            .expect("defer tool batch");
+        commit_action(&mut drive, deferred);
+
+        let result = completed_tool_result(&request);
+        let resumed = drive
+            .admit_command(
+                CoreAgentCommand::ResumeToolBatch {
+                    batch_id: request.batch_id,
+                    result: result.clone(),
+                },
+                91,
+            )
+            .expect("resume command");
+        let entries = commit_action(&mut drive, resumed);
+        assert!(matches!(
+            entries[0].event.kind,
+            CoreAgentEventKind::Tool(ToolEvent::BatchResumed { .. })
+        ));
+        assert!(matches!(
+            entries[1].event.kind,
+            CoreAgentEventKind::Tool(ToolEvent::CallCompleted { .. })
+        ));
+
+        let active_run = drive.state().runs.active.as_ref().expect("active run");
+        let batch = active_run
+            .tool_batches
+            .get(&request.batch_id)
+            .expect("active tool batch");
+        assert!(batch.parked.is_none());
+        assert_eq!(batch.calls[0].status, ToolCallStatus::Succeeded);
+
+        let duplicate = drive
+            .admit_command(
+                CoreAgentCommand::ResumeToolBatch {
+                    batch_id: request.batch_id,
+                    result,
+                },
+                92,
+            )
+            .expect("duplicate resume command");
+        assert!(
+            !matches!(duplicate, CoreAgentAction::AppendEvents { .. }),
+            "duplicate resume must not append events: {duplicate:?}"
+        );
+
+        let completed = drive.next_action(93, 64).expect("complete batch");
+        let entries = commit_action(&mut drive, completed);
+        assert!(entries.iter().any(|entry| matches!(
+            entry.event.kind,
+            CoreAgentEventKind::Tool(ToolEvent::BatchCompleted { .. })
+        )));
+        let active_run = drive.state().runs.active.as_ref().expect("active run");
+        assert!(active_run.tool_batches.get(&request.batch_id).is_none());
+        assert!(
+            active_run
+                .completed_tool_batches
+                .contains_key(&request.batch_id)
+        );
+    }
+
+    #[test]
+    fn inline_tool_batch_completion_is_unchanged() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let request = drive_to_single_tool_invocation(&mut drive);
+
+        let completed = drive
+            .resume_tool_batch_outcome(
+                ToolBatchOutcome::completed(completed_tool_result(&request)),
+                90,
+            )
+            .expect("complete inline batch");
+        let entries = commit_action(&mut drive, completed);
+        assert_eq!(entries.len(), 1);
+        assert!(matches!(
+            entries[0].event.kind,
+            CoreAgentEventKind::Tool(ToolEvent::CallCompleted { .. })
+        ));
+
+        let active_run = drive.state().runs.active.as_ref().expect("active run");
+        let batch = active_run
+            .tool_batches
+            .get(&request.batch_id)
+            .expect("active tool batch");
+        assert!(batch.parked.is_none());
+        assert_eq!(batch.calls[0].status, ToolCallStatus::Succeeded);
+
+        let completed = drive.next_action(91, 64).expect("complete batch");
+        let entries = commit_action(&mut drive, completed);
+        assert!(entries.iter().all(|entry| {
+            !matches!(
+                entry.event.kind,
+                CoreAgentEventKind::Tool(
+                    ToolEvent::BatchDeferred { .. } | ToolEvent::BatchResumed { .. }
+                )
+            )
+        }));
+        assert!(entries.iter().any(|entry| matches!(
+            entry.event.kind,
+            CoreAgentEventKind::Tool(ToolEvent::BatchCompleted { .. })
+        )));
+    }
+
+    #[test]
+    fn tool_batch_result_materializes_extra_model_visible_entries() {
+        let session_id = SessionId::new("session-extra-tool-context");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let request = drive_to_single_tool_invocation(&mut drive);
+        let tool_result_ref = BlobRef::from_bytes(b"wait completed");
+        let extra_ref = BlobRef::from_bytes(b"extra visible message");
+        let mut result = completed_tool_result(&request);
+        result.results[0]
+            .model_visible_context_entries
+            .push(message_input(ContextMessageRole::User, extra_ref.clone()));
+
+        let completed = drive
+            .resume_tool_batch_outcome(ToolBatchOutcome::completed(result), 90)
+            .expect("complete inline batch");
+        commit_action(&mut drive, completed);
+        for observed_at_ms in 91..100 {
+            if drive.state().context.entries.iter().any(|entry| {
+                matches!(
+                    entry.kind,
+                    ContextEntryKind::Message {
+                        role: ContextMessageRole::User
+                    }
+                ) && entry.content_ref == extra_ref
+            }) {
+                break;
+            }
+            let action = drive
+                .next_action(observed_at_ms, 64)
+                .expect("materialize result context");
+            commit_action(&mut drive, action);
+        }
+
+        assert!(drive.state().context.entries.iter().any(|entry| {
+            matches!(entry.kind, ContextEntryKind::ToolResult { .. })
+                && entry.content_ref == tool_result_ref
+        }));
+        assert!(drive.state().context.entries.iter().any(|entry| {
+            matches!(
+                entry.kind,
+                ContextEntryKind::Message {
+                    role: ContextMessageRole::User
+                }
+            ) && entry.content_ref == extra_ref
+        }));
     }
 
     fn request_run_with_submission(

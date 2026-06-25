@@ -6,11 +6,13 @@
 //! session/run/item protocol.
 
 use std::collections::BTreeMap;
+use std::fmt;
+use std::str::FromStr;
 
 use async_trait::async_trait;
 use schemars::JsonSchema;
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
+use serde::de::{self, DeserializeOwned};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use thiserror::Error;
 
@@ -21,6 +23,12 @@ pub const PROTOCOL_VERSION: &str = "lightspeed.agent.api.v1";
 
 pub const METHOD_INITIALIZE: &str = "initialize";
 pub const METHOD_SESSION_START: &str = "session/start";
+pub const METHOD_PROFILES_CREATE: &str = "profiles/create";
+pub const METHOD_PROFILES_READ: &str = "profiles/read";
+pub const METHOD_PROFILES_LIST: &str = "profiles/list";
+pub const METHOD_PROFILES_UPDATE: &str = "profiles/update";
+pub const METHOD_PROFILES_DELETE: &str = "profiles/delete";
+pub const METHOD_PROFILES_APPLY: &str = "profiles/apply";
 pub const METHOD_SESSION_UPDATE: &str = "session/update";
 pub const METHOD_SESSION_TOOLS_UPDATE: &str = "session/tools/update";
 pub const METHOD_SESSION_READ: &str = "session/read";
@@ -47,6 +55,8 @@ pub const METHOD_SESSION_ENVIRONMENTS_CLOSE: &str = "session/environments/close"
 pub const METHOD_ENVIRONMENT_PROVIDERS_REGISTER: &str = "environmentProviders/register";
 pub const METHOD_ENVIRONMENT_PROVIDERS_HEARTBEAT: &str = "environmentProviders/heartbeat";
 pub const METHOD_ENVIRONMENT_PROVIDERS_UNREGISTER: &str = "environmentProviders/unregister";
+pub const METHOD_ENVIRONMENT_PROVIDERS_LIST: &str = "environmentProviders/list";
+pub const METHOD_ENVIRONMENT_PROVIDER_TARGETS_LIST: &str = "environmentProviders/targets/list";
 pub const METHOD_BLOB_PUT: &str = "blob/put";
 pub const METHOD_BLOB_PUT_MANY: &str = "blob/put_many";
 pub const METHOD_BLOB_GET: &str = "blob/get";
@@ -151,6 +161,36 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: SessionStartParams,
     ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError>;
+
+    async fn create_profile(
+        &self,
+        params: ProfileCreateParams,
+    ) -> Result<AgentApiOutcome<ProfileCreateResponse>, AgentApiError>;
+
+    async fn read_profile(
+        &self,
+        params: ProfileReadParams,
+    ) -> Result<AgentApiOutcome<ProfileReadResponse>, AgentApiError>;
+
+    async fn list_profiles(
+        &self,
+        params: ProfileListParams,
+    ) -> Result<AgentApiOutcome<ProfileListResponse>, AgentApiError>;
+
+    async fn update_profile(
+        &self,
+        params: ProfileUpdateParams,
+    ) -> Result<AgentApiOutcome<ProfileUpdateResponse>, AgentApiError>;
+
+    async fn delete_profile(
+        &self,
+        params: ProfileDeleteParams,
+    ) -> Result<AgentApiOutcome<ProfileDeleteResponse>, AgentApiError>;
+
+    async fn apply_profile(
+        &self,
+        params: ProfileApplyParams,
+    ) -> Result<AgentApiOutcome<ProfileApplyResponse>, AgentApiError>;
 
     async fn update_session(
         &self,
@@ -281,6 +321,16 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: EnvironmentProviderUnregisterParams,
     ) -> Result<AgentApiOutcome<EnvironmentProviderUnregisterResponse>, AgentApiError>;
+
+    async fn list_environment_providers(
+        &self,
+        params: EnvironmentProviderListParams,
+    ) -> Result<AgentApiOutcome<EnvironmentProviderListResponse>, AgentApiError>;
+
+    async fn list_environment_provider_targets(
+        &self,
+        params: EnvironmentProviderTargetListParams,
+    ) -> Result<AgentApiOutcome<EnvironmentProviderTargetListResponse>, AgentApiError>;
 
     async fn put_blob(
         &self,
@@ -541,6 +591,383 @@ pub struct SessionStartParams {
     pub cwd: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config: Option<SessionConfigInput>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<ProfileSource>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ProfileId(String);
+
+impl ProfileId {
+    pub fn new(value: impl Into<String>) -> Self {
+        let value = value.into();
+        Self::try_new(value).unwrap_or_else(|error| panic!("invalid ProfileId: {error}"))
+    }
+
+    pub fn try_new(value: impl Into<String>) -> Result<Self, ProfileIdError> {
+        let value = value.into();
+        validate_profile_id(&value)?;
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for ProfileId {
+    type Error = ProfileIdError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::try_new(value)
+    }
+}
+
+impl TryFrom<&str> for ProfileId {
+    type Error = ProfileIdError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        Self::try_new(value)
+    }
+}
+
+impl FromStr for ProfileId {
+    type Err = ProfileIdError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::try_new(value)
+    }
+}
+
+impl fmt::Display for ProfileId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl Serialize for ProfileId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for ProfileId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::try_new(value).map_err(de::Error::custom)
+    }
+}
+
+impl JsonSchema for ProfileId {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "ProfileId".into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        String::json_schema(generator)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum ProfileIdError {
+    #[error("profile id must not be empty")]
+    Empty,
+    #[error("profile id must start with an ASCII alphanumeric character")]
+    InvalidStart,
+    #[error("profile id contains invalid character {ch:?} at byte {index}")]
+    InvalidCharacter { index: usize, ch: char },
+    #[error("profile id must be at most 128 bytes")]
+    TooLong,
+}
+
+fn validate_profile_id(value: &str) -> Result<(), ProfileIdError> {
+    if value.is_empty() {
+        return Err(ProfileIdError::Empty);
+    }
+    if value.len() > 128 {
+        return Err(ProfileIdError::TooLong);
+    }
+    let Some(first) = value.chars().next() else {
+        return Err(ProfileIdError::Empty);
+    };
+    if !first.is_ascii_alphanumeric() {
+        return Err(ProfileIdError::InvalidStart);
+    }
+    for (index, ch) in value.char_indices() {
+        if !(ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | ':')) {
+            return Err(ProfileIdError::InvalidCharacter { index, ch });
+        }
+    }
+    Ok(())
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentProfileInput {
+    pub profile_id: ProfileId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(flatten)]
+    pub document: ProfileDocument,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct InlineAgentProfile {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(flatten)]
+    pub document: ProfileDocument,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentProfile {
+    pub profile_id: ProfileId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub revision: u64,
+    #[serde(flatten)]
+    pub document: ProfileDocument,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+impl AgentProfile {
+    pub fn summary(&self) -> AgentProfileSummary {
+        AgentProfileSummary {
+            profile_id: self.profile_id.clone(),
+            display_name: self.display_name.clone(),
+            description: self.description.clone(),
+            revision: self.revision,
+            updated_at_ms: self.updated_at_ms,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentProfileSummary {
+    pub profile_id: ProfileId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub revision: u64,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileDocument {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<SessionConfigInput>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<ProfileInstructions>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mounts: Vec<ProfileMount>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp: Vec<ProfileMcpLink>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub environments: Vec<ProfileEnvironment>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ProfileInstructions {
+    Text { text: String },
+    TextRef { blob_ref: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileMount {
+    pub mount_path: String,
+    pub source: VfsMountSourceInput,
+    pub access: VfsMountAccess,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileMcpLink {
+    pub server_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_tools: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval: Option<RemoteMcpApprovalPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub defer_loading: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_grant_id: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileEnvironment {
+    pub env_id: EnvironmentId,
+    pub provider_id: EnvironmentProviderId,
+    pub target_id: EnvironmentTargetId,
+    #[serde(default)]
+    pub activate: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ProfileSource {
+    Named {
+        #[serde(alias = "profile_id")]
+        profile_id: ProfileId,
+    },
+    Inline {
+        profile: InlineAgentProfile,
+    },
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentProfileUpdatePatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<FieldPatch<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<FieldPatch<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<FieldPatch<SessionConfigInput>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<FieldPatch<ProfileInstructions>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mounts: Option<Vec<ProfileMount>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp: Option<Vec<ProfileMcpLink>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environments: Option<Vec<ProfileEnvironment>>,
+}
+
+impl AgentProfileUpdatePatch {
+    pub fn is_empty(&self) -> bool {
+        self.display_name.is_none()
+            && self.description.is_none()
+            && self.config.is_none()
+            && self.instructions.is_none()
+            && self.mounts.is_none()
+            && self.mcp.is_none()
+            && self.environments.is_none()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileCreateParams {
+    pub profile: AgentProfileInput,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileCreateResponse {
+    pub profile: AgentProfile,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileReadParams {
+    pub profile_id: ProfileId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileReadResponse {
+    pub profile: AgentProfile,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileListParams {}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileListResponse {
+    #[serde(default)]
+    pub profiles: Vec<AgentProfileSummary>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileUpdateParams {
+    pub profile_id: ProfileId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_revision: Option<u64>,
+    #[serde(default)]
+    pub patch: AgentProfileUpdatePatch,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileUpdateResponse {
+    pub profile: AgentProfile,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileDeleteParams {
+    pub profile_id: ProfileId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileDeleteResponse {
+    pub profile: AgentProfile,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileApplyParams {
+    pub session_id: SessionId,
+    pub profile: ProfileSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_config_revision: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_tools_revision: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileApplyResponse {
+    pub session: SessionView,
+    #[serde(default)]
+    pub applied: ProfileApplySummary,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileApplySummary {
+    pub config_changed: bool,
+    pub instructions_changed: bool,
+    pub mounts_changed: u32,
+    pub mcp_changed: u32,
+    pub environments_changed: u32,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -635,6 +1062,10 @@ pub struct ToolConfigInput {
     /// sessions bound to a chat channel.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub messaging: Option<bool>,
+    /// Enables the Fleet subagent control-plane tools
+    /// (agent_spawn/send/read/list/cancel and profile_list/read).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fleet: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -684,6 +1115,15 @@ pub enum FieldPatch<T> {
     Clear,
 }
 
+impl<T> FieldPatch<T> {
+    pub fn into_option(self) -> Option<T> {
+        match self {
+            Self::Set(value) => Some(value),
+            Self::Clear => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerationConfigPatch {
@@ -722,6 +1162,8 @@ pub struct ToolConfigPatchInput {
     pub filesystem: Option<FieldPatch<FilesystemToolMode>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub messaging: Option<FieldPatch<bool>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fleet: Option<FieldPatch<bool>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1236,6 +1678,16 @@ pub enum SessionEventKindView {
         status: ToolItemStatus,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         effects: Vec<ToolEffectView>,
+    },
+    ToolBatchDeferred {
+        run_id: RunId,
+        turn_id: String,
+        batch_id: String,
+    },
+    ToolBatchResumed {
+        run_id: RunId,
+        turn_id: String,
+        batch_id: String,
     },
     ToolBatchCompleted {
         run_id: RunId,
@@ -1862,6 +2314,37 @@ pub struct EnvironmentProviderUnregisterParams {
 #[serde(rename_all = "camelCase")]
 pub struct EnvironmentProviderUnregisterResponse {
     pub provider: EnvironmentProviderView,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentProviderListParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<EnvironmentProviderStatusView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_kind: Option<EnvironmentProviderKindView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentProviderListResponse {
+    #[serde(default)]
+    pub providers: Vec<EnvironmentProviderView>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentProviderTargetListParams {
+    pub provider_id: EnvironmentProviderId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<EnvironmentTargetStatusView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentProviderTargetListResponse {
+    #[serde(default)]
+    pub targets: Vec<EnvironmentTargetSummaryView>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -2918,6 +3401,7 @@ pub struct ToolConfigView {
     pub web_search: bool,
     pub web_fetch: bool,
     pub filesystem: FilesystemToolMode,
+    pub fleet: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -3502,6 +3986,12 @@ macro_rules! api_methods {
 api_methods! {
     METHOD_INITIALIZE => initialize(InitializeParams) -> InitializeResponse,
     METHOD_SESSION_START => start_session(SessionStartParams) -> SessionStartResponse,
+    METHOD_PROFILES_CREATE => create_profile(ProfileCreateParams) -> ProfileCreateResponse,
+    METHOD_PROFILES_READ => read_profile(ProfileReadParams) -> ProfileReadResponse,
+    METHOD_PROFILES_LIST => list_profiles(ProfileListParams) -> ProfileListResponse,
+    METHOD_PROFILES_UPDATE => update_profile(ProfileUpdateParams) -> ProfileUpdateResponse,
+    METHOD_PROFILES_DELETE => delete_profile(ProfileDeleteParams) -> ProfileDeleteResponse,
+    METHOD_PROFILES_APPLY => apply_profile(ProfileApplyParams) -> ProfileApplyResponse,
     METHOD_SESSION_UPDATE => update_session(SessionUpdateParams) -> SessionUpdateResponse,
     METHOD_SESSION_TOOLS_UPDATE => update_session_tools(SessionToolsUpdateParams) -> SessionToolsUpdateResponse,
     METHOD_SESSION_READ => read_session(SessionReadParams) -> SessionReadResponse,
@@ -3528,6 +4018,8 @@ api_methods! {
     METHOD_ENVIRONMENT_PROVIDERS_REGISTER => register_environment_provider(EnvironmentProviderRegisterParams) -> EnvironmentProviderRegisterResponse,
     METHOD_ENVIRONMENT_PROVIDERS_HEARTBEAT => heartbeat_environment_provider(EnvironmentProviderHeartbeatParams) -> EnvironmentProviderHeartbeatResponse,
     METHOD_ENVIRONMENT_PROVIDERS_UNREGISTER => unregister_environment_provider(EnvironmentProviderUnregisterParams) -> EnvironmentProviderUnregisterResponse,
+    METHOD_ENVIRONMENT_PROVIDERS_LIST => list_environment_providers(EnvironmentProviderListParams) -> EnvironmentProviderListResponse,
+    METHOD_ENVIRONMENT_PROVIDER_TARGETS_LIST => list_environment_provider_targets(EnvironmentProviderTargetListParams) -> EnvironmentProviderTargetListResponse,
     METHOD_BLOB_PUT => put_blob(BlobPutParams) -> BlobPutResponse,
     METHOD_BLOB_PUT_MANY => put_blobs(BlobPutManyParams) -> BlobPutManyResponse,
     METHOD_BLOB_GET => get_blob(BlobGetParams) -> BlobGetResponse,
@@ -4908,6 +5400,70 @@ mod tests {
             Err(AgentApiError::internal("not implemented"))
         }
 
+        async fn create_profile(
+            &self,
+            params: ProfileCreateParams,
+        ) -> Result<AgentApiOutcome<ProfileCreateResponse>, AgentApiError> {
+            let input = params.profile;
+            Ok(AgentApiOutcome::new(ProfileCreateResponse {
+                profile: AgentProfile {
+                    profile_id: input.profile_id,
+                    display_name: input.display_name,
+                    description: input.description,
+                    revision: 1,
+                    document: input.document,
+                    created_at_ms: 1,
+                    updated_at_ms: 1,
+                },
+            }))
+        }
+
+        async fn read_profile(
+            &self,
+            params: ProfileReadParams,
+        ) -> Result<AgentApiOutcome<ProfileReadResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(ProfileReadResponse {
+                profile: test_profile(params.profile_id),
+            }))
+        }
+
+        async fn list_profiles(
+            &self,
+            _params: ProfileListParams,
+        ) -> Result<AgentApiOutcome<ProfileListResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(ProfileListResponse {
+                profiles: vec![test_profile(ProfileId::new("support")).summary()],
+            }))
+        }
+
+        async fn update_profile(
+            &self,
+            params: ProfileUpdateParams,
+        ) -> Result<AgentApiOutcome<ProfileUpdateResponse>, AgentApiError> {
+            let mut profile = test_profile(params.profile_id);
+            profile.revision = params.expected_revision.unwrap_or(profile.revision) + 1;
+            Ok(AgentApiOutcome::new(ProfileUpdateResponse { profile }))
+        }
+
+        async fn delete_profile(
+            &self,
+            params: ProfileDeleteParams,
+        ) -> Result<AgentApiOutcome<ProfileDeleteResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(ProfileDeleteResponse {
+                profile: test_profile(params.profile_id),
+            }))
+        }
+
+        async fn apply_profile(
+            &self,
+            params: ProfileApplyParams,
+        ) -> Result<AgentApiOutcome<ProfileApplyResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(ProfileApplyResponse {
+                session: test_session(params.session_id, SessionStatus::Idle),
+                applied: ProfileApplySummary::default(),
+            }))
+        }
+
         async fn update_session(
             &self,
             params: SessionUpdateParams,
@@ -5224,6 +5780,31 @@ mod tests {
                         EnvironmentProviderKindView::Bridge,
                         EnvironmentProviderStatusView::Offline,
                     ),
+                },
+            ))
+        }
+
+        async fn list_environment_providers(
+            &self,
+            _params: EnvironmentProviderListParams,
+        ) -> Result<AgentApiOutcome<EnvironmentProviderListResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(EnvironmentProviderListResponse {
+                providers: vec![test_environment_provider(
+                    "bridge-local".to_owned(),
+                    EnvironmentProviderKindView::Bridge,
+                    EnvironmentProviderStatusView::Online,
+                )],
+            }))
+        }
+
+        async fn list_environment_provider_targets(
+            &self,
+            params: EnvironmentProviderTargetListParams,
+        ) -> Result<AgentApiOutcome<EnvironmentProviderTargetListResponse>, AgentApiError> {
+            assert_eq!(params.provider_id, "bridge-local");
+            Ok(AgentApiOutcome::new(
+                EnvironmentProviderTargetListResponse {
+                    targets: vec![test_environment_target()],
                 },
             ))
         }
@@ -5718,6 +6299,32 @@ mod tests {
         }
     }
 
+    fn test_profile(profile_id: ProfileId) -> AgentProfile {
+        AgentProfile {
+            profile_id,
+            display_name: Some("Support".to_owned()),
+            description: Some("Ticket support profile".to_owned()),
+            revision: 1,
+            document: ProfileDocument {
+                config: Some(SessionConfigInput {
+                    tools: Some(ToolConfigInput {
+                        fleet: Some(true),
+                        ..ToolConfigInput::default()
+                    }),
+                    ..SessionConfigInput::default()
+                }),
+                instructions: Some(ProfileInstructions::Text {
+                    text: "Be concise.".to_owned(),
+                }),
+                mounts: Vec::new(),
+                mcp: Vec::new(),
+                environments: Vec::new(),
+            },
+            created_at_ms: 1,
+            updated_at_ms: 2,
+        }
+    }
+
     fn test_session(id: SessionId, status: SessionStatus) -> SessionView {
         SessionView {
             id,
@@ -5782,6 +6389,27 @@ mod tests {
             last_seen_ms: 10,
             lease_expires_ms: 30_010,
             display_name: Some("Local bridge".to_owned()),
+            metadata: BTreeMap::new(),
+        }
+    }
+
+    fn test_environment_target() -> EnvironmentTargetSummaryView {
+        EnvironmentTargetSummaryView {
+            target_id: "local".to_owned(),
+            status: EnvironmentTargetStatusView::Ready,
+            scope: HostScopeView::Default,
+            capabilities: HostCapabilitiesView {
+                filesystem_read: true,
+                filesystem_write: true,
+                process_start: true,
+                process_stdin: true,
+                process_terminate: true,
+                process_output_polling: true,
+                process_output_notifications: false,
+                process_pty: true,
+            },
+            display_name: Some("Local".to_owned()),
+            default_cwd: Some("/workspace".to_owned()),
             metadata: BTreeMap::new(),
         }
     }

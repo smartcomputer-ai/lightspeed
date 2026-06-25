@@ -301,6 +301,7 @@ impl<'a> CoreAgentProjector<'a> {
                 web_search: effective_web_search_enabled(config),
                 web_fetch: effective_web_fetch_enabled(config),
                 filesystem: filesystem_tool_mode_to_api(effective_filesystem_tool_mode(config)),
+                fleet: effective_fleet_enabled(config),
             },
         })
     }
@@ -574,6 +575,25 @@ impl<'a> CoreAgentProjector<'a> {
                     call_id: result.call_id.as_str().to_owned(),
                     status: core_tool_status_to_api_status(result.status),
                     effects: tool_effects_to_api(&result.effects),
+                }),
+                ToolEvent::BatchDeferred {
+                    run_id,
+                    turn_id,
+                    batch_id,
+                    ..
+                } => Ok(SessionEventKindView::ToolBatchDeferred {
+                    run_id: api_run_id(*run_id),
+                    turn_id: api_turn_id(*turn_id),
+                    batch_id: api_tool_batch_id(*batch_id),
+                }),
+                ToolEvent::BatchResumed {
+                    run_id,
+                    turn_id,
+                    batch_id,
+                } => Ok(SessionEventKindView::ToolBatchResumed {
+                    run_id: api_run_id(*run_id),
+                    turn_id: api_turn_id(*turn_id),
+                    batch_id: api_tool_batch_id(*batch_id),
                 }),
                 ToolEvent::BatchCompleted {
                     run_id,
@@ -1102,6 +1122,10 @@ fn effective_filesystem_tool_mode(config: &SessionConfig) -> engine::FilesystemT
         .unwrap_or(engine::FilesystemToolMode::Edit)
 }
 
+fn effective_fleet_enabled(config: &SessionConfig) -> bool {
+    config.tools.fleet.unwrap_or(false)
+}
+
 fn filesystem_tool_mode_to_api(mode: engine::FilesystemToolMode) -> ApiFilesystemToolMode {
     match mode {
         engine::FilesystemToolMode::None => ApiFilesystemToolMode::None,
@@ -1330,6 +1354,10 @@ pub fn map_session_store_error(error: SessionStoreError) -> AgentApiError {
         }
         SessionStoreError::InvalidLimit { limit } => {
             AgentApiError::invalid_request(format!("invalid page limit: {limit}"))
+        }
+        SessionStoreError::InvalidForkPoint { .. }
+        | SessionStoreError::InvalidRelationship { .. } => {
+            AgentApiError::invalid_request(error.to_string())
         }
         SessionStoreError::ExpectedHeadMismatch { .. } => {
             AgentApiError::conflict(error.to_string())

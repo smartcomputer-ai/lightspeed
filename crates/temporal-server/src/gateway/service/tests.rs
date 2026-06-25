@@ -802,6 +802,7 @@ fn web_search_can_be_disabled_in_session_tools_config() {
             web_fetch: None,
             filesystem: None,
             messaging: None,
+            fleet: None,
         }),
     );
 
@@ -821,6 +822,7 @@ fn web_fetch_defaults_on_and_can_be_disabled() {
             web_fetch: Some(false),
             filesystem: None,
             messaging: None,
+            fleet: None,
         }),
     );
 
@@ -841,6 +843,7 @@ fn web_search_rejects_explicit_enable_for_non_openai_responses() {
             web_fetch: None,
             filesystem: None,
             messaging: None,
+            fleet: None,
         }),
     );
 
@@ -874,6 +877,7 @@ fn filesystem_tools_can_be_configured_read_only_or_none() {
             web_fetch: None,
             filesystem: Some(api::FilesystemToolMode::ReadOnly),
             messaging: None,
+            fleet: None,
         }),
     );
 
@@ -889,6 +893,7 @@ fn filesystem_tools_can_be_configured_read_only_or_none() {
             web_fetch: None,
             filesystem: Some(api::FilesystemToolMode::None),
             messaging: None,
+            fleet: None,
         }),
     );
 

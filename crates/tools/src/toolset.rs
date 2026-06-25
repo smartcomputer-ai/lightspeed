@@ -7,6 +7,7 @@ use engine::{ProviderApiKind, ToolName, ToolSpec};
 use crate::{
     builtin::{BuiltinTool, BuiltinToolOperation, BuiltinToolSurface},
     error::{ToolError, ToolResult},
+    fleet::{FleetToolsetConfig, fleet_tool_bindings, fleet_tool_bundles},
     messaging::{MessagingToolsetConfig, messaging_tool_bindings, messaging_tool_bundles},
     runtime::{ToolCatalog, ToolDocument, ToolExecutionMode, ToolSpecBundle, ToolTarget},
     web::fetch::{WebFetchToolConfig, web_fetch_tool_binding, web_fetch_tool_bundle},
@@ -22,6 +23,7 @@ pub struct ToolsetConfig {
     pub openai_web_search: OpenAiResponsesWebSearchConfig,
     pub web_fetch: WebFetchToolConfig,
     pub messaging: MessagingToolsetConfig,
+    pub fleet: FleetToolsetConfig,
 }
 
 impl ToolsetConfig {
@@ -31,6 +33,7 @@ impl ToolsetConfig {
             openai_web_search: OpenAiResponsesWebSearchConfig::default(),
             web_fetch: WebFetchToolConfig::default(),
             messaging: MessagingToolsetConfig::default(),
+            fleet: FleetToolsetConfig::default(),
         }
     }
 
@@ -327,6 +330,10 @@ pub fn resolve_toolset(
         builder.add_messaging(messaging_tool_bundles(&config.messaging)?);
     }
 
+    if config.fleet.enabled {
+        builder.add_fleet(fleet_tool_bundles(&config.fleet)?);
+    }
+
     Ok(builder.finish())
 }
 
@@ -392,6 +399,15 @@ impl ToolsetBuilder {
             self.add_bundle(bundle);
         }
         for binding in messaging_tool_bindings(ToolExecutionMode::Inline) {
+            self.catalog.insert(binding);
+        }
+    }
+
+    fn add_fleet(&mut self, bundles: Vec<ToolSpecBundle>) {
+        for bundle in bundles {
+            self.add_bundle(bundle);
+        }
+        for binding in fleet_tool_bindings(ToolExecutionMode::Inline) {
             self.catalog.insert(binding);
         }
     }

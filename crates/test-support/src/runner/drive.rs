@@ -5,8 +5,9 @@ use engine::{
     ContextCompactionStatus, CoreAgentAction, CoreAgentCommand, CoreAgentDrive,
     CoreAgentDriveError, CoreAgentIoError, CoreAgentLlm, CoreAgentState, CoreAgentTools,
     CoreApplyEvent, EventSeq, LlmFinish, LlmGenerationFacts, LlmGenerationRequest,
-    LlmGenerationResult, LlmGenerationStatus, SKILL_CATALOG_CONTEXT_KEY, SessionId, ToolCallStatus,
-    ToolInvocationBatchRequest, ToolInvocationBatchResult, ToolInvocationResult,
+    LlmGenerationResult, LlmGenerationStatus, SKILL_CATALOG_CONTEXT_KEY, SessionId,
+    ToolBatchOutcome, ToolCallStatus, ToolInvocationBatchRequest, ToolInvocationBatchResult,
+    ToolInvocationResult,
     storage::{AppendSessionEvents, BlobStore, ReadSessionEvents},
 };
 use tools::{
@@ -484,28 +485,28 @@ impl SessionRunner {
                     action = drive.resume_context_compaction(result, observed_at_ms)?;
                 }
                 CoreAgentAction::InvokeTools { request } => {
-                    let result = match self.tools.as_deref() {
+                    let outcome = match self.tools.as_deref() {
                         Some(tools) => match tools.invoke_batch(request.clone()).await {
-                            Ok(result) => result,
-                            Err(error) => {
+                            Ok(outcome) => outcome,
+                            Err(error) => ToolBatchOutcome::completed(
                                 failed_tool_batch_result(
                                     self.stores.blobs.as_ref(),
                                     &request,
                                     error.to_string(),
                                 )
-                                .await?
-                            }
+                                .await?,
+                            ),
                         },
-                        None => {
+                        None => ToolBatchOutcome::completed(
                             failed_tool_batch_result(
                                 self.stores.blobs.as_ref(),
                                 &request,
                                 "test-support tool runtime unavailable",
                             )
-                            .await?
-                        }
+                            .await?,
+                        ),
                     };
-                    action = drive.resume_tool_batch(result, observed_at_ms)?;
+                    action = drive.resume_tool_batch_outcome(outcome, observed_at_ms)?;
                 }
                 CoreAgentAction::Idle => return Ok(RunnerQuiescence::Idle),
                 CoreAgentAction::Closed => return Ok(RunnerQuiescence::Closed),
@@ -644,7 +645,11 @@ async fn failed_tool_batch_result(
             call_id: call.call_id.clone(),
             status: ToolCallStatus::Failed,
             output_ref: None,
-            model_visible_output_ref: Some(error_ref.clone()),
+            model_visible_context_entries: vec![ToolInvocationResult::tool_result_context_entry(
+                &call.call_id,
+                ToolCallStatus::Failed,
+                error_ref.clone(),
+            )],
             error_ref: Some(error_ref),
             effects: Vec::new(),
         });
@@ -680,7 +685,8 @@ mod tests {
         RunStatus, SessionConfig, SessionId, ToolCallResult, ToolKind, ToolName, ToolParallelism,
         ToolSpec, ToolTargetRequirement, TurnConfig, TurnEvent,
         storage::{
-            BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore,
+            BlobStore, CreateForkedSession, CreateSession, InMemoryBlobStore, InMemorySessionStore,
+            SessionStore,
         },
     };
     use tools::prompts::{
@@ -1269,6 +1275,82 @@ mod tests {
                 .iter()
                 .any(|entry| matches!(entry.kind, ContextEntryKind::EnvironmentCatalog))
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn forked_session_rehydrates_inherited_opened_event_and_runs() {
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let stores = RunnerStores::new(sessions.clone(), blobs.clone());
+        let source_id = SessionId::new("source-session");
+        let child_id = SessionId::new("child-session");
+        sessions
+            .create_session(CreateSession {
+                session_id: source_id.clone(),
+                agent_handle: AgentHandle::new("lightspeed.default"),
+                created_at_ms: 1,
+            })
+            .await
+            .expect("create source");
+        let llm = Arc::new(CaptureFinalLlm::default());
+        let runner = SessionRunner::new(stores, llm.clone());
+        let session_config = config();
+        runner
+            .drive_command(DriveCommand {
+                session_id: source_id.clone(),
+                observed_at_ms: 10,
+                command: CoreAgentCommand::OpenSession {
+                    config: session_config.clone(),
+                },
+                max_steps: None,
+            })
+            .await
+            .expect("open source");
+
+        let fork_seq = sessions
+            .safe_fork_seq(&source_id)
+            .await
+            .expect("compute safe fork seq");
+        assert_eq!(fork_seq, engine::EventSeq::new(1));
+        sessions
+            .create_forked_session(CreateForkedSession {
+                source_session_id: source_id,
+                session_id: child_id.clone(),
+                agent_handle: AgentHandle::new("lightspeed.default"),
+                source_seq: fork_seq,
+                created_at_ms: 20,
+            })
+            .await
+            .expect("create fork");
+
+        let outcome = runner
+            .drive_command(DriveCommand {
+                session_id: child_id,
+                observed_at_ms: 30,
+                command: CoreAgentCommand::RequestRun {
+                    submission_id: None,
+                    input: user_input(BlobRef::from_bytes(b"child input")),
+                    run_config: run_config(),
+                },
+                max_steps: Some(64),
+            })
+            .await
+            .expect("run child");
+
+        assert!(outcome.accepted);
+        assert_eq!(outcome.state.lifecycle.config, Some(session_config));
+        assert!(outcome.state.runs.active.is_none());
+        assert_eq!(outcome.state.runs.completed.len(), 1);
+        assert_eq!(
+            outcome
+                .emitted_entries
+                .first()
+                .expect("child emitted entries")
+                .position
+                .seq,
+            engine::EventSeq::new(2)
+        );
+        assert_eq!(llm.requests.lock().expect("requests").len(), 1);
     }
 
     #[tokio::test(flavor = "current_thread")]

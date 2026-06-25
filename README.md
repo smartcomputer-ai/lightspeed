@@ -16,16 +16,19 @@ We also acknowledge that the current iteration of frontier models are optimized 
 ## Features
 What constitutes an "agent harness" is a rapidly expanding set of table-stakes features. Here is a list of where we are at:
 - [x] Broad frontier model support for OpenAI and Anthropic: native compaction, reasoning traces, advanced tool configurations and provider native tools, MCP, files, images, provider OAuth login, multiple API keys, etc.
-- [ ] Other model support via the "Completion API" standard (in progress)
 - [x] Long-lasting and durable agent runs (weeks to months)
-- [ ] Sandboxes, including delegating work to standard coding agents inside sandboxes (in progress)
 - [x] Virtual file system that allows the agent to use standard file tools (read, glob, patch. etc), without needing a full operating system attached
 - [x] Skills hosted on a virtual file system or inside sandboxes
 - [x] Flexible prompt and instruction configuration features
+- [x] Reusable agent profiles for named or inline session setup across CLI, bridge, and Fleet spawns
 - [x] Hosted MCP, including various authentication methods such as API keys, OAuth flows
-- [ ] Sub-agents (aka. "fleets"), letting agents start or manage other agents (planned)
+- [x] Sub-agents (aka. "fleets"), letting agents start or manage other agents (planned)
+- [~] Sandboxes, including delegating work to standard coding agents inside sandboxes (in progress)
+  - [x] Dedicated VMs that connect via a bridge daemon to the agent
+  - [ ] Ad-hoc sandboxes
 - [ ] Timers, schedules, wake-ups (planned)
 - [ ] Multi-tenant support (in progress)
+- [ ] Other model support via the "Completion API" standard (in progress)
 - [x] CLI to connect to running agent sessions
 - [x] Bridge to various messaging platforms (WhatsApp, Telegram, others coming soon)
 
@@ -121,7 +124,7 @@ flowchart TD
 ```
 The Temporal workflow owns an instance of the deterministic core–aka a "session". It drives the core state machine until it is idle. When not idle, it sends the the effect intents via activities to real APIs and services, such as LLM providers. It also logs all events that constitute a session state in a Postgres store (or optionally an file system store, for testing). Small CAS blobs get stored in Postgres, large blobs go to S3 (also supporting different blob providers).
 
-Around the main stack, there is also a gateway API and CLI tooling to make interacting with the whole Lightspeed system easier.
+Around the main stack, there is also a gateway API and CLI tooling to make interacting with the whole Lightspeed system easier. Agent profiles live on that public API boundary: a profile is a reusable setup document for session config, instructions, mounts, MCP links, and environments. The hosted runtime resolves and applies profiles outside the deterministic core.
 
 
 ## Quick Start
@@ -213,6 +216,41 @@ That starts an interactive TUI session. `LIGHTSPEED_API_URL` is exported by
 For OpenAI-backed chat, the CLI sends typed session/run configuration through
 the API. Use `--model ...` on a command, or set `LIGHTSPEED_CHAT_MODEL`, if you want
 a specific model.
+
+The repository includes runnable example profiles under `profiles/`. Import one
+through the gateway, then start a chat with its profile id:
+
+```bash
+cargo run -p cli -- profiles import profiles/workspace-prompts-skills.json
+cargo run -p cli -- chat --new --profile example.workspace-prompts-skills \
+  "summarize the mounted profile workspace"
+```
+
+The workspace-backed profile provisions `profiles/workspace-prompts-skills/` as
+a VFS workspace and mounts it at `/workspace`. The local `provision` block is
+consumed by the CLI during import and is not stored in the profile record.
+
+There is also a multi-profile Fleet demo:
+
+```bash
+cargo run -p cli -- profiles import profiles/fleet-demo.json
+cargo run -p cli -- chat --new --profile example.fleet.supervisor
+```
+
+Profiles can be managed through the same gateway:
+
+```bash
+cargo run -p cli -- profiles list
+cargo run -p cli -- profiles check profiles/fleet-demo.json
+cargo run -p cli -- profiles read example.workspace-prompts-skills
+cargo run -p cli -- profiles export example.workspace-prompts-skills \
+  --out /tmp/example.workspace-prompts-skills.json
+```
+
+`profiles import` and `profiles check` accept either one profile object or a
+non-empty JSON array of profile objects. See `profiles/README.md` for the full
+set of examples, including the MCP echo profile, which requires registering the
+test MCP server before import.
 
 To chat with a local directory mounted as a writable CAS-backed VFS workspace:
 

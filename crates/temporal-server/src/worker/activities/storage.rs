@@ -409,6 +409,8 @@ mod tests {
                 session_id: session_id.clone(),
                 agent_handle: AgentHandle::new("lightspeed.agent"),
                 head: None,
+                source_session_id: None,
+                source_seq: None,
                 created_at_ms: 1,
                 updated_at_ms: 1,
             },

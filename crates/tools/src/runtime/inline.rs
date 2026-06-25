@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use engine::{
-    CoreAgentIoError, CoreAgentTools, ToolCallStatus, ToolInvocationBatchRequest,
+    CoreAgentIoError, CoreAgentTools, ToolBatchOutcome, ToolCallStatus, ToolInvocationBatchRequest,
     ToolInvocationBatchResult, ToolInvocationRequest, ToolInvocationResult, ToolName,
     storage::BlobStore,
 };
@@ -174,7 +174,7 @@ impl InlineToolRuntime {
         let output_bytes = serde_json::to_vec(&output.output_json)
             .map_err(|error| io_error(format!("failed to encode tool output: {error}")))?;
         let output_ref = self.put_blob(ctx, output_bytes).await?;
-        let model_visible_output_ref = self
+        let model_visible_ref = self
             .put_blob(
                 ctx,
                 truncate_bytes(
@@ -191,7 +191,11 @@ impl InlineToolRuntime {
             call_id: call.call_id.clone(),
             status: ToolCallStatus::Succeeded,
             output_ref: Some(output_ref),
-            model_visible_output_ref: Some(model_visible_output_ref),
+            model_visible_context_entries: vec![ToolInvocationResult::tool_result_context_entry(
+                &call.call_id,
+                ToolCallStatus::Succeeded,
+                model_visible_ref,
+            )],
             error_ref: None,
             effects,
         })
@@ -218,7 +222,11 @@ impl InlineToolRuntime {
             call_id: call.call_id.clone(),
             status: ToolCallStatus::Failed,
             output_ref: None,
-            model_visible_output_ref: Some(error_ref.clone()),
+            model_visible_context_entries: vec![ToolInvocationResult::tool_result_context_entry(
+                &call.call_id,
+                ToolCallStatus::Failed,
+                error_ref.clone(),
+            )],
             error_ref: Some(error_ref),
             effects: ctx.drain_tool_effects(),
         })
@@ -232,7 +240,7 @@ impl InlineToolRuntime {
         let output_bytes = serde_json::to_vec(&output.output_json)
             .map_err(|error| io_error(format!("failed to encode tool output: {error}")))?;
         let output_ref = self.put_blob_bytes(output_bytes).await?;
-        let model_visible_output_ref = self
+        let model_visible_ref = self
             .put_blob_bytes(truncate_bytes(
                 output.model_visible_text.into_bytes(),
                 self.limits.max_model_visible_output_bytes,
@@ -243,7 +251,11 @@ impl InlineToolRuntime {
             call_id: call.call_id.clone(),
             status: ToolCallStatus::Succeeded,
             output_ref: Some(output_ref),
-            model_visible_output_ref: Some(model_visible_output_ref),
+            model_visible_context_entries: vec![ToolInvocationResult::tool_result_context_entry(
+                &call.call_id,
+                ToolCallStatus::Succeeded,
+                model_visible_ref,
+            )],
             error_ref: None,
             effects: output.effects,
         })
@@ -265,7 +277,11 @@ impl InlineToolRuntime {
             call_id: call.call_id.clone(),
             status: ToolCallStatus::Failed,
             output_ref: None,
-            model_visible_output_ref: Some(error_ref.clone()),
+            model_visible_context_entries: vec![ToolInvocationResult::tool_result_context_entry(
+                &call.call_id,
+                ToolCallStatus::Failed,
+                error_ref.clone(),
+            )],
             error_ref: Some(error_ref),
             effects: Vec::new(),
         })
@@ -367,17 +383,17 @@ impl CoreAgentTools for InlineToolRuntime {
     async fn invoke_batch(
         &self,
         request: ToolInvocationBatchRequest,
-    ) -> Result<ToolInvocationBatchResult, CoreAgentIoError> {
+    ) -> Result<ToolBatchOutcome, CoreAgentIoError> {
         let mut results = Vec::with_capacity(request.calls.len());
         for call in request.calls {
             results.push(self.invoke_call(&call).await?);
         }
-        Ok(ToolInvocationBatchResult {
+        Ok(ToolBatchOutcome::completed(ToolInvocationBatchResult {
             run_id: request.run_id,
             turn_id: request.turn_id,
             batch_id: request.batch_id,
             results,
-        })
+        }))
     }
 }
 
@@ -406,8 +422,8 @@ mod tests {
 
     use async_trait::async_trait;
     use engine::{
-        BlobRef, RunId, SessionId, ToolBatchId, ToolCallId, ToolInvocationRequest, ToolName,
-        TurnId,
+        BlobRef, ContextEntryKind, RunId, SessionId, ToolBatchId, ToolCallId,
+        ToolInvocationRequest, ToolInvocationResult, ToolName, TurnId,
         storage::{BlobStore, InMemoryBlobStore},
     };
     use serde_json::json;
@@ -534,6 +550,17 @@ mod tests {
             .catalog
     }
 
+    fn visible_tool_result_ref(result: &ToolInvocationResult) -> BlobRef {
+        result
+            .model_visible_context_entries
+            .iter()
+            .find_map(|entry| {
+                matches!(entry.kind, ContextEntryKind::ToolResult { .. })
+                    .then(|| entry.content_ref.clone())
+            })
+            .expect("visible ref")
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn inline_runtime_maps_tool_name_to_builtin_operation() {
         let blobs = Arc::new(InMemoryBlobStore::new());
@@ -600,11 +627,13 @@ mod tests {
             .invoke_batch(batch_request(call(args_ref, "read_file")))
             .await
             .expect("invoke batch")
+            .completed_result()
+            .expect("completed batch")
             .single_result()
             .expect("single result");
 
         assert_eq!(result.status, ToolCallStatus::Succeeded);
-        let visible_ref = result.model_visible_output_ref.expect("visible ref");
+        let visible_ref = visible_tool_result_ref(&result);
         let visible = blobs.read_text(&visible_ref).await.expect("visible text");
         assert!(visible.contains("hello"));
     }
@@ -640,14 +669,13 @@ mod tests {
             },
         )
         .await
-        .expect("invoke batch");
+        .expect("invoke batch")
+        .completed_result()
+        .expect("completed batch");
 
         assert_eq!(result.results.len(), 1);
         assert_eq!(result.results[0].status, ToolCallStatus::Succeeded);
-        let visible_ref = result.results[0]
-            .model_visible_output_ref
-            .clone()
-            .expect("visible ref");
+        let visible_ref = visible_tool_result_ref(&result.results[0]);
         let visible = blobs.read_text(&visible_ref).await.expect("visible text");
         assert!(visible.contains("hello"));
     }
@@ -670,6 +698,8 @@ mod tests {
             .invoke_batch(batch_request(call_with_target(args_ref, "web_fetch", None)))
             .await
             .expect("invoke batch")
+            .completed_result()
+            .expect("completed batch")
             .single_result()
             .expect("single result");
 
@@ -714,11 +744,13 @@ mod tests {
             )))
             .await
             .expect("invoke batch")
+            .completed_result()
+            .expect("completed batch")
             .single_result()
             .expect("single result");
 
         assert_eq!(result.status, ToolCallStatus::Succeeded);
-        let visible_ref = result.model_visible_output_ref.expect("visible ref");
+        let visible_ref = visible_tool_result_ref(&result);
         let visible = blobs.read_text(&visible_ref).await.expect("visible text");
         assert!(visible.contains("two"));
         assert!(!visible.contains("one"));
@@ -755,11 +787,13 @@ mod tests {
             )))
             .await
             .expect("invoke batch")
+            .completed_result()
+            .expect("completed batch")
             .single_result()
             .expect("single result");
 
         assert_eq!(result.status, ToolCallStatus::Succeeded);
-        let visible_ref = result.model_visible_output_ref.expect("visible ref");
+        let visible_ref = visible_tool_result_ref(&result);
         let visible = blobs.read_text(&visible_ref).await.expect("visible text");
         assert!(visible.contains("ok"));
         let requests = process.requests.lock().expect("lock");
@@ -793,6 +827,8 @@ mod tests {
             )))
             .await
             .expect("invoke batch")
+            .completed_result()
+            .expect("completed batch")
             .single_result()
             .expect("single result");
 
@@ -818,6 +854,8 @@ mod tests {
             )))
             .await
             .expect("invoke batch")
+            .completed_result()
+            .expect("completed batch")
             .single_result()
             .expect("single result");
 
@@ -854,6 +892,8 @@ mod tests {
                 )))
                 .await
                 .expect("invoke batch")
+                .completed_result()
+                .expect("completed batch")
                 .single_result()
                 .expect("single result");
 

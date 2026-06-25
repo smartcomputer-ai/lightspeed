@@ -3,6 +3,7 @@ mod auth_cli;
 mod chat;
 mod env_cli;
 mod mcp_cli;
+mod profile_cli;
 mod skills_cli;
 mod vfs_cli;
 mod vfs_transfer;
@@ -31,6 +32,8 @@ enum Command {
     Auth(auth_cli::AuthArgs),
     /// Manage session environments.
     Env(env_cli::EnvArgs),
+    /// Manage agent profiles.
+    Profiles(profile_cli::ProfilesArgs),
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -44,6 +47,7 @@ async fn main() -> Result<()> {
         Command::Mcp(args) => mcp_cli::handle(args).await,
         Command::Auth(args) => auth_cli::handle(args).await,
         Command::Env(args) => env_cli::handle(args).await,
+        Command::Profiles(args) => profile_cli::handle(args).await,
     }
 }
 
@@ -103,6 +107,77 @@ mod tests {
         ])
         .expect("parse chat mount");
         assert!(matches!(cli.command, Command::Chat(_)));
+    }
+
+    #[test]
+    fn chat_parse_accepts_profile_options() {
+        let cli = Cli::try_parse_from([
+            "lightspeed",
+            "chat",
+            "--new",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
+            "--profile",
+            "support",
+            "hello",
+        ])
+        .expect("parse chat profile");
+        assert!(matches!(cli.command, Command::Chat(_)));
+    }
+
+    #[test]
+    fn profiles_parse_accepts_apply_named_profile() {
+        let cli = Cli::try_parse_from([
+            "lightspeed",
+            "profiles",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
+            "apply",
+            "session_1",
+            "--profile",
+            "support",
+        ])
+        .expect("parse profiles apply");
+        assert!(matches!(cli.command, Command::Profiles(_)));
+    }
+
+    #[test]
+    fn profiles_parse_accepts_import_export_and_check() {
+        let cli = Cli::try_parse_from([
+            "lightspeed",
+            "profiles",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
+            "import",
+            "./support-profile.json",
+            "--no-check",
+        ])
+        .expect("parse profiles import");
+        assert!(matches!(cli.command, Command::Profiles(_)));
+
+        let cli = Cli::try_parse_from([
+            "lightspeed",
+            "profiles",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
+            "export",
+            "support",
+            "--out",
+            "./support-profile.json",
+        ])
+        .expect("parse profiles export");
+        assert!(matches!(cli.command, Command::Profiles(_)));
+
+        let cli = Cli::try_parse_from([
+            "lightspeed",
+            "profiles",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
+            "check",
+            "-",
+        ])
+        .expect("parse profiles check");
+        assert!(matches!(cli.command, Command::Profiles(_)));
     }
 
     #[test]

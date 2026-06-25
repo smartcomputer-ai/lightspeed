@@ -14,7 +14,7 @@ type Running = RunningBridge | RunningWhatsAppBridge;
 const config = await loadBridgeConfig();
 const store = new JsonBridgeStore(config.store.path);
 const client = new LightspeedClient(config.lightspeed.endpoint);
-const lightspeed = new LightspeedSessionBridge(client, store, config.lightspeed);
+const lightspeed = new LightspeedSessionBridge(client, config.lightspeed);
 const runtime = new MessagingBridgeRuntime({
   lightspeed,
   store,
@@ -22,7 +22,7 @@ const runtime = new MessagingBridgeRuntime({
   sessionPrefix: config.lightspeed.sessionPrefix,
 });
 const running: Running[] = [];
-const routing = { bindings: config.bindings, recipes: config.recipes };
+const routing = { bindings: config.bindings };
 
 if (config.telegram?.enabled) {
   running.push(await startTelegramBridge(config.telegram, runtime, routing));

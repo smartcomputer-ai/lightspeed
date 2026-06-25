@@ -11,11 +11,12 @@ use engine::{
     BlobRef,
     session::{
         AgentHandle, DynamicEvent, DynamicJoins, DynamicUncommittedSessionEvent, EventSeq,
-        SessionId,
+        SessionId, SessionPosition,
     },
     storage::{
-        AppendSessionEvents, BlobEdge, BlobGraphStore, BlobStore, CreateSession, ReadSessionEvents,
-        SessionBlobRoot, SessionStore,
+        AppendSessionEvents, BlobEdge, BlobGraphStore, BlobStore, CreateClonedSession,
+        CreateForkedSession, CreateSession, ListSessionLinks, ReadSessionEvents, SessionBlobRoot,
+        SessionLinkDirection, SessionStore, UpsertSessionLink,
     },
 };
 use environment_registry::{
@@ -105,6 +106,366 @@ async fn pg_live_sessions_are_isolated_by_universe() {
         .await
         .expect("read right events");
     assert!(right_page.entries.is_empty());
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires local/up.sh or compatible Postgres + MinIO env"]
+async fn pg_live_clone_copies_resources_and_links_sessions() {
+    let store = live_store("session-graph-clone", 1024).await;
+    let source_id = SessionId::new("source-session");
+    let clone_id = SessionId::new("clone-session");
+    let peer_id = SessionId::new("peer-session");
+    for session_id in [&source_id, &peer_id] {
+        store
+            .create_session(CreateSession {
+                session_id: session_id.clone(),
+                agent_handle: AgentHandle::new("lightspeed.default"),
+                created_at_ms: 1,
+            })
+            .await
+            .expect("create session");
+    }
+    store
+        .append(AppendSessionEvents {
+            session_id: source_id.clone(),
+            expected_head: None,
+            events: vec![open_event(10), open_event(11)],
+        })
+        .await
+        .expect("append source events");
+
+    let snapshot_ref = store
+        .put_bytes(b"snapshot manifest".to_vec())
+        .await
+        .expect("put snapshot");
+    store
+        .record_snapshot(VfsSnapshotRecord {
+            snapshot_ref: snapshot_ref.clone(),
+            source: VfsSnapshotSource::new("inline").with_subject("seed"),
+            display_name: Some("Seed".to_owned()),
+            created_at_ms: 12,
+        })
+        .await
+        .expect("record snapshot");
+    let workspace_id = VfsWorkspaceId::new("workspace-graph");
+    store
+        .create_workspace(CreateVfsWorkspaceRecord {
+            workspace_id: workspace_id.clone(),
+            base_snapshot_ref: Some(snapshot_ref.clone()),
+            head_snapshot_ref: snapshot_ref.clone(),
+            created_at_ms: 13,
+        })
+        .await
+        .expect("create workspace");
+    store
+        .put_mount(VfsMountRecord {
+            session_id: source_id.clone(),
+            mount_path: VfsPath::parse("/workspace").expect("workspace path"),
+            source: VfsMountSource::Workspace {
+                workspace_id: workspace_id.clone(),
+            },
+            access: VfsMountAccess::ReadWrite,
+        })
+        .await
+        .expect("put workspace mount");
+    store
+        .put_mount(VfsMountRecord {
+            session_id: source_id.clone(),
+            mount_path: VfsPath::parse("/skills").expect("skills path"),
+            source: VfsMountSource::Snapshot {
+                snapshot_ref: snapshot_ref.clone(),
+            },
+            access: VfsMountAccess::ReadOnly,
+        })
+        .await
+        .expect("put snapshot mount");
+
+    let provider_id = EnvironmentProviderId::new("bridge-graph");
+    let target_id = HostTargetId::new("host-graph");
+    let env_id = EnvironmentId::new("local");
+    store
+        .register_provider(RegisterEnvironmentProvider {
+            provider_id: provider_id.clone(),
+            provider_kind: EnvironmentProviderKind::Bridge,
+            display_name: Some("Graph bridge".to_owned()),
+            controller_connection: HostControllerConnectionSpec::new(
+                "ws://127.0.0.1:9000/controller",
+                HostTransport::WebSocket,
+            ),
+            capabilities: EnvironmentProviderCapabilities {
+                list_targets: true,
+                attach_target: true,
+                get_target: true,
+                ..EnvironmentProviderCapabilities::default()
+            },
+            implementation: ImplementationInfo {
+                name: "test-bridge".to_owned(),
+                version: Some("1.0.0".to_owned()),
+            },
+            lease_ttl_ms: 30_000,
+            metadata: Default::default(),
+            observed_at_ms: 14,
+        })
+        .await
+        .expect("register provider");
+    store
+        .upsert_target(UpsertEnvironmentTargetRecord {
+            provider_id: provider_id.clone(),
+            target_id: target_id.clone(),
+            display_name: Some("Graph host".to_owned()),
+            status: HostTargetStatus::Ready,
+            scope: HostScope::Default,
+            capabilities: HostCapabilities::filesystem(true, true).with_process(),
+            default_cwd: Some(HostPath::new("/workspace").expect("cwd")),
+            metadata: Default::default(),
+            observed_at_ms: 15,
+        })
+        .await
+        .expect("upsert target");
+    store
+        .create_binding(CreateSessionEnvironmentBinding {
+            session_id: source_id.clone(),
+            env_id: env_id.clone(),
+            provider_id: provider_id.clone(),
+            target_id: target_id.clone(),
+            kind: SessionEnvironmentKind::AttachedHost,
+            status: SessionEnvironmentBindingStatus::Ready,
+            capabilities: SessionEnvironmentCapabilities {
+                fs_read: true,
+                fs_write: true,
+                process_exec: true,
+                process_stdin: true,
+                network: false,
+                persistent: true,
+            },
+            connection: HostConnectionSpec {
+                target_id: target_id.clone(),
+                endpoint: "ws://127.0.0.1:9001/data".to_owned(),
+                transport: HostTransport::WebSocket,
+                scope: HostScope::Session {
+                    session_id: source_id.as_str().to_owned(),
+                },
+                default_cwd: Some(HostPath::new("/workspace").expect("cwd")),
+                capabilities: HostCapabilities::filesystem(true, true).with_process(),
+            },
+            cwd: Some(HostPath::new("/workspace").expect("cwd")),
+            fs_routes: Vec::new(),
+            created_at_ms: 16,
+        })
+        .await
+        .expect("create binding");
+
+    let clone = store
+        .create_cloned_session(CreateClonedSession {
+            source_session_id: source_id.clone(),
+            session_id: clone_id.clone(),
+            agent_handle: AgentHandle::new("lightspeed.default"),
+            created_at_ms: 20,
+            opening_events: vec![open_event(21)],
+        })
+        .await
+        .expect("clone session");
+    assert_eq!(clone.source_session_id, Some(source_id.clone()));
+    assert_eq!(clone.source_seq, None);
+    assert_eq!(
+        clone.head.as_ref().map(|head| head.seq),
+        Some(EventSeq::new(1))
+    );
+
+    let clone_mounts = store
+        .list_mounts(&clone_id)
+        .await
+        .expect("list clone mounts");
+    assert_eq!(clone_mounts.len(), 2);
+    assert!(
+        clone_mounts
+            .iter()
+            .all(|mount| mount.session_id == clone_id)
+    );
+    assert!(clone_mounts.iter().any(|mount| matches!(
+        &mount.source,
+        VfsMountSource::Workspace { workspace_id: id } if id == &workspace_id
+    )));
+    assert!(clone_mounts.iter().any(|mount| matches!(
+        &mount.source,
+        VfsMountSource::Snapshot { snapshot_ref: reference } if reference == &snapshot_ref
+    )));
+
+    let clone_bindings = store
+        .list_bindings_for_session(&clone_id)
+        .await
+        .expect("list clone bindings");
+    assert_eq!(clone_bindings.len(), 1);
+    assert_eq!(clone_bindings[0].session_id, clone_id);
+    assert_eq!(clone_bindings[0].provider_id, provider_id);
+    assert_eq!(clone_bindings[0].target_id, target_id);
+
+    let workspace_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM vfs_workspaces WHERE universe_id = $1")
+            .bind(store.config().universe_id)
+            .fetch_one(store.pool())
+            .await
+            .expect("count workspaces");
+    assert_eq!(workspace_count, 1);
+    let provider_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM environment_providers WHERE universe_id = $1")
+            .bind(store.config().universe_id)
+            .fetch_one(store.pool())
+            .await
+            .expect("count providers");
+    assert_eq!(provider_count, 1);
+
+    let link = store
+        .upsert_link(UpsertSessionLink {
+            from_session_id: clone_id.clone(),
+            to_session_id: peer_id.clone(),
+            relationship: "can_see".to_owned(),
+            created_at_ms: 30,
+            metadata: serde_json::json!({"via": "test"}),
+        })
+        .await
+        .expect("upsert link");
+    assert_eq!(link.from_session_id, clone_id.clone());
+    assert_eq!(link.to_session_id, peer_id.clone());
+    assert_eq!(
+        store
+            .list_links(ListSessionLinks {
+                session_id: clone_id,
+                direction: SessionLinkDirection::Outgoing,
+                relationship: Some("can_see".to_owned()),
+                limit: 10,
+            })
+            .await
+            .expect("list outgoing links"),
+        vec![link.clone()]
+    );
+    assert_eq!(
+        store
+            .list_links(ListSessionLinks {
+                session_id: peer_id,
+                direction: SessionLinkDirection::Incoming,
+                relationship: None,
+                limit: 10,
+            })
+            .await
+            .expect("list incoming links"),
+        vec![link]
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires local/up.sh or compatible Postgres + MinIO env"]
+async fn pg_live_fork_stitches_reads_and_clamps_parent_tail() {
+    let store = live_store("session-graph-fork", 1024).await;
+    let root = SessionId::new("root-session");
+    store
+        .create_session(CreateSession {
+            session_id: root.clone(),
+            agent_handle: AgentHandle::new("lightspeed.default"),
+            created_at_ms: 1,
+        })
+        .await
+        .expect("create root");
+    store
+        .append(AppendSessionEvents {
+            session_id: root.clone(),
+            expected_head: None,
+            events: vec![open_event(10), open_event(11), open_event(12)],
+        })
+        .await
+        .expect("append root");
+
+    let fork = SessionId::new("fork-session");
+    let fork_record = store
+        .create_forked_session(CreateForkedSession {
+            source_session_id: root.clone(),
+            session_id: fork.clone(),
+            agent_handle: AgentHandle::new("lightspeed.default"),
+            source_seq: EventSeq::new(2),
+            created_at_ms: 20,
+        })
+        .await
+        .expect("fork root");
+    assert_eq!(fork_record.source_session_id, Some(root.clone()));
+    assert_eq!(fork_record.source_seq, Some(EventSeq::new(2)));
+    assert_eq!(
+        fork_record.head.as_ref().map(|head| head.seq),
+        Some(EventSeq::new(2))
+    );
+    let appended = store
+        .append(AppendSessionEvents {
+            session_id: fork.clone(),
+            expected_head: Some(SessionPosition {
+                seq: EventSeq::new(2),
+            }),
+            events: vec![open_event(21), open_event(22)],
+        })
+        .await
+        .expect("append fork");
+    assert_eq!(
+        appended
+            .entries
+            .iter()
+            .map(|entry| entry.position.seq)
+            .collect::<Vec<_>>(),
+        vec![EventSeq::new(3), EventSeq::new(4)]
+    );
+
+    store
+        .append(AppendSessionEvents {
+            session_id: root,
+            expected_head: Some(SessionPosition {
+                seq: EventSeq::new(3),
+            }),
+            events: vec![open_event(30)],
+        })
+        .await
+        .expect("append hidden parent tail");
+
+    let child = SessionId::new("fork-child-session");
+    store
+        .create_forked_session(CreateForkedSession {
+            source_session_id: fork.clone(),
+            session_id: child.clone(),
+            agent_handle: AgentHandle::new("lightspeed.default"),
+            source_seq: EventSeq::new(3),
+            created_at_ms: 40,
+        })
+        .await
+        .expect("fork fork");
+    store
+        .append(AppendSessionEvents {
+            session_id: child.clone(),
+            expected_head: Some(SessionPosition {
+                seq: EventSeq::new(3),
+            }),
+            events: vec![open_event(41)],
+        })
+        .await
+        .expect("append child");
+
+    let page = store
+        .read_after(ReadSessionEvents {
+            session_id: child,
+            after: Some(EventSeq::new(1)),
+            limit: 10,
+        })
+        .await
+        .expect("read stitched child");
+    assert_eq!(
+        page.entries
+            .iter()
+            .map(|entry| entry.position.seq.as_u64())
+            .collect::<Vec<_>>(),
+        vec![2, 3, 4]
+    );
+    assert_eq!(
+        page.entries
+            .iter()
+            .map(|entry| entry.observed_at_ms)
+            .collect::<Vec<_>>(),
+        vec![11, 21, 41]
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]

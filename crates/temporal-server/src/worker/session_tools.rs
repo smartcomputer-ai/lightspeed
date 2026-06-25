@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use engine::{
-    CoreAgentIoError, CoreAgentTools, ProviderApiKind, SessionId, ToolCallStatus,
+    CoreAgentIoError, CoreAgentTools, ProviderApiKind, SessionId, ToolBatchOutcome, ToolCallStatus,
     ToolInvocationBatchRequest, ToolInvocationBatchResult, ToolInvocationResult,
     storage::{BlobStore, BlobStoreError},
 };
@@ -19,6 +19,7 @@ use messaging::OutboxStore;
 use serde_json::Value;
 use store_pg::PgStore;
 use tools::{
+    fleet::{AGENT_WAIT_TOOL_NAME, is_fleet_tool},
     fs::{FsPath, FsToolContext, MountedVfsFileSystem},
     host_protocol::RemoteHostConnection,
     limits::ToolLimits,
@@ -30,7 +31,10 @@ use tools::{
 };
 use vfs::{VfsCatalogError, VfsMountRecord, VfsMountStore, VfsWorkspaceStore};
 
-use crate::environment::{RuntimeEnvironment, SessionEnvironmentManager};
+use crate::{
+    environment::{RuntimeEnvironment, SessionEnvironmentManager},
+    fleet::{FleetChildRuntime, FleetService, FleetToolExecutor},
+};
 
 #[derive(Clone)]
 pub struct SessionTools {
@@ -40,6 +44,7 @@ pub struct SessionTools {
     environments: SessionEnvironmentManager,
     environment_bindings: Option<Arc<dyn SessionEnvironmentBindingStore>>,
     messaging: Option<MessagingToolExecutor>,
+    fleet: Option<FleetToolExecutor>,
 }
 
 impl SessionTools {
@@ -56,11 +61,23 @@ impl SessionTools {
             environments,
             environment_bindings: None,
             messaging: None,
+            fleet: None,
         }
     }
 
     pub fn with_messaging_outbox(mut self, outbox: Arc<dyn OutboxStore>) -> Self {
         self.messaging = Some(MessagingToolExecutor::new(outbox));
+        self
+    }
+
+    pub fn with_fleet_runtime(
+        mut self,
+        sessions: Arc<dyn engine::storage::SessionStore>,
+        runtime: Arc<dyn FleetChildRuntime>,
+    ) -> Self {
+        let service = FleetService::new(sessions, runtime)
+            .with_vfs_stores(self.workspace_store.clone(), self.mount_store.clone());
+        self.fleet = Some(FleetToolExecutor::new(self.blobs.clone(), service));
         self
     }
 
@@ -86,6 +103,14 @@ impl SessionTools {
         Self::new(blobs, workspace_store, mount_store)
             .with_messaging_outbox(outbox)
             .with_environment_bindings(environment_bindings)
+    }
+
+    pub fn from_pg_store_with_fleet_runtime(
+        store: Arc<PgStore>,
+        runtime: Arc<dyn FleetChildRuntime>,
+    ) -> Self {
+        let sessions: Arc<dyn engine::storage::SessionStore> = store.clone();
+        Self::from_pg_store(store).with_fleet_runtime(sessions, runtime)
     }
 
     async fn invoke_messaging_call(
@@ -144,7 +169,13 @@ impl SessionTools {
                     call_id: call.call_id.clone(),
                     status: ToolCallStatus::Succeeded,
                     output_ref: Some(output_ref),
-                    model_visible_output_ref: Some(visible_ref),
+                    model_visible_context_entries: vec![
+                        ToolInvocationResult::tool_result_context_entry(
+                            &call.call_id,
+                            ToolCallStatus::Succeeded,
+                            visible_ref,
+                        ),
+                    ],
                     error_ref: None,
                     effects: output.effects,
                 })
@@ -153,6 +184,74 @@ impl SessionTools {
                 failed_result(self.blobs.as_ref(), call.call_id.clone(), error.to_string()).await
             }
         }
+    }
+
+    async fn invoke_fleet_call(
+        &self,
+        request: &ToolInvocationBatchRequest,
+        call: &engine::ToolInvocationRequest,
+    ) -> Result<ToolInvocationResult, CoreAgentIoError> {
+        let Some(executor) = &self.fleet else {
+            return failed_result(
+                self.blobs.as_ref(),
+                call.call_id.clone(),
+                "Fleet tools are not configured on this runtime",
+            )
+            .await;
+        };
+        executor
+            .invoke(
+                crate::fleet::FleetInvocationContext {
+                    parent_session_id: request.session_id.clone(),
+                    parent_run_id: request.run_id,
+                    turn_id: request.turn_id,
+                    batch_id: request.batch_id,
+                    call_id: call.call_id.clone(),
+                    observed_at_ms: now_unix_ms()?,
+                },
+                call,
+            )
+            .await
+    }
+
+    async fn invoke_lone_agent_wait_batch(
+        &self,
+        request: ToolInvocationBatchRequest,
+    ) -> Result<ToolBatchOutcome, CoreAgentIoError> {
+        let Some(executor) = &self.fleet else {
+            let call = request.calls.first().ok_or_else(|| {
+                io_error("agent_wait batch had no calls after planner invocation")
+            })?;
+            let result = failed_result(
+                self.blobs.as_ref(),
+                call.call_id.clone(),
+                "Fleet tools are not configured on this runtime",
+            )
+            .await?;
+            return Ok(ToolBatchOutcome::completed(ToolInvocationBatchResult {
+                run_id: request.run_id,
+                turn_id: request.turn_id,
+                batch_id: request.batch_id,
+                results: vec![result],
+            }));
+        };
+        let call = request
+            .calls
+            .first()
+            .ok_or_else(|| io_error("agent_wait batch had no calls after planner invocation"))?;
+        executor
+            .invoke_wait_batch(
+                crate::fleet::FleetInvocationContext {
+                    parent_session_id: request.session_id.clone(),
+                    parent_run_id: request.run_id,
+                    turn_id: request.turn_id,
+                    batch_id: request.batch_id,
+                    call_id: call.call_id.clone(),
+                    observed_at_ms: now_unix_ms()?,
+                },
+                call,
+            )
+            .await
     }
 
     async fn environment_manager_for_session(
@@ -317,26 +416,37 @@ impl CoreAgentTools for SessionTools {
     async fn invoke_batch(
         &self,
         request: ToolInvocationBatchRequest,
-    ) -> Result<ToolInvocationBatchResult, CoreAgentIoError> {
-        let has_non_messaging = request
+    ) -> Result<ToolBatchOutcome, CoreAgentIoError> {
+        let has_agent_wait_call = request
             .calls
             .iter()
-            .any(|call| !is_messaging_tool(&call.tool_name));
-        if !has_non_messaging {
-            // Messaging-only batches skip VFS/runtime setup entirely.
+            .any(|call| call.tool_name.as_str() == AGENT_WAIT_TOOL_NAME);
+        if has_agent_wait_call && request.calls.len() == 1 {
+            return self.invoke_lone_agent_wait_batch(request).await;
+        }
+        let has_generic_runtime_call = request
+            .calls
+            .iter()
+            .any(|call| !is_messaging_tool(&call.tool_name) && !is_fleet_tool(&call.tool_name));
+        if !has_generic_runtime_call {
+            // Messaging/Fleet-only batches skip generic VFS/runtime setup entirely.
             let mut results = Vec::with_capacity(request.calls.len());
             for call in &request.calls {
-                results.push(
-                    self.invoke_messaging_call(&request.session_id, request.run_id, call)
-                        .await?,
-                );
+                if is_messaging_tool(&call.tool_name) {
+                    results.push(
+                        self.invoke_messaging_call(&request.session_id, request.run_id, call)
+                            .await?,
+                    );
+                } else {
+                    results.push(self.invoke_fleet_call(&request, call).await?);
+                }
             }
-            return Ok(ToolInvocationBatchResult {
+            return Ok(ToolBatchOutcome::completed(ToolInvocationBatchResult {
                 run_id: request.run_id,
                 turn_id: request.turn_id,
                 batch_id: request.batch_id,
                 results,
-            });
+            }));
         }
 
         let mounts = self
@@ -361,6 +471,8 @@ impl CoreAgentTools for SessionTools {
                     self.invoke_messaging_call(&request.session_id, request.run_id, call)
                         .await?,
                 );
+            } else if is_fleet_tool(&call.tool_name) {
+                results.push(self.invoke_fleet_call(&request, call).await?);
             } else if !has_session_fs
                 && call
                     .execution_target
@@ -379,12 +491,12 @@ impl CoreAgentTools for SessionTools {
                 results.push(runtime.invoke_call(call).await?);
             }
         }
-        Ok(ToolInvocationBatchResult {
+        Ok(ToolBatchOutcome::completed(ToolInvocationBatchResult {
             run_id: request.run_id,
             turn_id: request.turn_id,
             batch_id: request.batch_id,
             results,
-        })
+        }))
     }
 }
 
@@ -410,10 +522,14 @@ async fn failed_result(
         .await
         .map_err(map_blob_error)?;
     Ok(ToolInvocationResult {
-        call_id,
+        call_id: call_id.clone(),
         status: ToolCallStatus::Failed,
         output_ref: None,
-        model_visible_output_ref: Some(error_ref.clone()),
+        model_visible_context_entries: vec![ToolInvocationResult::tool_result_context_entry(
+            &call_id,
+            ToolCallStatus::Failed,
+            error_ref.clone(),
+        )],
         error_ref: Some(error_ref),
         effects: Vec::new(),
     })
@@ -435,6 +551,14 @@ fn map_blob_error(error: BlobStoreError) -> CoreAgentIoError {
     io_error(format!("write tool error blob: {error}"))
 }
 
+fn now_unix_ms() -> Result<u64, CoreAgentIoError> {
+    let duration = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| io_error(format!("system clock is before unix epoch: {error}")))?;
+    u64::try_from(duration.as_millis())
+        .map_err(|_| io_error("current timestamp does not fit in u64 milliseconds"))
+}
+
 fn io_error(error: impl std::fmt::Display) -> CoreAgentIoError {
     CoreAgentIoError::Failed {
         message: error.to_string(),
@@ -447,8 +571,8 @@ mod tests {
 
     use crate::environment::RuntimeEnvironment;
     use engine::{
-        BlobRef, RunId, SessionId, ToolBatchId, ToolCallId, ToolName, TurnId,
-        storage::InMemoryBlobStore,
+        BlobRef, ContextEntryKind, RunId, SessionId, ToolBatchId, ToolCallId, ToolName, TurnId,
+        storage::{CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
     };
     use tools::environment::{
         EnvironmentToolContext,
@@ -468,6 +592,17 @@ mod tests {
 
     use super::*;
 
+    fn visible_tool_result_ref(result: &ToolInvocationResult) -> BlobRef {
+        result
+            .model_visible_context_entries
+            .iter()
+            .find_map(|entry| {
+                matches!(entry.kind, ContextEntryKind::ToolResult { .. })
+                    .then(|| entry.content_ref.clone())
+            })
+            .expect("visible ref")
+    }
+
     #[derive(Default)]
     struct TestCatalog {
         workspaces: Mutex<BTreeMap<VfsWorkspaceId, VfsWorkspaceRecord>>,
@@ -477,6 +612,119 @@ mod tests {
     #[derive(Default)]
     struct RecordingProcessExecutor {
         requests: Mutex<Vec<ProcessRequest>>,
+    }
+
+    #[derive(Default)]
+    struct FakeFleetRuntime {
+        started_runs: Mutex<Vec<(SessionId, Vec<api::InputItem>, engine::SubmissionId)>>,
+    }
+
+    #[async_trait]
+    impl FleetChildRuntime for FakeFleetRuntime {
+        async fn start_session(
+            &self,
+            _session_id: &SessionId,
+            _close_on_terminal: bool,
+            _profile: Option<api::ProfileSource>,
+        ) -> Result<(), api::AgentApiError> {
+            Ok(())
+        }
+
+        async fn list_profiles(&self) -> Result<Vec<api::AgentProfileSummary>, api::AgentApiError> {
+            Ok(Vec::new())
+        }
+
+        async fn read_profile(
+            &self,
+            profile_id: api::ProfileId,
+        ) -> Result<api::AgentProfile, api::AgentApiError> {
+            Err(api::AgentApiError::not_found(format!(
+                "agent profile not found: {profile_id}"
+            )))
+        }
+
+        async fn start_run(
+            &self,
+            session_id: &SessionId,
+            input: Vec<api::InputItem>,
+            submission_id: engine::SubmissionId,
+        ) -> Result<String, api::AgentApiError> {
+            self.started_runs.lock().expect("fleet lock").push((
+                session_id.clone(),
+                input,
+                submission_id,
+            ));
+            Ok("run_1".to_owned())
+        }
+
+        async fn read_session(
+            &self,
+            session_id: &SessionId,
+        ) -> Result<api::SessionView, api::AgentApiError> {
+            Ok(fleet_test_session(session_id, api::SessionStatus::Idle))
+        }
+
+        async fn read_session_events(
+            &self,
+            _session_id: &SessionId,
+            _after: Option<u64>,
+            _limit: u32,
+        ) -> Result<api::SessionEventsReadResponse, api::AgentApiError> {
+            Ok(api::SessionEventsReadResponse {
+                events: Vec::new(),
+                next_cursor: None,
+                head_cursor: None,
+                complete: true,
+                gap: None,
+            })
+        }
+
+        async fn list_session_environments(
+            &self,
+            _session_id: &SessionId,
+        ) -> Result<api::SessionEnvironmentListResponse, api::AgentApiError> {
+            Ok(api::SessionEnvironmentListResponse {
+                active_env_id: None,
+                environments: Vec::new(),
+            })
+        }
+
+        async fn cancel_run(
+            &self,
+            _session_id: &SessionId,
+            run_id: &str,
+        ) -> Result<api::RunView, api::AgentApiError> {
+            Ok(api::RunView {
+                id: run_id.to_owned(),
+                status: api::RunStatus::Cancelled,
+                input: Vec::new(),
+                items: Vec::new(),
+                tool_batches: Vec::new(),
+            })
+        }
+
+        async fn close_session(
+            &self,
+            session_id: &SessionId,
+        ) -> Result<api::SessionView, api::AgentApiError> {
+            Ok(fleet_test_session(session_id, api::SessionStatus::Closed))
+        }
+    }
+
+    fn fleet_test_session(session_id: &SessionId, status: api::SessionStatus) -> api::SessionView {
+        api::SessionView {
+            id: session_id.as_str().to_owned(),
+            status,
+            cwd: None,
+            config_revision: 0,
+            config: None,
+            created_at_ms: 1,
+            updated_at_ms: 1,
+            runs: Vec::new(),
+            active_context: api::ContextView::default(),
+            active_tools: api::ActiveToolsView::default(),
+            vfs_mounts: Vec::new(),
+        }
     }
 
     #[async_trait]
@@ -700,7 +948,9 @@ mod tests {
                 }],
             })
             .await
-            .expect("invoke");
+            .expect("invoke")
+            .completed_result()
+            .expect("completed batch");
 
         assert_eq!(result.results[0].status, ToolCallStatus::Succeeded);
         let output = blobs
@@ -733,7 +983,9 @@ mod tests {
                 }],
             })
             .await
-            .expect("invoke");
+            .expect("invoke")
+            .completed_result()
+            .expect("completed batch");
 
         assert_eq!(result.results[0].status, ToolCallStatus::Succeeded);
         let output = blobs
@@ -780,7 +1032,9 @@ mod tests {
                 ],
             })
             .await
-            .expect("invoke");
+            .expect("invoke")
+            .completed_result()
+            .expect("completed batch");
 
         assert_eq!(result.results.len(), 2);
         assert_eq!(result.results[0].status, ToolCallStatus::Succeeded);
@@ -796,13 +1050,9 @@ mod tests {
             .await
             .expect("read output text");
         assert!(read_output.contains("hello"));
+        let process_visible_ref = visible_tool_result_ref(&result.results[1]);
         let process_visible = blobs
-            .read_text(
-                result.results[1]
-                    .model_visible_output_ref
-                    .as_ref()
-                    .expect("process visible"),
-            )
+            .read_text(&process_visible_ref)
             .await
             .expect("process visible text");
         assert!(process_visible.contains("process ok"));
@@ -856,7 +1106,9 @@ mod tests {
                 ],
             })
             .await
-            .expect("invoke");
+            .expect("invoke")
+            .completed_result()
+            .expect("completed batch");
 
         assert_eq!(result.results.len(), 2);
         assert!(
@@ -865,15 +1117,8 @@ mod tests {
                 .iter()
                 .all(|call| call.status == ToolCallStatus::Succeeded)
         );
-        let visible = blobs
-            .read_text(
-                result.results[0]
-                    .model_visible_output_ref
-                    .as_ref()
-                    .expect("visible ref"),
-            )
-            .await
-            .expect("visible text");
+        let visible_ref = visible_tool_result_ref(&result.results[0]);
+        let visible = blobs.read_text(&visible_ref).await.expect("visible text");
         assert!(visible.contains("Enqueued"));
 
         let pending = outbox
@@ -892,6 +1137,135 @@ mod tests {
                 reply_to: Some("4123".to_owned()),
             }
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn fleet_tools_spawn_without_generic_vfs_runtime_setup() {
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let parent = SessionId::new("parent");
+        sessions
+            .create_session(CreateSession {
+                session_id: parent.clone(),
+                agent_handle: crate::fleet::default_agent_handle(),
+                created_at_ms: 1,
+            })
+            .await
+            .expect("create parent");
+        let mut state = engine::CoreAgentState::new();
+        state.lifecycle.config = Some(crate::worker::default_session_config(
+            engine::ModelSelection {
+                api_kind: engine::ProviderApiKind::OpenAiResponses,
+                provider_id: "test".to_owned(),
+                model: "test-model".to_owned(),
+            },
+        ));
+        let opening_events =
+            engine::core_agent_clone_opening_events(&state, 2).expect("opening events");
+        sessions
+            .append(engine::storage::AppendSessionEvents {
+                session_id: parent.clone(),
+                expected_head: None,
+                events: opening_events,
+            })
+            .await
+            .expect("open parent");
+
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let catalog = Arc::new(TestCatalog::default());
+        let fleet_runtime = Arc::new(FakeFleetRuntime::default());
+        let session_store: Arc<dyn SessionStore> = sessions;
+        let tools = SessionTools::new(blobs.clone(), catalog.clone(), catalog)
+            .with_fleet_runtime(session_store, fleet_runtime.clone());
+        let arguments_ref = blobs
+            .put_bytes(br#"{"input":"do child work"}"#.to_vec())
+            .await
+            .expect("arguments");
+
+        let result = tools
+            .invoke_batch(ToolInvocationBatchRequest {
+                session_id: parent,
+                run_id: RunId::new(9),
+                turn_id: TurnId::new(1),
+                batch_id: ToolBatchId::new(1),
+                default_targets: Default::default(),
+                calls: vec![engine::ToolInvocationRequest {
+                    call_id: ToolCallId::new("call_spawn"),
+                    tool_name: ToolName::new(::tools::fleet::AGENT_SPAWN_TOOL_NAME),
+                    arguments_ref,
+                    execution_target: None,
+                }],
+            })
+            .await
+            .expect("invoke")
+            .completed_result()
+            .expect("completed batch");
+
+        assert_eq!(result.results[0].status, ToolCallStatus::Succeeded);
+        let output_ref = result.results[0].output_ref.as_ref().expect("output");
+        let output: ::tools::fleet::AgentSpawnOutput =
+            serde_json::from_slice(&blobs.read_bytes(output_ref).await.expect("read output"))
+                .expect("decode output");
+        assert!(output.child_session_id.starts_with("agent_"));
+        assert_eq!(
+            fleet_runtime.started_runs.lock().expect("fleet lock")[0].1,
+            vec![api::InputItem::Text {
+                text: "do child work".to_owned()
+            }]
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn agent_wait_in_mixed_batch_fails_without_deferring() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let catalog = Arc::new(TestCatalog::default());
+        let sessions: Arc<dyn SessionStore> = Arc::new(InMemorySessionStore::new());
+        let fleet_runtime = Arc::new(FakeFleetRuntime::default());
+        let tools = SessionTools::new(blobs.clone(), catalog.clone(), catalog)
+            .with_fleet_runtime(sessions, fleet_runtime);
+        let wait_args = blobs
+            .put_bytes(br#"{"waits":[{"target_session_id":"child","run_id":"run_1"}]}"#.to_vec())
+            .await
+            .expect("wait args");
+        let read_args = blobs
+            .put_bytes(br#"{"path":"README.md"}"#.to_vec())
+            .await
+            .expect("read args");
+
+        let result = tools
+            .invoke_batch(ToolInvocationBatchRequest {
+                session_id: SessionId::new("parent"),
+                run_id: RunId::new(9),
+                turn_id: TurnId::new(1),
+                batch_id: ToolBatchId::new(1),
+                default_targets: Default::default(),
+                calls: vec![
+                    engine::ToolInvocationRequest {
+                        call_id: ToolCallId::new("call_wait"),
+                        tool_name: ToolName::new(::tools::fleet::AGENT_WAIT_TOOL_NAME),
+                        arguments_ref: wait_args,
+                        execution_target: None,
+                    },
+                    engine::ToolInvocationRequest {
+                        call_id: ToolCallId::new("call_read"),
+                        tool_name: ToolName::new("read_file"),
+                        arguments_ref: read_args,
+                        execution_target: Some(tools::targets::session_fs_target()),
+                    },
+                ],
+            })
+            .await
+            .expect("invoke")
+            .completed_result()
+            .expect("completed batch");
+
+        assert_eq!(result.results.len(), 2);
+        assert_eq!(result.results[0].status, ToolCallStatus::Failed);
+        let wait_error = blobs
+            .read_text(result.results[0].error_ref.as_ref().expect("wait error"))
+            .await
+            .expect("wait error text");
+        assert!(wait_error.contains("agent_wait must be the only call"));
+        assert_eq!(result.results[1].status, ToolCallStatus::Failed);
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -916,7 +1290,9 @@ mod tests {
                 }],
             })
             .await
-            .expect("invoke");
+            .expect("invoke")
+            .completed_result()
+            .expect("completed batch");
 
         assert_eq!(result.results[0].status, ToolCallStatus::Failed);
         let error = blobs
@@ -951,7 +1327,9 @@ mod tests {
                 }],
             })
             .await
-            .expect("invoke");
+            .expect("invoke")
+            .completed_result()
+            .expect("completed batch");
 
         assert_eq!(result.results[0].status, ToolCallStatus::Failed);
         let error = blobs

@@ -14,6 +14,7 @@ mod input;
 mod mcp_api;
 mod oauth_api;
 mod parse;
+mod profiles;
 mod prompts;
 mod skills;
 mod tools_api;
@@ -84,22 +85,28 @@ use api::{
     ContextConfigInput as ApiContextConfigInput, ContextConfigPatchInput,
     EnvironmentProviderCapabilitiesView, EnvironmentProviderHeartbeatParams,
     EnvironmentProviderHeartbeatResponse, EnvironmentProviderImplementationView,
-    EnvironmentProviderKindView, EnvironmentProviderRegisterParams,
-    EnvironmentProviderRegisterResponse, EnvironmentProviderStatusView,
-    EnvironmentProviderUnregisterParams, EnvironmentProviderUnregisterResponse,
-    EnvironmentProviderView, EnvironmentTargetStatusView, EnvironmentTargetSummaryView, FieldPatch,
-    GenerationConfig, GenerationConfigPatch, HostCapabilitiesView, HostControllerConnectionView,
-    HostScopeView, HostTargetAttachRequestView, HostTargetCreateRequestView, HostTransportView,
-    InitializeParams, InitializeResponse, InputItem, McpServerCreateParams,
-    McpServerCreateResponse, McpServerDeleteParams, McpServerDeleteResponse, McpServerListParams,
-    McpServerListResponse, McpServerReadParams, McpServerReadResponse, MediaKind, ModelConfig,
-    OutboundAckInput, OutboundMessageView, OutboundOriginView, OutboundPayloadView,
-    OutboundStatusView, OutboxAckParams, OutboxAckResponse, OutboxReadParams, OutboxReadResponse,
-    PromptInstructionView, PromptsActiveParams, PromptsActiveResponse, ReasoningEffort,
-    RunCancelParams, RunCancelResponse, RunDefaultsConfig, RunDefaultsPatch, RunLimitsConfig,
-    RunStartConfig, RunStartParams, RunStartResponse, RunView, SandboxTargetSpecView,
-    ServerCapabilities, ServerInfo, SessionCloseParams, SessionCloseResponse, SessionConfigInput,
-    SessionConfigPatchInput, SessionEnvironmentActivateParams, SessionEnvironmentActivateResponse,
+    EnvironmentProviderKindView, EnvironmentProviderListParams, EnvironmentProviderListResponse,
+    EnvironmentProviderRegisterParams, EnvironmentProviderRegisterResponse,
+    EnvironmentProviderStatusView, EnvironmentProviderTargetListParams,
+    EnvironmentProviderTargetListResponse, EnvironmentProviderUnregisterParams,
+    EnvironmentProviderUnregisterResponse, EnvironmentProviderView, EnvironmentTargetStatusView,
+    EnvironmentTargetSummaryView, FieldPatch, GenerationConfig, GenerationConfigPatch,
+    HostCapabilitiesView, HostControllerConnectionView, HostScopeView, HostTargetAttachRequestView,
+    HostTargetCreateRequestView, HostTransportView, InitializeParams, InitializeResponse,
+    InputItem, McpServerCreateParams, McpServerCreateResponse, McpServerDeleteParams,
+    McpServerDeleteResponse, McpServerListParams, McpServerListResponse, McpServerReadParams,
+    McpServerReadResponse, MediaKind, ModelConfig, OutboundAckInput, OutboundMessageView,
+    OutboundOriginView, OutboundPayloadView, OutboundStatusView, OutboxAckParams,
+    OutboxAckResponse, OutboxReadParams, OutboxReadResponse, ProfileApplyParams,
+    ProfileApplyResponse, ProfileApplySummary, ProfileCreateParams, ProfileCreateResponse,
+    ProfileDeleteParams, ProfileDeleteResponse, ProfileDocument, ProfileInstructions,
+    ProfileListParams, ProfileListResponse, ProfileReadParams, ProfileReadResponse, ProfileSource,
+    ProfileUpdateParams, ProfileUpdateResponse, PromptInstructionView, PromptsActiveParams,
+    PromptsActiveResponse, ReasoningEffort, RunCancelParams, RunCancelResponse, RunDefaultsConfig,
+    RunDefaultsPatch, RunLimitsConfig, RunStartConfig, RunStartParams, RunStartResponse, RunView,
+    SandboxTargetSpecView, ServerCapabilities, ServerInfo, SessionCloseParams,
+    SessionCloseResponse, SessionConfigInput, SessionConfigPatchInput,
+    SessionEnvironmentActivateParams, SessionEnvironmentActivateResponse,
     SessionEnvironmentAttachParams, SessionEnvironmentAttachResponse,
     SessionEnvironmentCapabilitiesView, SessionEnvironmentCloseParams,
     SessionEnvironmentCloseResponse, SessionEnvironmentCreateParams,
@@ -571,6 +578,9 @@ impl GatewayAgentApi {
         if session_config.tools.messaging.unwrap_or(false) {
             config.messaging = tools::messaging::MessagingToolsetConfig::enabled();
         }
+        if session_config.tools.fleet.unwrap_or(false) {
+            config.fleet = tools::fleet::FleetToolsetConfig::enabled();
+        }
         if include_process_tools {
             config.builtin.process = tools::toolset::EnvironmentToolsetConfig::basic();
         }
@@ -581,6 +591,7 @@ impl GatewayAgentApi {
         &self,
         session_id: SessionId,
         session_config: SessionConfig,
+        close_on_terminal: bool,
     ) -> AgentSessionArgs {
         AgentSessionArgs {
             session_id,
@@ -588,7 +599,109 @@ impl GatewayAgentApi {
             instructions_ref: self.instructions_ref.clone(),
             max_steps_per_input: self.max_steps_per_input,
             continue_as_new_history_threshold: self.continue_as_new_history_threshold,
+            close_on_terminal,
         }
+    }
+
+    pub(crate) async fn start_session_for_fleet_with_profile(
+        &self,
+        session_id: &SessionId,
+        close_on_terminal: bool,
+        profile: Option<ProfileSource>,
+    ) -> Result<(), AgentApiError> {
+        self.start_session_internal(
+            SessionStartParams {
+                session_id: Some(session_id.as_str().to_owned()),
+                cwd: None,
+                config: None,
+                profile,
+            },
+            close_on_terminal,
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn start_session_internal(
+        &self,
+        params: SessionStartParams,
+        close_on_terminal: bool,
+    ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError> {
+        let SessionStartParams {
+            session_id,
+            cwd,
+            config,
+            profile,
+        } = params;
+        let client_supplied_id = session_id.is_some();
+        let session_id = match session_id {
+            Some(session_id) => SessionId::try_new(session_id).map_err(|error| {
+                AgentApiError::invalid_request(format!("invalid session id: {error}"))
+            })?,
+            None => self.allocate_session_id(),
+        };
+        if client_supplied_id {
+            match self.load_session_state(&session_id).await {
+                Ok(loaded) if loaded.state.lifecycle.status == CoreAgentStatus::Closed => {
+                    let session = self.project_session_by_id(&session_id).await?;
+                    return Ok(AgentApiOutcome::new(SessionStartResponse { session }));
+                }
+                Ok(_) => {}
+                Err(error) if is_not_found(&error) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        let resolved_profile = match profile {
+            Some(source) => Some(self.resolve_profile_source(source).await?),
+            None => None,
+        };
+        let start_config = self.merge_profile_start_config(
+            resolved_profile
+                .as_ref()
+                .and_then(|profile| profile.document.config.clone()),
+            config,
+        );
+        let session_config = self.session_config_for_start(start_config).await?;
+        self.write_session_metadata(
+            session_id.clone(),
+            GatewaySessionMetadata {
+                cwd,
+                ..self.session_metadata(&session_id)?
+            },
+        )?;
+        let started = self
+            .client
+            .start_workflow(
+                AgentSessionWorkflow::run,
+                self.workflow_args(session_id.clone(), session_config, close_on_terminal),
+                WorkflowStartOptions::new(self.task_queue.clone(), session_id.as_str()).build(),
+            )
+            .await
+            .map_err(map_workflow_start_error);
+        match started {
+            Ok(_) => {}
+            Err(error)
+                if matches!(error.kind, AgentApiErrorKind::Conflict) && client_supplied_id =>
+            {
+                let loaded = self.load_session_state(&session_id).await?;
+                if loaded.state.lifecycle.status == CoreAgentStatus::Closed {
+                    let session = self.project_session_by_id(&session_id).await?;
+                    return Ok(AgentApiOutcome::new(SessionStartResponse { session }));
+                }
+                let session = self.wait_for_open_session(&session_id).await?;
+                return Ok(AgentApiOutcome::new(SessionStartResponse { session }));
+            }
+            Err(error) => return Err(error),
+        }
+        self.wait_for_open_session(&session_id).await?;
+        let loaded = self.load_session_state(&session_id).await?;
+        let mut session = self.configure_session_toolset(&session_id, &loaded).await?;
+        if let Some(profile) = resolved_profile {
+            (session, _) = self
+                .apply_profile_document(&session_id, &profile.document, false, None, None)
+                .await?;
+        }
+        Ok(AgentApiOutcome::new(SessionStartResponse { session }))
     }
 
     fn projector(&self) -> CoreAgentProjector<'_> {
@@ -716,54 +829,61 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: SessionStartParams,
     ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError> {
-        let SessionStartParams {
-            session_id,
-            cwd,
-            config,
-        } = params;
-        let client_supplied_id = session_id.is_some();
-        let session_id = match session_id {
-            Some(session_id) => SessionId::try_new(session_id).map_err(|error| {
-                AgentApiError::invalid_request(format!("invalid session id: {error}"))
-            })?,
-            None => self.allocate_session_id(),
-        };
-        let session_config = self.session_config_for_start(config.clone()).await?;
-        self.write_session_metadata(
-            session_id.clone(),
-            GatewaySessionMetadata {
-                cwd,
-                ..self.session_metadata(&session_id)?
-            },
-        )?;
-        let started = self
-            .client
-            .start_workflow(
-                AgentSessionWorkflow::run,
-                self.workflow_args(session_id.clone(), session_config),
-                WorkflowStartOptions::new(self.task_queue.clone(), session_id.as_str()).build(),
-            )
+        self.start_session_internal(params, false).await
+    }
+
+    async fn create_profile(
+        &self,
+        params: ProfileCreateParams,
+    ) -> Result<AgentApiOutcome<ProfileCreateResponse>, AgentApiError> {
+        self.create_profile_record(params)
             .await
-            .map_err(map_workflow_start_error);
-        match started {
-            Ok(_) => {}
-            Err(error)
-                if matches!(error.kind, AgentApiErrorKind::Conflict) && client_supplied_id =>
-            {
-                let loaded = self.load_session_state(&session_id).await?;
-                if loaded.state.lifecycle.status == CoreAgentStatus::Closed {
-                    let session = self.project_session_by_id(&session_id).await?;
-                    return Ok(AgentApiOutcome::new(SessionStartResponse { session }));
-                }
-                let session = self.wait_for_open_session(&session_id).await?;
-                return Ok(AgentApiOutcome::new(SessionStartResponse { session }));
-            }
-            Err(error) => return Err(error),
-        }
-        self.wait_for_open_session(&session_id).await?;
-        let loaded = self.load_session_state(&session_id).await?;
-        let session = self.configure_session_toolset(&session_id, &loaded).await?;
-        Ok(AgentApiOutcome::new(SessionStartResponse { session }))
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn read_profile(
+        &self,
+        params: ProfileReadParams,
+    ) -> Result<AgentApiOutcome<ProfileReadResponse>, AgentApiError> {
+        self.read_profile_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn list_profiles(
+        &self,
+        params: ProfileListParams,
+    ) -> Result<AgentApiOutcome<ProfileListResponse>, AgentApiError> {
+        self.list_profile_records(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn update_profile(
+        &self,
+        params: ProfileUpdateParams,
+    ) -> Result<AgentApiOutcome<ProfileUpdateResponse>, AgentApiError> {
+        self.update_profile_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn delete_profile(
+        &self,
+        params: ProfileDeleteParams,
+    ) -> Result<AgentApiOutcome<ProfileDeleteResponse>, AgentApiError> {
+        self.delete_profile_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn apply_profile(
+        &self,
+        params: ProfileApplyParams,
+    ) -> Result<AgentApiOutcome<ProfileApplyResponse>, AgentApiError> {
+        self.apply_profile_to_session(params)
+            .await
+            .map(AgentApiOutcome::new)
     }
 
     async fn update_session(
@@ -991,6 +1111,7 @@ impl AgentApiService for GatewayAgentApi {
             AgentApiError::invalid_request(format!("invalid session id: {error}"))
         })?;
         let loaded = self.load_session_state(&session_id).await?;
+        self.require_open_idle_session(&session_id, &loaded, "context compaction")?;
         let baseline_revision = loaded.state.context.revision;
         let baseline_failures = self
             .query_status_optional(&session_id)
@@ -1041,6 +1162,7 @@ impl AgentApiService for GatewayAgentApi {
         }
 
         let loaded = self.load_session_state(&session_id).await?;
+        self.require_open_idle_session(&session_id, &loaded, "context append")?;
         let mut applied_keys = Vec::new();
         let mut unchanged_keys = Vec::new();
         let mut pending = Vec::new();
@@ -1186,6 +1308,11 @@ impl AgentApiService for GatewayAgentApi {
                 }
                 ExistingRunSubmission::Reject => Err(duplicate_submission_error(&submission_id)),
             };
+        }
+        if loaded.state.lifecycle.status != CoreAgentStatus::Open {
+            return Err(AgentApiError::rejected(format!(
+                "session is not open: {session_id}"
+            )));
         }
         let status_before_signal = self.query_status_optional(&session_id).await?;
         let baseline_admission_failures = status_before_signal
@@ -1606,6 +1733,24 @@ impl AgentApiService for GatewayAgentApi {
         params: EnvironmentProviderUnregisterParams,
     ) -> Result<AgentApiOutcome<EnvironmentProviderUnregisterResponse>, AgentApiError> {
         self.unregister_environment_provider_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn list_environment_providers(
+        &self,
+        params: EnvironmentProviderListParams,
+    ) -> Result<AgentApiOutcome<EnvironmentProviderListResponse>, AgentApiError> {
+        self.list_environment_provider_records(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn list_environment_provider_targets(
+        &self,
+        params: EnvironmentProviderTargetListParams,
+    ) -> Result<AgentApiOutcome<EnvironmentProviderTargetListResponse>, AgentApiError> {
+        self.list_environment_provider_target_records(params)
             .await
             .map(AgentApiOutcome::new)
     }

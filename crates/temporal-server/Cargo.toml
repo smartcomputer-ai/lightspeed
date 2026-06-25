@@ -24,6 +24,7 @@ llm-clients = { path = "../llm-clients" }
 llm-runtime = { path = "../llm-runtime" }
 mcp-registry = { path = "../mcp-registry" }
 messaging = { path = "../messaging" }
+profile-registry = { path = "../profile-registry" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 store-pg = { path = "../store-pg" }

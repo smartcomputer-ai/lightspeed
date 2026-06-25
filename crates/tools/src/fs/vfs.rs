@@ -1449,6 +1449,8 @@ mod tests {
         )
         .await
         .expect("invoke batch")
+        .completed_result()
+        .expect("completed batch")
         .single_result()
         .expect("single result");
 

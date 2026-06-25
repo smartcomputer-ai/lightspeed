@@ -2552,6 +2552,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "profile-registry"
+version = "0.1.0"
+dependencies = [
+ "api",
+ "async-trait",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "prometheus"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3703,6 +3712,7 @@ name = "store-pg"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",
+ "api",
  "async-trait",
  "auth-registry",
  "base64",
@@ -3712,6 +3722,7 @@ dependencies = [
  "mcp-registry",
  "messaging",
  "object_store",
+ "profile-registry",
  "rand 0.8.6",
  "serde",
  "serde_json",
@@ -3847,6 +3858,7 @@ dependencies = [
  "llm-runtime",
  "mcp-registry",
  "messaging",
+ "profile-registry",
  "serde",
  "serde_json",
  "store-pg",
@@ -3877,6 +3889,7 @@ dependencies = [
  "futures",
  "futures-util",
  "serde",
+ "serde_json",
  "temporalio-client",
  "temporalio-common",
  "temporalio-macros",
@@ -4357,6 +4370,7 @@ dependencies = [
 name = "tools"
 version = "0.1.0"
 dependencies = [
+ "api",
  "async-trait",
  "engine",
  "futures-util",

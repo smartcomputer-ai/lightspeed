@@ -91,7 +91,11 @@ pub(super) async fn failed_tool_batch_result(
             call_id: call.call_id.clone(),
             status: ToolCallStatus::Failed,
             output_ref: None,
-            model_visible_output_ref: Some(error_ref.clone()),
+            model_visible_context_entries: vec![ToolInvocationResult::tool_result_context_entry(
+                &call.call_id,
+                ToolCallStatus::Failed,
+                error_ref.clone(),
+            )],
             error_ref: Some(error_ref),
             effects: Vec::new(),
         });

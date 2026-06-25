@@ -1,124 +1,102 @@
-import { describe, expect, it } from "vitest";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import type { ProfileSource } from "@lightspeed/agent-client";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   handleDenied,
+  loadBridgeConfig,
   parseBindings,
-  parseRecipes,
   resolveBinding,
   resolveInboundAccess,
   type BindingRule,
-  type SessionRecipe,
 } from "../src/config.js";
 
-describe("parseRecipes", () => {
-  it("parses config, mounts with defaults, and mcp links", () => {
-    const recipes = parseRecipes({
-      personal: {
-        config: { tools: { filesystem: "readOnly" } },
-        mounts: [
-          { workspaceId: "ws-1" },
-          { mountPath: "/snap", snapshotRef: "snap-1", access: "readOnly" },
-        ],
-        mcp: [{ serverId: "github", allowedTools: ["search"], approval: "never" }],
-        environments: [{ envId: "devbox", providerId: "hetzner-devbox" }],
-      },
-    });
-    const personal = recipes.personal as SessionRecipe;
-    expect(personal.config).toEqual({ tools: { filesystem: "readOnly" } });
-    expect(personal.mounts).toEqual([
-      { mountPath: "/workspace", source: { workspaceId: "ws-1" }, access: "readWrite" },
-      { mountPath: "/snap", source: { snapshotRef: "snap-1" }, access: "readOnly" },
-    ]);
-    expect(personal.mcp).toEqual([
-      { serverId: "github", allowedTools: ["search"], approval: "never" },
-    ]);
-    expect(personal.environments).toEqual([
-      { envId: "devbox", providerId: "hetzner-devbox", targetId: "local", activate: true },
-    ]);
-  });
+let dir: string;
 
-  it("rejects a mount with neither workspaceId nor snapshotRef", () => {
-    expect(() => parseRecipes({ r: { mounts: [{ mountPath: "/x" }] } })).toThrow(
-      /workspaceId or snapshotRef/,
+beforeEach(async () => {
+  dir = await mkdtemp(path.join(tmpdir(), "bridge-config-"));
+});
+
+afterEach(async () => {
+  await rm(dir, { recursive: true, force: true });
+});
+
+describe("loadBridgeConfig", () => {
+  it("rejects legacy top-level recipes", async () => {
+    const configPath = path.join(dir, "bridge.json");
+    await writeFile(configPath, JSON.stringify({ recipes: { personal: {} } }));
+
+    await expect(loadBridgeConfig({ BRIDGE_CONFIG: configPath })).rejects.toThrow(
+      /recipes are no longer supported/,
     );
-  });
-
-  it("rejects an mcp link with no serverId", () => {
-    expect(() => parseRecipes({ r: { mcp: [{ allowedTools: [] }] } })).toThrow(/serverId/);
-  });
-
-  it("accepts envs as an alias and rejects multiple active environments", () => {
-    expect(parseRecipes({ r: { envs: [{ envId: "devbox", providerId: "provider" }] } }).r)
-      .toMatchObject({
-        environments: [
-          { envId: "devbox", providerId: "provider", targetId: "local", activate: true },
-        ],
-      });
-    expect(() =>
-      parseRecipes({
-        r: {
-          environments: [
-            { envId: "devbox-a", providerId: "provider-a" },
-            { envId: "devbox-b", providerId: "provider-b" },
-          ],
-        },
-      }),
-    ).toThrow(/at most one environment/);
   });
 });
 
 describe("parseBindings", () => {
-  const recipes = parseRecipes({ personal: {}, support: {} });
+  it("parses match, named profile, inline profile, and sessionKey", () => {
+    const inlineProfile: ProfileSource = {
+      kind: "inline",
+      profile: { config: { tools: { filesystem: "readOnly" } } },
+    };
+    const bindings = parseBindings([
+      {
+        match: { channel: "telegram", handle: "@lukas" },
+        profile: "personal",
+        sessionKey: "lukas",
+      },
+      { match: { channel: "*" }, profile: inlineProfile },
+    ]);
 
-  it("parses match, recipe, and sessionKey", () => {
-    const bindings = parseBindings(
-      [
-        { match: { channel: "telegram", handle: "@lukas" }, recipe: "personal", sessionKey: "lukas" },
-        { match: { channel: "*" }, recipe: "support" },
-      ],
-      recipes,
-    );
     expect(bindings).toEqual<BindingRule[]>([
-      { match: { channel: "telegram", handle: "@lukas" }, recipe: "personal", sessionKey: "lukas" },
-      { match: { channel: "*" }, recipe: "support" },
+      {
+        match: { channel: "telegram", handle: "@lukas" },
+        profile: { kind: "named", profileId: "personal" },
+        sessionKey: "lukas",
+      },
+      { match: { channel: "*" }, profile: inlineProfile },
     ]);
   });
 
   it("parses handle arrays", () => {
-    const bindings = parseBindings(
-      [
-        {
-          match: { channel: "telegram", handle: ["@lukas", "6071843755"] },
-          recipe: "personal",
-          sessionKey: "lukas",
-        },
-      ],
-      recipes,
-    );
+    const bindings = parseBindings([
+      {
+        match: { channel: "telegram", handle: ["@lukas", "6071843755"] },
+        profile: { kind: "named", profile_id: "personal" },
+        sessionKey: "lukas",
+      },
+    ]);
+
     expect(bindings).toEqual<BindingRule[]>([
       {
         match: { channel: "telegram", handle: ["@lukas", "6071843755"] },
-        recipe: "personal",
+        profile: { kind: "named", profileId: "personal" },
         sessionKey: "lukas",
       },
     ]);
   });
 
-  it("rejects a binding referencing an undefined recipe", () => {
-    expect(() => parseBindings([{ match: { channel: "*" }, recipe: "ghost" }], recipes)).toThrow(
-      /not defined in recipes/,
+  it("rejects legacy binding recipes", () => {
+    expect(() => parseBindings([{ match: { channel: "*" }, recipe: "personal" }])).toThrow(
+      /recipe is no longer supported/,
     );
   });
 });
 
 describe("resolveBinding", () => {
-  const bindings = parseBindings(
-    [
-      { match: { channel: "telegram", handle: "@lukas" }, recipe: "personal", sessionKey: "lukas" },
-      { match: { channel: "telegram", chatId: "-100", scope: "group" }, recipe: "support", sessionKey: "eng" },
-      { match: { channel: "*" }, recipe: "support" },
-    ],
-    parseRecipes({ personal: {}, support: {} }),
-  );
+  const bindings = parseBindings([
+    {
+      match: { channel: "telegram", handle: "@lukas" },
+      profile: "personal",
+      sessionKey: "lukas",
+    },
+    {
+      match: { channel: "telegram", chatId: "-100", scope: "group" },
+      profile: { kind: "inline", profile: { instructions: "support room" } },
+      sessionKey: "eng",
+    },
+    { match: { channel: "*" }, profile: "support" },
+  ]);
 
   it("matches the first rule by handle, ignoring leading @ and case", () => {
     expect(
@@ -126,26 +104,31 @@ describe("resolveBinding", () => {
         { channel: "telegram", handles: ["123", "Lukas"], chatId: "dm", scope: "direct" },
         bindings,
       ),
-    ).toEqual({ recipe: "personal", sessionKey: "lukas" });
+    ).toEqual({
+      profile: { kind: "named", profileId: "personal" },
+      profileLabel: "personal",
+      sessionKey: "lukas",
+    });
   });
 
   it("matches any configured handle in a binding handle array", () => {
-    const arrayBindings = parseBindings(
-      [
-        {
-          match: { channel: "telegram", handle: ["@lukas", "6071843755"] },
-          recipe: "personal",
-          sessionKey: "lukas",
-        },
-      ],
-      parseRecipes({ personal: {} }),
-    );
+    const arrayBindings = parseBindings([
+      {
+        match: { channel: "telegram", handle: ["@lukas", "6071843755"] },
+        profile: "personal",
+        sessionKey: "lukas",
+      },
+    ]);
     expect(
       resolveBinding(
         { channel: "telegram", handles: ["6071843755"], chatId: "dm", scope: "direct" },
         arrayBindings,
       ),
-    ).toEqual({ recipe: "personal", sessionKey: "lukas" });
+    ).toEqual({
+      profile: { kind: "named", profileId: "personal" },
+      profileLabel: "personal",
+      sessionKey: "lukas",
+    });
   });
 
   it("matches a group rule by chatId and scope", () => {
@@ -154,7 +137,11 @@ describe("resolveBinding", () => {
         { channel: "telegram", handles: ["999"], chatId: "-100", scope: "group" },
         bindings,
       ),
-    ).toEqual({ recipe: "support", sessionKey: "eng" });
+    ).toEqual({
+      profile: { kind: "inline", profile: { instructions: "support room" } },
+      profileLabel: "inline",
+      sessionKey: "eng",
+    });
   });
 
   it("falls through to the wildcard rule", () => {
@@ -163,13 +150,17 @@ describe("resolveBinding", () => {
         { channel: "whatsapp", handles: ["41790000000"], chatId: "x", scope: "direct" },
         bindings,
       ),
-    ).toEqual({ recipe: "support", sessionKey: null });
+    ).toEqual({
+      profile: { kind: "named", profileId: "support" },
+      profileLabel: "support",
+      sessionKey: null,
+    });
   });
 
-  it("returns the default recipe when nothing matches", () => {
+  it("returns the default profile when nothing matches", () => {
     expect(
       resolveBinding({ channel: "telegram", handles: ["1"], chatId: "x", scope: "direct" }, []),
-    ).toEqual({ recipe: null, sessionKey: null });
+    ).toEqual({ profile: null, profileLabel: null, sessionKey: null });
   });
 });
 
@@ -189,23 +180,24 @@ describe("handleDenied", () => {
 });
 
 describe("resolveInboundAccess", () => {
-  const recipes = parseRecipes({ personal: { config: { tools: { filesystem: "readOnly" } } } });
-  const bindings = parseBindings(
-    [{ match: { channel: "telegram", handle: "@lukas" }, recipe: "personal", sessionKey: "lukas" }],
-    recipes,
-  );
+  const bindings = parseBindings([
+    {
+      match: { channel: "telegram", handle: "@lukas" },
+      profile: "personal",
+      sessionKey: "lukas",
+    },
+  ]);
 
-  it("resolves turn/control gates and the bound recipe together", () => {
+  it("resolves turn/control gates and the bound profile together", () => {
     const access = resolveInboundAccess(
       { channel: "telegram", handles: ["123", "lukas"], chatId: "dm", scope: "direct" },
       { allowFrom: ["@lukas"], controlAllowFrom: ["@lukas"] },
       bindings,
-      recipes,
     );
     expect(access.turnAllowed).toBe(true);
     expect(access.controlAllowed).toBe(true);
-    expect(access.recipeName).toBe("personal");
-    expect(access.recipe?.config).toEqual({ tools: { filesystem: "readOnly" } });
+    expect(access.profileLabel).toBe("personal");
+    expect(access.profile).toEqual({ kind: "named", profileId: "personal" });
     expect(access.sessionKey).toBe("lukas");
   });
 
@@ -214,12 +206,11 @@ describe("resolveInboundAccess", () => {
       { channel: "telegram", handles: ["999"], chatId: "dm", scope: "direct" },
       { allowFrom: ["@lukas"], controlAllowFrom: [] },
       bindings,
-      recipes,
     );
     expect(access.turnAllowed).toBe(false);
     // Empty control allowlist trusts direct chats.
     expect(access.controlAllowed).toBe(true);
-    expect(access.recipeName).toBeNull();
+    expect(access.profileLabel).toBeNull();
   });
 
   it("does not trust group members for control with an empty control allowlist", () => {
@@ -227,7 +218,6 @@ describe("resolveInboundAccess", () => {
       { channel: "telegram", handles: ["999"], chatId: "-100", scope: "group" },
       { allowFrom: [], controlAllowFrom: [] },
       bindings,
-      recipes,
     );
     expect(access.turnAllowed).toBe(true);
     expect(access.controlAllowed).toBe(false);

@@ -7,6 +7,7 @@
 pub mod builtin;
 pub mod environment;
 pub mod error;
+pub mod fleet;
 pub mod fs;
 pub mod host_protocol;
 pub mod limits;

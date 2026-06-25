@@ -10,75 +10,36 @@
     "controlAllowFrom": ["41790000000@s.whatsapp.net"]
   },
 
-  "recipes": {
-    "personal": {
-      "config": {
-        "model": {
-          "providerId": "anthropic",
-          "apiKind": "anthropic_messages",
-          "model": "claude-opus-4-8"
-        },
-        "tools": {
-          "messaging": true,
-          "filesystem": "edit",
-          "webSearch": true,
-          "webFetch": true
-        }
-      },
-      "mounts": [
-        {
-          "mountPath": "/workspace",
-          "source": { "workspaceId": "lukas-ws" },
-          "access": "readWrite"
-        }
-      ],
-      "mcp": [
-        {
-          "serverId": "github-mcp",
-          "allowedTools": ["search_issues", "get_issue"],
-          "approval": "never"
-        }
-      ],
-      "environments": [
-        {
-          "envId": "devbox",
-          "providerId": "hetzner-devbox",
-          "targetId": "local",
-          "activate": true
-        }
-      ]
-    },
-
-    "support": {
-      "config": {
-        "tools": { "messaging": true, "webSearch": true }
-      },
-      "mounts": [
-        {
-          "mountPath": "/playbook",
-          "source": { "snapshotRef": "snap_support_v3" },
-          "access": "readOnly"
-        }
-      ],
-      "mcp": [],
-      "environments": []
-    }
-  },
-
   "bindings": [
     {
       "match": { "channel": "telegram", "handle": "@lukas" },
-      "recipe": "personal",
+      "profile": "personal",
       "sessionKey": "lukas"
     },
     {
       "match": { "channel": "telegram", "chatId": "-1001234567890", "scope": "group" },
-      "recipe": "support",
+      "profile": {
+        "kind": "inline",
+        "profile": {
+          "config": {
+            "tools": { "messaging": true, "webSearch": true }
+          },
+          "mounts": [
+            {
+              "mountPath": "/playbook",
+              "source": { "type": "snapshot", "snapshotRef": "snap_support_v3" },
+              "access": "readOnly"
+            }
+          ],
+          "mcp": [],
+          "environments": []
+        }
+      },
       "sessionKey": "eng-support-room"
     },
     {
       "match": { "channel": "whatsapp", "scope": "direct" },
-      "recipe": "support"
+      "profile": { "kind": "named", "profileId": "support" }
     },
     {
       "match": { "channel": "*" }

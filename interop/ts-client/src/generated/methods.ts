@@ -7,6 +7,12 @@ import type * as Api from "./types.js";
 export const METHODS = [
   "initialize",
   "session/start",
+  "profiles/create",
+  "profiles/read",
+  "profiles/list",
+  "profiles/update",
+  "profiles/delete",
+  "profiles/apply",
   "session/update",
   "session/tools/update",
   "session/read",
@@ -33,6 +39,8 @@ export const METHODS = [
   "environmentProviders/register",
   "environmentProviders/heartbeat",
   "environmentProviders/unregister",
+  "environmentProviders/list",
+  "environmentProviders/targets/list",
   "blob/put",
   "blob/put_many",
   "blob/get",
@@ -92,6 +100,30 @@ export interface MethodMap {
   "session/start": {
     params: Api.SessionStartParams;
     result: Api.AgentApiOutcomeOfSessionStartResponse;
+  };
+  "profiles/create": {
+    params: Api.ProfileCreateParams;
+    result: Api.AgentApiOutcomeOfProfileCreateResponse;
+  };
+  "profiles/read": {
+    params: Api.ProfileReadParams;
+    result: Api.AgentApiOutcomeOfProfileReadResponse;
+  };
+  "profiles/list": {
+    params: Api.ProfileListParams;
+    result: Api.AgentApiOutcomeOfProfileListResponse;
+  };
+  "profiles/update": {
+    params: Api.ProfileUpdateParams;
+    result: Api.AgentApiOutcomeOfProfileUpdateResponse;
+  };
+  "profiles/delete": {
+    params: Api.ProfileDeleteParams;
+    result: Api.AgentApiOutcomeOfProfileDeleteResponse;
+  };
+  "profiles/apply": {
+    params: Api.ProfileApplyParams;
+    result: Api.AgentApiOutcomeOfProfileApplyResponse;
   };
   "session/update": {
     params: Api.SessionUpdateParams;
@@ -196,6 +228,14 @@ export interface MethodMap {
   "environmentProviders/unregister": {
     params: Api.EnvironmentProviderUnregisterParams;
     result: Api.AgentApiOutcomeOfEnvironmentProviderUnregisterResponse;
+  };
+  "environmentProviders/list": {
+    params: Api.EnvironmentProviderListParams;
+    result: Api.AgentApiOutcomeOfEnvironmentProviderListResponse;
+  };
+  "environmentProviders/targets/list": {
+    params: Api.EnvironmentProviderTargetListParams;
+    result: Api.AgentApiOutcomeOfEnvironmentProviderTargetListResponse;
   };
   "blob/put": {
     params: Api.BlobPutParams;
@@ -357,6 +397,24 @@ export const rpc = {
   sessionStart(client: RpcCaller, params: Api.SessionStartParams): Promise<Api.AgentApiOutcomeOfSessionStartResponse> {
     return client.call("session/start", params);
   },
+  profilesCreate(client: RpcCaller, params: Api.ProfileCreateParams): Promise<Api.AgentApiOutcomeOfProfileCreateResponse> {
+    return client.call("profiles/create", params);
+  },
+  profilesRead(client: RpcCaller, params: Api.ProfileReadParams): Promise<Api.AgentApiOutcomeOfProfileReadResponse> {
+    return client.call("profiles/read", params);
+  },
+  profilesList(client: RpcCaller, params: Api.ProfileListParams): Promise<Api.AgentApiOutcomeOfProfileListResponse> {
+    return client.call("profiles/list", params);
+  },
+  profilesUpdate(client: RpcCaller, params: Api.ProfileUpdateParams): Promise<Api.AgentApiOutcomeOfProfileUpdateResponse> {
+    return client.call("profiles/update", params);
+  },
+  profilesDelete(client: RpcCaller, params: Api.ProfileDeleteParams): Promise<Api.AgentApiOutcomeOfProfileDeleteResponse> {
+    return client.call("profiles/delete", params);
+  },
+  profilesApply(client: RpcCaller, params: Api.ProfileApplyParams): Promise<Api.AgentApiOutcomeOfProfileApplyResponse> {
+    return client.call("profiles/apply", params);
+  },
   sessionUpdate(client: RpcCaller, params: Api.SessionUpdateParams): Promise<Api.AgentApiOutcomeOfSessionUpdateResponse> {
     return client.call("session/update", params);
   },
@@ -434,6 +492,12 @@ export const rpc = {
   },
   environmentProvidersUnregister(client: RpcCaller, params: Api.EnvironmentProviderUnregisterParams): Promise<Api.AgentApiOutcomeOfEnvironmentProviderUnregisterResponse> {
     return client.call("environmentProviders/unregister", params);
+  },
+  environmentProvidersList(client: RpcCaller, params: Api.EnvironmentProviderListParams): Promise<Api.AgentApiOutcomeOfEnvironmentProviderListResponse> {
+    return client.call("environmentProviders/list", params);
+  },
+  environmentProvidersTargetsList(client: RpcCaller, params: Api.EnvironmentProviderTargetListParams): Promise<Api.AgentApiOutcomeOfEnvironmentProviderTargetListResponse> {
+    return client.call("environmentProviders/targets/list", params);
   },
   blobPut(client: RpcCaller, params: Api.BlobPutParams): Promise<Api.AgentApiOutcomeOfBlobPutResponse> {
     return client.call("blob/put", params);

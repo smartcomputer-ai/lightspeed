@@ -31,6 +31,96 @@
       }
     },
     {
+      "method": "profiles/create",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/ProfileCreateParams"
+        },
+        "type": "ProfileCreateParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfProfileCreateResponse"
+        },
+        "type": "AgentApiOutcome<ProfileCreateResponse>"
+      }
+    },
+    {
+      "method": "profiles/read",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/ProfileReadParams"
+        },
+        "type": "ProfileReadParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfProfileReadResponse"
+        },
+        "type": "AgentApiOutcome<ProfileReadResponse>"
+      }
+    },
+    {
+      "method": "profiles/list",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/ProfileListParams"
+        },
+        "type": "ProfileListParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfProfileListResponse"
+        },
+        "type": "AgentApiOutcome<ProfileListResponse>"
+      }
+    },
+    {
+      "method": "profiles/update",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/ProfileUpdateParams"
+        },
+        "type": "ProfileUpdateParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfProfileUpdateResponse"
+        },
+        "type": "AgentApiOutcome<ProfileUpdateResponse>"
+      }
+    },
+    {
+      "method": "profiles/delete",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/ProfileDeleteParams"
+        },
+        "type": "ProfileDeleteParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfProfileDeleteResponse"
+        },
+        "type": "AgentApiOutcome<ProfileDeleteResponse>"
+      }
+    },
+    {
+      "method": "profiles/apply",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/ProfileApplyParams"
+        },
+        "type": "ProfileApplyParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfProfileApplyResponse"
+        },
+        "type": "AgentApiOutcome<ProfileApplyResponse>"
+      }
+    },
+    {
       "method": "session/update",
       "params": {
         "schema": {
@@ -418,6 +508,36 @@
           "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentProviderUnregisterResponse"
         },
         "type": "AgentApiOutcome<EnvironmentProviderUnregisterResponse>"
+      }
+    },
+    {
+      "method": "environmentProviders/list",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/EnvironmentProviderListParams"
+        },
+        "type": "EnvironmentProviderListParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentProviderListResponse"
+        },
+        "type": "AgentApiOutcome<EnvironmentProviderListResponse>"
+      }
+    },
+    {
+      "method": "environmentProviders/targets/list",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/EnvironmentProviderTargetListParams"
+        },
+        "type": "EnvironmentProviderTargetListParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentProviderTargetListResponse"
+        },
+        "type": "AgentApiOutcome<EnvironmentProviderTargetListResponse>"
       }
     },
     {

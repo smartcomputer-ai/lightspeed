@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ContextEntryInput, ContextEntryKey, RunConfig, SessionConfig, SessionConfigPatch, SubmissionId,
-    ToolExecutionTarget, ToolName, ToolPatch, ToolSpec,
+    ToolBatchId, ToolExecutionTarget, ToolInvocationBatchResult, ToolName, ToolPatch, ToolSpec,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -52,5 +52,9 @@ pub enum CoreAgentCommand {
         input: Vec<ContextEntryInput>,
     },
     RequestRunCancellation,
+    ResumeToolBatch {
+        batch_id: ToolBatchId,
+        result: ToolInvocationBatchResult,
+    },
     CloseSession,
 }

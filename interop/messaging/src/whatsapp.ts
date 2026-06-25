@@ -245,7 +245,6 @@ async function handleWhatsAppMessage(
     },
     config,
     routing.bindings,
-    routing.recipes,
   );
 
   const conversationParts = ["whatsapp", config.accountId, remoteJid];
@@ -303,8 +302,8 @@ async function handleWhatsAppMessage(
     isFromSelf: Boolean(message.key.fromMe),
     turnAllowed: access.turnAllowed,
     controlAllowed: access.controlAllowed,
-    recipe: access.recipe,
-    recipeName: access.recipeName,
+    profile: access.profile,
+    profileLabel: access.profileLabel,
     sessionKey: access.sessionKey,
     ...(fetchMedia ? { fetchMedia } : {}),
   };

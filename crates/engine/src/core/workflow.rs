@@ -7,5 +7,6 @@
 pub use super::drive::{
     CoreAgentAction, CoreAgentDrive, CoreAgentDriveError, classify_core_agent_action,
     generation_result_proposals, next_generation_request, next_tool_batch_request,
+    resume_deferred_tool_batch_proposals, tool_batch_deferred_proposals,
     tool_batch_result_proposals,
 };

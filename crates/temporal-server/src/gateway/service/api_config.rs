@@ -133,6 +133,9 @@ pub(super) fn apply_tool_config(config: &mut engine::ToolConfig, tools: Option<T
     if let Some(messaging) = tools.messaging {
         config.messaging = Some(messaging);
     }
+    if let Some(fleet) = tools.fleet {
+        config.fleet = Some(fleet);
+    }
 }
 
 pub(super) fn apply_run_start_config(
@@ -248,6 +251,7 @@ pub(super) fn tool_config_patch_from_api(
             .filesystem
             .map(|patch| optional_patch_from_api_map(patch, filesystem_tool_mode_from_api)),
         messaging: patch.messaging.map(optional_patch_from_api),
+        fleet: patch.fleet.map(optional_patch_from_api),
     }
 }
 

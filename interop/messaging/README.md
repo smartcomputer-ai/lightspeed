@@ -7,9 +7,9 @@ Lightspeed gateway. It binds each chat/thread to a stable Lightspeed session, cl
 inbound traffic, submits addressed messages as runs, appends unaddressed group
 chatter as session context, and sends assistant replies back to the channel.
 
-Access is gated by **sender handle**, and conversations bind to **session
-recipes** that configure model, tools, mounted workspaces/snapshots, linked MCP
-servers, and attached execution environments. See
+Access is gated by **sender handle**, and conversations bind to **agent
+profiles** that configure model, tools, instructions, mounted
+workspaces/snapshots, linked MCP servers, and attached execution environments. See
 [Access control and bindings](#access-control-and-bindings).
 
 ## How a message flows
@@ -79,14 +79,14 @@ Each channel has a turn allowlist (`*_ALLOW_FROM`, env CSV or the config file):
 A separate `*_CONTROL_ALLOW_FROM` gates control commands; empty trusts direct
 chats only.
 
-### Recipes and bindings (configuration)
+### Profiles and bindings (configuration)
 
-The bridge does not provision skills or system prompts directly. Instead a
-**recipe** points a session at a model, a tool set, mounted VFS
-workspaces/snapshots, linked MCP servers, and optional execution environments.
-The core then discovers `.lightspeed/prompts/` instructions and the skill
-catalog *from the mounts*, and the agent activates skills itself. Recipes and
-bindings live in the JSON file at `BRIDGE_CONFIG`. A complete, runnable example is in
+The bridge does not provision skills or system prompts directly. Instead each
+binding can reference a first-class Lightspeed **agent profile**. A profile points
+a session at a model, a tool set, instructions, mounted VFS workspaces/snapshots,
+linked MCP servers, and optional execution environments. Profiles live in the
+Lightspeed profile registry (`lightspeed profiles create ...`) or can be supplied
+inline in a binding. A complete, runnable example is in
 [`bridge.config.example.json`](bridge.config.example.json) — copy it to
 `bridge.config.json` and point `BRIDGE_CONFIG` at it:
 
@@ -94,27 +94,21 @@ bindings live in the JSON file at `BRIDGE_CONFIG`. A complete, runnable example 
 {
   "telegram": { "allowFrom": ["@lukas"], "controlAllowFrom": ["@lukas"] },
 
-  "recipes": {
-    "personal": {
-      "config": {
-        "model": { "providerId": "anthropic", "apiKind": "anthropic_messages", "model": "..." },
-        "tools": { "messaging": true, "filesystem": "edit", "webSearch": true }
-      },
-      "mounts": [
-        { "mountPath": "/workspace", "source": { "workspaceId": "lukas-ws" }, "access": "readWrite" }
-      ],
-      "mcp": [
-        { "serverId": "github-mcp", "allowedTools": ["search_issues"], "approval": "never" }
-      ],
-      "environments": [
-        { "envId": "devbox", "providerId": "hetzner-devbox", "targetId": "local", "activate": true }
-      ]
-    }
-  },
-
   "bindings": [
-    { "match": { "channel": "telegram", "handle": ["@lukas", "6071843755"] }, "recipe": "personal", "sessionKey": "lukas" },
-    { "match": { "channel": "telegram", "chatId": "-100123", "scope": "group" }, "recipe": "personal", "sessionKey": "eng-room" },
+    { "match": { "channel": "telegram", "handle": ["@lukas", "6071843755"] }, "profile": "personal", "sessionKey": "lukas" },
+    {
+      "match": { "channel": "telegram", "chatId": "-100123", "scope": "group" },
+      "profile": {
+        "kind": "inline",
+        "profile": {
+          "config": { "tools": { "messaging": true, "webSearch": true } },
+          "mounts": [
+            { "mountPath": "/playbook", "source": { "type": "snapshot", "snapshotRef": "snap_support_v3" }, "access": "readOnly" }
+          ]
+        }
+      },
+      "sessionKey": "eng-room"
+    },
     { "match": { "channel": "*" } }
   ]
 }
@@ -124,30 +118,28 @@ bindings live in the JSON file at `BRIDGE_CONFIG`. A complete, runnable example 
   `channel` (`telegram` | `whatsapp` | `*`), and optional `handle`, `chatId`,
   and `scope` (`direct` | `group`). `handle` may be one string or an array of
   aliases for the same sender.
+- **`profile`** is optional. A string is shorthand for a named registry profile.
+  An object is passed as a `ProfileSource`, either `{ "kind": "named",
+  "profileId": "support" }` or `{ "kind": "inline", "profile": { ... } }`.
 - **`sessionKey`** ties conversations to a session. Conversations sharing a key
   share one session (e.g. a team and its members); omit it and each
   conversation gets its own. There is no `/new` — a conversation always resolves
   to the session for its key.
-- **`config`** is passed straight to `session/start` (model, tools,
-  generation…); the messaging toolset defaults on unless a recipe disables it.
-- **`mounts`** default `mountPath` to `/workspace` and `access` to `readWrite`;
-  `source` is `{ workspaceId }` or `{ snapshotRef }`. Create the workspace or
-  snapshot out of band (`vfs/workspace/create`, `vfs/snapshot/commit`).
-- **`mcp`** is the `session/mcp/link` surface; the server must already be created
-  and authenticated (`mcp/servers/create`). The recipe references it by id.
-- **`environments`** attaches existing provider targets to the session through
-  `session/environments/attach`. The provider must already be online. `envId`
-  and `providerId` are required, `targetId` defaults to `local`, and `activate`
-  defaults to `true`. At most one environment may have `activate: true`; `envs`
-  is accepted as a short alias.
+- **Profile documents** reuse the API profile shape: `config`, `instructions`,
+  `mounts`, `mcp`, and `environments`. The bridge passes them to
+  `session/start { profile }`; the hosted profile applier handles all
+  mount/link/attach work.
+- Legacy `recipes` and `bindings[].recipe` are not accepted. Move reusable setup
+  into the profile registry, or wrap the same document inline under
+  `bindings[].profile`.
 
-A conversation with no matching binding (or a matching binding with no recipe)
+A conversation with no matching binding (or a matching binding with no profile)
 gets the default: a per-conversation session id, no mounts, no MCP, no
 environments, messaging tool only.
 
 ## Shape
 
-- `src/config.ts` — env + JSON config loading, recipe/binding parsing, and
+- `src/config.ts` — env + JSON config loading, profile/binding parsing, and
   per-inbound access resolution (allowlists + binding match).
 - `src/policy.ts` — inbound classification (incl. the `denied` outcome),
   control-command parsing, and the message envelope
@@ -155,10 +147,9 @@ environments, messaging tool only.
 - `src/batcher.ts` — turn debouncing and room-event buffering/budgets.
 - `src/runtime.ts` — orchestration: bindings, dedupe, per-conversation
   serialization, denied handling, control commands.
-- `src/lightspeed.ts` — `session/start` + recipe provisioning (mounts, MCP
-  links, environments), `context/append`, `run/start`, awaitRun, and reply
-  extraction.
-- `src/store.ts` — bindings (chat → session, recipe, activation, cursor) plus
+- `src/lightspeed.ts` — `session/start { profile }`, `context/append`,
+  `run/start`, awaitRun, and reply extraction.
+- `src/store.ts` — bindings (chat → session, profile label, activation, cursor) plus
   message dedupe records in `.bridge-state.json`.
 - `src/telegram.ts` — grammY adapter with native mention/reply detection.
 - `src/whatsapp.ts` — Baileys adapter with `mentionedJid`/quoted-author
