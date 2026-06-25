@@ -1784,6 +1784,21 @@ export interface HostCapabilitiesView {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfEnvironmentProviderListResponse".
+ */
+export interface AgentApiOutcomeOfEnvironmentProviderListResponse {
+  notifications?: AgentNotification[];
+  result: EnvironmentProviderListResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EnvironmentProviderListResponse".
+ */
+export interface EnvironmentProviderListResponse {
+  providers?: EnvironmentProviderView[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfEnvironmentProviderRegisterResponse".
  */
 export interface AgentApiOutcomeOfEnvironmentProviderRegisterResponse {
@@ -1796,6 +1811,21 @@ export interface AgentApiOutcomeOfEnvironmentProviderRegisterResponse {
  */
 export interface EnvironmentProviderRegisterResponse {
   provider: EnvironmentProviderView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfEnvironmentProviderTargetListResponse".
+ */
+export interface AgentApiOutcomeOfEnvironmentProviderTargetListResponse {
+  notifications?: AgentNotification[];
+  result: EnvironmentProviderTargetListResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EnvironmentProviderTargetListResponse".
+ */
+export interface EnvironmentProviderTargetListResponse {
+  targets?: EnvironmentTargetSummaryView[];
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -2053,7 +2083,8 @@ export interface SessionConfigInput {
 export interface ToolConfigInput {
   filesystem?: FilesystemToolMode | null;
   /**
-   * Enables the Fleet subagent control-plane tools (agent_spawn/send/read/list/cancel).
+   * Enables the Fleet subagent control-plane tools
+   * (agent_spawn/send/read/list/cancel and profile_list/read).
    */
   fleet?: boolean | null;
   /**
@@ -3046,6 +3077,14 @@ export interface EnvironmentProviderHeartbeatParams {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EnvironmentProviderListParams".
+ */
+export interface EnvironmentProviderListParams {
+  providerKind?: EnvironmentProviderKindView | null;
+  status?: EnvironmentProviderStatusView | null;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "EnvironmentProviderRegisterParams".
  */
 export interface EnvironmentProviderRegisterParams {
@@ -3059,6 +3098,14 @@ export interface EnvironmentProviderRegisterParams {
   };
   providerId: string;
   providerKind: EnvironmentProviderKindView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "EnvironmentProviderTargetListParams".
+ */
+export interface EnvironmentProviderTargetListParams {
+  providerId: string;
+  status?: EnvironmentTargetStatusView | null;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema

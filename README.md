@@ -226,7 +226,9 @@ Profiles can be managed through the same gateway:
 
 ```bash
 cargo run -p cli -- profiles list
-cargo run -p cli -- profiles create ./support-profile.json
+cargo run -p cli -- profiles import ./support-profile.json
+cargo run -p cli -- profiles check ./support-profile.import.json
+cargo run -p cli -- profiles export support --out ./support-profile.json
 ```
 
 To chat with a local directory mounted as a writable CAS-backed VFS workspace:

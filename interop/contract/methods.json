@@ -511,6 +511,36 @@
       }
     },
     {
+      "method": "environmentProviders/list",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/EnvironmentProviderListParams"
+        },
+        "type": "EnvironmentProviderListParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentProviderListResponse"
+        },
+        "type": "AgentApiOutcome<EnvironmentProviderListResponse>"
+      }
+    },
+    {
+      "method": "environmentProviders/targets/list",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/EnvironmentProviderTargetListParams"
+        },
+        "type": "EnvironmentProviderTargetListParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentProviderTargetListResponse"
+        },
+        "type": "AgentApiOutcome<EnvironmentProviderTargetListResponse>"
+      }
+    },
+    {
       "method": "blob/put",
       "params": {
         "schema": {

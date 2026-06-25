@@ -85,26 +85,28 @@ use api::{
     ContextConfigInput as ApiContextConfigInput, ContextConfigPatchInput,
     EnvironmentProviderCapabilitiesView, EnvironmentProviderHeartbeatParams,
     EnvironmentProviderHeartbeatResponse, EnvironmentProviderImplementationView,
-    EnvironmentProviderKindView, EnvironmentProviderRegisterParams,
-    EnvironmentProviderRegisterResponse, EnvironmentProviderStatusView,
-    EnvironmentProviderUnregisterParams, EnvironmentProviderUnregisterResponse,
-    EnvironmentProviderView, EnvironmentTargetStatusView, EnvironmentTargetSummaryView, FieldPatch,
-    GenerationConfig, GenerationConfigPatch, HostCapabilitiesView, HostControllerConnectionView,
-    HostScopeView, HostTargetAttachRequestView, HostTargetCreateRequestView, HostTransportView,
-    InitializeParams, InitializeResponse, InputItem, McpServerCreateParams,
-    McpServerCreateResponse, McpServerDeleteParams, McpServerDeleteResponse, McpServerListParams,
-    McpServerListResponse, McpServerReadParams, McpServerReadResponse, MediaKind, ModelConfig,
-    OutboundAckInput, OutboundMessageView, OutboundOriginView, OutboundPayloadView,
-    OutboundStatusView, OutboxAckParams, OutboxAckResponse, OutboxReadParams, OutboxReadResponse,
-    ProfileApplyParams, ProfileApplyResponse, ProfileApplySummary, ProfileCreateParams,
-    ProfileCreateResponse, ProfileDeleteParams, ProfileDeleteResponse, ProfileDocument,
-    ProfileInstructions, ProfileListParams, ProfileListResponse, ProfileReadParams,
-    ProfileReadResponse, ProfileSource, ProfileUpdateParams, ProfileUpdateResponse,
-    PromptInstructionView, PromptsActiveParams, PromptsActiveResponse, ReasoningEffort,
-    RunCancelParams, RunCancelResponse, RunDefaultsConfig, RunDefaultsPatch, RunLimitsConfig,
-    RunStartConfig, RunStartParams, RunStartResponse, RunView, SandboxTargetSpecView,
-    ServerCapabilities, ServerInfo, SessionCloseParams, SessionCloseResponse, SessionConfigInput,
-    SessionConfigPatchInput, SessionEnvironmentActivateParams, SessionEnvironmentActivateResponse,
+    EnvironmentProviderKindView, EnvironmentProviderListParams, EnvironmentProviderListResponse,
+    EnvironmentProviderRegisterParams, EnvironmentProviderRegisterResponse,
+    EnvironmentProviderStatusView, EnvironmentProviderTargetListParams,
+    EnvironmentProviderTargetListResponse, EnvironmentProviderUnregisterParams,
+    EnvironmentProviderUnregisterResponse, EnvironmentProviderView, EnvironmentTargetStatusView,
+    EnvironmentTargetSummaryView, FieldPatch, GenerationConfig, GenerationConfigPatch,
+    HostCapabilitiesView, HostControllerConnectionView, HostScopeView, HostTargetAttachRequestView,
+    HostTargetCreateRequestView, HostTransportView, InitializeParams, InitializeResponse,
+    InputItem, McpServerCreateParams, McpServerCreateResponse, McpServerDeleteParams,
+    McpServerDeleteResponse, McpServerListParams, McpServerListResponse, McpServerReadParams,
+    McpServerReadResponse, MediaKind, ModelConfig, OutboundAckInput, OutboundMessageView,
+    OutboundOriginView, OutboundPayloadView, OutboundStatusView, OutboxAckParams,
+    OutboxAckResponse, OutboxReadParams, OutboxReadResponse, ProfileApplyParams,
+    ProfileApplyResponse, ProfileApplySummary, ProfileCreateParams, ProfileCreateResponse,
+    ProfileDeleteParams, ProfileDeleteResponse, ProfileDocument, ProfileInstructions,
+    ProfileListParams, ProfileListResponse, ProfileReadParams, ProfileReadResponse, ProfileSource,
+    ProfileUpdateParams, ProfileUpdateResponse, PromptInstructionView, PromptsActiveParams,
+    PromptsActiveResponse, ReasoningEffort, RunCancelParams, RunCancelResponse, RunDefaultsConfig,
+    RunDefaultsPatch, RunLimitsConfig, RunStartConfig, RunStartParams, RunStartResponse, RunView,
+    SandboxTargetSpecView, ServerCapabilities, ServerInfo, SessionCloseParams,
+    SessionCloseResponse, SessionConfigInput, SessionConfigPatchInput,
+    SessionEnvironmentActivateParams, SessionEnvironmentActivateResponse,
     SessionEnvironmentAttachParams, SessionEnvironmentAttachResponse,
     SessionEnvironmentCapabilitiesView, SessionEnvironmentCloseParams,
     SessionEnvironmentCloseResponse, SessionEnvironmentCreateParams,
@@ -1731,6 +1733,24 @@ impl AgentApiService for GatewayAgentApi {
         params: EnvironmentProviderUnregisterParams,
     ) -> Result<AgentApiOutcome<EnvironmentProviderUnregisterResponse>, AgentApiError> {
         self.unregister_environment_provider_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn list_environment_providers(
+        &self,
+        params: EnvironmentProviderListParams,
+    ) -> Result<AgentApiOutcome<EnvironmentProviderListResponse>, AgentApiError> {
+        self.list_environment_provider_records(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn list_environment_provider_targets(
+        &self,
+        params: EnvironmentProviderTargetListParams,
+    ) -> Result<AgentApiOutcome<EnvironmentProviderTargetListResponse>, AgentApiError> {
+        self.list_environment_provider_target_records(params)
             .await
             .map(AgentApiOutcome::new)
     }

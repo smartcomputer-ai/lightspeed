@@ -12,17 +12,20 @@ use api::{
     AuthProviderCreateParams, AuthProviderCreateResponse, AuthProviderDeleteParams,
     AuthProviderDeleteResponse, AuthProviderListParams, AuthProviderListResponse,
     AuthProviderReadParams, AuthProviderReadResponse, BlobGetParams, BlobGetResponse,
-    BlobHasManyParams, BlobHasManyResponse, BlobPutManyParams, BlobPutManyResponse, JsonRpcRequest,
+    BlobHasManyParams, BlobHasManyResponse, BlobPutManyParams, BlobPutManyResponse,
+    EnvironmentProviderListParams, EnvironmentProviderListResponse,
+    EnvironmentProviderTargetListParams, EnvironmentProviderTargetListResponse, JsonRpcRequest,
     JsonRpcResponse, METHOD_AUTH_CLIENTS_CREATE, METHOD_AUTH_CLIENTS_DELETE,
     METHOD_AUTH_CLIENTS_LIST, METHOD_AUTH_CLIENTS_READ, METHOD_AUTH_FLOWS_START,
     METHOD_AUTH_FLOWS_STATUS, METHOD_AUTH_GITHUB_INSTALLATIONS_GRANT,
     METHOD_AUTH_GITHUB_INSTALLATIONS_LIST, METHOD_AUTH_GRANTS_IMPORT, METHOD_AUTH_GRANTS_LIST,
     METHOD_AUTH_GRANTS_READ, METHOD_AUTH_GRANTS_REVOKE, METHOD_AUTH_PROVIDERS_CREATE,
     METHOD_AUTH_PROVIDERS_DELETE, METHOD_AUTH_PROVIDERS_LIST, METHOD_AUTH_PROVIDERS_READ,
-    METHOD_BLOB_GET, METHOD_BLOB_HAS_MANY, METHOD_BLOB_PUT_MANY, METHOD_MCP_SERVERS_CREATE,
-    METHOD_MCP_SERVERS_DELETE, METHOD_MCP_SERVERS_LIST, METHOD_MCP_SERVERS_READ,
-    METHOD_PROFILES_APPLY, METHOD_PROFILES_CREATE, METHOD_PROFILES_DELETE, METHOD_PROFILES_LIST,
-    METHOD_PROFILES_READ, METHOD_PROFILES_UPDATE, METHOD_RUN_START,
+    METHOD_BLOB_GET, METHOD_BLOB_HAS_MANY, METHOD_BLOB_PUT_MANY,
+    METHOD_ENVIRONMENT_PROVIDER_TARGETS_LIST, METHOD_ENVIRONMENT_PROVIDERS_LIST,
+    METHOD_MCP_SERVERS_CREATE, METHOD_MCP_SERVERS_DELETE, METHOD_MCP_SERVERS_LIST,
+    METHOD_MCP_SERVERS_READ, METHOD_PROFILES_APPLY, METHOD_PROFILES_CREATE, METHOD_PROFILES_DELETE,
+    METHOD_PROFILES_LIST, METHOD_PROFILES_READ, METHOD_PROFILES_UPDATE, METHOD_RUN_START,
     METHOD_SESSION_ENVIRONMENTS_ACTIVATE, METHOD_SESSION_ENVIRONMENTS_ATTACH,
     METHOD_SESSION_ENVIRONMENTS_CLOSE, METHOD_SESSION_ENVIRONMENTS_DEACTIVATE,
     METHOD_SESSION_ENVIRONMENTS_LIST, METHOD_SESSION_ENVIRONMENTS_READ, METHOD_SESSION_EVENTS_READ,
@@ -486,6 +489,22 @@ impl HttpAgentApi {
         params: SessionEnvironmentCloseParams,
     ) -> Result<AgentApiOutcome<SessionEnvironmentCloseResponse>, AgentApiError> {
         self.request(METHOD_SESSION_ENVIRONMENTS_CLOSE, params)
+            .await
+    }
+
+    pub(crate) async fn list_environment_providers(
+        &self,
+        params: EnvironmentProviderListParams,
+    ) -> Result<AgentApiOutcome<EnvironmentProviderListResponse>, AgentApiError> {
+        self.request(METHOD_ENVIRONMENT_PROVIDERS_LIST, params)
+            .await
+    }
+
+    pub(crate) async fn list_environment_provider_targets(
+        &self,
+        params: EnvironmentProviderTargetListParams,
+    ) -> Result<AgentApiOutcome<EnvironmentProviderTargetListResponse>, AgentApiError> {
+        self.request(METHOD_ENVIRONMENT_PROVIDER_TARGETS_LIST, params)
             .await
     }
 

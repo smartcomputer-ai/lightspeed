@@ -55,6 +55,8 @@ pub const METHOD_SESSION_ENVIRONMENTS_CLOSE: &str = "session/environments/close"
 pub const METHOD_ENVIRONMENT_PROVIDERS_REGISTER: &str = "environmentProviders/register";
 pub const METHOD_ENVIRONMENT_PROVIDERS_HEARTBEAT: &str = "environmentProviders/heartbeat";
 pub const METHOD_ENVIRONMENT_PROVIDERS_UNREGISTER: &str = "environmentProviders/unregister";
+pub const METHOD_ENVIRONMENT_PROVIDERS_LIST: &str = "environmentProviders/list";
+pub const METHOD_ENVIRONMENT_PROVIDER_TARGETS_LIST: &str = "environmentProviders/targets/list";
 pub const METHOD_BLOB_PUT: &str = "blob/put";
 pub const METHOD_BLOB_PUT_MANY: &str = "blob/put_many";
 pub const METHOD_BLOB_GET: &str = "blob/get";
@@ -319,6 +321,16 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: EnvironmentProviderUnregisterParams,
     ) -> Result<AgentApiOutcome<EnvironmentProviderUnregisterResponse>, AgentApiError>;
+
+    async fn list_environment_providers(
+        &self,
+        params: EnvironmentProviderListParams,
+    ) -> Result<AgentApiOutcome<EnvironmentProviderListResponse>, AgentApiError>;
+
+    async fn list_environment_provider_targets(
+        &self,
+        params: EnvironmentProviderTargetListParams,
+    ) -> Result<AgentApiOutcome<EnvironmentProviderTargetListResponse>, AgentApiError>;
 
     async fn put_blob(
         &self,
@@ -2304,6 +2316,37 @@ pub struct EnvironmentProviderUnregisterResponse {
     pub provider: EnvironmentProviderView,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentProviderListParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<EnvironmentProviderStatusView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_kind: Option<EnvironmentProviderKindView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentProviderListResponse {
+    #[serde(default)]
+    pub providers: Vec<EnvironmentProviderView>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentProviderTargetListParams {
+    pub provider_id: EnvironmentProviderId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<EnvironmentTargetStatusView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentProviderTargetListResponse {
+    #[serde(default)]
+    pub targets: Vec<EnvironmentTargetSummaryView>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct BlobPutParams {
@@ -3975,6 +4018,8 @@ api_methods! {
     METHOD_ENVIRONMENT_PROVIDERS_REGISTER => register_environment_provider(EnvironmentProviderRegisterParams) -> EnvironmentProviderRegisterResponse,
     METHOD_ENVIRONMENT_PROVIDERS_HEARTBEAT => heartbeat_environment_provider(EnvironmentProviderHeartbeatParams) -> EnvironmentProviderHeartbeatResponse,
     METHOD_ENVIRONMENT_PROVIDERS_UNREGISTER => unregister_environment_provider(EnvironmentProviderUnregisterParams) -> EnvironmentProviderUnregisterResponse,
+    METHOD_ENVIRONMENT_PROVIDERS_LIST => list_environment_providers(EnvironmentProviderListParams) -> EnvironmentProviderListResponse,
+    METHOD_ENVIRONMENT_PROVIDER_TARGETS_LIST => list_environment_provider_targets(EnvironmentProviderTargetListParams) -> EnvironmentProviderTargetListResponse,
     METHOD_BLOB_PUT => put_blob(BlobPutParams) -> BlobPutResponse,
     METHOD_BLOB_PUT_MANY => put_blobs(BlobPutManyParams) -> BlobPutManyResponse,
     METHOD_BLOB_GET => get_blob(BlobGetParams) -> BlobGetResponse,
@@ -5739,6 +5784,31 @@ mod tests {
             ))
         }
 
+        async fn list_environment_providers(
+            &self,
+            _params: EnvironmentProviderListParams,
+        ) -> Result<AgentApiOutcome<EnvironmentProviderListResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(EnvironmentProviderListResponse {
+                providers: vec![test_environment_provider(
+                    "bridge-local".to_owned(),
+                    EnvironmentProviderKindView::Bridge,
+                    EnvironmentProviderStatusView::Online,
+                )],
+            }))
+        }
+
+        async fn list_environment_provider_targets(
+            &self,
+            params: EnvironmentProviderTargetListParams,
+        ) -> Result<AgentApiOutcome<EnvironmentProviderTargetListResponse>, AgentApiError> {
+            assert_eq!(params.provider_id, "bridge-local");
+            Ok(AgentApiOutcome::new(
+                EnvironmentProviderTargetListResponse {
+                    targets: vec![test_environment_target()],
+                },
+            ))
+        }
+
         async fn put_blob(
             &self,
             params: BlobPutParams,
@@ -6319,6 +6389,27 @@ mod tests {
             last_seen_ms: 10,
             lease_expires_ms: 30_010,
             display_name: Some("Local bridge".to_owned()),
+            metadata: BTreeMap::new(),
+        }
+    }
+
+    fn test_environment_target() -> EnvironmentTargetSummaryView {
+        EnvironmentTargetSummaryView {
+            target_id: "local".to_owned(),
+            status: EnvironmentTargetStatusView::Ready,
+            scope: HostScopeView::Default,
+            capabilities: HostCapabilitiesView {
+                filesystem_read: true,
+                filesystem_write: true,
+                process_start: true,
+                process_stdin: true,
+                process_terminate: true,
+                process_output_polling: true,
+                process_output_notifications: false,
+                process_pty: true,
+            },
+            display_name: Some("Local".to_owned()),
+            default_cwd: Some("/workspace".to_owned()),
             metadata: BTreeMap::new(),
         }
     }

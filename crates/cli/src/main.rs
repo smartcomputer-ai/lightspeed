@@ -142,6 +142,45 @@ mod tests {
     }
 
     #[test]
+    fn profiles_parse_accepts_import_export_and_check() {
+        let cli = Cli::try_parse_from([
+            "lightspeed",
+            "profiles",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
+            "import",
+            "./support-profile.json",
+            "--no-check",
+        ])
+        .expect("parse profiles import");
+        assert!(matches!(cli.command, Command::Profiles(_)));
+
+        let cli = Cli::try_parse_from([
+            "lightspeed",
+            "profiles",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
+            "export",
+            "support",
+            "--out",
+            "./support-profile.json",
+        ])
+        .expect("parse profiles export");
+        assert!(matches!(cli.command, Command::Profiles(_)));
+
+        let cli = Cli::try_parse_from([
+            "lightspeed",
+            "profiles",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
+            "check",
+            "-",
+        ])
+        .expect("parse profiles check");
+        assert!(matches!(cli.command, Command::Profiles(_)));
+    }
+
+    #[test]
     fn vfs_snapshot_parse_accepts_directory_and_api_options() {
         let cli = Cli::try_parse_from([
             "lightspeed",

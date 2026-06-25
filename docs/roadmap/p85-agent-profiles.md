@@ -51,7 +51,7 @@ P85 is implemented end-to-end with these concrete pieces:
   in Fleet spawn-link metadata. The Fleet toolset also exposes read-only profile
   discovery tools: `profile_list` and `profile_read`.
 - **CLI support**: `chat --profile`, `chat --profile-json`, and
-  `lightspeed profiles list|read|create|update|delete|apply`.
+  `lightspeed profiles list|read|import|check|export|delete|apply`.
 - **Messaging bridge migration**: bindings use native `profile` values directly
   (named profile id shorthand or explicit `ProfileSource`). Legacy top-level
   `recipes` and `bindings[].recipe` are rejected; session provisioning goes
@@ -311,9 +311,9 @@ retry after partial application converges.
 cargo run -p cli -- chat --new --profile support "help with the ticket"
 # inline / ad-hoc profile from a JSON file or literal
 cargo run -p cli -- chat --new --profile-json ./anthropic-coder.json "..."
-# manage the registry
+# manage the registry from profile files
 cargo run -p cli -- profiles list
-cargo run -p cli -- profiles create ./support.json
+cargo run -p cli -- profiles import ./support.json
 cargo run -p cli -- profiles read support
 ```
 
@@ -458,7 +458,7 @@ bridge starts the session with `tools.messaging = true`.
     spawn-link metadata. Live-session clone/fork stays under `base.kind =
     self|session`.
 - `crates/cli/`: `--profile` (named) / `--profile-json` (inline) on `chat`, and a
-  `profiles` subcommand (`list|read|create|update|delete|apply`).
+  `profiles` subcommand (`list|read|import|check|export|delete|apply`).
 - `interop/messaging/`: accept a `ProfileSource` per binding (plus string
   shorthand for named profiles); reject legacy `recipes` / `bindings[].recipe`;
   deleted `ensureSession`'s manual mount/link/attach loop in favor of
@@ -498,7 +498,9 @@ bridge starts the session with `tools.messaging = true`.
 
 ### S5. CLI
 - Completed: `--profile` (named) / `--profile-json` (inline) on `chat`; `profiles`
-  subcommand. CLI parse tests cover chat profile flags and profile apply.
+  subcommand. The file-oriented registry path is `profiles import`, which
+  validates by default and upserts the profile. CLI parse tests cover chat
+  profile flags, profile apply, import, check, and export.
 
 ### S6. Bridge migration
 - Completed: recipe application was replaced with `ProfileSource` per binding;
@@ -584,3 +586,132 @@ bridge starts the session with `tools.messaging = true`.
   in spawn-link metadata so `agent_read` can explain profile-based child
   creation, seeding the deferred `agent_type` concept without a typed role model.
   General session-level profile lineage is deferred.
+
+## Follow-up: Filesystem-Provisioned Profiles (CLI)
+
+**Status: implemented 2026-06-25.** An additive CLI extension on top of the
+shipped P85 surface. The bulk of the work lives in `crates/cli/`; it also adds
+one thin, additive read API (`environmentProviders/list` +
+`environmentProviders/targets/list`, see below) so environment references can be
+validated online. There are **no engine changes** and no new profile types; the
+gateway addition is read-only and does not change profile application behavior.
+The profile registry remains the runtime source of truth; profile files are
+treated as **source artifacts** that are imported one-way into the registry (no
+watcher, no bidirectional sync, no registry reconciliation/deletion).
+
+### The import document
+
+A **profile import document** is a normal `AgentProfileInput` JSON (the exact
+shape `profiles/create` already accepts) plus one optional, **CLI-only**
+top-level `provision` key. The CLI reads the document (from a file path, `-` for
+stdin, or a literal JSON arg), acts on the `provision` hints, strips the
+`provision` key, and sends **only** the clean `AgentProfileInput` through the
+same API create/update calls used by the registry. The stored profile never
+contains `provision` data.
+
+```json
+{
+  "profileId": "support",
+  "displayName": "Support",
+  "config": { "tools": { "filesystem": "edit", "webSearch": true } },
+  "instructions": { "type": "text", "text": "Help with support tickets." },
+  "mounts": [
+    {
+      "mountPath": "/workspace",
+      "source": { "type": "workspace", "workspaceId": "profile_support_workspace" },
+      "access": "readWrite"
+    }
+  ],
+  "mcp": [{ "serverId": "github", "authGrantId": "github-default" }],
+  "environments": [
+    { "envId": "local", "providerId": "host-bridge", "targetId": "local", "activate": true }
+  ],
+  "provision": {
+    "vfs": [
+      {
+        "path": "./support-files",
+        "mountPath": "/workspace",
+        "mode": "workspace",
+        "workspaceId": "profile_support_workspace"
+      }
+    ],
+    "validate": { "mounts": true, "mcp": true, "environments": true }
+  }
+}
+```
+
+`provision.vfs[].mode`:
+
+- **`workspace`** (default for a local directory): snapshot the local `path` (via
+  the existing `vfs snapshot` upload path), then create the named `workspaceId`
+  if it is missing or advance its head if it exists, and ensure the profile's
+  matching mount (keyed by `mountPath`) points at that workspace. The checked-in
+  JSON stays **stable** as local files change — only the workspace head moves.
+- **`snapshot`**: snapshot the local `path` and rewrite the outgoing mount's
+  source to the produced immutable `snapshotRef`. Best for frozen/shipped example
+  content; less stable for actively-edited checked-in files.
+
+Relative `path` values resolve from the profile file's directory (from the
+current working directory for stdin/literal input).
+
+### New `profiles` subcommands
+
+- **`profiles import <file|-|json> [--no-check]`** — read the import doc, split
+  off `provision`, resolve each `vfs` entry (upload snapshot → create/advance
+  workspace, or rewrite the mount source for `snapshot` mode), run validation by
+  default, then **upsert**: `profiles/read` first — missing →
+  `profiles/create`, exists → `profiles/update` at the current revision.
+  Re-runs are idempotent; no profile update is sent when the stored profile
+  already matches the imported document. `--no-check` skips live reference
+  validation after any local VFS provisioning; local VFS paths still must be
+  readable before upload.
+- **`profiles export <profile_id> --out <path>`** — `profiles/read` and write the
+  stored `AgentProfileInput`-shaped JSON to a file (or stdout). No `provision`
+  block is emitted (local source paths are not tracked server-side); the output
+  round-trips back through `provision`.
+- **`profiles check <file|-|json>`** — validate referenced resources **against
+  the live registry** (per-entry, aggregating all failures, non-zero exit on any
+  failure), without starting a session:
+  - **mounts**: `vfs/workspace/read` / `vfs/snapshot/read` for non-local mount
+    sources; local `provision.vfs` paths checked for existence/readability on disk.
+  - **mcp**: `mcp/servers/read` per `serverId`; `auth/grants/read` per
+    `authGrantId`.
+  - **environments**: `environmentProviders/list` to confirm `providerId` exists
+    and supports target attachment, and `environmentProviders/targets/list`
+    (provider-scoped) to confirm `targetId` exists when the provider supports
+    target listing. Providers without `listTargets` produce a warning rather than
+    a hard target-missing failure.
+
+### New read API: `environmentProviders/list` (+ `targets/list`)
+
+To let `import`/`check` validate `providerId` / `targetId` without starting a
+session, expose the **already-existing** registry list capability through a thin,
+additive read API. The internal plumbing is fully in place: `list_providers` and
+`list_targets` already exist on the `environment-registry` store traits and are
+already implemented in `store-pg` (migration `006_environment_registry.sql`
+tables and indexes). Only the API exposure layer is missing.
+
+- `environmentProviders/list { status?, providerKind? } -> { providers[] }`
+- `environmentProviders/targets/list { providerId, status? } -> { targets[] }`
+
+Implemented following the existing `environmentProviders/register` pattern: new
+method constants + params/response DTOs in `crates/api/`, two `api_methods!`
+entries, two gateway handler wrappers in `temporal-server` that call the
+existing store methods and reuse the existing `environment_provider_view` /
+`environment_target_summary_view` mappers. Contract artifacts and the generated
+TS client were regenerated. No store, schema, or migration changes.
+
+With this in place, environment references get online validation similar to MCP
+`serverId`/`authGrantId` and VFS mount sources — `check`/`import` fail early
+and per-entry on any missing provider, and on missing targets when the provider
+publishes a target list.
+
+### Non-goals for this cut
+
+No watcher; no bidirectional VFS sync; no global profile-directory discovery; no
+deletion/reconciliation of registry records not present on disk; no
+MCP/OAuth/environment creation or abstraction inside profile files (those stay in
+the existing `mcp`, `auth`, and `env` commands); no profile layering; no new
+profile types and no engine changes. The only API addition is the thin read-only
+`environmentProviders/list` / `environmentProviders/targets/list` exposure
+described above.

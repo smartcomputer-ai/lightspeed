@@ -452,6 +452,23 @@
       ],
       "type": "object"
     },
+    "AgentApiOutcomeOfEnvironmentProviderListResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/EnvironmentProviderListResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
     "AgentApiOutcomeOfEnvironmentProviderRegisterResponse": {
       "properties": {
         "notifications": {
@@ -462,6 +479,23 @@
         },
         "result": {
           "$ref": "#/definitions/EnvironmentProviderRegisterResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfEnvironmentProviderTargetListResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/EnvironmentProviderTargetListResponse"
         }
       },
       "required": [
@@ -3218,6 +3252,43 @@
       ],
       "type": "string"
     },
+    "EnvironmentProviderListParams": {
+      "properties": {
+        "providerKind": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/EnvironmentProviderKindView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/EnvironmentProviderStatusView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "EnvironmentProviderListResponse": {
+      "properties": {
+        "providers": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/EnvironmentProviderView"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
     "EnvironmentProviderRegisterParams": {
       "properties": {
         "capabilities": {
@@ -3282,6 +3353,39 @@
         "disabled"
       ],
       "type": "string"
+    },
+    "EnvironmentProviderTargetListParams": {
+      "properties": {
+        "providerId": {
+          "type": "string"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/EnvironmentTargetStatusView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "providerId"
+      ],
+      "type": "object"
+    },
+    "EnvironmentProviderTargetListResponse": {
+      "properties": {
+        "targets": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/EnvironmentTargetSummaryView"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
     },
     "EnvironmentProviderUnregisterParams": {
       "properties": {

@@ -5,8 +5,9 @@ use environment_registry::{
     EnvironmentProviderHeartbeat as RegistryProviderHeartbeat, EnvironmentProviderId,
     EnvironmentProviderKind as RegistryProviderKind, EnvironmentProviderRecord,
     EnvironmentProviderStatus as RegistryProviderStatus, EnvironmentRegistryError,
-    EnvironmentTargetRecord, HostControllerConnectionSpec, RegisterEnvironmentProvider,
-    UpdateEnvironmentProviderStatus, UpsertEnvironmentTargetRecord,
+    EnvironmentTargetRecord, HostControllerConnectionSpec, ListEnvironmentProviders,
+    ListEnvironmentTargets, RegisterEnvironmentProvider, UpdateEnvironmentProviderStatus,
+    UpsertEnvironmentTargetRecord,
 };
 use host_protocol::{
     control::{
@@ -119,6 +120,51 @@ impl GatewayAgentApi {
         })
     }
 
+    pub(super) async fn list_environment_provider_records(
+        &self,
+        params: EnvironmentProviderListParams,
+    ) -> Result<EnvironmentProviderListResponse, AgentApiError> {
+        let providers = environment_registry::EnvironmentProviderStore::list_providers(
+            self.store.as_ref(),
+            ListEnvironmentProviders {
+                status: params.status.map(registry_provider_status),
+                provider_kind: params.provider_kind.map(registry_provider_kind),
+            },
+        )
+        .await
+        .map_err(map_environment_registry_error)?
+        .into_iter()
+        .map(|provider| environment_provider_view(&provider))
+        .collect();
+        Ok(EnvironmentProviderListResponse { providers })
+    }
+
+    pub(super) async fn list_environment_provider_target_records(
+        &self,
+        params: EnvironmentProviderTargetListParams,
+    ) -> Result<EnvironmentProviderTargetListResponse, AgentApiError> {
+        let provider_id = parse_environment_provider_id(params.provider_id)?;
+        environment_registry::EnvironmentProviderStore::read_provider(
+            self.store.as_ref(),
+            &provider_id,
+        )
+        .await
+        .map_err(map_environment_registry_error)?;
+        let targets = environment_registry::EnvironmentTargetStore::list_targets(
+            self.store.as_ref(),
+            ListEnvironmentTargets {
+                provider_id: Some(provider_id),
+                status: params.status.map(registry_target_status),
+            },
+        )
+        .await
+        .map_err(map_environment_registry_error)?
+        .into_iter()
+        .map(|target| environment_target_summary_view(&target))
+        .collect();
+        Ok(EnvironmentProviderTargetListResponse { targets })
+    }
+
     async fn initialize_environment_provider_controller(
         &self,
         connection: &HostControllerConnectionSpec,
@@ -173,6 +219,16 @@ fn api_provider_kind(value: RegistryProviderKind) -> EnvironmentProviderKindView
         RegistryProviderKind::Sandbox => EnvironmentProviderKindView::Sandbox,
         RegistryProviderKind::Bridge => EnvironmentProviderKindView::Bridge,
         RegistryProviderKind::Custom => EnvironmentProviderKindView::Custom,
+    }
+}
+
+fn registry_provider_status(value: EnvironmentProviderStatusView) -> RegistryProviderStatus {
+    match value {
+        EnvironmentProviderStatusView::Registering => RegistryProviderStatus::Registering,
+        EnvironmentProviderStatusView::Online => RegistryProviderStatus::Online,
+        EnvironmentProviderStatusView::Stale => RegistryProviderStatus::Stale,
+        EnvironmentProviderStatusView::Offline => RegistryProviderStatus::Offline,
+        EnvironmentProviderStatusView::Disabled => RegistryProviderStatus::Disabled,
     }
 }
 

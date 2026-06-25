@@ -39,6 +39,8 @@ export const METHODS = [
   "environmentProviders/register",
   "environmentProviders/heartbeat",
   "environmentProviders/unregister",
+  "environmentProviders/list",
+  "environmentProviders/targets/list",
   "blob/put",
   "blob/put_many",
   "blob/get",
@@ -226,6 +228,14 @@ export interface MethodMap {
   "environmentProviders/unregister": {
     params: Api.EnvironmentProviderUnregisterParams;
     result: Api.AgentApiOutcomeOfEnvironmentProviderUnregisterResponse;
+  };
+  "environmentProviders/list": {
+    params: Api.EnvironmentProviderListParams;
+    result: Api.AgentApiOutcomeOfEnvironmentProviderListResponse;
+  };
+  "environmentProviders/targets/list": {
+    params: Api.EnvironmentProviderTargetListParams;
+    result: Api.AgentApiOutcomeOfEnvironmentProviderTargetListResponse;
   };
   "blob/put": {
     params: Api.BlobPutParams;
@@ -482,6 +492,12 @@ export const rpc = {
   },
   environmentProvidersUnregister(client: RpcCaller, params: Api.EnvironmentProviderUnregisterParams): Promise<Api.AgentApiOutcomeOfEnvironmentProviderUnregisterResponse> {
     return client.call("environmentProviders/unregister", params);
+  },
+  environmentProvidersList(client: RpcCaller, params: Api.EnvironmentProviderListParams): Promise<Api.AgentApiOutcomeOfEnvironmentProviderListResponse> {
+    return client.call("environmentProviders/list", params);
+  },
+  environmentProvidersTargetsList(client: RpcCaller, params: Api.EnvironmentProviderTargetListParams): Promise<Api.AgentApiOutcomeOfEnvironmentProviderTargetListResponse> {
+    return client.call("environmentProviders/targets/list", params);
   },
   blobPut(client: RpcCaller, params: Api.BlobPutParams): Promise<Api.AgentApiOutcomeOfBlobPutResponse> {
     return client.call("blob/put", params);

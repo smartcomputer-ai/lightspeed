@@ -10,8 +10,8 @@
 - [x] [P83](p83-fleet-subagent-control-plane.md) — agent-facing Fleet control plane (spawn/task/read/list/cancel) on top of P82
 - [x] [P84](p84-fleet-wait-and-callbacks.md) — first cut complete: `agent_send`, generic deferred tool batches, `RunSubscription` workflow primitives, `agent_wait` DTO/preflight/parking/resume, and live Mode I/Mode W coverage
 - [x] [Appendix: Fleet one-off child lifecycle](appendix-fleet-one-off-lifecycle.md) — `agent_spawn.lifecycle.close_on_terminal` for ephemeral delegation sessions
-- [ ] agent profiles
-- [ ] start new sessions with profiles and ad-hoc profiles
+- [x] agent profiles
+- [x] start new sessions with profiles and ad-hoc profiles
 - [ ] run coding agent (CC or Codex) on sandbox
 
 ## Provider Integrations
