@@ -17,6 +17,10 @@ pub const PROCESS_WRITE_METHOD: &str = "process/write";
 pub const PROCESS_TERMINATE_METHOD: &str = "process/terminate";
 pub const PROCESS_RESIZE_METHOD: &str = "process/resize";
 
+pub const JOB_START_METHOD: &str = "job/start";
+pub const JOB_READ_METHOD: &str = "job/read";
+pub const JOB_CANCEL_METHOD: &str = "job/cancel";
+
 pub const PROCESS_OUTPUT_METHOD: &str = "process/output";
 pub const PROCESS_EXITED_METHOD: &str = "process/exited";
 pub const PROCESS_CLOSED_METHOD: &str = "process/closed";

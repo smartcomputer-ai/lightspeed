@@ -3976,6 +3976,30 @@
             "default": false,
             "type": "boolean"
           },
+          "jobCancel": {
+            "default": false,
+            "type": "boolean"
+          },
+          "jobDependencies": {
+            "default": false,
+            "type": "boolean"
+          },
+          "jobRead": {
+            "default": false,
+            "type": "boolean"
+          },
+          "jobSerialLanes": {
+            "default": false,
+            "type": "boolean"
+          },
+          "jobStart": {
+            "default": false,
+            "type": "boolean"
+          },
+          "jobWaitHint": {
+            "default": false,
+            "type": "boolean"
+          },
           "processOutputNotifications": {
             "default": false,
             "type": "boolean"

@@ -2263,6 +2263,18 @@ pub struct HostCapabilitiesView {
     pub process_output_notifications: bool,
     #[serde(default)]
     pub process_pty: bool,
+    #[serde(default)]
+    pub job_start: bool,
+    #[serde(default)]
+    pub job_read: bool,
+    #[serde(default)]
+    pub job_cancel: bool,
+    #[serde(default)]
+    pub job_wait_hint: bool,
+    #[serde(default)]
+    pub job_dependencies: bool,
+    #[serde(default)]
+    pub job_serial_lanes: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -6407,6 +6419,12 @@ mod tests {
                 process_output_polling: true,
                 process_output_notifications: false,
                 process_pty: true,
+                job_start: true,
+                job_read: true,
+                job_cancel: true,
+                job_wait_hint: false,
+                job_dependencies: true,
+                job_serial_lanes: true,
             },
             display_name: Some("Local".to_owned()),
             default_cwd: Some("/workspace".to_owned()),

@@ -437,6 +437,12 @@ fn registry_host_capabilities(value: HostCapabilitiesView) -> HostCapabilities {
         process_output_polling: value.process_output_polling,
         process_output_notifications: value.process_output_notifications,
         process_pty: value.process_pty,
+        job_start: value.job_start,
+        job_read: value.job_read,
+        job_cancel: value.job_cancel,
+        job_wait_hint: value.job_wait_hint,
+        job_dependencies: value.job_dependencies,
+        job_serial_lanes: value.job_serial_lanes,
     }
 }
 
@@ -450,6 +456,12 @@ fn api_host_capabilities(value: &HostCapabilities) -> HostCapabilitiesView {
         process_output_polling: value.process_output_polling,
         process_output_notifications: value.process_output_notifications,
         process_pty: value.process_pty,
+        job_start: value.job_start,
+        job_read: value.job_read,
+        job_cancel: value.job_cancel,
+        job_wait_hint: value.job_wait_hint,
+        job_dependencies: value.job_dependencies,
+        job_serial_lanes: value.job_serial_lanes,
     }
 }
 

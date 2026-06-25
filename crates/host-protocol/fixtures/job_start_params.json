@@ -1,0 +1,38 @@
+{
+  "deckId": "deck-1",
+  "idempotencyKey": "idem-1",
+  "jobs": [
+    {
+      "argv": [
+        "git",
+        "status"
+      ],
+      "cwd": "/workspace",
+      "dependencyPolicy": "allSucceeded",
+      "dependsOn": [
+        {
+          "name": "setup"
+        }
+      ],
+      "env": {
+        "RUST_LOG": "debug"
+      },
+      "jobId": "checkout",
+      "metadata": {
+        "kind": "test"
+      },
+      "name": "checkout",
+      "outputPolicy": {
+        "discoverArtifacts": true,
+        "maxRetainedBytes": 1024
+      },
+      "stdin": "aGVsbG8K",
+      "timeoutMs": 60000
+    }
+  ],
+  "metadata": {
+    "request": "test"
+  },
+  "mode": "serial",
+  "serialLane": "repo"
+}

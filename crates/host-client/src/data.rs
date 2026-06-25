@@ -8,11 +8,16 @@ use host_protocol::data::{
         WriteFileResponse,
     },
     handshake::{InitializeParams, InitializeResponse, InitializedParams},
+    jobs::{
+        CancelJobsParams, CancelJobsResponse, ReadJobsParams, ReadJobsResponse, StartJobsParams,
+        StartJobsResponse,
+    },
     methods::{
         FS_COPY_METHOD, FS_CREATE_DIRECTORY_METHOD, FS_GET_METADATA_METHOD,
         FS_READ_DIRECTORY_METHOD, FS_READ_FILE_METHOD, FS_REMOVE_METHOD, FS_WRITE_FILE_METHOD,
-        INITIALIZE_METHOD, INITIALIZED_METHOD, PROCESS_READ_METHOD, PROCESS_RESIZE_METHOD,
-        PROCESS_START_METHOD, PROCESS_TERMINATE_METHOD, PROCESS_WRITE_METHOD,
+        INITIALIZE_METHOD, INITIALIZED_METHOD, JOB_CANCEL_METHOD, JOB_READ_METHOD,
+        JOB_START_METHOD, PROCESS_READ_METHOD, PROCESS_RESIZE_METHOD, PROCESS_START_METHOD,
+        PROCESS_TERMINATE_METHOD, PROCESS_WRITE_METHOD,
     },
     process::{
         ReadProcessParams, ReadProcessResponse, ResizeProcessParams, ResizeProcessResponse,
@@ -136,6 +141,27 @@ where
         params: &ResizeProcessParams,
     ) -> HostClientResult<ResizeProcessResponse> {
         self.rpc.request(PROCESS_RESIZE_METHOD, params).await
+    }
+
+    pub async fn start_jobs(
+        &mut self,
+        params: &StartJobsParams,
+    ) -> HostClientResult<StartJobsResponse> {
+        self.rpc.request(JOB_START_METHOD, params).await
+    }
+
+    pub async fn read_jobs(
+        &mut self,
+        params: &ReadJobsParams,
+    ) -> HostClientResult<ReadJobsResponse> {
+        self.rpc.request(JOB_READ_METHOD, params).await
+    }
+
+    pub async fn cancel_jobs(
+        &mut self,
+        params: &CancelJobsParams,
+    ) -> HostClientResult<CancelJobsResponse> {
+        self.rpc.request(JOB_CANCEL_METHOD, params).await
     }
 
     pub async fn next_notification(&mut self) -> HostClientResult<Option<JsonRpcNotification>> {

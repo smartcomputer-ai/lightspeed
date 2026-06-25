@@ -4,6 +4,12 @@
       "capabilities": {
         "filesystemRead": true,
         "filesystemWrite": true,
+        "jobCancel": true,
+        "jobDependencies": true,
+        "jobRead": true,
+        "jobSerialLanes": true,
+        "jobStart": true,
+        "jobWaitHint": false,
         "processOutputNotifications": true,
         "processOutputPolling": true,
         "processPty": false,
