@@ -942,9 +942,12 @@ async fn run_fleet_profile_spawn_live_client(
     let executor = FleetToolExecutor::new(blobs.clone(), service);
     let spawn_args = serde_json::json!({
         "input": "profile child live task",
-        "profile": {
-            "kind": "named",
-            "profileId": profile_id.as_str()
+        "base": {
+            "kind": "profile",
+            "profile": {
+                "kind": "named",
+                "profileId": profile_id.as_str()
+            }
         }
     });
     let arguments_ref = blobs.put_bytes(serde_json::to_vec(&spawn_args)?).await?;

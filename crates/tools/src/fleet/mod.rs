@@ -60,14 +60,8 @@ pub struct AgentSpawnArgs {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub child_session_id: Option<String>,
     pub input: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source: Option<AgentSpawnSource>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub profile: Option<ProfileSource>,
-    #[serde(default)]
-    pub fork: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fork_at_seq: Option<u64>,
+    #[serde(default, skip_serializing_if = "is_default_spawn_base")]
+    pub base: AgentSpawnBase,
     #[serde(default)]
     pub vfs: VfsPolicy,
     #[serde(default)]
@@ -78,15 +72,55 @@ pub struct AgentSpawnArgs {
     pub report_back: Option<AgentReportBack>,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum AgentSpawnSource {
+pub enum AgentSpawnBase {
     #[serde(rename = "self")]
-    #[default]
-    Self_,
+    Self_ {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fork: Option<AgentSpawnFork>,
+    },
     Session {
         session_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fork: Option<AgentSpawnFork>,
     },
+    Profile {
+        profile: ProfileSource,
+    },
+}
+
+impl Default for AgentSpawnBase {
+    fn default() -> Self {
+        Self::Self_ { fork: None }
+    }
+}
+
+impl AgentSpawnBase {
+    pub fn profile(&self) -> Option<&ProfileSource> {
+        match self {
+            Self::Profile { profile } => Some(profile),
+            Self::Self_ { .. } | Self::Session { .. } => None,
+        }
+    }
+
+    pub fn fork(&self) -> Option<&AgentSpawnFork> {
+        match self {
+            Self::Self_ { fork } | Self::Session { fork, .. } => fork.as_ref(),
+            Self::Profile { .. } => None,
+        }
+    }
+}
+
+fn is_default_spawn_base(base: &AgentSpawnBase) -> bool {
+    matches!(base, AgentSpawnBase::Self_ { fork: None })
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum AgentSpawnFork {
+    Safe,
+    AtSeq { seq: u64 },
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -496,13 +530,14 @@ fn function_bundle(
     })
 }
 
-fn source_schema() -> Value {
+fn spawn_base_schema() -> Value {
     json!({
         "oneOf": [
             {
                 "type": "object",
                 "properties": {
-                    "kind": { "const": "self" }
+                    "kind": { "const": "self" },
+                    "fork": fork_schema()
                 },
                 "required": ["kind"],
                 "additionalProperties": false
@@ -514,13 +549,56 @@ fn source_schema() -> Value {
                     "session_id": {
                         "type": "string",
                         "description": "Source session id to clone or fork."
-                    }
+                    },
+                    "fork": fork_schema()
                 },
                 "required": ["kind", "session_id"],
                 "additionalProperties": false
+            },
+            {
+                "type": "object",
+                "properties": {
+                    "kind": { "const": "profile" },
+                    "profile": profile_source_schema()
+                },
+                "required": ["kind", "profile"],
+                "additionalProperties": false
             }
         ],
-        "default": { "kind": "self" }
+        "default": { "kind": "self" },
+        "description": "Base used to create the child: clone/fork self, clone/fork another live session, or instantiate a profile."
+    })
+}
+
+fn fork_schema() -> Value {
+    json!({
+        "oneOf": [
+            {
+                "type": "object",
+                "properties": {
+                    "kind": {
+                        "const": "safe",
+                        "description": "Fork at the runtime-computed safe sequence."
+                    }
+                },
+                "required": ["kind"],
+                "additionalProperties": false
+            },
+            {
+                "type": "object",
+                "properties": {
+                    "kind": { "const": "at_seq" },
+                    "seq": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Explicit source sequence for fork; rejected if it lands inside an open run."
+                    }
+                },
+                "required": ["kind", "seq"],
+                "additionalProperties": false
+            }
+        ],
+        "description": "When present, create a history fork instead of a fresh-log clone. Omit for clone semantics."
     })
 }
 
@@ -560,7 +638,7 @@ fn profile_source_schema() -> Value {
                 "additionalProperties": false
             }
         ],
-        "description": "Profile to instantiate as a fresh child session. Mutually exclusive with source/fork/fork_at_seq."
+        "description": "Profile to instantiate as a fresh child session."
     })
 }
 
@@ -591,18 +669,7 @@ fn spawn_input_schema() -> Value {
                 "type": "string",
                 "description": "Initial task text for the child run."
             },
-            "source": source_schema(),
-            "profile": profile_source_schema(),
-            "fork": {
-                "type": "boolean",
-                "default": false,
-                "description": "When true, create a history fork. When false, create a fresh-log clone."
-            },
-            "fork_at_seq": {
-                "type": ["integer", "null"],
-                "minimum": 0,
-                "description": "Optional explicit source sequence for fork; rejected if it lands inside an open run."
-            },
+            "base": spawn_base_schema(),
             "vfs": {
                 "type": "string",
                 "enum": ["share", "isolate"],
@@ -886,19 +953,79 @@ mod tests {
     use super::*;
 
     #[test]
-    fn spawn_source_is_tagged_so_self_can_be_a_session_id() {
+    fn spawn_base_is_tagged_so_self_can_be_a_session_id() {
         let args: AgentSpawnArgs = serde_json::from_value(json!({
             "input": "do work",
-            "source": { "kind": "session", "session_id": "self" }
+            "base": { "kind": "session", "session_id": "self" }
         }))
         .expect("decode args");
 
         assert_eq!(
-            args.source,
-            Some(AgentSpawnSource::Session {
-                session_id: "self".to_owned()
-            })
+            args.base,
+            AgentSpawnBase::Session {
+                session_id: "self".to_owned(),
+                fork: None
+            }
         );
+    }
+
+    #[test]
+    fn spawn_omits_base_as_clone_self_default() {
+        let args: AgentSpawnArgs = serde_json::from_value(json!({
+            "input": "do work"
+        }))
+        .expect("decode args");
+
+        assert_eq!(args.base, AgentSpawnBase::Self_ { fork: None });
+    }
+
+    #[test]
+    fn spawn_accepts_fork_on_live_session_base() {
+        let args: AgentSpawnArgs = serde_json::from_value(json!({
+            "input": "do work",
+            "base": {
+                "kind": "session",
+                "session_id": "parent",
+                "fork": { "kind": "at_seq", "seq": 10 }
+            }
+        }))
+        .expect("decode args");
+
+        assert_eq!(
+            args.base,
+            AgentSpawnBase::Session {
+                session_id: "parent".to_owned(),
+                fork: Some(AgentSpawnFork::AtSeq { seq: 10 })
+            }
+        );
+    }
+
+    #[test]
+    fn spawn_accepts_safe_fork_on_self_base() {
+        let args: AgentSpawnArgs = serde_json::from_value(json!({
+            "input": "do work",
+            "base": {
+                "kind": "self",
+                "fork": { "kind": "safe" }
+            }
+        }))
+        .expect("decode args");
+
+        assert_eq!(
+            args.base,
+            AgentSpawnBase::Self_ {
+                fork: Some(AgentSpawnFork::Safe)
+            }
+        );
+    }
+
+    #[test]
+    fn spawn_rejects_legacy_top_level_source() {
+        serde_json::from_value::<AgentSpawnArgs>(json!({
+            "input": "do work",
+            "source": { "kind": "session", "session_id": "parent" }
+        }))
+        .expect_err("source moved under base");
     }
 
     #[test]

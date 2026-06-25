@@ -34,7 +34,7 @@ use tools::fleet::{
     AgentCancelScope, AgentLineageView, AgentLinkView, AgentListArgs, AgentListDirection,
     AgentListItem, AgentListOutput, AgentReadArgs, AgentReadOutput, AgentReportBack, AgentSendArgs,
     AgentSendInputItem, AgentSendMediaKind, AgentSendOutput, AgentSendStatus, AgentSendTarget,
-    AgentSpawnArgs, AgentSpawnOutput, AgentSpawnSource, AgentWaitArgs,
+    AgentSpawnArgs, AgentSpawnBase, AgentSpawnFork, AgentSpawnOutput, AgentWaitArgs,
     AgentWaitMode as ToolAgentWaitMode, EnvironmentPolicy, PROFILE_LIST_TOOL_NAME,
     PROFILE_READ_TOOL_NAME, ProfileListArgs, ProfileListOutput, ProfileReadArgs, ProfileReadOutput,
     VfsPolicy,
@@ -97,7 +97,7 @@ impl FleetService {
         let spawn_request_id = spawn_request_id(&context);
         let child_run_submission_id = child_run_submission_id(&context);
 
-        let (outcome, source_session_id, source_seq) = if let Some(profile) = args.profile.clone() {
+        let (outcome, source_session_id, source_seq) = if let Some(profile) = args.base.profile() {
             let existed = self
                 .sessions
                 .load_session(&child_session_id)
@@ -108,7 +108,7 @@ impl FleetService {
                 .start_session(
                     &child_session_id,
                     args.lifecycle.close_on_terminal,
-                    Some(profile),
+                    Some(profile.clone()),
                 )
                 .await?;
             if !existed {
@@ -123,16 +123,16 @@ impl FleetService {
                 )
             }
         } else {
-            let source_session_id = self.resolve_source(&context, args.source.as_ref())?;
+            let source_session_id = self.resolve_base_source(&context, &args.base)?;
             let source_record = self.load_session_required(&source_session_id).await?;
-            let source_seq = if args.fork {
-                Some(match args.fork_at_seq {
-                    Some(seq) => EventSeq::new(seq),
-                    None => self
+            let source_seq = if let Some(fork) = args.base.fork() {
+                Some(match fork {
+                    AgentSpawnFork::Safe => self
                         .sessions
                         .safe_fork_seq(&source_session_id)
                         .await
                         .map_err(map_session_store_error)?,
+                    AgentSpawnFork::AtSeq { seq } => EventSeq::new(*seq),
                 })
             } else {
                 None
@@ -151,12 +151,12 @@ impl FleetService {
             (outcome, Some(source_session_id), source_seq)
         };
         let skip_pre_run_setup = outcome.has_matching_spawn_link();
-        if args.profile.is_none() && !skip_pre_run_setup {
+        if args.base.profile().is_none() && !skip_pre_run_setup {
             self.apply_resource_policies(&child_session_id, context.observed_at_ms, &args)
                 .await?;
         }
 
-        if args.profile.is_none() {
+        if args.base.profile().is_none() {
             self.runtime
                 .start_session(&child_session_id, args.lifecycle.close_on_terminal, None)
                 .await?;
@@ -672,14 +672,19 @@ impl FleetService {
         Ok(false)
     }
 
-    fn resolve_source(
+    fn resolve_base_source(
         &self,
         context: &FleetInvocationContext,
-        source: Option<&AgentSpawnSource>,
+        base: &AgentSpawnBase,
     ) -> Result<SessionId, AgentApiError> {
-        match source.unwrap_or(&AgentSpawnSource::Self_) {
-            AgentSpawnSource::Self_ => Ok(context.parent_session_id.clone()),
-            AgentSpawnSource::Session { session_id } => parse_session_id(session_id, "source"),
+        match base {
+            AgentSpawnBase::Self_ { .. } => Ok(context.parent_session_id.clone()),
+            AgentSpawnBase::Session { session_id, .. } => {
+                parse_session_id(session_id, "base.session_id")
+            }
+            AgentSpawnBase::Profile { .. } => Err(AgentApiError::invalid_request(
+                "profile base does not resolve to a source session",
+            )),
         }
     }
 
@@ -1408,17 +1413,7 @@ fn validate_spawn_args(args: &AgentSpawnArgs) -> Result<(), AgentApiError> {
             "agent_spawn input must not be empty",
         ));
     }
-    if args.profile.is_some() && args.source.is_some() {
-        return Err(AgentApiError::invalid_request(
-            "agent_spawn profile is mutually exclusive with source",
-        ));
-    }
-    if args.profile.is_some() && (args.fork || args.fork_at_seq.is_some()) {
-        return Err(AgentApiError::invalid_request(
-            "agent_spawn profile is mutually exclusive with fork and fork_at_seq",
-        ));
-    }
-    if args.profile.is_some() && args.vfs != VfsPolicy::Share {
+    if args.base.profile().is_some() && args.vfs != VfsPolicy::Share {
         return Err(AgentApiError::invalid_request(
             "agent_spawn profile requires vfs=share",
         ));
@@ -1944,8 +1939,13 @@ fn spawn_link_metadata(
         "tool_call_id": context.call_id.as_str(),
         "source_session_id": source_session_id.map(SessionId::as_str),
         "source_seq": source_seq.map(EventSeq::as_u64),
-        "profile": args.profile.as_ref(),
-        "fork": args.fork,
+        "base": &args.base,
+        "profile": args.base.profile(),
+        "fork": args.base.fork().is_some(),
+        "fork_at_seq": args.base.fork().and_then(|fork| match fork {
+            AgentSpawnFork::Safe => None,
+            AgentSpawnFork::AtSeq { seq } => Some(*seq),
+        }),
         "vfs": match args.vfs {
             VfsPolicy::Share => "share",
             VfsPolicy::Isolate => "isolate",
@@ -2543,6 +2543,42 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn spawn_safe_fork_records_runtime_source_seq() {
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let source = open_source_session(sessions.as_ref()).await;
+        let expected_seq = sessions
+            .safe_fork_seq(&source)
+            .await
+            .expect("safe fork seq");
+        let runtime = Arc::new(FakeRuntime::default());
+        let service = FleetService::new(sessions.clone(), runtime);
+
+        let output = service
+            .spawn(
+                context(source.clone()),
+                serde_json::from_value(json!({
+                    "input": "fork work",
+                    "base": {
+                        "kind": "self",
+                        "fork": { "kind": "safe" }
+                    }
+                }))
+                .expect("spawn args"),
+            )
+            .await
+            .expect("spawn");
+
+        let child = SessionId::new(output.child_session_id);
+        let child_record = sessions
+            .load_session(&child)
+            .await
+            .expect("load")
+            .expect("child");
+        assert_eq!(child_record.source_session_id, Some(source));
+        assert_eq!(child_record.source_seq, Some(expected_seq));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn spawn_profile_only_creates_fresh_child_without_source_lineage() {
         let sessions = Arc::new(InMemorySessionStore::new());
         let parent = open_source_session(sessions.as_ref()).await;
@@ -2560,9 +2596,12 @@ mod tests {
                 context(parent.clone()),
                 serde_json::from_value(json!({
                     "input": "support this customer",
-                    "profile": {
-                        "kind": "named",
-                        "profileId": "support"
+                    "base": {
+                        "kind": "profile",
+                        "profile": {
+                            "kind": "named",
+                            "profileId": "support"
+                        }
                     }
                 }))
                 .expect("spawn args"),
@@ -2604,7 +2643,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn spawn_rejects_source_and_profile_together() {
+    async fn spawn_profile_base_rejects_vfs_isolate() {
         let sessions = Arc::new(InMemorySessionStore::new());
         let parent = open_source_session(sessions.as_ref()).await;
         let runtime = Arc::new(FakeRuntime::default());
@@ -2614,20 +2653,23 @@ mod tests {
             .spawn(
                 context(parent),
                 serde_json::from_value(json!({
-                    "input": "bad mix",
-                    "source": { "kind": "self" },
-                    "profile": {
-                        "kind": "named",
-                        "profileId": "support"
-                    }
+                    "input": "bad profile resource policy",
+                    "base": {
+                        "kind": "profile",
+                        "profile": {
+                            "kind": "named",
+                            "profileId": "support"
+                        }
+                    },
+                    "vfs": "isolate"
                 }))
                 .expect("spawn args"),
             )
             .await
-            .expect_err("source + profile must reject");
+            .expect_err("profile + vfs isolate must reject");
 
         assert_eq!(error.kind, api::AgentApiErrorKind::InvalidRequest);
-        assert!(error.message.contains("mutually exclusive"));
+        assert!(error.message.contains("profile requires vfs=share"));
     }
 
     #[tokio::test(flavor = "current_thread")]

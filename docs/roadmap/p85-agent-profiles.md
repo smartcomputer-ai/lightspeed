@@ -45,10 +45,10 @@ P85 is implemented end-to-end with these concrete pieces:
   order: config, instructions, mounts, MCP, environments. Apply is convergent:
   config, instructions, mounts, MCP links, and environments skip work when the
   effective session state already matches.
-- **Fleet integration**: `agent_spawn` accepts `profile`, rejects
-  `profile` combined with `source`/fork/isolate options, starts a fresh child
-  session from the profile, and records the requested `ProfileSource` in Fleet
-  spawn-link metadata. The Fleet toolset also exposes read-only profile
+- **Fleet integration**: `agent_spawn` has one tagged `base`
+  (`self`/`session`/`profile`), with fork options only on live-session bases.
+  Profile bases start a fresh child session from a `ProfileSource` and record it
+  in Fleet spawn-link metadata. The Fleet toolset also exposes read-only profile
   discovery tools: `profile_list` and `profile_read`.
 - **CLI support**: `chat --profile`, `chat --profile-json`, and
   `lightspeed profiles list|read|create|update|delete|apply`.
@@ -100,10 +100,12 @@ the existing session/run/resource operations. Profiles can be:
 1. **stored and named** (`profile_id`) in a registry, created/updated/listed/read
    over the API;
 2. **referenced** when starting a session (CLI `--profile support`), and when one
-   agent spawns another (`agent_spawn { profile: { kind: named, profile_id } }`);
+   agent spawns another
+   (`agent_spawn { base: { kind: profile, profile: { kind: named, profile_id } } }`);
 3. **passed ad hoc / inline** at any of those call sites (`--profile-json ...`, or
-   `agent_spawn { profile: { kind: inline, profile: {...} } }`), so a profile is
-   also a portable **agent-config language** that need not be pre-registered.
+   `agent_spawn { base: { kind: profile, profile: { kind: inline, profile: {...} } } }`),
+   so a profile is also a portable **agent-config language** that need not be
+   pre-registered.
 
 (Layered composition — a named base plus an inline override, or profile-to-profile
 inheritance — is deliberately **out of v1** and lands additively later; see "Why no
@@ -151,11 +153,11 @@ boundary rather than in a separate crate:
    target session through the internal `AgentApiService` and resource stores
    (the same calls the bridge makes today, now in Rust).
 
-`api` gains a thin profile CRUD surface and a `profile` field on the
-session-start / spawn paths. The model-visible Fleet surface gains a `profile`
-field on `agent_spawn`, plus read-only profile discovery (`profile_list` and
-`profile_read`). It does **not** gain generic profile authoring tools (an agent
-creating/updating/deleting registry entries is deferred — see Deferred).
+`api` gains a thin profile CRUD surface and a `profile` field on session-start.
+The model-visible Fleet surface gains a `profile` variant on `agent_spawn.base`,
+plus read-only profile discovery (`profile_list` and `profile_read`). It does
+**not** gain generic profile authoring tools (an agent creating/updating/deleting
+registry entries is deferred — see Deferred).
 
 ### Why not just extend P83 clone/fork
 
@@ -321,38 +323,34 @@ with the deferred `compose` variant.)
 
 ### Fleet (`agent_spawn`)
 
-`agent_spawn` gains an optional `profile: ProfileSource`, making profile-based
-children first-class (the P83-deferred "profile/template-based child creation"):
+`agent_spawn` gains a single tagged `base`, making profile-based children
+first-class while keeping P83 clone/fork explicit:
 
 ```text
 agent_spawn {
   child_session_id?
   input
-  source?     tagged source enum   (P83: self | session)   -- clone/fork a LIVE session
-  profile?    ProfileSource        (P85: named | inline)    -- instantiate a DESCRIPTION
+  base?       self | session | profile
   ...
 }
 ```
 
-`source` and `profile` are **mutually exclusive** — a spawn instantiates a child
-*either* from a live session (clone/fork) *or* from a description (profile), never
-both. Layering a profile over a clone is deliberately not offered: the two derive
-overlapping setup (config, mounts, mcp, environments) from different bases, so a
-combined order-of-precedence is exactly the "tricky overlay" worth avoiding. The
-three cases are:
+The `base` variants make the mutually exclusive branches unrepresentable as a bad
+combination:
 
-- **Neither** → P83 default: clone `{ kind: self }` (today's behavior unchanged).
-- **`profile` only** → fresh session provisioned purely from the profile document
-  (no source session needed). This is the "OAI agent starts a fresh Anthropic
-  agent with different MCPs" case the goal calls out.
-- **`source` only** → P83 clone/fork (unchanged).
-- supplying **both** is a validation error (`source` and `profile` are mutually
-  exclusive).
+- **Omitted / `{ kind: self }`** → P83 default: clone the caller.
+- **`{ kind: self|session, fork: { kind: safe } }`** → P83 history fork at the
+  P82 safe cut.
+- **`{ kind: self|session, fork: { kind: at_seq, seq } }`** → P83 history fork at
+  an explicit branch point.
+- **`{ kind: profile, profile }`** → fresh session provisioned purely from the
+  profile document (no source session needed). This is the "OAI agent starts a
+  fresh Anthropic agent with different MCPs" case the goal calls out.
 
 "Fork myself but switch provider" is **not a v1 one-shot** (it would need
 profile-on-live-session overlay, the undefined precedence we are avoiding). In v1
 the caller spawns from a `profile` that already describes the target setup, or
-clones via `source` and adjusts the child afterward (`agent_send` / a follow-up
+clones/forks via `base = self|session` and adjusts the child afterward (`agent_send` / a follow-up
 `profiles/apply`). Once the deferred profile layering lands, the intent collapses
 into a single `compose`/`extends` profile — profile-on-profile, never
 profile-on-live-session. Clone/fork stays a pure copy of a live session.
@@ -455,9 +453,10 @@ bridge starts the session with `tools.messaging = true`.
     the Fleet executor.
   - `gateway`: route the `profiles/*` methods to the store; route `session/start`'s
     `profile` to the applier before first-run admission.
-  - `fleet.rs`: `agent_spawn` starts a fresh session from `profile` (rejecting
-    `source` + `profile` together) before child run admission and records the
-    `ProfileSource` on the Fleet spawn-link metadata.
+  - `fleet.rs`: `agent_spawn` starts a fresh session from `base.kind = profile`
+    before child run admission and records the `ProfileSource` on the Fleet
+    spawn-link metadata. Live-session clone/fork stays under `base.kind =
+    self|session`.
 - `crates/cli/`: `--profile` (named) / `--profile-json` (inline) on `chat`, and a
   `profiles` subcommand (`list|read|create|update|delete|apply`).
 - `interop/messaging/`: accept a `ProfileSource` per binding (plus string
@@ -487,13 +486,15 @@ bridge starts the session with `tools.messaging = true`.
   Apply-time resource failures are surfaced through the existing
   VFS/MCP/environment paths.
 
-### S4. Fleet `agent_spawn { profile }`
-- Completed: `agent_spawn` accepts `profile` (named/inline), **mutually exclusive
-  with `source`**; `profile`-only spawns a fresh provisioned child; Fleet spawn-link
-  metadata records the requested `ProfileSource`; idempotent under tool-activity
-  retry. `profile_list` and `profile_read` expose read-only registry discovery to
-  agents. Tests cover profile-only spawn, `source`+`profile` rejection, and Fleet
-  executor profile list/read output blobs.
+### S4. Fleet `agent_spawn { base }`
+- Completed: `agent_spawn` accepts one tagged `base` (`self`/`session`/`profile`);
+  fork is only valid on live-session bases (`safe` or explicit `at_seq`), and
+  profile bases carry a `ProfileSource`. Profile spawns create a fresh provisioned
+  child; Fleet spawn-link metadata records the requested `ProfileSource`;
+  idempotent under tool-activity retry. `profile_list` and `profile_read` expose
+  read-only registry discovery to agents. Tests cover profile-only spawn,
+  profile resource-policy rejection, and Fleet executor profile list/read output
+  blobs.
 
 ### S5. CLI
 - Completed: `--profile` (named) / `--profile-json` (inline) on `chat`; `profiles`
@@ -565,13 +566,13 @@ bridge starts the session with `tools.messaging = true`.
   canonical order (config → instructions → mounts → mcp → environments), and
   `profiles/apply` does the same to an existing session **idempotently** (re-apply
   is a no-op), replacing the bridge's `ensureSession`/`startedSessions` logic.
-- `agent_spawn` gains an optional `profile`, **mutually exclusive with `source`**:
-  `profile`-only spawns a fresh provisioned child with **no source session
-  required** (e.g. an OAI agent spawning a fresh Anthropic agent with different
-  MCPs); supplying both is a validation error. The result is still a linked Fleet
-  child; retries do not double-provision. ("Fork-but-switch-provider" is not a v1
-  one-shot — it needs the deferred profile layering — and is handled meanwhile by a
-  profile that already describes the target or a clone adjusted afterward.)
+- `agent_spawn` gains a single `base` enum: `self` and `session` clone/fork a live
+  session, while `profile` spawns a fresh provisioned child with **no source
+  session required** (e.g. an OAI agent spawning a fresh Anthropic agent with
+  different MCPs). The result is still a linked Fleet child; retries do not
+  double-provision. ("Fork-but-switch-provider" is not a v1 one-shot — it needs
+  the deferred profile layering — and is handled meanwhile by a profile that
+  already describes the target or a clone adjusted afterward.)
 - Profiles store **references only**, never secrets; a missing/unreachable
   referenced resource fails **at apply time** with a per-entry error.
 - The **messaging bridge provisions through native profiles** (named id shorthand
