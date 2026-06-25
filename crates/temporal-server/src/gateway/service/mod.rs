@@ -559,6 +559,7 @@ impl GatewayAgentApi {
         &self,
         session_config: &SessionConfig,
         include_process_tools: bool,
+        include_job_tools: bool,
     ) -> ToolsetConfig {
         let mut config = ToolsetConfig::empty();
         config.builtin = match effective_filesystem_tool_mode(session_config) {
@@ -583,6 +584,9 @@ impl GatewayAgentApi {
         }
         if include_process_tools {
             config.builtin.process = tools::toolset::EnvironmentToolsetConfig::basic();
+        }
+        if include_job_tools {
+            config.builtin.process = config.builtin.process.with_jobs();
         }
         config
     }

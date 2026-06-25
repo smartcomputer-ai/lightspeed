@@ -114,7 +114,7 @@ pub struct HostCapabilities {
     #[serde(default)]
     pub job_dependencies: bool,
     #[serde(default)]
-    pub job_serial_lanes: bool,
+    pub job_queue_keys: bool,
 }
 
 impl HostCapabilities {
@@ -141,7 +141,7 @@ impl HostCapabilities {
         self.job_cancel = true;
         self.job_wait_hint = false;
         self.job_dependencies = true;
-        self.job_serial_lanes = true;
+        self.job_queue_keys = true;
         self
     }
 }

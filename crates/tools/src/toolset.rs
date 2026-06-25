@@ -95,6 +95,10 @@ impl BuiltinToolsetConfig {
             BuiltinToolOperation::ListDir => self.fs.list_dir = true,
             BuiltinToolOperation::RunProcess => self.process.run_process = true,
             BuiltinToolOperation::WriteProcessStdin => self.process.write_process_stdin = true,
+            BuiltinToolOperation::JobStart => self.process.job_start = true,
+            BuiltinToolOperation::JobRead => self.process.job_read = true,
+            BuiltinToolOperation::JobWait => self.process.job_wait = true,
+            BuiltinToolOperation::JobCancel => self.process.job_cancel = true,
         }
     }
 
@@ -210,6 +214,10 @@ impl FilesystemToolsetConfig {
 pub struct EnvironmentToolsetConfig {
     pub run_process: bool,
     pub write_process_stdin: bool,
+    pub job_start: bool,
+    pub job_read: bool,
+    pub job_wait: bool,
+    pub job_cancel: bool,
 }
 
 impl EnvironmentToolsetConfig {
@@ -221,11 +229,35 @@ impl EnvironmentToolsetConfig {
         Self {
             run_process: true,
             write_process_stdin: true,
+            ..Self::disabled()
         }
     }
 
+    pub fn jobs() -> Self {
+        Self {
+            job_start: true,
+            job_read: true,
+            job_wait: true,
+            job_cancel: true,
+            ..Self::disabled()
+        }
+    }
+
+    pub fn with_jobs(mut self) -> Self {
+        self.job_start = true;
+        self.job_read = true;
+        self.job_wait = true;
+        self.job_cancel = true;
+        self
+    }
+
     pub fn enabled(&self) -> bool {
-        self.run_process || self.write_process_stdin
+        self.run_process
+            || self.write_process_stdin
+            || self.job_start
+            || self.job_read
+            || self.job_wait
+            || self.job_cancel
     }
 
     fn operations(&self) -> Vec<BuiltinToolOperation> {
@@ -235,6 +267,18 @@ impl EnvironmentToolsetConfig {
         }
         if self.write_process_stdin {
             operations.push(BuiltinToolOperation::WriteProcessStdin);
+        }
+        if self.job_start {
+            operations.push(BuiltinToolOperation::JobStart);
+        }
+        if self.job_read {
+            operations.push(BuiltinToolOperation::JobRead);
+        }
+        if self.job_wait {
+            operations.push(BuiltinToolOperation::JobWait);
+        }
+        if self.job_cancel {
+            operations.push(BuiltinToolOperation::JobCancel);
         }
         operations
     }

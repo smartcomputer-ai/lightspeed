@@ -20,19 +20,16 @@
       "outputNextSeq": 2,
       "summary": {
         "createdAtMs": 1,
-        "deckId": "deck-1",
         "dependencies": [
           "checkout"
         ],
         "exitCode": 0,
         "finishedAtMs": 4,
         "jobId": "tests",
-        "metadata": {
-          "kind": "test"
-        },
         "name": "tests",
+        "namespace": "session_1",
         "queuedAtMs": 2,
-        "serialLane": "repo",
+        "queueKey": "repo",
         "startedAtMs": 3,
         "status": "succeeded"
       }

@@ -425,20 +425,10 @@ impl JobHandleStore for InMemoryEnvironmentRegistryStore {
                     .as_ref()
                     .is_none_or(|env_id| &record.env_id == env_id)
             })
-            .filter(|record| {
-                request
-                    .deck_id
-                    .as_ref()
-                    .is_none_or(|deck_id| record.deck_id.as_ref() == Some(deck_id))
-            })
             .cloned()
             .collect::<Vec<_>>();
         records.sort_by(|left, right| {
-            (&left.env_id, &left.deck_id, &left.job_id).cmp(&(
-                &right.env_id,
-                &right.deck_id,
-                &right.job_id,
-            ))
+            (&left.env_id, &left.job_id).cmp(&(&right.env_id, &right.job_id))
         });
         if let Some(limit) = request.limit {
             records.truncate(limit);

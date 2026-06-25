@@ -1338,6 +1338,6 @@ fn host_capabilities() -> HostCapabilities {
         job_cancel: true,
         job_wait_hint: false,
         job_dependencies: true,
-        job_serial_lanes: true,
+        job_queue_keys: true,
     }
 }

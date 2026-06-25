@@ -20,7 +20,8 @@ mod codex;
 mod shared;
 
 pub use crate::environment::tools::{
-    RunProcessArgs, WriteProcessStdinArgs, invoke_run_process, invoke_write_process_stdin,
+    RunProcessArgs, WriteProcessStdinArgs, invoke_job_cancel, invoke_job_read, invoke_job_start,
+    invoke_job_wait, invoke_run_process, invoke_write_process_stdin,
 };
 pub use crate::fs::tools::{
     ApplyPatchArgs, ApplyPatchResult, EditFileArgs, EditFileResult, GlobArgs, GlobResult, GrepArgs,
@@ -40,6 +41,10 @@ pub enum BuiltinToolOperation {
     ListDir,
     RunProcess,
     WriteProcessStdin,
+    JobStart,
+    JobRead,
+    JobWait,
+    JobCancel,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -85,6 +90,10 @@ impl BuiltinTool {
             (BuiltinToolSurface::Canonical, BuiltinToolOperation::WriteProcessStdin) => {
                 "env.write_process_stdin"
             }
+            (BuiltinToolSurface::Canonical, BuiltinToolOperation::JobStart) => "env.job_start",
+            (BuiltinToolSurface::Canonical, BuiltinToolOperation::JobRead) => "env.job_read",
+            (BuiltinToolSurface::Canonical, BuiltinToolOperation::JobWait) => "env.job_wait",
+            (BuiltinToolSurface::Canonical, BuiltinToolOperation::JobCancel) => "env.job_cancel",
             (BuiltinToolSurface::CodexLike, BuiltinToolOperation::ReadFile) => "fs.codex.read_file",
             (BuiltinToolSurface::CodexLike, BuiltinToolOperation::WriteFile) => {
                 "fs.codex.write_file"
@@ -101,6 +110,14 @@ impl BuiltinTool {
             }
             (BuiltinToolSurface::CodexLike, BuiltinToolOperation::WriteProcessStdin) => {
                 "env.codex.write_process_stdin"
+            }
+            (BuiltinToolSurface::CodexLike, BuiltinToolOperation::JobStart) => {
+                "env.codex.job_start"
+            }
+            (BuiltinToolSurface::CodexLike, BuiltinToolOperation::JobRead) => "env.codex.job_read",
+            (BuiltinToolSurface::CodexLike, BuiltinToolOperation::JobWait) => "env.codex.job_wait",
+            (BuiltinToolSurface::CodexLike, BuiltinToolOperation::JobCancel) => {
+                "env.codex.job_cancel"
             }
             (BuiltinToolSurface::ClaudeCodeLike, BuiltinToolOperation::ReadFile) => {
                 "fs.claude.read_file"
@@ -125,6 +142,18 @@ impl BuiltinTool {
             (BuiltinToolSurface::ClaudeCodeLike, BuiltinToolOperation::WriteProcessStdin) => {
                 "env.claude.write_process_stdin"
             }
+            (BuiltinToolSurface::ClaudeCodeLike, BuiltinToolOperation::JobStart) => {
+                "env.claude.job_start"
+            }
+            (BuiltinToolSurface::ClaudeCodeLike, BuiltinToolOperation::JobRead) => {
+                "env.claude.job_read"
+            }
+            (BuiltinToolSurface::ClaudeCodeLike, BuiltinToolOperation::JobWait) => {
+                "env.claude.job_wait"
+            }
+            (BuiltinToolSurface::ClaudeCodeLike, BuiltinToolOperation::JobCancel) => {
+                "env.claude.job_cancel"
+            }
         }
     }
 
@@ -139,6 +168,10 @@ impl BuiltinTool {
             BuiltinToolOperation::ListDir => "lightspeed.fs.list_dir",
             BuiltinToolOperation::RunProcess => "lightspeed.env.run_process",
             BuiltinToolOperation::WriteProcessStdin => "lightspeed.env.write_process_stdin",
+            BuiltinToolOperation::JobStart => "lightspeed.env.job_start",
+            BuiltinToolOperation::JobRead => "lightspeed.env.job_read",
+            BuiltinToolOperation::JobWait => "lightspeed.env.job_wait",
+            BuiltinToolOperation::JobCancel => "lightspeed.env.job_cancel",
         }
     }
 
@@ -180,6 +213,30 @@ impl BuiltinTool {
                 BuiltinToolSurface::Canonical | BuiltinToolSurface::CodexLike,
                 BuiltinToolOperation::WriteProcessStdin,
             ) => "write_stdin",
+            (
+                BuiltinToolSurface::Canonical
+                | BuiltinToolSurface::CodexLike
+                | BuiltinToolSurface::ClaudeCodeLike,
+                BuiltinToolOperation::JobStart,
+            ) => crate::environment::jobs::JOB_START_TOOL_NAME,
+            (
+                BuiltinToolSurface::Canonical
+                | BuiltinToolSurface::CodexLike
+                | BuiltinToolSurface::ClaudeCodeLike,
+                BuiltinToolOperation::JobRead,
+            ) => crate::environment::jobs::JOB_READ_TOOL_NAME,
+            (
+                BuiltinToolSurface::Canonical
+                | BuiltinToolSurface::CodexLike
+                | BuiltinToolSurface::ClaudeCodeLike,
+                BuiltinToolOperation::JobWait,
+            ) => crate::environment::jobs::JOB_WAIT_TOOL_NAME,
+            (
+                BuiltinToolSurface::Canonical
+                | BuiltinToolSurface::CodexLike
+                | BuiltinToolSurface::ClaudeCodeLike,
+                BuiltinToolOperation::JobCancel,
+            ) => crate::environment::jobs::JOB_CANCEL_TOOL_NAME,
             (BuiltinToolSurface::ClaudeCodeLike, BuiltinToolOperation::ReadFile) => "Read",
             (BuiltinToolSurface::ClaudeCodeLike, BuiltinToolOperation::WriteFile) => "Write",
             (BuiltinToolSurface::ClaudeCodeLike, BuiltinToolOperation::EditFile) => "Edit",
@@ -215,6 +272,12 @@ impl BuiltinTool {
             "env.write_process_stdin" | "host.write_process_stdin" => {
                 Self::canonical(BuiltinToolOperation::WriteProcessStdin)
             }
+            "env.job_start" | "host.job_start" => Self::canonical(BuiltinToolOperation::JobStart),
+            "env.job_read" | "host.job_read" => Self::canonical(BuiltinToolOperation::JobRead),
+            "env.job_wait" | "host.job_wait" => Self::canonical(BuiltinToolOperation::JobWait),
+            "env.job_cancel" | "host.job_cancel" => {
+                Self::canonical(BuiltinToolOperation::JobCancel)
+            }
             "fs.codex.read_file" | "host.codex.read_file" => Self::new(
                 BuiltinToolOperation::ReadFile,
                 BuiltinToolSurface::CodexLike,
@@ -246,6 +309,20 @@ impl BuiltinTool {
             ),
             "env.codex.write_process_stdin" | "host.codex.write_process_stdin" => Self::new(
                 BuiltinToolOperation::WriteProcessStdin,
+                BuiltinToolSurface::CodexLike,
+            ),
+            "env.codex.job_start" | "host.codex.job_start" => Self::new(
+                BuiltinToolOperation::JobStart,
+                BuiltinToolSurface::CodexLike,
+            ),
+            "env.codex.job_read" | "host.codex.job_read" => {
+                Self::new(BuiltinToolOperation::JobRead, BuiltinToolSurface::CodexLike)
+            }
+            "env.codex.job_wait" | "host.codex.job_wait" => {
+                Self::new(BuiltinToolOperation::JobWait, BuiltinToolSurface::CodexLike)
+            }
+            "env.codex.job_cancel" | "host.codex.job_cancel" => Self::new(
+                BuiltinToolOperation::JobCancel,
                 BuiltinToolSurface::CodexLike,
             ),
             "fs.claude.read_file" | "host.claude.read_file" => Self::new(
@@ -284,6 +361,22 @@ impl BuiltinTool {
                 BuiltinToolOperation::WriteProcessStdin,
                 BuiltinToolSurface::ClaudeCodeLike,
             ),
+            "env.claude.job_start" | "host.claude.job_start" => Self::new(
+                BuiltinToolOperation::JobStart,
+                BuiltinToolSurface::ClaudeCodeLike,
+            ),
+            "env.claude.job_read" | "host.claude.job_read" => Self::new(
+                BuiltinToolOperation::JobRead,
+                BuiltinToolSurface::ClaudeCodeLike,
+            ),
+            "env.claude.job_wait" | "host.claude.job_wait" => Self::new(
+                BuiltinToolOperation::JobWait,
+                BuiltinToolSurface::ClaudeCodeLike,
+            ),
+            "env.claude.job_cancel" | "host.claude.job_cancel" => Self::new(
+                BuiltinToolOperation::JobCancel,
+                BuiltinToolSurface::ClaudeCodeLike,
+            ),
             _ => return None,
         })
     }
@@ -304,8 +397,18 @@ impl BuiltinTool {
         )
     }
 
+    pub const fn requires_jobs(self) -> bool {
+        matches!(
+            self.operation,
+            BuiltinToolOperation::JobStart
+                | BuiltinToolOperation::JobRead
+                | BuiltinToolOperation::JobWait
+                | BuiltinToolOperation::JobCancel
+        )
+    }
+
     pub const fn is_filesystem_operation(self) -> bool {
-        !self.requires_process()
+        !self.requires_process() && !self.requires_jobs()
     }
 
     pub const fn target_namespace(self) -> &'static str {
@@ -326,7 +429,11 @@ impl BuiltinTool {
             | BuiltinToolOperation::EditFile
             | BuiltinToolOperation::ApplyPatch
             | BuiltinToolOperation::RunProcess
-            | BuiltinToolOperation::WriteProcessStdin => ToolParallelism::Exclusive,
+            | BuiltinToolOperation::WriteProcessStdin
+            | BuiltinToolOperation::JobStart
+            | BuiltinToolOperation::JobWait
+            | BuiltinToolOperation::JobCancel => ToolParallelism::Exclusive,
+            BuiltinToolOperation::JobRead => ToolParallelism::ParallelSafe,
         }
     }
 
@@ -422,6 +529,10 @@ impl BuiltinToolOperation {
             Self::ListDir => "list_dir",
             Self::RunProcess => "run_process",
             Self::WriteProcessStdin => "write_process_stdin",
+            Self::JobStart => "job_start",
+            Self::JobRead => "job_read",
+            Self::JobWait => "job_wait",
+            Self::JobCancel => "job_cancel",
         }
     }
 }

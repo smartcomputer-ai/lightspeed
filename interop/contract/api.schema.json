@@ -3984,11 +3984,11 @@
           "default": false,
           "type": "boolean"
         },
-        "jobRead": {
+        "jobQueueKeys": {
           "default": false,
           "type": "boolean"
         },
-        "jobSerialLanes": {
+        "jobRead": {
           "default": false,
           "type": "boolean"
         },
@@ -6232,6 +6232,30 @@
           "type": "boolean"
         },
         "fsWrite": {
+          "type": "boolean"
+        },
+        "jobCancel": {
+          "default": false,
+          "type": "boolean"
+        },
+        "jobDependencies": {
+          "default": false,
+          "type": "boolean"
+        },
+        "jobQueueKeys": {
+          "default": false,
+          "type": "boolean"
+        },
+        "jobRead": {
+          "default": false,
+          "type": "boolean"
+        },
+        "jobStart": {
+          "default": false,
+          "type": "boolean"
+        },
+        "jobWaitHint": {
+          "default": false,
           "type": "boolean"
         },
         "network": {

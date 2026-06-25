@@ -1942,6 +1942,18 @@ pub struct SessionEnvironmentCapabilitiesView {
     pub fs_write: bool,
     pub process_exec: bool,
     pub process_stdin: bool,
+    #[serde(default)]
+    pub job_start: bool,
+    #[serde(default)]
+    pub job_read: bool,
+    #[serde(default)]
+    pub job_cancel: bool,
+    #[serde(default)]
+    pub job_wait_hint: bool,
+    #[serde(default)]
+    pub job_dependencies: bool,
+    #[serde(default)]
+    pub job_queue_keys: bool,
     pub network: bool,
     pub persistent: bool,
 }
@@ -2274,7 +2286,7 @@ pub struct HostCapabilitiesView {
     #[serde(default)]
     pub job_dependencies: bool,
     #[serde(default)]
-    pub job_serial_lanes: bool,
+    pub job_queue_keys: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -6365,6 +6377,7 @@ mod tests {
                 process_stdin: true,
                 network: false,
                 persistent: false,
+                ..SessionEnvironmentCapabilitiesView::default()
             },
             exec_target: Some(ToolExecutionTargetView {
                 namespace: "env".to_owned(),
@@ -6424,7 +6437,7 @@ mod tests {
                 job_cancel: true,
                 job_wait_hint: false,
                 job_dependencies: true,
-                job_serial_lanes: true,
+                job_queue_keys: true,
             },
             display_name: Some("Local".to_owned()),
             default_cwd: Some("/workspace".to_owned()),

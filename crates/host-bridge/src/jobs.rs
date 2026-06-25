@@ -9,8 +9,8 @@ use std::{
 use host_protocol::{
     data::jobs::{
         CancelJobsParams, CancelJobsResponse, JobCancelScope, JobDependencyPolicy, JobOutputChunk,
-        JobOutputStream, JobReadResult, JobStartMode, JobStartSpec, JobStatus, JobSummary,
-        ReadJobsParams, ReadJobsResponse, StartJobsParams, StartJobsResponse,
+        JobOutputStream, JobReadResult, JobStartSpec, JobStatus, JobSummary, ReadJobsParams,
+        ReadJobsResponse, StartJobsParams, StartJobsResponse,
     },
     error::{HostError, HostErrorCode},
     shared::{ByteChunk, HostPath, JobId},
@@ -33,9 +33,11 @@ pub struct JobManager {
 
 #[derive(Default)]
 struct JobManagerState {
-    jobs: BTreeMap<String, JobRecord>,
-    running: BTreeMap<String, Arc<RunningJob>>,
+    jobs: BTreeMap<JobKey, JobRecord>,
+    running: BTreeMap<JobKey, Arc<RunningJob>>,
 }
+
+type JobKey = (String, JobId);
 
 struct RunningJob {
     cancel: Notify,
@@ -44,8 +46,8 @@ struct RunningJob {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct JobRecord {
+    namespace: String,
     job_id: JobId,
-    deck_id: Option<String>,
     name: Option<String>,
     argv: Vec<String>,
     cwd: Option<HostPath>,
@@ -54,8 +56,7 @@ struct JobRecord {
     timeout_ms: Option<u64>,
     dependency_policy: JobDependencyPolicy,
     dependencies: Vec<JobId>,
-    metadata: BTreeMap<String, String>,
-    serial_lane: Option<String>,
+    queue_key: Option<String>,
     spec_hash: String,
     status: JobStatus,
     created_at_ms: u64,
@@ -72,7 +73,6 @@ struct JobRecord {
 struct ResolvedJob {
     spec: JobStartSpec,
     dependencies: Vec<JobId>,
-    serial_lane: Option<String>,
     spec_hash: String,
 }
 
@@ -107,7 +107,9 @@ impl JobManager {
                     Some("host-bridge restarted before this job could be recovered".to_owned());
                 persist_record_at(&jobs_root, &record)?;
             }
-            state.jobs.insert(record.job_id.as_str().to_owned(), record);
+            state
+                .jobs
+                .insert(job_key(&record.namespace, &record.job_id), record);
         }
 
         Ok(Self {
@@ -128,24 +130,19 @@ impl JobManager {
             let state = self.state.lock().await;
             validate_and_resolve_start(&state, &params)?
         };
-        let deck_id = params.deck_id.clone().or_else(|| {
-            resolved
-                .first()
-                .map(|job| format!("deck-{}", job.spec.job_id.as_str()))
-        });
-
         let mut accepted = Vec::new();
         {
             let mut state = self.state.lock().await;
             for job in &resolved {
-                if let Some(existing) = state.jobs.get(job.spec.job_id.as_str()) {
-                    accepted.push(existing.summary());
+                let key = job_key(&params.namespace, &job.spec.job_id);
+                if state.jobs.contains_key(&key) {
+                    accepted.push(key);
                     continue;
                 }
 
                 let record = JobRecord {
+                    namespace: params.namespace.clone(),
                     job_id: job.spec.job_id.clone(),
-                    deck_id: deck_id.clone(),
                     name: job.spec.name.clone(),
                     argv: job.spec.argv.clone(),
                     cwd: job.spec.cwd.clone(),
@@ -154,8 +151,7 @@ impl JobManager {
                     timeout_ms: job.spec.timeout_ms,
                     dependency_policy: job.spec.dependency_policy,
                     dependencies: job.dependencies.clone(),
-                    metadata: job.spec.metadata.clone(),
-                    serial_lane: job.serial_lane.clone(),
+                    queue_key: job.spec.queue_key.clone(),
                     spec_hash: job.spec_hash.clone(),
                     status: JobStatus::Queued,
                     created_at_ms: now,
@@ -168,8 +164,8 @@ impl JobManager {
                     output_next_seq: 0,
                 };
                 self.persist_record(&record)?;
-                accepted.push(record.summary());
-                state.jobs.insert(record.job_id.as_str().to_owned(), record);
+                accepted.push(key.clone());
+                state.jobs.insert(key, record);
             }
         }
 
@@ -177,21 +173,21 @@ impl JobManager {
 
         let state = self.state.lock().await;
         Ok(StartJobsResponse {
-            deck_id,
             jobs: accepted
                 .into_iter()
-                .map(|summary| {
+                .map(|key| {
                     state
                         .jobs
-                        .get(summary.job_id.as_str())
+                        .get(&key)
                         .map(JobRecord::summary)
-                        .unwrap_or(summary)
+                        .unwrap_or_else(|| lost_summary(&key.0, &key.1))
                 })
                 .collect(),
         })
     }
 
     pub async fn read_jobs(&self, params: ReadJobsParams) -> Result<ReadJobsResponse, HostError> {
+        validate_id_component("namespace", &params.namespace)?;
         if params.jobs.is_empty() {
             return Err(HostError::new(
                 HostErrorCode::InvalidRequest,
@@ -234,6 +230,7 @@ impl JobManager {
         &self,
         params: CancelJobsParams,
     ) -> Result<CancelJobsResponse, HostError> {
+        validate_id_component("namespace", &params.namespace)?;
         if params.jobs.is_empty() {
             return Err(HostError::new(
                 HostErrorCode::InvalidRequest,
@@ -250,15 +247,15 @@ impl JobManager {
 
         {
             let mut state = self.state.lock().await;
-            for job_id in &target_ids {
-                let Some(status) = state.jobs.get(job_id).map(|record| record.status) else {
+            for key in &target_ids {
+                let Some(status) = state.jobs.get(key).map(|record| record.status) else {
                     continue;
                 };
                 if status.is_terminal() {
                     continue;
                 }
-                let running = state.running.get(job_id).cloned();
-                let Some(record) = state.jobs.get_mut(job_id) else {
+                let running = state.running.get(key).cloned();
+                let Some(record) = state.jobs.get_mut(key) else {
                     continue;
                 };
                 match status {
@@ -293,12 +290,12 @@ impl JobManager {
         Ok(CancelJobsResponse {
             jobs: target_ids
                 .iter()
-                .map(|job_id| {
+                .map(|key| {
                     state
                         .jobs
-                        .get(job_id)
+                        .get(key)
                         .map(JobRecord::summary)
-                        .unwrap_or_else(|| lost_summary(job_id))
+                        .unwrap_or_else(|| lost_summary(&key.0, &key.1))
                 })
                 .collect(),
         })
@@ -312,27 +309,44 @@ impl JobManager {
                     eprintln!("host-bridge job dependency update failed: {error:?}");
                 }
 
-                let ready_ids = state
-                    .jobs
-                    .iter()
-                    .filter(|(job_id, record)| {
-                        matches!(record.status, JobStatus::Accepted | JobStatus::Queued)
-                            && !state.running.contains_key(job_id.as_str())
-                            && dependencies_satisfied(&state, record)
+                let mut busy_queues = state
+                    .running
+                    .keys()
+                    .filter_map(|key| state.jobs.get(key))
+                    .filter_map(|record| {
+                        record
+                            .queue_key
+                            .as_ref()
+                            .map(|queue_key| (record.namespace.clone(), queue_key.clone()))
                     })
-                    .map(|(job_id, _)| job_id.clone())
-                    .collect::<Vec<_>>();
+                    .collect::<BTreeSet<_>>();
+                let mut ready_ids = Vec::new();
+                for (key, record) in &state.jobs {
+                    if !matches!(record.status, JobStatus::Accepted | JobStatus::Queued)
+                        || state.running.contains_key(key)
+                        || !dependencies_satisfied(&state, record)
+                    {
+                        continue;
+                    }
+                    if let Some(queue_key) = record.queue_key.as_ref() {
+                        if !busy_queues.insert((record.namespace.clone(), queue_key.clone())) {
+                            continue;
+                        }
+                    }
+                    ready_ids.push(key.clone());
+                }
                 let now = now_ms();
                 let mut ready = Vec::new();
-                for job_id in ready_ids {
+                for key in ready_ids {
                     let mut ready_record = None;
-                    if let Some(record) = state.jobs.get_mut(&job_id) {
+                    if let Some(record) = state.jobs.get_mut(&key) {
                         record.status = JobStatus::Running;
                         record.started_at_ms = Some(now);
                         record.failure = None;
                         if let Err(error) = self.persist_record(record) {
                             eprintln!(
-                                "host-bridge failed to persist running job {job_id}: {error:?}"
+                                "host-bridge failed to persist running job {}: {error:?}",
+                                job_key_id(&key)
                             );
                         }
                         ready_record = Some(record.clone());
@@ -341,7 +355,7 @@ impl JobManager {
                         let running = Arc::new(RunningJob {
                             cancel: Notify::new(),
                         });
-                        state.running.insert(job_id, running.clone());
+                        state.running.insert(key, running.clone());
                         ready.push((record.clone(), running));
                     }
                 }
@@ -372,7 +386,7 @@ impl JobManager {
                         && record.dependencies.iter().any(|dependency| {
                             state
                                 .jobs
-                                .get(dependency.as_str())
+                                .get(&job_key(&record.namespace, dependency))
                                 .map(|dependency| {
                                     dependency.status.is_terminal()
                                         && dependency.status != JobStatus::Succeeded
@@ -438,8 +452,9 @@ impl JobManager {
 
         {
             let mut state = self.state.lock().await;
-            state.running.remove(record.job_id.as_str());
-            if let Some(record) = state.jobs.get_mut(record.job_id.as_str()) {
+            let key = job_key(&record.namespace, &record.job_id);
+            state.running.remove(&key);
+            if let Some(record) = state.jobs.get_mut(&key) {
                 record.status = status;
                 record.exit_code = exit_code;
                 record.failure = failure;
@@ -519,6 +534,7 @@ impl JobManager {
         let stdout_task = stdout.map(|stdout| {
             tokio::spawn(read_job_stream(
                 self.clone(),
+                record.namespace.clone(),
                 record.job_id.clone(),
                 stdout,
                 JobOutputStream::Stdout,
@@ -527,6 +543,7 @@ impl JobManager {
         let stderr_task = stderr.map(|stderr| {
             tokio::spawn(read_job_stream(
                 self.clone(),
+                record.namespace.clone(),
                 record.job_id.clone(),
                 stderr,
                 JobOutputStream::Stderr,
@@ -605,6 +622,7 @@ impl JobManager {
 
 async fn read_job_stream<R>(
     manager: JobManager,
+    namespace: String,
     job_id: JobId,
     mut reader: R,
     stream: JobOutputStream,
@@ -621,7 +639,7 @@ async fn read_job_stream<R>(
             Ok(read) => read,
             Err(error) => {
                 let mut state = manager.state.lock().await;
-                if let Some(record) = state.jobs.get_mut(job_id.as_str()) {
+                if let Some(record) = state.jobs.get_mut(&job_key(&namespace, &job_id)) {
                     record.failure = Some(error.to_string());
                     if let Err(error) = manager.persist_record(record) {
                         eprintln!(
@@ -634,7 +652,7 @@ async fn read_job_stream<R>(
             }
         };
         let mut state = manager.state.lock().await;
-        if let Some(record) = state.jobs.get_mut(job_id.as_str()) {
+        if let Some(record) = state.jobs.get_mut(&job_key(&namespace, &job_id)) {
             let seq = record.output_next_seq;
             record.output_next_seq += 1;
             record.output_chunks.push(JobOutputChunk {
@@ -657,13 +675,13 @@ fn validate_and_resolve_start(
     if params.jobs.is_empty() {
         return Err(invalid_request("job/start requires at least one job"));
     }
-    validate_optional_nonempty("deck_id", params.deck_id.as_deref())?;
-    validate_optional_nonempty("serial_lane", params.serial_lane.as_deref())?;
-    validate_optional_nonempty("idempotency_key", params.idempotency_key.as_deref())?;
+    validate_id_component("namespace", &params.namespace)?;
+    validate_id_component("request_id", &params.request_id)?;
 
     let mut seen_job_ids = BTreeSet::new();
     let mut seen_names = BTreeMap::new();
     for spec in &params.jobs {
+        validate_id_component("job id", spec.job_id.as_str())?;
         if spec.argv.is_empty() {
             return Err(invalid_request(format!(
                 "job {} argv must not be empty",
@@ -685,6 +703,7 @@ fn validate_and_resolve_start(
                 return Err(invalid_request(format!("duplicate job name: {name}")));
             }
         }
+        validate_optional_id_component("queue_key", spec.queue_key.as_deref())?;
     }
 
     let request_job_ids = params
@@ -692,37 +711,15 @@ fn validate_and_resolve_start(
         .iter()
         .map(|spec| spec.job_id.as_str().to_owned())
         .collect::<BTreeSet<_>>();
-    let serial_lane = if params.mode == JobStartMode::Serial {
-        Some(
-            params
-                .serial_lane
-                .clone()
-                .unwrap_or_else(|| "default".to_owned()),
-        )
-    } else {
-        None
-    };
-    let previous_serial_job = serial_lane
-        .as_ref()
-        .and_then(|lane| previous_non_terminal_in_lane(state, lane));
 
     let mut resolved = Vec::new();
-    for (index, spec) in params.jobs.iter().enumerate() {
-        let mut dependencies = resolve_explicit_dependencies(&seen_names, spec)?;
-        if let Some(lane) = serial_lane.as_ref() {
-            if index == 0 {
-                if let Some(previous) = previous_serial_job.as_ref() {
-                    push_unique_job_id(&mut dependencies, previous.clone());
-                }
-            } else {
-                push_unique_job_id(&mut dependencies, params.jobs[index - 1].job_id.clone());
-            }
-            validate_nonempty("serial_lane", lane)?;
-        }
-
+    for spec in &params.jobs {
+        let dependencies = resolve_explicit_dependencies(&seen_names, spec)?;
         for dependency in &dependencies {
             if !request_job_ids.contains(dependency.as_str())
-                && !state.jobs.contains_key(dependency.as_str())
+                && !state
+                    .jobs
+                    .contains_key(&job_key(&params.namespace, dependency))
             {
                 return Err(invalid_request(format!(
                     "job {} depends on unknown job id {}",
@@ -731,14 +728,15 @@ fn validate_and_resolve_start(
             }
         }
 
-        let spec_hash = job_spec_hash(params, spec, &dependencies, serial_lane.as_deref())?;
-        if let Some(existing) = state.jobs.get(spec.job_id.as_str()) {
+        let spec_hash = job_spec_hash(params, spec, &dependencies)?;
+        let key = job_key(&params.namespace, &spec.job_id);
+        if let Some(existing) = state.jobs.get(&key) {
             if existing.spec_hash != spec_hash {
                 return Err(HostError::new(
                     HostErrorCode::Conflict,
                     format!(
-                        "job id already exists with different input: {}",
-                        spec.job_id
+                        "job id already exists with different input in namespace {}: {}",
+                        params.namespace, spec.job_id
                     ),
                 ));
             }
@@ -747,7 +745,6 @@ fn validate_and_resolve_start(
         resolved.push(ResolvedJob {
             spec: spec.clone(),
             dependencies,
-            serial_lane: serial_lane.clone(),
             spec_hash,
         });
     }
@@ -847,17 +844,6 @@ fn visit_job(
     Ok(())
 }
 
-fn previous_non_terminal_in_lane(state: &JobManagerState, lane: &str) -> Option<JobId> {
-    state
-        .jobs
-        .values()
-        .filter(|record| {
-            record.serial_lane.as_deref() == Some(lane) && !record.status.is_terminal()
-        })
-        .max_by_key(|record| record.created_at_ms)
-        .map(|record| record.job_id.clone())
-}
-
 fn push_unique_job_id(dependencies: &mut Vec<JobId>, job_id: JobId) {
     if !dependencies
         .iter()
@@ -869,7 +855,7 @@ fn push_unique_job_id(dependencies: &mut Vec<JobId>, job_id: JobId) {
 
 fn dependencies_satisfied(state: &JobManagerState, record: &JobRecord) -> bool {
     record.dependencies.iter().all(|dependency| {
-        let Some(dependency) = state.jobs.get(dependency.as_str()) else {
+        let Some(dependency) = state.jobs.get(&job_key(&record.namespace, dependency)) else {
             return false;
         };
         match record.dependency_policy {
@@ -884,24 +870,26 @@ fn build_read_response(state: &JobManagerState, params: &ReadJobsParams) -> Read
         jobs: params
             .jobs
             .iter()
-            .map(|job_id| match state.jobs.get(job_id.as_str()) {
-                Some(record) => {
-                    let (output_chunks, output_next_seq) =
-                        select_output_chunks(record, params.after_seq, params.max_bytes);
-                    JobReadResult {
-                        summary: record.summary(),
-                        output_chunks,
-                        output_next_seq,
-                        artifacts: Vec::new(),
+            .map(
+                |job_id| match state.jobs.get(&job_key(&params.namespace, job_id)) {
+                    Some(record) => {
+                        let (output_chunks, output_next_seq) =
+                            select_output_chunks(record, params.after_seq, params.max_bytes);
+                        JobReadResult {
+                            summary: record.summary(),
+                            output_chunks,
+                            output_next_seq,
+                            artifacts: Vec::new(),
+                        }
                     }
-                }
-                None => JobReadResult {
-                    summary: lost_summary(job_id.as_str()),
-                    output_chunks: Vec::new(),
-                    output_next_seq: 0,
-                    artifacts: Vec::new(),
+                    None => JobReadResult {
+                        summary: lost_summary(&params.namespace, job_id),
+                        output_chunks: Vec::new(),
+                        output_next_seq: 0,
+                        artifacts: Vec::new(),
+                    },
                 },
-            })
+            )
             .collect(),
     }
 }
@@ -949,47 +937,30 @@ fn select_output_chunks(
     (chunks, next_seq)
 }
 
-fn resolve_cancel_scope(state: &JobManagerState, params: &CancelJobsParams) -> Vec<String> {
+fn resolve_cancel_scope(state: &JobManagerState, params: &CancelJobsParams) -> Vec<JobKey> {
     let mut target_ids = params
         .jobs
         .iter()
-        .map(|job_id| job_id.as_str().to_owned())
+        .map(|job_id| job_key(&params.namespace, job_id))
         .collect::<BTreeSet<_>>();
-
     match params.scope {
         JobCancelScope::Job => {}
         JobCancelScope::Dependents => {
             let mut changed = true;
             while changed {
                 changed = false;
-                for (job_id, record) in &state.jobs {
-                    if record.status.is_terminal() || target_ids.contains(job_id) {
+                for (key, record) in &state.jobs {
+                    if record.namespace != params.namespace
+                        || record.status.is_terminal()
+                        || target_ids.contains(key)
+                    {
                         continue;
                     }
-                    if record
-                        .dependencies
-                        .iter()
-                        .any(|dependency| target_ids.contains(dependency.as_str()))
-                    {
-                        changed |= target_ids.insert(job_id.clone());
+                    if record.dependencies.iter().any(|dependency| {
+                        target_ids.contains(&job_key(&params.namespace, dependency))
+                    }) {
+                        changed |= target_ids.insert(key.clone());
                     }
-                }
-            }
-        }
-        JobCancelScope::Deck => {
-            let deck_ids = params
-                .jobs
-                .iter()
-                .filter_map(|job_id| state.jobs.get(job_id.as_str()))
-                .filter_map(|record| record.deck_id.clone())
-                .collect::<BTreeSet<_>>();
-            for (job_id, record) in &state.jobs {
-                if record
-                    .deck_id
-                    .as_ref()
-                    .is_some_and(|deck_id| deck_ids.contains(deck_id))
-                {
-                    target_ids.insert(job_id.clone());
                 }
             }
         }
@@ -1002,15 +973,11 @@ fn job_spec_hash(
     params: &StartJobsParams,
     spec: &JobStartSpec,
     dependencies: &[JobId],
-    serial_lane: Option<&str>,
 ) -> Result<String, HostError> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct JobHashMaterial<'a> {
-        deck_id: &'a Option<String>,
-        idempotency_key: &'a Option<String>,
-        mode: JobStartMode,
-        serial_lane: Option<&'a str>,
+        namespace: &'a str,
         job: JobHashSpec<'a>,
     }
 
@@ -1026,15 +993,11 @@ fn job_spec_hash(
         timeout_ms: Option<u64>,
         dependencies: &'a [JobId],
         dependency_policy: JobDependencyPolicy,
-        output_policy: &'a Option<host_protocol::data::jobs::JobOutputPolicy>,
-        metadata: &'a BTreeMap<String, String>,
+        queue_key: &'a Option<String>,
     }
 
     let material = JobHashMaterial {
-        deck_id: &params.deck_id,
-        idempotency_key: &params.idempotency_key,
-        mode: params.mode,
-        serial_lane,
+        namespace: params.namespace.as_str(),
         job: JobHashSpec {
             job_id: &spec.job_id,
             name: &spec.name,
@@ -1045,8 +1008,7 @@ fn job_spec_hash(
             timeout_ms: spec.timeout_ms,
             dependencies,
             dependency_policy: spec.dependency_policy,
-            output_policy: &spec.output_policy,
-            metadata: &spec.metadata,
+            queue_key: &spec.queue_key,
         },
     };
     let bytes = serde_json::to_vec(&material).map_err(|error| {
@@ -1070,8 +1032,8 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 impl JobRecord {
     fn summary(&self) -> JobSummary {
         JobSummary {
+            namespace: self.namespace.clone(),
             job_id: self.job_id.clone(),
-            deck_id: self.deck_id.clone(),
             name: self.name.clone(),
             status: self.status,
             dependencies: self.dependencies.clone(),
@@ -1081,16 +1043,15 @@ impl JobRecord {
             finished_at_ms: self.finished_at_ms,
             exit_code: self.exit_code,
             failure: self.failure.clone(),
-            serial_lane: self.serial_lane.clone(),
-            metadata: self.metadata.clone(),
+            queue_key: self.queue_key.clone(),
         }
     }
 }
 
-fn lost_summary(job_id: &str) -> JobSummary {
+fn lost_summary(namespace: &str, job_id: &JobId) -> JobSummary {
     JobSummary {
-        job_id: JobId::new(job_id.to_owned()),
-        deck_id: None,
+        namespace: namespace.to_owned(),
+        job_id: job_id.clone(),
         name: None,
         status: JobStatus::Lost,
         dependencies: Vec::new(),
@@ -1100,19 +1061,31 @@ fn lost_summary(job_id: &str) -> JobSummary {
         finished_at_ms: Some(now_ms()),
         exit_code: None,
         failure: Some("unknown job id".to_owned()),
-        serial_lane: None,
-        metadata: BTreeMap::new(),
+        queue_key: None,
     }
 }
 
 fn persist_record_at(jobs_root: &PathBuf, record: &JobRecord) -> anyhow::Result<()> {
     std::fs::create_dir_all(jobs_root)?;
-    let path = jobs_root.join(format!("{}.json", record.job_id.as_str()));
-    let temp_path = jobs_root.join(format!("{}.json.tmp", record.job_id.as_str()));
+    let stem = record_file_stem(&record.namespace, &record.job_id);
+    let path = jobs_root.join(format!("{stem}.json"));
+    let temp_path = jobs_root.join(format!("{stem}.json.tmp"));
     let bytes = serde_json::to_vec_pretty(record)?;
     std::fs::write(&temp_path, bytes)?;
     std::fs::rename(temp_path, path)?;
     Ok(())
+}
+
+fn job_key(namespace: &str, job_id: &JobId) -> JobKey {
+    (namespace.to_owned(), job_id.clone())
+}
+
+fn job_key_id(key: &JobKey) -> String {
+    format!("{}/{}", key.0, key.1)
+}
+
+fn record_file_stem(namespace: &str, job_id: &JobId) -> String {
+    format!("{namespace}--{}", job_id.as_str())
 }
 
 fn normalize_path(path: PathBuf) -> PathBuf {
@@ -1138,9 +1111,33 @@ fn now_ms() -> u64 {
         .unwrap_or_default()
 }
 
-fn validate_optional_nonempty(label: &str, value: Option<&str>) -> Result<(), HostError> {
+fn validate_optional_id_component(label: &str, value: Option<&str>) -> Result<(), HostError> {
     if let Some(value) = value {
-        validate_nonempty(label, value)?;
+        validate_id_component(label, value)?;
+    }
+    Ok(())
+}
+
+fn validate_id_component(label: &str, value: &str) -> Result<(), HostError> {
+    validate_nonempty(label, value)?;
+    if value.len() > 128 {
+        return Err(invalid_request(format!(
+            "{label} must be at most 128 bytes"
+        )));
+    }
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return Err(invalid_request(format!("{label} must not be empty")));
+    };
+    if !first.is_ascii_alphanumeric() {
+        return Err(invalid_request(format!(
+            "{label} must start with an ASCII alphanumeric character"
+        )));
+    }
+    if !chars.all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | ':' | '-')) {
+        return Err(invalid_request(format!(
+            "{label} may contain only ASCII alphanumeric characters, '_', '.', ':', or '-'"
+        )));
     }
     Ok(())
 }
@@ -1162,13 +1159,15 @@ mod tests {
 
     use host_protocol::{
         data::jobs::{
-            JobCancelScope, JobDependency, JobDependencyPolicy, JobStartMode, JobStatus,
-            ReadJobsParams, StartJobsParams,
+            JobCancelScope, JobDependency, JobDependencyPolicy, JobStatus, ReadJobsParams,
+            StartJobsParams,
         },
         shared::JobId,
     };
 
     use super::*;
+
+    const TEST_NAMESPACE: &str = "session_1";
 
     #[tokio::test(flavor = "current_thread")]
     async fn job_manager_runs_parallel_jobs_and_retains_output() {
@@ -1178,12 +1177,9 @@ mod tests {
 
         let response = manager
             .start_jobs(StartJobsParams {
-                deck_id: Some("deck-parallel".to_owned()),
+                namespace: TEST_NAMESPACE.to_owned(),
+                request_id: "parallel".to_owned(),
                 jobs: vec![job("job-a", "printf a"), job("job-b", "printf b")],
-                mode: JobStartMode::Parallel,
-                serial_lane: None,
-                idempotency_key: None,
-                metadata: BTreeMap::new(),
             })
             .await
             .expect("start");
@@ -1209,29 +1205,29 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn job_manager_honors_serial_lane_order() {
+    async fn job_manager_honors_queue_key_order() {
         let temp = tempfile::tempdir().expect("tempdir");
         let root = temp.path().canonicalize().expect("canonical root");
         let marker = root.join("order.txt");
         let manager = JobManager::new(root.clone(), root.clone()).expect("manager");
 
+        let mut first = job("queued-1", "printf 1 >> order.txt");
+        let mut second = job("queued-2", "printf 2 >> order.txt");
+        let mut third = job("queued-3", "printf 3 >> order.txt");
+        first.queue_key = Some("repo".to_owned());
+        second.queue_key = Some("repo".to_owned());
+        third.queue_key = Some("repo".to_owned());
+
         manager
             .start_jobs(StartJobsParams {
-                deck_id: Some("deck-serial".to_owned()),
-                jobs: vec![
-                    job("serial-1", "printf 1 >> order.txt"),
-                    job("serial-2", "printf 2 >> order.txt"),
-                    job("serial-3", "printf 3 >> order.txt"),
-                ],
-                mode: JobStartMode::Serial,
-                serial_lane: Some("lane-a".to_owned()),
-                idempotency_key: None,
-                metadata: BTreeMap::new(),
+                namespace: TEST_NAMESPACE.to_owned(),
+                request_id: "queue".to_owned(),
+                jobs: vec![first, second, third],
             })
             .await
             .expect("start");
 
-        let read = wait_for_jobs(&manager, ["serial-1", "serial-2", "serial-3"]).await;
+        let read = wait_for_jobs(&manager, ["queued-1", "queued-2", "queued-3"]).await;
         assert!(
             read.jobs
                 .iter()
@@ -1250,12 +1246,9 @@ mod tests {
         dependent.depends_on = vec![JobDependency::name("setup")];
         manager
             .start_jobs(StartJobsParams {
-                deck_id: Some("deck-deps".to_owned()),
+                namespace: TEST_NAMESPACE.to_owned(),
+                request_id: "deps".to_owned(),
                 jobs: vec![named_job("setup", "setup", "exit 7"), dependent],
-                mode: JobStartMode::Parallel,
-                serial_lane: None,
-                idempotency_key: None,
-                metadata: BTreeMap::new(),
             })
             .await
             .expect("start");
@@ -1278,12 +1271,9 @@ mod tests {
         cleanup.dependency_policy = JobDependencyPolicy::AllTerminal;
         manager
             .start_jobs(StartJobsParams {
-                deck_id: Some("deck-cleanup".to_owned()),
+                namespace: TEST_NAMESPACE.to_owned(),
+                request_id: "cleanup".to_owned(),
                 jobs: vec![job("fails", "exit 2"), cleanup],
-                mode: JobStartMode::Parallel,
-                serial_lane: None,
-                idempotency_key: None,
-                metadata: BTreeMap::new(),
             })
             .await
             .expect("start");
@@ -1306,12 +1296,9 @@ mod tests {
         dependent.depends_on = vec![JobDependency::job_id("sleep")];
         manager
             .start_jobs(StartJobsParams {
-                deck_id: Some("deck-cancel".to_owned()),
+                namespace: TEST_NAMESPACE.to_owned(),
+                request_id: "cancel".to_owned(),
                 jobs: vec![job("sleep", "sleep 5"), dependent],
-                mode: JobStartMode::Parallel,
-                serial_lane: None,
-                idempotency_key: None,
-                metadata: BTreeMap::new(),
             })
             .await
             .expect("start");
@@ -1319,6 +1306,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
         manager
             .cancel_jobs(CancelJobsParams {
+                namespace: TEST_NAMESPACE.to_owned(),
                 jobs: vec![JobId::new("sleep")],
                 scope: JobCancelScope::Dependents,
                 force: false,
@@ -1340,12 +1328,9 @@ mod tests {
 
         manager
             .start_jobs(StartJobsParams {
-                deck_id: Some("deck-timeout".to_owned()),
+                namespace: TEST_NAMESPACE.to_owned(),
+                request_id: "timeout".to_owned(),
                 jobs: vec![spec],
-                mode: JobStartMode::Parallel,
-                serial_lane: None,
-                idempotency_key: None,
-                metadata: BTreeMap::new(),
             })
             .await
             .expect("start");
@@ -1360,24 +1345,18 @@ mod tests {
         let root = temp.path().canonicalize().expect("canonical root");
         let manager = JobManager::new(root.clone(), root).expect("manager");
         let params = StartJobsParams {
-            deck_id: Some("deck-retry".to_owned()),
+            namespace: TEST_NAMESPACE.to_owned(),
+            request_id: "retry".to_owned(),
             jobs: vec![job("retry", "printf once")],
-            mode: JobStartMode::Parallel,
-            serial_lane: None,
-            idempotency_key: Some("idem".to_owned()),
-            metadata: BTreeMap::new(),
         };
 
         manager.start_jobs(params.clone()).await.expect("first");
         manager.start_jobs(params).await.expect("retry");
         let conflict = manager
             .start_jobs(StartJobsParams {
-                deck_id: Some("deck-retry".to_owned()),
+                namespace: TEST_NAMESPACE.to_owned(),
+                request_id: "retry-conflict".to_owned(),
                 jobs: vec![job("retry", "printf different")],
-                mode: JobStartMode::Parallel,
-                serial_lane: None,
-                idempotency_key: Some("idem".to_owned()),
-                metadata: BTreeMap::new(),
             })
             .await
             .expect_err("conflict");
@@ -1393,8 +1372,8 @@ mod tests {
         persist_record_at(
             &jobs_root,
             &JobRecord {
+                namespace: TEST_NAMESPACE.to_owned(),
                 job_id: JobId::new("recover"),
-                deck_id: Some("deck-recover".to_owned()),
                 name: None,
                 argv: vec!["sleep".to_owned(), "5".to_owned()],
                 cwd: None,
@@ -1403,8 +1382,7 @@ mod tests {
                 timeout_ms: None,
                 dependency_policy: JobDependencyPolicy::AllSucceeded,
                 dependencies: Vec::new(),
-                metadata: BTreeMap::new(),
-                serial_lane: None,
+                queue_key: None,
                 spec_hash: "seed".to_owned(),
                 status: JobStatus::Running,
                 created_at_ms: now_ms(),
@@ -1422,6 +1400,7 @@ mod tests {
         let recovered = JobManager::new(root.clone(), root).expect("recovered manager");
         let read = recovered
             .read_jobs(ReadJobsParams {
+                namespace: TEST_NAMESPACE.to_owned(),
                 jobs: vec![JobId::new("recover")],
                 after_seq: None,
                 max_bytes: None,
@@ -1451,8 +1430,7 @@ mod tests {
             timeout_ms: Some(5_000),
             depends_on: Vec::new(),
             dependency_policy: JobDependencyPolicy::AllSucceeded,
-            output_policy: None,
-            metadata: BTreeMap::new(),
+            queue_key: None,
         }
     }
 
@@ -1462,6 +1440,7 @@ mod tests {
     ) -> ReadJobsResponse {
         manager
             .read_jobs(ReadJobsParams {
+                namespace: TEST_NAMESPACE.to_owned(),
                 jobs: job_ids.iter().map(|job_id| JobId::new(*job_id)).collect(),
                 after_seq: None,
                 max_bytes: None,

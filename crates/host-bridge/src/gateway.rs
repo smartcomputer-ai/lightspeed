@@ -208,7 +208,7 @@ fn capabilities_view(value: HostCapabilities) -> HostCapabilitiesView {
         job_cancel: value.job_cancel,
         job_wait_hint: value.job_wait_hint,
         job_dependencies: value.job_dependencies,
-        job_serial_lanes: value.job_serial_lanes,
+        job_queue_keys: value.job_queue_keys,
     }
 }
 

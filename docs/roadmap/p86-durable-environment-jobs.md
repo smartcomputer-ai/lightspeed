@@ -2,6 +2,9 @@
 
 **Status**
 - Proposed 2026-06-25.
+- G1-G4 implemented 2026-06-25 with the revised v1 shape:
+  namespace-scoped provider jobs, optional per-job `queue_key`, explicit
+  dependencies, no `deck_id`/group id, and no model-provided idempotency key.
 - Builds on **P75-P81 (Environments)** for the `fs`/`env` namespace split,
   active environment projection, provider registry, host protocol, and
   `host-bridge`.
@@ -80,7 +83,7 @@ The model-visible surface is four tools:
 
 ```text
 job_start   start one or more jobs on an environment
-job_read    read job status, metadata, output tail, and artifacts
+job_read    read job status, output tail, and artifacts
 job_wait    join one or more jobs; may park the current tool batch
 job_cancel  cancel/terminate one or more jobs
 ```
@@ -164,9 +167,6 @@ Input shape:
 ```text
 env_id?                environment to start on; defaults to active environment
 jobs[]                 one or more job specs
-mode?                  parallel | serial             default parallel
-serial_lane?           string                         default "default"; used only by serial
-idempotency_key?       string                         optional caller-level request key
 ```
 
 Job spec:
@@ -181,8 +181,7 @@ stdin?                 inline stdin text
 timeout_ms?            provider-side timeout
 depends_on?            [ JobDependency ]              explicit dependency edges
 dependency_policy?     all_succeeded | all_terminal   default all_succeeded
-output_policy?         tail bytes, artifact hints, capture options
-metadata?              small string map
+queue_key?             optional per-namespace serialization key
 ```
 
 Dependency reference:
@@ -202,34 +201,27 @@ jobs[]:
   handle               { session_id, env_id, job_id }
   status                queued | running | succeeded | failed | cancelled | ...
   dependencies[]        resolved job ids
+  queue_key?
 ```
 
-#### Parallel vs serial
+The model does not provide provider idempotency keys, arbitrary metadata, or
+group ids in v1. The runtime derives omitted `job_id`s and a provider
+`request_id` from the session/run/turn/tool-call identity, then records only the
+accepted handles. That makes tool activity retries idempotent without requiring
+the model to invent stable retry keys.
 
-`mode = parallel` means every job with satisfied dependencies is eligible to run
-immediately. Jobs without dependencies may run concurrently, subject to provider
-capacity.
+#### Scheduling
 
-`mode = serial` is convenience sugar for a per-environment FIFO lane. The runtime
-adds an implicit dependency from each new job in that `serial_lane` to the
-previous non-terminal job in the same lane, then adds edges between jobs in the
-same start request in request order. This lets a model issue a stack of jobs
-without manually threading IDs:
+Jobs are eligible to run when their dependencies are satisfied, their optional
+`queue_key` is free, and provider capacity is available. Jobs without
+dependencies or queue conflicts may run in parallel.
 
-```text
-mode = serial, serial_lane = "repo-setup"
+`queue_key` is a per-namespace serialization primitive. It is not a batch mode:
+any job with the same queue key waits until the previous non-terminal job with
+that key finishes. Different queue keys may run in parallel.
 
-1. git clone ...
-2. git checkout feature
-3. codex exec ...
-```
-
-Only one job in a serial lane is eligible at a time. Different lanes may run in
-parallel.
-
-#### Explicit DAGs
-
-`depends_on` is the general mechanism. It lets the agent define a whole job deck:
+`depends_on` is the general DAG mechanism. It lets the agent define a multi-step
+job plan:
 
 ```text
 jobs:
@@ -248,7 +240,7 @@ jobs:
     depends_on: [{ name: tests }]
 ```
 
-The provider runs the deck as a DAG:
+The provider runs submitted jobs as a DAG plus queue constraints:
 
 - a job with no unsatisfied dependencies is eligible;
 - a job with `dependency_policy = all_succeeded` starts only if all dependencies
@@ -256,6 +248,8 @@ The provider runs the deck as a DAG:
   `dependency_failed`;
 - a job with `dependency_policy = all_terminal` starts after dependencies are
   terminal regardless of success, useful for cleanup/reporting jobs;
+- a job with `queue_key` starts only when no earlier non-terminal job in that
+  same namespace and queue key is active;
 - dependency cycles, duplicate local names, and references to unknown jobs are
   rejected before any job is started.
 
@@ -276,7 +270,7 @@ Input:
 
 ```text
 jobs[]                 [ { session_id?, env_id?, job_id } ]
-tail_bytes?            max output tail per stream
+output_bytes?          max output bytes to include
 after_seq?             optional stream cursor
 include_artifacts?     bool
 ```
@@ -306,7 +300,7 @@ jobs[]:
 ```
 
 Large logs and generated files must stay in the environment filesystem or CAS.
-The tool returns small tails, cursors, and artifact references/paths.
+The tool returns bounded output chunks, cursors, and artifact references/paths.
 
 ### `job_wait`
 
@@ -319,7 +313,7 @@ jobs[]                 [ { session_id?, env_id?, job_id } ]
 mode                   all | any                      default all
 terminal_policy        any_terminal | all_succeeded   default any_terminal
 timeout_ms?            optional timeout
-tail_bytes?            output tail to include on resolution
+output_bytes?          output bytes to include on resolution
 ```
 
 Semantics:
@@ -350,12 +344,12 @@ Input:
 
 ```text
 jobs[]                 [ { session_id?, env_id?, job_id } ]
-scope                  job | dependents | deck         default job
+scope                  job | dependents                default job
 force?                 provider-specific hard kill
 ```
 
 `scope = job` cancels only the named jobs. `dependents` also cancels queued jobs
-that depend on them. `deck` cancels every job sharing the same deck/request id.
+that depend on them.
 
 Cancellation is best-effort for already-running OS processes. The result is a
 job status transition, not necessarily immediate process death.
@@ -386,17 +380,15 @@ JobHandleRecord
   env_id
   provider_id
   target_id
+  namespace
   job_id
-  deck_id
   name?
-  serial_lane?
-  idempotency_key?
+  queue_key?
   created_by_run_id?
   created_by_turn_id?
   created_by_tool_call_id?
   created_at_ms
   start_request_hash
-  metadata
 ```
 
 This record says only: "Lightspeed accepted this provider-backed handle for this
@@ -409,7 +401,7 @@ session environment." It should not contain:
 - dependency progress;
 - provider-observed timestamps;
 - artifact lists;
-- copied argv/env/stdin beyond a hash or small non-secret metadata.
+- copied argv/env/stdin beyond a hash.
 
 The environment provider is the only source for those facts. If the provider is
 unreachable, job state is `unknown` from Lightspeed's perspective.
@@ -429,7 +421,7 @@ Recommended store surface:
 JobHandleStore
   create_job_handles(records[]) -> records[]
   read_job_handle(session_id, env_id, job_id) -> record
-  list_job_handles(session_id, env_id?, deck_id?, limit?) -> records[]
+  list_job_handles(session_id, env_id?, limit?) -> records[]
   delete_job_handle(session_id, env_id, job_id) -> record       optional/deferred
 ```
 
@@ -446,7 +438,7 @@ without becoming responsible for execution state.
 `job_start` should use two layers of idempotency:
 
 1. Derive or accept stable `job_id`s and compute `start_request_hash` from the
-   material job deck input.
+   material job start input.
 2. Call provider `job/start` with those ids. The provider is the execution
    authority and must make same-id/same-spec retries idempotent.
 3. After provider acceptance, create/upsert the handle records. If the runtime
@@ -519,8 +511,8 @@ used that way.
 ### Provider responsibility
 
 The environment provider is the authority for actual execution order. Lightspeed
-submits a deck/DAG to the provider; the provider starts eligible jobs according
-to dependencies, serial lanes, and capacity.
+submits namespace-scoped job specs to the provider; the provider starts eligible
+jobs according to dependencies, per-job queue keys, and capacity.
 
 For `host-bridge`, this means adding a job manager beside the current process
 manager:
@@ -528,11 +520,11 @@ manager:
 - client-chosen job ids;
 - idempotent `job/start`;
 - dependency graph validation;
-- serial-lane FIFO scheduling;
+- queue-key FIFO scheduling;
 - process group start/terminate;
 - retained stdout/stderr chunks with monotonic sequence numbers;
 - optional job working directory such as `.lightspeed/jobs/{job_id}`;
-- result metadata/artifact discovery;
+- result artifact discovery;
 - startup recovery that marks unrecoverable running jobs `interrupted`.
 
 Providers with stronger persistence can keep jobs running across bridge/worker
@@ -565,10 +557,11 @@ crates/host-client/src/data.rs        typed job methods beside process/fs
 crates/host-bridge/src/jobs.rs        bridge JobManager beside ProcessManager
 ```
 
-Host-protocol job ids are target-local. They should not contain Lightspeed
-`session_id` or `env_id`; those belong to the Lightspeed job handle registry.
-The registry maps `{ session_id, env_id, job_id }` to the provider/target that
-accepted the target-local `job_id`.
+Host-protocol job ids are target-local within a provider namespace. They should
+not contain Lightspeed `session_id` or `env_id`; those belong to the Lightspeed
+job handle registry. The runtime supplies a namespace, defaulting to the calling
+session id. The registry maps `{ session_id, env_id, job_id }` to the
+provider/target and namespace that accepted the target-local `job_id`.
 
 Extend `HostCapabilities` with job capabilities:
 
@@ -578,7 +571,7 @@ job_read
 job_cancel
 job_wait_hint          optional; provider can long-poll or callback
 job_dependencies
-job_serial_lanes
+job_queue_keys
 ```
 
 These capabilities must be mirrored through the existing environment capability
@@ -604,9 +597,43 @@ job/read
 job/cancel
 ```
 
-`job/start` accepts a deck of one or more job specs and returns job summaries.
-It must be idempotent for the same `job_id`/spec. If the same `job_id` is
-reused with different material input, it rejects with conflict.
+`job/start` accepts one or more job specs for a namespace and returns job
+summaries. It must be idempotent for the same `{ namespace, job_id, spec }`.
+If the same `{ namespace, job_id }` is reused with different material input, it
+rejects with conflict.
+
+Recommended v1 payload:
+
+```text
+StartJobsParams
+  namespace              runtime-supplied; defaults to calling session id
+  request_id             runtime-supplied retry/debug id
+  jobs[]:
+    job_id               runtime-derived unless explicitly supplied
+    name?
+    argv
+    cwd?
+    env?
+    stdin?
+    timeout_ms?
+    depends_on?
+    dependency_policy?
+    queue_key?
+
+ReadJobsParams
+  namespace
+  jobs[]
+  after_seq?
+  max_bytes?
+  include_artifacts?
+  wait_ms?
+
+CancelJobsParams
+  namespace
+  jobs[]
+  scope                  job | dependents
+  force?
+```
 
 `job/read` is the source of truth for live status and retained output. It should
 support reading many jobs at once. Lightspeed should not cache provider status;
@@ -628,8 +655,8 @@ This means P86 must add real host-protocol code, not only Lightspeed tools:
   calling the host data-plane methods.
 
 The bridge `JobManager` can reuse the process-spawning internals, but it cannot
-be just `process/start` exposed under another name. Jobs need deck-level
-idempotency, dependency scheduling, serial lanes, retained output/status after
+be just `process/start` exposed under another name. Jobs need namespace/job
+idempotency, dependency scheduling, queue keys, retained output/status after
 the starting tool call returns, and restart recovery that reports
 `interrupted`/`lost` clearly. It must reserve or idempotency-check job ids before
 spawning OS children, so a conflicting retry cannot accidentally start work.
@@ -685,7 +712,7 @@ ActiveEnvironmentJobWait
   handles[]                 canonical { session_id, env_id, job_id }
   mode                      all | any
   terminal_policy           any_terminal | all_succeeded
-  tail_bytes?
+  output_bytes?
   include_artifacts?
   deadline_ms?              workflow-computed absolute timeout deadline
   next_check_at_ms          workflow-computed absolute poll deadline
@@ -770,9 +797,9 @@ provider job changed / heartbeat changed-jobs / future job subscribe
 ```
 
 The signal should be treated as a wake hint, not as authoritative state. It may
-carry `{ session_id, env_id, job_id }` or `deck_id`, but the workflow still calls
-`job/read` before resolving anything. Duplicate callbacks are harmless. A missed
-callback only adds up to one poll interval of latency.
+carry `{ session_id, env_id, job_id }`, but the workflow still calls `job/read`
+before resolving anything. Duplicate callbacks are harmless. A missed callback
+only adds up to one poll interval of latency.
 
 ### Why Not A Separate Poller Workflow
 
@@ -813,7 +840,7 @@ session just to be waitable.
 Keep `run_process` as the short command/interactivity primitive.
 
 Use environment jobs when the model wants durable handles, dependencies,
-multi-step decks, long waits, or later inspection.
+multi-step job plans, long waits, or later inspection.
 
 ### Environment activation
 
@@ -838,7 +865,7 @@ has the credentials it needs.
 
 Job handle records must still avoid accidental leakage:
 
-- do not store raw secret env values in durable job metadata;
+- do not store raw secret env values in durable job handle records;
 - do not store copied argv/stdin/env in the Lightspeed handle record;
 - do not echo full commands into model-visible output when they contain obvious
   secret-shaped values;
@@ -865,7 +892,7 @@ Job handle records must still avoid accidental leakage:
 - Add a `JobHandleStore` trait to `environment-registry` with in-memory and
   Postgres implementations for handle ownership/routing/idempotency only.
 - Add a Postgres table keyed by `(universe_id, session_id, env_id, job_id)` and
-  indexed by `(session_id, env_id, deck_id)` for listing.
+  indexed by `(session_id, env_id)` for listing.
 - Do not store provider job status, output cursors, exit codes, dependency state,
   or artifacts in Lightspeed.
 - Add terminal-state helpers for provider DTOs, not for local persisted state.
@@ -880,10 +907,10 @@ Job handle records must still avoid accidental leakage:
 
 - Implement client-chosen job ids and retained output.
 - Implement dependency DAG validation and scheduling.
-- Implement serial lanes.
+- Implement queue-key serialization.
 - Implement cancellation and timeout.
 - Implement bridge restart recovery with `interrupted` for unrecoverable jobs.
-- Add tests for parallel jobs, serial lanes, explicit dependencies, cancellation,
+- Add tests for parallel jobs, queue keys, explicit dependencies, cancellation,
   timeout, and idempotent retry.
 
 ### G4. Tool Surface
@@ -932,7 +959,7 @@ Job handle records must still avoid accidental leakage:
 
 - Add ignored live tests with `host-bridge`:
   - start a long-ish job, wait until terminal without holding a process call;
-  - start a serial deck and verify execution order;
+  - start queue-keyed jobs and verify execution order;
   - start parallel jobs and verify overlap;
   - start a dependency DAG and wait only on the final job;
   - cancel a running job;
@@ -947,10 +974,8 @@ Job handle records must still avoid accidental leakage:
   internal gateway endpoint?
 - How much output should be mirrored to CAS automatically versus kept only in the
   environment filesystem?
-- Should serial lanes be scoped to `(session_id, env_id, lane)` only, or also to
-  `deck_id` by default?
 - Should a failed dependency produce `dependency_failed` immediately, or should a
-  queued dependent remain inspectable until the user cancels the deck? The
+  queued dependent remain inspectable until the user cancels it? The
   recommended v1 behavior is immediate `dependency_failed`.
 
 ## Done When

@@ -2,7 +2,7 @@ use thiserror::Error;
 
 use engine::storage::BlobStoreError;
 
-use crate::{environment::process::ProcessError, fs::FsError};
+use crate::{environment::jobs::JobError, environment::process::ProcessError, fs::FsError};
 
 pub type ToolResult<T> = Result<T, ToolError>;
 
@@ -13,6 +13,9 @@ pub enum ToolError {
 
     #[error(transparent)]
     Process(#[from] ProcessError),
+
+    #[error(transparent)]
+    Job(#[from] JobError),
 
     #[error(transparent)]
     BlobStore(#[from] BlobStoreError),

@@ -9,17 +9,9 @@ use crate::shared::{ByteChunk, HostPath, JobId};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StartJobsParams {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub deck_id: Option<String>,
+    pub namespace: String,
+    pub request_id: String,
     pub jobs: Vec<JobStartSpec>,
-    #[serde(default)]
-    pub mode: JobStartMode,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub serial_lane: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub idempotency_key: Option<String>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub metadata: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,17 +34,7 @@ pub struct JobStartSpec {
     #[serde(default)]
     pub dependency_policy: JobDependencyPolicy,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub output_policy: Option<JobOutputPolicy>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub metadata: BTreeMap<String, String>,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum JobStartMode {
-    #[default]
-    Parallel,
-    Serial,
+    pub queue_key: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -88,26 +70,16 @@ pub enum JobDependencyPolicy {
     AllTerminal,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct JobOutputPolicy {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_retained_bytes: Option<u64>,
-    #[serde(default)]
-    pub discover_artifacts: bool,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StartJobsResponse {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub deck_id: Option<String>,
     pub jobs: Vec<JobSummary>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReadJobsParams {
+    pub namespace: String,
     pub jobs: Vec<JobId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub after_seq: Option<u64>,
@@ -139,6 +111,7 @@ pub struct JobReadResult {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CancelJobsParams {
+    pub namespace: String,
     pub jobs: Vec<JobId>,
     #[serde(default)]
     pub scope: JobCancelScope,
@@ -158,15 +131,13 @@ pub enum JobCancelScope {
     #[default]
     Job,
     Dependents,
-    Deck,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JobSummary {
+    pub namespace: String,
     pub job_id: JobId,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub deck_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     pub status: JobStatus,
@@ -184,9 +155,7 @@ pub struct JobSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub serial_lane: Option<String>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub metadata: BTreeMap<String, String>,
+    pub queue_key: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

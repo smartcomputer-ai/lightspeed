@@ -14,17 +14,15 @@ const JOB_HANDLE_COLUMNS: &str = r#"
     env_id,
     provider_id,
     target_id,
+    namespace,
     job_id,
-    deck_id,
     name,
-    serial_lane,
-    idempotency_key,
+    queue_key,
     created_by_run_id,
     created_by_turn_id,
     created_by_tool_call_id,
     created_at_ms,
-    start_request_hash,
-    metadata_json
+    start_request_hash
 "#;
 
 #[async_trait]
@@ -49,7 +47,6 @@ impl JobHandleStore for PgStore {
         })?;
         let mut created = Vec::with_capacity(records.len());
         for record in records {
-            let metadata_json = json_value("encode job handle metadata", &record.metadata)?;
             let query = format!(
                 r#"
                 INSERT INTO environment_jobs (
@@ -58,19 +55,17 @@ impl JobHandleStore for PgStore {
                     env_id,
                     provider_id,
                     target_id,
+                    namespace,
                     job_id,
-                    deck_id,
                     name,
-                    serial_lane,
-                    idempotency_key,
+                    queue_key,
                     created_by_run_id,
                     created_by_turn_id,
                     created_by_tool_call_id,
                     created_at_ms,
-                    start_request_hash,
-                    metadata_json
+                    start_request_hash
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
                 ON CONFLICT (universe_id, session_id, env_id, job_id) DO UPDATE SET
                     start_request_hash = environment_jobs.start_request_hash
                 WHERE environment_jobs.start_request_hash = EXCLUDED.start_request_hash
@@ -83,11 +78,10 @@ impl JobHandleStore for PgStore {
                 .bind(record.env_id.as_str())
                 .bind(record.provider_id.as_str())
                 .bind(record.target_id.as_str())
+                .bind(record.namespace.as_str())
                 .bind(record.job_id.as_str())
-                .bind(record.deck_id.as_deref())
                 .bind(record.name.as_deref())
-                .bind(record.serial_lane.as_deref())
-                .bind(record.idempotency_key.as_deref())
+                .bind(record.queue_key.as_deref())
                 .bind(optional_u64_to_i64(
                     record.created_by_run_id.map(RunId::as_u64),
                     "created_by_run_id",
@@ -104,7 +98,6 @@ impl JobHandleStore for PgStore {
                 )
                 .bind(record.created_at_ms)
                 .bind(record.start_request_hash.as_str())
-                .bind(metadata_json)
                 .fetch_optional(&mut *tx)
                 .await
                 .map_err(|error| environment_sql_error("create job handle", error))?;
@@ -171,11 +164,7 @@ impl JobHandleStore for PgStore {
             query.push_str(&format!(" AND env_id = ${next_param}"));
             next_param += 1;
         }
-        if request.deck_id.is_some() {
-            query.push_str(&format!(" AND deck_id = ${next_param}"));
-            next_param += 1;
-        }
-        query.push_str(" ORDER BY env_id, deck_id, job_id");
+        query.push_str(" ORDER BY env_id, job_id");
         if request.limit.is_some() {
             query.push_str(&format!(" LIMIT ${next_param}"));
         }
@@ -185,9 +174,6 @@ impl JobHandleStore for PgStore {
             .bind(request.session_id.as_str());
         if let Some(env_id) = request.env_id.as_ref() {
             sql = sql.bind(env_id.as_str());
-        }
-        if let Some(deck_id) = request.deck_id.as_ref() {
-            sql = sql.bind(deck_id);
         }
         if let Some(limit) = request.limit {
             sql = sql.bind(usize_to_i64(limit, "job handle list limit")?);
@@ -272,19 +258,16 @@ fn job_handle_from_row(
             }
         })?,
         target_id: HostTargetId::new(target_id),
+        namespace: row
+            .try_get("namespace")
+            .map_err(|error| environment_sql_error("decode job handle namespace", error))?,
         job_id: JobId::new(job_id),
-        deck_id: row
-            .try_get("deck_id")
-            .map_err(|error| environment_sql_error("decode job handle deck id", error))?,
         name: row
             .try_get("name")
             .map_err(|error| environment_sql_error("decode job handle name", error))?,
-        serial_lane: row
-            .try_get("serial_lane")
-            .map_err(|error| environment_sql_error("decode job handle serial lane", error))?,
-        idempotency_key: row
-            .try_get("idempotency_key")
-            .map_err(|error| environment_sql_error("decode job handle idempotency key", error))?,
+        queue_key: row
+            .try_get("queue_key")
+            .map_err(|error| environment_sql_error("decode job handle queue key", error))?,
         created_by_run_id: optional_i64_to_run_id(run_id)?,
         created_by_turn_id: optional_i64_to_turn_id(turn_id)?,
         created_by_tool_call_id: tool_call_id.map(ToolCallId::try_new).transpose().map_err(
@@ -298,31 +281,9 @@ fn job_handle_from_row(
         start_request_hash: row
             .try_get("start_request_hash")
             .map_err(|error| environment_sql_error("decode job handle request hash", error))?,
-        metadata: json_column(row, "metadata_json")?,
     };
     record.validate()?;
     Ok(record)
-}
-
-fn json_value(
-    action: &'static str,
-    value: &impl serde::Serialize,
-) -> Result<serde_json::Value, EnvironmentRegistryError> {
-    serde_json::to_value(value).map_err(|error| EnvironmentRegistryError::Store {
-        message: format!("{action}: {error}"),
-    })
-}
-
-fn json_column<T: serde::de::DeserializeOwned>(
-    row: &sqlx::postgres::PgRow,
-    column: &'static str,
-) -> Result<T, EnvironmentRegistryError> {
-    let value: serde_json::Value = row
-        .try_get(column)
-        .map_err(|error| environment_sql_error(&format!("decode {column}"), error))?;
-    serde_json::from_value(value).map_err(|error| EnvironmentRegistryError::Store {
-        message: format!("decode {column}: {error}"),
-    })
 }
 
 fn job_handle_not_found(
@@ -349,11 +310,6 @@ fn environment_sql_error(action: &str, error: sqlx::Error) -> EnvironmentRegistr
 }
 
 fn validate_list_job_handles_pg(request: &ListJobHandles) -> Result<(), EnvironmentRegistryError> {
-    if matches!(request.deck_id.as_deref(), Some("")) {
-        return Err(EnvironmentRegistryError::InvalidInput {
-            message: "deck_id must not be empty".to_owned(),
-        });
-    }
     if matches!(request.limit, Some(0)) {
         return Err(EnvironmentRegistryError::InvalidInput {
             message: "job handle list limit must be greater than zero".to_owned(),

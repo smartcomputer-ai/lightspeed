@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 
 use auth_registry::{
     AuthFlowId, AuthFlowStore, AuthGrantId, AuthGrantStatus, AuthGrantStore, AuthGrantTokenRefresh,
@@ -238,6 +238,7 @@ async fn pg_live_clone_copies_resources_and_links_sessions() {
                 process_stdin: true,
                 network: false,
                 persistent: true,
+                ..SessionEnvironmentCapabilities::default()
             },
             connection: HostConnectionSpec {
                 target_id: target_id.clone(),
@@ -917,6 +918,7 @@ async fn pg_live_environment_registry_crud_and_session_bindings() {
                 process_stdin: true,
                 network: false,
                 persistent: true,
+                ..SessionEnvironmentCapabilities::default()
             },
             connection: HostConnectionSpec {
                 target_id: target_id.clone(),
@@ -952,17 +954,15 @@ async fn pg_live_environment_registry_crud_and_session_bindings() {
         env_id: env_id.clone(),
         provider_id: provider_id.clone(),
         target_id: target_id.clone(),
+        namespace: session_id.as_str().to_owned(),
         job_id: JobId::new("job-1"),
-        deck_id: Some("deck-1".to_owned()),
         name: Some("checkout".to_owned()),
-        serial_lane: Some("repo".to_owned()),
-        idempotency_key: Some("idem-1".to_owned()),
+        queue_key: Some("repo".to_owned()),
         created_by_run_id: Some(RunId::new(1)),
         created_by_turn_id: Some(TurnId::new(2)),
         created_by_tool_call_id: Some(ToolCallId::new("call_1")),
         created_at_ms: 45,
         start_request_hash: "hash-1".to_owned(),
-        metadata: BTreeMap::from([("kind".to_owned(), "test".to_owned())]),
     };
     let created_jobs = store
         .create_job_handles(vec![job_handle.clone()])
@@ -981,7 +981,6 @@ async fn pg_live_environment_registry_crud_and_session_bindings() {
         .list_job_handles(ListJobHandles {
             session_id: session_id.clone(),
             env_id: Some(env_id.clone()),
-            deck_id: Some("deck-1".to_owned()),
             limit: Some(10),
         })
         .await
@@ -992,6 +991,8 @@ async fn pg_live_environment_registry_crud_and_session_bindings() {
         .read_job_handle(&session_id, &env_id, &JobId::new("job-1"))
         .await
         .expect("read job handle");
+    assert_eq!(read_job.namespace, session_id.as_str());
+    assert_eq!(read_job.queue_key.as_deref(), Some("repo"));
     assert_eq!(read_job.start_request_hash, "hash-1");
 
     let degraded = store

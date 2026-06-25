@@ -9,7 +9,7 @@ use host_protocol::{
     },
     data::{
         handshake::{InitializeParams, InitializedParams},
-        jobs::{JobDependencyPolicy, JobStartMode, JobStartSpec, ReadJobsParams, StartJobsParams},
+        jobs::{JobDependencyPolicy, JobStartSpec, ReadJobsParams, StartJobsParams},
         process::{ReadProcessParams, StartProcessParams},
     },
     shared::{CURRENT_PROTOCOL_VERSION, HostScope, JobId, ProcessId},
@@ -126,7 +126,8 @@ async fn bridge_serves_controller_attach_and_process_data_plane() {
     assert_eq!(output.exit_code, Some(0));
 
     data.start_jobs(&StartJobsParams {
-        deck_id: Some("deck-server".to_owned()),
+        namespace: "session_1".to_owned(),
+        request_id: "server".to_owned(),
         jobs: vec![JobStartSpec {
             job_id: JobId::new("job-1"),
             name: Some("server-job".to_owned()),
@@ -141,18 +142,14 @@ async fn bridge_serves_controller_attach_and_process_data_plane() {
             timeout_ms: Some(5_000),
             depends_on: Vec::new(),
             dependency_policy: JobDependencyPolicy::AllSucceeded,
-            output_policy: None,
-            metadata: BTreeMap::new(),
+            queue_key: None,
         }],
-        mode: JobStartMode::Parallel,
-        serial_lane: None,
-        idempotency_key: None,
-        metadata: BTreeMap::new(),
     })
     .await
     .expect("start job");
     let jobs = data
         .read_jobs(&ReadJobsParams {
+            namespace: "session_1".to_owned(),
             jobs: vec![JobId::new("job-1")],
             after_seq: None,
             max_bytes: None,

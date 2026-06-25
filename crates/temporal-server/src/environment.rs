@@ -131,6 +131,19 @@ impl SessionEnvironmentManager {
         !self.environments.is_empty()
     }
 
+    pub fn has_process_environment(&self) -> bool {
+        self.environments
+            .values()
+            .any(|environment| environment.record.capabilities.process_exec)
+    }
+
+    pub fn has_job_environment(&self) -> bool {
+        self.environments.values().any(|environment| {
+            let capabilities = &environment.record.capabilities;
+            capabilities.job_start || capabilities.job_read || capabilities.job_cancel
+        })
+    }
+
     pub fn tool_targets(
         &self,
         session_fs: Option<FsToolContext>,
@@ -427,6 +440,12 @@ fn environment_capabilities_from_binding(
         fs_write: capabilities.fs_write,
         process_exec: capabilities.process_exec,
         process_stdin: capabilities.process_stdin,
+        job_start: capabilities.job_start,
+        job_read: capabilities.job_read,
+        job_cancel: capabilities.job_cancel,
+        job_wait_hint: capabilities.job_wait_hint,
+        job_dependencies: capabilities.job_dependencies,
+        job_queue_keys: capabilities.job_queue_keys,
         network: capabilities.network,
         persistent: capabilities.persistent,
     }
@@ -481,6 +500,7 @@ mod tests {
                             process_stdin: true,
                             network: false,
                             persistent: true,
+                            ..EnvironmentCapabilities::default()
                         },
                         exec_target: Some(environment_target("local")),
                         cwd: Some(FsPath::new("/workspace").expect("cwd")),
@@ -566,6 +586,7 @@ mod tests {
                             process_stdin: false,
                             network: false,
                             persistent: true,
+                            ..EnvironmentCapabilities::default()
                         },
                         exec_target: Some(environment_target("local")),
                         cwd: Some(FsPath::new("/workspace").expect("cwd")),
@@ -677,6 +698,7 @@ mod tests {
                             process_stdin: false,
                             network: false,
                             persistent: true,
+                            ..EnvironmentCapabilities::default()
                         },
                         exec_target: Some(environment_target("local")),
                         cwd: Some(FsPath::new("/repo").expect("cwd")),

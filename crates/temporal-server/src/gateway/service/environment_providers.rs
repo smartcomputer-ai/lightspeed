@@ -442,7 +442,7 @@ fn registry_host_capabilities(value: HostCapabilitiesView) -> HostCapabilities {
         job_cancel: value.job_cancel,
         job_wait_hint: value.job_wait_hint,
         job_dependencies: value.job_dependencies,
-        job_serial_lanes: value.job_serial_lanes,
+        job_queue_keys: value.job_queue_keys,
     }
 }
 
@@ -461,7 +461,7 @@ fn api_host_capabilities(value: &HostCapabilities) -> HostCapabilitiesView {
         job_cancel: value.job_cancel,
         job_wait_hint: value.job_wait_hint,
         job_dependencies: value.job_dependencies,
-        job_serial_lanes: value.job_serial_lanes,
+        job_queue_keys: value.job_queue_keys,
     }
 }
 

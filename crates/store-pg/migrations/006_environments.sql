@@ -177,17 +177,15 @@ CREATE TABLE IF NOT EXISTS environment_jobs (
     env_id text NOT NULL,
     provider_id text NOT NULL,
     target_id text NOT NULL,
+    namespace text NOT NULL,
     job_id text NOT NULL,
-    deck_id text,
     name text,
-    serial_lane text,
-    idempotency_key text,
+    queue_key text,
     created_by_run_id bigint,
     created_by_turn_id bigint,
     created_by_tool_call_id text,
     created_at_ms bigint NOT NULL,
     start_request_hash text NOT NULL,
-    metadata_json jsonb NOT NULL DEFAULT '{}',
 
     PRIMARY KEY (universe_id, session_id, env_id, job_id),
 
@@ -204,16 +202,14 @@ CREATE TABLE IF NOT EXISTS environment_jobs (
         CHECK (provider_id ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$'),
     CONSTRAINT environment_jobs_target_id_format
         CHECK (target_id ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$'),
+    CONSTRAINT environment_jobs_namespace_format
+        CHECK (namespace ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$'),
     CONSTRAINT environment_jobs_job_id_format
         CHECK (job_id ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$'),
-    CONSTRAINT environment_jobs_deck_id_not_empty
-        CHECK (deck_id IS NULL OR deck_id <> ''),
     CONSTRAINT environment_jobs_name_not_empty
         CHECK (name IS NULL OR name <> ''),
-    CONSTRAINT environment_jobs_serial_lane_not_empty
-        CHECK (serial_lane IS NULL OR serial_lane <> ''),
-    CONSTRAINT environment_jobs_idempotency_key_not_empty
-        CHECK (idempotency_key IS NULL OR idempotency_key <> ''),
+    CONSTRAINT environment_jobs_queue_key_format
+        CHECK (queue_key IS NULL OR queue_key ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$'),
     CONSTRAINT environment_jobs_created_by_run_nonnegative
         CHECK (created_by_run_id IS NULL OR created_by_run_id >= 0),
     CONSTRAINT environment_jobs_created_by_turn_nonnegative
@@ -223,16 +219,14 @@ CREATE TABLE IF NOT EXISTS environment_jobs (
     CONSTRAINT environment_jobs_created_nonnegative
         CHECK (created_at_ms >= 0),
     CONSTRAINT environment_jobs_hash_not_empty
-        CHECK (start_request_hash <> ''),
-    CONSTRAINT environment_jobs_metadata_object
-        CHECK (jsonb_typeof(metadata_json) = 'object')
+        CHECK (start_request_hash <> '')
 );
 
-CREATE INDEX IF NOT EXISTS environment_jobs_session_deck_idx
-    ON environment_jobs (universe_id, session_id, env_id, deck_id, job_id);
+CREATE INDEX IF NOT EXISTS environment_jobs_session_env_idx
+    ON environment_jobs (universe_id, session_id, env_id, job_id);
 
 CREATE INDEX IF NOT EXISTS environment_jobs_provider_idx
-    ON environment_jobs (universe_id, provider_id, target_id, job_id);
+    ON environment_jobs (universe_id, provider_id, target_id, namespace, job_id);
 
 COMMENT ON TABLE environment_providers IS
     'Universe-scoped runtime environment providers that advertise host-protocol controllers.';

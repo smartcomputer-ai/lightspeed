@@ -16,9 +16,8 @@ use host_protocol::{
         fs::ReadFileResponse,
         handshake::InitializeParams,
         jobs::{
-            JobArtifact, JobDependency, JobDependencyPolicy, JobOutputChunk, JobOutputPolicy,
-            JobOutputStream, JobReadResult, JobStartMode, JobStartSpec, JobStatus, JobSummary,
-            ReadJobsResponse, StartJobsParams,
+            JobArtifact, JobDependency, JobDependencyPolicy, JobOutputChunk, JobOutputStream,
+            JobReadResult, JobStartSpec, JobStatus, JobSummary, ReadJobsResponse, StartJobsParams,
         },
         methods::{
             FS_READ_FILE_METHOD, INITIALIZE_METHOD, JOB_CANCEL_METHOD, JOB_READ_METHOD,
@@ -165,7 +164,8 @@ fn process_read_response_preserves_ordered_output_chunks() {
 fn job_start_params_match_fixture() {
     assert_round_trip(
         StartJobsParams {
-            deck_id: Some("deck-1".to_owned()),
+            namespace: "session_1".to_owned(),
+            request_id: "request-1".to_owned(),
             jobs: vec![JobStartSpec {
                 job_id: JobId::new("checkout"),
                 name: Some("checkout".to_owned()),
@@ -176,16 +176,8 @@ fn job_start_params_match_fixture() {
                 timeout_ms: Some(60_000),
                 depends_on: vec![JobDependency::name("setup")],
                 dependency_policy: JobDependencyPolicy::AllSucceeded,
-                output_policy: Some(JobOutputPolicy {
-                    max_retained_bytes: Some(1024),
-                    discover_artifacts: true,
-                }),
-                metadata: BTreeMap::from([("kind".to_owned(), "test".to_owned())]),
+                queue_key: Some("repo".to_owned()),
             }],
-            mode: JobStartMode::Serial,
-            serial_lane: Some("repo".to_owned()),
-            idempotency_key: Some("idem-1".to_owned()),
-            metadata: BTreeMap::from([("request".to_owned(), "test".to_owned())]),
         },
         fixture("job_start_params"),
     );
@@ -197,8 +189,8 @@ fn job_read_response_matches_fixture() {
         ReadJobsResponse {
             jobs: vec![JobReadResult {
                 summary: JobSummary {
+                    namespace: "session_1".to_owned(),
                     job_id: JobId::new("tests"),
-                    deck_id: Some("deck-1".to_owned()),
                     name: Some("tests".to_owned()),
                     status: JobStatus::Succeeded,
                     dependencies: vec![JobId::new("checkout")],
@@ -208,8 +200,7 @@ fn job_read_response_matches_fixture() {
                     finished_at_ms: Some(4),
                     exit_code: Some(0),
                     failure: None,
-                    serial_lane: Some("repo".to_owned()),
-                    metadata: BTreeMap::from([("kind".to_owned(), "test".to_owned())]),
+                    queue_key: Some("repo".to_owned()),
                 },
                 output_chunks: vec![JobOutputChunk {
                     seq: 1,
@@ -335,6 +326,6 @@ fn remote_host_capabilities() -> HostCapabilities {
         job_cancel: true,
         job_wait_hint: false,
         job_dependencies: true,
-        job_serial_lanes: true,
+        job_queue_keys: true,
     }
 }

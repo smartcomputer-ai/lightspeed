@@ -8,7 +8,7 @@ use host_protocol::{
     control::handshake::ControllerInitializeParams,
     data::{
         fs::ReadFileParams,
-        jobs::{JobDependencyPolicy, JobStartMode, JobStartSpec, StartJobsParams},
+        jobs::{JobDependencyPolicy, JobStartSpec, StartJobsParams},
         methods::PROCESS_OUTPUT_METHOD,
     },
     error::HostErrorCode,
@@ -83,12 +83,11 @@ async fn data_client_sends_typed_job_start_request() {
         "jsonrpc": "2.0",
         "id": 1,
         "result": {
-            "deckId": "deck-1",
             "jobs": [
                 {
                     "createdAtMs": 1,
-                    "deckId": "deck-1",
                     "jobId": "job-1",
+                    "namespace": "session_1",
                     "status": "queued"
                 }
             ]
@@ -98,7 +97,8 @@ async fn data_client_sends_typed_job_start_request() {
 
     let response = client
         .start_jobs(&StartJobsParams {
-            deck_id: Some("deck-1".to_owned()),
+            namespace: "session_1".to_owned(),
+            request_id: "request-1".to_owned(),
             jobs: vec![JobStartSpec {
                 job_id: JobId::new("job-1"),
                 name: None,
@@ -113,13 +113,8 @@ async fn data_client_sends_typed_job_start_request() {
                 timeout_ms: Some(1_000),
                 depends_on: Vec::new(),
                 dependency_policy: JobDependencyPolicy::AllSucceeded,
-                output_policy: None,
-                metadata: Default::default(),
+                queue_key: None,
             }],
-            mode: JobStartMode::Parallel,
-            serial_lane: None,
-            idempotency_key: None,
-            metadata: Default::default(),
         })
         .await
         .expect("response");

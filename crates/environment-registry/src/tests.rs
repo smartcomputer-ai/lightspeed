@@ -68,6 +68,7 @@ fn binding(session_id: &str, env_id: &str) -> CreateSessionEnvironmentBinding {
             process_stdin: true,
             network: false,
             persistent: true,
+            ..SessionEnvironmentCapabilities::default()
         },
         connection: host_connection("local-host"),
         cwd: Some(HostPath::new("/workspace").expect("cwd")),
@@ -87,17 +88,15 @@ fn job_handle(session_id: &str, env_id: &str, job_id: &str) -> CreateJobHandle {
         env_id: EnvironmentId::new(env_id),
         provider_id: EnvironmentProviderId::new("bridge-local"),
         target_id: HostTargetId::new("local-host"),
+        namespace: session_id.to_owned(),
         job_id: JobId::new(job_id),
-        deck_id: Some("deck-1".to_owned()),
         name: Some(job_id.to_owned()),
-        serial_lane: Some("repo".to_owned()),
-        idempotency_key: Some("idem-1".to_owned()),
+        queue_key: Some("repo".to_owned()),
         created_by_run_id: Some(RunId::new(1)),
         created_by_turn_id: Some(TurnId::new(2)),
         created_by_tool_call_id: Some(ToolCallId::new("call_1")),
         created_at_ms: 70,
         start_request_hash: "hash-1".to_owned(),
-        metadata: BTreeMap::from([("kind".to_owned(), "test".to_owned())]),
     }
 }
 
@@ -256,7 +255,6 @@ async fn in_memory_store_creates_reads_lists_and_deletes_job_handles() {
             job_handle("session_1", "local", "job-1"),
             CreateJobHandle {
                 job_id: JobId::new("job-2"),
-                deck_id: Some("deck-2".to_owned()),
                 name: Some("job-2".to_owned()),
                 ..job_handle("session_1", "local", "job-2")
             },
@@ -274,25 +272,25 @@ async fn in_memory_store_creates_reads_lists_and_deletes_job_handles() {
         .await
         .expect("read job handle");
     assert_eq!(read.job_id.as_str(), "job-1");
+    assert_eq!(read.namespace, "session_1");
+    assert_eq!(read.queue_key.as_deref(), Some("repo"));
     assert_eq!(read.start_request_hash, "hash-1");
 
-    let deck_one = store
+    let listed = store
         .list_job_handles(ListJobHandles {
             session_id: SessionId::new("session_1"),
             env_id: Some(EnvironmentId::new("local")),
-            deck_id: Some("deck-1".to_owned()),
             limit: Some(10),
         })
         .await
         .expect("list job handles");
-    assert_eq!(deck_one.len(), 1);
-    assert_eq!(deck_one[0].job_id.as_str(), "job-1");
+    assert_eq!(listed.len(), 2);
+    assert_eq!(listed[0].job_id.as_str(), "job-1");
 
     let limited = store
         .list_job_handles(ListJobHandles {
             session_id: SessionId::new("session_1"),
             env_id: None,
-            deck_id: None,
             limit: Some(1),
         })
         .await

@@ -517,6 +517,18 @@ pub struct SessionEnvironmentCapabilities {
     #[serde(default)]
     pub process_stdin: bool,
     #[serde(default)]
+    pub job_start: bool,
+    #[serde(default)]
+    pub job_read: bool,
+    #[serde(default)]
+    pub job_cancel: bool,
+    #[serde(default)]
+    pub job_wait_hint: bool,
+    #[serde(default)]
+    pub job_dependencies: bool,
+    #[serde(default)]
+    pub job_queue_keys: bool,
+    #[serde(default)]
     pub network: bool,
     #[serde(default)]
     pub persistent: bool,
@@ -529,6 +541,12 @@ impl SessionEnvironmentCapabilities {
             fs_write: capabilities.filesystem_write,
             process_exec: capabilities.process_start,
             process_stdin: capabilities.process_stdin,
+            job_start: capabilities.job_start,
+            job_read: capabilities.job_read,
+            job_cancel: capabilities.job_cancel,
+            job_wait_hint: capabilities.job_wait_hint,
+            job_dependencies: capabilities.job_dependencies,
+            job_queue_keys: capabilities.job_queue_keys,
             network: false,
             persistent,
         }
@@ -543,6 +561,21 @@ impl SessionEnvironmentCapabilities {
         if self.process_stdin && !self.process_exec {
             return Err(EnvironmentRegistryError::InvalidInput {
                 message: "process_stdin requires process_exec".to_owned(),
+            });
+        }
+        if self.job_wait_hint && !self.job_read {
+            return Err(EnvironmentRegistryError::InvalidInput {
+                message: "job_wait_hint requires job_read".to_owned(),
+            });
+        }
+        if self.job_dependencies && !self.job_start {
+            return Err(EnvironmentRegistryError::InvalidInput {
+                message: "job_dependencies requires job_start".to_owned(),
+            });
+        }
+        if self.job_queue_keys && !self.job_start {
+            return Err(EnvironmentRegistryError::InvalidInput {
+                message: "job_queue_keys requires job_start".to_owned(),
             });
         }
         Ok(())
@@ -591,34 +624,38 @@ pub struct JobHandleRecord {
     pub env_id: EnvironmentId,
     pub provider_id: EnvironmentProviderId,
     pub target_id: HostTargetId,
+    pub namespace: String,
     pub job_id: JobId,
-    pub deck_id: Option<String>,
     pub name: Option<String>,
-    pub serial_lane: Option<String>,
-    pub idempotency_key: Option<String>,
+    pub queue_key: Option<String>,
     pub created_by_run_id: Option<RunId>,
     pub created_by_turn_id: Option<TurnId>,
     pub created_by_tool_call_id: Option<ToolCallId>,
     pub created_at_ms: i64,
     pub start_request_hash: String,
-    pub metadata: BTreeMap<String, String>,
 }
 
 impl JobHandleRecord {
     pub fn validate(&self) -> Result<(), EnvironmentRegistryError> {
         validate_host_job_id(&self.job_id)?;
         validate_host_target_id(&self.target_id)?;
-        validate_nonempty_optional("deck_id", self.deck_id.as_deref())?;
+        validate_general_string_id("namespace", &self.namespace).map_err(|error| {
+            EnvironmentRegistryError::InvalidInput {
+                message: format!("invalid namespace: {error}"),
+            }
+        })?;
         validate_nonempty_optional("job name", self.name.as_deref())?;
-        validate_nonempty_optional("serial_lane", self.serial_lane.as_deref())?;
-        validate_nonempty_optional("idempotency_key", self.idempotency_key.as_deref())?;
-        validate_optional_metadata_component("deck_id", self.deck_id.as_deref())?;
+        validate_nonempty_optional("queue_key", self.queue_key.as_deref())?;
         validate_optional_metadata_component("job name", self.name.as_deref())?;
-        validate_optional_metadata_component("serial_lane", self.serial_lane.as_deref())?;
-        validate_optional_metadata_component("idempotency_key", self.idempotency_key.as_deref())?;
+        if let Some(queue_key) = self.queue_key.as_deref() {
+            validate_general_string_id("queue_key", queue_key).map_err(|error| {
+                EnvironmentRegistryError::InvalidInput {
+                    message: format!("invalid queue_key: {error}"),
+                }
+            })?;
+        }
         validate_nonempty_string("start_request_hash", &self.start_request_hash)?;
         validate_metadata_component("start_request_hash", &self.start_request_hash)?;
-        validate_metadata(&self.metadata)?;
         validate_nonnegative_i64(self.created_at_ms, "created_at_ms")
     }
 }
@@ -629,17 +666,15 @@ pub struct CreateJobHandle {
     pub env_id: EnvironmentId,
     pub provider_id: EnvironmentProviderId,
     pub target_id: HostTargetId,
+    pub namespace: String,
     pub job_id: JobId,
-    pub deck_id: Option<String>,
     pub name: Option<String>,
-    pub serial_lane: Option<String>,
-    pub idempotency_key: Option<String>,
+    pub queue_key: Option<String>,
     pub created_by_run_id: Option<RunId>,
     pub created_by_turn_id: Option<TurnId>,
     pub created_by_tool_call_id: Option<ToolCallId>,
     pub created_at_ms: i64,
     pub start_request_hash: String,
-    pub metadata: BTreeMap<String, String>,
 }
 
 impl CreateJobHandle {
@@ -649,17 +684,15 @@ impl CreateJobHandle {
             env_id: self.env_id,
             provider_id: self.provider_id,
             target_id: self.target_id,
+            namespace: self.namespace,
             job_id: self.job_id,
-            deck_id: self.deck_id,
             name: self.name,
-            serial_lane: self.serial_lane,
-            idempotency_key: self.idempotency_key,
+            queue_key: self.queue_key,
             created_by_run_id: self.created_by_run_id,
             created_by_turn_id: self.created_by_turn_id,
             created_by_tool_call_id: self.created_by_tool_call_id,
             created_at_ms: self.created_at_ms,
             start_request_hash: self.start_request_hash,
-            metadata: self.metadata,
         }
     }
 }
@@ -668,7 +701,6 @@ impl CreateJobHandle {
 pub struct ListJobHandles {
     pub session_id: SessionId,
     pub env_id: Option<EnvironmentId>,
-    pub deck_id: Option<String>,
     pub limit: Option<usize>,
 }
 
@@ -820,8 +852,6 @@ fn validate_host_job_id(job_id: &JobId) -> Result<(), EnvironmentRegistryError> 
 }
 
 fn validate_list_job_handles(request: &ListJobHandles) -> Result<(), EnvironmentRegistryError> {
-    validate_nonempty_optional("deck_id", request.deck_id.as_deref())?;
-    validate_optional_metadata_component("deck_id", request.deck_id.as_deref())?;
     if matches!(request.limit, Some(0)) {
         return Err(EnvironmentRegistryError::InvalidInput {
             message: "job handle list limit must be greater than zero".to_owned(),

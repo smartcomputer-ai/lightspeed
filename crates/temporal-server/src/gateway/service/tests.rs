@@ -1504,6 +1504,7 @@ fn test_environment_record(
             process_stdin: true,
             network: false,
             persistent: true,
+            ..tools::environment::projection::EnvironmentCapabilities::default()
         },
         exec_target: Some(tools::targets::environment_target(env_id)),
         cwd: Some(FsPath::new("/workspace").expect("cwd")),

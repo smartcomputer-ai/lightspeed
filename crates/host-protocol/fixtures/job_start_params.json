@@ -1,6 +1,4 @@
 {
-  "deckId": "deck-1",
-  "idempotencyKey": "idem-1",
   "jobs": [
     {
       "argv": [
@@ -17,22 +15,13 @@
       "env": {
         "RUST_LOG": "debug"
       },
-      "jobId": "checkout",
-      "metadata": {
-        "kind": "test"
-      },
       "name": "checkout",
-      "outputPolicy": {
-        "discoverArtifacts": true,
-        "maxRetainedBytes": 1024
-      },
+      "jobId": "checkout",
+      "queueKey": "repo",
       "stdin": "aGVsbG8K",
       "timeoutMs": 60000
     }
   ],
-  "metadata": {
-    "request": "test"
-  },
-  "mode": "serial",
-  "serialLane": "repo"
+  "namespace": "session_1",
+  "requestId": "request-1"
 }

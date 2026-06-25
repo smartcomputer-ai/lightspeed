@@ -7,7 +7,7 @@
         "jobCancel": true,
         "jobDependencies": true,
         "jobRead": true,
-        "jobSerialLanes": true,
+        "jobQueueKeys": true,
         "jobStart": true,
         "jobWaitHint": false,
         "processOutputNotifications": true,

@@ -89,6 +89,18 @@ pub struct EnvironmentCapabilities {
     #[serde(default)]
     pub process_stdin: bool,
     #[serde(default)]
+    pub job_start: bool,
+    #[serde(default)]
+    pub job_read: bool,
+    #[serde(default)]
+    pub job_cancel: bool,
+    #[serde(default)]
+    pub job_wait_hint: bool,
+    #[serde(default)]
+    pub job_dependencies: bool,
+    #[serde(default)]
+    pub job_queue_keys: bool,
+    #[serde(default)]
     pub network: bool,
     #[serde(default)]
     pub persistent: bool,
@@ -622,6 +634,7 @@ mod tests {
                 process_stdin: true,
                 network: true,
                 persistent: true,
+                ..EnvironmentCapabilities::default()
             },
             exec_target: Some(ToolExecutionTarget::new("env", "local")),
             cwd: Some(FsPath::new("/workspace").expect("cwd")),
