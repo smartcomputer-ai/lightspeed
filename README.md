@@ -16,17 +16,19 @@ We also acknowledge that the current iteration of frontier models are optimized 
 ## Features
 What constitutes an "agent harness" is a rapidly expanding set of table-stakes features. Here is a list of where we are at:
 - [x] Broad frontier model support for OpenAI and Anthropic: native compaction, reasoning traces, advanced tool configurations and provider native tools, MCP, files, images, provider OAuth login, multiple API keys, etc.
-- [ ] Other model support via the "Completion API" standard (in progress)
 - [x] Long-lasting and durable agent runs (weeks to months)
-- [ ] Sandboxes, including delegating work to standard coding agents inside sandboxes (in progress)
 - [x] Virtual file system that allows the agent to use standard file tools (read, glob, patch. etc), without needing a full operating system attached
 - [x] Skills hosted on a virtual file system or inside sandboxes
 - [x] Flexible prompt and instruction configuration features
 - [x] Reusable agent profiles for named or inline session setup across CLI, bridge, and Fleet spawns
 - [x] Hosted MCP, including various authentication methods such as API keys, OAuth flows
-- [ ] Sub-agents (aka. "fleets"), letting agents start or manage other agents (planned)
+- [x] Sub-agents (aka. "fleets"), letting agents start or manage other agents (planned)
+- [~] Sandboxes, including delegating work to standard coding agents inside sandboxes (in progress)
+  - [x] Dedicated VMs that connect via a bridge daemon to the agent
+  - [ ] Ad-hoc sandboxes
 - [ ] Timers, schedules, wake-ups (planned)
 - [ ] Multi-tenant support (in progress)
+- [ ] Other model support via the "Completion API" standard (in progress)
 - [x] CLI to connect to running agent sessions
 - [x] Bridge to various messaging platforms (WhatsApp, Telegram, others coming soon)
 
