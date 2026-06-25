@@ -3,10 +3,10 @@
 use std::sync::Arc;
 
 use api::{
-    AgentApiError, AgentApiService, EventCursor, InputItem, MediaKind, RunCancelParams,
-    RunStartParams, RunStatus as ApiRunStatus, SessionCloseParams, SessionEnvironmentListParams,
-    SessionEnvironmentListResponse, SessionEventsReadParams, SessionEventsReadResponse,
-    SessionReadParams, SessionView,
+    AgentApiError, AgentApiService, EventCursor, InputItem, MediaKind, ProfileSource,
+    RunCancelParams, RunStartParams, RunStatus as ApiRunStatus, SessionCloseParams,
+    SessionEnvironmentListParams, SessionEnvironmentListResponse, SessionEventsReadParams,
+    SessionEventsReadResponse, SessionReadParams, SessionView,
 };
 use api_projection::{MAX_EVENT_PAGE_LIMIT, read_all_session_entries, replay_core_agent_state};
 use async_trait::async_trait;
@@ -86,8 +86,6 @@ impl FleetService {
         args: AgentSpawnArgs,
     ) -> Result<AgentSpawnOutput, AgentApiError> {
         validate_spawn_args(&args)?;
-        let source_session_id = self.resolve_source(&context, &args.source)?;
-        let source_record = self.load_session_required(&source_session_id).await?;
         let child_id_was_derived = args.child_session_id.is_none();
         let child_session_id = match args.child_session_id.as_deref() {
             Some(session_id) => parse_session_id(session_id, "child_session_id")?,
@@ -95,41 +93,74 @@ impl FleetService {
         };
         let spawn_request_id = spawn_request_id(&context);
         let child_run_submission_id = child_run_submission_id(&context);
-        let source_seq = if args.fork {
-            Some(match args.fork_at_seq {
-                Some(seq) => EventSeq::new(seq),
-                None => self
-                    .sessions
-                    .safe_fork_seq(&source_session_id)
-                    .await
-                    .map_err(map_session_store_error)?,
-            })
-        } else {
-            None
-        };
 
-        let outcome = self
-            .create_or_reuse_child(
-                &context,
-                &source_record,
-                &child_session_id,
-                source_seq,
-                &spawn_request_id,
-                child_id_was_derived,
-            )
-            .await?;
+        let (outcome, source_session_id, source_seq) = if let Some(profile) = args.profile.clone() {
+            let existed = self
+                .sessions
+                .load_session(&child_session_id)
+                .await
+                .map_err(map_session_store_error)?
+                .is_some();
+            self.runtime
+                .start_session(
+                    &child_session_id,
+                    args.lifecycle.close_on_terminal,
+                    Some(profile),
+                )
+                .await?;
+            if !existed {
+                (ChildCreateOutcome::Created, None, None)
+            } else {
+                (
+                    ChildCreateOutcome::Reused {
+                        matching_spawn_link: false,
+                    },
+                    None,
+                    None,
+                )
+            }
+        } else {
+            let source_session_id = self.resolve_source(&context, args.source.as_ref())?;
+            let source_record = self.load_session_required(&source_session_id).await?;
+            let source_seq = if args.fork {
+                Some(match args.fork_at_seq {
+                    Some(seq) => EventSeq::new(seq),
+                    None => self
+                        .sessions
+                        .safe_fork_seq(&source_session_id)
+                        .await
+                        .map_err(map_session_store_error)?,
+                })
+            } else {
+                None
+            };
+
+            let outcome = self
+                .create_or_reuse_child(
+                    &context,
+                    &source_record,
+                    &child_session_id,
+                    source_seq,
+                    &spawn_request_id,
+                    child_id_was_derived,
+                )
+                .await?;
+            (outcome, Some(source_session_id), source_seq)
+        };
         let skip_pre_run_setup = outcome.has_matching_spawn_link();
-        if !skip_pre_run_setup {
+        if args.profile.is_none() && !skip_pre_run_setup {
             self.apply_resource_policies(&child_session_id, context.observed_at_ms, &args)
                 .await?;
         }
 
-        self.runtime
-            .start_session(&child_session_id, args.lifecycle.close_on_terminal)
-            .await?;
+        if args.profile.is_none() {
+            self.runtime
+                .start_session(&child_session_id, args.lifecycle.close_on_terminal, None)
+                .await?;
+        }
         self.upsert_spawn_link(
             &context,
-            &source_session_id,
+            source_session_id.as_ref(),
             &child_session_id,
             source_seq,
             &spawn_request_id,
@@ -188,7 +219,7 @@ impl FleetService {
         }
         self.load_session_required(&target_session_id).await?;
         self.runtime
-            .start_session(&target_session_id, false)
+            .start_session(&target_session_id, false, None)
             .await?;
         let input = send_run_input(&context, &args)?;
         let run_id = self
@@ -261,7 +292,11 @@ impl FleetService {
                 results.push(result);
                 continue;
             }
-            if let Err(error) = self.runtime.start_session(&target_session_id, false).await {
+            if let Err(error) = self
+                .runtime
+                .start_session(&target_session_id, false, None)
+                .await
+            {
                 results.push(wait_error_result(
                     &target_session_id,
                     run_id,
@@ -616,9 +651,9 @@ impl FleetService {
     fn resolve_source(
         &self,
         context: &FleetInvocationContext,
-        source: &AgentSpawnSource,
+        source: Option<&AgentSpawnSource>,
     ) -> Result<SessionId, AgentApiError> {
-        match source {
+        match source.unwrap_or(&AgentSpawnSource::Self_) {
             AgentSpawnSource::Self_ => Ok(context.parent_session_id.clone()),
             AgentSpawnSource::Session { session_id } => parse_session_id(session_id, "source"),
         }
@@ -752,7 +787,7 @@ impl FleetService {
     async fn upsert_spawn_link(
         &self,
         context: &FleetInvocationContext,
-        source_session_id: &SessionId,
+        source_session_id: Option<&SessionId>,
         child_session_id: &SessionId,
         source_seq: Option<EventSeq>,
         spawn_request_id: &str,
@@ -901,6 +936,7 @@ pub trait FleetChildRuntime: Send + Sync {
         &self,
         session_id: &SessionId,
         close_on_terminal: bool,
+        profile: Option<ProfileSource>,
     ) -> Result<(), AgentApiError>;
 
     async fn start_run(
@@ -950,9 +986,10 @@ impl FleetChildRuntime for AgentApiFleetRuntime {
         &self,
         session_id: &SessionId,
         close_on_terminal: bool,
+        profile: Option<ProfileSource>,
     ) -> Result<(), AgentApiError> {
         self.api
-            .start_session_for_fleet(session_id, close_on_terminal)
+            .start_session_for_fleet_with_profile(session_id, close_on_terminal, profile)
             .await?;
         Ok(())
     }
@@ -1292,6 +1329,21 @@ fn validate_spawn_args(args: &AgentSpawnArgs) -> Result<(), AgentApiError> {
     if args.input.trim().is_empty() {
         return Err(AgentApiError::invalid_request(
             "agent_spawn input must not be empty",
+        ));
+    }
+    if args.profile.is_some() && args.source.is_some() {
+        return Err(AgentApiError::invalid_request(
+            "agent_spawn profile is mutually exclusive with source",
+        ));
+    }
+    if args.profile.is_some() && (args.fork || args.fork_at_seq.is_some()) {
+        return Err(AgentApiError::invalid_request(
+            "agent_spawn profile is mutually exclusive with fork and fork_at_seq",
+        ));
+    }
+    if args.profile.is_some() && args.vfs != VfsPolicy::Share {
+        return Err(AgentApiError::invalid_request(
+            "agent_spawn profile requires vfs=share",
         ));
     }
     if args.environment != EnvironmentPolicy::Share {
@@ -1801,7 +1853,7 @@ fn extra_report_back_instructions(report_back: &AgentReportBack) -> String {
 
 fn spawn_link_metadata(
     context: &FleetInvocationContext,
-    source_session_id: &SessionId,
+    source_session_id: Option<&SessionId>,
     source_seq: Option<EventSeq>,
     spawn_request_id: &str,
     args: &AgentSpawnArgs,
@@ -1813,8 +1865,9 @@ fn spawn_link_metadata(
         "turn_id": context.turn_id.as_u64(),
         "tool_batch_id": context.batch_id.as_u64(),
         "tool_call_id": context.call_id.as_str(),
-        "source_session_id": source_session_id.as_str(),
+        "source_session_id": source_session_id.map(SessionId::as_str),
         "source_seq": source_seq.map(EventSeq::as_u64),
+        "profile": args.profile.as_ref(),
         "fork": args.fork,
         "vfs": match args.vfs {
             VfsPolicy::Share => "share",
@@ -2115,7 +2168,8 @@ mod tests {
 
     #[derive(Default)]
     struct FakeRuntime {
-        started_sessions: Mutex<Vec<(SessionId, bool)>>,
+        session_store: Option<Arc<InMemorySessionStore>>,
+        started_sessions: Mutex<Vec<(SessionId, bool, Option<ProfileSource>)>>,
         started_runs: Mutex<Vec<(SessionId, Vec<InputItem>, SubmissionId)>>,
         sessions: Mutex<BTreeMap<SessionId, SessionView>>,
         events: Mutex<BTreeMap<SessionId, Vec<api::SessionEventView>>>,
@@ -2130,11 +2184,29 @@ mod tests {
             &self,
             session_id: &SessionId,
             close_on_terminal: bool,
+            profile: Option<ProfileSource>,
         ) -> Result<(), AgentApiError> {
-            self.started_sessions
-                .lock()
-                .expect("lock")
-                .push((session_id.clone(), close_on_terminal));
+            if let Some(store) = &self.session_store
+                && store
+                    .load_session(session_id)
+                    .await
+                    .map_err(map_session_store_error)?
+                    .is_none()
+            {
+                store
+                    .create_session(CreateSession {
+                        session_id: session_id.clone(),
+                        agent_handle: default_agent_handle(),
+                        created_at_ms: 1,
+                    })
+                    .await
+                    .map_err(map_session_store_error)?;
+            }
+            self.started_sessions.lock().expect("lock").push((
+                session_id.clone(),
+                close_on_terminal,
+                profile,
+            ));
             Ok(())
         }
 
@@ -2289,7 +2361,7 @@ mod tests {
 
         assert_eq!(
             runtime.started_sessions.lock().expect("lock").as_slice(),
-            &[(links[0].to_session_id.clone(), false)]
+            &[(links[0].to_session_id.clone(), false, None)]
         );
         assert_eq!(output.child_run_id.as_deref(), Some("run_1"));
         assert_eq!(output.status, "created");
@@ -2319,6 +2391,94 @@ mod tests {
         let started = runtime.started_sessions.lock().expect("lock");
         assert_eq!(started.len(), 1);
         assert!(started[0].1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn spawn_profile_only_creates_fresh_child_without_source_lineage() {
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let parent = open_source_session(sessions.as_ref()).await;
+        let profile = ProfileSource::Named {
+            profile_id: api::ProfileId::new("support"),
+        };
+        let runtime = Arc::new(FakeRuntime {
+            session_store: Some(sessions.clone()),
+            ..FakeRuntime::default()
+        });
+        let service = FleetService::new(sessions.clone(), runtime.clone());
+
+        let output = service
+            .spawn(
+                context(parent.clone()),
+                serde_json::from_value(json!({
+                    "input": "support this customer",
+                    "profile": {
+                        "kind": "named",
+                        "profileId": "support"
+                    }
+                }))
+                .expect("spawn args"),
+            )
+            .await
+            .expect("spawn");
+
+        let child = SessionId::new(output.child_session_id);
+        let child_record = sessions
+            .load_session(&child)
+            .await
+            .expect("load")
+            .expect("child");
+        assert_eq!(child_record.source_session_id, None);
+        assert_eq!(child_record.source_seq, None);
+
+        assert_eq!(
+            runtime.started_sessions.lock().expect("lock").as_slice(),
+            &[(child.clone(), false, Some(profile.clone()))]
+        );
+        assert_eq!(output.child_run_id.as_deref(), Some("run_1"));
+        assert_eq!(output.status, "created");
+
+        let links = sessions
+            .list_links(ListSessionLinks {
+                session_id: parent,
+                direction: SessionLinkDirection::Outgoing,
+                relationship: Some(FLEET_CHILD_RELATIONSHIP.to_owned()),
+                limit: 10,
+            })
+            .await
+            .expect("links");
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].to_session_id, child);
+        assert_eq!(
+            links[0].metadata["profile"],
+            serde_json::to_value(profile).expect("profile json")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn spawn_rejects_source_and_profile_together() {
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let parent = open_source_session(sessions.as_ref()).await;
+        let runtime = Arc::new(FakeRuntime::default());
+        let service = FleetService::new(sessions, runtime);
+
+        let error = service
+            .spawn(
+                context(parent),
+                serde_json::from_value(json!({
+                    "input": "bad mix",
+                    "source": { "kind": "self" },
+                    "profile": {
+                        "kind": "named",
+                        "profileId": "support"
+                    }
+                }))
+                .expect("spawn args"),
+            )
+            .await
+            .expect_err("source + profile must reject");
+
+        assert_eq!(error.kind, api::AgentApiErrorKind::InvalidRequest);
+        assert!(error.message.contains("mutually exclusive"));
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -2550,7 +2710,7 @@ mod tests {
         assert_eq!(output.status, AgentSendStatus::Delivered);
         assert_eq!(
             runtime.started_sessions.lock().expect("lock").as_slice(),
-            &[(child.clone(), false)]
+            &[(child.clone(), false, None)]
         );
         let started_runs = runtime.started_runs.lock().expect("lock");
         assert_eq!(started_runs.len(), 1);

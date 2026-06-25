@@ -1,5 +1,6 @@
 //! Fleet subagent control-plane tool contracts.
 
+use api::ProfileSource;
 use engine::{
     FunctionToolSpec, ToolKind, ToolName, ToolParallelism, ToolSpec, ToolTargetRequirement,
 };
@@ -55,8 +56,10 @@ pub struct AgentSpawnArgs {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub child_session_id: Option<String>,
     pub input: String,
-    #[serde(default)]
-    pub source: AgentSpawnSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<AgentSpawnSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<ProfileSource>,
     #[serde(default)]
     pub fork: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -482,6 +485,46 @@ fn source_schema() -> Value {
     })
 }
 
+fn profile_source_schema() -> Value {
+    json!({
+        "oneOf": [
+            {
+                "type": "object",
+                "properties": {
+                    "kind": { "const": "named" },
+                    "profile_id": {
+                        "type": "string",
+                        "description": "Named agent profile id to instantiate."
+                    },
+                    "profileId": {
+                        "type": "string",
+                        "description": "Camel-case alias for profile_id."
+                    }
+                },
+                "required": ["kind"],
+                "oneOf": [
+                    { "required": ["profile_id"] },
+                    { "required": ["profileId"] }
+                ],
+                "additionalProperties": false
+            },
+            {
+                "type": "object",
+                "properties": {
+                    "kind": { "const": "inline" },
+                    "profile": {
+                        "type": "object",
+                        "description": "Inline agent profile document."
+                    }
+                },
+                "required": ["kind", "profile"],
+                "additionalProperties": false
+            }
+        ],
+        "description": "Profile to instantiate as a fresh child session. Mutually exclusive with source/fork/fork_at_seq."
+    })
+}
+
 fn report_back_schema() -> Value {
     json!({
         "type": ["object", "null"],
@@ -510,6 +553,7 @@ fn spawn_input_schema() -> Value {
                 "description": "Initial task text for the child run."
             },
             "source": source_schema(),
+            "profile": profile_source_schema(),
             "fork": {
                 "type": "boolean",
                 "default": false,
@@ -789,9 +833,9 @@ mod tests {
 
         assert_eq!(
             args.source,
-            AgentSpawnSource::Session {
+            Some(AgentSpawnSource::Session {
                 session_id: "self".to_owned()
-            }
+            })
         );
     }
 

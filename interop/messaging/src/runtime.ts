@@ -1,5 +1,6 @@
 import { RoomBuffer, TurnDebouncer } from "./batcher.js";
-import type { BridgeRuntimeConfig, SessionRecipe } from "./config.js";
+import type { BridgeRuntimeConfig } from "./config.js";
+import type { ProfileSource } from "@lightspeed/agent-client";
 import type { LightspeedSessionBridge } from "./lightspeed.js";
 import { stableHash, stableSessionId } from "./ids.js";
 import {
@@ -39,13 +40,13 @@ export interface NormalizedInbound {
   turnAllowed: boolean;
   /// Sender is on the control allowlist (may run /activation, /status).
   controlAllowed: boolean;
-  /// Recipe resolved for this conversation (null = default recipe).
-  recipe?: SessionRecipe | null;
+  /// Profile resolved for this conversation (null = default profile).
+  profile?: ProfileSource | null;
   /// Configured session key for the binding, or null to derive one per
   /// conversation. Conversations sharing a key share a session.
   sessionKey?: string | null;
-  /// Recipe name recorded on the binding (informational; null = default).
-  recipeName?: string | null;
+  /// Profile label recorded on the binding (informational; null = default).
+  profileLabel?: string | null;
   /// Lazily fetches attached media; only invoked when the message becomes a
   /// user turn, so ignored chatter never downloads anything.
   fetchMedia?: () => Promise<InboundMedia[]>;
@@ -149,9 +150,9 @@ export class MessagingBridgeRuntime {
   private readonly log: (message: string) => void;
   private readonly queues = new Map<string, Promise<void>>();
   private readonly seenRoomKeys = new Set<string>();
-  /// Recipe resolved per conversation, so room-event flushes (which only carry
+  /// Profile resolved per conversation, so room-event flushes (which only carry
   /// the binding) can provision the session the same way turns do.
-  private readonly recipeByConversation = new Map<string, SessionRecipe | null>();
+  private readonly profileByConversation = new Map<string, ProfileSource | null>();
   private readonly turns: TurnDebouncer<PendingTurn>;
   private readonly rooms: RoomBuffer;
 
@@ -192,7 +193,7 @@ export class MessagingBridgeRuntime {
         await this.lightspeed.appendRoomEvents(
           binding.sessionId,
           flushed,
-          this.recipeByConversation.get(key) ?? null,
+          this.profileByConversation.get(key) ?? null,
         );
         this.log(`bridge: appended ${events.length} room event(s) for ${key}`);
       },
@@ -201,7 +202,7 @@ export class MessagingBridgeRuntime {
 
   async handleInbound(message: NormalizedInbound, policy: ChannelPolicy, options: HandleInboundOptions): Promise<void> {
     const binding = await this.ensureBinding(message, policy);
-    this.recipeByConversation.set(message.conversationKey, message.recipe ?? null);
+    this.profileByConversation.set(message.conversationKey, message.profile ?? null);
     const classification = classifyInbound(
       {
         text: message.text,
@@ -295,7 +296,7 @@ export class MessagingBridgeRuntime {
       chatId: message.chatId,
       ...(message.threadId !== undefined ? { threadId: message.threadId } : {}),
       sessionId: stableSessionId(this.sessionPrefix, sessionParts),
-      recipe: message.recipeName ?? null,
+      profileLabel: message.profileLabel ?? null,
       activation,
     });
   }
@@ -342,7 +343,7 @@ export class MessagingBridgeRuntime {
         const buffered = this.rooms.bufferedCount(message.conversationKey);
         return [
           `session: ${binding.sessionId}`,
-          `recipe: ${binding.recipe ?? "default"}`,
+          `profile: ${binding.profileLabel ?? "default"}`,
           `activation: ${binding.activation}`,
           `buffered room messages: ${buffered}`,
           "commands: /activation mention|always|silent, /status",
@@ -390,7 +391,7 @@ export class MessagingBridgeRuntime {
         accountId: first.message.accountId,
         conversationKey: key,
         sessionId: binding.sessionId,
-        recipe: first.message.recipe ?? null,
+        profile: first.message.profile ?? null,
         submissionParts: batch.map((turn) => turn.message.messageId),
         text,
         media,

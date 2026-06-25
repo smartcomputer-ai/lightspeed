@@ -3703,6 +3703,7 @@ name = "store-pg"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",
+ "api",
  "async-trait",
  "auth-registry",
  "base64",
@@ -4358,6 +4359,7 @@ dependencies = [
 name = "tools"
 version = "0.1.0"
 dependencies = [
+ "api",
  "async-trait",
  "engine",
  "futures-util",

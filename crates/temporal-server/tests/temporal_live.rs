@@ -3,9 +3,12 @@ mod support;
 use std::{env, future::Future, sync::Arc, time::Duration};
 
 use api::{
-    AgentApiErrorKind, AgentApiService, ContextAppendEntry, ContextAppendParams, InitializeParams,
-    InputItem, McpServerCreateParams, McpServerDeleteParams, McpServerListParams,
-    McpServerReadParams, McpServerStatus, RemoteMcpApprovalPolicy, RemoteMcpTransport,
+    AgentApiErrorKind, AgentApiService, AgentProfileInput, AgentProfileUpdatePatch,
+    ContextAppendEntry, ContextAppendParams, FieldPatch, InitializeParams, InputItem,
+    McpServerCreateParams, McpServerDeleteParams, McpServerListParams, McpServerReadParams,
+    McpServerStatus, ProfileApplyParams, ProfileCreateParams, ProfileDeleteParams, ProfileDocument,
+    ProfileId, ProfileInstructions, ProfileListParams, ProfileMcpLink, ProfileReadParams,
+    ProfileSource, ProfileUpdateParams, RemoteMcpApprovalPolicy, RemoteMcpTransport,
     RunStartParams, SessionConfigInput, SessionEventsReadParams, SessionItemView,
     SessionMcpLinkParams, SessionMcpListParams, SessionMcpUnlinkParams, SessionReadParams,
     SessionStartParams, SessionStatus, ToolConfigInput,
@@ -18,7 +21,7 @@ use engine::{
     LlmGenerationFacts, LlmGenerationRequest, LlmGenerationResult, LlmGenerationStatus,
     ModelSelection, ObservedToolCall, RunId, SessionId, ToolBatchId, ToolCallId, ToolCallStatus,
     ToolInvocationRequest, ToolName, TurnId,
-    storage::{BlobStore, SessionStore},
+    storage::{BlobStore, ListSessionLinks, SessionLinkDirection, SessionStore},
 };
 use support::live::{
     LIVE_TEST_LOCK, fake_worker_activities, final_assistant_text, openai_live_model,
@@ -27,7 +30,10 @@ use support::live::{
 };
 use temporal_server::{
     default_model_from_env,
-    fleet::{AgentApiFleetRuntime, FleetInvocationContext, FleetService, FleetToolExecutor},
+    fleet::{
+        AgentApiFleetRuntime, FLEET_CHILD_RELATIONSHIP, FleetInvocationContext, FleetService,
+        FleetToolExecutor,
+    },
     gateway::GatewayAgentApi,
     pg_store_from_env,
     worker::{ActivityState, SessionTools, WorkerActivities, core_runtime, worker_with_activities},
@@ -123,6 +129,17 @@ async fn temporal_live_mcp_registry_and_session_links_materialize() -> anyhow::R
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires local/up.sh or compatible Temporal + Postgres env"]
+async fn temporal_live_profiles_create_start_and_apply_idempotently() -> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().expect("live test lock");
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+
+    let activities = fake_worker_activities().await?;
+    run_with_live_worker(activities, run_profiles_live_client).await
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires local/up.sh or compatible Temporal + Postgres env"]
 async fn temporal_live_fleet_executor_spawns_child_workflow_and_run() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().expect("live test lock");
     let _ = dotenvy::dotenv();
@@ -130,6 +147,17 @@ async fn temporal_live_fleet_executor_spawns_child_workflow_and_run() -> anyhow:
 
     let activities = fake_worker_activities().await?;
     run_with_live_worker(activities, run_fleet_spawn_live_client).await
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires local/up.sh or compatible Temporal + Postgres env"]
+async fn temporal_live_fleet_executor_spawns_profile_child() -> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().expect("live test lock");
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+
+    let activities = fake_worker_activities().await?;
+    run_with_live_worker(activities, run_fleet_profile_spawn_live_client).await
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -563,6 +591,7 @@ async fn run_fake_live_client(
                 model: Some(model_to_api(&model)),
                 ..SessionConfigInput::default()
             }),
+            profile: None,
         })
         .await?;
     assert_eq!(started.result.session.id, session_id.as_str());
@@ -629,6 +658,7 @@ async fn run_fake_live_client(
             session_id: Some(session_id.as_str().to_owned()),
             cwd: None,
             config: None,
+            profile: None,
         })
         .await?;
     assert_eq!(restarted.result.session.id, session_id.as_str());
@@ -703,6 +733,7 @@ async fn run_fleet_spawn_live_client(
             }),
             ..SessionConfigInput::default()
         }),
+        profile: None,
     })
     .await?;
 
@@ -833,6 +864,174 @@ async fn run_fleet_spawn_live_client(
     Ok(())
 }
 
+async fn run_fleet_profile_spawn_live_client(
+    client: Client,
+    task_queue: String,
+    session_id: SessionId,
+) -> anyhow::Result<()> {
+    let store = pg_store_from_env().await?;
+    let model = default_model_from_env();
+    let api = Arc::new(
+        GatewayAgentApi::builder(client.clone(), store.clone())
+            .with_task_queue(task_queue)
+            .with_default_model(model.clone())
+            .with_max_steps_per_input(128)
+            .build(),
+    );
+    let profile_id = ProfileId::new(format!(
+        "live_profile_child_{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+
+    api.create_profile(ProfileCreateParams {
+        profile: AgentProfileInput {
+            profile_id: profile_id.clone(),
+            display_name: Some("Live child profile".to_owned()),
+            description: Some("Fleet live profile child".to_owned()),
+            document: ProfileDocument {
+                config: Some(SessionConfigInput {
+                    tools: Some(ToolConfigInput {
+                        fleet: Some(true),
+                        web_fetch: Some(false),
+                        ..ToolConfigInput::default()
+                    }),
+                    ..SessionConfigInput::default()
+                }),
+                instructions: Some(ProfileInstructions::Text {
+                    text: "You are a profile-spawned live child.".to_owned(),
+                }),
+                mounts: Vec::new(),
+                mcp: Vec::new(),
+                environments: Vec::new(),
+            },
+        },
+    })
+    .await?;
+
+    api.start_session(SessionStartParams {
+        session_id: Some(session_id.as_str().to_owned()),
+        cwd: None,
+        config: Some(SessionConfigInput {
+            model: Some(model_to_api(&model)),
+            tools: Some(ToolConfigInput {
+                fleet: Some(true),
+                ..ToolConfigInput::default()
+            }),
+            ..SessionConfigInput::default()
+        }),
+        profile: None,
+    })
+    .await?;
+
+    let blobs: Arc<dyn BlobStore> = store.clone();
+    let sessions: Arc<dyn SessionStore> = store.clone();
+    let fleet_runtime = Arc::new(AgentApiFleetRuntime::new(api.clone()));
+    let service = FleetService::new(sessions.clone(), fleet_runtime);
+    let executor = FleetToolExecutor::new(blobs.clone(), service);
+    let spawn_args = serde_json::json!({
+        "input": "profile child live task",
+        "profile": {
+            "kind": "named",
+            "profileId": profile_id.as_str()
+        }
+    });
+    let arguments_ref = blobs.put_bytes(serde_json::to_vec(&spawn_args)?).await?;
+    let observed_at_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_millis() as u64;
+    let result = executor
+        .invoke(
+            FleetInvocationContext {
+                parent_session_id: session_id.clone(),
+                parent_run_id: RunId::new(1),
+                turn_id: TurnId::new(1),
+                batch_id: ToolBatchId::new(1),
+                call_id: ToolCallId::new("call_profile_spawn"),
+                observed_at_ms,
+            },
+            &ToolInvocationRequest {
+                call_id: ToolCallId::new("call_profile_spawn"),
+                tool_name: ToolName::new(AGENT_SPAWN_TOOL_NAME),
+                arguments_ref,
+                execution_target: None,
+            },
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+    assert_eq!(result.status, ToolCallStatus::Succeeded);
+    let output_ref = result.output_ref.expect("spawn output ref");
+    let output: AgentSpawnOutput = serde_json::from_slice(&blobs.read_bytes(&output_ref).await?)?;
+    let child_run_id = output
+        .child_run_id
+        .as_deref()
+        .expect("spawn should start child run");
+    let child_session_id = SessionId::try_new(output.child_session_id.clone())?;
+
+    let child_record = sessions
+        .load_session(&child_session_id)
+        .await?
+        .expect("profile child session record");
+    assert_eq!(child_record.source_session_id, None);
+    assert_eq!(child_record.source_seq, None);
+
+    let child = api
+        .read_session(SessionReadParams {
+            session_id: child_session_id.as_str().to_owned(),
+        })
+        .await?;
+    let child_config = child.result.session.config.as_ref().expect("child config");
+    assert!(child_config.tools.fleet);
+    assert!(!child_config.tools.web_fetch);
+    assert!(
+        child
+            .result
+            .session
+            .active_context
+            .items
+            .iter()
+            .any(|item| matches!(item, SessionItemView::SystemEvent { text, .. } if text == "Profile instructions")),
+        "profile instructions should be projected"
+    );
+
+    let links = sessions
+        .list_links(ListSessionLinks {
+            session_id: session_id.clone(),
+            direction: SessionLinkDirection::Outgoing,
+            relationship: Some(FLEET_CHILD_RELATIONSHIP.to_owned()),
+            limit: 10,
+        })
+        .await?;
+    let link = links
+        .iter()
+        .find(|link| link.to_session_id == child_session_id)
+        .expect("fleet child link");
+    assert_eq!(
+        link.metadata["profile"],
+        serde_json::to_value(ProfileSource::Named {
+            profile_id: profile_id.clone()
+        })?
+    );
+
+    let run = wait_for_terminal_run(api.as_ref(), &child_session_id, child_run_id).await?;
+    let output_text = final_assistant_text(&run).expect("child assistant output");
+    assert!(output_text.contains("Fake agent completed run"));
+
+    api.delete_profile(ProfileDeleteParams { profile_id })
+        .await?;
+
+    for id in [session_id.as_str(), child_session_id.as_str()] {
+        let handle = client.get_workflow_handle::<AgentSessionWorkflow>(id);
+        let _ = handle
+            .terminate(
+                WorkflowTerminateOptions::builder()
+                    .reason("fleet profile live test cleanup")
+                    .build(),
+            )
+            .await;
+    }
+    Ok(())
+}
+
 async fn run_fleet_wait_live_client(
     client: Client,
     session_id: SessionId,
@@ -852,6 +1051,7 @@ async fn run_fleet_wait_live_client(
             }),
             ..SessionConfigInput::default()
         }),
+        profile: None,
     })
     .await?;
 
@@ -979,6 +1179,7 @@ async fn run_fleet_send_report_back_live_client(
             }),
             ..SessionConfigInput::default()
         }),
+        profile: None,
     })
     .await?;
 
@@ -1170,6 +1371,7 @@ async fn run_continue_as_new_live_client(
             model: Some(model_to_api(&model)),
             ..SessionConfigInput::default()
         }),
+        profile: None,
     })
     .await?;
 
@@ -1369,6 +1571,7 @@ async fn run_context_append_live_client(
             model: Some(model_to_api(&model)),
             ..SessionConfigInput::default()
         }),
+        profile: None,
     })
     .await?;
 
@@ -1528,6 +1731,7 @@ async fn run_admission_failure_live_client(
             model: Some(model_to_api(&model)),
             ..SessionConfigInput::default()
         }),
+        profile: None,
     })
     .await?;
 
@@ -1661,6 +1865,7 @@ async fn run_mcp_registry_live_client(
             model: Some(model_to_api(&model)),
             ..SessionConfigInput::default()
         }),
+        profile: None,
     })
     .await?;
 
@@ -1715,6 +1920,184 @@ async fn run_mcp_registry_live_client(
     Ok(())
 }
 
+async fn run_profiles_live_client(
+    client: Client,
+    task_queue: String,
+    session_id: SessionId,
+) -> anyhow::Result<()> {
+    let store = pg_store_from_env().await?;
+    let model = default_model_from_env();
+    let api = GatewayAgentApi::builder(client.clone(), store)
+        .with_task_queue(task_queue)
+        .with_default_model(model.clone())
+        .with_max_steps_per_input(128)
+        .build();
+    let profile_id = ProfileId::new(format!("live_profile_{}", uuid::Uuid::new_v4().simple()));
+    let server_id = format!("profile_crm_{}", uuid::Uuid::new_v4().simple());
+
+    api.create_mcp_server(McpServerCreateParams {
+        server_id: server_id.clone(),
+        display_name: Some("Profile CRM".to_owned()),
+        server_url: format!("https://{server_id}.example.com/mcp"),
+        transport: RemoteMcpTransport::Auto,
+        default_server_label: "profile_crm".to_owned(),
+        description: Some("Profile live MCP server".to_owned()),
+        allowed_tools: Some(vec!["lookup_customer".to_owned()]),
+        approval_default: RemoteMcpApprovalPolicy::Never,
+        defer_loading_default: Some(true),
+        auth_policy: api::McpServerAuthPolicy::None,
+        status: McpServerStatus::Active,
+    })
+    .await?;
+
+    let created = api
+        .create_profile(ProfileCreateParams {
+            profile: AgentProfileInput {
+                profile_id: profile_id.clone(),
+                display_name: Some("Live profile".to_owned()),
+                description: Some("Initial live profile".to_owned()),
+                document: ProfileDocument {
+                    config: Some(SessionConfigInput {
+                        tools: Some(ToolConfigInput {
+                            fleet: Some(true),
+                            web_fetch: Some(false),
+                            ..ToolConfigInput::default()
+                        }),
+                        ..SessionConfigInput::default()
+                    }),
+                    instructions: Some(ProfileInstructions::Text {
+                        text: "Use the profile instructions in this live test.".to_owned(),
+                    }),
+                    mounts: Vec::new(),
+                    mcp: vec![ProfileMcpLink {
+                        server_id: server_id.clone(),
+                        tool_id: Some("mcp_profile_crm".to_owned()),
+                        server_label: None,
+                        allowed_tools: Some(vec!["lookup_customer".to_owned()]),
+                        approval: Some(RemoteMcpApprovalPolicy::Never),
+                        defer_loading: Some(true),
+                        auth_grant_id: None,
+                    }],
+                    environments: Vec::new(),
+                },
+            },
+        })
+        .await?;
+    assert_eq!(created.result.profile.profile_id, profile_id);
+    assert_eq!(created.result.profile.revision, 1);
+
+    let updated = api
+        .update_profile(ProfileUpdateParams {
+            profile_id: profile_id.clone(),
+            expected_revision: Some(1),
+            patch: AgentProfileUpdatePatch {
+                description: Some(FieldPatch::Set("Updated live profile".to_owned())),
+                ..AgentProfileUpdatePatch::default()
+            },
+        })
+        .await?;
+    assert_eq!(updated.result.profile.revision, 2);
+    assert_eq!(
+        updated.result.profile.description.as_deref(),
+        Some("Updated live profile")
+    );
+
+    let read = api
+        .read_profile(ProfileReadParams {
+            profile_id: profile_id.clone(),
+        })
+        .await?;
+    assert_eq!(read.result.profile.revision, 2);
+    let listed = api.list_profiles(ProfileListParams {}).await?;
+    assert!(
+        listed
+            .result
+            .profiles
+            .iter()
+            .any(|profile| profile.profile_id == profile_id)
+    );
+
+    let started = api
+        .start_session(SessionStartParams {
+            session_id: Some(session_id.as_str().to_owned()),
+            cwd: None,
+            config: Some(SessionConfigInput {
+                model: Some(model_to_api(&model)),
+                ..SessionConfigInput::default()
+            }),
+            profile: Some(ProfileSource::Named {
+                profile_id: profile_id.clone(),
+            }),
+        })
+        .await?;
+    let session = &started.result.session;
+    let config = session.config.as_ref().expect("session config");
+    assert!(config.tools.fleet);
+    assert!(!config.tools.web_fetch);
+    assert!(
+        session
+            .active_context
+            .items
+            .iter()
+            .any(|item| matches!(item, SessionItemView::SystemEvent { text, .. } if text == "Profile instructions")),
+        "profile instructions should be projected"
+    );
+
+    let linked = api
+        .list_session_mcp(SessionMcpListParams {
+            session_id: session_id.as_str().to_owned(),
+        })
+        .await?;
+    assert_eq!(linked.result.links.len(), 1);
+    assert_eq!(linked.result.links[0].tool_id, "mcp_profile_crm");
+    assert_eq!(linked.result.links[0].server_label, "profile_crm");
+
+    let applied = api
+        .apply_profile(ProfileApplyParams {
+            session_id: session_id.as_str().to_owned(),
+            profile: ProfileSource::Named {
+                profile_id: profile_id.clone(),
+            },
+            expected_config_revision: Some(session.config_revision),
+            expected_tools_revision: Some(session.active_tools.revision),
+        })
+        .await?;
+    assert!(!applied.result.applied.config_changed);
+    assert!(!applied.result.applied.instructions_changed);
+    assert_eq!(applied.result.applied.mounts_changed, 0);
+    assert_eq!(applied.result.applied.mcp_changed, 0);
+    assert_eq!(applied.result.applied.environments_changed, 0);
+
+    let run = api
+        .start_run(RunStartParams {
+            submission_id: None,
+            session_id: session_id.as_str().to_owned(),
+            input: vec![InputItem::Text {
+                text: "run after profile start".to_owned(),
+            }],
+            config: None,
+        })
+        .await?;
+    let run = wait_for_terminal_run(&api, &session_id, &run.result.run.id).await?;
+    let output = final_assistant_text(&run).expect("assistant output");
+    assert!(output.contains("Fake agent completed run"));
+
+    api.delete_profile(ProfileDeleteParams { profile_id })
+        .await?;
+    api.delete_mcp_server(McpServerDeleteParams { server_id })
+        .await?;
+
+    let handle = client.get_workflow_handle::<AgentSessionWorkflow>(session_id.as_str());
+    let _ = handle
+        .terminate(
+            WorkflowTerminateOptions::builder()
+                .reason("agent profile live test cleanup")
+                .build(),
+        )
+        .await;
+    Ok(())
+}
+
 async fn run_openai_live_client(
     client: Client,
     task_queue: String,
@@ -1738,6 +2121,7 @@ async fn run_openai_live_client(
             model: Some(model_to_api(&model)),
             ..SessionConfigInput::default()
         }),
+        profile: None,
     })
     .await?;
 

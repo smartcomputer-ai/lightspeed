@@ -20,7 +20,9 @@ use api::{
     METHOD_AUTH_GRANTS_READ, METHOD_AUTH_GRANTS_REVOKE, METHOD_AUTH_PROVIDERS_CREATE,
     METHOD_AUTH_PROVIDERS_DELETE, METHOD_AUTH_PROVIDERS_LIST, METHOD_AUTH_PROVIDERS_READ,
     METHOD_BLOB_GET, METHOD_BLOB_HAS_MANY, METHOD_BLOB_PUT_MANY, METHOD_MCP_SERVERS_CREATE,
-    METHOD_MCP_SERVERS_DELETE, METHOD_MCP_SERVERS_LIST, METHOD_MCP_SERVERS_READ, METHOD_RUN_START,
+    METHOD_MCP_SERVERS_DELETE, METHOD_MCP_SERVERS_LIST, METHOD_MCP_SERVERS_READ,
+    METHOD_PROFILES_APPLY, METHOD_PROFILES_CREATE, METHOD_PROFILES_DELETE, METHOD_PROFILES_LIST,
+    METHOD_PROFILES_READ, METHOD_PROFILES_UPDATE, METHOD_RUN_START,
     METHOD_SESSION_ENVIRONMENTS_ACTIVATE, METHOD_SESSION_ENVIRONMENTS_ATTACH,
     METHOD_SESSION_ENVIRONMENTS_CLOSE, METHOD_SESSION_ENVIRONMENTS_DEACTIVATE,
     METHOD_SESSION_ENVIRONMENTS_LIST, METHOD_SESSION_ENVIRONMENTS_READ, METHOD_SESSION_EVENTS_READ,
@@ -31,7 +33,10 @@ use api::{
     METHOD_VFS_WORKSPACE_CREATE, METHOD_VFS_WORKSPACE_DELETE, METHOD_VFS_WORKSPACE_READ,
     METHOD_VFS_WORKSPACE_UPDATE, McpServerCreateParams, McpServerCreateResponse,
     McpServerDeleteParams, McpServerDeleteResponse, McpServerListParams, McpServerListResponse,
-    McpServerReadParams, McpServerReadResponse, RequestId, RunStartParams, RunStartResponse,
+    McpServerReadParams, McpServerReadResponse, ProfileApplyParams, ProfileApplyResponse,
+    ProfileCreateParams, ProfileCreateResponse, ProfileDeleteParams, ProfileDeleteResponse,
+    ProfileListParams, ProfileListResponse, ProfileReadParams, ProfileReadResponse,
+    ProfileUpdateParams, ProfileUpdateResponse, RequestId, RunStartParams, RunStartResponse,
     SessionEnvironmentActivateParams, SessionEnvironmentActivateResponse,
     SessionEnvironmentAttachParams, SessionEnvironmentAttachResponse,
     SessionEnvironmentCloseParams, SessionEnvironmentCloseResponse,
@@ -98,6 +103,48 @@ impl HttpAgentApi {
         params: SessionStartParams,
     ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError> {
         self.request(METHOD_SESSION_START, params).await
+    }
+
+    pub(crate) async fn create_profile(
+        &self,
+        params: ProfileCreateParams,
+    ) -> Result<AgentApiOutcome<ProfileCreateResponse>, AgentApiError> {
+        self.request(METHOD_PROFILES_CREATE, params).await
+    }
+
+    pub(crate) async fn read_profile(
+        &self,
+        params: ProfileReadParams,
+    ) -> Result<AgentApiOutcome<ProfileReadResponse>, AgentApiError> {
+        self.request(METHOD_PROFILES_READ, params).await
+    }
+
+    pub(crate) async fn list_profiles(
+        &self,
+        params: ProfileListParams,
+    ) -> Result<AgentApiOutcome<ProfileListResponse>, AgentApiError> {
+        self.request(METHOD_PROFILES_LIST, params).await
+    }
+
+    pub(crate) async fn update_profile(
+        &self,
+        params: ProfileUpdateParams,
+    ) -> Result<AgentApiOutcome<ProfileUpdateResponse>, AgentApiError> {
+        self.request(METHOD_PROFILES_UPDATE, params).await
+    }
+
+    pub(crate) async fn delete_profile(
+        &self,
+        params: ProfileDeleteParams,
+    ) -> Result<AgentApiOutcome<ProfileDeleteResponse>, AgentApiError> {
+        self.request(METHOD_PROFILES_DELETE, params).await
+    }
+
+    pub(crate) async fn apply_profile(
+        &self,
+        params: ProfileApplyParams,
+    ) -> Result<AgentApiOutcome<ProfileApplyResponse>, AgentApiError> {
+        self.request(METHOD_PROFILES_APPLY, params).await
     }
 
     pub(crate) async fn read_session(

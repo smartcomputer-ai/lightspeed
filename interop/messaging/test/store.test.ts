@@ -27,9 +27,9 @@ const init = {
 describe("JsonBridgeStore bindings", () => {
   it("creates and persists bindings across store instances", async () => {
     const store = new JsonBridgeStore(filePath);
-    const created = await store.getOrCreateBinding("conv-1", { ...init, recipe: "support" });
+    const created = await store.getOrCreateBinding("conv-1", { ...init, profileLabel: "support" });
     expect(created.sessionId).toBe("bridge_abc");
-    expect(created.recipe).toBe("support");
+    expect(created.profileLabel).toBe("support");
 
     await store.updateBinding("conv-1", { activation: "always" });
 
@@ -37,7 +37,7 @@ describe("JsonBridgeStore bindings", () => {
     const binding = await reloaded.getBinding("conv-1");
     expect(binding?.activation).toBe("always");
     expect(binding?.chatId).toBe("chat-1");
-    expect(binding?.recipe).toBe("support");
+    expect(binding?.profileLabel).toBe("support");
   });
 
   it("returns the existing binding without overwriting customizations", async () => {
@@ -54,7 +54,7 @@ describe("JsonBridgeStore bindings", () => {
     await store.getOrCreateBinding("conv-1", {
       ...init,
       sessionId: "bridge_old",
-      recipe: null,
+      profileLabel: null,
     });
     await store.updateBinding("conv-1", { activation: "silent" });
 
@@ -62,13 +62,13 @@ describe("JsonBridgeStore bindings", () => {
       ...init,
       chatId: "chat-2",
       sessionId: "bridge_new",
-      recipe: "anna",
+      profileLabel: "anna",
       activation: "always",
     });
 
     expect(refreshed.chatId).toBe("chat-2");
     expect(refreshed.sessionId).toBe("bridge_new");
-    expect(refreshed.recipe).toBe("anna");
+    expect(refreshed.profileLabel).toBe("anna");
     expect(refreshed.activation).toBe("silent");
   });
 });

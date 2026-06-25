@@ -5,12 +5,14 @@
 //! workflow gateway, or another substrate while clients keep speaking the same
 //! session/run/item protocol.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
+use std::str::FromStr;
 
 use async_trait::async_trait;
 use schemars::JsonSchema;
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
+use serde::de::{self, DeserializeOwned};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use thiserror::Error;
 
@@ -21,6 +23,12 @@ pub const PROTOCOL_VERSION: &str = "lightspeed.agent.api.v1";
 
 pub const METHOD_INITIALIZE: &str = "initialize";
 pub const METHOD_SESSION_START: &str = "session/start";
+pub const METHOD_PROFILES_CREATE: &str = "profiles/create";
+pub const METHOD_PROFILES_READ: &str = "profiles/read";
+pub const METHOD_PROFILES_LIST: &str = "profiles/list";
+pub const METHOD_PROFILES_UPDATE: &str = "profiles/update";
+pub const METHOD_PROFILES_DELETE: &str = "profiles/delete";
+pub const METHOD_PROFILES_APPLY: &str = "profiles/apply";
 pub const METHOD_SESSION_UPDATE: &str = "session/update";
 pub const METHOD_SESSION_TOOLS_UPDATE: &str = "session/tools/update";
 pub const METHOD_SESSION_READ: &str = "session/read";
@@ -151,6 +159,36 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: SessionStartParams,
     ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError>;
+
+    async fn create_profile(
+        &self,
+        params: ProfileCreateParams,
+    ) -> Result<AgentApiOutcome<ProfileCreateResponse>, AgentApiError>;
+
+    async fn read_profile(
+        &self,
+        params: ProfileReadParams,
+    ) -> Result<AgentApiOutcome<ProfileReadResponse>, AgentApiError>;
+
+    async fn list_profiles(
+        &self,
+        params: ProfileListParams,
+    ) -> Result<AgentApiOutcome<ProfileListResponse>, AgentApiError>;
+
+    async fn update_profile(
+        &self,
+        params: ProfileUpdateParams,
+    ) -> Result<AgentApiOutcome<ProfileUpdateResponse>, AgentApiError>;
+
+    async fn delete_profile(
+        &self,
+        params: ProfileDeleteParams,
+    ) -> Result<AgentApiOutcome<ProfileDeleteResponse>, AgentApiError>;
+
+    async fn apply_profile(
+        &self,
+        params: ProfileApplyParams,
+    ) -> Result<AgentApiOutcome<ProfileApplyResponse>, AgentApiError>;
 
     async fn update_session(
         &self,
@@ -541,6 +579,649 @@ pub struct SessionStartParams {
     pub cwd: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config: Option<SessionConfigInput>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<ProfileSource>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ProfileId(String);
+
+impl ProfileId {
+    pub fn new(value: impl Into<String>) -> Self {
+        let value = value.into();
+        Self::try_new(value).unwrap_or_else(|error| panic!("invalid ProfileId: {error}"))
+    }
+
+    pub fn try_new(value: impl Into<String>) -> Result<Self, ProfileIdError> {
+        let value = value.into();
+        validate_profile_id(&value)?;
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for ProfileId {
+    type Error = ProfileIdError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::try_new(value)
+    }
+}
+
+impl TryFrom<&str> for ProfileId {
+    type Error = ProfileIdError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        Self::try_new(value)
+    }
+}
+
+impl FromStr for ProfileId {
+    type Err = ProfileIdError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::try_new(value)
+    }
+}
+
+impl fmt::Display for ProfileId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl Serialize for ProfileId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for ProfileId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::try_new(value).map_err(de::Error::custom)
+    }
+}
+
+impl JsonSchema for ProfileId {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "ProfileId".into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        String::json_schema(generator)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum ProfileIdError {
+    #[error("profile id must not be empty")]
+    Empty,
+    #[error("profile id must start with an ASCII alphanumeric character")]
+    InvalidStart,
+    #[error("profile id contains invalid character {ch:?} at byte {index}")]
+    InvalidCharacter { index: usize, ch: char },
+    #[error("profile id must be at most 128 bytes")]
+    TooLong,
+}
+
+fn validate_profile_id(value: &str) -> Result<(), ProfileIdError> {
+    if value.is_empty() {
+        return Err(ProfileIdError::Empty);
+    }
+    if value.len() > 128 {
+        return Err(ProfileIdError::TooLong);
+    }
+    let Some(first) = value.chars().next() else {
+        return Err(ProfileIdError::Empty);
+    };
+    if !first.is_ascii_alphanumeric() {
+        return Err(ProfileIdError::InvalidStart);
+    }
+    for (index, ch) in value.char_indices() {
+        if !(ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | ':')) {
+            return Err(ProfileIdError::InvalidCharacter { index, ch });
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum ProfileError {
+    #[error("agent profile already exists: {profile_id}")]
+    AlreadyExists { profile_id: ProfileId },
+
+    #[error("agent profile not found: {profile_id}")]
+    NotFound { profile_id: ProfileId },
+
+    #[error("agent profile revision conflict for {profile_id}: expected {expected}, got {actual}")]
+    RevisionConflict {
+        profile_id: ProfileId,
+        expected: u64,
+        actual: u64,
+    },
+
+    #[error("invalid agent profile: {message}")]
+    InvalidInput { message: String },
+
+    #[error("agent profile store failure: {message}")]
+    Store { message: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentProfileInput {
+    pub profile_id: ProfileId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(flatten)]
+    pub document: ProfileDocument,
+}
+
+impl AgentProfileInput {
+    pub fn into_record(self, created_at_ms: i64) -> AgentProfile {
+        AgentProfile {
+            profile_id: self.profile_id,
+            display_name: self.display_name,
+            description: self.description,
+            revision: 1,
+            document: self.document,
+            created_at_ms,
+            updated_at_ms: created_at_ms,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct InlineAgentProfile {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(flatten)]
+    pub document: ProfileDocument,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentProfile {
+    pub profile_id: ProfileId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub revision: u64,
+    #[serde(flatten)]
+    pub document: ProfileDocument,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+impl AgentProfile {
+    pub fn validate(&self) -> Result<(), ProfileError> {
+        validate_nonempty_optional("displayName", self.display_name.as_deref())?;
+        validate_nonempty_optional("description", self.description.as_deref())?;
+        if self.revision == 0 {
+            return Err(ProfileError::InvalidInput {
+                message: "revision must be greater than zero".to_owned(),
+            });
+        }
+        validate_nonnegative_i64("createdAtMs", self.created_at_ms)?;
+        validate_nonnegative_i64("updatedAtMs", self.updated_at_ms)?;
+        if self.updated_at_ms < self.created_at_ms {
+            return Err(ProfileError::InvalidInput {
+                message: "updatedAtMs must be >= createdAtMs".to_owned(),
+            });
+        }
+        self.document.validate()
+    }
+
+    pub fn summary(&self) -> AgentProfileSummary {
+        AgentProfileSummary {
+            profile_id: self.profile_id.clone(),
+            display_name: self.display_name.clone(),
+            description: self.description.clone(),
+            revision: self.revision,
+            updated_at_ms: self.updated_at_ms,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentProfileSummary {
+    pub profile_id: ProfileId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub revision: u64,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileDocument {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<SessionConfigInput>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<ProfileInstructions>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mounts: Vec<ProfileMount>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp: Vec<ProfileMcpLink>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub environments: Vec<ProfileEnvironment>,
+}
+
+impl ProfileDocument {
+    pub fn validate(&self) -> Result<(), ProfileError> {
+        if let Some(instructions) = &self.instructions {
+            instructions.validate()?;
+        }
+        let mut mount_paths = BTreeSet::new();
+        for mount in &self.mounts {
+            mount.validate()?;
+            if !mount_paths.insert(mount.mount_path.clone()) {
+                return Err(ProfileError::InvalidInput {
+                    message: format!("duplicate mountPath {}", mount.mount_path),
+                });
+            }
+        }
+        let mut server_ids = BTreeSet::new();
+        for link in &self.mcp {
+            link.validate()?;
+            if !server_ids.insert(link.server_id.clone()) {
+                return Err(ProfileError::InvalidInput {
+                    message: format!("duplicate mcp serverId {}", link.server_id),
+                });
+            }
+        }
+        let mut env_ids = BTreeSet::new();
+        let mut active_count = 0usize;
+        for environment in &self.environments {
+            environment.validate()?;
+            if !env_ids.insert(environment.env_id.clone()) {
+                return Err(ProfileError::InvalidInput {
+                    message: format!("duplicate environment envId {}", environment.env_id),
+                });
+            }
+            if environment.activate {
+                active_count += 1;
+            }
+        }
+        if active_count > 1 {
+            return Err(ProfileError::InvalidInput {
+                message: "at most one environment may activate".to_owned(),
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ProfileInstructions {
+    Text { text: String },
+    TextRef { blob_ref: String },
+}
+
+impl ProfileInstructions {
+    fn validate(&self) -> Result<(), ProfileError> {
+        match self {
+            ProfileInstructions::Text { text } => {
+                validate_nonempty_string("instructions.text", text)
+            }
+            ProfileInstructions::TextRef { blob_ref } => {
+                validate_nonempty_string("instructions.blobRef", blob_ref)
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileMount {
+    pub mount_path: String,
+    pub source: VfsMountSourceInput,
+    pub access: VfsMountAccess,
+}
+
+impl ProfileMount {
+    fn validate(&self) -> Result<(), ProfileError> {
+        validate_absolute_path("mountPath", &self.mount_path)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileMcpLink {
+    pub server_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_tools: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval: Option<RemoteMcpApprovalPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub defer_loading: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_grant_id: Option<String>,
+}
+
+impl ProfileMcpLink {
+    fn validate(&self) -> Result<(), ProfileError> {
+        validate_nonempty_string("mcp.serverId", &self.server_id)?;
+        validate_nonempty_optional("mcp.toolId", self.tool_id.as_deref())?;
+        validate_nonempty_optional("mcp.serverLabel", self.server_label.as_deref())?;
+        validate_nonempty_optional("mcp.authGrantId", self.auth_grant_id.as_deref())?;
+        if let Some(allowed_tools) = &self.allowed_tools {
+            if allowed_tools.is_empty() {
+                return Err(ProfileError::InvalidInput {
+                    message: "mcp.allowedTools must not be empty when present".to_owned(),
+                });
+            }
+            for tool in allowed_tools {
+                validate_nonempty_string("mcp.allowedTools[]", tool)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileEnvironment {
+    pub env_id: EnvironmentId,
+    pub provider_id: EnvironmentProviderId,
+    pub target_id: EnvironmentTargetId,
+    #[serde(default)]
+    pub activate: bool,
+}
+
+impl ProfileEnvironment {
+    fn validate(&self) -> Result<(), ProfileError> {
+        validate_nonempty_string("environment.envId", &self.env_id)?;
+        validate_nonempty_string("environment.providerId", &self.provider_id)?;
+        validate_nonempty_string("environment.targetId", &self.target_id)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ProfileSource {
+    Named {
+        #[serde(alias = "profile_id")]
+        profile_id: ProfileId,
+    },
+    Inline {
+        profile: InlineAgentProfile,
+    },
+}
+
+impl ProfileSource {
+    pub fn validate(&self) -> Result<(), ProfileError> {
+        match self {
+            ProfileSource::Named { .. } => Ok(()),
+            ProfileSource::Inline { profile } => {
+                validate_nonempty_optional("displayName", profile.display_name.as_deref())?;
+                validate_nonempty_optional("description", profile.description.as_deref())?;
+                profile.document.validate()
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentProfileUpdatePatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<FieldPatch<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<FieldPatch<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<FieldPatch<SessionConfigInput>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<FieldPatch<ProfileInstructions>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mounts: Option<Vec<ProfileMount>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp: Option<Vec<ProfileMcpLink>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environments: Option<Vec<ProfileEnvironment>>,
+}
+
+impl AgentProfileUpdatePatch {
+    pub fn is_empty(&self) -> bool {
+        self.display_name.is_none()
+            && self.description.is_none()
+            && self.config.is_none()
+            && self.instructions.is_none()
+            && self.mounts.is_none()
+            && self.mcp.is_none()
+            && self.environments.is_none()
+    }
+
+    pub fn apply_to(
+        self,
+        mut profile: AgentProfile,
+        updated_at_ms: i64,
+    ) -> Result<AgentProfile, ProfileError> {
+        if let Some(patch) = self.display_name {
+            profile.display_name = patch.into_option();
+        }
+        if let Some(patch) = self.description {
+            profile.description = patch.into_option();
+        }
+        if let Some(patch) = self.config {
+            profile.document.config = patch.into_option();
+        }
+        if let Some(patch) = self.instructions {
+            profile.document.instructions = patch.into_option();
+        }
+        if let Some(mounts) = self.mounts {
+            profile.document.mounts = mounts;
+        }
+        if let Some(mcp) = self.mcp {
+            profile.document.mcp = mcp;
+        }
+        if let Some(environments) = self.environments {
+            profile.document.environments = environments;
+        }
+        profile.revision =
+            profile
+                .revision
+                .checked_add(1)
+                .ok_or_else(|| ProfileError::InvalidInput {
+                    message: "profile revision exhausted".to_owned(),
+                })?;
+        profile.updated_at_ms = updated_at_ms;
+        profile.validate()?;
+        Ok(profile)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UpdateAgentProfile {
+    pub profile_id: ProfileId,
+    pub expected_revision: Option<u64>,
+    pub patch: AgentProfileUpdatePatch,
+    pub updated_at_ms: i64,
+}
+
+#[async_trait]
+pub trait ProfileStore: Send + Sync {
+    async fn create_agent_profile(
+        &self,
+        profile: AgentProfileInput,
+        created_at_ms: i64,
+    ) -> Result<AgentProfile, ProfileError>;
+
+    async fn read_agent_profile(
+        &self,
+        profile_id: &ProfileId,
+    ) -> Result<AgentProfile, ProfileError>;
+
+    async fn list_agent_profiles(&self) -> Result<Vec<AgentProfileSummary>, ProfileError>;
+
+    async fn update_agent_profile(
+        &self,
+        update: UpdateAgentProfile,
+    ) -> Result<AgentProfile, ProfileError>;
+
+    async fn delete_agent_profile(
+        &self,
+        profile_id: &ProfileId,
+    ) -> Result<AgentProfile, ProfileError>;
+}
+
+fn validate_nonempty_optional(name: &str, value: Option<&str>) -> Result<(), ProfileError> {
+    if let Some(value) = value {
+        validate_nonempty_string(name, value)?;
+    }
+    Ok(())
+}
+
+fn validate_nonempty_string(name: &str, value: &str) -> Result<(), ProfileError> {
+    if value.trim().is_empty() {
+        return Err(ProfileError::InvalidInput {
+            message: format!("{name} must not be empty"),
+        });
+    }
+    Ok(())
+}
+
+fn validate_nonnegative_i64(name: &str, value: i64) -> Result<(), ProfileError> {
+    if value < 0 {
+        return Err(ProfileError::InvalidInput {
+            message: format!("{name} must be nonnegative"),
+        });
+    }
+    Ok(())
+}
+
+fn validate_absolute_path(name: &str, value: &str) -> Result<(), ProfileError> {
+    validate_nonempty_string(name, value)?;
+    if !value.starts_with('/') {
+        return Err(ProfileError::InvalidInput {
+            message: format!("{name} must be an absolute VFS path"),
+        });
+    }
+    Ok(())
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileCreateParams {
+    pub profile: AgentProfileInput,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileCreateResponse {
+    pub profile: AgentProfile,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileReadParams {
+    pub profile_id: ProfileId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileReadResponse {
+    pub profile: AgentProfile,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileListParams {}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileListResponse {
+    #[serde(default)]
+    pub profiles: Vec<AgentProfileSummary>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileUpdateParams {
+    pub profile_id: ProfileId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_revision: Option<u64>,
+    #[serde(default)]
+    pub patch: AgentProfileUpdatePatch,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileUpdateResponse {
+    pub profile: AgentProfile,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileDeleteParams {
+    pub profile_id: ProfileId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileDeleteResponse {
+    pub profile: AgentProfile,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileApplyParams {
+    pub session_id: SessionId,
+    pub profile: ProfileSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_config_revision: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_tools_revision: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileApplyResponse {
+    pub session: SessionView,
+    #[serde(default)]
+    pub applied: ProfileApplySummary,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileApplySummary {
+    pub config_changed: bool,
+    pub instructions_changed: bool,
+    pub mounts_changed: u32,
+    pub mcp_changed: u32,
+    pub environments_changed: u32,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -685,6 +1366,15 @@ pub struct SessionConfigPatchInput {
 pub enum FieldPatch<T> {
     Set(T),
     Clear,
+}
+
+impl<T> FieldPatch<T> {
+    pub fn into_option(self) -> Option<T> {
+        match self {
+            Self::Set(value) => Some(value),
+            Self::Clear => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -3518,6 +4208,12 @@ macro_rules! api_methods {
 api_methods! {
     METHOD_INITIALIZE => initialize(InitializeParams) -> InitializeResponse,
     METHOD_SESSION_START => start_session(SessionStartParams) -> SessionStartResponse,
+    METHOD_PROFILES_CREATE => create_profile(ProfileCreateParams) -> ProfileCreateResponse,
+    METHOD_PROFILES_READ => read_profile(ProfileReadParams) -> ProfileReadResponse,
+    METHOD_PROFILES_LIST => list_profiles(ProfileListParams) -> ProfileListResponse,
+    METHOD_PROFILES_UPDATE => update_profile(ProfileUpdateParams) -> ProfileUpdateResponse,
+    METHOD_PROFILES_DELETE => delete_profile(ProfileDeleteParams) -> ProfileDeleteResponse,
+    METHOD_PROFILES_APPLY => apply_profile(ProfileApplyParams) -> ProfileApplyResponse,
     METHOD_SESSION_UPDATE => update_session(SessionUpdateParams) -> SessionUpdateResponse,
     METHOD_SESSION_TOOLS_UPDATE => update_session_tools(SessionToolsUpdateParams) -> SessionToolsUpdateResponse,
     METHOD_SESSION_READ => read_session(SessionReadParams) -> SessionReadResponse,
@@ -4924,6 +5620,61 @@ mod tests {
             Err(AgentApiError::internal("not implemented"))
         }
 
+        async fn create_profile(
+            &self,
+            params: ProfileCreateParams,
+        ) -> Result<AgentApiOutcome<ProfileCreateResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(ProfileCreateResponse {
+                profile: params.profile.into_record(1),
+            }))
+        }
+
+        async fn read_profile(
+            &self,
+            params: ProfileReadParams,
+        ) -> Result<AgentApiOutcome<ProfileReadResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(ProfileReadResponse {
+                profile: test_profile(params.profile_id),
+            }))
+        }
+
+        async fn list_profiles(
+            &self,
+            _params: ProfileListParams,
+        ) -> Result<AgentApiOutcome<ProfileListResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(ProfileListResponse {
+                profiles: vec![test_profile(ProfileId::new("support")).summary()],
+            }))
+        }
+
+        async fn update_profile(
+            &self,
+            params: ProfileUpdateParams,
+        ) -> Result<AgentApiOutcome<ProfileUpdateResponse>, AgentApiError> {
+            let mut profile = test_profile(params.profile_id);
+            profile.revision = params.expected_revision.unwrap_or(profile.revision) + 1;
+            Ok(AgentApiOutcome::new(ProfileUpdateResponse { profile }))
+        }
+
+        async fn delete_profile(
+            &self,
+            params: ProfileDeleteParams,
+        ) -> Result<AgentApiOutcome<ProfileDeleteResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(ProfileDeleteResponse {
+                profile: test_profile(params.profile_id),
+            }))
+        }
+
+        async fn apply_profile(
+            &self,
+            params: ProfileApplyParams,
+        ) -> Result<AgentApiOutcome<ProfileApplyResponse>, AgentApiError> {
+            Ok(AgentApiOutcome::new(ProfileApplyResponse {
+                session: test_session(params.session_id, SessionStatus::Idle),
+                applied: ProfileApplySummary::default(),
+            }))
+        }
+
         async fn update_session(
             &self,
             params: SessionUpdateParams,
@@ -5729,6 +6480,32 @@ mod tests {
             expires_at_ms: None,
             status,
             metadata: serde_json::Value::Object(Default::default()),
+            created_at_ms: 1,
+            updated_at_ms: 2,
+        }
+    }
+
+    fn test_profile(profile_id: ProfileId) -> AgentProfile {
+        AgentProfile {
+            profile_id,
+            display_name: Some("Support".to_owned()),
+            description: Some("Ticket support profile".to_owned()),
+            revision: 1,
+            document: ProfileDocument {
+                config: Some(SessionConfigInput {
+                    tools: Some(ToolConfigInput {
+                        fleet: Some(true),
+                        ..ToolConfigInput::default()
+                    }),
+                    ..SessionConfigInput::default()
+                }),
+                instructions: Some(ProfileInstructions::Text {
+                    text: "Be concise.".to_owned(),
+                }),
+                mounts: Vec::new(),
+                mcp: Vec::new(),
+                environments: Vec::new(),
+            },
             created_at_ms: 1,
             updated_at_ms: 2,
         }

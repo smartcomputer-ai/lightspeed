@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+api = { path = "../api" }
 async-trait = "0.1"
 engine = { path = "../engine" }
 futures-util = "0.3"

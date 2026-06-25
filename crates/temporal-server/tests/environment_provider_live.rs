@@ -12,13 +12,15 @@ use std::{
 };
 
 use api::{
-    AgentApiService, EnvironmentProviderCapabilitiesView, EnvironmentProviderHeartbeatParams,
-    EnvironmentProviderImplementationView, EnvironmentProviderKindView,
-    EnvironmentProviderRegisterParams, HostControllerConnectionView, HostTargetAttachRequestView,
-    HostTargetCreateRequestView, HostTransportView, InputItem, RunStartParams, RunStatus,
-    SandboxTargetSpecView, SessionConfigInput, SessionEnvironmentAttachParams,
-    SessionEnvironmentCloseParams, SessionEnvironmentCreateParams, SessionStartParams,
-    VfsMountAccess as ApiVfsMountAccess, VfsMountPutParams, VfsMountSourceInput,
+    AgentApiService, AgentProfileInput, EnvironmentProviderCapabilitiesView,
+    EnvironmentProviderHeartbeatParams, EnvironmentProviderImplementationView,
+    EnvironmentProviderKindView, EnvironmentProviderRegisterParams, HostControllerConnectionView,
+    HostTargetAttachRequestView, HostTargetCreateRequestView, HostTransportView, InputItem,
+    ProfileCreateParams, ProfileDeleteParams, ProfileDocument, ProfileEnvironment, ProfileId,
+    ProfileSource, RunStartParams, RunStatus, SandboxTargetSpecView, SessionConfigInput,
+    SessionEnvironmentAttachParams, SessionEnvironmentCloseParams, SessionEnvironmentCreateParams,
+    SessionEnvironmentListParams, SessionStartParams, VfsMountAccess as ApiVfsMountAccess,
+    VfsMountPutParams, VfsMountSourceInput,
 };
 use async_trait::async_trait;
 use engine::{
@@ -100,6 +102,26 @@ async fn temporal_live_fake_provider_create_attach_and_process_tool() -> anyhow:
 }
 
 #[tokio::test(flavor = "current_thread")]
+#[ignore = "requires local/up.sh or compatible Temporal + Postgres env"]
+async fn temporal_live_profile_attaches_host_environment() -> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().expect("live test lock");
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+
+    let provider = FakeHostProvider::start().await?;
+    let store = pg_store_from_env().await?;
+    let blobs: Arc<dyn BlobStore> = store.clone();
+    let llm = Arc::new(ExecCommandLlm::new(blobs.clone())) as Arc<dyn CoreAgentLlm>;
+    let tools = Arc::new(SessionTools::from_pg_store(store.clone())) as Arc<dyn CoreAgentTools>;
+    let activities = WorkerActivities::new(ActivityState::from_pg_store(store, llm, tools));
+
+    support::live::run_with_live_worker(activities, |client, task_queue, session_id| async move {
+        run_profile_environment_client(client, task_queue, session_id, provider).await
+    })
+    .await
+}
+
+#[tokio::test(flavor = "current_thread")]
 #[ignore = "requires local/up.sh or compatible Temporal + Postgres env and target/debug/host-bridge"]
 async fn temporal_live_host_bridge_agent_reads_local_filesystem() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().expect("live test lock");
@@ -158,6 +180,7 @@ async fn run_host_bridge_client(
             model: Some(api_projection::model_to_api(&model)),
             ..SessionConfigInput::default()
         }),
+        profile: None,
     })
     .await?;
 
@@ -309,6 +332,7 @@ async fn run_fake_provider_client(
             model: Some(api_projection::model_to_api(&model)),
             ..SessionConfigInput::default()
         }),
+        profile: None,
     })
     .await?;
 
@@ -420,6 +444,137 @@ async fn run_fake_provider_client(
         .terminate(
             WorkflowTerminateOptions::builder()
                 .reason("fake provider live test cleanup")
+                .build(),
+        )
+        .await;
+    Ok(())
+}
+
+async fn run_profile_environment_client(
+    client: Client,
+    task_queue: String,
+    session_id: engine::SessionId,
+    provider: FakeHostProvider,
+) -> anyhow::Result<()> {
+    let store = pg_store_from_env().await?;
+    let model = fake_model();
+    let api = GatewayAgentApi::builder(client.clone(), store)
+        .with_task_queue(task_queue)
+        .with_default_model(model.clone())
+        .with_max_steps_per_input(32)
+        .build();
+    let provider_id = format!("profile-provider-{}", uuid::Uuid::new_v4().simple());
+    let profile_id = ProfileId::new(format!("profile_env_{}", uuid::Uuid::new_v4().simple()));
+
+    api.register_environment_provider(EnvironmentProviderRegisterParams {
+        provider_id: provider_id.clone(),
+        provider_kind: EnvironmentProviderKindView::Bridge,
+        controller_connection: HostControllerConnectionView {
+            endpoint: provider.endpoint().to_owned(),
+            transport: HostTransportView::WebSocket,
+        },
+        capabilities: EnvironmentProviderCapabilitiesView::default(),
+        implementation: EnvironmentProviderImplementationView {
+            name: "client-supplied-placeholder".to_owned(),
+            version: None,
+        },
+        lease_ttl_ms: 60_000,
+        display_name: Some("profile fake host provider".to_owned()),
+        metadata: BTreeMap::new(),
+    })
+    .await?;
+
+    api.heartbeat_environment_provider(EnvironmentProviderHeartbeatParams {
+        provider_id: provider_id.clone(),
+        lease_ttl_ms: None,
+        observed_targets: Vec::new(),
+    })
+    .await?;
+
+    api.create_profile(ProfileCreateParams {
+        profile: AgentProfileInput {
+            profile_id: profile_id.clone(),
+            display_name: Some("Profile environment".to_owned()),
+            description: Some("Attach fake host provider target".to_owned()),
+            document: ProfileDocument {
+                config: Some(SessionConfigInput {
+                    model: Some(api_projection::model_to_api(&model)),
+                    ..SessionConfigInput::default()
+                }),
+                instructions: None,
+                mounts: Vec::new(),
+                mcp: Vec::new(),
+                environments: vec![ProfileEnvironment {
+                    env_id: "profile-env".to_owned(),
+                    provider_id: provider_id.clone(),
+                    target_id: ATTACH_TARGET_ID.to_owned(),
+                    activate: true,
+                }],
+            },
+        },
+    })
+    .await?;
+
+    let started = api
+        .start_session(SessionStartParams {
+            session_id: Some(session_id.as_str().to_owned()),
+            cwd: None,
+            config: None,
+            profile: Some(ProfileSource::Named {
+                profile_id: profile_id.clone(),
+            }),
+        })
+        .await?;
+    assert_eq!(started.result.session.id, session_id.as_str());
+    assert_eq!(provider.attach_count(), 1);
+
+    let environments = api
+        .list_session_environments(SessionEnvironmentListParams {
+            session_id: session_id.as_str().to_owned(),
+        })
+        .await?;
+    assert_eq!(
+        environments.result.active_env_id.as_deref(),
+        Some("profile-env")
+    );
+    assert_eq!(environments.result.environments.len(), 1);
+
+    let run = api
+        .start_run(RunStartParams {
+            submission_id: None,
+            session_id: session_id.as_str().to_owned(),
+            input: vec![InputItem::Text {
+                text: "run a command in the profile attached provider target".to_owned(),
+            }],
+            config: None,
+        })
+        .await?;
+    let run = support::live::wait_for_terminal_run(&api, &session_id, &run.result.run.id).await?;
+    assert_eq!(
+        run.status,
+        RunStatus::Completed,
+        "profile environment run did not complete: {run:#?}"
+    );
+    let Some(text) = final_assistant_text(&run) else {
+        anyhow::bail!("profile environment run missing final assistant message: {run:#?}");
+    };
+    assert!(text.contains(PROCESS_STDOUT));
+
+    api.close_session_environment(SessionEnvironmentCloseParams {
+        session_id: session_id.as_str().to_owned(),
+        env_id: "profile-env".to_owned(),
+        force: false,
+        close_target: Some(false),
+    })
+    .await?;
+    api.delete_profile(ProfileDeleteParams { profile_id })
+        .await?;
+
+    let handle = client.get_workflow_handle::<AgentSessionWorkflow>(session_id.as_str());
+    let _ = handle
+        .terminate(
+            WorkflowTerminateOptions::builder()
+                .reason("profile environment live test cleanup")
                 .build(),
         )
         .await;

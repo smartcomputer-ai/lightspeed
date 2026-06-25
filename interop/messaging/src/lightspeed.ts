@@ -1,19 +1,16 @@
 import {
   LightspeedClient,
-  LightspeedRpcError,
   type EventCursor,
   type InputItem,
+  type ProfileSource,
   type RunStatus,
   type SessionConfigInput,
-  type SessionEnvironmentView,
   type SessionItemView,
   type SessionView,
-  type VfsMountSourceInput,
 } from "@lightspeed/agent-client";
-import type { LightspeedBridgeConfig, RecipeEnvironment, SessionRecipe } from "./config.js";
+import type { LightspeedBridgeConfig } from "./config.js";
 import { stableSubmissionId } from "./ids.js";
 import { mediaKindForMime } from "./media.js";
-import type { JsonBridgeStore } from "./store.js";
 
 export interface LightspeedTurnMedia {
   base64: string;
@@ -26,8 +23,8 @@ export interface LightspeedTurn {
   accountId: string;
   conversationKey: string;
   sessionId: string;
-  /// Recipe to provision the session with on first creation (null = default).
-  recipe?: SessionRecipe | null;
+  /// Profile to provision the session with on first creation (null = default).
+  profile?: ProfileSource | null;
   /// Stable parts identifying this turn batch for submission idempotency.
   submissionParts: readonly unknown[];
   text: string;
@@ -57,87 +54,25 @@ export class LightspeedSessionBridge {
 
   constructor(
     private readonly client: LightspeedClient,
-    private readonly store: JsonBridgeStore,
     private readonly config: LightspeedBridgeConfig,
   ) {}
 
-  /// Starts the session (if not already) and applies the recipe once: the
-  /// session config (model + tools), workspace/snapshot mounts, MCP links, and
-  /// execution environment bindings. The core discovers prompts and the skill
-  /// catalog from the mounts, so the bridge never activates skills itself.
-  /// session/start is idempotent and the config only applies on creation;
-  /// mounts and links are guarded by `startedSessions` so they run once.
-  async ensureSession(sessionId: string, recipe?: SessionRecipe | null): Promise<void> {
+  /// Starts the session (if not already) and applies the profile through
+  /// session/start. With no profile, the bridge still enables messaging tools
+  /// by default so channel delivery can use the outbox.
+  async ensureSession(
+    sessionId: string,
+    profile?: ProfileSource | null,
+  ): Promise<void> {
     if (this.startedSessions.has(sessionId)) {
       return;
     }
     await this.client.call("session/start", {
       sessionId,
       cwd: this.config.cwd ?? null,
-      config: sessionStartConfig(recipe),
+      ...(profile ? { profile } : { config: sessionStartConfig() }),
     });
-    for (const mount of recipe?.mounts ?? []) {
-      await this.client.call("vfs/mount/put", {
-        sessionId,
-        mountPath: mount.mountPath,
-        source: mountSourceInput(mount.source),
-        access: mount.access,
-      });
-    }
-    for (const link of recipe?.mcp ?? []) {
-      await this.client.call("session/mcp/link", {
-        sessionId,
-        serverId: link.serverId,
-        ...(link.serverLabel !== undefined ? { serverLabel: link.serverLabel } : {}),
-        ...(link.toolId !== undefined ? { toolId: link.toolId } : {}),
-        ...(link.allowedTools !== undefined ? { allowedTools: link.allowedTools } : {}),
-        ...(link.approval !== undefined ? { approval: link.approval } : {}),
-        ...(link.authGrantId !== undefined ? { authGrantId: link.authGrantId } : {}),
-        ...(link.deferLoading !== undefined ? { deferLoading: link.deferLoading } : {}),
-      });
-    }
-    for (const environment of recipe?.environments ?? []) {
-      await this.ensureEnvironment(sessionId, environment);
-    }
     this.startedSessions.add(sessionId);
-  }
-
-  private async ensureEnvironment(
-    sessionId: string,
-    environment: RecipeEnvironment,
-  ): Promise<void> {
-    const existing = await this.readEnvironment(sessionId, environment.envId);
-    if (!existing) {
-      await this.client.call("session/environments/attach", {
-        sessionId,
-        envId: environment.envId,
-        providerId: environment.providerId,
-        request: { type: "target", targetId: environment.targetId },
-        activate: environment.activate,
-      });
-      return;
-    }
-    if (environment.activate && !existing.active) {
-      await this.client.call("session/environments/activate", {
-        sessionId,
-        envId: environment.envId,
-      });
-    }
-  }
-
-  private async readEnvironment(
-    sessionId: string,
-    envId: string,
-  ): Promise<SessionEnvironmentView | null> {
-    try {
-      const response = await this.client.call("session/environments/read", { sessionId, envId });
-      return response.result.environment;
-    } catch (error) {
-      if (error instanceof LightspeedRpcError && error.kind === "not_found") {
-        return null;
-      }
-      throw error;
-    }
   }
 
   /// Appends unaddressed room chatter as session context without starting a
@@ -145,12 +80,12 @@ export class LightspeedSessionBridge {
   async appendRoomEvents(
     sessionId: string,
     events: readonly LightspeedRoomEvent[],
-    recipe?: SessionRecipe | null,
+    profile?: ProfileSource | null,
   ): Promise<void> {
     if (events.length === 0) {
       return;
     }
-    await this.ensureSession(sessionId, recipe);
+    await this.ensureSession(sessionId, profile);
     for (let start = 0; start < events.length; start += CONTEXT_APPEND_BATCH_LIMIT) {
       const batch = events.slice(start, start + CONTEXT_APPEND_BATCH_LIMIT);
       await this.client.call("context/append", {
@@ -164,7 +99,7 @@ export class LightspeedSessionBridge {
   }
 
   async submitTurn(turn: LightspeedTurn): Promise<LightspeedReply> {
-    await this.ensureSession(turn.sessionId, turn.recipe);
+    await this.ensureSession(turn.sessionId, turn.profile);
 
     const input: InputItem[] = [{ type: "text", text: turn.text }];
     for (const media of turn.media ?? []) {
@@ -226,27 +161,14 @@ export class LightspeedSessionBridge {
   }
 }
 
-/// Builds the session/start config from a recipe, defaulting the messaging
-/// toolset on (the bridge delivers via the outbox) unless the recipe sets it
-/// explicitly. All other config fields (model, generation, filesystem tool mode,
-/// web tools, etc.) pass through from the recipe untouched.
-export function sessionStartConfig(recipe?: SessionRecipe | null): SessionConfigInput {
-  const base = recipe?.config ?? {};
-  const tools = base.tools ?? {};
+/// Builds the default session/start config for unprofiled conversations. The
+/// bridge enables messaging tools so channel delivery can use the outbox.
+export function sessionStartConfig(): SessionConfigInput {
   return {
-    ...base,
     tools: {
-      ...tools,
-      messaging: tools.messaging ?? true,
+      messaging: true,
     },
   };
-}
-
-function mountSourceInput(source: SessionRecipe["mounts"][number]["source"]): VfsMountSourceInput {
-  if ("workspaceId" in source) {
-    return { type: "workspace", workspaceId: source.workspaceId };
-  }
-  return { type: "snapshot", snapshotRef: source.snapshotRef };
 }
 
 /// True when the run contains at least one successful messaging tool call

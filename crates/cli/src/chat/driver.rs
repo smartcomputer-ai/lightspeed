@@ -5,11 +5,12 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
 use api::{
-    AgentApiOutcome, EventCursor, FilesystemToolMode, GenerationConfig, InputItem, ModelConfig,
-    ReasoningEffort as ApiReasoningEffort, RunStartConfig, RunStartParams, RunStartResponse,
-    SessionConfigInput, SessionEventKindView, SessionEventView, SessionEventsReadParams,
-    SessionItemView, SessionReadParams, SessionStartParams, SessionView, ToolBatchView,
-    ToolCallEventView, ToolCallView, ToolConfigInput, ToolItemStatus,
+    AgentApiOutcome, EventCursor, FilesystemToolMode, GenerationConfig, InlineAgentProfile,
+    InputItem, ModelConfig, ProfileId, ProfileSource, ReasoningEffort as ApiReasoningEffort,
+    RunStartConfig, RunStartParams, RunStartResponse, SessionConfigInput, SessionEventKindView,
+    SessionEventView, SessionEventsReadParams, SessionItemView, SessionReadParams,
+    SessionStartParams, SessionView, ToolBatchView, ToolCallEventView, ToolCallView,
+    ToolConfigInput, ToolItemStatus,
 };
 use clap::Args;
 use serde_json::Value;
@@ -70,6 +71,12 @@ pub(crate) struct ChatArgs {
     /// Filesystem tool mode for this session: edit, read-only, or none.
     #[arg(long = "filesystem-tools")]
     filesystem_tools: Option<String>,
+    /// Start a new session from a named agent profile.
+    #[arg(long)]
+    profile: Option<String>,
+    /// Start a new session from an inline agent profile JSON file or literal.
+    #[arg(long = "profile-json")]
+    profile_json: Option<String>,
     /// Working directory for local file tools. Defaults to the current directory.
     #[arg(long)]
     workdir: Option<PathBuf>,
@@ -94,6 +101,7 @@ pub(crate) struct ChatArgs {
 
 pub(crate) async fn handle(args: ChatArgs) -> Result<()> {
     let draft = draft_settings(&args)?;
+    let profile = profile_source_from_args(args.profile.as_deref(), args.profile_json.as_deref())?;
     if args.mount.is_some() && args.workdir.is_some() {
         return Err(anyhow!(
             "--workdir cannot be used with --mount; use --mount-path for the VFS cwd"
@@ -108,7 +116,7 @@ pub(crate) async fn handle(args: ChatArgs) -> Result<()> {
     };
     let session_id = if args.new {
         new_session_id()
-    } else if let Some(session_id) = args.session {
+    } else if let Some(session_id) = args.session.as_ref() {
         validate_session_id(&session_id)?
     } else {
         new_session_id()
@@ -120,6 +128,7 @@ pub(crate) async fn handle(args: ChatArgs) -> Result<()> {
         draft_settings: draft,
         workdir,
         api_url: args.api_url,
+        profile,
     })
     .await?;
     if let Some(directory) = mount {
@@ -165,12 +174,41 @@ pub(crate) async fn handle(args: ChatArgs) -> Result<()> {
     crate::chat::tui::run_shell(driver, initial_events, args.show_tool_details).await
 }
 
+fn profile_source_from_args(
+    profile: Option<&str>,
+    profile_json: Option<&str>,
+) -> Result<Option<ProfileSource>> {
+    match (profile, profile_json) {
+        (Some(_), Some(_)) => Err(anyhow!(
+            "--profile and --profile-json are mutually exclusive"
+        )),
+        (Some(profile_id), None) => Ok(Some(ProfileSource::Named {
+            profile_id: ProfileId::try_new(profile_id.to_owned())
+                .map_err(|error| anyhow!("invalid profile id: {error}"))?,
+        })),
+        (None, Some(json_arg)) => {
+            let path = PathBuf::from(json_arg);
+            let json = if path.exists() {
+                std::fs::read_to_string(&path)
+                    .with_context(|| format!("failed to read profile JSON {}", path.display()))?
+            } else {
+                json_arg.to_owned()
+            };
+            let profile: InlineAgentProfile =
+                serde_json::from_str(&json).context("failed to parse inline profile JSON")?;
+            Ok(Some(ProfileSource::Inline { profile }))
+        }
+        (None, None) => Ok(None),
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct ChatSessionDriverOptions {
     pub session_id: String,
     pub draft_settings: ChatDraftSettings,
     pub workdir: String,
     pub api_url: String,
+    pub profile: Option<ProfileSource>,
 }
 
 pub(crate) struct ChatSessionDriver {
@@ -200,6 +238,7 @@ impl ChatSessionDriver {
                 session_id: Some(session_id.clone()),
                 cwd: Some(options.workdir.clone()),
                 config: Some(session_start_config(&options.draft_settings)),
+                profile: options.profile.clone(),
             })
             .await
             .map_err(api_error)?;
@@ -754,6 +793,8 @@ impl ChatSessionDriver {
             | SessionEventKindView::TurnCompleted { .. }
             | SessionEventKindView::ToolsReplaced { .. }
             | SessionEventKindView::ToolsPatched { .. }
+            | SessionEventKindView::ToolBatchDeferred { .. }
+            | SessionEventKindView::ToolBatchResumed { .. }
             | SessionEventKindView::ToolDefaultTargetChanged { .. } => {}
         }
         events
@@ -838,6 +879,7 @@ impl ChatSessionDriver {
                 session_id: Some(session_id.clone()),
                 cwd: Some(self.workdir.clone()),
                 config: Some(session_start_config(&self.settings)),
+                profile: None,
             })
             .await
             .map_err(api_error)?;
@@ -2104,6 +2146,8 @@ mod tests {
             no_web_search: false,
             no_web_fetch: false,
             filesystem_tools: None,
+            profile: None,
+            profile_json: None,
             workdir: None,
             mount: None,
             mount_path: "/workspace".into(),

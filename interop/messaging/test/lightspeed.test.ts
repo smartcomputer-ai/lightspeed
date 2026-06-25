@@ -1,9 +1,8 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { LightspeedRpcError, type LightspeedClient, type SessionView } from "@lightspeed/agent-client";
+import { type LightspeedClient, type ProfileSource, type SessionView } from "@lightspeed/agent-client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { SessionRecipe } from "../src/config.js";
 import {
   extractAssistantText,
   LightspeedSessionBridge,
@@ -61,25 +60,8 @@ describe("extractAssistantText", () => {
 });
 
 describe("sessionStartConfig", () => {
-  it("defaults the messaging toolset on with no recipe", () => {
-    expect(sessionStartConfig(null)).toEqual({ tools: { messaging: true } });
-  });
-
-  it("preserves recipe config and adds messaging when absent", () => {
-    const recipe: SessionRecipe = {
-      mounts: [],
-      mcp: [],
-      config: { model: { providerId: "p", apiKind: "k", model: "m" }, tools: { webSearch: true } },
-    };
-    expect(sessionStartConfig(recipe)).toEqual({
-      model: { providerId: "p", apiKind: "k", model: "m" },
-      tools: { webSearch: true, messaging: true },
-    });
-  });
-
-  it("lets a recipe disable messaging explicitly", () => {
-    const recipe: SessionRecipe = { mounts: [], mcp: [], config: { tools: { messaging: false } } };
-    expect(sessionStartConfig(recipe).tools?.messaging).toBe(false);
+  it("defaults the messaging toolset on with no profile", () => {
+    expect(sessionStartConfig()).toEqual({ tools: { messaging: true } });
   });
 });
 
@@ -90,20 +72,9 @@ interface RecordedCall {
 
 class FakeClient {
   readonly calls: RecordedCall[] = [];
-  readonly environments = new Map<string, Record<string, unknown>>();
 
   async call(method: string, params: Record<string, unknown>): Promise<unknown> {
     this.calls.push({ method, params });
-    if (method === "session/environments/read") {
-      const environment = this.environments.get(String(params.envId));
-      if (!environment) {
-        throw new LightspeedRpcError({
-          code: -32004,
-          message: "environment not found",
-        });
-      }
-      return { result: { environment } };
-    }
     if (method === "session/read") {
       return { result: { session: sessionFixture() } };
     }
@@ -146,7 +117,7 @@ describe("LightspeedSessionBridge.ensureSession", () => {
   });
 
   function bridge(client: FakeClient): LightspeedSessionBridge {
-    return new LightspeedSessionBridge(client as unknown as LightspeedClient, store, {
+    return new LightspeedSessionBridge(client as unknown as LightspeedClient, {
       endpoint: "http://test",
       cwd: null,
       waitMs: 1,
@@ -155,102 +126,66 @@ describe("LightspeedSessionBridge.ensureSession", () => {
     });
   }
 
-  it("starts, mounts, and links once per session in order", async () => {
+  it("starts with an inline profile once per session", async () => {
     const client = new FakeClient();
-    const recipe: SessionRecipe = {
-      config: { tools: { filesystem: "readOnly" } },
-      mounts: [
-        { mountPath: "/workspace", source: { workspaceId: "ws-1" }, access: "readWrite" },
-      ],
-      mcp: [{ serverId: "github", allowedTools: ["search"] }],
+    const profile: ProfileSource = {
+      kind: "inline" as const,
+      profile: {
+        config: { tools: { filesystem: "readOnly" } },
+        mounts: [
+          {
+            mountPath: "/workspace",
+            source: { type: "workspace" as const, workspaceId: "ws-1" },
+            access: "readWrite" as const,
+          },
+        ],
+        mcp: [{ serverId: "github", allowedTools: ["search"] }],
+      },
     };
     const ls = bridge(client);
-    await ls.ensureSession("session_x", recipe);
-    await ls.ensureSession("session_x", recipe);
+    await ls.ensureSession("session_x", profile);
+    await ls.ensureSession("session_x", profile);
 
-    expect(client.calls.map((call) => call.method)).toEqual([
-      "session/start",
-      "vfs/mount/put",
-      "session/mcp/link",
-    ]);
-    expect(client.calls[0]?.params.config).toEqual({
-      tools: { filesystem: "readOnly", messaging: true },
-    });
-    expect(client.calls[1]?.params).toMatchObject({
-      sessionId: "session_x",
-      mountPath: "/workspace",
-      source: { type: "workspace", workspaceId: "ws-1" },
-      access: "readWrite",
-    });
-    expect(client.calls[2]?.params).toMatchObject({
-      sessionId: "session_x",
-      serverId: "github",
-      allowedTools: ["search"],
-    });
+    expect(client.calls.map((call) => call.method)).toEqual(["session/start"]);
+    expect(client.calls[0]?.params.profile).toEqual(profile);
   });
 
-  it("starts with the default config and no provisioning when no recipe", async () => {
+  it("starts with the default config and no provisioning when no profile", async () => {
     const client = new FakeClient();
     await bridge(client).ensureSession("session_y");
     expect(client.calls.map((call) => call.method)).toEqual(["session/start"]);
     expect(client.calls[0]?.params.config).toEqual({ tools: { messaging: true } });
   });
 
-  it("attaches a missing recipe environment", async () => {
+  it("passes profile environments through session start", async () => {
     const client = new FakeClient();
-    const recipe: SessionRecipe = {
-      mounts: [],
-      mcp: [],
-      environments: [
-        {
-          envId: "devbox",
-          providerId: "hetzner-devbox",
-          targetId: "local",
-          activate: true,
-        },
-      ],
+    const profile: ProfileSource = {
+      kind: "inline" as const,
+      profile: {
+        environments: [
+          {
+            envId: "devbox",
+            providerId: "hetzner-devbox",
+            targetId: "local",
+            activate: true,
+          },
+        ],
+      },
     };
-    await bridge(client).ensureSession("session_env", recipe);
+    await bridge(client).ensureSession("session_env", profile);
 
-    expect(client.calls.map((call) => call.method)).toEqual([
-      "session/start",
-      "session/environments/read",
-      "session/environments/attach",
-    ]);
-    expect(client.calls[2]?.params).toMatchObject({
-      sessionId: "session_env",
-      envId: "devbox",
-      providerId: "hetzner-devbox",
-      request: { type: "target", targetId: "local" },
-      activate: true,
-    });
+    expect(client.calls.map((call) => call.method)).toEqual(["session/start"]);
+    expect(client.calls[0]?.params.profile).toEqual(profile);
   });
 
-  it("activates an existing inactive recipe environment", async () => {
+  it("passes named profiles through session start", async () => {
     const client = new FakeClient();
-    client.environments.set("devbox", { envId: "devbox", active: false });
-    const recipe: SessionRecipe = {
-      mounts: [],
-      mcp: [],
-      environments: [
-        {
-          envId: "devbox",
-          providerId: "hetzner-devbox",
-          targetId: "local",
-          activate: true,
-        },
-      ],
-    };
-    await bridge(client).ensureSession("session_env", recipe);
+    await bridge(client).ensureSession("session_profile", { kind: "named", profileId: "support" });
 
-    expect(client.calls.map((call) => call.method)).toEqual([
-      "session/start",
-      "session/environments/read",
-      "session/environments/activate",
-    ]);
-    expect(client.calls[2]?.params).toMatchObject({
-      sessionId: "session_env",
-      envId: "devbox",
+    expect(client.calls.map((call) => call.method)).toEqual(["session/start"]);
+    expect(client.calls[0]?.params).toMatchObject({
+      sessionId: "session_profile",
+      profile: { kind: "named", profileId: "support" },
     });
   });
 

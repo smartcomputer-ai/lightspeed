@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 aes-gcm = "0.10"
+api = { path = "../api" }
 auth-registry = { path = "../auth-registry" }
 base64 = "0.22"
 engine = { path = "../engine" }

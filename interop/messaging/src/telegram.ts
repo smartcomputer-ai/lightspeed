@@ -1,11 +1,6 @@
 import { Bot, type Context } from "grammy";
 import type { Message } from "grammy/types";
-import {
-  resolveInboundAccess,
-  type BindingRule,
-  type SessionRecipe,
-  type TelegramBridgeConfig,
-} from "./config.js";
+import { resolveInboundAccess, type BindingRule, type TelegramBridgeConfig } from "./config.js";
 import { cleanChannelMessageId } from "./channel_id.js";
 import { stableHash } from "./ids.js";
 import { shouldQuoteChunk, type ReplyToMode } from "./policy.js";
@@ -33,7 +28,6 @@ export interface RunningBridge {
 
 export interface BridgeRouting {
   bindings: readonly BindingRule[];
-  recipes: Record<string, SessionRecipe>;
 }
 
 export async function startTelegramBridge(
@@ -104,7 +98,6 @@ export async function startTelegramBridge(
       },
       config,
       routing.bindings,
-      routing.recipes,
     );
     const threadId = message.message_thread_id;
     const conversationParts = ["telegram", config.accountId, chatId, threadId ?? "main"];
@@ -167,8 +160,8 @@ export async function startTelegramBridge(
       isFromSelf: message.from?.id === me.id,
       turnAllowed: access.turnAllowed,
       controlAllowed: access.controlAllowed,
-      recipe: access.recipe,
-      recipeName: access.recipeName,
+      profile: access.profile,
+      profileLabel: access.profileLabel,
       sessionKey: access.sessionKey,
       ...(fetchMedia ? { fetchMedia } : {}),
     };

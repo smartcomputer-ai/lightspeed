@@ -14,6 +14,7 @@ mod input;
 mod mcp_api;
 mod oauth_api;
 mod parse;
+mod profiles;
 mod prompts;
 mod skills;
 mod tools_api;
@@ -95,6 +96,10 @@ use api::{
     McpServerListResponse, McpServerReadParams, McpServerReadResponse, MediaKind, ModelConfig,
     OutboundAckInput, OutboundMessageView, OutboundOriginView, OutboundPayloadView,
     OutboundStatusView, OutboxAckParams, OutboxAckResponse, OutboxReadParams, OutboxReadResponse,
+    ProfileApplyParams, ProfileApplyResponse, ProfileApplySummary, ProfileCreateParams,
+    ProfileCreateResponse, ProfileDeleteParams, ProfileDeleteResponse, ProfileDocument,
+    ProfileError, ProfileInstructions, ProfileListParams, ProfileListResponse, ProfileReadParams,
+    ProfileReadResponse, ProfileSource, ProfileStore, ProfileUpdateParams, ProfileUpdateResponse,
     PromptInstructionView, PromptsActiveParams, PromptsActiveResponse, ReasoningEffort,
     RunCancelParams, RunCancelResponse, RunDefaultsConfig, RunDefaultsPatch, RunLimitsConfig,
     RunStartConfig, RunStartParams, RunStartResponse, RunView, SandboxTargetSpecView,
@@ -115,14 +120,14 @@ use api::{
     SkillActivationSource as ApiSkillActivationSource, SkillActivationView, SkillActiveParams,
     SkillActiveResponse, SkillDeactivateParams, SkillDeactivateResponse, SkillListItem,
     SkillListParams, SkillListResponse, ToolChoiceConfig, ToolChoiceModeConfig, ToolConfigInput,
-    ToolConfigPatchInput, ToolExecutionTargetView, VfsMountAccess as ApiVfsMountAccess,
-    VfsMountDeleteParams, VfsMountDeleteResponse, VfsMountListParams, VfsMountListResponse,
-    VfsMountPutParams, VfsMountPutResponse, VfsMountSourceInput, VfsMountSourceView, VfsMountView,
-    VfsSnapshotCommitParams, VfsSnapshotCommitResponse, VfsSnapshotReadParams,
-    VfsSnapshotReadResponse, VfsWorkspaceCreateParams, VfsWorkspaceCreateResponse,
-    VfsWorkspaceDeleteParams, VfsWorkspaceDeleteResponse, VfsWorkspaceReadParams,
-    VfsWorkspaceReadResponse, VfsWorkspaceUpdateParams, VfsWorkspaceUpdateResponse,
-    VfsWorkspaceView,
+    ToolConfigPatchInput, ToolExecutionTargetView, UpdateAgentProfile,
+    VfsMountAccess as ApiVfsMountAccess, VfsMountDeleteParams, VfsMountDeleteResponse,
+    VfsMountListParams, VfsMountListResponse, VfsMountPutParams, VfsMountPutResponse,
+    VfsMountSourceInput, VfsMountSourceView, VfsMountView, VfsSnapshotCommitParams,
+    VfsSnapshotCommitResponse, VfsSnapshotReadParams, VfsSnapshotReadResponse,
+    VfsWorkspaceCreateParams, VfsWorkspaceCreateResponse, VfsWorkspaceDeleteParams,
+    VfsWorkspaceDeleteResponse, VfsWorkspaceReadParams, VfsWorkspaceReadResponse,
+    VfsWorkspaceUpdateParams, VfsWorkspaceUpdateResponse, VfsWorkspaceView,
 };
 use api_projection::{
     CoreAgentProjector, MAX_EVENT_PAGE_LIMIT, ProjectSession, api_kind_from_str, api_run_id,
@@ -596,16 +601,18 @@ impl GatewayAgentApi {
         }
     }
 
-    pub(crate) async fn start_session_for_fleet(
+    pub(crate) async fn start_session_for_fleet_with_profile(
         &self,
         session_id: &SessionId,
         close_on_terminal: bool,
+        profile: Option<ProfileSource>,
     ) -> Result<(), AgentApiError> {
         self.start_session_internal(
             SessionStartParams {
                 session_id: Some(session_id.as_str().to_owned()),
                 cwd: None,
                 config: None,
+                profile,
             },
             close_on_terminal,
         )
@@ -622,6 +629,7 @@ impl GatewayAgentApi {
             session_id,
             cwd,
             config,
+            profile,
         } = params;
         let client_supplied_id = session_id.is_some();
         let session_id = match session_id {
@@ -641,7 +649,17 @@ impl GatewayAgentApi {
                 Err(error) => return Err(error),
             }
         }
-        let session_config = self.session_config_for_start(config.clone()).await?;
+        let resolved_profile = match profile {
+            Some(source) => Some(self.resolve_profile_source(source).await?),
+            None => None,
+        };
+        let start_config = self.merge_profile_start_config(
+            resolved_profile
+                .as_ref()
+                .and_then(|profile| profile.document.config.clone()),
+            config,
+        );
+        let session_config = self.session_config_for_start(start_config).await?;
         self.write_session_metadata(
             session_id.clone(),
             GatewaySessionMetadata {
@@ -675,7 +693,12 @@ impl GatewayAgentApi {
         }
         self.wait_for_open_session(&session_id).await?;
         let loaded = self.load_session_state(&session_id).await?;
-        let session = self.configure_session_toolset(&session_id, &loaded).await?;
+        let mut session = self.configure_session_toolset(&session_id, &loaded).await?;
+        if let Some(profile) = resolved_profile {
+            (session, _) = self
+                .apply_profile_document(&session_id, &profile.document, false, None, None)
+                .await?;
+        }
         Ok(AgentApiOutcome::new(SessionStartResponse { session }))
     }
 
@@ -805,6 +828,60 @@ impl AgentApiService for GatewayAgentApi {
         params: SessionStartParams,
     ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError> {
         self.start_session_internal(params, false).await
+    }
+
+    async fn create_profile(
+        &self,
+        params: ProfileCreateParams,
+    ) -> Result<AgentApiOutcome<ProfileCreateResponse>, AgentApiError> {
+        self.create_profile_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn read_profile(
+        &self,
+        params: ProfileReadParams,
+    ) -> Result<AgentApiOutcome<ProfileReadResponse>, AgentApiError> {
+        self.read_profile_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn list_profiles(
+        &self,
+        params: ProfileListParams,
+    ) -> Result<AgentApiOutcome<ProfileListResponse>, AgentApiError> {
+        self.list_profile_records(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn update_profile(
+        &self,
+        params: ProfileUpdateParams,
+    ) -> Result<AgentApiOutcome<ProfileUpdateResponse>, AgentApiError> {
+        self.update_profile_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn delete_profile(
+        &self,
+        params: ProfileDeleteParams,
+    ) -> Result<AgentApiOutcome<ProfileDeleteResponse>, AgentApiError> {
+        self.delete_profile_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn apply_profile(
+        &self,
+        params: ProfileApplyParams,
+    ) -> Result<AgentApiOutcome<ProfileApplyResponse>, AgentApiError> {
+        self.apply_profile_to_session(params)
+            .await
+            .map(AgentApiOutcome::new)
     }
 
     async fn update_session(

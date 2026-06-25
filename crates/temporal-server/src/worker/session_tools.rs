@@ -625,6 +625,7 @@ mod tests {
             &self,
             _session_id: &SessionId,
             _close_on_terminal: bool,
+            _profile: Option<api::ProfileSource>,
         ) -> Result<(), api::AgentApiError> {
             Ok(())
         }

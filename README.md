@@ -22,6 +22,7 @@ What constitutes an "agent harness" is a rapidly expanding set of table-stakes f
 - [x] Virtual file system that allows the agent to use standard file tools (read, glob, patch. etc), without needing a full operating system attached
 - [x] Skills hosted on a virtual file system or inside sandboxes
 - [x] Flexible prompt and instruction configuration features
+- [x] Reusable agent profiles for named or inline session setup across CLI, bridge, and Fleet spawns
 - [x] Hosted MCP, including various authentication methods such as API keys, OAuth flows
 - [ ] Sub-agents (aka. "fleets"), letting agents start or manage other agents (planned)
 - [ ] Timers, schedules, wake-ups (planned)
@@ -121,7 +122,7 @@ flowchart TD
 ```
 The Temporal workflow owns an instance of the deterministic core–aka a "session". It drives the core state machine until it is idle. When not idle, it sends the the effect intents via activities to real APIs and services, such as LLM providers. It also logs all events that constitute a session state in a Postgres store (or optionally an file system store, for testing). Small CAS blobs get stored in Postgres, large blobs go to S3 (also supporting different blob providers).
 
-Around the main stack, there is also a gateway API and CLI tooling to make interacting with the whole Lightspeed system easier.
+Around the main stack, there is also a gateway API and CLI tooling to make interacting with the whole Lightspeed system easier. Agent profiles live on that public API boundary: a profile is a reusable setup document for session config, instructions, mounts, MCP links, and environments. The hosted runtime resolves and applies profiles outside the deterministic core.
 
 
 ## Quick Start
@@ -213,6 +214,20 @@ That starts an interactive TUI session. `LIGHTSPEED_API_URL` is exported by
 For OpenAI-backed chat, the CLI sends typed session/run configuration through
 the API. Use `--model ...` on a command, or set `LIGHTSPEED_CHAT_MODEL`, if you want
 a specific model.
+
+To start from a named or inline agent profile:
+
+```bash
+cargo run -p cli -- chat --new --profile support "help with this ticket"
+cargo run -p cli -- chat --new --profile-json ./support-profile.json "help with this ticket"
+```
+
+Profiles can be managed through the same gateway:
+
+```bash
+cargo run -p cli -- profiles list
+cargo run -p cli -- profiles create ./support-profile.json
+```
 
 To chat with a local directory mounted as a writable CAS-backed VFS workspace:
 

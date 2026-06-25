@@ -83,14 +83,15 @@ cargo run -p cli -- chat --api-url http://127.0.0.1:18080/rpc --session session_
 - `crates/engine/` — deterministic session kernel plus built-in CoreAgent:
   dynamic session log storage, CoreAgent command/event/state models, planning,
   codecs, storage traits, and the substrate-neutral drive machine.
-- `crates/api/` — client-facing session/run/item API types, views, and
-  notifications.
+- `crates/api/` — client-facing session/run/item/profile API types, views,
+  notifications, JSON-RPC method DTOs, and the profile store trait.
 - `crates/api-projection/` — shared CoreAgent-to-`api` projection
   helpers for local and workflow-backed gateways.
 - `crates/temporal-workflow/` — Temporal workflow, signals, queries, and
   activity DTOs.
 - `crates/temporal-server/` — hosted runtime binary and modules for the Temporal
-  worker, HTTP/JSON-RPC gateway, and combined local/small-deployment mode.
+  worker, HTTP/JSON-RPC gateway, profile applier, and combined
+  local/small-deployment mode.
 - `crates/test-support/` — fast in-process runner harness for tests/evals. It
   is not a production runtime and must not expose an `AgentApiService`.
 - `crates/tools/` — optional tool packages for session filesystems,
@@ -98,7 +99,8 @@ cargo run -p cli -- chat --api-url http://127.0.0.1:18080/rpc --session session_
 - `crates/store-fs/` — filesystem-backed session log and content-addressed blob
   store adapters.
 - `crates/store-pg/` — PostgreSQL-backed session store, CAS catalog, MCP server
-  catalog, environment registry, and AEAD-encrypted auth grant/secret storage.
+  catalog, agent profile catalog, environment registry, and AEAD-encrypted auth
+  grant/secret storage.
 - `crates/messaging/` — channel-neutral outbound message types and the
   delivery outbox store trait backing the messaging tools and bridges (P71).
 - `crates/mcp-registry/` — provider-independent remote MCP server catalog DTOs,

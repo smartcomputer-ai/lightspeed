@@ -8,11 +8,7 @@ export type {
   InboundAccess,
   LightspeedBridgeConfig,
   MessagingBridgeConfig,
-  RecipeEnvironment,
-  RecipeMcpLink,
-  RecipeMount,
   ResolvedBinding,
-  SessionRecipe,
   TelegramBridgeConfig,
   WhatsAppBridgeConfig,
 } from "./config.js";
@@ -21,7 +17,6 @@ export {
   handleMatches,
   loadBridgeConfig,
   parseBindings,
-  parseRecipes,
   resolveBinding,
   resolveInboundAccess,
 } from "./config.js";
