@@ -2071,48 +2071,149 @@ async fn append_wait_terminal_visible_context_entries(
     entries: &mut Vec<ContextEntryInput>,
     result: &AgentWaitHandleResult,
 ) -> Result<(), CoreAgentIoError> {
-    let mut prefix = String::from("Agent run final output");
-    prefix.push_str("\ntarget_session_id: ");
-    prefix.push_str(&result.target_session_id);
-    prefix.push_str("\nrun_id: ");
-    prefix.push_str(&result.run_id);
-
     let Some(run) = result.run.as_ref() else {
-        prefix.push_str("\nstatus: terminal\n\nNo run details were recorded.");
-        append_wait_text_message(blobs, entries, prefix).await?;
+        let mut text = wait_result_header(result, "terminal", "none", 0);
+        text.push_str("\n\nNo run details were recorded.");
+        append_wait_text_message(
+            blobs,
+            entries,
+            text,
+            Some(wait_result_bundle_preview(result, "no run details")),
+        )
+        .await?;
         return Ok(());
     };
-    prefix.push_str("\nstatus: ");
-    prefix.push_str(&run.status);
-    append_wait_text_message(blobs, entries, prefix).await?;
 
     if let Some(output_ref) = run.output_ref.as_ref() {
-        entries.push(wait_user_message(
-            output_ref.clone(),
-            Some("Agent run final output"),
-        ));
+        append_wait_result_content(
+            blobs,
+            entries,
+            result,
+            run,
+            "final_output",
+            "Final output",
+            output_ref,
+        )
+        .await?;
     } else if let Some(failure_ref) = run.failure_message_ref.as_ref() {
-        entries.push(wait_user_message(
-            failure_ref.clone(),
-            Some("Agent run failure message"),
-        ));
+        append_wait_result_content(
+            blobs,
+            entries,
+            result,
+            run,
+            "failure_message",
+            "Failure message",
+            failure_ref,
+        )
+        .await?;
     } else {
-        append_wait_text_message(blobs, entries, "No final output was recorded.").await?;
+        let mut text = wait_result_header(result, &run.status, "none", 0);
+        text.push_str("\n\nNo final output was recorded.");
+        append_wait_text_message(
+            blobs,
+            entries,
+            text,
+            Some(wait_result_bundle_preview(result, "empty result")),
+        )
+        .await?;
     }
     Ok(())
+}
+
+async fn append_wait_result_content(
+    blobs: &dyn BlobStore,
+    entries: &mut Vec<ContextEntryInput>,
+    result: &AgentWaitHandleResult,
+    run: &AgentWaitRunResult,
+    item_kind: &str,
+    section_label: &str,
+    content_ref: &BlobRef,
+) -> Result<(), CoreAgentIoError> {
+    match blobs.read_text(content_ref).await {
+        Ok(content) => {
+            let mut text = wait_result_header(result, &run.status, item_kind, 1);
+            text.push_str("\n\n");
+            text.push_str(section_label);
+            text.push_str(":\n");
+            text.push_str(&content);
+            append_wait_text_message(
+                blobs,
+                entries,
+                text,
+                Some(wait_result_bundle_preview(result, item_kind)),
+            )
+            .await?;
+        }
+        Err(_) => {
+            let mut text = wait_result_header(result, &run.status, item_kind, 1);
+            text.push_str("\n\nThe next context item belongs to this subagent result. ");
+            text.push_str(
+                "It is preserved as its original blob because it could not be copied into a text wrapper.",
+            );
+            append_wait_text_message(
+                blobs,
+                entries,
+                text,
+                Some(wait_result_bundle_preview(result, item_kind)),
+            )
+            .await?;
+            entries.push(wait_user_message(
+                content_ref.clone(),
+                Some(&wait_result_item_preview(result, item_kind, 1, 1)),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn wait_result_header(
+    result: &AgentWaitHandleResult,
+    status: &str,
+    item_kind: &str,
+    item_count: usize,
+) -> String {
+    let mut text = format!(
+        "Subagent result\ntarget_session_id: {}\nrun_id: {}\nstatus: {}\nresult_item_count: {}",
+        result.target_session_id, result.run_id, status, item_count
+    );
+    if item_count > 0 {
+        text.push_str("\nresult_item_1_kind: ");
+        text.push_str(item_kind);
+    }
+    text
+}
+
+fn wait_result_bundle_preview(result: &AgentWaitHandleResult, item_kind: &str) -> String {
+    format!(
+        "Subagent result: {item_kind} from {} {}",
+        result.target_session_id, result.run_id
+    )
+}
+
+fn wait_result_item_preview(
+    result: &AgentWaitHandleResult,
+    item_kind: &str,
+    index: usize,
+    count: usize,
+) -> String {
+    format!(
+        "Subagent result item {index}/{count}: {item_kind} from {} {}",
+        result.target_session_id, result.run_id
+    )
 }
 
 async fn append_wait_text_message(
     blobs: &dyn BlobStore,
     entries: &mut Vec<ContextEntryInput>,
     text: impl Into<String>,
+    preview: Option<String>,
 ) -> Result<(), CoreAgentIoError> {
     let text = text.into();
     let content_ref = blobs
-        .put_bytes(text.clone().into_bytes())
+        .put_bytes(text.into_bytes())
         .await
         .map_err(map_blob_error)?;
-    entries.push(wait_user_message(content_ref, Some(&text)));
+    entries.push(wait_user_message(content_ref, preview.as_deref()));
     Ok(())
 }
 
@@ -3463,32 +3564,85 @@ mod tests {
             .iter()
             .filter(|entry| matches!(entry.kind, ContextEntryKind::Message { .. }))
             .collect::<Vec<_>>();
-        let metadata = visible_messages
-            .iter()
-            .find(|entry| {
-                entry
-                    .preview
-                    .as_deref()
-                    .is_some_and(|text| text.contains("Agent run final output"))
-            })
-            .expect("metadata message");
-        let metadata = blobs
-            .read_text(&metadata.content_ref)
+        assert_eq!(visible_messages.len(), 1);
+        let wrapped_output = visible_messages[0];
+        assert!(
+            wrapped_output
+                .preview
+                .as_deref()
+                .is_some_and(|text| text.contains("Subagent result: final_output from child run_1"))
+        );
+        let wrapped_output = blobs
+            .read_text(&wrapped_output.content_ref)
             .await
-            .expect("read metadata");
-        assert!(metadata.contains("target_session_id: child"));
-        assert!(metadata.contains("run_id: run_1"));
+            .expect("read wrapped output");
+        assert!(wrapped_output.contains("Subagent result"));
+        assert!(wrapped_output.contains("target_session_id: child"));
+        assert!(wrapped_output.contains("run_id: run_1"));
+        assert!(wrapped_output.contains("status: completed"));
+        assert!(wrapped_output.contains("result_item_count: 1"));
+        assert!(wrapped_output.contains("result_item_1_kind: final_output"));
+        assert!(wrapped_output.contains("Final output:\nfull child answer\nwith every line"));
         let child_output_ref = BlobRef::from_bytes(b"full child answer\nwith every line");
-        let child_output_entry = visible_messages
-            .iter()
-            .find(|entry| entry.content_ref == child_output_ref)
-            .expect("child output entry");
-        let child_output = blobs
-            .read_text(&child_output_entry.content_ref)
-            .await
-            .expect("read child output");
-        assert_eq!(child_output, "full child answer\nwith every line");
+        assert!(
+            !visible_messages
+                .iter()
+                .any(|entry| entry.content_ref == child_output_ref),
+            "text child output should be wrapped with subagent identity, not injected raw"
+        );
         assert!(runtime.started_sessions.lock().expect("lock").is_empty());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn wait_context_preserves_non_text_result_as_bundle_item() {
+        let blobs = Arc::new(engine::storage::InMemoryBlobStore::new());
+        let binary_ref = blobs
+            .put_bytes(vec![0xff, 0xfe, 0xfd])
+            .await
+            .expect("binary output");
+        let output = AgentWaitOutput {
+            outcome: AgentWaitOutcome::Terminal,
+            results: vec![AgentWaitHandleResult {
+                target_session_id: "child".to_owned(),
+                run_id: "run_1".to_owned(),
+                status: AgentWaitHandleStatus::Terminal,
+                run: Some(AgentWaitRunResult {
+                    status: "completed".to_owned(),
+                    output_ref: Some(binary_ref.clone()),
+                    failure_message_ref: None,
+                }),
+                error: None,
+            }],
+        };
+
+        let entries = wait_model_visible_context_entries(
+            blobs.as_ref(),
+            &ToolCallId::new("call_wait"),
+            &output,
+        )
+        .await
+        .expect("visible entries");
+        let visible_messages = entries
+            .iter()
+            .filter(|entry| matches!(entry.kind, ContextEntryKind::Message { .. }))
+            .collect::<Vec<_>>();
+
+        assert_eq!(visible_messages.len(), 2);
+        let header = blobs
+            .read_text(&visible_messages[0].content_ref)
+            .await
+            .expect("read header");
+        assert!(header.contains("Subagent result"));
+        assert!(header.contains("target_session_id: child"));
+        assert!(header.contains("run_id: run_1"));
+        assert!(header.contains("status: completed"));
+        assert!(header.contains("result_item_count: 1"));
+        assert!(header.contains("result_item_1_kind: final_output"));
+        assert!(header.contains("The next context item belongs to this subagent result."));
+        assert_eq!(visible_messages[1].content_ref, binary_ref);
+        assert!(visible_messages[1].preview.as_deref().is_some_and(|text| {
+            text.contains("Subagent result item 1/1: final_output from child run_1")
+        }));
     }
 
     #[tokio::test(flavor = "current_thread")]
