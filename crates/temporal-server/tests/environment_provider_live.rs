@@ -80,6 +80,8 @@ const PROCESS_STDOUT: &str = "fake provider stdout\n";
 const BRIDGE_FILE_NAME: &str = "bridge-agent.txt";
 const BRIDGE_FILE_MARKER: &str = "LIGHTSPEED_BRIDGE_AGENT_MARKER";
 const BRIDGE_VFS_SKILL_MARKER: &str = "LIGHTSPEED_BRIDGE_VFS_SKILL_MARKER";
+const BRIDGE_JOB_FILE_NAME: &str = "job-live.txt";
+const BRIDGE_JOB_MARKER: &str = "LIGHTSPEED_BRIDGE_JOB_MARKER";
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires local/up.sh or compatible Temporal + Postgres env"]
@@ -139,6 +141,28 @@ async fn temporal_live_host_bridge_agent_reads_local_filesystem() -> anyhow::Res
 
     support::live::run_with_live_worker(activities, |client, task_queue, session_id| async move {
         run_host_bridge_client(client, task_queue, session_id, bridge_bin, bridge_root).await
+    })
+    .await
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires local/up.sh or compatible Temporal + Postgres env and target/debug/host-bridge"]
+async fn temporal_live_host_bridge_environment_jobs_round_trip() -> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().expect("live test lock");
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+
+    let bridge_bin = host_bridge_binary_path()?;
+    let bridge_root = tempfile::tempdir()?;
+    let bridge_root = bridge_root.path().canonicalize()?;
+    let store = pg_store_from_env().await?;
+    let blobs: Arc<dyn BlobStore> = store.clone();
+    let llm = Arc::new(BridgeJobsLlm::new(blobs.clone())) as Arc<dyn CoreAgentLlm>;
+    let tools = Arc::new(SessionTools::from_pg_store(store.clone())) as Arc<dyn CoreAgentTools>;
+    let activities = WorkerActivities::new(ActivityState::from_pg_store(store, llm, tools));
+
+    support::live::run_with_live_worker(activities, |client, task_queue, session_id| async move {
+        run_host_bridge_jobs_client(client, task_queue, session_id, bridge_bin, bridge_root).await
     })
     .await
 }
@@ -265,6 +289,110 @@ async fn run_host_bridge_client(
         .terminate(
             WorkflowTerminateOptions::builder()
                 .reason("host bridge live test cleanup")
+                .build(),
+        )
+        .await;
+    drop(bridge);
+    gateway.abort();
+    Ok(())
+}
+
+async fn run_host_bridge_jobs_client(
+    client: Client,
+    task_queue: String,
+    session_id: engine::SessionId,
+    bridge_bin: PathBuf,
+    bridge_root: PathBuf,
+) -> anyhow::Result<()> {
+    let store = pg_store_from_env().await?;
+    let model = fake_model();
+    let api = Arc::new(
+        GatewayAgentApi::builder(client.clone(), store)
+            .with_task_queue(task_queue)
+            .with_default_model(model.clone())
+            .with_max_steps_per_input(64)
+            .build(),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let gateway_url = format!("http://{}/rpc", listener.local_addr()?);
+    let gateway = tokio::spawn({
+        let api = api.clone();
+        async move {
+            let app = gateway_router(api, DEFAULT_MAX_REQUEST_BODY_BYTES);
+            axum::serve(listener, app).await
+        }
+    });
+
+    let provider_id = format!("host-bridge-jobs-{}", uuid::Uuid::new_v4().simple());
+    let bridge = SpawnedBridge::start(&bridge_bin, &gateway_url, &provider_id, &bridge_root)?;
+
+    api.start_session(SessionStartParams {
+        session_id: Some(session_id.as_str().to_owned()),
+        cwd: None,
+        config: Some(SessionConfigInput {
+            model: Some(api_projection::model_to_api(&model)),
+            ..SessionConfigInput::default()
+        }),
+        profile: None,
+    })
+    .await?;
+
+    let attached =
+        wait_for_bridge_attach(api.as_ref(), &session_id, &provider_id, "bridge-local").await?;
+    assert_eq!(
+        attached.result.active_env_id.as_deref(),
+        Some("bridge-local")
+    );
+
+    let run = api
+        .start_run(RunStartParams {
+            submission_id: None,
+            session_id: session_id.as_str().to_owned(),
+            input: vec![InputItem::Text {
+                text: "start, list, wait for, and read a durable environment job".to_owned(),
+            }],
+            config: None,
+        })
+        .await?;
+    let run = support::live::wait_for_terminal_run(&api, &session_id, &run.result.run.id).await?;
+    assert_eq!(
+        run.status,
+        RunStatus::Completed,
+        "host bridge jobs run did not complete: {run:#?}"
+    );
+    let Some(text) = final_assistant_text(&run) else {
+        anyhow::bail!("host bridge jobs run missing final assistant message: {run:#?}");
+    };
+    assert!(
+        text.contains(BRIDGE_JOB_MARKER),
+        "final answer did not include marker from job output: {text}"
+    );
+    assert!(
+        text.contains("job_wait outcome: Satisfied"),
+        "final answer did not include a satisfied job_wait result: {text}"
+    );
+
+    let local_file = bridge_root.join(BRIDGE_JOB_FILE_NAME);
+    let local_contents = tokio::fs::read_to_string(&local_file).await?;
+    assert!(
+        local_contents.contains(BRIDGE_JOB_MARKER),
+        "bridge job did not write marker to local file {}: {local_contents}",
+        local_file.display()
+    );
+
+    api.close_session_environment(SessionEnvironmentCloseParams {
+        session_id: session_id.as_str().to_owned(),
+        env_id: "bridge-local".to_owned(),
+        force: false,
+        close_target: Some(false),
+    })
+    .await?;
+
+    let handle = client.get_workflow_handle::<AgentSessionWorkflow>(session_id.as_str());
+    let _ = handle
+        .terminate(
+            WorkflowTerminateOptions::builder()
+                .reason("host bridge jobs live test cleanup")
                 .build(),
         )
         .await;
@@ -907,6 +1035,274 @@ impl CoreAgentLlm for BridgeFileLlm {
             2 => self.read_vfs_skill_result(&request).await,
             _ => self.final_result(&request).await,
         }
+    }
+}
+
+struct BridgeJobsLlm {
+    blobs: Arc<dyn BlobStore>,
+}
+
+impl BridgeJobsLlm {
+    fn new(blobs: Arc<dyn BlobStore>) -> Self {
+        Self { blobs }
+    }
+
+    async fn start_job_result(
+        &self,
+        request: &LlmGenerationRequest,
+    ) -> Result<LlmGenerationResult, CoreAgentIoError> {
+        self.require_tool(request, "job_start")?;
+        let command = format!(
+            "printf '{}\\n' > {} && printf '{}\\n'",
+            BRIDGE_JOB_MARKER, BRIDGE_JOB_FILE_NAME, BRIDGE_JOB_MARKER
+        );
+        self.tool_call_result(
+            request,
+            "job_start",
+            json!({
+                "jobs": [{
+                    "name": "live-job",
+                    "argv": ["/bin/sh", "-c", command],
+                    "timeout_ms": 10000
+                }]
+            }),
+            "bridge_job_start",
+        )
+        .await
+    }
+
+    async fn list_jobs_result(
+        &self,
+        request: &LlmGenerationRequest,
+    ) -> Result<LlmGenerationResult, CoreAgentIoError> {
+        self.require_tool(request, "job_list")?;
+        let handle = self.job_handle_from_results(request).await?;
+        self.tool_call_result(
+            request,
+            "job_list",
+            json!({
+                "session_id": handle.session_id,
+                "limit": 10
+            }),
+            "bridge_job_list",
+        )
+        .await
+    }
+
+    async fn wait_job_result(
+        &self,
+        request: &LlmGenerationRequest,
+    ) -> Result<LlmGenerationResult, CoreAgentIoError> {
+        self.require_tool(request, "job_wait")?;
+        let handle = self.job_handle_from_results(request).await?;
+        self.tool_call_result(
+            request,
+            "job_wait",
+            json!({
+                "jobs": [handle.json_arg()],
+                "timeout_ms": 15000,
+                "output_bytes": 4096
+            }),
+            "bridge_job_wait",
+        )
+        .await
+    }
+
+    async fn read_job_result(
+        &self,
+        request: &LlmGenerationRequest,
+    ) -> Result<LlmGenerationResult, CoreAgentIoError> {
+        self.require_tool(request, "job_read")?;
+        let handle = self.job_handle_from_results(request).await?;
+        self.tool_call_result(
+            request,
+            "job_read",
+            json!({
+                "jobs": [handle.json_arg()],
+                "output_bytes": 4096
+            }),
+            "bridge_job_read",
+        )
+        .await
+    }
+
+    fn require_tool(
+        &self,
+        request: &LlmGenerationRequest,
+        name: &str,
+    ) -> Result<(), CoreAgentIoError> {
+        if request
+            .request
+            .tools
+            .iter()
+            .any(|tool| tool.name.as_str() == name)
+        {
+            return Ok(());
+        }
+        Err(io_error(format!("planned request did not expose {name}")))
+    }
+
+    async fn tool_call_result(
+        &self,
+        request: &LlmGenerationRequest,
+        tool_name: &str,
+        arguments: Value,
+        label: &str,
+    ) -> Result<LlmGenerationResult, CoreAgentIoError> {
+        let arguments_ref = self
+            .blobs
+            .put_bytes(serde_json::to_vec(&arguments).map_err(io_error)?)
+            .await
+            .map_err(io_error)?;
+        let call_id = ToolCallId::new(format!("{label}_{}_{}", request.run_id, request.turn_id));
+        let tool_name = ToolName::new(tool_name);
+        Ok(LlmGenerationResult {
+            run_id: request.run_id,
+            turn_id: request.turn_id,
+            status: LlmGenerationStatus::Succeeded,
+            failure_ref: None,
+            context_entries: vec![ContextEntryInput {
+                kind: ContextEntryKind::ToolCall {
+                    call_id: call_id.clone(),
+                    name: tool_name.clone(),
+                },
+                content_ref: arguments_ref.clone(),
+                media_type: Some("application/json".to_owned()),
+                preview: Some(format!("{}({arguments})", tool_name.as_str())),
+                provider_kind: Some("fake".to_owned()),
+                provider_item_id: Some(call_id.as_str().to_owned()),
+                token_estimate: None,
+            }],
+            facts: LlmGenerationFacts {
+                provider_response_id: Some(format!("fake-{label}-{}", request.turn_id)),
+                finish: LlmFinish::ToolCalls,
+                usage: None,
+                tool_calls: vec![ObservedToolCall {
+                    call_id,
+                    tool_name,
+                    provider_kind: Some("fake".to_owned()),
+                    arguments_ref,
+                    native_call_ref: None,
+                }],
+                context_token_estimate: None,
+            },
+        })
+    }
+
+    async fn job_handle_from_results(
+        &self,
+        request: &LlmGenerationRequest,
+    ) -> Result<BridgeJobHandle, CoreAgentIoError> {
+        for entry in current_run_tool_results(request).into_iter().rev() {
+            let output = self
+                .blobs
+                .read_text(&entry.content_ref)
+                .await
+                .map_err(io_error)?;
+            for line in output.lines() {
+                if let Some(handle) = BridgeJobHandle::parse(line) {
+                    return Ok(handle);
+                }
+            }
+        }
+        Err(io_error("job_start result did not include a job handle"))
+    }
+
+    async fn final_result(
+        &self,
+        request: &LlmGenerationRequest,
+    ) -> Result<LlmGenerationResult, CoreAgentIoError> {
+        let mut text = String::from("Host bridge durable job test completed.\n");
+        for entry in current_run_tool_results(request) {
+            let output = self
+                .blobs
+                .read_text(&entry.content_ref)
+                .await
+                .map_err(io_error)?;
+            text.push_str("\n--- tool result ---\n");
+            text.push_str(&output);
+        }
+        let output_ref = self
+            .blobs
+            .put_bytes(text.into_bytes())
+            .await
+            .map_err(io_error)?;
+        Ok(LlmGenerationResult {
+            run_id: request.run_id,
+            turn_id: request.turn_id,
+            status: LlmGenerationStatus::Succeeded,
+            failure_ref: None,
+            context_entries: vec![ContextEntryInput {
+                kind: ContextEntryKind::Message {
+                    role: ContextMessageRole::Assistant,
+                },
+                content_ref: output_ref,
+                media_type: Some("text/plain".to_owned()),
+                preview: Some("host bridge jobs final answer".to_owned()),
+                provider_kind: Some("fake".to_owned()),
+                provider_item_id: None,
+                token_estimate: None,
+            }],
+            facts: LlmGenerationFacts {
+                provider_response_id: Some(format!(
+                    "fake-host-bridge-jobs-final-{}",
+                    request.turn_id
+                )),
+                finish: LlmFinish::Stop,
+                usage: None,
+                tool_calls: Vec::new(),
+                context_token_estimate: None,
+            },
+        })
+    }
+}
+
+#[async_trait]
+impl CoreAgentLlm for BridgeJobsLlm {
+    async fn generate(
+        &self,
+        request: LlmGenerationRequest,
+    ) -> Result<LlmGenerationResult, CoreAgentIoError> {
+        match current_run_tool_results(&request).len() {
+            0 => self.start_job_result(&request).await,
+            1 => self.list_jobs_result(&request).await,
+            2 => self.wait_job_result(&request).await,
+            3 => self.read_job_result(&request).await,
+            _ => self.final_result(&request).await,
+        }
+    }
+}
+
+struct BridgeJobHandle {
+    session_id: String,
+    env_id: String,
+    job_id: String,
+}
+
+impl BridgeJobHandle {
+    fn parse(line: &str) -> Option<Self> {
+        let (handle, _) = line.split_once(':')?;
+        let mut parts = handle.trim().split('/');
+        let session_id = parts.next()?.to_owned();
+        let env_id = parts.next()?.to_owned();
+        let job_id = parts.next()?.to_owned();
+        if parts.next().is_some() || session_id.is_empty() || env_id.is_empty() || job_id.is_empty()
+        {
+            return None;
+        }
+        Some(Self {
+            session_id,
+            env_id,
+            job_id,
+        })
+    }
+
+    fn json_arg(&self) -> Value {
+        json!({
+            "session_id": self.session_id,
+            "env_id": self.env_id,
+            "job_id": self.job_id
+        })
     }
 }
 
