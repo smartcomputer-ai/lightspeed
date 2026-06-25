@@ -2,7 +2,7 @@
 
 **Status**
 - Proposed 2026-06-25.
-- G1-G7 implemented 2026-06-25 with the revised v1 shape:
+- Done 2026-06-25. G1-G7 are implemented with the revised v1 shape:
   session-scoped provider jobs, optional per-job `queue_key`, explicit
   dependencies, no `deck_id`/group id, and no model-provided idempotency key.
   G5 adds Temporal-owned parked `job_wait` polling, absolute workflow
@@ -1034,26 +1034,27 @@ Job handle records must still avoid accidental leakage:
   - retry-stable API start with no duplicate registry row and no duplicate
     execution.
 
-## Open Questions
+## Follow-Ups
 
-- Should `job_start` accept same-call `name` references in v1, or
-  should v1 require explicit `job_id` for every dependency and add local names in
-  G2?
-- Should provider callbacks go through provider heartbeat payloads or a separate
-  internal gateway endpoint?
-- How much output should be mirrored to CAS automatically versus kept only in the
-  environment filesystem?
-- Should a failed dependency produce `dependency_failed` immediately, or should a
-  queued dependent remain inspectable until the user cancels it? The
-  recommended v1 behavior is immediate `dependency_failed`.
+These are not blockers for P86:
 
-## Done When
+- Provider callbacks or subscriptions can reduce polling latency later. V1 uses
+  Temporal-owned polling plus optional wake hints.
+- Automatic CAS mirroring of job output and artifacts remains a product/storage
+  policy decision. V1 reads retained output from the environment provider.
+- Product wrappers for Codex, Claude Code, repository checkout, PR creation, and
+  result interpretation should build on the generic job primitive.
 
-- An agent can start a checkout job and a dependent coding-agent process job on
+## Done Criteria
+
+- Done: an agent can start long-running environment work and dependent jobs on
   an active environment.
-- The jobs run in provider-managed order without a long-running tool activity.
-- The agent can wait on the final job and have the parked tool batch resume when
-  it completes.
-- The agent can inspect output tails and artifacts after completion.
-- Idempotent retry does not duplicate jobs.
-- Serial and parallel execution are both covered by tests.
+- Done: jobs run in provider-managed serial, parallel, and DAG order without a
+  long-running tool activity.
+- Done: the agent can wait on a final job and have the parked tool batch resume
+  when it completes.
+- Done: the agent can inspect bounded output tails and artifact metadata after
+  completion.
+- Done: idempotent retry does not duplicate jobs.
+- Done: model-visible tools and public API methods are both covered by live
+  host-bridge tests.
