@@ -14,6 +14,19 @@ That import uploads `profiles/workspace-prompts-skills/` as a VFS workspace and
 mounts it at `/workspace`. The `provision` block is consumed locally by the CLI
 and is not stored in the profile record.
 
+Import the fleet demo profile set:
+
+```bash
+cargo run -p cli -- profiles import profiles/fleet-demo.json
+cargo run -p cli -- chat --new --profile example.fleet.supervisor
+```
+
+The supervisor profile enables Fleet tools and routes work to three named child
+profiles. The child profiles use different prompt instructions and model
+configuration: OpenAI children use `providerId: "openai"` with
+`apiKind: "openai:responses"`, while the reviewer uses
+`providerId: "anthropic"` with `apiKind: "anthropic:messages"`.
+
 Register the public MCP echo test server before importing the MCP profile:
 
 ```bash

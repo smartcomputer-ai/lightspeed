@@ -520,7 +520,7 @@ fn function_bundle(
                 description_ref: Some(description.blob_ref.clone()),
                 input_schema_ref: input_schema.blob_ref.clone(),
                 output_schema_ref: None,
-                strict: Some(true),
+                strict: Some(false),
                 provider_options_ref: None,
             }),
             parallelism: ToolParallelism::Exclusive,
@@ -1182,14 +1182,20 @@ mod tests {
 
     #[test]
     fn enabled_config_includes_profile_tools() {
-        let names: Vec<_> = fleet_tool_bundles(&FleetToolsetConfig::enabled())
-            .expect("bundles")
-            .into_iter()
-            .map(|bundle| bundle.spec.name)
+        let bundles = fleet_tool_bundles(&FleetToolsetConfig::enabled()).expect("bundles");
+        let names: Vec<_> = bundles
+            .iter()
+            .map(|bundle| bundle.spec.name.clone())
             .collect();
 
         assert!(names.contains(&ToolName::new(PROFILE_LIST_TOOL_NAME)));
         assert!(names.contains(&ToolName::new(PROFILE_READ_TOOL_NAME)));
+        for bundle in bundles {
+            let ToolKind::Function(function) = bundle.spec.kind else {
+                panic!("fleet tools should be functions");
+            };
+            assert_eq!(function.strict, Some(false));
+        }
     }
 
     #[test]
