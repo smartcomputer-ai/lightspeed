@@ -8,11 +8,13 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fmt,
     str::FromStr,
-    sync::{Arc, RwLock},
 };
 
 use async_trait::async_trait;
-use engine::{SessionId, StringIdError, ToolExecutionTarget, validate_general_string_id};
+use engine::{
+    RunId, SessionId, StringIdError, ToolCallId, ToolExecutionTarget, TurnId,
+    validate_general_string_id,
+};
 use host_protocol::{
     control::{
         handshake::ControllerCapabilities,
@@ -20,7 +22,7 @@ use host_protocol::{
     },
     shared::{
         HostCapabilities, HostConnectionSpec, HostPath, HostScope, HostTargetId, HostTransport,
-        ImplementationInfo,
+        ImplementationInfo, JobId,
     },
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
@@ -583,6 +585,93 @@ pub enum SessionEnvironmentFsRouteAccess {
     ReadWrite,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JobHandleRecord {
+    pub session_id: SessionId,
+    pub env_id: EnvironmentId,
+    pub provider_id: EnvironmentProviderId,
+    pub target_id: HostTargetId,
+    pub job_id: JobId,
+    pub deck_id: Option<String>,
+    pub name: Option<String>,
+    pub serial_lane: Option<String>,
+    pub idempotency_key: Option<String>,
+    pub created_by_run_id: Option<RunId>,
+    pub created_by_turn_id: Option<TurnId>,
+    pub created_by_tool_call_id: Option<ToolCallId>,
+    pub created_at_ms: i64,
+    pub start_request_hash: String,
+    pub metadata: BTreeMap<String, String>,
+}
+
+impl JobHandleRecord {
+    pub fn validate(&self) -> Result<(), EnvironmentRegistryError> {
+        validate_host_job_id(&self.job_id)?;
+        validate_host_target_id(&self.target_id)?;
+        validate_nonempty_optional("deck_id", self.deck_id.as_deref())?;
+        validate_nonempty_optional("job name", self.name.as_deref())?;
+        validate_nonempty_optional("serial_lane", self.serial_lane.as_deref())?;
+        validate_nonempty_optional("idempotency_key", self.idempotency_key.as_deref())?;
+        validate_optional_metadata_component("deck_id", self.deck_id.as_deref())?;
+        validate_optional_metadata_component("job name", self.name.as_deref())?;
+        validate_optional_metadata_component("serial_lane", self.serial_lane.as_deref())?;
+        validate_optional_metadata_component("idempotency_key", self.idempotency_key.as_deref())?;
+        validate_nonempty_string("start_request_hash", &self.start_request_hash)?;
+        validate_metadata_component("start_request_hash", &self.start_request_hash)?;
+        validate_metadata(&self.metadata)?;
+        validate_nonnegative_i64(self.created_at_ms, "created_at_ms")
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreateJobHandle {
+    pub session_id: SessionId,
+    pub env_id: EnvironmentId,
+    pub provider_id: EnvironmentProviderId,
+    pub target_id: HostTargetId,
+    pub job_id: JobId,
+    pub deck_id: Option<String>,
+    pub name: Option<String>,
+    pub serial_lane: Option<String>,
+    pub idempotency_key: Option<String>,
+    pub created_by_run_id: Option<RunId>,
+    pub created_by_turn_id: Option<TurnId>,
+    pub created_by_tool_call_id: Option<ToolCallId>,
+    pub created_at_ms: i64,
+    pub start_request_hash: String,
+    pub metadata: BTreeMap<String, String>,
+}
+
+impl CreateJobHandle {
+    pub fn into_record(self) -> JobHandleRecord {
+        JobHandleRecord {
+            session_id: self.session_id,
+            env_id: self.env_id,
+            provider_id: self.provider_id,
+            target_id: self.target_id,
+            job_id: self.job_id,
+            deck_id: self.deck_id,
+            name: self.name,
+            serial_lane: self.serial_lane,
+            idempotency_key: self.idempotency_key,
+            created_by_run_id: self.created_by_run_id,
+            created_by_turn_id: self.created_by_turn_id,
+            created_by_tool_call_id: self.created_by_tool_call_id,
+            created_at_ms: self.created_at_ms,
+            start_request_hash: self.start_request_hash,
+            metadata: self.metadata,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ListJobHandles {
+    pub session_id: SessionId,
+    pub env_id: Option<EnvironmentId>,
+    pub deck_id: Option<String>,
+    pub limit: Option<usize>,
+}
+
 #[async_trait]
 pub trait EnvironmentProviderStore: Send + Sync {
     async fn register_provider(
@@ -670,354 +759,35 @@ pub trait SessionEnvironmentBindingStore: Send + Sync {
     ) -> Result<SessionEnvironmentBindingRecord, EnvironmentRegistryError>;
 }
 
-#[derive(Clone, Default)]
-pub struct InMemoryEnvironmentRegistryStore {
-    providers: Arc<RwLock<BTreeMap<EnvironmentProviderId, EnvironmentProviderRecord>>>,
-    targets: Arc<RwLock<BTreeMap<(EnvironmentProviderId, HostTargetId), EnvironmentTargetRecord>>>,
-    bindings: Arc<RwLock<BTreeMap<(SessionId, EnvironmentId), SessionEnvironmentBindingRecord>>>,
-}
-
-impl InMemoryEnvironmentRegistryStore {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
 #[async_trait]
-impl EnvironmentProviderStore for InMemoryEnvironmentRegistryStore {
-    async fn register_provider(
+pub trait JobHandleStore: Send + Sync {
+    async fn create_job_handles(
         &self,
-        record: RegisterEnvironmentProvider,
-    ) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError> {
-        let record = record.into_record()?;
-        let mut providers =
-            self.providers
-                .write()
-                .map_err(|_| EnvironmentRegistryError::Store {
-                    message: "environment provider registry write lock poisoned".to_owned(),
-                })?;
-        let created_at_ms = providers
-            .get(&record.provider_id)
-            .map(|existing| existing.created_at_ms)
-            .unwrap_or(record.created_at_ms);
-        let mut record = record;
-        record.created_at_ms = created_at_ms;
-        record.validate()?;
-        providers.insert(record.provider_id.clone(), record.clone());
-        Ok(record)
-    }
+        records: Vec<CreateJobHandle>,
+    ) -> Result<Vec<JobHandleRecord>, EnvironmentRegistryError>;
 
-    async fn read_provider(
-        &self,
-        provider_id: &EnvironmentProviderId,
-    ) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError> {
-        let providers = self
-            .providers
-            .read()
-            .map_err(|_| EnvironmentRegistryError::Store {
-                message: "environment provider registry read lock poisoned".to_owned(),
-            })?;
-        providers
-            .get(provider_id)
-            .cloned()
-            .ok_or_else(|| provider_not_found(provider_id))
-    }
-
-    async fn list_providers(
-        &self,
-        request: ListEnvironmentProviders,
-    ) -> Result<Vec<EnvironmentProviderRecord>, EnvironmentRegistryError> {
-        let providers = self
-            .providers
-            .read()
-            .map_err(|_| EnvironmentRegistryError::Store {
-                message: "environment provider registry read lock poisoned".to_owned(),
-            })?;
-        Ok(providers
-            .values()
-            .filter(|record| request.status.is_none_or(|status| record.status == status))
-            .filter(|record| {
-                request
-                    .provider_kind
-                    .is_none_or(|kind| record.provider_kind == kind)
-            })
-            .cloned()
-            .collect())
-    }
-
-    async fn update_provider_heartbeat(
-        &self,
-        heartbeat: EnvironmentProviderHeartbeat,
-    ) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError> {
-        validate_nonnegative_i64(heartbeat.observed_at_ms, "observed_at_ms")?;
-        if let Some(ttl) = heartbeat.lease_ttl_ms {
-            validate_positive_i64(ttl, "lease_ttl_ms")?;
-        }
-        let mut providers =
-            self.providers
-                .write()
-                .map_err(|_| EnvironmentRegistryError::Store {
-                    message: "environment provider registry write lock poisoned".to_owned(),
-                })?;
-        let record = providers
-            .get_mut(&heartbeat.provider_id)
-            .ok_or_else(|| provider_not_found(&heartbeat.provider_id))?;
-        let ttl = heartbeat
-            .lease_ttl_ms
-            .unwrap_or_else(|| record.lease_expires_ms.saturating_sub(record.last_seen_ms));
-        record.last_seen_ms = heartbeat.observed_at_ms;
-        record.lease_expires_ms = heartbeat.observed_at_ms.checked_add(ttl).ok_or_else(|| {
-            EnvironmentRegistryError::InvalidInput {
-                message: "lease expiry timestamp overflowed".to_owned(),
-            }
-        })?;
-        record.updated_at_ms = heartbeat.observed_at_ms;
-        record.status = EnvironmentProviderStatus::Online;
-        record.validate()?;
-        Ok(record.clone())
-    }
-
-    async fn update_provider_status(
-        &self,
-        request: UpdateEnvironmentProviderStatus,
-    ) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError> {
-        validate_nonnegative_i64(request.updated_at_ms, "updated_at_ms")?;
-        let mut providers =
-            self.providers
-                .write()
-                .map_err(|_| EnvironmentRegistryError::Store {
-                    message: "environment provider registry write lock poisoned".to_owned(),
-                })?;
-        let record = providers
-            .get_mut(&request.provider_id)
-            .ok_or_else(|| provider_not_found(&request.provider_id))?;
-        record.status = request.status;
-        record.updated_at_ms = request.updated_at_ms;
-        record.validate()?;
-        Ok(record.clone())
-    }
-
-    async fn delete_provider(
-        &self,
-        provider_id: &EnvironmentProviderId,
-    ) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError> {
-        let mut providers =
-            self.providers
-                .write()
-                .map_err(|_| EnvironmentRegistryError::Store {
-                    message: "environment provider registry write lock poisoned".to_owned(),
-                })?;
-        providers
-            .remove(provider_id)
-            .ok_or_else(|| provider_not_found(provider_id))
-    }
-}
-
-#[async_trait]
-impl EnvironmentTargetStore for InMemoryEnvironmentRegistryStore {
-    async fn upsert_target(
-        &self,
-        record: UpsertEnvironmentTargetRecord,
-    ) -> Result<EnvironmentTargetRecord, EnvironmentRegistryError> {
-        let record = record.into_record();
-        record.validate()?;
-        let mut targets = self
-            .targets
-            .write()
-            .map_err(|_| EnvironmentRegistryError::Store {
-                message: "environment target registry write lock poisoned".to_owned(),
-            })?;
-        targets.insert(
-            (record.provider_id.clone(), record.target_id.clone()),
-            record.clone(),
-        );
-        Ok(record)
-    }
-
-    async fn read_target(
-        &self,
-        provider_id: &EnvironmentProviderId,
-        target_id: &HostTargetId,
-    ) -> Result<EnvironmentTargetRecord, EnvironmentRegistryError> {
-        let targets = self
-            .targets
-            .read()
-            .map_err(|_| EnvironmentRegistryError::Store {
-                message: "environment target registry read lock poisoned".to_owned(),
-            })?;
-        targets
-            .get(&(provider_id.clone(), target_id.clone()))
-            .cloned()
-            .ok_or_else(|| target_not_found(provider_id, target_id))
-    }
-
-    async fn list_targets(
-        &self,
-        request: ListEnvironmentTargets,
-    ) -> Result<Vec<EnvironmentTargetRecord>, EnvironmentRegistryError> {
-        let targets = self
-            .targets
-            .read()
-            .map_err(|_| EnvironmentRegistryError::Store {
-                message: "environment target registry read lock poisoned".to_owned(),
-            })?;
-        Ok(targets
-            .values()
-            .filter(|record| {
-                request
-                    .provider_id
-                    .as_ref()
-                    .is_none_or(|provider_id| &record.provider_id == provider_id)
-            })
-            .filter(|record| request.status.is_none_or(|status| record.status == status))
-            .cloned()
-            .collect())
-    }
-
-    async fn update_target_status(
-        &self,
-        request: UpdateEnvironmentTargetStatus,
-    ) -> Result<EnvironmentTargetRecord, EnvironmentRegistryError> {
-        validate_nonnegative_i64(request.observed_at_ms, "observed_at_ms")?;
-        let mut targets = self
-            .targets
-            .write()
-            .map_err(|_| EnvironmentRegistryError::Store {
-                message: "environment target registry write lock poisoned".to_owned(),
-            })?;
-        let record = targets
-            .get_mut(&(request.provider_id.clone(), request.target_id.clone()))
-            .ok_or_else(|| target_not_found(&request.provider_id, &request.target_id))?;
-        record.status = request.status;
-        record.observed_at_ms = request.observed_at_ms;
-        record.validate()?;
-        Ok(record.clone())
-    }
-}
-
-#[async_trait]
-impl SessionEnvironmentBindingStore for InMemoryEnvironmentRegistryStore {
-    async fn create_binding(
-        &self,
-        record: CreateSessionEnvironmentBinding,
-    ) -> Result<SessionEnvironmentBindingRecord, EnvironmentRegistryError> {
-        let record = record.into_record();
-        record.validate()?;
-        let mut bindings = self
-            .bindings
-            .write()
-            .map_err(|_| EnvironmentRegistryError::Store {
-                message: "session environment binding registry write lock poisoned".to_owned(),
-            })?;
-        let key = (record.session_id.clone(), record.env_id.clone());
-        if bindings.contains_key(&key) {
-            return Err(EnvironmentRegistryError::AlreadyExists {
-                kind: "session_environment_binding",
-                id: binding_id(&record.session_id, &record.env_id),
-            });
-        }
-        bindings.insert(key, record.clone());
-        Ok(record)
-    }
-
-    async fn read_binding(
+    async fn read_job_handle(
         &self,
         session_id: &SessionId,
         env_id: &EnvironmentId,
-    ) -> Result<SessionEnvironmentBindingRecord, EnvironmentRegistryError> {
-        let bindings = self
-            .bindings
-            .read()
-            .map_err(|_| EnvironmentRegistryError::Store {
-                message: "session environment binding registry read lock poisoned".to_owned(),
-            })?;
-        bindings
-            .get(&(session_id.clone(), env_id.clone()))
-            .cloned()
-            .ok_or_else(|| binding_not_found(session_id, env_id))
-    }
+        job_id: &JobId,
+    ) -> Result<JobHandleRecord, EnvironmentRegistryError>;
 
-    async fn list_bindings_for_session(
+    async fn list_job_handles(
         &self,
-        session_id: &SessionId,
-    ) -> Result<Vec<SessionEnvironmentBindingRecord>, EnvironmentRegistryError> {
-        let bindings = self
-            .bindings
-            .read()
-            .map_err(|_| EnvironmentRegistryError::Store {
-                message: "session environment binding registry read lock poisoned".to_owned(),
-            })?;
-        Ok(bindings
-            .values()
-            .filter(|record| &record.session_id == session_id)
-            .cloned()
-            .collect())
-    }
+        request: ListJobHandles,
+    ) -> Result<Vec<JobHandleRecord>, EnvironmentRegistryError>;
 
-    async fn update_binding_status(
-        &self,
-        request: UpdateSessionEnvironmentBindingStatus,
-    ) -> Result<SessionEnvironmentBindingRecord, EnvironmentRegistryError> {
-        validate_nonnegative_i64(request.updated_at_ms, "updated_at_ms")?;
-        let mut bindings = self
-            .bindings
-            .write()
-            .map_err(|_| EnvironmentRegistryError::Store {
-                message: "session environment binding registry write lock poisoned".to_owned(),
-            })?;
-        let record = bindings
-            .get_mut(&(request.session_id.clone(), request.env_id.clone()))
-            .ok_or_else(|| binding_not_found(&request.session_id, &request.env_id))?;
-        record.status = request.status;
-        record.updated_at_ms = request.updated_at_ms;
-        record.validate()?;
-        Ok(record.clone())
-    }
-
-    async fn delete_binding(
+    async fn delete_job_handle(
         &self,
         session_id: &SessionId,
         env_id: &EnvironmentId,
-    ) -> Result<SessionEnvironmentBindingRecord, EnvironmentRegistryError> {
-        let mut bindings = self
-            .bindings
-            .write()
-            .map_err(|_| EnvironmentRegistryError::Store {
-                message: "session environment binding registry write lock poisoned".to_owned(),
-            })?;
-        bindings
-            .remove(&(session_id.clone(), env_id.clone()))
-            .ok_or_else(|| binding_not_found(session_id, env_id))
-    }
+        job_id: &JobId,
+    ) -> Result<JobHandleRecord, EnvironmentRegistryError>;
 }
 
-fn provider_not_found(provider_id: &EnvironmentProviderId) -> EnvironmentRegistryError {
-    EnvironmentRegistryError::NotFound {
-        kind: "environment_provider",
-        id: provider_id.as_str().to_owned(),
-    }
-}
-
-fn target_not_found(
-    provider_id: &EnvironmentProviderId,
-    target_id: &HostTargetId,
-) -> EnvironmentRegistryError {
-    EnvironmentRegistryError::NotFound {
-        kind: "environment_target",
-        id: format!("{provider_id}/{}", target_id.as_str()),
-    }
-}
-
-fn binding_not_found(session_id: &SessionId, env_id: &EnvironmentId) -> EnvironmentRegistryError {
-    EnvironmentRegistryError::NotFound {
-        kind: "session_environment_binding",
-        id: binding_id(session_id, env_id),
-    }
-}
-
-fn binding_id(session_id: &SessionId, env_id: &EnvironmentId) -> String {
-    format!("{session_id}/{}", env_id.as_str())
-}
+mod memory;
+pub use memory::InMemoryEnvironmentRegistryStore;
 
 fn validate_implementation(
     implementation: &ImplementationInfo,
@@ -1039,6 +809,35 @@ fn validate_host_target_id(target_id: &HostTargetId) -> Result<(), EnvironmentRe
             message: format!("invalid host target id: {error}"),
         }
     })
+}
+
+fn validate_host_job_id(job_id: &JobId) -> Result<(), EnvironmentRegistryError> {
+    validate_general_string_id("JobId", job_id.as_str()).map_err(|error| {
+        EnvironmentRegistryError::InvalidInput {
+            message: format!("invalid job id: {error}"),
+        }
+    })
+}
+
+fn validate_list_job_handles(request: &ListJobHandles) -> Result<(), EnvironmentRegistryError> {
+    validate_nonempty_optional("deck_id", request.deck_id.as_deref())?;
+    validate_optional_metadata_component("deck_id", request.deck_id.as_deref())?;
+    if matches!(request.limit, Some(0)) {
+        return Err(EnvironmentRegistryError::InvalidInput {
+            message: "job handle list limit must be greater than zero".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_optional_metadata_component(
+    name: &'static str,
+    value: Option<&str>,
+) -> Result<(), EnvironmentRegistryError> {
+    if let Some(value) = value {
+        validate_metadata_component(name, value)?;
+    }
+    Ok(())
 }
 
 fn validate_endpoint(name: &'static str, value: &str) -> Result<(), EnvironmentRegistryError> {
@@ -1131,233 +930,4 @@ fn validate_positive_i64(value: i64, name: &'static str) -> Result<(), Environme
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use host_protocol::shared::HostTransport;
-
-    fn provider_registration(provider_id: &str) -> RegisterEnvironmentProvider {
-        RegisterEnvironmentProvider {
-            provider_id: EnvironmentProviderId::new(provider_id),
-            provider_kind: EnvironmentProviderKind::Bridge,
-            display_name: Some("Local bridge".to_owned()),
-            controller_connection: HostControllerConnectionSpec::new(
-                "ws://127.0.0.1:9000/controller",
-                HostTransport::WebSocket,
-            ),
-            capabilities: EnvironmentProviderCapabilities {
-                list_targets: true,
-                attach_target: true,
-                get_target: true,
-                ..EnvironmentProviderCapabilities::default()
-            },
-            implementation: ImplementationInfo {
-                name: "test-bridge".to_owned(),
-                version: Some("1.0.0".to_owned()),
-            },
-            lease_ttl_ms: 30_000,
-            metadata: BTreeMap::new(),
-            observed_at_ms: 10,
-        }
-    }
-
-    fn host_connection(target_id: &str) -> HostConnectionSpec {
-        HostConnectionSpec {
-            target_id: HostTargetId::new(target_id),
-            endpoint: "ws://127.0.0.1:9001/data".to_owned(),
-            transport: HostTransport::WebSocket,
-            scope: HostScope::Session {
-                session_id: "session_1".to_owned(),
-            },
-            default_cwd: Some(HostPath::new("/workspace").expect("cwd")),
-            capabilities: HostCapabilities::filesystem(true, true).with_process(),
-        }
-    }
-
-    fn target(provider_id: &str, target_id: &str) -> UpsertEnvironmentTargetRecord {
-        UpsertEnvironmentTargetRecord {
-            provider_id: EnvironmentProviderId::new(provider_id),
-            target_id: HostTargetId::new(target_id),
-            display_name: Some("Local host".to_owned()),
-            status: HostTargetStatus::Ready,
-            scope: HostScope::Default,
-            capabilities: HostCapabilities::filesystem(true, true).with_process(),
-            default_cwd: Some(HostPath::new("/workspace").expect("cwd")),
-            metadata: BTreeMap::new(),
-            observed_at_ms: 20,
-        }
-    }
-
-    fn binding(session_id: &str, env_id: &str) -> CreateSessionEnvironmentBinding {
-        CreateSessionEnvironmentBinding {
-            session_id: SessionId::new(session_id),
-            env_id: EnvironmentId::new(env_id),
-            provider_id: EnvironmentProviderId::new("bridge-local"),
-            target_id: HostTargetId::new("local-host"),
-            kind: SessionEnvironmentKind::AttachedHost,
-            status: SessionEnvironmentBindingStatus::Ready,
-            capabilities: SessionEnvironmentCapabilities {
-                fs_read: true,
-                fs_write: true,
-                process_exec: true,
-                process_stdin: true,
-                network: false,
-                persistent: true,
-            },
-            connection: host_connection("local-host"),
-            cwd: Some(HostPath::new("/workspace").expect("cwd")),
-            fs_routes: vec![SessionEnvironmentFsRoute {
-                path: HostPath::new("/workspace").expect("route"),
-                source_path: None,
-                access: SessionEnvironmentFsRouteAccess::ReadWrite,
-                same_state_as_active_env: Some(EnvironmentId::new(env_id)),
-            }],
-            created_at_ms: 30,
-        }
-    }
-
-    #[test]
-    fn provider_records_validate_controller_shape() {
-        let record = provider_registration("bridge-local")
-            .into_record()
-            .expect("record");
-
-        record.validate().expect("valid provider");
-    }
-
-    #[test]
-    fn provider_records_reject_empty_capabilities() {
-        let mut registration = provider_registration("bridge-local");
-        registration.capabilities = EnvironmentProviderCapabilities::default();
-
-        let error = registration
-            .into_record()
-            .expect_err("empty provider capabilities");
-
-        assert!(matches!(
-            error,
-            EnvironmentRegistryError::InvalidInput { .. }
-        ));
-    }
-
-    #[test]
-    fn binding_records_require_matching_env_execution_target() {
-        let mut record = binding("session_1", "local").into_record();
-        record.exec_target = ToolExecutionTarget::new("env", "other");
-
-        let error = record
-            .validate()
-            .expect_err("mismatched env execution target");
-
-        assert!(matches!(
-            error,
-            EnvironmentRegistryError::InvalidInput { .. }
-        ));
-    }
-
-    #[tokio::test]
-    async fn in_memory_store_registers_heartbeats_lists_and_deletes_providers() {
-        let store = InMemoryEnvironmentRegistryStore::new();
-
-        let registered = store
-            .register_provider(provider_registration("bridge-local"))
-            .await
-            .expect("register provider");
-        assert_eq!(registered.provider_id.as_str(), "bridge-local");
-        assert_eq!(registered.status, EnvironmentProviderStatus::Online);
-
-        let heartbeat = store
-            .update_provider_heartbeat(EnvironmentProviderHeartbeat {
-                provider_id: EnvironmentProviderId::new("bridge-local"),
-                observed_at_ms: 40,
-                lease_ttl_ms: Some(10_000),
-                observed_targets: Vec::new(),
-            })
-            .await
-            .expect("heartbeat");
-        assert_eq!(heartbeat.last_seen_ms, 40);
-        assert_eq!(heartbeat.lease_expires_ms, 10_040);
-
-        let online = store
-            .list_providers(ListEnvironmentProviders {
-                status: Some(EnvironmentProviderStatus::Online),
-                provider_kind: Some(EnvironmentProviderKind::Bridge),
-            })
-            .await
-            .expect("list providers");
-        assert_eq!(online, vec![heartbeat.clone()]);
-
-        let deleted = store
-            .delete_provider(&EnvironmentProviderId::new("bridge-local"))
-            .await
-            .expect("delete provider");
-        assert_eq!(deleted, heartbeat);
-    }
-
-    #[tokio::test]
-    async fn in_memory_store_upserts_targets() {
-        let store = InMemoryEnvironmentRegistryStore::new();
-
-        let created = store
-            .upsert_target(target("bridge-local", "local-host"))
-            .await
-            .expect("upsert target");
-        assert_eq!(created.target_id.as_str(), "local-host");
-
-        let ready = store
-            .list_targets(ListEnvironmentTargets {
-                provider_id: Some(EnvironmentProviderId::new("bridge-local")),
-                status: Some(HostTargetStatus::Ready),
-            })
-            .await
-            .expect("list targets");
-        assert_eq!(ready, vec![created.clone()]);
-
-        let stopped = store
-            .update_target_status(UpdateEnvironmentTargetStatus {
-                provider_id: EnvironmentProviderId::new("bridge-local"),
-                target_id: HostTargetId::new("local-host"),
-                status: HostTargetStatus::Stopped,
-                observed_at_ms: 50,
-            })
-            .await
-            .expect("update target status");
-        assert_eq!(stopped.status, HostTargetStatus::Stopped);
-    }
-
-    #[tokio::test]
-    async fn in_memory_store_creates_lists_updates_and_deletes_bindings() {
-        let store = InMemoryEnvironmentRegistryStore::new();
-
-        let created = store
-            .create_binding(binding("session_1", "local"))
-            .await
-            .expect("create binding");
-        assert_eq!(
-            created.exec_target,
-            ToolExecutionTarget::new("env", "local")
-        );
-
-        let listed = store
-            .list_bindings_for_session(&SessionId::new("session_1"))
-            .await
-            .expect("list bindings");
-        assert_eq!(listed, vec![created.clone()]);
-
-        let degraded = store
-            .update_binding_status(UpdateSessionEnvironmentBindingStatus {
-                session_id: SessionId::new("session_1"),
-                env_id: EnvironmentId::new("local"),
-                status: SessionEnvironmentBindingStatus::Degraded,
-                updated_at_ms: 60,
-            })
-            .await
-            .expect("update binding");
-        assert_eq!(degraded.status, SessionEnvironmentBindingStatus::Degraded);
-
-        let deleted = store
-            .delete_binding(&SessionId::new("session_1"), &EnvironmentId::new("local"))
-            .await
-            .expect("delete binding");
-        assert_eq!(deleted, degraded);
-    }
-}
+mod tests;

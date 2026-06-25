@@ -1,4 +1,4 @@
--- P80 G2: runtime environment provider registry.
+-- P80 G2 / P86 G1: runtime environment registry.
 --
 -- Providers register runtime capacity and expose host-protocol controllers.
 -- Session environment bindings materialize provider targets into session-visible
@@ -168,9 +168,77 @@ CREATE INDEX IF NOT EXISTS session_environment_bindings_provider_idx
 CREATE INDEX IF NOT EXISTS session_environment_bindings_session_status_idx
     ON session_environment_bindings (universe_id, session_id, status, env_id);
 
+-- This table is a Lightspeed-side handle ledger only. The environment
+-- provider remains the source of truth for job status, output, dependencies,
+-- exit codes, and artifacts.
+CREATE TABLE IF NOT EXISTS environment_jobs (
+    universe_id uuid NOT NULL,
+    session_id text NOT NULL,
+    env_id text NOT NULL,
+    provider_id text NOT NULL,
+    target_id text NOT NULL,
+    job_id text NOT NULL,
+    deck_id text,
+    name text,
+    serial_lane text,
+    idempotency_key text,
+    created_by_run_id bigint,
+    created_by_turn_id bigint,
+    created_by_tool_call_id text,
+    created_at_ms bigint NOT NULL,
+    start_request_hash text NOT NULL,
+    metadata_json jsonb NOT NULL DEFAULT '{}',
+
+    PRIMARY KEY (universe_id, session_id, env_id, job_id),
+
+    FOREIGN KEY (universe_id, session_id, env_id)
+        REFERENCES session_environment_bindings (universe_id, session_id, env_id)
+        ON DELETE CASCADE,
+    FOREIGN KEY (universe_id, provider_id, target_id)
+        REFERENCES environment_targets (universe_id, provider_id, target_id)
+        ON DELETE CASCADE,
+
+    CONSTRAINT environment_jobs_env_id_format
+        CHECK (env_id ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$'),
+    CONSTRAINT environment_jobs_provider_id_format
+        CHECK (provider_id ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$'),
+    CONSTRAINT environment_jobs_target_id_format
+        CHECK (target_id ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$'),
+    CONSTRAINT environment_jobs_job_id_format
+        CHECK (job_id ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$'),
+    CONSTRAINT environment_jobs_deck_id_not_empty
+        CHECK (deck_id IS NULL OR deck_id <> ''),
+    CONSTRAINT environment_jobs_name_not_empty
+        CHECK (name IS NULL OR name <> ''),
+    CONSTRAINT environment_jobs_serial_lane_not_empty
+        CHECK (serial_lane IS NULL OR serial_lane <> ''),
+    CONSTRAINT environment_jobs_idempotency_key_not_empty
+        CHECK (idempotency_key IS NULL OR idempotency_key <> ''),
+    CONSTRAINT environment_jobs_created_by_run_nonnegative
+        CHECK (created_by_run_id IS NULL OR created_by_run_id >= 0),
+    CONSTRAINT environment_jobs_created_by_turn_nonnegative
+        CHECK (created_by_turn_id IS NULL OR created_by_turn_id >= 0),
+    CONSTRAINT environment_jobs_tool_call_id_not_empty
+        CHECK (created_by_tool_call_id IS NULL OR created_by_tool_call_id <> ''),
+    CONSTRAINT environment_jobs_created_nonnegative
+        CHECK (created_at_ms >= 0),
+    CONSTRAINT environment_jobs_hash_not_empty
+        CHECK (start_request_hash <> ''),
+    CONSTRAINT environment_jobs_metadata_object
+        CHECK (jsonb_typeof(metadata_json) = 'object')
+);
+
+CREATE INDEX IF NOT EXISTS environment_jobs_session_deck_idx
+    ON environment_jobs (universe_id, session_id, env_id, deck_id, job_id);
+
+CREATE INDEX IF NOT EXISTS environment_jobs_provider_idx
+    ON environment_jobs (universe_id, provider_id, target_id, job_id);
+
 COMMENT ON TABLE environment_providers IS
     'Universe-scoped runtime environment providers that advertise host-protocol controllers.';
 COMMENT ON TABLE environment_targets IS
     'Mirrored host-protocol targets observed from registered environment providers.';
 COMMENT ON TABLE session_environment_bindings IS
     'Session-visible env:<id> bindings to provider targets and host data-plane connections.';
+COMMENT ON TABLE environment_jobs IS
+    'Session-owned environment job handle ledger for routing and idempotency only.';
