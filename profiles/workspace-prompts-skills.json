@@ -1,0 +1,36 @@
+{
+  "profileId": "example.workspace-prompts-skills",
+  "displayName": "Example Workspace Prompts And Skills",
+  "description": "Imports a local workspace containing conventional prompt and skill files.",
+  "config": {
+    "tools": {
+      "filesystem": "edit",
+      "webFetch": true,
+      "webSearch": true
+    }
+  },
+  "instructions": {
+    "type": "text",
+    "text": "Use the mounted workspace as the profile-provided operating context. Check the conventional prompt and skill directories before starting substantial work."
+  },
+  "mounts": [
+    {
+      "mountPath": "/workspace",
+      "source": {
+        "type": "workspace",
+        "workspaceId": "example_workspace_prompts_skills"
+      },
+      "access": "readWrite"
+    }
+  ],
+  "provision": {
+    "vfs": [
+      {
+        "path": "./workspace-prompts-skills",
+        "mountPath": "/workspace",
+        "mode": "workspace",
+        "workspaceId": "example_workspace_prompts_skills"
+      }
+    ]
+  }
+}
