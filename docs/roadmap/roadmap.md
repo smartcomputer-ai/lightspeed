@@ -12,7 +12,6 @@
 - [x] [Appendix: Fleet one-off child lifecycle](appendix-fleet-one-off-lifecycle.md) — `agent_spawn.lifecycle.close_on_terminal` for ephemeral delegation sessions
 - [x] agent profiles
 - [x] start new sessions with profiles and ad-hoc profiles
-- [ ] run coding agent (CC or Codex) on sandbox
 
 ## Provider Integrations
 - [ ] support and test completions api
@@ -25,6 +24,8 @@
 - [ ] Finalize sandbox protocol (look at Codex's protocol)
 - [ ] Write first sandbox integration
 - [ ] Allow agent to request new sandbox/env
+- [ ] [P86](p86-durable-environment-jobs.md) — durable environment jobs for long VM/sandbox work, including parallel jobs, serial lanes, dependency DAGs, and wait/cancel/read primitives
+- [ ] run coding agent (CC or Codex) on sandbox wrappers
 
 ## Message Bridge
 - [ ] Password/code-based login in channel (instead of whitelisting)
