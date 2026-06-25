@@ -595,6 +595,88 @@ async fn dispatch_json_rpc_routes_session_environments_close() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn dispatch_json_rpc_routes_session_environment_credentials_bind() {
+    let response = dispatch_json_rpc(
+        &TestService,
+        JsonRpcRequest {
+            id: RequestId::Number(1),
+            method: METHOD_SESSION_ENVIRONMENT_CREDENTIALS_BIND.to_owned(),
+            params: Some(json!({
+                "sessionId": "session_1",
+                "envId": "test",
+                "envName": "GITHUB_TOKEN",
+                "source": {
+                    "type": "authGrant",
+                    "grantId": "authgrant_repo"
+                }
+            })),
+        },
+    )
+    .await;
+
+    assert!(response.error.is_none());
+    let result = response.result.expect("result");
+    assert_eq!(
+        result["result"]["credential"]["envName"],
+        json!("GITHUB_TOKEN")
+    );
+    assert_eq!(
+        result["result"]["credential"]["source"]["grantId"],
+        json!("authgrant_repo")
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn dispatch_json_rpc_routes_session_environment_credentials_list() {
+    let response = dispatch_json_rpc(
+        &TestService,
+        JsonRpcRequest {
+            id: RequestId::Number(1),
+            method: METHOD_SESSION_ENVIRONMENT_CREDENTIALS_LIST.to_owned(),
+            params: Some(json!({
+                "sessionId": "session_1",
+                "envId": "test"
+            })),
+        },
+    )
+    .await;
+
+    assert!(response.error.is_none());
+    let result = response.result.expect("result");
+    assert_eq!(
+        result["result"]["credentials"][0]["envName"],
+        json!("GITHUB_TOKEN")
+    );
+    assert_eq!(
+        result["result"]["credentials"][0]["source"]["type"],
+        json!("authGrant")
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn dispatch_json_rpc_routes_session_environment_credentials_unbind() {
+    let response = dispatch_json_rpc(
+        &TestService,
+        JsonRpcRequest {
+            id: RequestId::Number(1),
+            method: METHOD_SESSION_ENVIRONMENT_CREDENTIALS_UNBIND.to_owned(),
+            params: Some(json!({
+                "sessionId": "session_1",
+                "envId": "test",
+                "envName": "GITHUB_TOKEN"
+            })),
+        },
+    )
+    .await;
+
+    assert!(response.error.is_none());
+    assert_eq!(
+        response.result.expect("result")["result"]["credential"]["envName"],
+        json!("GITHUB_TOKEN")
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn dispatch_json_rpc_routes_session_jobs_create() {
     let response = dispatch_json_rpc(
         &TestService,
@@ -1748,6 +1830,58 @@ impl AgentApiService for TestService {
         }))
     }
 
+    async fn bind_session_environment_credential(
+        &self,
+        params: SessionEnvironmentCredentialBindParams,
+    ) -> Result<AgentApiOutcome<SessionEnvironmentCredentialBindResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(
+            SessionEnvironmentCredentialBindResponse {
+                credential: test_session_environment_credential(
+                    params.session_id,
+                    params.env_id,
+                    params.env_name,
+                    params.source,
+                ),
+            },
+        ))
+    }
+
+    async fn list_session_environment_credentials(
+        &self,
+        params: SessionEnvironmentCredentialListParams,
+    ) -> Result<AgentApiOutcome<SessionEnvironmentCredentialListResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(
+            SessionEnvironmentCredentialListResponse {
+                credentials: vec![test_session_environment_credential(
+                    params.session_id,
+                    params.env_id,
+                    "GITHUB_TOKEN".to_owned(),
+                    SessionEnvironmentCredentialSourceView::AuthGrant {
+                        grant_id: "authgrant_repo".to_owned(),
+                    },
+                )],
+            },
+        ))
+    }
+
+    async fn unbind_session_environment_credential(
+        &self,
+        params: SessionEnvironmentCredentialUnbindParams,
+    ) -> Result<AgentApiOutcome<SessionEnvironmentCredentialUnbindResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(
+            SessionEnvironmentCredentialUnbindResponse {
+                credential: test_session_environment_credential(
+                    params.session_id,
+                    params.env_id,
+                    params.env_name,
+                    SessionEnvironmentCredentialSourceView::AuthGrant {
+                        grant_id: "authgrant_repo".to_owned(),
+                    },
+                ),
+            },
+        ))
+    }
+
     async fn create_session_jobs(
         &self,
         params: SessionJobCreateParams,
@@ -2428,6 +2562,22 @@ fn test_session_environment(active: bool) -> SessionEnvironmentView {
         }),
         cwd: Some("/workspace".to_owned()),
         active,
+    }
+}
+
+fn test_session_environment_credential(
+    session_id: SessionId,
+    env_id: EnvironmentId,
+    env_name: String,
+    source: SessionEnvironmentCredentialSourceView,
+) -> SessionEnvironmentCredentialView {
+    SessionEnvironmentCredentialView {
+        session_id,
+        env_id,
+        env_name,
+        source,
+        created_at_ms: 1,
+        updated_at_ms: 1,
     }
 }
 

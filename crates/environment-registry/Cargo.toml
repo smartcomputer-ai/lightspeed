@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 async-trait = "0.1"
+auth-registry = { path = "../auth-registry" }
 engine = { path = "../engine" }
 host-protocol = { path = "../host-protocol" }
 serde = { version = "1", features = ["derive"] }

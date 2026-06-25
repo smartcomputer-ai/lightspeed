@@ -3,6 +3,7 @@
 mod api_config;
 mod auth_api;
 mod blobs;
+mod environment_credentials;
 mod environment_lifecycle;
 mod environment_projection;
 mod environment_providers;
@@ -29,6 +30,7 @@ use auth_api::{
     parse_auth_grant_id, registry_auth_grant_status_for_filter,
 };
 use blobs::{get_blob, has_blobs, put_blob, put_blobs};
+use environment_lifecycle::{parse_core_session_id, parse_registry_environment_id};
 use environment_providers::{map_environment_registry_error, parse_environment_provider_id};
 use environments::{
     activate_environment_command, deactivate_environment_command, parse_environment_id,
@@ -111,7 +113,11 @@ use api::{
     SessionEnvironmentAttachParams, SessionEnvironmentAttachResponse,
     SessionEnvironmentCapabilitiesView, SessionEnvironmentCloseParams,
     SessionEnvironmentCloseResponse, SessionEnvironmentCreateParams,
-    SessionEnvironmentCreateResponse, SessionEnvironmentDeactivateParams,
+    SessionEnvironmentCreateResponse, SessionEnvironmentCredentialBindParams,
+    SessionEnvironmentCredentialBindResponse, SessionEnvironmentCredentialListParams,
+    SessionEnvironmentCredentialListResponse, SessionEnvironmentCredentialSourceView,
+    SessionEnvironmentCredentialUnbindParams, SessionEnvironmentCredentialUnbindResponse,
+    SessionEnvironmentCredentialView, SessionEnvironmentDeactivateParams,
     SessionEnvironmentDeactivateResponse, SessionEnvironmentKindView, SessionEnvironmentListParams,
     SessionEnvironmentListResponse, SessionEnvironmentReadParams, SessionEnvironmentReadResponse,
     SessionEnvironmentStatusView, SessionEnvironmentView, SessionEventsReadParams,
@@ -1718,6 +1724,33 @@ impl AgentApiService for GatewayAgentApi {
         params: SessionEnvironmentCloseParams,
     ) -> Result<AgentApiOutcome<SessionEnvironmentCloseResponse>, AgentApiError> {
         self.close_session_environment_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn bind_session_environment_credential(
+        &self,
+        params: SessionEnvironmentCredentialBindParams,
+    ) -> Result<AgentApiOutcome<SessionEnvironmentCredentialBindResponse>, AgentApiError> {
+        self.bind_session_environment_credential_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn list_session_environment_credentials(
+        &self,
+        params: SessionEnvironmentCredentialListParams,
+    ) -> Result<AgentApiOutcome<SessionEnvironmentCredentialListResponse>, AgentApiError> {
+        self.list_session_environment_credential_records(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn unbind_session_environment_credential(
+        &self,
+        params: SessionEnvironmentCredentialUnbindParams,
+    ) -> Result<AgentApiOutcome<SessionEnvironmentCredentialUnbindResponse>, AgentApiError> {
+        self.unbind_session_environment_credential_record(params)
             .await
             .map(AgentApiOutcome::new)
     }

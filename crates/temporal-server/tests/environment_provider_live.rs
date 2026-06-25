@@ -12,13 +12,16 @@ use std::{
 };
 
 use api::{
-    AgentApiService, AgentProfileInput, EnvironmentProviderCapabilitiesView,
-    EnvironmentProviderHeartbeatParams, EnvironmentProviderImplementationView,
-    EnvironmentProviderKindView, EnvironmentProviderRegisterParams, HostControllerConnectionView,
-    HostTargetAttachRequestView, HostTargetCreateRequestView, HostTransportView, InputItem,
-    ProfileCreateParams, ProfileDeleteParams, ProfileDocument, ProfileEnvironment, ProfileId,
-    ProfileSource, RunStartParams, RunStatus, SandboxTargetSpecView, SessionConfigInput,
+    AgentApiService, AgentProfileInput, AuthProviderConfigInput, AuthProviderCreateParams,
+    EnvironmentProviderCapabilitiesView, EnvironmentProviderHeartbeatParams,
+    EnvironmentProviderImplementationView, EnvironmentProviderKindView,
+    EnvironmentProviderRegisterParams, HostControllerConnectionView, HostTargetAttachRequestView,
+    HostTargetCreateRequestView, HostTransportView, InputItem, ProfileCreateParams,
+    ProfileDeleteParams, ProfileDocument, ProfileEnvironment, ProfileId, ProfileSource,
+    RunStartParams, RunStatus, SandboxTargetSpecView, SessionConfigInput,
     SessionEnvironmentAttachParams, SessionEnvironmentCloseParams, SessionEnvironmentCreateParams,
+    SessionEnvironmentCredentialBindParams, SessionEnvironmentCredentialListParams,
+    SessionEnvironmentCredentialSourceView, SessionEnvironmentCredentialUnbindParams,
     SessionEnvironmentListParams, SessionJobCancelParams, SessionJobCancelScopeView,
     SessionJobCreateParams, SessionJobDependencyInput, SessionJobDependencyPolicyView,
     SessionJobHandleInput, SessionJobHandleView, SessionJobListParams, SessionJobReadEntryView,
@@ -88,6 +91,8 @@ const BRIDGE_JOB_FILE_NAME: &str = "job-live.txt";
 const BRIDGE_JOB_MARKER: &str = "LIGHTSPEED_BRIDGE_JOB_MARKER";
 const BRIDGE_API_JOB_FILE_NAME: &str = "api-job-live.txt";
 const BRIDGE_API_JOB_MARKER: &str = "LIGHTSPEED_BRIDGE_API_JOB_MARKER";
+const BRIDGE_CREDENTIAL_FILE_NAME: &str = "credential-live.txt";
+const BRIDGE_CREDENTIAL_ENV_NAME: &str = "P87_LIVE_TOKEN";
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires local/up.sh or compatible Temporal + Postgres env"]
@@ -169,6 +174,29 @@ async fn temporal_live_host_bridge_environment_jobs_round_trip() -> anyhow::Resu
 
     support::live::run_with_live_worker(activities, |client, task_queue, session_id| async move {
         run_host_bridge_jobs_client(client, task_queue, session_id, bridge_bin, bridge_root).await
+    })
+    .await
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires local/up.sh or compatible Temporal + Postgres env and target/debug/host-bridge"]
+async fn temporal_live_host_bridge_environment_credential_injection() -> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().expect("live test lock");
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+
+    let bridge_bin = host_bridge_binary_path()?;
+    let bridge_root = tempfile::tempdir()?;
+    let bridge_root = bridge_root.path().canonicalize()?;
+    let store = pg_store_from_env().await?;
+    let blobs: Arc<dyn BlobStore> = store.clone();
+    let llm = Arc::new(ExecCommandLlm::new(blobs.clone())) as Arc<dyn CoreAgentLlm>;
+    let tools = Arc::new(SessionTools::from_pg_store(store.clone())) as Arc<dyn CoreAgentTools>;
+    let activities = WorkerActivities::new(ActivityState::from_pg_store(store, llm, tools));
+
+    support::live::run_with_live_worker(activities, |client, task_queue, session_id| async move {
+        run_host_bridge_credential_client(client, task_queue, session_id, bridge_bin, bridge_root)
+            .await
     })
     .await
 }
@@ -567,6 +595,182 @@ async fn run_host_bridge_jobs_client(
     Ok(())
 }
 
+async fn run_host_bridge_credential_client(
+    client: Client,
+    task_queue: String,
+    session_id: engine::SessionId,
+    bridge_bin: PathBuf,
+    bridge_root: PathBuf,
+) -> anyhow::Result<()> {
+    let store = pg_store_from_env().await?;
+    let model = fake_model();
+    let api = Arc::new(
+        GatewayAgentApi::builder(client.clone(), store)
+            .with_task_queue(task_queue)
+            .with_default_model(model.clone())
+            .with_max_steps_per_input(32)
+            .build(),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let gateway_url = format!("http://{}/rpc", listener.local_addr()?);
+    let gateway = tokio::spawn({
+        let api = api.clone();
+        async move {
+            let app = gateway_router(api, DEFAULT_MAX_REQUEST_BODY_BYTES);
+            axum::serve(listener, app).await
+        }
+    });
+
+    let provider_id = format!("host-bridge-credential-{}", uuid::Uuid::new_v4().simple());
+    let credential_provider_id = format!("p87-credential-{}", uuid::Uuid::new_v4().simple());
+    let secret_value = format!("p87-live-secret-{}", uuid::Uuid::new_v4().simple());
+    let bridge = SpawnedBridge::start(&bridge_bin, &gateway_url, &provider_id, &bridge_root)?;
+
+    api.start_session(SessionStartParams {
+        session_id: Some(session_id.as_str().to_owned()),
+        cwd: None,
+        config: Some(SessionConfigInput {
+            model: Some(api_projection::model_to_api(&model)),
+            ..SessionConfigInput::default()
+        }),
+        profile: None,
+    })
+    .await?;
+
+    let attached =
+        wait_for_bridge_attach(api.as_ref(), &session_id, &provider_id, "bridge-local").await?;
+    assert_eq!(
+        attached.result.active_env_id.as_deref(),
+        Some("bridge-local")
+    );
+
+    let provider = api
+        .create_auth_provider(AuthProviderCreateParams {
+            provider_id: Some(credential_provider_id.clone()),
+            display_name: Some("P87 live credential".to_owned()),
+            config: AuthProviderConfigInput::ModelApiKey {},
+            credential: Some(secret_value.clone()),
+        })
+        .await?;
+    assert_eq!(provider.result.provider.provider_id, credential_provider_id);
+    assert!(provider.result.provider.has_credential);
+
+    let bound = api
+        .bind_session_environment_credential(SessionEnvironmentCredentialBindParams {
+            session_id: session_id.as_str().to_owned(),
+            env_id: "bridge-local".to_owned(),
+            env_name: BRIDGE_CREDENTIAL_ENV_NAME.to_owned(),
+            source: SessionEnvironmentCredentialSourceView::AuthProviderCredential {
+                provider_id: credential_provider_id.clone(),
+            },
+        })
+        .await?;
+    assert_eq!(bound.result.credential.env_name, BRIDGE_CREDENTIAL_ENV_NAME);
+
+    let listed = api
+        .list_session_environment_credentials(SessionEnvironmentCredentialListParams {
+            session_id: session_id.as_str().to_owned(),
+            env_id: "bridge-local".to_owned(),
+        })
+        .await?;
+    assert!(
+        listed
+            .result
+            .credentials
+            .iter()
+            .any(|credential| credential.env_name == BRIDGE_CREDENTIAL_ENV_NAME),
+        "credential binding was not listed after bind: {:?}",
+        listed.result.credentials
+    );
+
+    let command = format!(
+        "printf '%s\\n' \"${}\" > {}; printf '%s\\n' \"${}\"",
+        BRIDGE_CREDENTIAL_ENV_NAME, BRIDGE_CREDENTIAL_FILE_NAME, BRIDGE_CREDENTIAL_ENV_NAME
+    );
+    let created = api
+        .create_session_jobs(SessionJobCreateParams {
+            session_id: session_id.as_str().to_owned(),
+            env_id: Some("bridge-local".to_owned()),
+            request_id: "p87_credential_injection".to_owned(),
+            jobs: vec![SessionJobStartSpecInput {
+                name: Some("p87-credential-injection".to_owned()),
+                job_id: None,
+                argv: vec!["/bin/sh".to_owned(), "-c".to_owned(), command],
+                cwd: None,
+                env: BTreeMap::new(),
+                stdin: None,
+                timeout_ms: Some(10_000),
+                depends_on: Vec::new(),
+                dependency_policy: SessionJobDependencyPolicyView::AllSucceeded,
+                queue_key: None,
+            }],
+        })
+        .await?;
+    let handle = created.result.jobs[0].handle.clone();
+    let entries = wait_for_session_jobs_terminal(
+        api.as_ref(),
+        &session_id,
+        std::slice::from_ref(&handle),
+        Duration::from_secs(10),
+    )
+    .await?;
+    ensure_job_statuses(
+        &entries,
+        SessionJobStatusView::Succeeded,
+        "credential injection job",
+    )?;
+    let output = session_job_output_text(&entries[0]);
+    assert!(
+        output.contains("<redacted>"),
+        "credential value was not redacted from job output: {output:?}"
+    );
+    assert!(
+        !output.contains(&secret_value),
+        "credential value leaked through job output: {output:?}"
+    );
+
+    let credential_file = bridge_root.join(BRIDGE_CREDENTIAL_FILE_NAME);
+    let credential_contents = tokio::fs::read_to_string(&credential_file).await?;
+    assert_eq!(
+        credential_contents,
+        format!("{secret_value}\n"),
+        "credential env was not injected into bridge job file {}",
+        credential_file.display()
+    );
+
+    let unbound = api
+        .unbind_session_environment_credential(SessionEnvironmentCredentialUnbindParams {
+            session_id: session_id.as_str().to_owned(),
+            env_id: "bridge-local".to_owned(),
+            env_name: BRIDGE_CREDENTIAL_ENV_NAME.to_owned(),
+        })
+        .await?;
+    assert_eq!(
+        unbound.result.credential.env_name,
+        BRIDGE_CREDENTIAL_ENV_NAME
+    );
+
+    api.close_session_environment(SessionEnvironmentCloseParams {
+        session_id: session_id.as_str().to_owned(),
+        env_id: "bridge-local".to_owned(),
+        force: false,
+        close_target: Some(false),
+    })
+    .await?;
+
+    let handle = client.get_workflow_handle::<AgentSessionWorkflow>(session_id.as_str());
+    let _ = handle
+        .terminate(
+            WorkflowTerminateOptions::builder()
+                .reason("host bridge credential live test cleanup")
+                .build(),
+        )
+        .await;
+    drop(bridge);
+    gateway.abort();
+    Ok(())
+}
+
 async fn run_api_job_queue_live_check(
     api: &GatewayAgentApi,
     session_id: &engine::SessionId,
@@ -876,6 +1080,16 @@ fn ensure_job_statuses(
         return Ok(());
     }
     anyhow::bail!("{label} did not all finish as {expected:?}: {statuses:?}")
+}
+
+fn session_job_output_text(entry: &SessionJobReadEntryView) -> String {
+    entry
+        .output_chunks
+        .iter()
+        .filter_map(|chunk| BASE64_STANDARD.decode(&chunk.data_base64).ok())
+        .filter_map(|bytes| String::from_utf8(bytes).ok())
+        .collect::<Vec<_>>()
+        .join("")
 }
 
 fn job_status_debug(entries: &[SessionJobReadEntryView]) -> Vec<String> {

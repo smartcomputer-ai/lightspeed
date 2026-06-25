@@ -23,6 +23,24 @@ enum EnvCommand {
     Deactivate(EnvDeactivateArgs),
     /// Close or detach a session environment.
     Close(EnvCloseArgs),
+    /// Bind, list, or unbind environment credentials.
+    Credentials(EnvCredentialsArgs),
+}
+
+#[derive(Args, Debug, Clone)]
+struct EnvCredentialsArgs {
+    #[command(subcommand)]
+    command: EnvCredentialCommand,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum EnvCredentialCommand {
+    /// Bind a credential source to an environment variable.
+    Bind(EnvCredentialBindArgs),
+    /// List credential bindings for an environment.
+    List(EnvCredentialListArgs),
+    /// Remove one credential binding from an environment.
+    Unbind(EnvCredentialUnbindArgs),
 }
 
 #[derive(Args, Debug, Clone)]
@@ -130,6 +148,69 @@ struct EnvCloseArgs {
     env_id: String,
 }
 
+#[derive(Args, Debug, Clone)]
+struct EnvCredentialBindArgs {
+    /// JSON-RPC agent API URL.
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    api_url: String,
+    /// Emit the bind response as JSON.
+    #[arg(long)]
+    json: bool,
+    /// Session id to bind within.
+    #[arg(long)]
+    session: String,
+    /// Environment id to bind within.
+    #[arg(long = "env-id")]
+    env_id: String,
+    /// Process environment variable name to inject.
+    #[arg(long = "env-name")]
+    env_name: String,
+    /// Bind an auth grant as the source.
+    #[arg(long = "grant-id", conflicts_with_all = ["provider_id", "secret_id"])]
+    grant_id: Option<String>,
+    /// Bind an auth provider credential secret as the source.
+    #[arg(long = "provider-id", conflicts_with_all = ["grant_id", "secret_id"])]
+    provider_id: Option<String>,
+    /// Bind a direct secret as the source.
+    #[arg(long = "secret-id", conflicts_with_all = ["grant_id", "provider_id"])]
+    secret_id: Option<String>,
+}
+
+#[derive(Args, Debug, Clone)]
+struct EnvCredentialListArgs {
+    /// JSON-RPC agent API URL.
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    api_url: String,
+    /// Emit bindings as JSON.
+    #[arg(long)]
+    json: bool,
+    /// Session id to inspect.
+    #[arg(long)]
+    session: String,
+    /// Environment id to inspect.
+    #[arg(long = "env-id")]
+    env_id: String,
+}
+
+#[derive(Args, Debug, Clone)]
+struct EnvCredentialUnbindArgs {
+    /// JSON-RPC agent API URL.
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    api_url: String,
+    /// Emit the unbind response as JSON.
+    #[arg(long)]
+    json: bool,
+    /// Session id to unbind within.
+    #[arg(long)]
+    session: String,
+    /// Environment id to unbind within.
+    #[arg(long = "env-id")]
+    env_id: String,
+    /// Process environment variable name to remove.
+    #[arg(long = "env-name")]
+    env_name: String,
+}
+
 pub(crate) async fn handle(args: EnvArgs) -> Result<()> {
     match args.command {
         EnvCommand::List(args) => list(args).await,
@@ -138,6 +219,7 @@ pub(crate) async fn handle(args: EnvArgs) -> Result<()> {
         EnvCommand::Activate(args) => activate(args).await,
         EnvCommand::Deactivate(args) => deactivate(args).await,
         EnvCommand::Close(args) => close(args).await,
+        EnvCommand::Credentials(args) => credentials(args).await,
     }
 }
 
@@ -277,6 +359,113 @@ async fn close(args: EnvCloseArgs) -> Result<()> {
         println!("active -");
     }
     print_environment(&response.environment, false)
+}
+
+async fn credentials(args: EnvCredentialsArgs) -> Result<()> {
+    match args.command {
+        EnvCredentialCommand::Bind(args) => credential_bind(args).await,
+        EnvCredentialCommand::List(args) => credential_list(args).await,
+        EnvCredentialCommand::Unbind(args) => credential_unbind(args).await,
+    }
+}
+
+async fn credential_bind(args: EnvCredentialBindArgs) -> Result<()> {
+    let source = match (args.grant_id, args.provider_id, args.secret_id) {
+        (Some(grant_id), None, None) => {
+            api::SessionEnvironmentCredentialSourceView::AuthGrant { grant_id }
+        }
+        (None, Some(provider_id), None) => {
+            api::SessionEnvironmentCredentialSourceView::AuthProviderCredential { provider_id }
+        }
+        (None, None, Some(secret_id)) => {
+            api::SessionEnvironmentCredentialSourceView::DirectSecret { secret_id }
+        }
+        _ => anyhow::bail!("specify exactly one of --grant-id, --provider-id, or --secret-id"),
+    };
+    let api = HttpAgentApi::new(args.api_url);
+    let response = api
+        .bind_session_environment_credential(api::SessionEnvironmentCredentialBindParams {
+            session_id: args.session,
+            env_id: args.env_id,
+            env_name: args.env_name,
+            source,
+        })
+        .await
+        .map_err(crate::api_client::api_error)?
+        .result;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&response)?);
+        return Ok(());
+    }
+    print_credential(&response.credential);
+    Ok(())
+}
+
+async fn credential_list(args: EnvCredentialListArgs) -> Result<()> {
+    let api = HttpAgentApi::new(args.api_url);
+    let response = api
+        .list_session_environment_credentials(api::SessionEnvironmentCredentialListParams {
+            session_id: args.session,
+            env_id: args.env_id,
+        })
+        .await
+        .map_err(crate::api_client::api_error)?
+        .result;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&response)?);
+        return Ok(());
+    }
+    if response.credentials.is_empty() {
+        println!("credentials 0");
+        return Ok(());
+    }
+    for credential in &response.credentials {
+        print_credential(credential);
+    }
+    Ok(())
+}
+
+async fn credential_unbind(args: EnvCredentialUnbindArgs) -> Result<()> {
+    let api = HttpAgentApi::new(args.api_url);
+    let response = api
+        .unbind_session_environment_credential(api::SessionEnvironmentCredentialUnbindParams {
+            session_id: args.session,
+            env_id: args.env_id,
+            env_name: args.env_name,
+        })
+        .await
+        .map_err(crate::api_client::api_error)?
+        .result;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&response)?);
+        return Ok(());
+    }
+    print!("unbound ");
+    print_credential(&response.credential);
+    Ok(())
+}
+
+fn print_credential(credential: &api::SessionEnvironmentCredentialView) {
+    println!(
+        "{} {} {}",
+        credential.env_id,
+        credential.env_name,
+        credential_source_label(&credential.source)
+    );
+}
+
+fn credential_source_label(source: &api::SessionEnvironmentCredentialSourceView) -> String {
+    match source {
+        api::SessionEnvironmentCredentialSourceView::AuthGrant { grant_id } => {
+            format!("authGrant:{grant_id}")
+        }
+        api::SessionEnvironmentCredentialSourceView::AuthProviderCredential { provider_id } => {
+            format!("authProviderCredential:{provider_id}")
+        }
+        api::SessionEnvironmentCredentialSourceView::DirectSecret { secret_id } => {
+            format!("directSecret:{secret_id}")
+        }
+    }
 }
 
 fn print_environment(environment: &api::SessionEnvironmentView, json: bool) -> Result<()> {

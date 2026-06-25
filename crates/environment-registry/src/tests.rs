@@ -247,6 +247,67 @@ async fn in_memory_store_creates_lists_updates_and_deletes_bindings() {
 }
 
 #[tokio::test]
+async fn in_memory_store_binds_lists_rebinds_and_unbinds_credentials() {
+    let store = InMemoryEnvironmentRegistryStore::new();
+    store
+        .create_binding(binding("session_1", "local"))
+        .await
+        .expect("create binding");
+
+    let bound = store
+        .bind_credential(CreateSessionEnvironmentCredential {
+            session_id: SessionId::new("session_1"),
+            env_id: EnvironmentId::new("local"),
+            env_name: "GITHUB_TOKEN".to_owned(),
+            source: SessionEnvironmentCredentialSource::AuthGrant {
+                grant_id: auth_registry::AuthGrantId::new("authgrant_repo"),
+            },
+            created_at_ms: 100,
+        })
+        .await
+        .expect("bind credential");
+    assert_eq!(bound.env_name, "GITHUB_TOKEN");
+
+    let rebound = store
+        .bind_credential(CreateSessionEnvironmentCredential {
+            session_id: SessionId::new("session_1"),
+            env_id: EnvironmentId::new("local"),
+            env_name: "GITHUB_TOKEN".to_owned(),
+            source: SessionEnvironmentCredentialSource::DirectSecret {
+                secret_id: auth_registry::SecretId::new("authsec_token"),
+            },
+            created_at_ms: 110,
+        })
+        .await
+        .expect("rebind credential");
+    assert_eq!(rebound.created_at_ms, 100);
+    assert_eq!(rebound.updated_at_ms, 110);
+    assert!(matches!(
+        rebound.source,
+        SessionEnvironmentCredentialSource::DirectSecret { .. }
+    ));
+
+    let listed = store
+        .list_credentials(ListSessionEnvironmentCredentials {
+            session_id: SessionId::new("session_1"),
+            env_id: EnvironmentId::new("local"),
+        })
+        .await
+        .expect("list credentials");
+    assert_eq!(listed, vec![rebound.clone()]);
+
+    let unbound = store
+        .unbind_credential(
+            &SessionId::new("session_1"),
+            &EnvironmentId::new("local"),
+            "GITHUB_TOKEN",
+        )
+        .await
+        .expect("unbind credential");
+    assert_eq!(unbound, rebound);
+}
+
+#[tokio::test]
 async fn in_memory_store_creates_reads_lists_and_deletes_job_handles() {
     let store = InMemoryEnvironmentRegistryStore::new();
 

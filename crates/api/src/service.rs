@@ -157,6 +157,21 @@ pub trait AgentApiService: Send + Sync {
         params: SessionEnvironmentCloseParams,
     ) -> Result<AgentApiOutcome<SessionEnvironmentCloseResponse>, AgentApiError>;
 
+    async fn bind_session_environment_credential(
+        &self,
+        params: SessionEnvironmentCredentialBindParams,
+    ) -> Result<AgentApiOutcome<SessionEnvironmentCredentialBindResponse>, AgentApiError>;
+
+    async fn list_session_environment_credentials(
+        &self,
+        params: SessionEnvironmentCredentialListParams,
+    ) -> Result<AgentApiOutcome<SessionEnvironmentCredentialListResponse>, AgentApiError>;
+
+    async fn unbind_session_environment_credential(
+        &self,
+        params: SessionEnvironmentCredentialUnbindParams,
+    ) -> Result<AgentApiOutcome<SessionEnvironmentCredentialUnbindResponse>, AgentApiError>;
+
     async fn create_session_jobs(
         &self,
         params: SessionJobCreateParams,

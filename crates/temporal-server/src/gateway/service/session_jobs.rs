@@ -31,6 +31,8 @@ use host_protocol::{
 };
 use tools::targets::ENV_TARGET_NAMESPACE;
 
+use crate::credential_injection::EnvironmentCredentialResolver;
+
 const DEFAULT_SESSION_JOB_LIST_LIMIT: usize = 20;
 const MAX_SESSION_JOB_LIST_LIMIT: usize = 200;
 
@@ -83,6 +85,17 @@ impl GatewayAgentApi {
             request_id: params.request_id,
             jobs,
         };
+        let resolver = EnvironmentCredentialResolver::from_pg_store(self.store.clone());
+        let mut request = request;
+        for job in &mut request.jobs {
+            let secret_env = resolver
+                .resolve_secret_env(&session_id, &env_id, &job.env)
+                .await
+                .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
+            for (name, value) in secret_env {
+                job.secret_env.insert(name, value);
+            }
+        }
         let request_hash = session_job_start_request_hash(&request)?;
 
         let (mut client, capabilities) = connect_initialized_host_data_client(&binding).await?;
@@ -502,6 +515,7 @@ fn api_start_spec_to_host(
             .transpose()
             .map_err(|error| format!("invalid job cwd: {error}"))?,
         env: spec.env,
+        secret_env: BTreeMap::new(),
         stdin: spec.stdin.map(|stdin| ByteChunk::from(stdin.into_bytes())),
         timeout_ms: spec.timeout_ms,
         depends_on: spec
@@ -566,7 +580,52 @@ fn derived_api_job_id(
 }
 
 fn session_job_start_request_hash(request: &HostStartJobsParams) -> Result<String, AgentApiError> {
-    serde_json::to_vec(request)
+    #[derive(serde::Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct SanitizedStartJobsParams<'a> {
+        namespace: &'a str,
+        request_id: &'a str,
+        jobs: Vec<SanitizedJobStartSpec<'a>>,
+    }
+
+    #[derive(serde::Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct SanitizedJobStartSpec<'a> {
+        job_id: &'a JobId,
+        name: &'a Option<String>,
+        argv: &'a [String],
+        cwd: &'a Option<HostPath>,
+        env: &'a BTreeMap<String, String>,
+        secret_env_names: Vec<&'a String>,
+        stdin: &'a Option<ByteChunk>,
+        timeout_ms: Option<u64>,
+        depends_on: &'a [HostJobDependency],
+        dependency_policy: HostJobDependencyPolicy,
+        queue_key: &'a Option<String>,
+    }
+
+    let material = SanitizedStartJobsParams {
+        namespace: &request.namespace,
+        request_id: &request.request_id,
+        jobs: request
+            .jobs
+            .iter()
+            .map(|job| SanitizedJobStartSpec {
+                job_id: &job.job_id,
+                name: &job.name,
+                argv: &job.argv,
+                cwd: &job.cwd,
+                env: &job.env,
+                secret_env_names: job.secret_env.keys().collect(),
+                stdin: &job.stdin,
+                timeout_ms: job.timeout_ms,
+                depends_on: &job.depends_on,
+                dependency_policy: job.dependency_policy,
+                queue_key: &job.queue_key,
+            })
+            .collect(),
+    };
+    serde_json::to_vec(&material)
         .map(|bytes| BlobRef::from_bytes(&bytes).to_string())
         .map_err(|error| AgentApiError::internal(format!("encode job start request hash: {error}")))
 }

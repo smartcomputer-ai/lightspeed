@@ -106,6 +106,7 @@ impl JobStartSpecArgs {
             argv: self.argv,
             cwd: self.cwd.as_ref().map(host_path).transpose()?,
             env: self.env,
+            secret_env: BTreeMap::new(),
             stdin: self.stdin.map(|value| ByteChunk::from(value.into_bytes())),
             timeout_ms: self.timeout_ms,
             depends_on: self.depends_on,

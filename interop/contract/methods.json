@@ -466,6 +466,51 @@
       }
     },
     {
+      "method": "session/environments/credentials/bind",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/SessionEnvironmentCredentialBindParams"
+        },
+        "type": "SessionEnvironmentCredentialBindParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfSessionEnvironmentCredentialBindResponse"
+        },
+        "type": "AgentApiOutcome<SessionEnvironmentCredentialBindResponse>"
+      }
+    },
+    {
+      "method": "session/environments/credentials/list",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/SessionEnvironmentCredentialListParams"
+        },
+        "type": "SessionEnvironmentCredentialListParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfSessionEnvironmentCredentialListResponse"
+        },
+        "type": "AgentApiOutcome<SessionEnvironmentCredentialListResponse>"
+      }
+    },
+    {
+      "method": "session/environments/credentials/unbind",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/SessionEnvironmentCredentialUnbindParams"
+        },
+        "type": "SessionEnvironmentCredentialUnbindParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfSessionEnvironmentCredentialUnbindResponse"
+        },
+        "type": "AgentApiOutcome<SessionEnvironmentCredentialUnbindResponse>"
+      }
+    },
+    {
       "method": "session/jobs/create",
       "params": {
         "schema": {

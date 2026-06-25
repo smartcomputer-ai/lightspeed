@@ -50,6 +50,7 @@ use tools::{
 use vfs::{VfsCatalogError, VfsMountRecord, VfsMountStore, VfsWorkspaceStore};
 
 use crate::{
+    credential_injection::EnvironmentCredentialResolver,
     environment::{RuntimeEnvironment, SessionEnvironmentManager},
     fleet::{FleetChildRuntime, FleetService, FleetToolExecutor},
 };
@@ -64,6 +65,7 @@ pub struct SessionTools {
     mount_store: Arc<dyn VfsMountStore>,
     environments: SessionEnvironmentManager,
     environment_bindings: Option<Arc<dyn SessionEnvironmentBindingStore>>,
+    environment_credentials: Option<EnvironmentCredentialResolver>,
     job_handles: Option<Arc<dyn JobHandleStore>>,
     messaging: Option<MessagingToolExecutor>,
     fleet: Option<FleetToolExecutor>,
@@ -82,6 +84,7 @@ impl SessionTools {
             mount_store,
             environments,
             environment_bindings: None,
+            environment_credentials: None,
             job_handles: None,
             messaging: None,
             fleet: None,
@@ -112,6 +115,14 @@ impl SessionTools {
         self
     }
 
+    pub(crate) fn with_environment_credentials(
+        mut self,
+        credentials: EnvironmentCredentialResolver,
+    ) -> Self {
+        self.environment_credentials = Some(credentials);
+        self
+    }
+
     pub fn with_job_handles(mut self, job_handles: Arc<dyn JobHandleStore>) -> Self {
         self.job_handles = Some(job_handles);
         self
@@ -128,10 +139,12 @@ impl SessionTools {
         let mount_store: Arc<dyn VfsMountStore> = store.clone();
         let outbox: Arc<dyn OutboxStore> = store.clone();
         let environment_bindings: Arc<dyn SessionEnvironmentBindingStore> = store.clone();
+        let credentials = EnvironmentCredentialResolver::from_pg_store(store.clone());
         let job_handles: Arc<dyn JobHandleStore> = store;
         Self::new(blobs, workspace_store, mount_store)
             .with_messaging_outbox(outbox)
             .with_environment_bindings(environment_bindings)
+            .with_environment_credentials(credentials)
             .with_job_handles(job_handles)
     }
 
@@ -1191,7 +1204,14 @@ impl SessionTools {
         if let Some(cwd) = cwd {
             connection = connection.with_cwd(cwd);
         }
-        let (fs_context, environment_context) = connection.into_contexts(self.blobs.clone());
+        let (fs_context, mut environment_context) = connection.into_contexts(self.blobs.clone());
+        if let Some(credentials) = &self.environment_credentials {
+            environment_context = credentials.wrap_context(
+                environment_context,
+                binding.session_id.clone(),
+                binding.env_id.clone(),
+            );
+        }
         let environment_context =
             environment_context.with_session_id(binding.session_id.as_str().to_owned());
         crate::environment::runtime_environment_from_binding_record(&binding, environment_context)

@@ -47,6 +47,7 @@ pub async fn invoke_run_process(
             argv: args.argv,
             cwd,
             env: args.env,
+            secret_env: BTreeMap::new(),
             stdin: args.stdin.map(String::into_bytes),
             timeout_ms: Some(
                 args.timeout_ms

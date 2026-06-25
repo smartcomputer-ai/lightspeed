@@ -8,14 +8,16 @@ use engine::SessionId;
 use host_protocol::shared::{HostTargetId, JobId};
 
 use crate::{
-    CreateJobHandle, CreateSessionEnvironmentBinding, EnvironmentId, EnvironmentProviderHeartbeat,
-    EnvironmentProviderId, EnvironmentProviderRecord, EnvironmentProviderStatus,
-    EnvironmentProviderStore, EnvironmentRegistryError, EnvironmentTargetRecord,
-    EnvironmentTargetStore, JobHandleRecord, JobHandleStore, ListEnvironmentProviders,
-    ListEnvironmentTargets, ListJobHandles, RegisterEnvironmentProvider,
+    CreateJobHandle, CreateSessionEnvironmentBinding, CreateSessionEnvironmentCredential,
+    EnvironmentId, EnvironmentProviderHeartbeat, EnvironmentProviderId, EnvironmentProviderRecord,
+    EnvironmentProviderStatus, EnvironmentProviderStore, EnvironmentRegistryError,
+    EnvironmentTargetRecord, EnvironmentTargetStore, JobHandleRecord, JobHandleStore,
+    ListEnvironmentProviders, ListEnvironmentTargets, ListJobHandles,
+    ListSessionEnvironmentCredentials, RegisterEnvironmentProvider,
     SessionEnvironmentBindingRecord, SessionEnvironmentBindingStore,
+    SessionEnvironmentCredentialRecord, SessionEnvironmentCredentialStore,
     UpdateEnvironmentProviderStatus, UpdateEnvironmentTargetStatus,
-    UpdateSessionEnvironmentBindingStatus, UpsertEnvironmentTargetRecord,
+    UpdateSessionEnvironmentBindingStatus, UpsertEnvironmentTargetRecord, validate_env_name,
     validate_list_job_handles, validate_nonnegative_i64, validate_positive_i64,
 };
 
@@ -24,6 +26,9 @@ pub struct InMemoryEnvironmentRegistryStore {
     providers: Arc<RwLock<BTreeMap<EnvironmentProviderId, EnvironmentProviderRecord>>>,
     targets: Arc<RwLock<BTreeMap<(EnvironmentProviderId, HostTargetId), EnvironmentTargetRecord>>>,
     bindings: Arc<RwLock<BTreeMap<(SessionId, EnvironmentId), SessionEnvironmentBindingRecord>>>,
+    credentials: Arc<
+        RwLock<BTreeMap<(SessionId, EnvironmentId, String), SessionEnvironmentCredentialRecord>>,
+    >,
     job_handles: Arc<RwLock<BTreeMap<(SessionId, EnvironmentId, JobId), JobHandleRecord>>>,
 }
 
@@ -342,6 +347,77 @@ impl SessionEnvironmentBindingStore for InMemoryEnvironmentRegistryStore {
 }
 
 #[async_trait]
+impl SessionEnvironmentCredentialStore for InMemoryEnvironmentRegistryStore {
+    async fn bind_credential(
+        &self,
+        record: CreateSessionEnvironmentCredential,
+    ) -> Result<SessionEnvironmentCredentialRecord, EnvironmentRegistryError> {
+        let mut record = record.into_record();
+        record.validate()?;
+        self.read_binding(&record.session_id, &record.env_id)
+            .await?;
+
+        let mut credentials =
+            self.credentials
+                .write()
+                .map_err(|_| EnvironmentRegistryError::Store {
+                    message: "session environment credential registry write lock poisoned"
+                        .to_owned(),
+                })?;
+        let key = credential_key(&record.session_id, &record.env_id, &record.env_name);
+        if let Some(existing) = credentials.get(&key) {
+            record.created_at_ms = existing.created_at_ms;
+            record.updated_at_ms = record.updated_at_ms.max(record.created_at_ms);
+            record.validate()?;
+        }
+        credentials.insert(key, record.clone());
+        Ok(record)
+    }
+
+    async fn list_credentials(
+        &self,
+        request: ListSessionEnvironmentCredentials,
+    ) -> Result<Vec<SessionEnvironmentCredentialRecord>, EnvironmentRegistryError> {
+        self.read_binding(&request.session_id, &request.env_id)
+            .await?;
+        let credentials = self
+            .credentials
+            .read()
+            .map_err(|_| EnvironmentRegistryError::Store {
+                message: "session environment credential registry read lock poisoned".to_owned(),
+            })?;
+        let mut records = credentials
+            .values()
+            .filter(|record| {
+                record.session_id == request.session_id && record.env_id == request.env_id
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        records.sort_by(|left, right| left.env_name.cmp(&right.env_name));
+        Ok(records)
+    }
+
+    async fn unbind_credential(
+        &self,
+        session_id: &SessionId,
+        env_id: &EnvironmentId,
+        env_name: &str,
+    ) -> Result<SessionEnvironmentCredentialRecord, EnvironmentRegistryError> {
+        validate_env_name(env_name)?;
+        let mut credentials =
+            self.credentials
+                .write()
+                .map_err(|_| EnvironmentRegistryError::Store {
+                    message: "session environment credential registry write lock poisoned"
+                        .to_owned(),
+                })?;
+        credentials
+            .remove(&credential_key(session_id, env_id, env_name))
+            .ok_or_else(|| credential_not_found(session_id, env_id, env_name))
+    }
+}
+
+#[async_trait]
 impl JobHandleStore for InMemoryEnvironmentRegistryStore {
     async fn create_job_handles(
         &self,
@@ -484,6 +560,25 @@ fn binding_not_found(session_id: &SessionId, env_id: &EnvironmentId) -> Environm
 
 fn binding_id(session_id: &SessionId, env_id: &EnvironmentId) -> String {
     format!("{session_id}/{}", env_id.as_str())
+}
+
+fn credential_key(
+    session_id: &SessionId,
+    env_id: &EnvironmentId,
+    env_name: &str,
+) -> (SessionId, EnvironmentId, String) {
+    (session_id.clone(), env_id.clone(), env_name.to_owned())
+}
+
+fn credential_not_found(
+    session_id: &SessionId,
+    env_id: &EnvironmentId,
+    env_name: &str,
+) -> EnvironmentRegistryError {
+    EnvironmentRegistryError::NotFound {
+        kind: "session_environment_credential",
+        id: format!("{session_id}/{}/{env_name}", env_id.as_str()),
+    }
 }
 
 fn job_handle_key(

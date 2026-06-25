@@ -877,6 +877,57 @@
         ],
         "type": "object"
       },
+      "AgentApiOutcomeOfSessionEnvironmentCredentialBindResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/SessionEnvironmentCredentialBindResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfSessionEnvironmentCredentialListResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/SessionEnvironmentCredentialListResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfSessionEnvironmentCredentialUnbindResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/SessionEnvironmentCredentialUnbindResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
       "AgentApiOutcomeOfSessionEnvironmentDeactivateResponse": {
         "properties": {
           "notifications": {
@@ -6459,6 +6510,182 @@
         ],
         "type": "object"
       },
+      "SessionEnvironmentCredentialBindParams": {
+        "properties": {
+          "envId": {
+            "type": "string"
+          },
+          "envName": {
+            "type": "string"
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/SessionEnvironmentCredentialSourceView"
+          }
+        },
+        "required": [
+          "sessionId",
+          "envId",
+          "envName",
+          "source"
+        ],
+        "type": "object"
+      },
+      "SessionEnvironmentCredentialBindResponse": {
+        "properties": {
+          "credential": {
+            "$ref": "#/components/schemas/SessionEnvironmentCredentialView"
+          }
+        },
+        "required": [
+          "credential"
+        ],
+        "type": "object"
+      },
+      "SessionEnvironmentCredentialListParams": {
+        "properties": {
+          "envId": {
+            "type": "string"
+          },
+          "sessionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId",
+          "envId"
+        ],
+        "type": "object"
+      },
+      "SessionEnvironmentCredentialListResponse": {
+        "properties": {
+          "credentials": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SessionEnvironmentCredentialView"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "SessionEnvironmentCredentialSourceView": {
+        "oneOf": [
+          {
+            "properties": {
+              "grantId": {
+                "type": "string"
+              },
+              "type": {
+                "const": "authGrant",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "grantId"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "providerId": {
+                "type": "string"
+              },
+              "type": {
+                "const": "authProviderCredential",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "providerId"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "secretId": {
+                "type": "string"
+              },
+              "type": {
+                "const": "directSecret",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "secretId"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "SessionEnvironmentCredentialUnbindParams": {
+        "properties": {
+          "envId": {
+            "type": "string"
+          },
+          "envName": {
+            "type": "string"
+          },
+          "sessionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId",
+          "envId",
+          "envName"
+        ],
+        "type": "object"
+      },
+      "SessionEnvironmentCredentialUnbindResponse": {
+        "properties": {
+          "credential": {
+            "$ref": "#/components/schemas/SessionEnvironmentCredentialView"
+          }
+        },
+        "required": [
+          "credential"
+        ],
+        "type": "object"
+      },
+      "SessionEnvironmentCredentialView": {
+        "properties": {
+          "createdAtMs": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "envId": {
+            "type": "string"
+          },
+          "envName": {
+            "type": "string"
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/SessionEnvironmentCredentialSourceView"
+          },
+          "updatedAtMs": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sessionId",
+          "envId",
+          "envName",
+          "source",
+          "createdAtMs",
+          "updatedAtMs"
+        ],
+        "type": "object"
+      },
       "SessionEnvironmentDeactivateParams": {
         "properties": {
           "sessionId": {
@@ -10794,6 +11021,66 @@
         "name": "result",
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfSessionEnvironmentCloseResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "session/environments/credentials/bind",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/SessionEnvironmentCredentialBindParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfSessionEnvironmentCredentialBindResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "session/environments/credentials/list",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/SessionEnvironmentCredentialListParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfSessionEnvironmentCredentialListResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "session/environments/credentials/unbind",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/SessionEnvironmentCredentialUnbindParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfSessionEnvironmentCredentialUnbindResponse"
         }
       }
     },

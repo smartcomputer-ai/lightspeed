@@ -237,6 +237,72 @@ pub struct SessionEnvironmentCloseResponse {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+pub struct SessionEnvironmentCredentialView {
+    pub session_id: SessionId,
+    pub env_id: EnvironmentId,
+    pub env_name: String,
+    pub source: SessionEnvironmentCredentialSourceView,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum SessionEnvironmentCredentialSourceView {
+    AuthGrant { grant_id: String },
+    AuthProviderCredential { provider_id: String },
+    DirectSecret { secret_id: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionEnvironmentCredentialBindParams {
+    pub session_id: SessionId,
+    pub env_id: EnvironmentId,
+    pub env_name: String,
+    pub source: SessionEnvironmentCredentialSourceView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionEnvironmentCredentialBindResponse {
+    pub credential: SessionEnvironmentCredentialView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionEnvironmentCredentialListParams {
+    pub session_id: SessionId,
+    pub env_id: EnvironmentId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionEnvironmentCredentialListResponse {
+    #[serde(default)]
+    pub credentials: Vec<SessionEnvironmentCredentialView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionEnvironmentCredentialUnbindParams {
+    pub session_id: SessionId,
+    pub env_id: EnvironmentId,
+    pub env_name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionEnvironmentCredentialUnbindResponse {
+    pub credential: SessionEnvironmentCredentialView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct SessionJobHandleView {
     pub session_id: SessionId,
     pub env_id: EnvironmentId,

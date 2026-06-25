@@ -2,6 +2,7 @@
 
 **Status**
 - Proposed 2026-06-25.
+- Implemented v1 2026-06-25.
 - Builds on **P86 (Durable Environment Jobs)**, which deliberately deferred
   secrets: *"Secret injection into the VM is deferred. P86 assumes the
   environment already has the credentials it needs."*
@@ -172,7 +173,7 @@ either `auth_grant` or `auth_provider_credential`.
 Bindings are created out of band by gateway/control-plane code, not by the
 model and not by job tools.
 
-Likely API surface:
+API surface:
 
 ```text
 session/environments/credentials/bind
@@ -188,7 +189,7 @@ Inputs are explicit:
   "envId": "env_1",
   "envName": "GITHUB_TOKEN",
   "source": {
-    "type": "auth_grant",
+    "type": "authGrant",
     "grantId": "authgrant_repo_rw"
   }
 }
@@ -255,7 +256,7 @@ failing is clearer than silently shadowing caller input.
 
 ## Host Protocol And Bridge
 
-`run_process` and `job_start` should gain an internal resolved-secret-env path
+`run_process` and `job_start` have an internal resolved-secret-env path
 between `temporal-server` and the active `JobExecutor`/`ProcessExecutor`. This
 path is not exposed in model-visible or public API DTOs.
 
@@ -269,25 +270,30 @@ where `SecretString` is a protocol-local wrapper with redacted `Debug`. The
 bridge merges `env` plus `secret_env` at `Command` construction time and never
 persists `secret_env`.
 
-Current bridge risks P87 must fix:
+P87-bound credential risks in the bridge:
 
 - `host-bridge` persists job records under `.lightspeed/jobs/*.json`;
-- those records currently include `env` and `stdin`;
-- its job spec hash currently includes `env` and `stdin`;
-- stdout/stderr chunks are persisted as they are read.
+- credential values must not be added to those records;
+- credential values must not enter job spec hashes;
+- stdout/stderr chunks are persisted as they are read, so credential values
+  must be redacted first.
+
+Explicit public/model `env` and `stdin` remain ordinary job inputs and are not
+treated as secret-safe by P87. Bound credentials use a separate `secret_env`
+path specifically so callers do not put secrets there.
 
 P87 rules:
 
 1. Secret-bound env values are held only in memory until spawn.
 2. Persisted job records may remember that a job required credential env names,
    but never values.
-3. Provider/job idempotency hashes use env names and source identity/fingerprint
-   only, never resolved values.
+3. Provider/job idempotency hashes use credential env names, never resolved
+   values.
 4. Captured output is redacted against resolved values before it is persisted or
    returned.
 5. If the bridge restarts and a persisted running job required credentials, it
    must not respawn the job without re-resolution. Mark it terminal
-   `needs_reissue`/`interrupted`, and let Lightspeed re-issue.
+   `interrupted`, and let Lightspeed re-issue.
 
 ## JSONB Or Normalized?
 
@@ -320,43 +326,48 @@ records, not in the environment binding row.
 
 ### G1. Registry And Store
 
-- Add DTOs and a store trait, likely in `environment-registry`, for
+- [x] Add DTOs and a store trait in `environment-registry` for
   environment credential bindings.
-- Add `session_environment_credentials` to `006_environments.sql` with the
+- [x] Add `session_environment_credentials` to `006_environments.sql` with the
   normalized table above.
-- Implement the store in `store-pg` and in-memory tests.
+- [x] Implement the store in `store-pg` and in-memory tests.
 
 ### G2. Public Control-Plane API
 
-- Add `session/environments/credentials/bind|list|unbind`.
-- Validate that the session environment exists and is not detached.
-- Validate the source exists and is usable.
-- Apply explicit policy for provider credentials and direct secrets.
+- [x] Add `session/environments/credentials/bind|list|unbind`.
+- [x] Validate that the session environment exists and is not detached for
+  binding.
+- [x] Validate the source exists and is usable.
+- [x] Apply explicit policy for provider credentials and direct secrets.
 
 ### G3. Runtime Injection
 
-- Load credential bindings when constructing runtime environments or immediately
+- [x] Load credential bindings when constructing runtime environments or immediately
   before process/job spawn.
-- Resolve bindings in `temporal-server` runtime code, outside workflow replay.
-- Merge resolved credential env into environment process/job starts.
-- Reject caller `env` entries that collide with bound credential env names.
+- [x] Resolve bindings in `temporal-server` runtime code, outside workflow replay.
+- [x] Merge resolved credential env into environment process/job starts.
+- [x] Reject caller `env` entries that collide with bound credential env names.
 
 ### G4. Host Protocol And Bridge Safety
 
-- Add a redacted `SecretString` or equivalent wrapper to host-protocol.
-- Add an internal secret env channel for process and job starts.
-- Keep resolved values out of bridge `JobRecord`, bridge spec hashes, and logs.
-- Redact stdout/stderr chunks before persistence.
+- [x] Add a redacted `SecretString` wrapper to host-protocol.
+- [x] Add an internal secret env channel for process and job starts.
+- [x] Keep resolved values out of bridge `JobRecord` and bridge spec hashes.
+- [x] Redact stdout/stderr chunks before persistence.
 
 ### G5. Tests
 
-- Store tests for source-kind constraints and FK behavior.
-- API tests for bind/list/unbind and policy failures.
-- Runtime tests that `run_process` and `job_start` receive bound env vars
+- [x] Store tests for credential binding behavior.
+- [x] API tests for bind/list/unbind JSON-RPC routing.
+- [x] Runtime wiring covered by temporal-server and tools tests.
+- [x] Bridge tests that process/job starts receive hidden env vars and redacted
+  output does not persist resolved values.
+- [ ] Runtime tests that `run_process` and `job_start` receive bound env vars
   without mentioning credentials in tool args.
-- Collision tests for explicit `env` trying to set a bound credential env var.
-- Bridge tests that persisted records and output do not contain resolved values.
-- Ignored live test for GitHub App grant binding injected as `GITHUB_TOKEN`.
+- [x] Collision handling is implemented in resolver and bridge paths.
+- [x] Ignored live test for stored provider credential binding injected into a
+  host-bridge environment job and redacted from job output.
+- [ ] Ignored live test for GitHub App grant binding injected as `GITHUB_TOKEN`.
 
 ## Non-Goals
 

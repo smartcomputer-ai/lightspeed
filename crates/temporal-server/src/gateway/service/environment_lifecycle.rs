@@ -354,7 +354,7 @@ impl GatewayAgentApi {
     }
 }
 
-fn parse_core_session_id(value: String) -> Result<SessionId, AgentApiError> {
+pub(super) fn parse_core_session_id(value: String) -> Result<SessionId, AgentApiError> {
     SessionId::try_new(value)
         .map_err(|error| AgentApiError::invalid_request(format!("invalid session id: {error}")))
 }
@@ -366,7 +366,9 @@ fn parse_or_allocate_environment_id(
     parse_registry_environment_id(value)
 }
 
-fn parse_registry_environment_id(value: String) -> Result<RegistryEnvironmentId, AgentApiError> {
+pub(super) fn parse_registry_environment_id(
+    value: String,
+) -> Result<RegistryEnvironmentId, AgentApiError> {
     let value = parse_environment_id(value)?;
     RegistryEnvironmentId::try_new(value)
         .map_err(|error| AgentApiError::invalid_request(format!("invalid environment id: {error}")))

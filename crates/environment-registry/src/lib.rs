@@ -11,6 +11,7 @@ use std::{
 };
 
 use async_trait::async_trait;
+use auth_registry::{AuthGrantId, AuthProviderId, SecretId};
 use engine::{
     RunId, SessionId, StringIdError, ToolCallId, ToolExecutionTarget, TurnId,
     validate_general_string_id,
@@ -490,6 +491,69 @@ pub struct UpdateSessionEnvironmentBindingStatus {
     pub updated_at_ms: i64,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionEnvironmentCredentialRecord {
+    pub session_id: SessionId,
+    pub env_id: EnvironmentId,
+    pub env_name: String,
+    pub source: SessionEnvironmentCredentialSource,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+impl SessionEnvironmentCredentialRecord {
+    pub fn validate(&self) -> Result<(), EnvironmentRegistryError> {
+        validate_env_name(&self.env_name)?;
+        validate_nonnegative_i64(self.created_at_ms, "created_at_ms")?;
+        validate_nonnegative_i64(self.updated_at_ms, "updated_at_ms")?;
+        if self.updated_at_ms < self.created_at_ms {
+            return Err(EnvironmentRegistryError::InvalidInput {
+                message: format!(
+                    "updated_at_ms {} must be >= created_at_ms {}",
+                    self.updated_at_ms, self.created_at_ms
+                ),
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreateSessionEnvironmentCredential {
+    pub session_id: SessionId,
+    pub env_id: EnvironmentId,
+    pub env_name: String,
+    pub source: SessionEnvironmentCredentialSource,
+    pub created_at_ms: i64,
+}
+
+impl CreateSessionEnvironmentCredential {
+    pub fn into_record(self) -> SessionEnvironmentCredentialRecord {
+        SessionEnvironmentCredentialRecord {
+            session_id: self.session_id,
+            env_id: self.env_id,
+            env_name: self.env_name,
+            source: self.source,
+            created_at_ms: self.created_at_ms,
+            updated_at_ms: self.created_at_ms,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SessionEnvironmentCredentialSource {
+    AuthGrant { grant_id: AuthGrantId },
+    AuthProviderCredential { provider_id: AuthProviderId },
+    DirectSecret { secret_id: SecretId },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ListSessionEnvironmentCredentials {
+    pub session_id: SessionId,
+    pub env_id: EnvironmentId,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionEnvironmentKind {
@@ -805,6 +869,26 @@ pub trait SessionEnvironmentBindingStore: Send + Sync {
 }
 
 #[async_trait]
+pub trait SessionEnvironmentCredentialStore: Send + Sync {
+    async fn bind_credential(
+        &self,
+        record: CreateSessionEnvironmentCredential,
+    ) -> Result<SessionEnvironmentCredentialRecord, EnvironmentRegistryError>;
+
+    async fn list_credentials(
+        &self,
+        request: ListSessionEnvironmentCredentials,
+    ) -> Result<Vec<SessionEnvironmentCredentialRecord>, EnvironmentRegistryError>;
+
+    async fn unbind_credential(
+        &self,
+        session_id: &SessionId,
+        env_id: &EnvironmentId,
+        env_name: &str,
+    ) -> Result<SessionEnvironmentCredentialRecord, EnvironmentRegistryError>;
+}
+
+#[async_trait]
 pub trait JobHandleStore: Send + Sync {
     async fn create_job_handles(
         &self,
@@ -868,6 +952,37 @@ fn validate_list_job_handles(request: &ListJobHandles) -> Result<(), Environment
     if matches!(request.limit, Some(0)) {
         return Err(EnvironmentRegistryError::InvalidInput {
             message: "job handle list limit must be greater than zero".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_env_name(value: &str) -> Result<(), EnvironmentRegistryError> {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return Err(EnvironmentRegistryError::InvalidInput {
+            message: "credential env name must not be empty".to_owned(),
+        });
+    };
+    if !(first == '_' || first.is_ascii_alphabetic()) {
+        return Err(EnvironmentRegistryError::InvalidInput {
+            message: format!("invalid credential env name: {value}"),
+        });
+    }
+    let len = 1 + chars
+        .try_fold(0usize, |count, ch| {
+            if ch == '_' || ch.is_ascii_alphanumeric() {
+                Ok(count + 1)
+            } else {
+                Err(())
+            }
+        })
+        .map_err(|()| EnvironmentRegistryError::InvalidInput {
+            message: format!("invalid credential env name: {value}"),
+        })?;
+    if len > 128 {
+        return Err(EnvironmentRegistryError::InvalidInput {
+            message: format!("credential env name is too long: {len} bytes, max 128"),
         });
     }
     Ok(())

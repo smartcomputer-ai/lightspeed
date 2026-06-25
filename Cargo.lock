@@ -889,6 +889,7 @@ name = "environment-registry"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "auth-registry",
  "engine",
  "host-protocol",
  "serde",

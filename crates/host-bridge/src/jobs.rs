@@ -13,7 +13,7 @@ use host_protocol::{
         ListJobsResponse, ReadJobsParams, ReadJobsResponse, StartJobsParams, StartJobsResponse,
     },
     error::{HostError, HostErrorCode},
-    shared::{ByteChunk, HostPath, JobId},
+    shared::{ByteChunk, HostPath, JobId, SecretString},
 };
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -35,6 +35,7 @@ pub struct JobManager {
 struct JobManagerState {
     jobs: BTreeMap<JobKey, JobRecord>,
     running: BTreeMap<JobKey, Arc<RunningJob>>,
+    secret_envs: BTreeMap<JobKey, BTreeMap<String, SecretString>>,
     next_accept_seq: u64,
 }
 
@@ -53,6 +54,8 @@ struct JobRecord {
     argv: Vec<String>,
     cwd: Option<HostPath>,
     env: BTreeMap<String, String>,
+    #[serde(default)]
+    secret_env_names: Vec<String>,
     stdin: Option<ByteChunk>,
     timeout_ms: Option<u64>,
     dependency_policy: JobDependencyPolicy,
@@ -76,6 +79,7 @@ struct JobRecord {
 struct ResolvedJob {
     spec: JobStartSpec,
     dependencies: Vec<JobId>,
+    secret_env: BTreeMap<String, SecretString>,
     spec_hash: String,
 }
 
@@ -142,6 +146,10 @@ impl JobManager {
             for job in &resolved {
                 let key = job_key(&params.namespace, &job.spec.job_id);
                 if state.jobs.contains_key(&key) {
+                    state
+                        .secret_envs
+                        .entry(key.clone())
+                        .or_insert_with(|| job.secret_env.clone());
                     accepted.push(key);
                     continue;
                 }
@@ -155,6 +163,7 @@ impl JobManager {
                     argv: job.spec.argv.clone(),
                     cwd: job.spec.cwd.clone(),
                     env: job.spec.env.clone(),
+                    secret_env_names: job.secret_env.keys().cloned().collect(),
                     stdin: job.spec.stdin.clone(),
                     timeout_ms: job.spec.timeout_ms,
                     dependency_policy: job.spec.dependency_policy,
@@ -174,6 +183,9 @@ impl JobManager {
                 };
                 self.persist_record(&record)?;
                 accepted.push(key.clone());
+                state
+                    .secret_envs
+                    .insert(key.clone(), job.secret_env.clone());
                 state.jobs.insert(key, record);
             }
         }
@@ -412,11 +424,12 @@ impl JobManager {
                         ready_record = Some(record.clone());
                     }
                     if let Some(record) = ready_record {
+                        let secret_env = state.secret_envs.get(&key).cloned().unwrap_or_default();
                         let running = Arc::new(RunningJob {
                             cancel: Notify::new(),
                         });
                         state.running.insert(key, running.clone());
-                        ready.push((record.clone(), running));
+                        ready.push((record.clone(), running, secret_env));
                     }
                 }
                 ready
@@ -425,10 +438,10 @@ impl JobManager {
             if ready.is_empty() {
                 break;
             }
-            for (record, running) in ready {
+            for (record, running, secret_env) in ready {
                 let manager = self.clone();
                 tokio::spawn(async move {
-                    manager.run_job(record, running).await;
+                    manager.run_job(record, running, secret_env).await;
                 });
             }
         }
@@ -480,8 +493,15 @@ impl JobManager {
         }
     }
 
-    async fn run_job(&self, record: JobRecord, running: Arc<RunningJob>) {
-        let result = self.spawn_and_wait(record.clone(), running.clone()).await;
+    async fn run_job(
+        &self,
+        record: JobRecord,
+        running: Arc<RunningJob>,
+        secret_env: BTreeMap<String, SecretString>,
+    ) {
+        let result = self
+            .spawn_and_wait(record.clone(), running.clone(), secret_env)
+            .await;
         let (status, exit_code, failure) = match result {
             Ok((FinishKind::Exit, exit_code)) => {
                 if exit_code == Some(0) {
@@ -514,6 +534,7 @@ impl JobManager {
             let mut state = self.state.lock().await;
             let key = job_key(&record.namespace, &record.job_id);
             state.running.remove(&key);
+            state.secret_envs.remove(&key);
             if let Some(record) = state.jobs.get_mut(&key) {
                 record.status = status;
                 record.exit_code = exit_code;
@@ -542,6 +563,7 @@ impl JobManager {
         &self,
         record: JobRecord,
         running: Arc<RunningJob>,
+        secret_env: BTreeMap<String, SecretString>,
     ) -> Result<(FinishKind, Option<i32>), HostError> {
         if record.argv.is_empty() {
             return Err(HostError::new(
@@ -557,6 +579,14 @@ impl JobManager {
             .unwrap_or_else(|| self.cwd.clone());
 
         let mut command = Command::new(&record.argv[0]);
+        for name in secret_env.keys() {
+            if record.env.contains_key(name) {
+                return Err(HostError::new(
+                    HostErrorCode::InvalidRequest,
+                    format!("job env collides with secret env: {name}"),
+                ));
+            }
+        }
         command
             .args(&record.argv[1..])
             .current_dir(cwd)
@@ -568,6 +598,9 @@ impl JobManager {
             })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        for (name, value) in &secret_env {
+            command.env(name, value.expose());
+        }
 
         let mut child = command.spawn().map_err(|error| {
             HostError::new(
@@ -598,6 +631,7 @@ impl JobManager {
                 record.job_id.clone(),
                 stdout,
                 JobOutputStream::Stdout,
+                redactions_for_secret_env(&secret_env),
             ))
         });
         let stderr_task = stderr.map(|stderr| {
@@ -607,6 +641,7 @@ impl JobManager {
                 record.job_id.clone(),
                 stderr,
                 JobOutputStream::Stderr,
+                redactions_for_secret_env(&secret_env),
             ))
         });
 
@@ -686,6 +721,7 @@ async fn read_job_stream<R>(
     job_id: JobId,
     mut reader: R,
     stream: JobOutputStream,
+    redactions: Vec<Vec<u8>>,
 ) where
     R: AsyncRead + Unpin,
 {
@@ -718,7 +754,7 @@ async fn read_job_stream<R>(
             record.output_chunks.push(JobOutputChunk {
                 seq,
                 stream,
-                chunk: ByteChunk::from(buffer[..read].to_vec()),
+                chunk: ByteChunk::from(redact_bytes(&buffer[..read], &redactions)),
             });
             if let Err(error) = manager.persist_record(record) {
                 eprintln!("host-bridge failed to persist output for {job_id}: {error:?}");
@@ -726,6 +762,37 @@ async fn read_job_stream<R>(
         }
         manager.notify.notify_waiters();
     }
+}
+
+fn redactions_for_secret_env(secret_env: &BTreeMap<String, SecretString>) -> Vec<Vec<u8>> {
+    secret_env
+        .values()
+        .filter(|value| !value.is_empty())
+        .map(|value| value.expose().as_bytes().to_vec())
+        .collect()
+}
+
+fn redact_bytes(bytes: &[u8], redactions: &[Vec<u8>]) -> Vec<u8> {
+    let mut output = bytes.to_vec();
+    for secret in redactions {
+        if secret.is_empty() || secret.len() > output.len() {
+            continue;
+        }
+        let mut index = 0;
+        while let Some(offset) = find_subslice(&output[index..], secret) {
+            let start = index + offset;
+            let end = start + secret.len();
+            output.splice(start..end, b"<redacted>".iter().copied());
+            index = start + b"<redacted>".len();
+        }
+    }
+    output
+}
+
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 fn validate_and_resolve_start(
@@ -747,6 +814,15 @@ fn validate_and_resolve_start(
                 "job {} argv must not be empty",
                 spec.job_id
             )));
+        }
+        for name in spec.secret_env.keys() {
+            validate_nonempty("secret env name", name)?;
+            if spec.env.contains_key(name) {
+                return Err(invalid_request(format!(
+                    "job {} env collides with secret env: {name}",
+                    spec.job_id
+                )));
+            }
         }
         if !seen_job_ids.insert(spec.job_id.as_str().to_owned()) {
             return Err(invalid_request(format!(
@@ -805,6 +881,7 @@ fn validate_and_resolve_start(
         resolved.push(ResolvedJob {
             spec: spec.clone(),
             dependencies,
+            secret_env: spec.secret_env.clone(),
             spec_hash,
         });
     }
@@ -1049,6 +1126,7 @@ fn job_spec_hash(
         argv: &'a [String],
         cwd: &'a Option<HostPath>,
         env: &'a BTreeMap<String, String>,
+        secret_env_names: Vec<&'a String>,
         stdin: &'a Option<ByteChunk>,
         timeout_ms: Option<u64>,
         dependencies: &'a [JobId],
@@ -1064,6 +1142,7 @@ fn job_spec_hash(
             argv: &spec.argv,
             cwd: &spec.cwd,
             env: &spec.env,
+            secret_env_names: spec.secret_env.keys().collect(),
             stdin: &spec.stdin,
             timeout_ms: spec.timeout_ms,
             dependencies,
@@ -1222,7 +1301,7 @@ mod tests {
             JobCancelScope, JobDependency, JobDependencyPolicy, JobStatus, ListJobsParams,
             ReadJobsParams, StartJobsParams,
         },
-        shared::JobId,
+        shared::{JobId, SecretString},
     };
 
     use super::*;
@@ -1262,6 +1341,45 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(output.contains(&b'a'));
         assert!(output.contains(&b'b'));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn job_manager_injects_secret_env_without_persisting_values() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().canonicalize().expect("canonical root");
+        let manager = JobManager::new(root.clone(), root.clone()).expect("manager");
+        let mut spec = job("secret-job", "printf \"$SECRET_TOKEN\"");
+        spec.secret_env.insert(
+            "SECRET_TOKEN".to_owned(),
+            SecretString::new("super-secret-token"),
+        );
+
+        manager
+            .start_jobs(StartJobsParams {
+                namespace: TEST_NAMESPACE.to_owned(),
+                request_id: "secret".to_owned(),
+                jobs: vec![spec],
+            })
+            .await
+            .expect("start");
+
+        let read = wait_for_jobs(&manager, ["secret-job"]).await;
+        let result = result(&read, "secret-job");
+        assert_eq!(result.summary.status, JobStatus::Succeeded);
+        let output = result
+            .output_chunks
+            .iter()
+            .flat_map(|chunk| chunk.chunk.as_slice().to_vec())
+            .collect::<Vec<_>>();
+        assert_eq!(output, b"<redacted>");
+
+        let record_path = root
+            .join(".lightspeed")
+            .join("jobs")
+            .join("session_1--secret-job.json");
+        let persisted = std::fs::read_to_string(record_path).expect("persisted job record");
+        assert!(!persisted.contains("super-secret-token"));
+        assert!(persisted.contains("SECRET_TOKEN"));
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1474,6 +1592,7 @@ mod tests {
                 argv: vec!["sleep".to_owned(), "5".to_owned()],
                 cwd: None,
                 env: BTreeMap::new(),
+                secret_env_names: Vec::new(),
                 stdin: None,
                 timeout_ms: None,
                 dependency_policy: JobDependencyPolicy::AllSucceeded,
@@ -1523,6 +1642,7 @@ mod tests {
             argv: vec!["/bin/sh".to_owned(), "-c".to_owned(), shell.to_owned()],
             cwd: None,
             env: BTreeMap::new(),
+            secret_env: BTreeMap::new(),
             stdin: None,
             timeout_ms: Some(5_000),
             depends_on: Vec::new(),

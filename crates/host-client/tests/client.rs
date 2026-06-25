@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 
 use async_trait::async_trait;
 use host_client::{
@@ -109,6 +109,7 @@ async fn data_client_sends_typed_job_start_request() {
                 ],
                 cwd: None,
                 env: Default::default(),
+                secret_env: BTreeMap::new(),
                 stdin: None,
                 timeout_ms: Some(1_000),
                 depends_on: Vec::new(),
