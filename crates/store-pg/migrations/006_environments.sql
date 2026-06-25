@@ -1,4 +1,4 @@
--- P80 G2 / P86 G1: runtime environment registry.
+-- P80 G2 / P86 G1 / P87: runtime environment registry.
 --
 -- Providers register runtime capacity and expose host-protocol controllers.
 -- Session environment bindings materialize provider targets into session-visible
@@ -168,6 +168,75 @@ CREATE INDEX IF NOT EXISTS session_environment_bindings_provider_idx
 CREATE INDEX IF NOT EXISTS session_environment_bindings_session_status_idx
     ON session_environment_bindings (universe_id, session_id, status, env_id);
 
+-- Session-environment-scoped credential bindings. These rows do not store
+-- secret values; they map process environment variable names to existing auth
+-- credential records that are resolved at process/job spawn time.
+CREATE TABLE IF NOT EXISTS session_environment_credentials (
+    universe_id uuid NOT NULL,
+    session_id text NOT NULL,
+    env_id text NOT NULL,
+    env_name text NOT NULL,
+    source_kind text NOT NULL,
+    grant_id text,
+    auth_provider_id text,
+    secret_id text,
+    created_at_ms bigint NOT NULL,
+    updated_at_ms bigint NOT NULL,
+
+    PRIMARY KEY (universe_id, session_id, env_id, env_name),
+
+    FOREIGN KEY (universe_id, session_id, env_id)
+        REFERENCES session_environment_bindings (universe_id, session_id, env_id)
+        ON DELETE CASCADE,
+    FOREIGN KEY (universe_id, grant_id)
+        REFERENCES auth_grants (universe_id, grant_id)
+        ON DELETE RESTRICT,
+    FOREIGN KEY (universe_id, auth_provider_id)
+        REFERENCES auth_providers (universe_id, provider_id)
+        ON DELETE RESTRICT,
+    FOREIGN KEY (universe_id, secret_id)
+        REFERENCES auth_secrets (universe_id, secret_id)
+        ON DELETE RESTRICT,
+
+    CONSTRAINT session_environment_credentials_env_name_format
+        CHECK (env_name ~ '^[A-Za-z_][A-Za-z0-9_]{0,127}$'),
+    CONSTRAINT session_environment_credentials_source_kind_known
+        CHECK (
+            source_kind IN (
+                'auth_grant',
+                'auth_provider_credential',
+                'direct_secret'
+            )
+        ),
+    CONSTRAINT session_environment_credentials_source_exactly_one
+        CHECK (
+            (
+                source_kind = 'auth_grant'
+                AND grant_id IS NOT NULL
+                AND auth_provider_id IS NULL
+                AND secret_id IS NULL
+            )
+            OR (
+                source_kind = 'auth_provider_credential'
+                AND grant_id IS NULL
+                AND auth_provider_id IS NOT NULL
+                AND secret_id IS NULL
+            )
+            OR (
+                source_kind = 'direct_secret'
+                AND grant_id IS NULL
+                AND auth_provider_id IS NULL
+                AND secret_id IS NOT NULL
+            )
+        ),
+    CONSTRAINT session_environment_credentials_created_nonnegative
+        CHECK (created_at_ms >= 0),
+    CONSTRAINT session_environment_credentials_updated_nonnegative
+        CHECK (updated_at_ms >= 0),
+    CONSTRAINT session_environment_credentials_updated_after_created
+        CHECK (updated_at_ms >= created_at_ms)
+);
+
 -- This table is a Lightspeed-side handle ledger only. The environment
 -- provider remains the source of truth for job status, output, dependencies,
 -- exit codes, and artifacts.
@@ -239,6 +308,10 @@ COMMENT ON TABLE environment_targets IS
     'Mirrored host-protocol targets observed from registered environment providers.';
 COMMENT ON TABLE session_environment_bindings IS
     'Session-visible env:<id> bindings to provider targets and host data-plane connections.';
+COMMENT ON TABLE session_environment_credentials IS
+    'Session-environment-scoped process env credential bindings; values are resolved at spawn time and never stored here.';
+COMMENT ON COLUMN session_environment_credentials.env_name IS
+    'Process environment variable name that receives the resolved credential for Lightspeed-started processes in this session environment.';
 COMMENT ON TABLE environment_jobs IS
     'Session-owned environment job handle ledger for routing and idempotency only.';
 COMMENT ON COLUMN environment_jobs.namespace IS
