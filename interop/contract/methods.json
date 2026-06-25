@@ -466,6 +466,66 @@
       }
     },
     {
+      "method": "session/jobs/create",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/SessionJobCreateParams"
+        },
+        "type": "SessionJobCreateParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfSessionJobCreateResponse"
+        },
+        "type": "AgentApiOutcome<SessionJobCreateResponse>"
+      }
+    },
+    {
+      "method": "session/jobs/list",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/SessionJobListParams"
+        },
+        "type": "SessionJobListParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfSessionJobListResponse"
+        },
+        "type": "AgentApiOutcome<SessionJobListResponse>"
+      }
+    },
+    {
+      "method": "session/jobs/read",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/SessionJobReadParams"
+        },
+        "type": "SessionJobReadParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfSessionJobReadResponse"
+        },
+        "type": "AgentApiOutcome<SessionJobReadResponse>"
+      }
+    },
+    {
+      "method": "session/jobs/cancel",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/SessionJobCancelParams"
+        },
+        "type": "SessionJobCancelParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfSessionJobCancelResponse"
+        },
+        "type": "AgentApiOutcome<SessionJobCancelResponse>"
+      }
+    },
+    {
       "method": "environmentProviders/register",
       "params": {
         "schema": {

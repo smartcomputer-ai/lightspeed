@@ -19,10 +19,14 @@ use api::{
     ProfileCreateParams, ProfileDeleteParams, ProfileDocument, ProfileEnvironment, ProfileId,
     ProfileSource, RunStartParams, RunStatus, SandboxTargetSpecView, SessionConfigInput,
     SessionEnvironmentAttachParams, SessionEnvironmentCloseParams, SessionEnvironmentCreateParams,
-    SessionEnvironmentListParams, SessionStartParams, VfsMountAccess as ApiVfsMountAccess,
-    VfsMountPutParams, VfsMountSourceInput,
+    SessionEnvironmentListParams, SessionJobCancelParams, SessionJobCancelScopeView,
+    SessionJobCreateParams, SessionJobDependencyInput, SessionJobDependencyPolicyView,
+    SessionJobHandleInput, SessionJobHandleView, SessionJobListParams, SessionJobReadEntryView,
+    SessionJobReadParams, SessionJobStartSpecInput, SessionJobStatusView, SessionStartParams,
+    VfsMountAccess as ApiVfsMountAccess, VfsMountPutParams, VfsMountSourceInput,
 };
 use async_trait::async_trait;
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use engine::{
     ContextEntryInput, ContextEntryKind, ContextEntrySource, ContextMessageRole, CoreAgentIoError,
     CoreAgentLlm, CoreAgentTools, LlmFinish, LlmGenerationFacts, LlmGenerationRequest,
@@ -82,6 +86,8 @@ const BRIDGE_FILE_MARKER: &str = "LIGHTSPEED_BRIDGE_AGENT_MARKER";
 const BRIDGE_VFS_SKILL_MARKER: &str = "LIGHTSPEED_BRIDGE_VFS_SKILL_MARKER";
 const BRIDGE_JOB_FILE_NAME: &str = "job-live.txt";
 const BRIDGE_JOB_MARKER: &str = "LIGHTSPEED_BRIDGE_JOB_MARKER";
+const BRIDGE_API_JOB_FILE_NAME: &str = "api-job-live.txt";
+const BRIDGE_API_JOB_MARKER: &str = "LIGHTSPEED_BRIDGE_API_JOB_MARKER";
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires local/up.sh or compatible Temporal + Postgres env"]
@@ -380,6 +386,166 @@ async fn run_host_bridge_jobs_client(
         local_file.display()
     );
 
+    let api_command = format!(
+        "printf '{}\\n' > {} && printf '{}\\n'",
+        BRIDGE_API_JOB_MARKER, BRIDGE_API_JOB_FILE_NAME, BRIDGE_API_JOB_MARKER
+    );
+    let created = api
+        .create_session_jobs(SessionJobCreateParams {
+            session_id: session_id.as_str().to_owned(),
+            env_id: Some("bridge-local".to_owned()),
+            request_id: "api_job_round_trip".to_owned(),
+            jobs: vec![SessionJobStartSpecInput {
+                name: Some("api-live-job".to_owned()),
+                job_id: None,
+                argv: vec!["/bin/sh".to_owned(), "-c".to_owned(), api_command],
+                cwd: None,
+                env: BTreeMap::new(),
+                stdin: None,
+                timeout_ms: Some(10_000),
+                depends_on: Vec::new(),
+                dependency_policy: SessionJobDependencyPolicyView::AllSucceeded,
+                queue_key: None,
+            }],
+        })
+        .await?;
+    assert_eq!(created.result.env_id, "bridge-local");
+    assert_eq!(created.result.jobs.len(), 1);
+    let api_job = created.result.jobs[0].handle.clone();
+
+    let listed = api
+        .list_session_jobs(SessionJobListParams {
+            session_id: session_id.as_str().to_owned(),
+            env_id: Some("bridge-local".to_owned()),
+            limit: Some(10),
+        })
+        .await?;
+    assert!(
+        listed
+            .result
+            .jobs
+            .iter()
+            .any(|record| record.handle.job_id == api_job.job_id),
+        "session/jobs/list did not return API-created job: {:?}",
+        listed.result.jobs
+    );
+
+    let mut api_job_output = None;
+    let started = Instant::now();
+    while started.elapsed() <= Duration::from_secs(10) {
+        let read = api
+            .read_session_jobs(SessionJobReadParams {
+                session_id: session_id.as_str().to_owned(),
+                jobs: vec![SessionJobHandleInput {
+                    session_id: Some(api_job.session_id.clone()),
+                    env_id: Some(api_job.env_id.clone()),
+                    job_id: api_job.job_id.clone(),
+                }],
+                output_bytes: Some(4096),
+                after_seq: None,
+                include_artifacts: false,
+            })
+            .await?;
+        let entry = read.result.jobs.into_iter().next().expect("job read entry");
+        if entry
+            .summary
+            .as_ref()
+            .is_some_and(|summary| summary.status == SessionJobStatusView::Succeeded)
+        {
+            let output = entry
+                .output_chunks
+                .into_iter()
+                .filter_map(|chunk| BASE64_STANDARD.decode(chunk.data_base64).ok())
+                .filter_map(|bytes| String::from_utf8(bytes).ok())
+                .collect::<Vec<_>>()
+                .join("");
+            api_job_output = Some(output);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let Some(api_job_output) = api_job_output else {
+        anyhow::bail!("session/jobs/read did not observe API job completion");
+    };
+    assert!(
+        api_job_output.contains(BRIDGE_API_JOB_MARKER),
+        "session/jobs/read output did not include API job marker: {api_job_output}"
+    );
+
+    let api_local_file = bridge_root.join(BRIDGE_API_JOB_FILE_NAME);
+    let api_local_contents = tokio::fs::read_to_string(&api_local_file).await?;
+    assert!(
+        api_local_contents.contains(BRIDGE_API_JOB_MARKER),
+        "API job did not write marker to local file {}: {api_local_contents}",
+        api_local_file.display()
+    );
+
+    run_api_job_queue_live_check(api.as_ref(), &session_id, &bridge_root).await?;
+    run_api_job_parallel_live_check(api.as_ref(), &session_id, &bridge_root).await?;
+    run_api_job_dag_live_check(api.as_ref(), &session_id, &bridge_root).await?;
+    run_api_job_retry_live_check(api.as_ref(), &session_id, &bridge_root).await?;
+
+    let cancel_created = api
+        .create_session_jobs(SessionJobCreateParams {
+            session_id: session_id.as_str().to_owned(),
+            env_id: Some("bridge-local".to_owned()),
+            request_id: "api_job_cancel".to_owned(),
+            jobs: vec![SessionJobStartSpecInput {
+                name: Some("api-cancel-job".to_owned()),
+                job_id: None,
+                argv: vec!["/bin/sh".to_owned(), "-c".to_owned(), "sleep 30".to_owned()],
+                cwd: None,
+                env: BTreeMap::new(),
+                stdin: None,
+                timeout_ms: Some(60_000),
+                depends_on: Vec::new(),
+                dependency_policy: SessionJobDependencyPolicyView::AllSucceeded,
+                queue_key: None,
+            }],
+        })
+        .await?;
+    let cancel_job = cancel_created.result.jobs[0].handle.clone();
+    let cancelled = api
+        .cancel_session_jobs(SessionJobCancelParams {
+            session_id: session_id.as_str().to_owned(),
+            jobs: vec![SessionJobHandleInput {
+                session_id: Some(cancel_job.session_id.clone()),
+                env_id: Some(cancel_job.env_id.clone()),
+                job_id: cancel_job.job_id.clone(),
+            }],
+            scope: SessionJobCancelScopeView::Job,
+            force: true,
+        })
+        .await?;
+    let cancel_status = cancelled.result.jobs[0]
+        .summary
+        .as_ref()
+        .map(|summary| summary.status);
+    assert!(
+        matches!(
+            cancel_status,
+            Some(SessionJobStatusView::CancelRequested | SessionJobStatusView::Cancelled)
+        ),
+        "session/jobs/cancel returned unexpected status: {:?}",
+        cancelled.result.jobs
+    );
+    let cancelled_read = wait_for_session_jobs_terminal(
+        api.as_ref(),
+        &session_id,
+        std::slice::from_ref(&cancel_job),
+        Duration::from_secs(10),
+    )
+    .await?;
+    assert_eq!(
+        cancelled_read[0]
+            .summary
+            .as_ref()
+            .map(|summary| summary.status),
+        Some(SessionJobStatusView::Cancelled),
+        "cancelled job did not reach Cancelled: {:?}",
+        cancelled_read
+    );
+
     api.close_session_environment(SessionEnvironmentCloseParams {
         session_id: session_id.as_str().to_owned(),
         env_id: "bridge-local".to_owned(),
@@ -399,6 +565,334 @@ async fn run_host_bridge_jobs_client(
     drop(bridge);
     gateway.abort();
     Ok(())
+}
+
+async fn run_api_job_queue_live_check(
+    api: &GatewayAgentApi,
+    session_id: &engine::SessionId,
+    bridge_root: &std::path::Path,
+) -> anyhow::Result<()> {
+    let queue_file_name = "api-queue-order.txt";
+    let queue_file = bridge_root.join(queue_file_name);
+    let mut first = api_shell_job("queue-1", format!("printf 1 >> {queue_file_name}"));
+    let mut second = api_shell_job("queue-2", format!("printf 2 >> {queue_file_name}"));
+    let mut third = api_shell_job("queue-3", format!("printf 3 >> {queue_file_name}"));
+    first.queue_key = Some("api_live_queue".to_owned());
+    second.queue_key = Some("api_live_queue".to_owned());
+    third.queue_key = Some("api_live_queue".to_owned());
+
+    let created = api
+        .create_session_jobs(SessionJobCreateParams {
+            session_id: session_id.as_str().to_owned(),
+            env_id: Some("bridge-local".to_owned()),
+            request_id: "api_live_queue".to_owned(),
+            jobs: vec![first, second, third],
+        })
+        .await?;
+    let handles = created
+        .result
+        .jobs
+        .iter()
+        .map(|job| job.handle.clone())
+        .collect::<Vec<_>>();
+    let entries =
+        wait_for_session_jobs_terminal(api, session_id, &handles, Duration::from_secs(15)).await?;
+    ensure_job_statuses(
+        &entries,
+        SessionJobStatusView::Succeeded,
+        "queue-keyed jobs",
+    )?;
+    let contents = tokio::fs::read_to_string(&queue_file).await?;
+    assert_eq!(
+        contents, "123",
+        "queue-keyed jobs did not execute serially in accepted order"
+    );
+    Ok(())
+}
+
+async fn run_api_job_parallel_live_check(
+    api: &GatewayAgentApi,
+    session_id: &engine::SessionId,
+    bridge_root: &std::path::Path,
+) -> anyhow::Result<()> {
+    let order_file_name = "api-parallel-order.txt";
+    let order_file = bridge_root.join(order_file_name);
+    let created = api
+        .create_session_jobs(SessionJobCreateParams {
+            session_id: session_id.as_str().to_owned(),
+            env_id: Some("bridge-local".to_owned()),
+            request_id: "api_live_parallel".to_owned(),
+            jobs: vec![
+                api_shell_job(
+                    "parallel-a",
+                    format!(
+                        "printf 'a-start\\n' >> {order_file_name}; sleep 1; printf 'a-end\\n' >> {order_file_name}"
+                    ),
+                ),
+                api_shell_job(
+                    "parallel-b",
+                    format!(
+                        "printf 'b-start\\n' >> {order_file_name}; sleep 1; printf 'b-end\\n' >> {order_file_name}"
+                    ),
+                ),
+            ],
+        })
+        .await?;
+    let handles = created
+        .result
+        .jobs
+        .iter()
+        .map(|job| job.handle.clone())
+        .collect::<Vec<_>>();
+    let entries =
+        wait_for_session_jobs_terminal(api, session_id, &handles, Duration::from_secs(15)).await?;
+    ensure_job_statuses(&entries, SessionJobStatusView::Succeeded, "parallel jobs")?;
+
+    let contents = tokio::fs::read_to_string(&order_file).await?;
+    let lines = contents.lines().collect::<Vec<_>>();
+    let a_start = line_index(&lines, "a-start")?;
+    let b_start = line_index(&lines, "b-start")?;
+    let a_end = line_index(&lines, "a-end")?;
+    let b_end = line_index(&lines, "b-end")?;
+    let latest_start = a_start.max(b_start);
+    let earliest_end = a_end.min(b_end);
+    assert!(
+        latest_start < earliest_end,
+        "parallel jobs did not overlap; order file was: {contents:?}"
+    );
+    Ok(())
+}
+
+async fn run_api_job_dag_live_check(
+    api: &GatewayAgentApi,
+    session_id: &engine::SessionId,
+    bridge_root: &std::path::Path,
+) -> anyhow::Result<()> {
+    let dag_file_name = "api-dag-order.txt";
+    let dag_file = bridge_root.join(dag_file_name);
+    let checkout = api_shell_job("checkout", format!("printf A >> {dag_file_name}"));
+    let mut build = api_shell_job("build", format!("printf B >> {dag_file_name}"));
+    build.depends_on = vec![SessionJobDependencyInput {
+        job_id: None,
+        name: Some("checkout".to_owned()),
+    }];
+    let mut tests = api_shell_job("tests", format!("printf C >> {dag_file_name}"));
+    tests.depends_on = vec![SessionJobDependencyInput {
+        job_id: None,
+        name: Some("build".to_owned()),
+    }];
+
+    let created = api
+        .create_session_jobs(SessionJobCreateParams {
+            session_id: session_id.as_str().to_owned(),
+            env_id: Some("bridge-local".to_owned()),
+            request_id: "api_live_dag".to_owned(),
+            jobs: vec![checkout, build, tests],
+        })
+        .await?;
+    let final_handle = created
+        .result
+        .jobs
+        .last()
+        .expect("created DAG final job")
+        .handle
+        .clone();
+    let entries = wait_for_session_jobs_terminal(
+        api,
+        session_id,
+        std::slice::from_ref(&final_handle),
+        Duration::from_secs(15),
+    )
+    .await?;
+    ensure_job_statuses(
+        &entries,
+        SessionJobStatusView::Succeeded,
+        "dependency DAG final job",
+    )?;
+    let contents = tokio::fs::read_to_string(&dag_file).await?;
+    assert_eq!(
+        contents, "ABC",
+        "dependency DAG did not execute in dependency order"
+    );
+    Ok(())
+}
+
+async fn run_api_job_retry_live_check(
+    api: &GatewayAgentApi,
+    session_id: &engine::SessionId,
+    bridge_root: &std::path::Path,
+) -> anyhow::Result<()> {
+    let retry_file_name = "api-retry-count.txt";
+    let retry_file = bridge_root.join(retry_file_name);
+    let params = SessionJobCreateParams {
+        session_id: session_id.as_str().to_owned(),
+        env_id: Some("bridge-local".to_owned()),
+        request_id: "api_live_retry".to_owned(),
+        jobs: vec![api_shell_job(
+            "retry",
+            format!("printf R >> {retry_file_name}"),
+        )],
+    };
+
+    let first = api.create_session_jobs(params.clone()).await?;
+    let second = api.create_session_jobs(params).await?;
+    assert_eq!(
+        first.result.jobs[0].handle.job_id, second.result.jobs[0].handle.job_id,
+        "retry-stable API start did not return the same job id"
+    );
+    let handle = first.result.jobs[0].handle.clone();
+    let entries = wait_for_session_jobs_terminal(
+        api,
+        session_id,
+        std::slice::from_ref(&handle),
+        Duration::from_secs(10),
+    )
+    .await?;
+    ensure_job_statuses(&entries, SessionJobStatusView::Succeeded, "retry job")?;
+
+    let listed = api
+        .list_session_jobs(SessionJobListParams {
+            session_id: session_id.as_str().to_owned(),
+            env_id: Some("bridge-local".to_owned()),
+            limit: Some(200),
+        })
+        .await?;
+    let matching_records = listed
+        .result
+        .jobs
+        .iter()
+        .filter(|record| record.handle.job_id == handle.job_id)
+        .count();
+    assert_eq!(
+        matching_records, 1,
+        "retry-stable API start inserted duplicate registry rows: {:?}",
+        listed.result.jobs
+    );
+
+    let contents = tokio::fs::read_to_string(&retry_file).await?;
+    assert_eq!(
+        contents, "R",
+        "retry-stable API start executed the job more than once"
+    );
+    Ok(())
+}
+
+fn api_shell_job(name: &str, shell: impl Into<String>) -> SessionJobStartSpecInput {
+    SessionJobStartSpecInput {
+        name: Some(name.to_owned()),
+        job_id: None,
+        argv: vec!["/bin/sh".to_owned(), "-c".to_owned(), shell.into()],
+        cwd: None,
+        env: BTreeMap::new(),
+        stdin: None,
+        timeout_ms: Some(10_000),
+        depends_on: Vec::new(),
+        dependency_policy: SessionJobDependencyPolicyView::AllSucceeded,
+        queue_key: None,
+    }
+}
+
+async fn wait_for_session_jobs_terminal(
+    api: &GatewayAgentApi,
+    session_id: &engine::SessionId,
+    handles: &[SessionJobHandleView],
+    timeout: Duration,
+) -> anyhow::Result<Vec<SessionJobReadEntryView>> {
+    let started = Instant::now();
+    loop {
+        let read = api
+            .read_session_jobs(SessionJobReadParams {
+                session_id: session_id.as_str().to_owned(),
+                jobs: handles.iter().map(session_job_handle_input).collect(),
+                output_bytes: Some(4096),
+                after_seq: None,
+                include_artifacts: false,
+            })
+            .await?;
+        if read.result.jobs.len() != handles.len() {
+            anyhow::bail!(
+                "session/jobs/read returned {} entries for {} handles",
+                read.result.jobs.len(),
+                handles.len()
+            );
+        }
+        for entry in &read.result.jobs {
+            if let Some(error) = entry.error.as_deref() {
+                anyhow::bail!("session/jobs/read returned entry error: {error}");
+            }
+        }
+        if read.result.jobs.iter().all(|entry| {
+            entry
+                .summary
+                .as_ref()
+                .is_some_and(|summary| is_terminal_job_status(summary.status))
+        }) {
+            return Ok(read.result.jobs);
+        }
+        if started.elapsed() > timeout {
+            anyhow::bail!(
+                "session jobs did not reach terminal status within {:?}: {:?}",
+                timeout,
+                job_status_debug(&read.result.jobs)
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+fn session_job_handle_input(handle: &SessionJobHandleView) -> SessionJobHandleInput {
+    SessionJobHandleInput {
+        session_id: Some(handle.session_id.clone()),
+        env_id: Some(handle.env_id.clone()),
+        job_id: handle.job_id.clone(),
+    }
+}
+
+fn is_terminal_job_status(status: SessionJobStatusView) -> bool {
+    matches!(
+        status,
+        SessionJobStatusView::Succeeded
+            | SessionJobStatusView::Failed
+            | SessionJobStatusView::Cancelled
+            | SessionJobStatusView::TimedOut
+            | SessionJobStatusView::DependencyFailed
+            | SessionJobStatusView::Interrupted
+            | SessionJobStatusView::Lost
+    )
+}
+
+fn ensure_job_statuses(
+    entries: &[SessionJobReadEntryView],
+    expected: SessionJobStatusView,
+    label: &str,
+) -> anyhow::Result<()> {
+    let statuses = job_status_debug(entries);
+    if entries.iter().all(|entry| {
+        entry
+            .summary
+            .as_ref()
+            .is_some_and(|summary| summary.status == expected)
+    }) {
+        return Ok(());
+    }
+    anyhow::bail!("{label} did not all finish as {expected:?}: {statuses:?}")
+}
+
+fn job_status_debug(entries: &[SessionJobReadEntryView]) -> Vec<String> {
+    entries
+        .iter()
+        .map(|entry| match entry.summary.as_ref() {
+            Some(summary) => format!("{}:{:?}", summary.job_id, summary.status),
+            None => format!("missing-summary:{:?}", entry.error),
+        })
+        .collect()
+}
+
+fn line_index(lines: &[&str], expected: &str) -> anyhow::Result<usize> {
+    lines
+        .iter()
+        .position(|line| *line == expected)
+        .ok_or_else(|| anyhow::anyhow!("missing {expected:?} in {lines:?}"))
 }
 
 async fn run_fake_provider_client(

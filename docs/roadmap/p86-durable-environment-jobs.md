@@ -2,12 +2,17 @@
 
 **Status**
 - Proposed 2026-06-25.
-- G1-G5 implemented 2026-06-25 with the revised v1 shape:
+- G1-G7 implemented 2026-06-25 with the revised v1 shape:
   session-scoped provider jobs, optional per-job `queue_key`, explicit
   dependencies, no `deck_id`/group id, and no model-provided idempotency key.
   G5 adds Temporal-owned parked `job_wait` polling, absolute workflow
   deadlines, a short provider-read check activity, wake-hint signal plumbing,
   and continue-as-new blocking while environment job waits are active.
+  G6 adds public `session/jobs/*` JSON-RPC methods for non-model clients:
+  create, registry-only list, provider-backed read, and provider-backed cancel.
+  G7 adds ignored host-bridge live coverage for model-visible job tools and the
+  public API job lifecycle, including queue keys, parallelism, DAG dependencies,
+  cancellation, and retry/idempotency behavior.
 - Builds on **P75-P81 (Environments)** for the `fs`/`env` namespace split,
   active environment projection, provider registry, host protocol, and
   `host-bridge`.
@@ -996,30 +1001,38 @@ Job handle records must still avoid accidental leakage:
 
 ### G6. API And Projection
 
-- Add optional public API methods for operator/UI inspection and external
-  clients.
-- Add `session/jobs/create` if non-model API clients need to start environment
-  jobs; it must share `job_start` semantics.
-- Add `session/jobs/list` to return registry handle records only, without
-  pretending to know live status. Model-visible `job_list` may also ask the
-  provider for current summaries for the latest listed handles.
-- Add `session/jobs/read` to resolve registry handles and ask the provider for
-  live status/output.
-- Add `session/jobs/cancel` to resolve registry handles and ask the provider to
-  cancel.
-- Keep model-visible tools and public API DTOs aligned where possible.
-- Project active environment capabilities so the model can know job support is
-  available.
+- Implemented 2026-06-25. Public JSON-RPC methods now exist for non-model
+  clients and operator/UI inspection:
+  - `session/jobs/create` starts provider jobs through the environment data
+    plane, requires a client `request_id` for retry-stable API starts, derives
+    omitted job ids from `{ session_id, env_id, request_id, index }`, and records
+    accepted handles in the Lightspeed job handle registry.
+  - `session/jobs/list` returns registry handle records only. It does not ask
+    the provider for live status or output.
+  - `session/jobs/read` resolves registry handles and asks the recorded
+    provider/target for live summaries, bounded output chunks, and artifacts.
+  - `session/jobs/cancel` resolves registry handles and asks the recorded
+    provider/target to cancel.
+  - API DTOs mirror the model-visible tool shape where practical while keeping
+    `api` independent from `host-protocol`.
+  - Contract artifacts under `interop/contract/` are regenerated.
+  - Active environment capability projection already carries job support flags
+    through session environment views and prompt/tool projection.
 
 ### G7. Live Coverage
 
-- Add ignored live tests with `host-bridge`:
-  - start a long-ish job, wait until terminal without holding a process call;
-  - start queue-keyed jobs and verify execution order;
-  - start parallel jobs and verify overlap;
-  - start a dependency DAG and wait only on the final job;
-  - cancel a running job;
-  - retry `job_start` and verify no duplicate execution.
+- Implemented 2026-06-25. The ignored host-bridge live round-trip covers:
+  - model-visible `job_start -> job_list -> job_wait -> job_read` against a
+    real local `host-bridge`;
+  - public API `session/jobs/create -> list -> read -> cancel`;
+  - queue-keyed jobs preserving accepted order even when generated job ids do
+    not sort in request order;
+  - parallel jobs proving overlap by observing both start markers before either
+    finish marker;
+  - a dependency DAG where the test waits only on the final job;
+  - cancellation of a running job through to terminal `Cancelled`;
+  - retry-stable API start with no duplicate registry row and no duplicate
+    execution.
 
 ## Open Questions
 

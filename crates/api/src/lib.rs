@@ -52,6 +52,10 @@ pub const METHOD_SESSION_ENVIRONMENTS_ATTACH: &str = "session/environments/attac
 pub const METHOD_SESSION_ENVIRONMENTS_ACTIVATE: &str = "session/environments/activate";
 pub const METHOD_SESSION_ENVIRONMENTS_DEACTIVATE: &str = "session/environments/deactivate";
 pub const METHOD_SESSION_ENVIRONMENTS_CLOSE: &str = "session/environments/close";
+pub const METHOD_SESSION_JOBS_CREATE: &str = "session/jobs/create";
+pub const METHOD_SESSION_JOBS_LIST: &str = "session/jobs/list";
+pub const METHOD_SESSION_JOBS_READ: &str = "session/jobs/read";
+pub const METHOD_SESSION_JOBS_CANCEL: &str = "session/jobs/cancel";
 pub const METHOD_ENVIRONMENT_PROVIDERS_REGISTER: &str = "environmentProviders/register";
 pub const METHOD_ENVIRONMENT_PROVIDERS_HEARTBEAT: &str = "environmentProviders/heartbeat";
 pub const METHOD_ENVIRONMENT_PROVIDERS_UNREGISTER: &str = "environmentProviders/unregister";
@@ -306,6 +310,26 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: SessionEnvironmentCloseParams,
     ) -> Result<AgentApiOutcome<SessionEnvironmentCloseResponse>, AgentApiError>;
+
+    async fn create_session_jobs(
+        &self,
+        params: SessionJobCreateParams,
+    ) -> Result<AgentApiOutcome<SessionJobCreateResponse>, AgentApiError>;
+
+    async fn list_session_jobs(
+        &self,
+        params: SessionJobListParams,
+    ) -> Result<AgentApiOutcome<SessionJobListResponse>, AgentApiError>;
+
+    async fn read_session_jobs(
+        &self,
+        params: SessionJobReadParams,
+    ) -> Result<AgentApiOutcome<SessionJobReadResponse>, AgentApiError>;
+
+    async fn cancel_session_jobs(
+        &self,
+        params: SessionJobCancelParams,
+    ) -> Result<AgentApiOutcome<SessionJobCancelResponse>, AgentApiError>;
 
     async fn register_environment_provider(
         &self,
@@ -2138,6 +2162,274 @@ pub struct SessionEnvironmentCloseResponse {
     pub active_env_id: Option<EnvironmentId>,
     #[serde(default)]
     pub environments: Vec<SessionEnvironmentView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionJobHandleView {
+    pub session_id: SessionId,
+    pub env_id: EnvironmentId,
+    pub job_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionJobHandleInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<SessionId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env_id: Option<EnvironmentId>,
+    pub job_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionJobCreateParams {
+    pub session_id: SessionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env_id: Option<EnvironmentId>,
+    pub request_id: String,
+    pub jobs: Vec<SessionJobStartSpecInput>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionJobStartSpecInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<String>,
+    pub argv: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stdin: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub depends_on: Vec<SessionJobDependencyInput>,
+    #[serde(default)]
+    pub dependency_policy: SessionJobDependencyPolicyView,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue_key: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionJobDependencyInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum SessionJobDependencyPolicyView {
+    #[default]
+    AllSucceeded,
+    AllTerminal,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionJobCreateResponse {
+    pub env_id: EnvironmentId,
+    #[serde(default)]
+    pub jobs: Vec<SessionJobStartedView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionJobStartedView {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    pub job_id: String,
+    pub handle: SessionJobHandleView,
+    pub status: SessionJobStatusView,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dependencies: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue_key: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionJobListParams {
+    pub session_id: SessionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env_id: Option<EnvironmentId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionJobListResponse {
+    #[serde(default)]
+    pub jobs: Vec<SessionJobHandleRecordView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionJobHandleRecordView {
+    pub handle: SessionJobHandleView,
+    pub provider_id: EnvironmentProviderId,
+    pub target_id: EnvironmentTargetId,
+    pub namespace: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_by_run_id: Option<RunId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_by_turn_id: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_by_tool_call_id: Option<String>,
+    pub created_at_ms: i64,
+    pub start_request_hash: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionJobReadParams {
+    pub session_id: SessionId,
+    pub jobs: Vec<SessionJobHandleInput>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_bytes: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after_seq: Option<u64>,
+    #[serde(default)]
+    pub include_artifacts: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionJobReadResponse {
+    #[serde(default)]
+    pub jobs: Vec<SessionJobReadEntryView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionJobReadEntryView {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handle: Option<SessionJobHandleView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<SessionJobSummaryView>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub output_chunks: Vec<SessionJobOutputChunkView>,
+    pub output_next_seq: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub artifacts: Vec<SessionJobArtifactView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionJobCancelParams {
+    pub session_id: SessionId,
+    pub jobs: Vec<SessionJobHandleInput>,
+    #[serde(default)]
+    pub scope: SessionJobCancelScopeView,
+    #[serde(default)]
+    pub force: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionJobCancelResponse {
+    #[serde(default)]
+    pub jobs: Vec<SessionJobCancelEntryView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionJobCancelEntryView {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handle: Option<SessionJobHandleView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<SessionJobSummaryView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum SessionJobCancelScopeView {
+    #[default]
+    Job,
+    Dependents,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionJobSummaryView {
+    pub namespace: String,
+    pub job_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    pub status: SessionJobStatusView,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dependencies: Vec<String>,
+    pub created_at_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queued_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue_key: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum SessionJobStatusView {
+    Accepted,
+    Queued,
+    Running,
+    Succeeded,
+    Failed,
+    CancelRequested,
+    Cancelled,
+    TimedOut,
+    DependencyFailed,
+    Interrupted,
+    Lost,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionJobOutputChunkView {
+    pub seq: u64,
+    pub stream: SessionJobOutputStreamView,
+    pub data_base64: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum SessionJobOutputStreamView {
+    Stdout,
+    Stderr,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionJobArtifactView {
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub metadata: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -4043,6 +4335,10 @@ api_methods! {
     METHOD_SESSION_ENVIRONMENTS_ACTIVATE => activate_session_environment(SessionEnvironmentActivateParams) -> SessionEnvironmentActivateResponse,
     METHOD_SESSION_ENVIRONMENTS_DEACTIVATE => deactivate_session_environment(SessionEnvironmentDeactivateParams) -> SessionEnvironmentDeactivateResponse,
     METHOD_SESSION_ENVIRONMENTS_CLOSE => close_session_environment(SessionEnvironmentCloseParams) -> SessionEnvironmentCloseResponse,
+    METHOD_SESSION_JOBS_CREATE => create_session_jobs(SessionJobCreateParams) -> SessionJobCreateResponse,
+    METHOD_SESSION_JOBS_LIST => list_session_jobs(SessionJobListParams) -> SessionJobListResponse,
+    METHOD_SESSION_JOBS_READ => read_session_jobs(SessionJobReadParams) -> SessionJobReadResponse,
+    METHOD_SESSION_JOBS_CANCEL => cancel_session_jobs(SessionJobCancelParams) -> SessionJobCancelResponse,
     METHOD_ENVIRONMENT_PROVIDERS_REGISTER => register_environment_provider(EnvironmentProviderRegisterParams) -> EnvironmentProviderRegisterResponse,
     METHOD_ENVIRONMENT_PROVIDERS_HEARTBEAT => heartbeat_environment_provider(EnvironmentProviderHeartbeatParams) -> EnvironmentProviderHeartbeatResponse,
     METHOD_ENVIRONMENT_PROVIDERS_UNREGISTER => unregister_environment_provider(EnvironmentProviderUnregisterParams) -> EnvironmentProviderUnregisterResponse,
@@ -4714,6 +5010,107 @@ mod tests {
         assert_eq!(
             response.result.expect("result")["result"]["environment"]["status"],
             json!("detached")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_session_jobs_create() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_SESSION_JOBS_CREATE.to_owned(),
+                params: Some(json!({
+                    "sessionId": "session_1",
+                    "envId": "test",
+                    "requestId": "request_1",
+                    "jobs": [{
+                        "name": "build",
+                        "argv": ["cargo", "test"]
+                    }]
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["jobs"][0]["handle"]["jobId"],
+            json!("job-1")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_session_jobs_list() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_SESSION_JOBS_LIST.to_owned(),
+                params: Some(json!({
+                    "sessionId": "session_1",
+                    "limit": 10
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["jobs"][0]["namespace"],
+            json!("session_1")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_session_jobs_read() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_SESSION_JOBS_READ.to_owned(),
+                params: Some(json!({
+                    "sessionId": "session_1",
+                    "jobs": [{
+                        "envId": "test",
+                        "jobId": "job-1"
+                    }],
+                    "outputBytes": 1024
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["jobs"][0]["summary"]["status"],
+            json!("succeeded")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_json_rpc_routes_session_jobs_cancel() {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_SESSION_JOBS_CANCEL.to_owned(),
+                params: Some(json!({
+                    "sessionId": "session_1",
+                    "jobs": [{
+                        "envId": "test",
+                        "jobId": "job-1"
+                    }],
+                    "force": true
+                })),
+            },
+        )
+        .await;
+
+        assert!(response.error.is_none());
+        assert_eq!(
+            response.result.expect("result")["result"]["jobs"][0]["summary"]["status"],
+            json!("cancelled")
         );
     }
 
@@ -5770,6 +6167,69 @@ mod tests {
             }))
         }
 
+        async fn create_session_jobs(
+            &self,
+            params: SessionJobCreateParams,
+        ) -> Result<AgentApiOutcome<SessionJobCreateResponse>, AgentApiError> {
+            assert_eq!(params.request_id, "request_1");
+            Ok(AgentApiOutcome::new(SessionJobCreateResponse {
+                env_id: params.env_id.unwrap_or_else(|| "test".to_owned()),
+                jobs: vec![SessionJobStartedView {
+                    name: params.jobs.first().and_then(|job| job.name.clone()),
+                    job_id: "job-1".to_owned(),
+                    handle: test_session_job_handle(),
+                    status: SessionJobStatusView::Queued,
+                    dependencies: Vec::new(),
+                    queue_key: None,
+                }],
+            }))
+        }
+
+        async fn list_session_jobs(
+            &self,
+            params: SessionJobListParams,
+        ) -> Result<AgentApiOutcome<SessionJobListResponse>, AgentApiError> {
+            assert_eq!(params.session_id, "session_1");
+            Ok(AgentApiOutcome::new(SessionJobListResponse {
+                jobs: vec![test_session_job_record()],
+            }))
+        }
+
+        async fn read_session_jobs(
+            &self,
+            params: SessionJobReadParams,
+        ) -> Result<AgentApiOutcome<SessionJobReadResponse>, AgentApiError> {
+            assert_eq!(params.jobs.len(), 1);
+            Ok(AgentApiOutcome::new(SessionJobReadResponse {
+                jobs: vec![SessionJobReadEntryView {
+                    handle: Some(test_session_job_handle()),
+                    summary: Some(test_session_job_summary(SessionJobStatusView::Succeeded)),
+                    output_chunks: vec![SessionJobOutputChunkView {
+                        seq: 1,
+                        stream: SessionJobOutputStreamView::Stdout,
+                        data_base64: "b2sK".to_owned(),
+                    }],
+                    output_next_seq: 2,
+                    artifacts: Vec::new(),
+                    error: None,
+                }],
+            }))
+        }
+
+        async fn cancel_session_jobs(
+            &self,
+            params: SessionJobCancelParams,
+        ) -> Result<AgentApiOutcome<SessionJobCancelResponse>, AgentApiError> {
+            assert_eq!(params.jobs.len(), 1);
+            Ok(AgentApiOutcome::new(SessionJobCancelResponse {
+                jobs: vec![SessionJobCancelEntryView {
+                    handle: Some(test_session_job_handle()),
+                    summary: Some(test_session_job_summary(SessionJobStatusView::Cancelled)),
+                    error: None,
+                }],
+            }))
+        }
+
         async fn register_environment_provider(
             &self,
             params: EnvironmentProviderRegisterParams,
@@ -6389,6 +6849,47 @@ mod tests {
             }),
             cwd: Some("/workspace".to_owned()),
             active,
+        }
+    }
+
+    fn test_session_job_handle() -> SessionJobHandleView {
+        SessionJobHandleView {
+            session_id: "session_1".to_owned(),
+            env_id: "test".to_owned(),
+            job_id: "job-1".to_owned(),
+        }
+    }
+
+    fn test_session_job_record() -> SessionJobHandleRecordView {
+        SessionJobHandleRecordView {
+            handle: test_session_job_handle(),
+            provider_id: "bridge-local".to_owned(),
+            target_id: "local".to_owned(),
+            namespace: "session_1".to_owned(),
+            name: Some("build".to_owned()),
+            queue_key: None,
+            created_by_run_id: Some("run_1".to_owned()),
+            created_by_turn_id: Some(1),
+            created_by_tool_call_id: Some("call_1".to_owned()),
+            created_at_ms: 123,
+            start_request_hash: format!("sha256:{}", "1".repeat(64)),
+        }
+    }
+
+    fn test_session_job_summary(status: SessionJobStatusView) -> SessionJobSummaryView {
+        SessionJobSummaryView {
+            namespace: "session_1".to_owned(),
+            job_id: "job-1".to_owned(),
+            name: Some("build".to_owned()),
+            status,
+            dependencies: Vec::new(),
+            created_at_ms: 123,
+            queued_at_ms: Some(124),
+            started_at_ms: Some(125),
+            finished_at_ms: Some(126),
+            exit_code: Some(0),
+            failure: None,
+            queue_key: None,
         }
     }
 

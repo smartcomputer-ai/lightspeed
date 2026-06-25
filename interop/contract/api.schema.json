@@ -945,6 +945,74 @@
       ],
       "type": "object"
     },
+    "AgentApiOutcomeOfSessionJobCancelResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/SessionJobCancelResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfSessionJobCreateResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/SessionJobCreateResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfSessionJobListResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/SessionJobListResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfSessionJobReadResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/SessionJobReadResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
     "AgentApiOutcomeOfSessionMcpLinkResponse": {
       "properties": {
         "notifications": {
@@ -7679,6 +7747,656 @@
           "type": "object"
         }
       ]
+    },
+    "SessionJobArtifactView": {
+      "properties": {
+        "kind": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "metadata": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "SessionJobCancelEntryView": {
+      "properties": {
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "handle": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SessionJobHandleView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SessionJobSummaryView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "SessionJobCancelParams": {
+      "properties": {
+        "force": {
+          "default": false,
+          "type": "boolean"
+        },
+        "jobs": {
+          "items": {
+            "$ref": "#/definitions/SessionJobHandleInput"
+          },
+          "type": "array"
+        },
+        "scope": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SessionJobCancelScopeView"
+            }
+          ],
+          "default": "job"
+        },
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "jobs"
+      ],
+      "type": "object"
+    },
+    "SessionJobCancelResponse": {
+      "properties": {
+        "jobs": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/SessionJobCancelEntryView"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "SessionJobCancelScopeView": {
+      "enum": [
+        "job",
+        "dependents"
+      ],
+      "type": "string"
+    },
+    "SessionJobCreateParams": {
+      "properties": {
+        "envId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "jobs": {
+          "items": {
+            "$ref": "#/definitions/SessionJobStartSpecInput"
+          },
+          "type": "array"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "requestId",
+        "jobs"
+      ],
+      "type": "object"
+    },
+    "SessionJobCreateResponse": {
+      "properties": {
+        "envId": {
+          "type": "string"
+        },
+        "jobs": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/SessionJobStartedView"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "envId"
+      ],
+      "type": "object"
+    },
+    "SessionJobDependencyInput": {
+      "properties": {
+        "jobId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "SessionJobDependencyPolicyView": {
+      "enum": [
+        "allSucceeded",
+        "allTerminal"
+      ],
+      "type": "string"
+    },
+    "SessionJobHandleInput": {
+      "properties": {
+        "envId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "jobId": {
+          "type": "string"
+        },
+        "sessionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "jobId"
+      ],
+      "type": "object"
+    },
+    "SessionJobHandleRecordView": {
+      "properties": {
+        "createdAtMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "createdByRunId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "createdByToolCallId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "createdByTurnId": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "handle": {
+          "$ref": "#/definitions/SessionJobHandleView"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "providerId": {
+          "type": "string"
+        },
+        "queueKey": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "startRequestHash": {
+          "type": "string"
+        },
+        "targetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "handle",
+        "providerId",
+        "targetId",
+        "namespace",
+        "createdAtMs",
+        "startRequestHash"
+      ],
+      "type": "object"
+    },
+    "SessionJobHandleView": {
+      "properties": {
+        "envId": {
+          "type": "string"
+        },
+        "jobId": {
+          "type": "string"
+        },
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "envId",
+        "jobId"
+      ],
+      "type": "object"
+    },
+    "SessionJobListParams": {
+      "properties": {
+        "envId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "type": "object"
+    },
+    "SessionJobListResponse": {
+      "properties": {
+        "jobs": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/SessionJobHandleRecordView"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "SessionJobOutputChunkView": {
+      "properties": {
+        "dataBase64": {
+          "type": "string"
+        },
+        "seq": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stream": {
+          "$ref": "#/definitions/SessionJobOutputStreamView"
+        }
+      },
+      "required": [
+        "seq",
+        "stream",
+        "dataBase64"
+      ],
+      "type": "object"
+    },
+    "SessionJobOutputStreamView": {
+      "enum": [
+        "stdout",
+        "stderr"
+      ],
+      "type": "string"
+    },
+    "SessionJobReadEntryView": {
+      "properties": {
+        "artifacts": {
+          "items": {
+            "$ref": "#/definitions/SessionJobArtifactView"
+          },
+          "type": "array"
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "handle": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SessionJobHandleView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "outputChunks": {
+          "items": {
+            "$ref": "#/definitions/SessionJobOutputChunkView"
+          },
+          "type": "array"
+        },
+        "outputNextSeq": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SessionJobSummaryView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "outputNextSeq"
+      ],
+      "type": "object"
+    },
+    "SessionJobReadParams": {
+      "properties": {
+        "afterSeq": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "includeArtifacts": {
+          "default": false,
+          "type": "boolean"
+        },
+        "jobs": {
+          "items": {
+            "$ref": "#/definitions/SessionJobHandleInput"
+          },
+          "type": "array"
+        },
+        "outputBytes": {
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "jobs"
+      ],
+      "type": "object"
+    },
+    "SessionJobReadResponse": {
+      "properties": {
+        "jobs": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/SessionJobReadEntryView"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "SessionJobStartSpecInput": {
+      "properties": {
+        "argv": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dependencyPolicy": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SessionJobDependencyPolicyView"
+            }
+          ],
+          "default": "allSucceeded"
+        },
+        "dependsOn": {
+          "items": {
+            "$ref": "#/definitions/SessionJobDependencyInput"
+          },
+          "type": "array"
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "jobId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "queueKey": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "stdin": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timeoutMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "argv"
+      ],
+      "type": "object"
+    },
+    "SessionJobStartedView": {
+      "properties": {
+        "dependencies": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "handle": {
+          "$ref": "#/definitions/SessionJobHandleView"
+        },
+        "jobId": {
+          "type": "string"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "queueKey": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/definitions/SessionJobStatusView"
+        }
+      },
+      "required": [
+        "jobId",
+        "handle",
+        "status"
+      ],
+      "type": "object"
+    },
+    "SessionJobStatusView": {
+      "enum": [
+        "accepted",
+        "queued",
+        "running",
+        "succeeded",
+        "failed",
+        "cancelRequested",
+        "cancelled",
+        "timedOut",
+        "dependencyFailed",
+        "interrupted",
+        "lost"
+      ],
+      "type": "string"
+    },
+    "SessionJobSummaryView": {
+      "properties": {
+        "createdAtMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "dependencies": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "exitCode": {
+          "format": "int32",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "failure": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "finishedAtMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "jobId": {
+          "type": "string"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "queueKey": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "queuedAtMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "startedAtMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/definitions/SessionJobStatusView"
+        }
+      },
+      "required": [
+        "namespace",
+        "jobId",
+        "status",
+        "createdAtMs"
+      ],
+      "type": "object"
     },
     "SessionMcpLinkParams": {
       "properties": {

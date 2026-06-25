@@ -16,6 +16,7 @@ mod oauth_api;
 mod parse;
 mod profiles;
 mod prompts;
+mod session_jobs;
 mod skills;
 mod tools_api;
 mod vfs_api;
@@ -114,7 +115,14 @@ use api::{
     SessionEnvironmentDeactivateResponse, SessionEnvironmentKindView, SessionEnvironmentListParams,
     SessionEnvironmentListResponse, SessionEnvironmentReadParams, SessionEnvironmentReadResponse,
     SessionEnvironmentStatusView, SessionEnvironmentView, SessionEventsReadParams,
-    SessionEventsReadResponse, SessionMcpLinkParams, SessionMcpLinkResponse, SessionMcpListParams,
+    SessionEventsReadResponse, SessionJobArtifactView, SessionJobCancelEntryView,
+    SessionJobCancelParams, SessionJobCancelResponse, SessionJobCancelScopeView,
+    SessionJobCreateParams, SessionJobCreateResponse, SessionJobDependencyInput,
+    SessionJobDependencyPolicyView, SessionJobHandleInput, SessionJobHandleRecordView,
+    SessionJobHandleView, SessionJobListParams, SessionJobListResponse, SessionJobOutputChunkView,
+    SessionJobOutputStreamView, SessionJobReadEntryView, SessionJobReadParams,
+    SessionJobReadResponse, SessionJobStartSpecInput, SessionJobStartedView, SessionJobStatusView,
+    SessionJobSummaryView, SessionMcpLinkParams, SessionMcpLinkResponse, SessionMcpListParams,
     SessionMcpListResponse, SessionMcpUnlinkParams, SessionMcpUnlinkResponse, SessionReadParams,
     SessionReadResponse, SessionStartParams, SessionStartResponse, SessionToolsUpdateParams,
     SessionToolsUpdateResponse, SessionUpdateParams, SessionUpdateResponse, SessionView,
@@ -1710,6 +1718,42 @@ impl AgentApiService for GatewayAgentApi {
         params: SessionEnvironmentCloseParams,
     ) -> Result<AgentApiOutcome<SessionEnvironmentCloseResponse>, AgentApiError> {
         self.close_session_environment_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn create_session_jobs(
+        &self,
+        params: SessionJobCreateParams,
+    ) -> Result<AgentApiOutcome<SessionJobCreateResponse>, AgentApiError> {
+        self.create_session_job_records(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn list_session_jobs(
+        &self,
+        params: SessionJobListParams,
+    ) -> Result<AgentApiOutcome<SessionJobListResponse>, AgentApiError> {
+        self.list_session_job_records(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn read_session_jobs(
+        &self,
+        params: SessionJobReadParams,
+    ) -> Result<AgentApiOutcome<SessionJobReadResponse>, AgentApiError> {
+        self.read_session_job_records(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn cancel_session_jobs(
+        &self,
+        params: SessionJobCancelParams,
+    ) -> Result<AgentApiOutcome<SessionJobCancelResponse>, AgentApiError> {
+        self.cancel_session_job_records(params)
             .await
             .map(AgentApiOutcome::new)
     }

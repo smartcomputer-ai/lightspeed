@@ -35,6 +35,7 @@ pub struct JobManager {
 struct JobManagerState {
     jobs: BTreeMap<JobKey, JobRecord>,
     running: BTreeMap<JobKey, Arc<RunningJob>>,
+    next_accept_seq: u64,
 }
 
 type JobKey = (String, JobId);
@@ -58,6 +59,8 @@ struct JobRecord {
     dependencies: Vec<JobId>,
     queue_key: Option<String>,
     spec_hash: String,
+    #[serde(default)]
+    accept_seq: u64,
     status: JobStatus,
     created_at_ms: u64,
     queued_at_ms: Option<u64>,
@@ -107,6 +110,9 @@ impl JobManager {
                     Some("host-bridge restarted before this job could be recovered".to_owned());
                 persist_record_at(&jobs_root, &record)?;
             }
+            state.next_accept_seq = state
+                .next_accept_seq
+                .max(record.accept_seq.saturating_add(1));
             state
                 .jobs
                 .insert(job_key(&record.namespace, &record.job_id), record);
@@ -139,6 +145,8 @@ impl JobManager {
                     accepted.push(key);
                     continue;
                 }
+                let accept_seq = state.next_accept_seq;
+                state.next_accept_seq = state.next_accept_seq.saturating_add(1);
 
                 let record = JobRecord {
                     namespace: params.namespace.clone(),
@@ -153,6 +161,7 @@ impl JobManager {
                     dependencies: job.dependencies.clone(),
                     queue_key: job.spec.queue_key.clone(),
                     spec_hash: job.spec_hash.clone(),
+                    accept_seq,
                     status: JobStatus::Queued,
                     created_at_ms: now,
                     queued_at_ms: Some(now),
@@ -347,14 +356,38 @@ impl JobManager {
                             .map(|queue_key| (record.namespace.clone(), queue_key.clone()))
                     })
                     .collect::<BTreeSet<_>>();
+                let mut candidates = state
+                    .jobs
+                    .iter()
+                    .filter_map(|(key, record)| {
+                        if !matches!(record.status, JobStatus::Accepted | JobStatus::Queued)
+                            || state.running.contains_key(key)
+                            || !dependencies_satisfied(&state, record)
+                        {
+                            return None;
+                        }
+                        Some((
+                            key.clone(),
+                            record.accept_seq,
+                            record.queued_at_ms.unwrap_or(record.created_at_ms),
+                            record.created_at_ms,
+                            record.job_id.clone(),
+                        ))
+                    })
+                    .collect::<Vec<_>>();
+                candidates.sort_by(|left, right| {
+                    left.1
+                        .cmp(&right.1)
+                        .then_with(|| left.2.cmp(&right.2))
+                        .then_with(|| left.3.cmp(&right.3))
+                        .then_with(|| left.4.cmp(&right.4))
+                });
+
                 let mut ready_ids = Vec::new();
-                for (key, record) in &state.jobs {
-                    if !matches!(record.status, JobStatus::Accepted | JobStatus::Queued)
-                        || state.running.contains_key(key)
-                        || !dependencies_satisfied(&state, record)
-                    {
+                for (key, _, _, _, _) in candidates {
+                    let Some(record) = state.jobs.get(&key) else {
                         continue;
-                    }
+                    };
                     if let Some(queue_key) = record.queue_key.as_ref() {
                         if !busy_queues.insert((record.namespace.clone(), queue_key.clone())) {
                             continue;
@@ -1238,9 +1271,9 @@ mod tests {
         let marker = root.join("order.txt");
         let manager = JobManager::new(root.clone(), root.clone()).expect("manager");
 
-        let mut first = job("queued-1", "printf 1 >> order.txt");
-        let mut second = job("queued-2", "printf 2 >> order.txt");
-        let mut third = job("queued-3", "printf 3 >> order.txt");
+        let mut first = job("queued-z", "printf 1 >> order.txt");
+        let mut second = job("queued-a", "printf 2 >> order.txt");
+        let mut third = job("queued-m", "printf 3 >> order.txt");
         first.queue_key = Some("repo".to_owned());
         second.queue_key = Some("repo".to_owned());
         third.queue_key = Some("repo".to_owned());
@@ -1254,7 +1287,7 @@ mod tests {
             .await
             .expect("start");
 
-        let read = wait_for_jobs(&manager, ["queued-1", "queued-2", "queued-3"]).await;
+        let read = wait_for_jobs(&manager, ["queued-z", "queued-a", "queued-m"]).await;
         assert!(
             read.jobs
                 .iter()
@@ -1447,6 +1480,7 @@ mod tests {
                 dependencies: Vec::new(),
                 queue_key: None,
                 spec_hash: "seed".to_owned(),
+                accept_seq: 0,
                 status: JobStatus::Running,
                 created_at_ms: now_ms(),
                 queued_at_ms: Some(now_ms()),
