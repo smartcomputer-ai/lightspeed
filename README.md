@@ -2,6 +2,12 @@
 
 Lightspeed is a powerful agent harness built around a deterministic core and data structures designed to run inside [durable workflow engines](https://en.wikipedia.org/wiki/Workflow_engine). [Temporal](https://temporal.io/) is fully supported today; others are coming soon: [Restate](https://www.restate.dev/), [Inngest](https://www.inngest.com/), Hatchet, AWS Step Functions, etc. The core is written in Rust. The production data backend is Postgres and optional S3.
 
+**What you can build with Lightspeed**:
+- An insanley **scalable OpenClaw**: thousands of users, very low cost (besides tokens)
+- Fully **autonomous software factory**: agents collaborating to build, test, critique your next feature
+- **@Claude that you control**: multi-provider, on-prem hosting
+- ...and much more!
+
 ## Why?
 Frontier agent harnesses like Claude Code, Codex, OpenCode, OpenClaw are designed to run inside a guest OS and need an entire OS process for themselves. These agents are difficult to scale and secure.
 
@@ -23,9 +29,10 @@ What constitutes an "agent harness" is a rapidly expanding set of table-stakes f
 - [x] Reusable agent profiles for named or inline session setup across CLI, bridge, and Fleet spawns
 - [x] Hosted MCP, including various authentication methods such as API keys, OAuth flows
 - [x] Sub-agents (aka. "fleets"), letting agents start or manage other agents (planned)
-- [~] Sandboxes, including delegating work to standard coding agents inside sandboxes (in progress)
+- [ ] Sandboxes, including delegating work to standard coding agents inside sandboxes (in progress)
   - [x] Dedicated VMs that connect via a bridge daemon to the agent
   - [ ] Ad-hoc sandboxes
+  - [ ] Jobs for long running tasks: downloads, start a coding agent like Codex, etc
 - [ ] Timers, schedules, wake-ups (planned)
 - [ ] Multi-tenant support (in progress)
 - [ ] Other model support via the "Completion API" standard (in progress)
