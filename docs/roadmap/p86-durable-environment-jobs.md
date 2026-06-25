@@ -932,12 +932,14 @@ Job handle records must still avoid accidental leakage:
   calls `check_environment_job_wait`, and resumes the original parked tool
   batch when the wait is ready or timed out. Provider wake hints are accepted
   through `environment_job_changed` and force a fresh read; they are not treated
-  as authoritative job state.
+  as authoritative job state. `AgentSessionWorkflow` now lives under
+  `crates/temporal-workflow/src/workflow/` with focused modules for bootstrap,
+  admissions, driving, wait-loop selection, Fleet waits, environment job waits,
+  activity calls, session state, errors, clock helpers, and tests.
 - Add a `lightspeed.environment.job_wait` resume directive.
-- Split the environment job wait machinery into
-  `crates/temporal-workflow/src/workflow/environment_job_waits.rs`; the main
-  workflow loop owns generic wake selection and the existing Fleet
-  wait/subscription path remains in `workflow.rs`.
+- Split the workflow implementation into focused modules under
+  `crates/temporal-workflow/src/workflow/`; the main workflow loop owns generic
+  orchestration and directive-specific wait machinery lives in dedicated files.
 - Add workflow-local `ActiveEnvironmentJobWait` state with absolute
   `deadline_ms?` and `next_check_at_ms`.
 - Add a short `check_environment_job_wait` activity that resolves handles,
