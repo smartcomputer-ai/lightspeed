@@ -73,6 +73,12 @@ struct ProfileImportDocument {
     base_dir: PathBuf,
 }
 
+#[derive(Clone, Debug)]
+struct ProfileImportBatch {
+    documents: Vec<ProfileImportDocument>,
+    source_was_array: bool,
+}
+
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ProvisionConfig {
@@ -191,14 +197,28 @@ pub(crate) async fn handle(args: ProfilesArgs) -> Result<()> {
             print_json(&response.result.profile)
         }
         ProfilesCommand::Import { json, no_check } => {
-            let mut document = read_profile_import_arg(&json)?;
-            provision_vfs(&api, &mut document).await?;
+            let mut batch = read_profile_import_arg(&json)?;
+            for document in &mut batch.documents {
+                let profile_id = document.profile.profile_id.as_str().to_owned();
+                provision_vfs(&api, document)
+                    .await
+                    .with_context(|| format!("failed to provision profile {profile_id}"))?;
+            }
             if !no_check {
-                let report = validate_import_document(&api, &document, true).await;
+                let report =
+                    validate_import_documents(&api, &batch.documents, true, batch.source_was_array)
+                        .await;
                 report.ensure_success()?;
             }
-            let profile = upsert_profile(&api, document.profile).await?;
-            print_json(&profile)
+            let mut profiles = Vec::with_capacity(batch.documents.len());
+            for document in batch.documents {
+                let profile_id = document.profile.profile_id.as_str().to_owned();
+                let profile = upsert_profile(&api, document.profile)
+                    .await
+                    .with_context(|| format!("failed to import profile {profile_id}"))?;
+                profiles.push(profile);
+            }
+            print_profile_import_results(profiles, batch.source_was_array)
         }
         ProfilesCommand::Delete { profile_id } => {
             let response = api
@@ -239,8 +259,8 @@ pub(crate) async fn handle(args: ProfilesArgs) -> Result<()> {
             write_json_output(&profile, out.as_deref())
         }
         ProfilesCommand::Check { json } => {
-            let document = read_profile_import_arg(&json)?;
-            validate_import_document(&api, &document, false)
+            let batch = read_profile_import_arg(&json)?;
+            validate_import_documents(&api, &batch.documents, false, batch.source_was_array)
                 .await
                 .finish()
         }
@@ -378,6 +398,41 @@ async fn validate_import_document(
     if document.provision.validate.environments() {
         validate_environments(api, &document.profile, &mut report).await;
     }
+    report
+}
+
+async fn validate_import_documents(
+    api: &HttpAgentApi,
+    documents: &[ProfileImportDocument],
+    provision_has_run: bool,
+    prefix_messages: bool,
+) -> ValidationReport {
+    let mut report = ValidationReport::default();
+    for document in documents {
+        let document_report = validate_import_document(api, document, provision_has_run).await;
+        if prefix_messages {
+            report.extend(prefix_validation_report(
+                document.profile.profile_id.as_str(),
+                document_report,
+            ));
+        } else {
+            report.extend(document_report);
+        }
+    }
+    report
+}
+
+fn prefix_validation_report(profile_id: &str, mut report: ValidationReport) -> ValidationReport {
+    report.warnings = report
+        .warnings
+        .into_iter()
+        .map(|message| format!("profile {profile_id}: {message}"))
+        .collect();
+    report.errors = report
+        .errors
+        .into_iter()
+        .map(|message| format!("profile {profile_id}: {message}"))
+        .collect();
     report
 }
 
@@ -728,9 +783,44 @@ fn profile_source_from_args(
     }
 }
 
-fn read_profile_import_arg(arg: &str) -> Result<ProfileImportDocument> {
+fn read_profile_import_arg(arg: &str) -> Result<ProfileImportBatch> {
     let input = read_json_text_arg(arg)?;
-    let mut value = serde_json::from_str::<Value>(&input.json).context("failed to parse JSON")?;
+    read_profile_import_json(&input.json, input.base_dir)
+}
+
+fn read_profile_import_json(json: &str, base_dir: PathBuf) -> Result<ProfileImportBatch> {
+    let value = serde_json::from_str::<Value>(json).context("failed to parse JSON")?;
+    match value {
+        Value::Array(values) => {
+            if values.is_empty() {
+                bail!("profile import document array must contain at least one profile");
+            }
+            let mut documents = Vec::with_capacity(values.len());
+            for (index, value) in values.into_iter().enumerate() {
+                let document = profile_import_document_from_value(value, base_dir.clone())
+                    .with_context(|| {
+                        format!("failed to parse profile import document at array index {index}")
+                    })?;
+                documents.push(document);
+            }
+            ensure_unique_profile_ids(&documents)?;
+            Ok(ProfileImportBatch {
+                documents,
+                source_was_array: true,
+            })
+        }
+        Value::Object(_) => Ok(ProfileImportBatch {
+            documents: vec![profile_import_document_from_value(value, base_dir)?],
+            source_was_array: false,
+        }),
+        _ => bail!("profile import document must be a JSON object or array of objects"),
+    }
+}
+
+fn profile_import_document_from_value(
+    mut value: Value,
+    base_dir: PathBuf,
+) -> Result<ProfileImportDocument> {
     let provision = match value.as_object_mut() {
         Some(object) => object.remove("provision"),
         None => bail!("profile import document must be a JSON object"),
@@ -746,13 +836,36 @@ fn read_profile_import_arg(arg: &str) -> Result<ProfileImportDocument> {
     Ok(ProfileImportDocument {
         profile,
         provision,
-        base_dir: input.base_dir,
+        base_dir,
     })
+}
+
+fn ensure_unique_profile_ids(documents: &[ProfileImportDocument]) -> Result<()> {
+    let mut ids = BTreeSet::new();
+    for document in documents {
+        let profile_id = document.profile.profile_id.as_str();
+        if !ids.insert(profile_id.to_owned()) {
+            bail!("duplicate profileId {profile_id} in profile import array");
+        }
+    }
+    Ok(())
 }
 
 fn read_json_arg<T: DeserializeOwned>(arg: &str) -> Result<T> {
     let input = read_json_text_arg(arg)?;
     serde_json::from_str(&input.json).context("failed to parse JSON")
+}
+
+fn print_profile_import_results(profiles: Vec<AgentProfile>, source_was_array: bool) -> Result<()> {
+    if source_was_array {
+        print_json(&profiles)
+    } else {
+        let profile = profiles
+            .into_iter()
+            .next()
+            .context("single-profile import produced no profile")?;
+        print_json(&profile)
+    }
 }
 
 struct JsonTextArg {
@@ -846,6 +959,50 @@ mod tests {
     }
 
     #[test]
+    fn import_document_accepts_profile_array() {
+        let batch = parse_import_batch_for_test(
+            r#"[
+              {
+                "profileId": "support",
+                "displayName": "Support"
+              },
+              {
+                "profileId": "review",
+                "provision": {
+                  "vfs": [
+                    {
+                      "path": "./review-files",
+                      "mountPath": "/workspace",
+                      "mode": "snapshot"
+                    }
+                  ]
+                }
+              }
+            ]"#,
+        );
+
+        assert!(batch.source_was_array);
+        assert_eq!(batch.documents.len(), 2);
+        assert_eq!(batch.documents[0].profile.profile_id.as_str(), "support");
+        assert_eq!(batch.documents[1].profile.profile_id.as_str(), "review");
+        assert_eq!(batch.documents[1].provision.vfs.len(), 1);
+        assert_eq!(batch.documents[1].provision.vfs[0].mount_path, "/workspace");
+    }
+
+    #[test]
+    fn import_document_rejects_duplicate_profile_ids_in_array() {
+        let result = read_profile_import_json(
+            r#"[
+              { "profileId": "support" },
+              { "profileId": "support" }
+            ]"#,
+            PathBuf::from("."),
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn provisioned_mount_is_inserted_when_missing() {
         let mut profile = AgentProfileInput {
             profile_id: ProfileId::new("support"),
@@ -902,21 +1059,13 @@ mod tests {
     }
 
     fn parse_import_document_for_test(json: &str) -> ProfileImportDocument {
-        let mut value = serde_json::from_str::<Value>(json).unwrap();
-        let provision = value
-            .as_object_mut()
-            .unwrap()
-            .remove("provision")
-            .map(serde_json::from_value::<Option<ProvisionConfig>>)
-            .transpose()
-            .unwrap()
-            .flatten()
-            .unwrap_or_default();
-        let profile = serde_json::from_value::<AgentProfileInput>(value).unwrap();
-        ProfileImportDocument {
-            profile,
-            provision,
-            base_dir: PathBuf::from("."),
-        }
+        let mut batch = parse_import_batch_for_test(json);
+        assert!(!batch.source_was_array);
+        assert_eq!(batch.documents.len(), 1);
+        batch.documents.pop().unwrap()
+    }
+
+    fn parse_import_batch_for_test(json: &str) -> ProfileImportBatch {
+        read_profile_import_json(json, PathBuf::from(".")).unwrap()
     }
 }

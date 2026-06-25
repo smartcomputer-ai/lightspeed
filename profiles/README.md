@@ -1,6 +1,8 @@
 # Example Profiles
 
-These files are importable profile documents for local development and demos.
+These files are importable agent profile documents for local development and demos.
+The CLI accepts either one profile object per file or a non-empty JSON array of
+profile objects for batch import/check.
 
 Import the workspace-backed profile:
 

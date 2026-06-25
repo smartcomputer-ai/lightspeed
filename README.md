@@ -231,6 +231,9 @@ cargo run -p cli -- profiles check ./support-profile.import.json
 cargo run -p cli -- profiles export support --out ./support-profile.json
 ```
 
+`profiles import` and `profiles check` accept either one profile object or a
+non-empty JSON array of profile objects.
+
 To chat with a local directory mounted as a writable CAS-backed VFS workspace:
 
 ```bash

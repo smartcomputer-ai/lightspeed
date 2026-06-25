@@ -609,6 +609,10 @@ stdin, or a literal JSON arg), acts on the `provision` hints, strips the
 same API create/update calls used by the registry. The stored profile never
 contains `provision` data.
 
+For batch imports/checks, the same file argument may also be a non-empty JSON
+array of profile import documents. Each array element has its own optional
+`provision` block, and duplicate `profileId` values are rejected before import.
+
 ```json
 {
   "profileId": "support",
@@ -656,22 +660,23 @@ current working directory for stdin/literal input).
 
 ### New `profiles` subcommands
 
-- **`profiles import <file|-|json> [--no-check]`** — read the import doc, split
-  off `provision`, resolve each `vfs` entry (upload snapshot → create/advance
-  workspace, or rewrite the mount source for `snapshot` mode), run validation by
-  default, then **upsert**: `profiles/read` first — missing →
-  `profiles/create`, exists → `profiles/update` at the current revision.
-  Re-runs are idempotent; no profile update is sent when the stored profile
-  already matches the imported document. `--no-check` skips live reference
-  validation after any local VFS provisioning; local VFS paths still must be
-  readable before upload.
+- **`profiles import <file|-|json> [--no-check]`** — read one import doc or an
+  array of import docs, split off `provision`, resolve each `vfs` entry (upload
+  snapshot → create/advance workspace, or rewrite the mount source for
+  `snapshot` mode), run validation by default, then **upsert**:
+  `profiles/read` first — missing → `profiles/create`, exists →
+  `profiles/update` at the current revision. Re-runs are idempotent; no profile
+  update is sent when the stored profile already matches the imported document.
+  `--no-check` skips live reference validation after any local VFS provisioning;
+  local VFS paths still must be readable before upload.
 - **`profiles export <profile_id> --out <path>`** — `profiles/read` and write the
   stored `AgentProfileInput`-shaped JSON to a file (or stdout). No `provision`
   block is emitted (local source paths are not tracked server-side); the output
   round-trips back through `provision`.
-- **`profiles check <file|-|json>`** — validate referenced resources **against
-  the live registry** (per-entry, aggregating all failures, non-zero exit on any
-  failure), without starting a session:
+- **`profiles check <file|-|json>`** — validate referenced resources for one
+  import doc or an array of import docs **against the live registry** (per-entry,
+  aggregating all failures, non-zero exit on any failure), without starting a
+  session:
   - **mounts**: `vfs/workspace/read` / `vfs/snapshot/read` for non-local mount
     sources; local `provision.vfs` paths checked for existence/readability on disk.
   - **mcp**: `mcp/servers/read` per `serverId`; `auth/grants/read` per
