@@ -217,24 +217,40 @@ For OpenAI-backed chat, the CLI sends typed session/run configuration through
 the API. Use `--model ...` on a command, or set `LIGHTSPEED_CHAT_MODEL`, if you want
 a specific model.
 
-To start from a named or inline agent profile:
+The repository includes runnable example profiles under `profiles/`. Import one
+through the gateway, then start a chat with its profile id:
 
 ```bash
-cargo run -p cli -- chat --new --profile support "help with this ticket"
-cargo run -p cli -- chat --new --profile-json ./support-profile.json "help with this ticket"
+cargo run -p cli -- profiles import profiles/workspace-prompts-skills.json
+cargo run -p cli -- chat --new --profile example.workspace-prompts-skills \
+  "summarize the mounted profile workspace"
+```
+
+The workspace-backed profile provisions `profiles/workspace-prompts-skills/` as
+a VFS workspace and mounts it at `/workspace`. The local `provision` block is
+consumed by the CLI during import and is not stored in the profile record.
+
+There is also a multi-profile Fleet demo:
+
+```bash
+cargo run -p cli -- profiles import profiles/fleet-demo.json
+cargo run -p cli -- chat --new --profile example.fleet.supervisor
 ```
 
 Profiles can be managed through the same gateway:
 
 ```bash
 cargo run -p cli -- profiles list
-cargo run -p cli -- profiles import ./support-profile.json
-cargo run -p cli -- profiles check ./support-profile.import.json
-cargo run -p cli -- profiles export support --out ./support-profile.json
+cargo run -p cli -- profiles check profiles/fleet-demo.json
+cargo run -p cli -- profiles read example.workspace-prompts-skills
+cargo run -p cli -- profiles export example.workspace-prompts-skills \
+  --out /tmp/example.workspace-prompts-skills.json
 ```
 
 `profiles import` and `profiles check` accept either one profile object or a
-non-empty JSON array of profile objects.
+non-empty JSON array of profile objects. See `profiles/README.md` for the full
+set of examples, including the MCP echo profile, which requires registering the
+test MCP server before import.
 
 To chat with a local directory mounted as a writable CAS-backed VFS workspace:
 
