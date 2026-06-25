@@ -519,6 +519,8 @@ pub struct SessionEnvironmentCapabilities {
     #[serde(default)]
     pub job_start: bool,
     #[serde(default)]
+    pub job_list: bool,
+    #[serde(default)]
     pub job_read: bool,
     #[serde(default)]
     pub job_cancel: bool,
@@ -542,6 +544,7 @@ impl SessionEnvironmentCapabilities {
             process_exec: capabilities.process_start,
             process_stdin: capabilities.process_stdin,
             job_start: capabilities.job_start,
+            job_list: capabilities.job_list,
             job_read: capabilities.job_read,
             job_cancel: capabilities.job_cancel,
             job_wait_hint: capabilities.job_wait_hint,
@@ -566,6 +569,11 @@ impl SessionEnvironmentCapabilities {
         if self.job_wait_hint && !self.job_read {
             return Err(EnvironmentRegistryError::InvalidInput {
                 message: "job_wait_hint requires job_read".to_owned(),
+            });
+        }
+        if self.job_list && !self.job_read {
+            return Err(EnvironmentRegistryError::InvalidInput {
+                message: "job_list requires job_read".to_owned(),
             });
         }
         if self.job_dependencies && !self.job_start {
@@ -644,6 +652,11 @@ impl JobHandleRecord {
                 message: format!("invalid namespace: {error}"),
             }
         })?;
+        if self.namespace != self.session_id.as_str() {
+            return Err(EnvironmentRegistryError::InvalidInput {
+                message: "job namespace must equal session_id".to_owned(),
+            });
+        }
         validate_nonempty_optional("job name", self.name.as_deref())?;
         validate_nonempty_optional("queue_key", self.queue_key.as_deref())?;
         validate_optional_metadata_component("job name", self.name.as_deref())?;

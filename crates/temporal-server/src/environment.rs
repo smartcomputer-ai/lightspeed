@@ -140,7 +140,10 @@ impl SessionEnvironmentManager {
     pub fn has_job_environment(&self) -> bool {
         self.environments.values().any(|environment| {
             let capabilities = &environment.record.capabilities;
-            capabilities.job_start || capabilities.job_read || capabilities.job_cancel
+            capabilities.job_start
+                || capabilities.job_list
+                || capabilities.job_read
+                || capabilities.job_cancel
         })
     }
 
@@ -441,6 +444,7 @@ fn environment_capabilities_from_binding(
         process_exec: capabilities.process_exec,
         process_stdin: capabilities.process_stdin,
         job_start: capabilities.job_start,
+        job_list: capabilities.job_list,
         job_read: capabilities.job_read,
         job_cancel: capabilities.job_cancel,
         job_wait_hint: capabilities.job_wait_hint,

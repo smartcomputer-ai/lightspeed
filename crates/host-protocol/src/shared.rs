@@ -106,6 +106,8 @@ pub struct HostCapabilities {
     #[serde(default)]
     pub job_start: bool,
     #[serde(default)]
+    pub job_list: bool,
+    #[serde(default)]
     pub job_read: bool,
     #[serde(default)]
     pub job_cancel: bool,
@@ -137,6 +139,7 @@ impl HostCapabilities {
 
     pub fn with_jobs(mut self) -> Self {
         self.job_start = true;
+        self.job_list = true;
         self.job_read = true;
         self.job_cancel = true;
         self.job_wait_hint = false;

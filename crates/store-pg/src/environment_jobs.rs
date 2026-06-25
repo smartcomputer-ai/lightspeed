@@ -164,7 +164,7 @@ impl JobHandleStore for PgStore {
             query.push_str(&format!(" AND env_id = ${next_param}"));
             next_param += 1;
         }
-        query.push_str(" ORDER BY env_id, job_id");
+        query.push_str(" ORDER BY created_at_ms DESC, env_id, job_id");
         if request.limit.is_some() {
             query.push_str(&format!(" LIMIT ${next_param}"));
         }

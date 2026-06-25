@@ -1334,6 +1334,7 @@ fn host_capabilities() -> HostCapabilities {
         process_output_notifications: false,
         process_pty: false,
         job_start: true,
+        job_list: true,
         job_read: true,
         job_cancel: true,
         job_wait_hint: false,

@@ -17,11 +17,12 @@ use host_protocol::{
         handshake::InitializeParams,
         jobs::{
             JobArtifact, JobDependency, JobDependencyPolicy, JobOutputChunk, JobOutputStream,
-            JobReadResult, JobStartSpec, JobStatus, JobSummary, ReadJobsResponse, StartJobsParams,
+            JobReadResult, JobStartSpec, JobStatus, JobSummary, ListJobsParams, ReadJobsResponse,
+            StartJobsParams,
         },
         methods::{
-            FS_READ_FILE_METHOD, INITIALIZE_METHOD, JOB_CANCEL_METHOD, JOB_READ_METHOD,
-            JOB_START_METHOD, PROCESS_OUTPUT_METHOD, PROCESS_START_METHOD,
+            FS_READ_FILE_METHOD, INITIALIZE_METHOD, JOB_CANCEL_METHOD, JOB_LIST_METHOD,
+            JOB_READ_METHOD, JOB_START_METHOD, PROCESS_OUTPUT_METHOD, PROCESS_START_METHOD,
         },
         process::{
             ProcessOutputChunk, ProcessOutputStream, ReadProcessResponse, StartProcessParams,
@@ -79,6 +80,7 @@ fn method_names_match_data_plane_contract() {
     assert_eq!(FS_READ_FILE_METHOD, "fs/readFile");
     assert_eq!(PROCESS_START_METHOD, "process/start");
     assert_eq!(JOB_START_METHOD, "job/start");
+    assert_eq!(JOB_LIST_METHOD, "job/list");
     assert_eq!(JOB_READ_METHOD, "job/read");
     assert_eq!(JOB_CANCEL_METHOD, "job/cancel");
     assert_eq!(PROCESS_OUTPUT_METHOD, "process/output");
@@ -220,6 +222,20 @@ fn job_read_response_matches_fixture() {
 }
 
 #[test]
+fn job_list_params_use_session_namespace_and_limit() {
+    assert_round_trip(
+        ListJobsParams {
+            namespace: "session_1".to_owned(),
+            limit: Some(25),
+        },
+        json!({
+            "namespace": "session_1",
+            "limit": 25
+        }),
+    );
+}
+
+#[test]
 fn byte_chunk_rejects_invalid_base64() {
     assert!(serde_json::from_value::<ByteChunk>(json!("not base64 !!!")).is_err());
 }
@@ -322,6 +338,7 @@ fn remote_host_capabilities() -> HostCapabilities {
         process_output_notifications: true,
         process_pty: false,
         job_start: true,
+        job_list: true,
         job_read: true,
         job_cancel: true,
         job_wait_hint: false,

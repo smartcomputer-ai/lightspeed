@@ -9,8 +9,8 @@ use std::{
 use host_protocol::{
     data::jobs::{
         CancelJobsParams, CancelJobsResponse, JobCancelScope, JobDependencyPolicy, JobOutputChunk,
-        JobOutputStream, JobReadResult, JobStartSpec, JobStatus, JobSummary, ReadJobsParams,
-        ReadJobsResponse, StartJobsParams, StartJobsResponse,
+        JobOutputStream, JobReadResult, JobStartSpec, JobStatus, JobSummary, ListJobsParams,
+        ListJobsResponse, ReadJobsParams, ReadJobsResponse, StartJobsParams, StartJobsResponse,
     },
     error::{HostError, HostErrorCode},
     shared::{ByteChunk, HostPath, JobId},
@@ -224,6 +224,33 @@ impl JobManager {
                 _ = tokio::time::sleep_until(deadline) => {}
             }
         }
+    }
+
+    pub async fn list_jobs(&self, params: ListJobsParams) -> Result<ListJobsResponse, HostError> {
+        validate_id_component("namespace", &params.namespace)?;
+        if matches!(params.limit, Some(0)) {
+            return Err(HostError::new(
+                HostErrorCode::InvalidRequest,
+                "job/list limit must be greater than zero",
+            ));
+        }
+        let state = self.state.lock().await;
+        let mut jobs = state
+            .jobs
+            .values()
+            .filter(|record| record.namespace == params.namespace)
+            .map(JobRecord::summary)
+            .collect::<Vec<_>>();
+        jobs.sort_by(|left, right| {
+            right
+                .created_at_ms
+                .cmp(&left.created_at_ms)
+                .then_with(|| left.job_id.cmp(&right.job_id))
+        });
+        if let Some(limit) = params.limit {
+            jobs.truncate(limit);
+        }
+        Ok(ListJobsResponse { jobs })
     }
 
     pub async fn cancel_jobs(
@@ -1159,8 +1186,8 @@ mod tests {
 
     use host_protocol::{
         data::jobs::{
-            JobCancelScope, JobDependency, JobDependencyPolicy, JobStatus, ReadJobsParams,
-            StartJobsParams,
+            JobCancelScope, JobDependency, JobDependencyPolicy, JobStatus, ListJobsParams,
+            ReadJobsParams, StartJobsParams,
         },
         shared::JobId,
     };
@@ -1361,6 +1388,42 @@ mod tests {
             .await
             .expect_err("conflict");
         assert_eq!(conflict.code, HostErrorCode::Conflict);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn job_manager_lists_latest_jobs_with_limit() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().canonicalize().expect("canonical root");
+        let manager = JobManager::new(root.clone(), root).expect("manager");
+
+        manager
+            .start_jobs(StartJobsParams {
+                namespace: TEST_NAMESPACE.to_owned(),
+                request_id: "list-1".to_owned(),
+                jobs: vec![job("job-old", "printf old")],
+            })
+            .await
+            .expect("start old");
+        tokio::time::sleep(Duration::from_millis(2)).await;
+        manager
+            .start_jobs(StartJobsParams {
+                namespace: TEST_NAMESPACE.to_owned(),
+                request_id: "list-2".to_owned(),
+                jobs: vec![job("job-new", "printf new")],
+            })
+            .await
+            .expect("start new");
+
+        let listed = manager
+            .list_jobs(ListJobsParams {
+                namespace: TEST_NAMESPACE.to_owned(),
+                limit: Some(1),
+            })
+            .await
+            .expect("list jobs");
+
+        assert_eq!(listed.jobs.len(), 1);
+        assert_eq!(listed.jobs[0].job_id.as_str(), "job-new");
     }
 
     #[tokio::test(flavor = "current_thread")]

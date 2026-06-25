@@ -9,7 +9,9 @@ use host_protocol::{
     },
     data::{
         handshake::{InitializeParams, InitializedParams},
-        jobs::{JobDependencyPolicy, JobStartSpec, ReadJobsParams, StartJobsParams},
+        jobs::{
+            JobDependencyPolicy, JobStartSpec, ListJobsParams, ReadJobsParams, StartJobsParams,
+        },
         process::{ReadProcessParams, StartProcessParams},
     },
     shared::{CURRENT_PROTOCOL_VERSION, HostScope, JobId, ProcessId},
@@ -147,6 +149,14 @@ async fn bridge_serves_controller_attach_and_process_data_plane() {
     })
     .await
     .expect("start job");
+    let listed = data
+        .list_jobs(&ListJobsParams {
+            namespace: "session_1".to_owned(),
+            limit: Some(10),
+        })
+        .await
+        .expect("list jobs");
+    assert_eq!(listed.jobs[0].job_id.as_str(), "job-1");
     let jobs = data
         .read_jobs(&ReadJobsParams {
             namespace: "session_1".to_owned(),

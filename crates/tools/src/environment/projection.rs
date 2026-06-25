@@ -91,6 +91,8 @@ pub struct EnvironmentCapabilities {
     #[serde(default)]
     pub job_start: bool,
     #[serde(default)]
+    pub job_list: bool,
+    #[serde(default)]
     pub job_read: bool,
     #[serde(default)]
     pub job_cancel: bool,

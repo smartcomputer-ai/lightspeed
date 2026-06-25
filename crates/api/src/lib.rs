@@ -1945,6 +1945,8 @@ pub struct SessionEnvironmentCapabilitiesView {
     #[serde(default)]
     pub job_start: bool,
     #[serde(default)]
+    pub job_list: bool,
+    #[serde(default)]
     pub job_read: bool,
     #[serde(default)]
     pub job_cancel: bool,
@@ -2277,6 +2279,8 @@ pub struct HostCapabilitiesView {
     pub process_pty: bool,
     #[serde(default)]
     pub job_start: bool,
+    #[serde(default)]
+    pub job_list: bool,
     #[serde(default)]
     pub job_read: bool,
     #[serde(default)]
@@ -6433,6 +6437,7 @@ mod tests {
                 process_output_notifications: false,
                 process_pty: true,
                 job_start: true,
+                job_list: true,
                 job_read: true,
                 job_cancel: true,
                 job_wait_hint: false,

@@ -96,6 +96,7 @@ impl BuiltinToolsetConfig {
             BuiltinToolOperation::RunProcess => self.process.run_process = true,
             BuiltinToolOperation::WriteProcessStdin => self.process.write_process_stdin = true,
             BuiltinToolOperation::JobStart => self.process.job_start = true,
+            BuiltinToolOperation::JobList => self.process.job_list = true,
             BuiltinToolOperation::JobRead => self.process.job_read = true,
             BuiltinToolOperation::JobWait => self.process.job_wait = true,
             BuiltinToolOperation::JobCancel => self.process.job_cancel = true,
@@ -215,6 +216,7 @@ pub struct EnvironmentToolsetConfig {
     pub run_process: bool,
     pub write_process_stdin: bool,
     pub job_start: bool,
+    pub job_list: bool,
     pub job_read: bool,
     pub job_wait: bool,
     pub job_cancel: bool,
@@ -236,6 +238,7 @@ impl EnvironmentToolsetConfig {
     pub fn jobs() -> Self {
         Self {
             job_start: true,
+            job_list: true,
             job_read: true,
             job_wait: true,
             job_cancel: true,
@@ -245,6 +248,7 @@ impl EnvironmentToolsetConfig {
 
     pub fn with_jobs(mut self) -> Self {
         self.job_start = true;
+        self.job_list = true;
         self.job_read = true;
         self.job_wait = true;
         self.job_cancel = true;
@@ -255,6 +259,7 @@ impl EnvironmentToolsetConfig {
         self.run_process
             || self.write_process_stdin
             || self.job_start
+            || self.job_list
             || self.job_read
             || self.job_wait
             || self.job_cancel
@@ -270,6 +275,9 @@ impl EnvironmentToolsetConfig {
         }
         if self.job_start {
             operations.push(BuiltinToolOperation::JobStart);
+        }
+        if self.job_list {
+            operations.push(BuiltinToolOperation::JobList);
         }
         if self.job_read {
             operations.push(BuiltinToolOperation::JobRead);

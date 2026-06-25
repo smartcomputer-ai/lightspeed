@@ -428,7 +428,11 @@ impl JobHandleStore for InMemoryEnvironmentRegistryStore {
             .cloned()
             .collect::<Vec<_>>();
         records.sort_by(|left, right| {
-            (&left.env_id, &left.job_id).cmp(&(&right.env_id, &right.job_id))
+            right
+                .created_at_ms
+                .cmp(&left.created_at_ms)
+                .then_with(|| left.env_id.cmp(&right.env_id))
+                .then_with(|| left.job_id.cmp(&right.job_id))
         });
         if let Some(limit) = request.limit {
             records.truncate(limit);

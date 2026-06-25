@@ -204,6 +204,7 @@ fn capabilities_view(value: HostCapabilities) -> HostCapabilitiesView {
         process_output_notifications: value.process_output_notifications,
         process_pty: value.process_pty,
         job_start: value.job_start,
+        job_list: value.job_list,
         job_read: value.job_read,
         job_cancel: value.job_cancel,
         job_wait_hint: value.job_wait_hint,

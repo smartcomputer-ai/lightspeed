@@ -18,6 +18,7 @@ pub const PROCESS_TERMINATE_METHOD: &str = "process/terminate";
 pub const PROCESS_RESIZE_METHOD: &str = "process/resize";
 
 pub const JOB_START_METHOD: &str = "job/start";
+pub const JOB_LIST_METHOD: &str = "job/list";
 pub const JOB_READ_METHOD: &str = "job/read";
 pub const JOB_CANCEL_METHOD: &str = "job/cancel";
 

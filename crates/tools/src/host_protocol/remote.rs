@@ -95,6 +95,7 @@ where
 
     pub fn job_executor(&self) -> Option<RemoteJobExecutor<T>> {
         if !self.capabilities.job_start
+            && !self.capabilities.job_list
             && !self.capabilities.job_read
             && !self.capabilities.job_cancel
         {
@@ -432,6 +433,23 @@ where
             .lock()
             .await
             .start_jobs(&request)
+            .await
+            .map_err(map_job_error)
+    }
+
+    async fn list_jobs(
+        &self,
+        request: remote_jobs::ListJobsParams,
+    ) -> JobExecResult<remote_jobs::ListJobsResponse> {
+        if !self.capabilities.job_list {
+            return Err(JobError::Unsupported {
+                message: "host target does not support job/list".to_owned(),
+            });
+        }
+        self.client
+            .lock()
+            .await
+            .list_jobs(&request)
             .await
             .map_err(map_job_error)
     }

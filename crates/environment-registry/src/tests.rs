@@ -256,6 +256,7 @@ async fn in_memory_store_creates_reads_lists_and_deletes_job_handles() {
             CreateJobHandle {
                 job_id: JobId::new("job-2"),
                 name: Some("job-2".to_owned()),
+                created_at_ms: 80,
                 ..job_handle("session_1", "local", "job-2")
             },
         ])
@@ -285,7 +286,7 @@ async fn in_memory_store_creates_reads_lists_and_deletes_job_handles() {
         .await
         .expect("list job handles");
     assert_eq!(listed.len(), 2);
-    assert_eq!(listed[0].job_id.as_str(), "job-1");
+    assert_eq!(listed[0].job_id.as_str(), "job-2");
 
     let limited = store
         .list_job_handles(ListJobHandles {
@@ -296,6 +297,7 @@ async fn in_memory_store_creates_reads_lists_and_deletes_job_handles() {
         .await
         .expect("list limited");
     assert_eq!(limited.len(), 1);
+    assert_eq!(limited[0].job_id.as_str(), "job-2");
 
     let deleted = store
         .delete_job_handle(

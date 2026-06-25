@@ -3,7 +3,7 @@
 **Status**
 - Proposed 2026-06-25.
 - G1-G5 implemented 2026-06-25 with the revised v1 shape:
-  namespace-scoped provider jobs, optional per-job `queue_key`, explicit
+  session-scoped provider jobs, optional per-job `queue_key`, explicit
   dependencies, no `deck_id`/group id, and no model-provided idempotency key.
   G5 adds Temporal-owned parked `job_wait` polling, absolute workflow
   deadlines, a short provider-read check activity, wake-hint signal plumbing,
@@ -82,10 +82,11 @@ Tool inputs may omit `session_id` and `env_id` for the common case:
 Tool outputs should always return the fully resolved canonical handle. That lets
 later calls remain exact even if the active environment changes.
 
-The model-visible surface is four tools:
+The model-visible surface is five tools:
 
 ```text
 job_start   start one or more jobs on an environment
+job_list    read the latest known jobs for a session
 job_read    read job status, output tail, and artifacts
 job_wait    join one or more jobs; may park the current tool batch
 job_cancel  cancel/terminate one or more jobs
@@ -117,8 +118,9 @@ environment process tools -> env:<active-env-id>
   run_process
   write_process_stdin
 
-environment job tools     -> start/read/wait/cancel durable work on envs
+environment job tools     -> start/list/read/wait/cancel durable work on envs
   job_start
+  job_list
   job_read
   job_wait
   job_cancel
@@ -184,7 +186,7 @@ stdin?                 inline stdin text
 timeout_ms?            provider-side timeout
 depends_on?            [ JobDependency ]              explicit dependency edges
 dependency_policy?     all_succeeded | all_terminal   default all_succeeded
-queue_key?             optional per-namespace serialization key
+queue_key?             optional per-session serialization key
 ```
 
 Dependency reference:
@@ -219,7 +221,7 @@ Jobs are eligible to run when their dependencies are satisfied, their optional
 `queue_key` is free, and provider capacity is available. Jobs without
 dependencies or queue conflicts may run in parallel.
 
-`queue_key` is a per-namespace serialization primitive. It is not a batch mode:
+`queue_key` is a per-session serialization primitive. It is not a batch mode:
 any job with the same queue key waits until the previous non-terminal job with
 that key finishes. Different queue keys may run in parallel.
 
@@ -252,7 +254,7 @@ The provider runs submitted jobs as a DAG plus queue constraints:
 - a job with `dependency_policy = all_terminal` starts after dependencies are
   terminal regardless of success, useful for cleanup/reporting jobs;
 - a job with `queue_key` starts only when no earlier non-terminal job in that
-  same namespace and queue key is active;
+  same session namespace and queue key is active;
 - dependency cycles, duplicate local names, and references to unknown jobs are
   rejected before any job is started.
 
@@ -264,6 +266,42 @@ session_id + env_id + run_id + turn_id + tool_batch_id + tool_call_id + job inde
 ```
 
 That makes tool activity retries idempotent.
+
+### `job_list`
+
+Reads the latest known jobs for a session.
+
+Input:
+
+```text
+session_id?            defaults to the calling session
+env_id?                optional environment filter
+limit?                 latest N jobs; no cursor in v1
+```
+
+The provider namespace is the session id. There is no separate model-visible
+namespace partition in v1. `job_list` is latest-N only, intended for recovery
+after compaction, retries, and debugging before selecting exact handles for
+`job_read`, `job_wait`, or `job_cancel`.
+
+Output:
+
+```text
+jobs[]:
+  handle
+  status?
+  created_at_ms?
+  queued_at_ms?
+  started_at_ms?
+  finished_at_ms?
+  exit_code?
+  failure?
+  dependencies[]
+  error?
+```
+
+`job_list` should not include output tails by default. Models should use
+`job_read` when they need bounded stdout/stderr chunks or artifacts.
 
 ### `job_read`
 
@@ -383,7 +421,7 @@ JobHandleRecord
   env_id
   provider_id
   target_id
-  namespace
+  namespace        // equals session_id in v1
   job_id
   name?
   queue_key?
@@ -514,8 +552,8 @@ used that way.
 ### Provider responsibility
 
 The environment provider is the authority for actual execution order. Lightspeed
-submits namespace-scoped job specs to the provider; the provider starts eligible
-jobs according to dependencies, per-job queue keys, and capacity.
+submits session-namespace job specs to the provider; the provider starts
+eligible jobs according to dependencies, per-job queue keys, and capacity.
 
 For `host-bridge`, this means adding a job manager beside the current process
 manager:
@@ -562,14 +600,15 @@ crates/host-bridge/src/jobs.rs        bridge JobManager beside ProcessManager
 
 Host-protocol job ids are target-local within a provider namespace. They should
 not contain Lightspeed `session_id` or `env_id`; those belong to the Lightspeed
-job handle registry. The runtime supplies a namespace, defaulting to the calling
-session id. The registry maps `{ session_id, env_id, job_id }` to the
-provider/target and namespace that accepted the target-local `job_id`.
+job handle registry. The runtime supplies `namespace = session_id`. The registry
+maps `{ session_id, env_id, job_id }` to the provider/target and namespace that
+accepted the target-local `job_id`.
 
 Extend `HostCapabilities` with job capabilities:
 
 ```text
 job_start
+job_list
 job_read
 job_cancel
 job_wait_hint          optional; provider can long-poll or callback
@@ -596,11 +635,12 @@ Add data-plane methods:
 
 ```text
 job/start
+job/list
 job/read
 job/cancel
 ```
 
-`job/start` accepts one or more job specs for a namespace and returns job
+`job/start` accepts one or more job specs for a session namespace and returns job
 summaries. It must be idempotent for the same `{ namespace, job_id, spec }`.
 If the same `{ namespace, job_id }` is reused with different material input, it
 rejects with conflict.
@@ -609,7 +649,7 @@ Recommended v1 payload:
 
 ```text
 StartJobsParams
-  namespace              runtime-supplied; defaults to calling session id
+  namespace              runtime-supplied session id
   request_id             runtime-supplied retry/debug id
   jobs[]:
     job_id               runtime-derived unless explicitly supplied
@@ -623,8 +663,12 @@ StartJobsParams
     dependency_policy?
     queue_key?
 
+ListJobsParams
+  namespace              runtime-supplied session id
+  limit?                 latest N jobs; no cursor in v1
+
 ReadJobsParams
-  namespace
+  namespace              runtime-supplied session id
   jobs[]
   after_seq?
   max_bytes?
@@ -632,7 +676,7 @@ ReadJobsParams
   wait_ms?
 
 CancelJobsParams
-  namespace
+  namespace              runtime-supplied session id
   jobs[]
   scope                  job | dependents
   force?
@@ -658,7 +702,7 @@ This means P86 must add real host-protocol code, not only Lightspeed tools:
   calling the host data-plane methods.
 
 The bridge `JobManager` can reuse the process-spawning internals, but it cannot
-be just `process/start` exposed under another name. Jobs need namespace/job
+be just `process/start` exposed under another name. Jobs need session namespace/job
 idempotency, dependency scheduling, queue keys, retained output/status after
 the starting tool call returns, and restart recovery that reports
 `interrupted`/`lost` clearly. It must reserve or idempotency-check job ids before
@@ -918,7 +962,7 @@ Job handle records must still avoid accidental leakage:
 
 ### G4. Tool Surface
 
-- Add `job_start/read/wait/cancel` tool contracts in `crates/tools`.
+- Add `job_start/list/read/wait/cancel` tool contracts in `crates/tools`.
 - Add toolset config gate for environment jobs.
 - Start defaults through the active `env` target but supports explicit `env_id`;
   read/wait/cancel use job handles with optional `env_id` defaulting.
@@ -957,7 +1001,8 @@ Job handle records must still avoid accidental leakage:
 - Add `session/jobs/create` if non-model API clients need to start environment
   jobs; it must share `job_start` semantics.
 - Add `session/jobs/list` to return registry handle records only, without
-  pretending to know live status.
+  pretending to know live status. Model-visible `job_list` may also ask the
+  provider for current summaries for the latest listed handles.
 - Add `session/jobs/read` to resolve registry handles and ask the provider for
   live status/output.
 - Add `session/jobs/cancel` to resolve registry handles and ask the provider to

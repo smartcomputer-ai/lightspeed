@@ -3984,6 +3984,10 @@
             "default": false,
             "type": "boolean"
           },
+          "jobList": {
+            "default": false,
+            "type": "boolean"
+          },
           "jobQueueKeys": {
             "default": false,
             "type": "boolean"
@@ -6239,6 +6243,10 @@
             "type": "boolean"
           },
           "jobDependencies": {
+            "default": false,
+            "type": "boolean"
+          },
+          "jobList": {
             "default": false,
             "type": "boolean"
           },

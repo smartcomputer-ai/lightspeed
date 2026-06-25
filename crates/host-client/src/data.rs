@@ -9,13 +9,13 @@ use host_protocol::data::{
     },
     handshake::{InitializeParams, InitializeResponse, InitializedParams},
     jobs::{
-        CancelJobsParams, CancelJobsResponse, ReadJobsParams, ReadJobsResponse, StartJobsParams,
-        StartJobsResponse,
+        CancelJobsParams, CancelJobsResponse, ListJobsParams, ListJobsResponse, ReadJobsParams,
+        ReadJobsResponse, StartJobsParams, StartJobsResponse,
     },
     methods::{
         FS_COPY_METHOD, FS_CREATE_DIRECTORY_METHOD, FS_GET_METADATA_METHOD,
         FS_READ_DIRECTORY_METHOD, FS_READ_FILE_METHOD, FS_REMOVE_METHOD, FS_WRITE_FILE_METHOD,
-        INITIALIZE_METHOD, INITIALIZED_METHOD, JOB_CANCEL_METHOD, JOB_READ_METHOD,
+        INITIALIZE_METHOD, INITIALIZED_METHOD, JOB_CANCEL_METHOD, JOB_LIST_METHOD, JOB_READ_METHOD,
         JOB_START_METHOD, PROCESS_READ_METHOD, PROCESS_RESIZE_METHOD, PROCESS_START_METHOD,
         PROCESS_TERMINATE_METHOD, PROCESS_WRITE_METHOD,
     },
@@ -148,6 +148,13 @@ where
         params: &StartJobsParams,
     ) -> HostClientResult<StartJobsResponse> {
         self.rpc.request(JOB_START_METHOD, params).await
+    }
+
+    pub async fn list_jobs(
+        &mut self,
+        params: &ListJobsParams,
+    ) -> HostClientResult<ListJobsResponse> {
+        self.rpc.request(JOB_LIST_METHOD, params).await
     }
 
     pub async fn read_jobs(

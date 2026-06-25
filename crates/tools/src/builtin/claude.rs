@@ -44,6 +44,7 @@ pub(super) fn description(
         BuiltinToolOperation::Glob => "Finds files by glob pattern.",
         BuiltinToolOperation::RunProcess => "Executes a shell command.",
         BuiltinToolOperation::JobStart
+        | BuiltinToolOperation::JobList
         | BuiltinToolOperation::JobRead
         | BuiltinToolOperation::JobWait
         | BuiltinToolOperation::JobCancel => {
@@ -209,6 +210,7 @@ pub(super) fn input_schema(operation: BuiltinToolOperation) -> ToolResult<Value>
             ["command"],
         ),
         BuiltinToolOperation::JobStart
+        | BuiltinToolOperation::JobList
         | BuiltinToolOperation::JobRead
         | BuiltinToolOperation::JobWait
         | BuiltinToolOperation::JobCancel => return Ok(canonical::input_schema(operation)),
@@ -297,6 +299,7 @@ pub(super) async fn invoke_json(
             encode_output(&result, visible)
         }
         BuiltinToolOperation::JobStart
+        | BuiltinToolOperation::JobList
         | BuiltinToolOperation::JobRead
         | BuiltinToolOperation::JobWait
         | BuiltinToolOperation::JobCancel => {

@@ -5,11 +5,11 @@ use serde_json::{Value, json};
 use crate::{
     environment::{
         jobs::{
-            JOB_CANCEL_TOOL_NAME, JOB_READ_TOOL_NAME, JOB_START_TOOL_NAME, JOB_WAIT_TOOL_NAME,
-            visible_job_read_output,
+            JOB_CANCEL_TOOL_NAME, JOB_LIST_TOOL_NAME, JOB_READ_TOOL_NAME, JOB_START_TOOL_NAME,
+            JOB_WAIT_TOOL_NAME, visible_job_list_output, visible_job_read_output,
         },
         tools::{
-            invoke_job_cancel, invoke_job_read, invoke_job_start, invoke_job_wait,
+            invoke_job_cancel, invoke_job_list, invoke_job_read, invoke_job_start, invoke_job_wait,
             invoke_run_process, invoke_write_process_stdin,
         },
     },
@@ -59,6 +59,7 @@ pub(super) fn description(operation: BuiltinToolOperation, scoped_paths: bool) -
         BuiltinToolOperation::JobStart => {
             "Start one or more durable jobs on an environment and return provider-backed handles."
         }
+        BuiltinToolOperation::JobList => "List the latest durable environment jobs.",
         BuiltinToolOperation::JobRead => {
             "Read durable environment job status and bounded output tails."
         }
@@ -206,6 +207,7 @@ pub(super) fn input_schema(operation: BuiltinToolOperation) -> Value {
             ["handle", "input"],
         ),
         BuiltinToolOperation::JobStart => job_start_schema(),
+        BuiltinToolOperation::JobList => job_list_schema(),
         BuiltinToolOperation::JobRead => job_read_schema(),
         BuiltinToolOperation::JobWait => job_wait_schema(),
         BuiltinToolOperation::JobCancel => job_cancel_schema(),
@@ -303,6 +305,12 @@ pub(super) async fn invoke_json(
                 .map(|job| format!("{}: {:?}", job.job_id.as_str(), job.status))
                 .collect::<Vec<_>>()
                 .join("\n");
+            encode_output(&result, visible)
+        }
+        BuiltinToolOperation::JobList => {
+            let env_ctx = ctx.environment()?;
+            let result = invoke_job_list(env_ctx, decode_args(arguments)?).await?;
+            let visible = visible_job_list_output(&result.jobs);
             encode_output(&result, visible)
         }
         BuiltinToolOperation::JobRead => {
@@ -409,6 +417,19 @@ fn job_read_schema() -> Value {
         "required": ["jobs"],
         "additionalProperties": false,
         "description": JOB_READ_TOOL_NAME
+    })
+}
+
+fn job_list_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "session_id": { "type": ["string", "null"], "description": "Session id to inspect. Defaults to the calling session." },
+            "env_id": { "type": ["string", "null"], "description": "Optional environment id filter." },
+            "limit": { "type": ["integer", "null"], "minimum": 1, "description": "Maximum number of latest jobs to return." }
+        },
+        "additionalProperties": false,
+        "description": JOB_LIST_TOOL_NAME
     })
 }
 

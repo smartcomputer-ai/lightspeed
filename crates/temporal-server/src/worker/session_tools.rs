@@ -9,7 +9,7 @@ use engine::{
 };
 use environment_registry::{
     CreateJobHandle, EnvironmentId, EnvironmentRegistryError, JobHandleRecord, JobHandleStore,
-    SessionEnvironmentBindingRecord, SessionEnvironmentBindingStatus,
+    ListJobHandles, SessionEnvironmentBindingRecord, SessionEnvironmentBindingStatus,
     SessionEnvironmentBindingStore,
 };
 use host_client::{HostClientError, HostDataClient, WebSocketConnectOptions};
@@ -29,11 +29,13 @@ use temporal_workflow::{
 };
 use tools::{
     environment::jobs::{
-        JOB_CANCEL_TOOL_NAME, JOB_READ_TOOL_NAME, JOB_START_TOOL_NAME, JOB_WAIT_TOOL_NAME,
-        JobCancelArgs, JobCancelResultEntry, JobCancelResultSet, JobHandle, JobHandleArg,
-        JobReadArgs, JobReadResultEntry, JobReadResultSet, JobStartArgs, JobStartResult,
-        JobStarted, JobWaitArgs, JobWaitMode, JobWaitOutcome, JobWaitResult, JobWaitTerminalPolicy,
-        is_environment_job_tool_name, visible_job_read_output, wait_satisfied,
+        JOB_CANCEL_TOOL_NAME, JOB_LIST_TOOL_NAME, JOB_READ_TOOL_NAME, JOB_START_TOOL_NAME,
+        JOB_WAIT_TOOL_NAME, JobCancelArgs, JobCancelResultEntry, JobCancelResultSet, JobHandle,
+        JobHandleArg, JobListArgs, JobListResultEntry, JobListResultSet, JobReadArgs,
+        JobReadResultEntry, JobReadResultSet, JobStartArgs, JobStartResult, JobStarted,
+        JobWaitArgs, JobWaitMode, JobWaitOutcome, JobWaitResult, JobWaitTerminalPolicy,
+        is_environment_job_tool_name, visible_job_list_output, visible_job_read_output,
+        wait_satisfied,
     },
     fleet::{AGENT_WAIT_TOOL_NAME, is_fleet_tool},
     fs::{FsPath, FsToolContext, MountedVfsFileSystem},
@@ -51,6 +53,9 @@ use crate::{
     environment::{RuntimeEnvironment, SessionEnvironmentManager},
     fleet::{FleetChildRuntime, FleetService, FleetToolExecutor},
 };
+
+const DEFAULT_JOB_LIST_LIMIT: usize = 20;
+const MAX_JOB_LIST_LIMIT: usize = 200;
 
 #[derive(Clone)]
 pub struct SessionTools {
@@ -353,6 +358,25 @@ impl SessionTools {
                 )
                 .await
             }
+            JOB_LIST_TOOL_NAME => {
+                let args: JobListArgs = self.read_tool_args(call).await?;
+                let result = match self
+                    .list_environment_jobs(&request.session_id, environments, args)
+                    .await
+                {
+                    Ok(result) => result,
+                    Err(error) => {
+                        return failed_result(
+                            self.blobs.as_ref(),
+                            call.call_id.clone(),
+                            error.to_string(),
+                        )
+                        .await;
+                    }
+                };
+                self.succeeded_tool_result(call, &result, visible_job_list_output(&result.jobs))
+                    .await
+            }
             JOB_READ_TOOL_NAME => {
                 let args: JobReadArgs = self.read_tool_args(call).await?;
                 let result = self
@@ -587,6 +611,142 @@ impl SessionTools {
             .collect::<Vec<_>>()
             .join("\n");
         self.succeeded_tool_result(call, &result, visible).await
+    }
+
+    async fn list_environment_jobs(
+        &self,
+        current_session_id: &SessionId,
+        current_environments: &SessionEnvironmentManager,
+        args: JobListArgs,
+    ) -> Result<JobListResultSet, CoreAgentIoError> {
+        let session_id = resolve_job_list_session_id(current_session_id, args.session_id)?;
+        let env_id = args
+            .env_id
+            .map(EnvironmentId::try_new)
+            .transpose()
+            .map_err(|error| io_error(format!("invalid env_id: {error}")))?;
+        let limit = normalize_job_list_limit(args.limit)?;
+        let Some(job_store) = &self.job_handles else {
+            return Err(io_error(
+                "job handle store is not configured on this runtime",
+            ));
+        };
+        let records = job_store
+            .list_job_handles(ListJobHandles {
+                session_id: session_id.clone(),
+                env_id,
+                limit: Some(limit),
+            })
+            .await
+            .map_err(map_environment_registry_error)?;
+
+        let environments = if &session_id == current_session_id {
+            current_environments.clone()
+        } else {
+            self.environment_manager_for_session(&session_id).await?
+        };
+
+        let mut entries = vec![None; records.len()];
+        let mut grouped = BTreeMap::<EnvironmentId, Vec<(usize, JobHandleRecord)>>::new();
+        for (index, record) in records.into_iter().enumerate() {
+            if record.namespace != record.session_id.as_str() {
+                entries[index] = Some(JobListResultEntry {
+                    handle: Some(handle_from_record(&record)),
+                    summary: None,
+                    error: Some("job registry record has non-session namespace".to_owned()),
+                });
+                continue;
+            }
+            if environments.environment(record.env_id.as_str()).is_none() {
+                entries[index] = Some(JobListResultEntry {
+                    handle: Some(handle_from_record(&record)),
+                    summary: None,
+                    error: Some(format!("environment is not reachable: {}", record.env_id)),
+                });
+                continue;
+            }
+            grouped
+                .entry(record.env_id.clone())
+                .or_default()
+                .push((index, record));
+        }
+
+        for (env_id, group) in grouped {
+            let Some(environment) = environments.environment(env_id.as_str()) else {
+                for (index, record) in group {
+                    entries[index] = Some(JobListResultEntry {
+                        handle: Some(handle_from_record(&record)),
+                        summary: None,
+                        error: Some(format!("environment is not reachable: {}", record.env_id)),
+                    });
+                }
+                continue;
+            };
+            let Some(jobs) = environment.tool_context().jobs.as_ref() else {
+                for (index, record) in group {
+                    entries[index] = Some(JobListResultEntry {
+                        handle: Some(handle_from_record(&record)),
+                        summary: None,
+                        error: Some(format!(
+                            "environment does not support durable jobs: {}",
+                            record.env_id
+                        )),
+                    });
+                }
+                continue;
+            };
+            let namespace = group
+                .first()
+                .map(|(_, record)| record.namespace.clone())
+                .unwrap_or_else(|| session_id.as_str().to_owned());
+            let job_ids = group
+                .iter()
+                .map(|(_, record)| record.job_id.clone())
+                .collect::<Vec<_>>();
+            match jobs
+                .read_jobs(ReadJobsParams {
+                    namespace,
+                    jobs: job_ids,
+                    after_seq: None,
+                    max_bytes: None,
+                    include_artifacts: false,
+                    wait_ms: None,
+                })
+                .await
+            {
+                Ok(response) => {
+                    let mut summaries = response.jobs.into_iter();
+                    for (index, record) in group {
+                        entries[index] = Some(job_list_entry_from_response(
+                            handle_from_record(&record),
+                            summaries.next(),
+                        ));
+                    }
+                }
+                Err(error) => {
+                    for (index, record) in group {
+                        entries[index] = Some(JobListResultEntry {
+                            handle: Some(handle_from_record(&record)),
+                            summary: None,
+                            error: Some(error.to_string()),
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(JobListResultSet {
+            jobs: entries
+                .into_iter()
+                .map(|entry| {
+                    entry.unwrap_or(JobListResultEntry {
+                        handle: None,
+                        summary: None,
+                        error: Some("job_list internal result missing".to_owned()),
+                    })
+                })
+                .collect(),
+        })
     }
 
     async fn preflight_environment_job_wait(
@@ -1032,6 +1192,8 @@ impl SessionTools {
             connection = connection.with_cwd(cwd);
         }
         let (fs_context, environment_context) = connection.into_contexts(self.blobs.clone());
+        let environment_context =
+            environment_context.with_session_id(binding.session_id.as_str().to_owned());
         crate::environment::runtime_environment_from_binding_record(&binding, environment_context)
             .map(|environment| environment.with_fs_context(fs_context))
             .map_err(io_error)
@@ -1209,6 +1371,43 @@ fn job_read_entry_from_response(
             error: Some("provider returned no job result".to_owned()),
         },
     }
+}
+
+fn job_list_entry_from_response(
+    handle: JobHandle,
+    response: Option<HostJobReadResult>,
+) -> JobListResultEntry {
+    match response {
+        Some(response) => JobListResultEntry {
+            handle: Some(handle),
+            summary: Some(response.summary),
+            error: None,
+        },
+        None => JobListResultEntry {
+            handle: Some(handle),
+            summary: None,
+            error: Some("provider returned no job result".to_owned()),
+        },
+    }
+}
+
+fn resolve_job_list_session_id(
+    current_session_id: &SessionId,
+    explicit_session_id: Option<String>,
+) -> Result<SessionId, CoreAgentIoError> {
+    explicit_session_id
+        .map(SessionId::try_new)
+        .transpose()
+        .map_err(|error| io_error(format!("invalid session_id: {error}")))?
+        .map_or_else(|| Ok(current_session_id.clone()), Ok)
+}
+
+fn normalize_job_list_limit(limit: Option<usize>) -> Result<usize, CoreAgentIoError> {
+    let limit = limit.unwrap_or(DEFAULT_JOB_LIST_LIMIT);
+    if limit == 0 {
+        return Err(io_error("job_list limit must be greater than zero"));
+    }
+    Ok(limit.min(MAX_JOB_LIST_LIMIT))
 }
 
 async fn connect_host_data_client(

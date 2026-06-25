@@ -22,6 +22,7 @@ pub struct EnvironmentToolContext {
     pub blobs: Arc<dyn BlobStore>,
     pub limits: ToolLimits,
     pub process_cwd: Option<FsPath>,
+    pub session_id: Option<String>,
 }
 
 impl EnvironmentToolContext {
@@ -32,6 +33,7 @@ impl EnvironmentToolContext {
             blobs,
             limits: ToolLimits::default(),
             process_cwd: None,
+            session_id: None,
         }
     }
 
@@ -47,6 +49,11 @@ impl EnvironmentToolContext {
 
     pub fn with_process_cwd(mut self, cwd: FsPath) -> Self {
         self.process_cwd = Some(cwd);
+        self
+    }
+
+    pub fn with_session_id(mut self, session_id: impl Into<String>) -> Self {
+        self.session_id = Some(session_id.into());
         self
     }
 }

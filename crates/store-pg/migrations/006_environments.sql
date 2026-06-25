@@ -204,6 +204,8 @@ CREATE TABLE IF NOT EXISTS environment_jobs (
         CHECK (target_id ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$'),
     CONSTRAINT environment_jobs_namespace_format
         CHECK (namespace ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$'),
+    CONSTRAINT environment_jobs_namespace_session
+        CHECK (namespace = session_id),
     CONSTRAINT environment_jobs_job_id_format
         CHECK (job_id ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$'),
     CONSTRAINT environment_jobs_name_not_empty
@@ -225,6 +227,9 @@ CREATE TABLE IF NOT EXISTS environment_jobs (
 CREATE INDEX IF NOT EXISTS environment_jobs_session_env_idx
     ON environment_jobs (universe_id, session_id, env_id, job_id);
 
+CREATE INDEX IF NOT EXISTS environment_jobs_session_latest_idx
+    ON environment_jobs (universe_id, session_id, created_at_ms DESC, env_id, job_id);
+
 CREATE INDEX IF NOT EXISTS environment_jobs_provider_idx
     ON environment_jobs (universe_id, provider_id, target_id, namespace, job_id);
 
@@ -236,3 +241,5 @@ COMMENT ON TABLE session_environment_bindings IS
     'Session-visible env:<id> bindings to provider targets and host data-plane connections.';
 COMMENT ON TABLE environment_jobs IS
     'Session-owned environment job handle ledger for routing and idempotency only.';
+COMMENT ON COLUMN environment_jobs.namespace IS
+    'Provider-facing job namespace sent to the environment executor. In v1 this is derived from and constrained to session_id, but it is stored separately because providers route by namespace rather than Lightspeed session id.';
