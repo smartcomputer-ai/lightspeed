@@ -8506,7 +8506,7 @@
             ]
           },
           "fleet": {
-            "description": "Enables the Fleet subagent control-plane tools (agent_spawn/send/read/list/cancel).",
+            "description": "Enables the Fleet subagent control-plane tools\n(agent_spawn/send/read/list/cancel and profile_list/read).",
             "type": [
               "boolean",
               "null"

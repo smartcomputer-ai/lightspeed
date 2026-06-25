@@ -1,8 +1,9 @@
-use api::{
-    AgentProfile, AgentProfileInput, AgentProfileSummary, ProfileError, ProfileId, ProfileStore,
+use api::{AgentProfile, AgentProfileInput, AgentProfileSummary, ProfileId};
+use async_trait::async_trait;
+use profile_registry::{
+    AgentProfileExt, AgentProfileInputExt, AgentProfileUpdatePatchExt, ProfileError, ProfileStore,
     UpdateAgentProfile,
 };
-use async_trait::async_trait;
 use sqlx::Row;
 
 use crate::PgStore;

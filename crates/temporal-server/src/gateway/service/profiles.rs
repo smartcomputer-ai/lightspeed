@@ -1,4 +1,5 @@
 use super::*;
+use profile_registry::{ProfileError, ProfileSourceExt, ProfileStore, UpdateAgentProfile};
 
 const PROFILE_INSTRUCTIONS_CONTEXT_KEY: &str = "instructions.050.profile";
 

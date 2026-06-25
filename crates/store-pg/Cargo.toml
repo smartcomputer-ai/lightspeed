@@ -15,6 +15,7 @@ async-trait = "0.1"
 mcp-registry = { path = "../mcp-registry" }
 messaging = { path = "../messaging" }
 object_store = { version = "0.13.1", features = ["aws"] }
+profile-registry = { path = "../profile-registry" }
 rand = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

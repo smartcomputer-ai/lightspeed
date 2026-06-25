@@ -84,7 +84,7 @@ cargo run -p cli -- chat --api-url http://127.0.0.1:18080/rpc --session session_
   dynamic session log storage, CoreAgent command/event/state models, planning,
   codecs, storage traits, and the substrate-neutral drive machine.
 - `crates/api/` — client-facing session/run/item/profile API types, views,
-  notifications, JSON-RPC method DTOs, and the profile store trait.
+  notifications, and JSON-RPC method DTOs.
 - `crates/api-projection/` — shared CoreAgent-to-`api` projection
   helpers for local and workflow-backed gateways.
 - `crates/temporal-workflow/` — Temporal workflow, signals, queries, and
@@ -105,6 +105,9 @@ cargo run -p cli -- chat --api-url http://127.0.0.1:18080/rpc --session session_
   delivery outbox store trait backing the messaging tools and bridges (P71).
 - `crates/mcp-registry/` — provider-independent remote MCP server catalog DTOs,
   validation, and store traits.
+- `crates/profile-registry/` — agent profile registry validation helpers,
+  errors, update records, and the substrate-neutral `ProfileStore` trait over
+  `api` profile DTOs.
 - `crates/auth-registry/` — generic auth grant/secret/provider records,
   OAuth client and authorization-flow records, PKCE helpers, the MCP OAuth
   and GitHub App drivers, store traits, typed broker errors, and the runtime

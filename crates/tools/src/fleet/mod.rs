@@ -1,6 +1,6 @@
 //! Fleet subagent control-plane tool contracts.
 
-use api::ProfileSource;
+use api::{AgentProfile, AgentProfileSummary, ProfileSource};
 use engine::{
     FunctionToolSpec, ToolKind, ToolName, ToolParallelism, ToolSpec, ToolTargetRequirement,
 };
@@ -18,6 +18,8 @@ pub const AGENT_WAIT_TOOL_NAME: &str = "agent_wait";
 pub const AGENT_LIST_TOOL_NAME: &str = "agent_list";
 pub const AGENT_READ_TOOL_NAME: &str = "agent_read";
 pub const AGENT_CANCEL_TOOL_NAME: &str = "agent_cancel";
+pub const PROFILE_LIST_TOOL_NAME: &str = "profile_list";
+pub const PROFILE_READ_TOOL_NAME: &str = "profile_read";
 
 pub const FLEET_LOGICAL_ID_PREFIX: &str = "fleet.";
 pub const FLEET_ACTIVITY_TYPE: &str = "lightspeed.fleet";
@@ -47,6 +49,8 @@ pub fn is_fleet_tool(tool_name: &ToolName) -> bool {
             | AGENT_LIST_TOOL_NAME
             | AGENT_READ_TOOL_NAME
             | AGENT_CANCEL_TOOL_NAME
+            | PROFILE_LIST_TOOL_NAME
+            | PROFILE_READ_TOOL_NAME
     )
 }
 
@@ -247,6 +251,16 @@ pub struct AgentCancelArgs {
     pub reason: Option<String>,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub struct ProfileListArgs {}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub struct ProfileReadArgs {
+    pub profile_id: String,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentCancelScope {
@@ -367,6 +381,19 @@ pub struct AgentCancelOutput {
     pub session: Option<Value>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ProfileListOutput {
+    #[serde(default)]
+    pub profiles: Vec<AgentProfileSummary>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ProfileReadOutput {
+    pub profile: AgentProfile,
+}
+
 pub fn fleet_tool_bundles(config: &FleetToolsetConfig) -> ToolResult<Vec<ToolSpecBundle>> {
     if !config.enabled {
         return Ok(Vec::new());
@@ -402,6 +429,16 @@ pub fn fleet_tool_bundles(config: &FleetToolsetConfig) -> ToolResult<Vec<ToolSpe
             "Cancel a related agent's active run or close the child agent, subject to policy.",
             cancel_input_schema(),
         )?,
+        function_bundle(
+            PROFILE_LIST_TOOL_NAME,
+            "List named agent profiles available for profile-based agent_spawn. Use profile_read to inspect a full profile document.",
+            profile_list_input_schema(),
+        )?,
+        function_bundle(
+            PROFILE_READ_TOOL_NAME,
+            "Read one full named agent profile document by id before spawning or explaining profile setup.",
+            profile_read_input_schema(),
+        )?,
     ])
 }
 
@@ -413,6 +450,8 @@ pub fn fleet_tool_bindings(execution: ToolExecutionMode) -> Vec<ToolBinding> {
         AGENT_LIST_TOOL_NAME,
         AGENT_READ_TOOL_NAME,
         AGENT_CANCEL_TOOL_NAME,
+        PROFILE_LIST_TOOL_NAME,
+        PROFILE_READ_TOOL_NAME,
     ]
     .into_iter()
     .map(|tool_name| {
@@ -797,6 +836,29 @@ fn cancel_input_schema() -> Value {
     })
 }
 
+fn profile_list_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+    })
+}
+
+fn profile_read_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "profile_id": {
+                "type": "string",
+                "description": "Named agent profile id to read."
+            }
+        },
+        "required": ["profile_id"],
+        "additionalProperties": false
+    })
+}
+
 fn recent_transcript_schema() -> Value {
     json!({
         "type": ["object", "null"],
@@ -971,6 +1033,36 @@ mod tests {
         .expect_err("queued run cancellation is not part of v1");
 
         assert!(error.to_string().contains("unknown variant"));
+    }
+
+    #[test]
+    fn profile_read_accepts_profile_id() {
+        let args: ProfileReadArgs = serde_json::from_value(json!({
+            "profile_id": "support"
+        }))
+        .expect("decode profile read args");
+
+        assert_eq!(args.profile_id, "support");
+    }
+
+    #[test]
+    fn profile_list_rejects_unknown_fields() {
+        serde_json::from_value::<ProfileListArgs>(json!({
+            "limit": 10
+        }))
+        .expect_err("unknown fields are denied");
+    }
+
+    #[test]
+    fn enabled_config_includes_profile_tools() {
+        let names: Vec<_> = fleet_tool_bundles(&FleetToolsetConfig::enabled())
+            .expect("bundles")
+            .into_iter()
+            .map(|bundle| bundle.spec.name)
+            .collect();
+
+        assert!(names.contains(&ToolName::new(PROFILE_LIST_TOOL_NAME)));
+        assert!(names.contains(&ToolName::new(PROFILE_READ_TOOL_NAME)));
     }
 
     #[test]

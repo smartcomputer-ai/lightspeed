@@ -5,7 +5,7 @@
 //! workflow gateway, or another substrate while clients keep speaking the same
 //! session/run/item protocol.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 
@@ -695,28 +695,6 @@ fn validate_profile_id(value: &str) -> Result<(), ProfileIdError> {
     Ok(())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum ProfileError {
-    #[error("agent profile already exists: {profile_id}")]
-    AlreadyExists { profile_id: ProfileId },
-
-    #[error("agent profile not found: {profile_id}")]
-    NotFound { profile_id: ProfileId },
-
-    #[error("agent profile revision conflict for {profile_id}: expected {expected}, got {actual}")]
-    RevisionConflict {
-        profile_id: ProfileId,
-        expected: u64,
-        actual: u64,
-    },
-
-    #[error("invalid agent profile: {message}")]
-    InvalidInput { message: String },
-
-    #[error("agent profile store failure: {message}")]
-    Store { message: String },
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentProfileInput {
@@ -727,20 +705,6 @@ pub struct AgentProfileInput {
     pub description: Option<String>,
     #[serde(flatten)]
     pub document: ProfileDocument,
-}
-
-impl AgentProfileInput {
-    pub fn into_record(self, created_at_ms: i64) -> AgentProfile {
-        AgentProfile {
-            profile_id: self.profile_id,
-            display_name: self.display_name,
-            description: self.description,
-            revision: 1,
-            document: self.document,
-            created_at_ms,
-            updated_at_ms: created_at_ms,
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -770,24 +734,6 @@ pub struct AgentProfile {
 }
 
 impl AgentProfile {
-    pub fn validate(&self) -> Result<(), ProfileError> {
-        validate_nonempty_optional("displayName", self.display_name.as_deref())?;
-        validate_nonempty_optional("description", self.description.as_deref())?;
-        if self.revision == 0 {
-            return Err(ProfileError::InvalidInput {
-                message: "revision must be greater than zero".to_owned(),
-            });
-        }
-        validate_nonnegative_i64("createdAtMs", self.created_at_ms)?;
-        validate_nonnegative_i64("updatedAtMs", self.updated_at_ms)?;
-        if self.updated_at_ms < self.created_at_ms {
-            return Err(ProfileError::InvalidInput {
-                message: "updatedAtMs must be >= createdAtMs".to_owned(),
-            });
-        }
-        self.document.validate()
-    }
-
     pub fn summary(&self) -> AgentProfileSummary {
         AgentProfileSummary {
             profile_id: self.profile_id.clone(),
@@ -826,51 +772,6 @@ pub struct ProfileDocument {
     pub environments: Vec<ProfileEnvironment>,
 }
 
-impl ProfileDocument {
-    pub fn validate(&self) -> Result<(), ProfileError> {
-        if let Some(instructions) = &self.instructions {
-            instructions.validate()?;
-        }
-        let mut mount_paths = BTreeSet::new();
-        for mount in &self.mounts {
-            mount.validate()?;
-            if !mount_paths.insert(mount.mount_path.clone()) {
-                return Err(ProfileError::InvalidInput {
-                    message: format!("duplicate mountPath {}", mount.mount_path),
-                });
-            }
-        }
-        let mut server_ids = BTreeSet::new();
-        for link in &self.mcp {
-            link.validate()?;
-            if !server_ids.insert(link.server_id.clone()) {
-                return Err(ProfileError::InvalidInput {
-                    message: format!("duplicate mcp serverId {}", link.server_id),
-                });
-            }
-        }
-        let mut env_ids = BTreeSet::new();
-        let mut active_count = 0usize;
-        for environment in &self.environments {
-            environment.validate()?;
-            if !env_ids.insert(environment.env_id.clone()) {
-                return Err(ProfileError::InvalidInput {
-                    message: format!("duplicate environment envId {}", environment.env_id),
-                });
-            }
-            if environment.activate {
-                active_count += 1;
-            }
-        }
-        if active_count > 1 {
-            return Err(ProfileError::InvalidInput {
-                message: "at most one environment may activate".to_owned(),
-            });
-        }
-        Ok(())
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "type",
@@ -882,31 +783,12 @@ pub enum ProfileInstructions {
     TextRef { blob_ref: String },
 }
 
-impl ProfileInstructions {
-    fn validate(&self) -> Result<(), ProfileError> {
-        match self {
-            ProfileInstructions::Text { text } => {
-                validate_nonempty_string("instructions.text", text)
-            }
-            ProfileInstructions::TextRef { blob_ref } => {
-                validate_nonempty_string("instructions.blobRef", blob_ref)
-            }
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfileMount {
     pub mount_path: String,
     pub source: VfsMountSourceInput,
     pub access: VfsMountAccess,
-}
-
-impl ProfileMount {
-    fn validate(&self) -> Result<(), ProfileError> {
-        validate_absolute_path("mountPath", &self.mount_path)
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -927,26 +809,6 @@ pub struct ProfileMcpLink {
     pub auth_grant_id: Option<String>,
 }
 
-impl ProfileMcpLink {
-    fn validate(&self) -> Result<(), ProfileError> {
-        validate_nonempty_string("mcp.serverId", &self.server_id)?;
-        validate_nonempty_optional("mcp.toolId", self.tool_id.as_deref())?;
-        validate_nonempty_optional("mcp.serverLabel", self.server_label.as_deref())?;
-        validate_nonempty_optional("mcp.authGrantId", self.auth_grant_id.as_deref())?;
-        if let Some(allowed_tools) = &self.allowed_tools {
-            if allowed_tools.is_empty() {
-                return Err(ProfileError::InvalidInput {
-                    message: "mcp.allowedTools must not be empty when present".to_owned(),
-                });
-            }
-            for tool in allowed_tools {
-                validate_nonempty_string("mcp.allowedTools[]", tool)?;
-            }
-        }
-        Ok(())
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfileEnvironment {
@@ -955,14 +817,6 @@ pub struct ProfileEnvironment {
     pub target_id: EnvironmentTargetId,
     #[serde(default)]
     pub activate: bool,
-}
-
-impl ProfileEnvironment {
-    fn validate(&self) -> Result<(), ProfileError> {
-        validate_nonempty_string("environment.envId", &self.env_id)?;
-        validate_nonempty_string("environment.providerId", &self.provider_id)?;
-        validate_nonempty_string("environment.targetId", &self.target_id)
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -979,19 +833,6 @@ pub enum ProfileSource {
     Inline {
         profile: InlineAgentProfile,
     },
-}
-
-impl ProfileSource {
-    pub fn validate(&self) -> Result<(), ProfileError> {
-        match self {
-            ProfileSource::Named { .. } => Ok(()),
-            ProfileSource::Inline { profile } => {
-                validate_nonempty_optional("displayName", profile.display_name.as_deref())?;
-                validate_nonempty_optional("description", profile.description.as_deref())?;
-                profile.document.validate()
-            }
-        }
-    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1023,113 +864,6 @@ impl AgentProfileUpdatePatch {
             && self.mcp.is_none()
             && self.environments.is_none()
     }
-
-    pub fn apply_to(
-        self,
-        mut profile: AgentProfile,
-        updated_at_ms: i64,
-    ) -> Result<AgentProfile, ProfileError> {
-        if let Some(patch) = self.display_name {
-            profile.display_name = patch.into_option();
-        }
-        if let Some(patch) = self.description {
-            profile.description = patch.into_option();
-        }
-        if let Some(patch) = self.config {
-            profile.document.config = patch.into_option();
-        }
-        if let Some(patch) = self.instructions {
-            profile.document.instructions = patch.into_option();
-        }
-        if let Some(mounts) = self.mounts {
-            profile.document.mounts = mounts;
-        }
-        if let Some(mcp) = self.mcp {
-            profile.document.mcp = mcp;
-        }
-        if let Some(environments) = self.environments {
-            profile.document.environments = environments;
-        }
-        profile.revision =
-            profile
-                .revision
-                .checked_add(1)
-                .ok_or_else(|| ProfileError::InvalidInput {
-                    message: "profile revision exhausted".to_owned(),
-                })?;
-        profile.updated_at_ms = updated_at_ms;
-        profile.validate()?;
-        Ok(profile)
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct UpdateAgentProfile {
-    pub profile_id: ProfileId,
-    pub expected_revision: Option<u64>,
-    pub patch: AgentProfileUpdatePatch,
-    pub updated_at_ms: i64,
-}
-
-#[async_trait]
-pub trait ProfileStore: Send + Sync {
-    async fn create_agent_profile(
-        &self,
-        profile: AgentProfileInput,
-        created_at_ms: i64,
-    ) -> Result<AgentProfile, ProfileError>;
-
-    async fn read_agent_profile(
-        &self,
-        profile_id: &ProfileId,
-    ) -> Result<AgentProfile, ProfileError>;
-
-    async fn list_agent_profiles(&self) -> Result<Vec<AgentProfileSummary>, ProfileError>;
-
-    async fn update_agent_profile(
-        &self,
-        update: UpdateAgentProfile,
-    ) -> Result<AgentProfile, ProfileError>;
-
-    async fn delete_agent_profile(
-        &self,
-        profile_id: &ProfileId,
-    ) -> Result<AgentProfile, ProfileError>;
-}
-
-fn validate_nonempty_optional(name: &str, value: Option<&str>) -> Result<(), ProfileError> {
-    if let Some(value) = value {
-        validate_nonempty_string(name, value)?;
-    }
-    Ok(())
-}
-
-fn validate_nonempty_string(name: &str, value: &str) -> Result<(), ProfileError> {
-    if value.trim().is_empty() {
-        return Err(ProfileError::InvalidInput {
-            message: format!("{name} must not be empty"),
-        });
-    }
-    Ok(())
-}
-
-fn validate_nonnegative_i64(name: &str, value: i64) -> Result<(), ProfileError> {
-    if value < 0 {
-        return Err(ProfileError::InvalidInput {
-            message: format!("{name} must be nonnegative"),
-        });
-    }
-    Ok(())
-}
-
-fn validate_absolute_path(name: &str, value: &str) -> Result<(), ProfileError> {
-    validate_nonempty_string(name, value)?;
-    if !value.starts_with('/') {
-        return Err(ProfileError::InvalidInput {
-            message: format!("{name} must be an absolute VFS path"),
-        });
-    }
-    Ok(())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1316,7 +1050,8 @@ pub struct ToolConfigInput {
     /// sessions bound to a chat channel.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub messaging: Option<bool>,
-    /// Enables the Fleet subagent control-plane tools (agent_spawn/send/read/list/cancel).
+    /// Enables the Fleet subagent control-plane tools
+    /// (agent_spawn/send/read/list/cancel and profile_list/read).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fleet: Option<bool>,
 }
@@ -5624,8 +5359,17 @@ mod tests {
             &self,
             params: ProfileCreateParams,
         ) -> Result<AgentApiOutcome<ProfileCreateResponse>, AgentApiError> {
+            let input = params.profile;
             Ok(AgentApiOutcome::new(ProfileCreateResponse {
-                profile: params.profile.into_record(1),
+                profile: AgentProfile {
+                    profile_id: input.profile_id,
+                    display_name: input.display_name,
+                    description: input.description,
+                    revision: 1,
+                    document: input.document,
+                    created_at_ms: 1,
+                    updated_at_ms: 1,
+                },
             }))
         }
 

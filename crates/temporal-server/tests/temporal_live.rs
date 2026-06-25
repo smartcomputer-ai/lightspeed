@@ -47,7 +47,8 @@ use temporalio_client::{
 };
 use tools::fleet::{
     AGENT_SEND_TOOL_NAME, AGENT_SPAWN_TOOL_NAME, AGENT_WAIT_TOOL_NAME, AgentSendOutput,
-    AgentSpawnOutput,
+    AgentSpawnOutput, PROFILE_LIST_TOOL_NAME, PROFILE_READ_TOOL_NAME, ProfileListOutput,
+    ProfileReadOutput,
 };
 
 #[tokio::test(flavor = "current_thread")]
@@ -158,6 +159,17 @@ async fn temporal_live_fleet_executor_spawns_profile_child() -> anyhow::Result<(
 
     let activities = fake_worker_activities().await?;
     run_with_live_worker(activities, run_fleet_profile_spawn_live_client).await
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires local/up.sh or compatible Temporal + Postgres env"]
+async fn temporal_live_fleet_executor_lists_and_reads_profiles() -> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().expect("live test lock");
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+
+    let activities = fake_worker_activities().await?;
+    run_with_live_worker(activities, run_fleet_profile_tools_live_client).await
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -1029,6 +1041,127 @@ async fn run_fleet_profile_spawn_live_client(
             )
             .await;
     }
+    Ok(())
+}
+
+async fn run_fleet_profile_tools_live_client(
+    client: Client,
+    task_queue: String,
+    session_id: SessionId,
+) -> anyhow::Result<()> {
+    let store = pg_store_from_env().await?;
+    let model = default_model_from_env();
+    let api = Arc::new(
+        GatewayAgentApi::builder(client, store.clone())
+            .with_task_queue(task_queue)
+            .with_default_model(model)
+            .with_max_steps_per_input(128)
+            .build(),
+    );
+    let profile_id = ProfileId::new(format!(
+        "live_profile_tools_{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+
+    api.create_profile(ProfileCreateParams {
+        profile: AgentProfileInput {
+            profile_id: profile_id.clone(),
+            display_name: Some("Live profile tools".to_owned()),
+            description: Some("Fleet profile discovery live test".to_owned()),
+            document: ProfileDocument {
+                config: Some(SessionConfigInput {
+                    tools: Some(ToolConfigInput {
+                        fleet: Some(true),
+                        web_fetch: Some(false),
+                        ..ToolConfigInput::default()
+                    }),
+                    ..SessionConfigInput::default()
+                }),
+                instructions: Some(ProfileInstructions::Text {
+                    text: "Profile read tools should return this document.".to_owned(),
+                }),
+                mounts: Vec::new(),
+                mcp: Vec::new(),
+                environments: Vec::new(),
+            },
+        },
+    })
+    .await?;
+
+    let blobs: Arc<dyn BlobStore> = store.clone();
+    let sessions: Arc<dyn SessionStore> = store.clone();
+    let fleet_runtime = Arc::new(AgentApiFleetRuntime::new(api.clone()));
+    let service = FleetService::new(sessions, fleet_runtime);
+    let executor = FleetToolExecutor::new(blobs.clone(), service);
+    let observed_at_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_millis() as u64;
+
+    let list_arguments_ref = blobs.put_bytes(br#"{}"#.to_vec()).await?;
+    let list_result = executor
+        .invoke(
+            FleetInvocationContext {
+                parent_session_id: session_id.clone(),
+                parent_run_id: RunId::new(1),
+                turn_id: TurnId::new(1),
+                batch_id: ToolBatchId::new(1),
+                call_id: ToolCallId::new("call_profile_list"),
+                observed_at_ms,
+            },
+            &ToolInvocationRequest {
+                call_id: ToolCallId::new("call_profile_list"),
+                tool_name: ToolName::new(PROFILE_LIST_TOOL_NAME),
+                arguments_ref: list_arguments_ref,
+                execution_target: None,
+            },
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+    assert_eq!(list_result.status, ToolCallStatus::Succeeded);
+    let list_output_ref = list_result.output_ref.expect("profile list output ref");
+    let list_output: ProfileListOutput =
+        serde_json::from_slice(&blobs.read_bytes(&list_output_ref).await?)?;
+    assert!(
+        list_output
+            .profiles
+            .iter()
+            .any(|profile| profile.profile_id == profile_id)
+    );
+
+    let read_args = serde_json::json!({ "profile_id": profile_id.as_str() });
+    let read_arguments_ref = blobs.put_bytes(serde_json::to_vec(&read_args)?).await?;
+    let read_result = executor
+        .invoke(
+            FleetInvocationContext {
+                parent_session_id: session_id,
+                parent_run_id: RunId::new(1),
+                turn_id: TurnId::new(1),
+                batch_id: ToolBatchId::new(2),
+                call_id: ToolCallId::new("call_profile_read"),
+                observed_at_ms,
+            },
+            &ToolInvocationRequest {
+                call_id: ToolCallId::new("call_profile_read"),
+                tool_name: ToolName::new(PROFILE_READ_TOOL_NAME),
+                arguments_ref: read_arguments_ref,
+                execution_target: None,
+            },
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+    assert_eq!(read_result.status, ToolCallStatus::Succeeded);
+    let read_output_ref = read_result.output_ref.expect("profile read output ref");
+    let read_output: ProfileReadOutput =
+        serde_json::from_slice(&blobs.read_bytes(&read_output_ref).await?)?;
+    assert_eq!(read_output.profile.profile_id, profile_id);
+    assert_eq!(
+        read_output.profile.description.as_deref(),
+        Some("Fleet profile discovery live test")
+    );
+    assert!(read_output.profile.document.instructions.is_some());
+
+    api.delete_profile(ProfileDeleteParams { profile_id })
+        .await?;
     Ok(())
 }
 

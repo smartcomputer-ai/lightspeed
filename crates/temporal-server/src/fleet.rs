@@ -3,10 +3,11 @@
 use std::sync::Arc;
 
 use api::{
-    AgentApiError, AgentApiService, EventCursor, InputItem, MediaKind, ProfileSource,
-    RunCancelParams, RunStartParams, RunStatus as ApiRunStatus, SessionCloseParams,
-    SessionEnvironmentListParams, SessionEnvironmentListResponse, SessionEventsReadParams,
-    SessionEventsReadResponse, SessionReadParams, SessionView,
+    AgentApiError, AgentApiService, AgentProfile, AgentProfileSummary, EventCursor, InputItem,
+    MediaKind, ProfileId, ProfileListParams, ProfileReadParams, ProfileSource, RunCancelParams,
+    RunStartParams, RunStatus as ApiRunStatus, SessionCloseParams, SessionEnvironmentListParams,
+    SessionEnvironmentListResponse, SessionEventsReadParams, SessionEventsReadResponse,
+    SessionReadParams, SessionView,
 };
 use api_projection::{MAX_EVENT_PAGE_LIMIT, read_all_session_entries, replay_core_agent_state};
 use async_trait::async_trait;
@@ -34,7 +35,9 @@ use tools::fleet::{
     AgentListItem, AgentListOutput, AgentReadArgs, AgentReadOutput, AgentReportBack, AgentSendArgs,
     AgentSendInputItem, AgentSendMediaKind, AgentSendOutput, AgentSendStatus, AgentSendTarget,
     AgentSpawnArgs, AgentSpawnOutput, AgentSpawnSource, AgentWaitArgs,
-    AgentWaitMode as ToolAgentWaitMode, EnvironmentPolicy, VfsPolicy,
+    AgentWaitMode as ToolAgentWaitMode, EnvironmentPolicy, PROFILE_LIST_TOOL_NAME,
+    PROFILE_READ_TOOL_NAME, ProfileListArgs, ProfileListOutput, ProfileReadArgs, ProfileReadOutput,
+    VfsPolicy,
 };
 use vfs::{
     CreateVfsWorkspaceRecord, VfsCatalogError, VfsMountSource, VfsMountStore, VfsPath,
@@ -191,6 +194,27 @@ impl FleetService {
             } else {
                 "reused".to_owned()
             },
+        })
+    }
+
+    pub async fn list_profiles(
+        &self,
+        _args: ProfileListArgs,
+    ) -> Result<ProfileListOutput, AgentApiError> {
+        Ok(ProfileListOutput {
+            profiles: self.runtime.list_profiles().await?,
+        })
+    }
+
+    pub async fn read_profile(
+        &self,
+        args: ProfileReadArgs,
+    ) -> Result<ProfileReadOutput, AgentApiError> {
+        let profile_id = ProfileId::try_new(args.profile_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid profile_id: {error}"))
+        })?;
+        Ok(ProfileReadOutput {
+            profile: self.runtime.read_profile(profile_id).await?,
         })
     }
 
@@ -939,6 +963,10 @@ pub trait FleetChildRuntime: Send + Sync {
         profile: Option<ProfileSource>,
     ) -> Result<(), AgentApiError>;
 
+    async fn list_profiles(&self) -> Result<Vec<AgentProfileSummary>, AgentApiError>;
+
+    async fn read_profile(&self, profile_id: ProfileId) -> Result<AgentProfile, AgentApiError>;
+
     async fn start_run(
         &self,
         session_id: &SessionId,
@@ -992,6 +1020,19 @@ impl FleetChildRuntime for AgentApiFleetRuntime {
             .start_session_for_fleet_with_profile(session_id, close_on_terminal, profile)
             .await?;
         Ok(())
+    }
+
+    async fn list_profiles(&self) -> Result<Vec<AgentProfileSummary>, AgentApiError> {
+        let response = self.api.list_profiles(ProfileListParams {}).await?;
+        Ok(response.result.profiles)
+    }
+
+    async fn read_profile(&self, profile_id: ProfileId) -> Result<AgentProfile, AgentApiError> {
+        let response = self
+            .api
+            .read_profile(ProfileReadParams { profile_id })
+            .await?;
+        Ok(response.result.profile)
     }
 
     async fn start_run(
@@ -1109,6 +1150,8 @@ impl FleetToolExecutor {
             AGENT_LIST_TOOL_NAME => self.invoke_list(context, call).await,
             AGENT_READ_TOOL_NAME => self.invoke_read(call).await,
             AGENT_CANCEL_TOOL_NAME => self.invoke_cancel(call).await,
+            PROFILE_LIST_TOOL_NAME => self.invoke_profile_list(call).await,
+            PROFILE_READ_TOOL_NAME => self.invoke_profile_read(call).await,
             other => {
                 fleet_failed_result(
                     self.blobs.as_ref(),
@@ -1268,6 +1311,40 @@ impl FleetToolExecutor {
         match self.service.cancel(args).await {
             Ok(output) => {
                 let visible = cancel_model_visible_text(&output);
+                self.succeeded(call.call_id.clone(), &output, visible).await
+            }
+            Err(error) => {
+                fleet_failed_result(self.blobs.as_ref(), call.call_id.clone(), error.to_string())
+                    .await
+            }
+        }
+    }
+
+    async fn invoke_profile_list(
+        &self,
+        call: &ToolInvocationRequest,
+    ) -> Result<ToolInvocationResult, CoreAgentIoError> {
+        let args: ProfileListArgs = self.decode_args(call).await?;
+        match self.service.list_profiles(args).await {
+            Ok(output) => {
+                let visible = profile_list_model_visible_text(&output);
+                self.succeeded(call.call_id.clone(), &output, visible).await
+            }
+            Err(error) => {
+                fleet_failed_result(self.blobs.as_ref(), call.call_id.clone(), error.to_string())
+                    .await
+            }
+        }
+    }
+
+    async fn invoke_profile_read(
+        &self,
+        call: &ToolInvocationRequest,
+    ) -> Result<ToolInvocationResult, CoreAgentIoError> {
+        let args: ProfileReadArgs = self.decode_args(call).await?;
+        match self.service.read_profile(args).await {
+            Ok(output) => {
+                let visible = profile_read_model_visible_text(&output);
                 self.succeeded(call.call_id.clone(), &output, visible).await
             }
             Err(error) => {
@@ -2103,6 +2180,56 @@ fn cancel_model_visible_text(output: &AgentCancelOutput) -> String {
     }
 }
 
+fn profile_list_model_visible_text(output: &ProfileListOutput) -> String {
+    if output.profiles.is_empty() {
+        return "No agent profiles are available.".to_owned();
+    }
+    let mut lines = Vec::with_capacity(output.profiles.len() + 1);
+    lines.push(format!("Found {} agent profile(s).", output.profiles.len()));
+    for profile in &output.profiles {
+        let mut line = format!(
+            "- {} (revision {}, updated_at_ms {})",
+            profile.profile_id, profile.revision, profile.updated_at_ms
+        );
+        if let Some(display_name) = profile
+            .display_name
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            line.push_str(": ");
+            line.push_str(display_name);
+        }
+        if let Some(description) = profile
+            .description
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            line.push_str(" - ");
+            line.push_str(description);
+        }
+        lines.push(line);
+    }
+    lines.join("\n")
+}
+
+fn profile_read_model_visible_text(output: &ProfileReadOutput) -> String {
+    let profile = &output.profile;
+    format!(
+        "Read profile {} revision {}: config {}, instructions {}, {} mount(s), {} MCP link(s), {} environment(s).",
+        profile.profile_id,
+        profile.revision,
+        yes_no(profile.document.config.is_some()),
+        yes_no(profile.document.instructions.is_some()),
+        profile.document.mounts.len(),
+        profile.document.mcp.len(),
+        profile.document.environments.len()
+    )
+}
+
+fn yes_no(value: bool) -> &'static str {
+    if value { "yes" } else { "no" }
+}
+
 async fn fleet_failed_result(
     blobs: &dyn BlobStore,
     call_id: ToolCallId,
@@ -2174,6 +2301,7 @@ mod tests {
         sessions: Mutex<BTreeMap<SessionId, SessionView>>,
         events: Mutex<BTreeMap<SessionId, Vec<api::SessionEventView>>>,
         environments: Mutex<BTreeMap<SessionId, SessionEnvironmentListResponse>>,
+        profiles: Mutex<BTreeMap<ProfileId, AgentProfile>>,
         cancelled_runs: Mutex<Vec<(SessionId, String)>>,
         closed_sessions: Mutex<Vec<SessionId>>,
     }
@@ -2208,6 +2336,27 @@ mod tests {
                 profile,
             ));
             Ok(())
+        }
+
+        async fn list_profiles(&self) -> Result<Vec<AgentProfileSummary>, AgentApiError> {
+            Ok(self
+                .profiles
+                .lock()
+                .expect("lock")
+                .values()
+                .map(AgentProfile::summary)
+                .collect())
+        }
+
+        async fn read_profile(&self, profile_id: ProfileId) -> Result<AgentProfile, AgentApiError> {
+            self.profiles
+                .lock()
+                .expect("lock")
+                .get(&profile_id)
+                .cloned()
+                .ok_or_else(|| {
+                    AgentApiError::not_found(format!("agent profile not found: {profile_id}"))
+                })
         }
 
         async fn start_run(
@@ -3342,6 +3491,87 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn fleet_executor_runs_profile_tools_and_writes_output_blobs() {
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let parent = open_source_session(sessions.as_ref()).await;
+        let blobs = Arc::new(engine::storage::InMemoryBlobStore::new());
+        let profile = test_profile("support");
+        let runtime = Arc::new(FakeRuntime::default());
+        runtime
+            .profiles
+            .lock()
+            .expect("lock")
+            .insert(profile.profile_id.clone(), profile.clone());
+        let service = FleetService::new(sessions, runtime);
+        let executor = FleetToolExecutor::new(blobs.clone(), service);
+
+        let list_arguments_ref = blobs.put_bytes(br#"{}"#.to_vec()).await.expect("args");
+        let list_result = executor
+            .invoke(
+                context(parent.clone()),
+                &ToolInvocationRequest {
+                    call_id: ToolCallId::new("call_profile_list"),
+                    tool_name: ToolName::new(PROFILE_LIST_TOOL_NAME),
+                    arguments_ref: list_arguments_ref,
+                    execution_target: None,
+                },
+            )
+            .await
+            .expect("invoke list");
+
+        assert_eq!(list_result.status, ToolCallStatus::Succeeded);
+        let list_output_ref = list_result.output_ref.as_ref().expect("list output");
+        let list_output: ProfileListOutput = serde_json::from_slice(
+            &blobs
+                .read_bytes(list_output_ref)
+                .await
+                .expect("read list output"),
+        )
+        .expect("decode list output");
+        assert_eq!(list_output.profiles, vec![profile.summary()]);
+        let list_visible_ref = visible_tool_result_ref(&list_result);
+        let list_visible = blobs
+            .read_text(&list_visible_ref)
+            .await
+            .expect("read list visible");
+        assert!(list_visible.contains("Found 1 agent profile"));
+
+        let read_arguments_ref = blobs
+            .put_bytes(br#"{"profile_id":"support"}"#.to_vec())
+            .await
+            .expect("args");
+        let read_result = executor
+            .invoke(
+                context(parent),
+                &ToolInvocationRequest {
+                    call_id: ToolCallId::new("call_profile_read"),
+                    tool_name: ToolName::new(PROFILE_READ_TOOL_NAME),
+                    arguments_ref: read_arguments_ref,
+                    execution_target: None,
+                },
+            )
+            .await
+            .expect("invoke read");
+
+        assert_eq!(read_result.status, ToolCallStatus::Succeeded);
+        let read_output_ref = read_result.output_ref.as_ref().expect("read output");
+        let read_output: ProfileReadOutput = serde_json::from_slice(
+            &blobs
+                .read_bytes(read_output_ref)
+                .await
+                .expect("read profile output"),
+        )
+        .expect("decode read output");
+        assert_eq!(read_output.profile, profile);
+        let read_visible_ref = visible_tool_result_ref(&read_result);
+        let read_visible = blobs
+            .read_text(&read_visible_ref)
+            .await
+            .expect("read visible");
+        assert!(read_visible.contains("Read profile support revision 1"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn fleet_executor_runs_send_and_writes_output_blobs() {
         let sessions = Arc::new(InMemorySessionStore::new());
         let parent = open_source_session(sessions.as_ref()).await;
@@ -3396,6 +3626,23 @@ mod tests {
             "child_session_id": child_session_id
         }))
         .expect("args")
+    }
+
+    fn test_profile(profile_id: &str) -> AgentProfile {
+        AgentProfile {
+            profile_id: ProfileId::new(profile_id),
+            display_name: Some("Support".to_owned()),
+            description: Some("Ticket support profile".to_owned()),
+            revision: 1,
+            document: api::ProfileDocument {
+                instructions: Some(api::ProfileInstructions::Text {
+                    text: "Be concise.".to_owned(),
+                }),
+                ..api::ProfileDocument::default()
+            },
+            created_at_ms: 1,
+            updated_at_ms: 2,
+        }
     }
 
     async fn open_source_session(sessions: &InMemorySessionStore) -> SessionId {

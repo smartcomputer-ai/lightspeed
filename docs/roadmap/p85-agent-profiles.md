@@ -3,10 +3,11 @@
 **Status**
 - Implemented 2026-06-24.
 - Updated 2026-06-25 to reflect the final implemented shape.
-- Final shape: profile DTOs, validation, `ProfileSource`, `ProfileError`, and the
-  `ProfileStore` trait live in `crates/api/` so every client and runtime boundary
-  speaks the same wire types. The earlier separate `crates/agent-profile/` split
-  was rejected as unnecessary duplication for this greenfield codebase.
+- Final shape: profile wire DTOs and `ProfileSource` live in `crates/api/` so
+  every client and runtime boundary speaks the same wire types. Runtime registry
+  behavior (`ProfileStore`, validation helpers, patch application, and
+  `ProfileError`) lives in `crates/profile-registry/`, which depends on `api`
+  without duplicating profile types.
 - Builds on **P83 (Fleet Subagent Control Plane)** — `agent_spawn` and the Fleet
   service that compiles agent intent into session/run/resource operations — and
   **P84 (Fleet Wait, Subscriptions, And Send)** — `agent_send`/`agent_wait`. It
@@ -25,9 +26,12 @@ P85 is implemented end-to-end with these concrete pieces:
   `AgentProfileInput`, `InlineAgentProfile`, stored `AgentProfile`,
   `AgentProfileSummary`, `ProfileDocument`, `ProfileInstructions`,
   `ProfileMount`, `ProfileMcpLink`, `ProfileEnvironment`, tagged
-  `ProfileSource`, `AgentProfileUpdatePatch`, typed `ProfileError`, and the
-  substrate-neutral `ProfileStore` trait. Profile documents reuse existing
-  `api` config/resource input types instead of creating a second dialect.
+  `ProfileSource`, and `AgentProfileUpdatePatch`. Profile documents reuse
+  existing `api` config/resource input types instead of creating a second
+  dialect.
+- **Registry contract crate** in `crates/profile-registry/`: typed
+  `ProfileError`, `UpdateAgentProfile`, profile validation/patch helper traits,
+  and the substrate-neutral `ProfileStore` trait over the `api` DTOs.
 - **Public JSON-RPC surface**: `profiles/create`, `profiles/read`,
   `profiles/list`, `profiles/update`, `profiles/delete`, `profiles/apply`, plus
   `SessionStartParams.profile`. The committed OpenRPC/schema/method artifacts
@@ -44,7 +48,8 @@ P85 is implemented end-to-end with these concrete pieces:
 - **Fleet integration**: `agent_spawn` accepts `profile`, rejects
   `profile` combined with `source`/fork/isolate options, starts a fresh child
   session from the profile, and records the requested `ProfileSource` in Fleet
-  spawn-link metadata.
+  spawn-link metadata. The Fleet toolset also exposes read-only profile
+  discovery tools: `profile_list` and `profile_read`.
 - **CLI support**: `chat --profile`, `chat --profile-json`, and
   `lightspeed profiles list|read|create|update|delete|apply`.
 - **Messaging bridge migration**: bindings use native `profile` values directly
@@ -131,22 +136,26 @@ Three layers, deliberately keeping the profile language on the public API
 boundary rather than in a separate crate:
 
 1. **`crates/api/`** — owns the `AgentProfile` / `InlineAgentProfile` document
-   types, `ProfileSource`, `ProfileId`, validation, typed errors, method DTOs,
-   and the substrate-neutral `ProfileStore` trait. This avoids a second config
-   dialect and lets CLI, gateway, Fleet tools, and generated clients reuse the
-   same contract.
-2. **`crates/store-pg/src/profile.rs`** + migration `007_agent_profiles.sql` — the
+   types, `ProfileSource`, `ProfileId`, and method DTOs. This avoids a second
+   config dialect and lets CLI, gateway, Fleet tools, and generated clients reuse
+   the same contract.
+2. **`crates/profile-registry/`** — owns registry-only behavior around those
+   DTOs: validation helpers, typed errors, update records, patch application, and
+   the substrate-neutral `ProfileStore` trait. It depends on `api`; `api` does not
+   depend back on it.
+3. **`crates/store-pg/src/profile.rs`** + migration `007_agent_profiles.sql` — the
    Postgres-backed `ProfileStore`. A profile catalog table, exactly like the MCP
    server catalog (`003_mcp.sql`) and environment registry (`006_*`).
-3. **profile applier** in the hosted runtime (`temporal-server`) — resolves a
+4. **profile applier** in the hosted runtime (`temporal-server`) — resolves a
    profile reference to a concrete `AgentProfile`, then applies it against a
    target session through the internal `AgentApiService` and resource stores
    (the same calls the bridge makes today, now in Rust).
 
 `api` gains a thin profile CRUD surface and a `profile` field on the
 session-start / spawn paths. The model-visible Fleet surface gains a `profile`
-field on `agent_spawn`; it does **not** gain generic profile CRUD tools (an agent
-authoring registry entries is deferred — see Deferred).
+field on `agent_spawn`, plus read-only profile discovery (`profile_list` and
+`profile_read`). It does **not** gain generic profile authoring tools (an agent
+creating/updating/deleting registry entries is deferred — see Deferred).
 
 ### Why not just extend P83 clone/fork
 
@@ -427,10 +436,13 @@ bridge starts the session with `tools.messaging = true`.
 
 - `crates/api/`: `AgentProfile`, `InlineAgentProfile`, `ProfileId`,
   `ProfileSource` (`named | inline`), section types reusing existing `api`
-  config/resource inputs, `validate()`, typed `ProfileError`, `ProfileStore`
-  trait, profile CRUD/apply DTOs, `profiles/*` JSON-RPC methods, and optional
-  `SessionStartParams.profile`. No layering/`extends` in v1. Regenerated committed
-  contract artifacts (`cargo run -p api --bin export-schema`).
+  config/resource inputs, profile CRUD/apply DTOs, `profiles/*` JSON-RPC methods,
+  and optional `SessionStartParams.profile`. No layering/`extends` in v1.
+  Regenerated committed contract artifacts (`cargo run -p api --bin
+  export-schema`).
+- `crates/profile-registry/`: typed `ProfileError`, `UpdateAgentProfile`,
+  validation/patch helper traits, and the `ProfileStore` trait over `api` profile
+  DTOs.
 - `crates/store-pg/src/profile.rs` + `migrations/007_agent_profiles.sql`:
   Postgres `ProfileStore` impl and an `agent_profiles` catalog table (id,
   display_name, description, revision, document JSONB, timestamps). (Pattern:
@@ -457,15 +469,15 @@ bridge starts the session with `tools.messaging = true`.
 
 ### S1. Profile language in `api`
 - Completed in `crates/api/`: `AgentProfile`, `InlineAgentProfile`, `ProfileSource`
-  (`named | inline`), section types, `validate()`, and `ProfileStore` trait. No
-  layering. JSON-RPC routing and schema export coverage live in `cargo test -p
-  api`.
+  (`named | inline`), section types, and profile method DTOs. No layering.
+  JSON-RPC routing and schema export coverage live in `cargo test -p api`.
 
 ### S2. Registry storage + API CRUD
-- Completed: `store-pg` `agent_profiles` table + `ProfileStore` impl; `api`
-  `profiles/create|read|list|update|delete` DTOs/methods with optimistic
-  concurrency on `update`; `read` returns the stored document verbatim. Regenerated
-  contract artifacts.
+- Completed: `profile-registry` owns `ProfileStore`, typed errors, validation,
+  and update helpers; `store-pg` implements it with the `agent_profiles` table;
+  `api` exposes `profiles/create|read|list|update|delete` DTOs/methods with
+  optimistic concurrency on `update`; `read` returns the stored document
+  verbatim. Regenerated contract artifacts.
 
 ### S3. Profile applier + `session/start { profile }` + `profiles/apply`
 - Completed: hosted applier resolves `ProfileSource` (registry for `named`,
@@ -479,7 +491,9 @@ bridge starts the session with `tools.messaging = true`.
 - Completed: `agent_spawn` accepts `profile` (named/inline), **mutually exclusive
   with `source`**; `profile`-only spawns a fresh provisioned child; Fleet spawn-link
   metadata records the requested `ProfileSource`; idempotent under tool-activity
-  retry. Tests cover profile-only spawn and `source`+`profile` rejection.
+  retry. `profile_list` and `profile_read` expose read-only registry discovery to
+  agents. Tests cover profile-only spawn, `source`+`profile` rejection, and Fleet
+  executor profile list/read output blobs.
 
 ### S5. CLI
 - Completed: `--profile` (named) / `--profile-json` (inline) on `chat`; `profiles`
@@ -494,11 +508,12 @@ bridge starts the session with `tools.messaging = true`.
 
 ## Deferred
 
-- **Model-visible profile CRUD tools** (`profile_create`/`profile_list` for
-  agents). v1 lets an agent *reference* a profile in `agent_spawn` (named or
-  inline) but not *author registry entries*; an agent that wants a custom child
-  passes an `inline` profile. Authoring registry entries from an agent waits for a
-  policy/ownership story.
+- **Model-visible profile authoring tools** (`profile_create`/`profile_update` /
+  `profile_delete` for agents). v1 lets an agent *reference* a profile in
+  `agent_spawn` (named or inline) and inspect stored profiles with
+  `profile_list`/`profile_read`, but not *author registry entries*; an agent that
+  wants a custom child passes an `inline` profile. Authoring registry entries
+  from an agent waits for a policy/ownership story.
 - **Profile layering — `extends` and a `compose` `ProfileSource` variant.** v1
   profiles are flat (the stored/inline document is applied verbatim). Layering
   lands later with section-scoped semantics defined once and shared by both:

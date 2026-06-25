@@ -304,7 +304,8 @@ pub struct ToolConfig {
     /// sessions bound to a chat channel.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub messaging: Option<bool>,
-    /// Enables the Fleet subagent control-plane tools (agent_spawn/read/list/cancel).
+    /// Enables the Fleet subagent control-plane tools
+    /// (agent_spawn/send/read/list/cancel and profile_list/read).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fleet: Option<bool>,
 }

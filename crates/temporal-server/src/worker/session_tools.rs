@@ -630,6 +630,19 @@ mod tests {
             Ok(())
         }
 
+        async fn list_profiles(&self) -> Result<Vec<api::AgentProfileSummary>, api::AgentApiError> {
+            Ok(Vec::new())
+        }
+
+        async fn read_profile(
+            &self,
+            profile_id: api::ProfileId,
+        ) -> Result<api::AgentProfile, api::AgentApiError> {
+            Err(api::AgentApiError::not_found(format!(
+                "agent profile not found: {profile_id}"
+            )))
+        }
+
         async fn start_run(
             &self,
             session_id: &SessionId,
