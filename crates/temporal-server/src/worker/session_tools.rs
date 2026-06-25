@@ -1,24 +1,42 @@
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use async_trait::async_trait;
 use engine::{
-    CoreAgentIoError, CoreAgentTools, ProviderApiKind, SessionId, ToolBatchOutcome, ToolCallStatus,
-    ToolInvocationBatchRequest, ToolInvocationBatchResult, ToolInvocationResult,
+    BlobRef, CoreAgentIoError, CoreAgentTools, ProviderApiKind, SessionId, ToolBatchOutcome,
+    ToolBatchResumeDirective, ToolCallStatus, ToolInvocationBatchRequest,
+    ToolInvocationBatchResult, ToolInvocationResult,
     storage::{BlobStore, BlobStoreError},
 };
 use environment_registry::{
-    EnvironmentRegistryError, SessionEnvironmentBindingRecord, SessionEnvironmentBindingStatus,
+    CreateJobHandle, EnvironmentId, EnvironmentRegistryError, JobHandleRecord, JobHandleStore,
+    ListJobHandles, SessionEnvironmentBindingRecord, SessionEnvironmentBindingStatus,
     SessionEnvironmentBindingStore,
 };
 use host_client::{HostClientError, HostDataClient, WebSocketConnectOptions};
 use host_protocol::{
-    data::handshake::{InitializeParams, InitializedParams},
-    shared::{CURRENT_PROTOCOL_VERSION, HostConnectionSpec, HostTransport},
+    data::{
+        handshake::{InitializeParams, InitializedParams},
+        jobs::{JobReadResult as HostJobReadResult, ReadJobsParams, StartJobsParams},
+    },
+    shared::{CURRENT_PROTOCOL_VERSION, HostConnectionSpec, HostTransport, JobId},
 };
 use messaging::OutboxStore;
 use serde_json::Value;
 use store_pg::PgStore;
+use temporal_workflow::{
+    ENVIRONMENT_JOB_WAIT_DIRECTIVE_KIND, EnvironmentJobHandle, EnvironmentJobWaitDirective,
+    EnvironmentJobWaitMode, EnvironmentJobWaitTerminalPolicy,
+};
 use tools::{
+    environment::jobs::{
+        JOB_CANCEL_TOOL_NAME, JOB_LIST_TOOL_NAME, JOB_READ_TOOL_NAME, JOB_START_TOOL_NAME,
+        JOB_WAIT_TOOL_NAME, JobCancelArgs, JobCancelResultEntry, JobCancelResultSet, JobHandle,
+        JobHandleArg, JobListArgs, JobListResultEntry, JobListResultSet, JobReadArgs,
+        JobReadResultEntry, JobReadResultSet, JobStartArgs, JobStartResult, JobStarted,
+        JobWaitArgs, JobWaitMode, JobWaitOutcome, JobWaitResult, JobWaitTerminalPolicy,
+        is_environment_job_tool_name, visible_job_list_output, visible_job_read_output,
+        wait_satisfied,
+    },
     fleet::{AGENT_WAIT_TOOL_NAME, is_fleet_tool},
     fs::{FsPath, FsToolContext, MountedVfsFileSystem},
     host_protocol::RemoteHostConnection,
@@ -32,9 +50,13 @@ use tools::{
 use vfs::{VfsCatalogError, VfsMountRecord, VfsMountStore, VfsWorkspaceStore};
 
 use crate::{
+    credential_injection::EnvironmentCredentialResolver,
     environment::{RuntimeEnvironment, SessionEnvironmentManager},
     fleet::{FleetChildRuntime, FleetService, FleetToolExecutor},
 };
+
+const DEFAULT_JOB_LIST_LIMIT: usize = 20;
+const MAX_JOB_LIST_LIMIT: usize = 200;
 
 #[derive(Clone)]
 pub struct SessionTools {
@@ -43,6 +65,8 @@ pub struct SessionTools {
     mount_store: Arc<dyn VfsMountStore>,
     environments: SessionEnvironmentManager,
     environment_bindings: Option<Arc<dyn SessionEnvironmentBindingStore>>,
+    environment_credentials: Option<EnvironmentCredentialResolver>,
+    job_handles: Option<Arc<dyn JobHandleStore>>,
     messaging: Option<MessagingToolExecutor>,
     fleet: Option<FleetToolExecutor>,
 }
@@ -60,6 +84,8 @@ impl SessionTools {
             mount_store,
             environments,
             environment_bindings: None,
+            environment_credentials: None,
+            job_handles: None,
             messaging: None,
             fleet: None,
         }
@@ -89,6 +115,19 @@ impl SessionTools {
         self
     }
 
+    pub(crate) fn with_environment_credentials(
+        mut self,
+        credentials: EnvironmentCredentialResolver,
+    ) -> Self {
+        self.environment_credentials = Some(credentials);
+        self
+    }
+
+    pub fn with_job_handles(mut self, job_handles: Arc<dyn JobHandleStore>) -> Self {
+        self.job_handles = Some(job_handles);
+        self
+    }
+
     pub fn with_environment(mut self, environment: RuntimeEnvironment) -> Self {
         self.environments.insert_environment(environment);
         self
@@ -99,10 +138,14 @@ impl SessionTools {
         let workspace_store: Arc<dyn VfsWorkspaceStore> = store.clone();
         let mount_store: Arc<dyn VfsMountStore> = store.clone();
         let outbox: Arc<dyn OutboxStore> = store.clone();
-        let environment_bindings: Arc<dyn SessionEnvironmentBindingStore> = store;
+        let environment_bindings: Arc<dyn SessionEnvironmentBindingStore> = store.clone();
+        let credentials = EnvironmentCredentialResolver::from_pg_store(store.clone());
+        let job_handles: Arc<dyn JobHandleStore> = store;
         Self::new(blobs, workspace_store, mount_store)
             .with_messaging_outbox(outbox)
             .with_environment_bindings(environment_bindings)
+            .with_environment_credentials(credentials)
+            .with_job_handles(job_handles)
     }
 
     pub fn from_pg_store_with_fleet_runtime(
@@ -254,6 +297,856 @@ impl SessionTools {
             .await
     }
 
+    async fn invoke_lone_environment_job_wait_batch(
+        &self,
+        request: ToolInvocationBatchRequest,
+    ) -> Result<ToolBatchOutcome, CoreAgentIoError> {
+        let call = request
+            .calls
+            .first()
+            .ok_or_else(|| io_error("job_wait batch had no calls after planner invocation"))?;
+        let active_env_target = request
+            .default_targets
+            .get(tools::targets::ENV_TARGET_NAMESPACE);
+        let environments = self
+            .environment_manager_for_session(&request.session_id)
+            .await?;
+        let args: JobWaitArgs = self.read_tool_args(call).await?;
+        if args.jobs.is_empty() {
+            let result = failed_result(
+                self.blobs.as_ref(),
+                call.call_id.clone(),
+                "job_wait requires at least one job",
+            )
+            .await?;
+            return Ok(ToolBatchOutcome::completed(ToolInvocationBatchResult {
+                run_id: request.run_id,
+                turn_id: request.turn_id,
+                batch_id: request.batch_id,
+                results: vec![result],
+            }));
+        }
+        match self
+            .preflight_environment_job_wait(&request, call, &environments, active_env_target, args)
+            .await?
+        {
+            EnvironmentJobWaitPreflight::Completed(result) => {
+                Ok(ToolBatchOutcome::completed(ToolInvocationBatchResult {
+                    run_id: request.run_id,
+                    turn_id: request.turn_id,
+                    batch_id: request.batch_id,
+                    results: vec![result],
+                }))
+            }
+            EnvironmentJobWaitPreflight::Deferred(directive) => {
+                let body = serde_json::to_value(directive)
+                    .map_err(|error| io_error(format!("encode job_wait directive: {error}")))?;
+                Ok(ToolBatchOutcome::Deferred {
+                    batch_id: request.batch_id,
+                    resume_directive: ToolBatchResumeDirective::new(
+                        ENVIRONMENT_JOB_WAIT_DIRECTIVE_KIND,
+                        body,
+                    ),
+                })
+            }
+        }
+    }
+
+    async fn invoke_environment_job_call(
+        &self,
+        request: &ToolInvocationBatchRequest,
+        call: &engine::ToolInvocationRequest,
+        environments: &SessionEnvironmentManager,
+        active_env_target: Option<&engine::ToolExecutionTarget>,
+    ) -> Result<ToolInvocationResult, CoreAgentIoError> {
+        match call.tool_name.as_str() {
+            JOB_START_TOOL_NAME => {
+                let args: JobStartArgs = self.read_tool_args(call).await?;
+                self.invoke_environment_job_start(
+                    request,
+                    call,
+                    environments,
+                    active_env_target,
+                    args,
+                )
+                .await
+            }
+            JOB_LIST_TOOL_NAME => {
+                let args: JobListArgs = self.read_tool_args(call).await?;
+                let result = match self
+                    .list_environment_jobs(&request.session_id, environments, args)
+                    .await
+                {
+                    Ok(result) => result,
+                    Err(error) => {
+                        return failed_result(
+                            self.blobs.as_ref(),
+                            call.call_id.clone(),
+                            error.to_string(),
+                        )
+                        .await;
+                    }
+                };
+                self.succeeded_tool_result(call, &result, visible_job_list_output(&result.jobs))
+                    .await
+            }
+            JOB_READ_TOOL_NAME => {
+                let args: JobReadArgs = self.read_tool_args(call).await?;
+                let result = self
+                    .read_environment_jobs(
+                        &request.session_id,
+                        request
+                            .default_targets
+                            .get(tools::targets::ENV_TARGET_NAMESPACE),
+                        environments,
+                        args.jobs,
+                        args.output_bytes,
+                        args.after_seq,
+                        args.include_artifacts,
+                    )
+                    .await?;
+                self.succeeded_tool_result(
+                    call,
+                    &JobReadResultSet {
+                        jobs: result.entries.clone(),
+                    },
+                    visible_job_read_output(&result.entries),
+                )
+                .await
+            }
+            JOB_WAIT_TOOL_NAME => {
+                let args: JobWaitArgs = self.read_tool_args(call).await?;
+                let result = self
+                    .environment_job_wait_result(
+                        &request.session_id,
+                        active_env_target,
+                        environments,
+                        args,
+                        false,
+                    )
+                    .await?;
+                self.succeeded_tool_result(
+                    call,
+                    &result,
+                    format!(
+                        "job_wait outcome: {:?}\n{}",
+                        result.outcome,
+                        visible_job_read_output(&result.jobs)
+                    ),
+                )
+                .await
+            }
+            JOB_CANCEL_TOOL_NAME => {
+                let args: JobCancelArgs = self.read_tool_args(call).await?;
+                let result = self
+                    .cancel_environment_jobs(
+                        &request.session_id,
+                        active_env_target,
+                        environments,
+                        args,
+                    )
+                    .await?;
+                let visible = result
+                    .jobs
+                    .iter()
+                    .map(|entry| {
+                        entry
+                            .summary
+                            .as_ref()
+                            .map(|summary| {
+                                format!("{}: {:?}", summary.job_id.as_str(), summary.status)
+                            })
+                            .or_else(|| {
+                                entry.error.as_ref().map(|error| {
+                                    let label = entry
+                                        .handle
+                                        .as_ref()
+                                        .map(|handle| handle.job_id.as_str())
+                                        .unwrap_or("<unknown>");
+                                    format!("{label}: error: {error}")
+                                })
+                            })
+                            .unwrap_or_else(|| "job_cancel: no result".to_owned())
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                self.succeeded_tool_result(call, &result, visible).await
+            }
+            _ => {
+                failed_result(
+                    self.blobs.as_ref(),
+                    call.call_id.clone(),
+                    format!("unknown environment job tool {}", call.tool_name),
+                )
+                .await
+            }
+        }
+    }
+
+    async fn invoke_environment_job_start(
+        &self,
+        request: &ToolInvocationBatchRequest,
+        call: &engine::ToolInvocationRequest,
+        environments: &SessionEnvironmentManager,
+        active_env_target: Option<&engine::ToolExecutionTarget>,
+        args: JobStartArgs,
+    ) -> Result<ToolInvocationResult, CoreAgentIoError> {
+        let env_id = match self.resolve_env_id(args.env_id.as_deref(), active_env_target) {
+            Ok(env_id) => env_id,
+            Err(error) => {
+                return failed_result(self.blobs.as_ref(), call.call_id.clone(), error).await;
+            }
+        };
+        let binding = match self.read_ready_binding(&request.session_id, &env_id).await {
+            Ok(binding) => binding,
+            Err(error) => {
+                return failed_result(self.blobs.as_ref(), call.call_id.clone(), error).await;
+            }
+        };
+        let Some(environment) = environments.environment(env_id.as_str()) else {
+            return failed_result(
+                self.blobs.as_ref(),
+                call.call_id.clone(),
+                format!("environment is not reachable: {}", env_id.as_str()),
+            )
+            .await;
+        };
+        let Some(jobs) = environment.tool_context().jobs.as_ref() else {
+            return failed_result(
+                self.blobs.as_ref(),
+                call.call_id.clone(),
+                format!(
+                    "environment does not support durable jobs: {}",
+                    env_id.as_str()
+                ),
+            )
+            .await;
+        };
+
+        let params = match build_start_jobs_params(request, call, &env_id, args) {
+            Ok(value) => value,
+            Err(error) => {
+                return failed_result(self.blobs.as_ref(), call.call_id.clone(), error).await;
+            }
+        };
+        let namespace = params.namespace.clone();
+        let request_hash = match start_request_hash(&params) {
+            Ok(hash) => hash,
+            Err(error) => {
+                return failed_result(self.blobs.as_ref(), call.call_id.clone(), error).await;
+            }
+        };
+        let response = match jobs.start_jobs(params).await {
+            Ok(response) => response,
+            Err(error) => {
+                return failed_result(self.blobs.as_ref(), call.call_id.clone(), error.to_string())
+                    .await;
+            }
+        };
+
+        let created_at_ms = match now_unix_ms().and_then(u64_to_i64) {
+            Ok(value) => value,
+            Err(error) => {
+                return failed_result(self.blobs.as_ref(), call.call_id.clone(), error.to_string())
+                    .await;
+            }
+        };
+        let Some(job_store) = &self.job_handles else {
+            return failed_result(
+                self.blobs.as_ref(),
+                call.call_id.clone(),
+                "job handle store is not configured on this runtime",
+            )
+            .await;
+        };
+        let handles = response
+            .jobs
+            .iter()
+            .map(|summary| CreateJobHandle {
+                session_id: request.session_id.clone(),
+                env_id: env_id.clone(),
+                provider_id: binding.provider_id.clone(),
+                target_id: binding.target_id.clone(),
+                namespace: namespace.clone(),
+                job_id: summary.job_id.clone(),
+                name: summary.name.clone(),
+                queue_key: summary.queue_key.clone(),
+                created_by_run_id: Some(request.run_id),
+                created_by_turn_id: Some(request.turn_id),
+                created_by_tool_call_id: Some(call.call_id.clone()),
+                created_at_ms,
+                start_request_hash: request_hash.clone(),
+            })
+            .collect::<Vec<_>>();
+        let stored = match job_store.create_job_handles(handles).await {
+            Ok(stored) => stored,
+            Err(error) => {
+                return failed_result(self.blobs.as_ref(), call.call_id.clone(), error.to_string())
+                    .await;
+            }
+        };
+        let handle_by_job_id = stored
+            .into_iter()
+            .map(|record| {
+                (
+                    record.job_id.as_str().to_owned(),
+                    handle_from_record(&record),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let result = JobStartResult {
+            jobs: response
+                .jobs
+                .into_iter()
+                .map(|summary| JobStarted {
+                    name: summary.name,
+                    job_id: summary.job_id.clone(),
+                    handle: handle_by_job_id.get(summary.job_id.as_str()).cloned(),
+                    status: summary.status,
+                    dependencies: summary.dependencies,
+                    queue_key: summary.queue_key,
+                })
+                .collect(),
+        };
+        let visible = result
+            .jobs
+            .iter()
+            .map(|job| {
+                let handle = job
+                    .handle
+                    .as_ref()
+                    .map(|handle| {
+                        format!("{}/{}/{}", handle.session_id, handle.env_id, handle.job_id)
+                    })
+                    .unwrap_or_else(|| job.job_id.to_string());
+                format!("{handle}: {:?}", job.status)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        self.succeeded_tool_result(call, &result, visible).await
+    }
+
+    async fn list_environment_jobs(
+        &self,
+        current_session_id: &SessionId,
+        current_environments: &SessionEnvironmentManager,
+        args: JobListArgs,
+    ) -> Result<JobListResultSet, CoreAgentIoError> {
+        let session_id = resolve_job_list_session_id(current_session_id, args.session_id)?;
+        let env_id = args
+            .env_id
+            .map(EnvironmentId::try_new)
+            .transpose()
+            .map_err(|error| io_error(format!("invalid env_id: {error}")))?;
+        let limit = normalize_job_list_limit(args.limit)?;
+        let Some(job_store) = &self.job_handles else {
+            return Err(io_error(
+                "job handle store is not configured on this runtime",
+            ));
+        };
+        let records = job_store
+            .list_job_handles(ListJobHandles {
+                session_id: session_id.clone(),
+                env_id,
+                limit: Some(limit),
+            })
+            .await
+            .map_err(map_environment_registry_error)?;
+
+        let environments = if &session_id == current_session_id {
+            current_environments.clone()
+        } else {
+            self.environment_manager_for_session(&session_id).await?
+        };
+
+        let mut entries = vec![None; records.len()];
+        let mut grouped = BTreeMap::<EnvironmentId, Vec<(usize, JobHandleRecord)>>::new();
+        for (index, record) in records.into_iter().enumerate() {
+            if record.namespace != record.session_id.as_str() {
+                entries[index] = Some(JobListResultEntry {
+                    handle: Some(handle_from_record(&record)),
+                    summary: None,
+                    error: Some("job registry record has non-session namespace".to_owned()),
+                });
+                continue;
+            }
+            if environments.environment(record.env_id.as_str()).is_none() {
+                entries[index] = Some(JobListResultEntry {
+                    handle: Some(handle_from_record(&record)),
+                    summary: None,
+                    error: Some(format!("environment is not reachable: {}", record.env_id)),
+                });
+                continue;
+            }
+            grouped
+                .entry(record.env_id.clone())
+                .or_default()
+                .push((index, record));
+        }
+
+        for (env_id, group) in grouped {
+            let Some(environment) = environments.environment(env_id.as_str()) else {
+                for (index, record) in group {
+                    entries[index] = Some(JobListResultEntry {
+                        handle: Some(handle_from_record(&record)),
+                        summary: None,
+                        error: Some(format!("environment is not reachable: {}", record.env_id)),
+                    });
+                }
+                continue;
+            };
+            let Some(jobs) = environment.tool_context().jobs.as_ref() else {
+                for (index, record) in group {
+                    entries[index] = Some(JobListResultEntry {
+                        handle: Some(handle_from_record(&record)),
+                        summary: None,
+                        error: Some(format!(
+                            "environment does not support durable jobs: {}",
+                            record.env_id
+                        )),
+                    });
+                }
+                continue;
+            };
+            let namespace = group
+                .first()
+                .map(|(_, record)| record.namespace.clone())
+                .unwrap_or_else(|| session_id.as_str().to_owned());
+            let job_ids = group
+                .iter()
+                .map(|(_, record)| record.job_id.clone())
+                .collect::<Vec<_>>();
+            match jobs
+                .read_jobs(ReadJobsParams {
+                    namespace,
+                    jobs: job_ids,
+                    after_seq: None,
+                    max_bytes: None,
+                    include_artifacts: false,
+                    wait_ms: None,
+                })
+                .await
+            {
+                Ok(response) => {
+                    let mut summaries = response.jobs.into_iter();
+                    for (index, record) in group {
+                        entries[index] = Some(job_list_entry_from_response(
+                            handle_from_record(&record),
+                            summaries.next(),
+                        ));
+                    }
+                }
+                Err(error) => {
+                    for (index, record) in group {
+                        entries[index] = Some(JobListResultEntry {
+                            handle: Some(handle_from_record(&record)),
+                            summary: None,
+                            error: Some(error.to_string()),
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(JobListResultSet {
+            jobs: entries
+                .into_iter()
+                .map(|entry| {
+                    entry.unwrap_or(JobListResultEntry {
+                        handle: None,
+                        summary: None,
+                        error: Some("job_list internal result missing".to_owned()),
+                    })
+                })
+                .collect(),
+        })
+    }
+
+    async fn preflight_environment_job_wait(
+        &self,
+        request: &ToolInvocationBatchRequest,
+        call: &engine::ToolInvocationRequest,
+        environments: &SessionEnvironmentManager,
+        active_env_target: Option<&engine::ToolExecutionTarget>,
+        args: JobWaitArgs,
+    ) -> Result<EnvironmentJobWaitPreflight, CoreAgentIoError> {
+        let result = self
+            .environment_job_wait_result(
+                &request.session_id,
+                active_env_target,
+                environments,
+                args.clone(),
+                true,
+            )
+            .await?;
+        if result.outcome != JobWaitOutcome::Pending {
+            let visible = format!(
+                "job_wait outcome: {:?}\n{}",
+                result.outcome,
+                visible_job_read_output(&result.jobs)
+            );
+            let tool_result = self.succeeded_tool_result(call, &result, visible).await?;
+            return Ok(EnvironmentJobWaitPreflight::Completed(tool_result));
+        }
+        if result.jobs.iter().any(|entry| entry.error.is_some()) {
+            let visible = format!(
+                "job_wait outcome: {:?}\n{}",
+                result.outcome,
+                visible_job_read_output(&result.jobs)
+            );
+            let tool_result = self.succeeded_tool_result(call, &result, visible).await?;
+            return Ok(EnvironmentJobWaitPreflight::Completed(tool_result));
+        }
+        let handles = result
+            .jobs
+            .iter()
+            .filter_map(|entry| entry.handle.clone())
+            .map(environment_job_handle_from_tool_handle)
+            .collect::<Vec<_>>();
+        Ok(EnvironmentJobWaitPreflight::Deferred(
+            EnvironmentJobWaitDirective {
+                call_id: call.call_id.clone(),
+                handles,
+                mode: environment_job_wait_mode(args.mode),
+                terminal_policy: environment_job_wait_terminal_policy(args.terminal_policy),
+                timeout_ms: args.timeout_ms,
+                output_bytes: args.output_bytes,
+                include_artifacts: args.include_artifacts,
+            },
+        ))
+    }
+
+    async fn environment_job_wait_result(
+        &self,
+        session_id: &SessionId,
+        active_env_target: Option<&engine::ToolExecutionTarget>,
+        environments: &SessionEnvironmentManager,
+        args: JobWaitArgs,
+        allow_timeout: bool,
+    ) -> Result<JobWaitResult, CoreAgentIoError> {
+        let read = self
+            .read_environment_jobs(
+                session_id,
+                active_env_target,
+                environments,
+                args.jobs,
+                args.output_bytes,
+                None,
+                args.include_artifacts,
+            )
+            .await?;
+        let satisfied = wait_satisfied(&read.entries, args.mode, args.terminal_policy);
+        let outcome = if satisfied {
+            JobWaitOutcome::Satisfied
+        } else if allow_timeout && matches!(args.timeout_ms, Some(0)) {
+            JobWaitOutcome::Timeout
+        } else {
+            JobWaitOutcome::Pending
+        };
+        Ok(JobWaitResult {
+            outcome,
+            jobs: read.entries,
+        })
+    }
+
+    async fn read_environment_jobs(
+        &self,
+        session_id: &SessionId,
+        active_env_target: Option<&engine::ToolExecutionTarget>,
+        environments: &SessionEnvironmentManager,
+        handles: Vec<JobHandleArg>,
+        output_bytes: Option<usize>,
+        after_seq: Option<u64>,
+        include_artifacts: bool,
+    ) -> Result<EnvironmentJobRead, CoreAgentIoError> {
+        let mut entries = Vec::with_capacity(handles.len());
+        for handle in handles {
+            let resolved = match self.resolve_job_handle_arg(session_id, active_env_target, handle)
+            {
+                Ok(handle) => handle,
+                Err(error) => {
+                    entries.push(JobReadResultEntry {
+                        handle: None,
+                        summary: None,
+                        output_chunks: Vec::new(),
+                        output_next_seq: 0,
+                        artifacts: Vec::new(),
+                        error: Some(error),
+                    });
+                    continue;
+                }
+            };
+            let record = match self.read_job_handle_record(&resolved).await {
+                Ok(record) => record,
+                Err(error) => {
+                    entries.push(JobReadResultEntry {
+                        handle: Some(resolved),
+                        summary: None,
+                        output_chunks: Vec::new(),
+                        output_next_seq: 0,
+                        artifacts: Vec::new(),
+                        error: Some(error),
+                    });
+                    continue;
+                }
+            };
+            let Some(environment) = environments.environment(record.env_id.as_str()) else {
+                entries.push(JobReadResultEntry {
+                    handle: Some(handle_from_record(&record)),
+                    summary: None,
+                    output_chunks: Vec::new(),
+                    output_next_seq: 0,
+                    artifacts: Vec::new(),
+                    error: Some(format!("environment is not reachable: {}", record.env_id)),
+                });
+                continue;
+            };
+            let Some(jobs) = environment.tool_context().jobs.as_ref() else {
+                entries.push(JobReadResultEntry {
+                    handle: Some(handle_from_record(&record)),
+                    summary: None,
+                    output_chunks: Vec::new(),
+                    output_next_seq: 0,
+                    artifacts: Vec::new(),
+                    error: Some(format!(
+                        "environment does not support durable jobs: {}",
+                        record.env_id
+                    )),
+                });
+                continue;
+            };
+            match jobs
+                .read_jobs(ReadJobsParams {
+                    namespace: record.namespace.clone(),
+                    jobs: vec![record.job_id.clone()],
+                    after_seq,
+                    max_bytes: output_bytes,
+                    include_artifacts,
+                    wait_ms: None,
+                })
+                .await
+            {
+                Ok(response) => {
+                    entries.push(job_read_entry_from_response(
+                        handle_from_record(&record),
+                        response.jobs.into_iter().next(),
+                    ));
+                }
+                Err(error) => {
+                    entries.push(JobReadResultEntry {
+                        handle: Some(handle_from_record(&record)),
+                        summary: None,
+                        output_chunks: Vec::new(),
+                        output_next_seq: 0,
+                        artifacts: Vec::new(),
+                        error: Some(error.to_string()),
+                    });
+                }
+            }
+        }
+        Ok(EnvironmentJobRead { entries })
+    }
+
+    async fn cancel_environment_jobs(
+        &self,
+        session_id: &SessionId,
+        active_env_target: Option<&engine::ToolExecutionTarget>,
+        environments: &SessionEnvironmentManager,
+        args: JobCancelArgs,
+    ) -> Result<JobCancelResultSet, CoreAgentIoError> {
+        let mut entries = Vec::with_capacity(args.jobs.len());
+        for handle in args.jobs {
+            let resolved = match self.resolve_job_handle_arg(session_id, active_env_target, handle)
+            {
+                Ok(handle) => handle,
+                Err(error) => {
+                    entries.push(JobCancelResultEntry {
+                        handle: None,
+                        summary: None,
+                        error: Some(error),
+                    });
+                    continue;
+                }
+            };
+            let record = match self.read_job_handle_record(&resolved).await {
+                Ok(record) => record,
+                Err(error) => {
+                    entries.push(JobCancelResultEntry {
+                        handle: Some(resolved),
+                        summary: None,
+                        error: Some(error),
+                    });
+                    continue;
+                }
+            };
+            let Some(environment) = environments.environment(record.env_id.as_str()) else {
+                entries.push(JobCancelResultEntry {
+                    handle: Some(handle_from_record(&record)),
+                    summary: None,
+                    error: Some(format!("environment is not reachable: {}", record.env_id)),
+                });
+                continue;
+            };
+            let Some(jobs) = environment.tool_context().jobs.as_ref() else {
+                entries.push(JobCancelResultEntry {
+                    handle: Some(handle_from_record(&record)),
+                    summary: None,
+                    error: Some(format!(
+                        "environment does not support durable jobs: {}",
+                        record.env_id
+                    )),
+                });
+                continue;
+            };
+            match jobs
+                .cancel_jobs(host_protocol::data::jobs::CancelJobsParams {
+                    namespace: record.namespace.clone(),
+                    jobs: vec![record.job_id.clone()],
+                    scope: args.scope,
+                    force: args.force,
+                })
+                .await
+            {
+                Ok(response) => {
+                    let summary = response.jobs.into_iter().next();
+                    entries.push(JobCancelResultEntry {
+                        handle: Some(handle_from_record(&record)),
+                        summary,
+                        error: None,
+                    });
+                }
+                Err(error) => entries.push(JobCancelResultEntry {
+                    handle: Some(handle_from_record(&record)),
+                    summary: None,
+                    error: Some(error.to_string()),
+                }),
+            }
+        }
+        Ok(JobCancelResultSet { jobs: entries })
+    }
+
+    async fn read_tool_args<T>(
+        &self,
+        call: &engine::ToolInvocationRequest,
+    ) -> Result<T, CoreAgentIoError>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        let bytes = self
+            .blobs
+            .read_bytes(&call.arguments_ref)
+            .await
+            .map_err(|error| io_error(format!("read tool arguments: {error}")))?;
+        serde_json::from_slice(&bytes)
+            .map_err(|error| io_error(format!("invalid JSON tool arguments: {error}")))
+    }
+
+    async fn succeeded_tool_result<T: serde::Serialize>(
+        &self,
+        call: &engine::ToolInvocationRequest,
+        output: &T,
+        visible: impl Into<String>,
+    ) -> Result<ToolInvocationResult, CoreAgentIoError> {
+        let output_ref = self
+            .blobs
+            .put_bytes(serde_json::to_vec(output).map_err(io_error)?)
+            .await
+            .map_err(map_blob_error)?;
+        let visible_ref = self
+            .blobs
+            .put_bytes(visible.into().into_bytes())
+            .await
+            .map_err(map_blob_error)?;
+        Ok(ToolInvocationResult {
+            call_id: call.call_id.clone(),
+            status: ToolCallStatus::Succeeded,
+            output_ref: Some(output_ref),
+            model_visible_context_entries: vec![ToolInvocationResult::tool_result_context_entry(
+                &call.call_id,
+                ToolCallStatus::Succeeded,
+                visible_ref,
+            )],
+            error_ref: None,
+            effects: Vec::new(),
+        })
+    }
+
+    fn resolve_env_id(
+        &self,
+        explicit_env_id: Option<&str>,
+        active_env_target: Option<&engine::ToolExecutionTarget>,
+    ) -> Result<EnvironmentId, String> {
+        let env_id = if let Some(env_id) = explicit_env_id {
+            env_id
+        } else {
+            let Some(target) = active_env_target else {
+                return Err("job tool requires env_id or an active environment target".to_owned());
+            };
+            if target.namespace != tools::targets::ENV_TARGET_NAMESPACE {
+                return Err(format!(
+                    "active tool target is not an environment: {}:{}",
+                    target.namespace, target.id
+                ));
+            }
+            target.id.as_str()
+        };
+        EnvironmentId::try_new(env_id).map_err(|error| format!("invalid env_id: {error}"))
+    }
+
+    async fn read_ready_binding(
+        &self,
+        session_id: &SessionId,
+        env_id: &EnvironmentId,
+    ) -> Result<SessionEnvironmentBindingRecord, String> {
+        let Some(bindings) = &self.environment_bindings else {
+            return Err("environment binding store is not configured on this runtime".to_owned());
+        };
+        let binding = bindings
+            .read_binding(session_id, env_id)
+            .await
+            .map_err(|error| error.to_string())?;
+        if binding.status != SessionEnvironmentBindingStatus::Ready {
+            return Err(format!("environment is not ready: {}", env_id.as_str()));
+        }
+        Ok(binding)
+    }
+
+    fn resolve_job_handle_arg(
+        &self,
+        current_session_id: &SessionId,
+        active_env_target: Option<&engine::ToolExecutionTarget>,
+        handle: JobHandleArg,
+    ) -> Result<JobHandle, String> {
+        let session_id = match handle.session_id {
+            Some(session_id) => SessionId::try_new(session_id)
+                .map_err(|error| format!("invalid job handle session_id: {error}"))?,
+            None => current_session_id.clone(),
+        };
+        if &session_id != current_session_id {
+            return Err("cross-session environment job access is not supported".to_owned());
+        }
+        let env_id = self.resolve_env_id(handle.env_id.as_deref(), active_env_target)?;
+        Ok(JobHandle {
+            session_id: session_id.as_str().to_owned(),
+            env_id: env_id.as_str().to_owned(),
+            job_id: handle.job_id,
+        })
+    }
+
+    async fn read_job_handle_record(&self, handle: &JobHandle) -> Result<JobHandleRecord, String> {
+        let Some(job_store) = &self.job_handles else {
+            return Err("job handle store is not configured on this runtime".to_owned());
+        };
+        let session_id = SessionId::try_new(handle.session_id.clone())
+            .map_err(|error| format!("invalid job handle session_id: {error}"))?;
+        let env_id = EnvironmentId::try_new(handle.env_id.clone())
+            .map_err(|error| format!("invalid job handle env_id: {error}"))?;
+        job_store
+            .read_job_handle(&session_id, &env_id, &handle.job_id)
+            .await
+            .map_err(|error| error.to_string())
+    }
+
     async fn environment_manager_for_session(
         &self,
         session_id: &SessionId,
@@ -311,7 +1204,16 @@ impl SessionTools {
         if let Some(cwd) = cwd {
             connection = connection.with_cwd(cwd);
         }
-        let (fs_context, environment_context) = connection.into_contexts(self.blobs.clone());
+        let (fs_context, mut environment_context) = connection.into_contexts(self.blobs.clone());
+        if let Some(credentials) = &self.environment_credentials {
+            environment_context = credentials.wrap_context(
+                environment_context,
+                binding.session_id.clone(),
+                binding.env_id.clone(),
+            );
+        }
+        let environment_context =
+            environment_context.with_session_id(binding.session_id.as_str().to_owned());
         crate::environment::runtime_environment_from_binding_record(&binding, environment_context)
             .map(|environment| environment.with_fs_context(fs_context))
             .map_err(io_error)
@@ -323,7 +1225,10 @@ impl SessionTools {
         environments: &SessionEnvironmentManager,
         active_env_target: Option<&engine::ToolExecutionTarget>,
     ) -> Result<InlineToolRuntime, CoreAgentIoError> {
-        let catalog = workspace_catalog(environments.has_environments())?;
+        let catalog = workspace_catalog(
+            environments.has_process_environment(),
+            environments.has_job_environment(),
+        )?;
         let session_fs = if mounts.is_empty() {
             None
         } else {
@@ -346,6 +1251,183 @@ impl SessionTools {
             catalog,
         ))
     }
+}
+
+enum EnvironmentJobWaitPreflight {
+    Completed(ToolInvocationResult),
+    Deferred(EnvironmentJobWaitDirective),
+}
+
+struct EnvironmentJobRead {
+    entries: Vec<JobReadResultEntry>,
+}
+
+fn build_start_jobs_params(
+    request: &ToolInvocationBatchRequest,
+    call: &engine::ToolInvocationRequest,
+    env_id: &EnvironmentId,
+    args: JobStartArgs,
+) -> Result<StartJobsParams, String> {
+    if args.jobs.is_empty() {
+        return Err("job_start requires at least one job".to_owned());
+    }
+    let namespace = request.session_id.as_str().to_owned();
+    let request_id = job_request_id(request, call);
+    let jobs = args
+        .jobs
+        .into_iter()
+        .enumerate()
+        .map(|(index, spec)| {
+            let job_id = spec
+                .job_id
+                .clone()
+                .unwrap_or_else(|| derived_job_id(request, call, env_id, index));
+            spec.into_host_spec(job_id)
+                .map_err(|error| error.to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(StartJobsParams {
+        namespace,
+        request_id,
+        jobs,
+    })
+}
+
+fn job_request_id(
+    request: &ToolInvocationBatchRequest,
+    call: &engine::ToolInvocationRequest,
+) -> String {
+    format!(
+        "jobreq:{}:{}:{}:{}",
+        request.run_id.as_u64(),
+        request.turn_id.as_u64(),
+        request.batch_id.as_u64(),
+        call.call_id.as_str()
+    )
+}
+
+fn derived_job_id(
+    request: &ToolInvocationBatchRequest,
+    call: &engine::ToolInvocationRequest,
+    env_id: &EnvironmentId,
+    index: usize,
+) -> JobId {
+    let seed = format!(
+        "{}:{}:{}:{}:{}:{}:{}",
+        request.session_id,
+        env_id.as_str(),
+        request.run_id.as_u64(),
+        request.turn_id.as_u64(),
+        request.batch_id.as_u64(),
+        call.call_id.as_str(),
+        index
+    );
+    let hash = BlobRef::from_bytes(seed.as_bytes());
+    let suffix = &hash.as_str()["sha256:".len().."sha256:".len() + 24];
+    JobId::new(format!("job-{suffix}"))
+}
+
+fn start_request_hash(params: &StartJobsParams) -> Result<String, String> {
+    serde_json::to_vec(params)
+        .map(|bytes| BlobRef::from_bytes(&bytes).to_string())
+        .map_err(|error| format!("encode job start request hash: {error}"))
+}
+
+fn u64_to_i64(value: u64) -> Result<i64, CoreAgentIoError> {
+    i64::try_from(value).map_err(|_| io_error("current timestamp does not fit in i64 milliseconds"))
+}
+
+fn handle_from_record(record: &JobHandleRecord) -> JobHandle {
+    JobHandle {
+        session_id: record.session_id.as_str().to_owned(),
+        env_id: record.env_id.as_str().to_owned(),
+        job_id: record.job_id.clone(),
+    }
+}
+
+fn environment_job_handle_from_tool_handle(handle: JobHandle) -> EnvironmentJobHandle {
+    EnvironmentJobHandle {
+        session_id: handle.session_id,
+        env_id: handle.env_id,
+        job_id: handle.job_id.as_str().to_owned(),
+    }
+}
+
+fn environment_job_wait_mode(mode: JobWaitMode) -> EnvironmentJobWaitMode {
+    match mode {
+        JobWaitMode::All => EnvironmentJobWaitMode::All,
+        JobWaitMode::Any => EnvironmentJobWaitMode::Any,
+    }
+}
+
+fn environment_job_wait_terminal_policy(
+    policy: JobWaitTerminalPolicy,
+) -> EnvironmentJobWaitTerminalPolicy {
+    match policy {
+        JobWaitTerminalPolicy::AnyTerminal => EnvironmentJobWaitTerminalPolicy::AnyTerminal,
+        JobWaitTerminalPolicy::AllSucceeded => EnvironmentJobWaitTerminalPolicy::AllSucceeded,
+    }
+}
+
+fn job_read_entry_from_response(
+    handle: JobHandle,
+    response: Option<HostJobReadResult>,
+) -> JobReadResultEntry {
+    match response {
+        Some(response) => JobReadResultEntry {
+            handle: Some(handle),
+            summary: Some(response.summary),
+            output_chunks: response.output_chunks,
+            output_next_seq: response.output_next_seq,
+            artifacts: response.artifacts,
+            error: None,
+        },
+        None => JobReadResultEntry {
+            handle: Some(handle),
+            summary: None,
+            output_chunks: Vec::new(),
+            output_next_seq: 0,
+            artifacts: Vec::new(),
+            error: Some("provider returned no job result".to_owned()),
+        },
+    }
+}
+
+fn job_list_entry_from_response(
+    handle: JobHandle,
+    response: Option<HostJobReadResult>,
+) -> JobListResultEntry {
+    match response {
+        Some(response) => JobListResultEntry {
+            handle: Some(handle),
+            summary: Some(response.summary),
+            error: None,
+        },
+        None => JobListResultEntry {
+            handle: Some(handle),
+            summary: None,
+            error: Some("provider returned no job result".to_owned()),
+        },
+    }
+}
+
+fn resolve_job_list_session_id(
+    current_session_id: &SessionId,
+    explicit_session_id: Option<String>,
+) -> Result<SessionId, CoreAgentIoError> {
+    explicit_session_id
+        .map(SessionId::try_new)
+        .transpose()
+        .map_err(|error| io_error(format!("invalid session_id: {error}")))?
+        .map_or_else(|| Ok(current_session_id.clone()), Ok)
+}
+
+fn normalize_job_list_limit(limit: Option<usize>) -> Result<usize, CoreAgentIoError> {
+    let limit = limit.unwrap_or(DEFAULT_JOB_LIST_LIMIT);
+    if limit == 0 {
+        return Err(io_error("job_list limit must be greater than zero"));
+    }
+    Ok(limit.min(MAX_JOB_LIST_LIMIT))
 }
 
 async fn connect_host_data_client(
@@ -389,7 +1471,10 @@ fn has_active_environment_fs(
             .is_some_and(|environment| environment.fs_context().is_some())
 }
 
-fn workspace_catalog(include_process_tools: bool) -> Result<ToolCatalog, CoreAgentIoError> {
+fn workspace_catalog(
+    include_process_tools: bool,
+    include_job_tools: bool,
+) -> Result<ToolCatalog, CoreAgentIoError> {
     let mut catalog = ToolCatalog::new();
     for api_kind in [
         ProviderApiKind::OpenAiResponses,
@@ -400,6 +1485,9 @@ fn workspace_catalog(include_process_tools: bool) -> Result<ToolCatalog, CoreAge
         let mut config = ToolsetConfig::workspace();
         if include_process_tools {
             config.builtin.process = EnvironmentToolsetConfig::basic();
+        }
+        if include_job_tools {
+            config.builtin.process = config.builtin.process.with_jobs();
         }
         config.web_fetch = WebFetchToolConfig::enabled();
         let toolset = resolve_toolset(ToolsetEnvironment { target: &target }, &config)
@@ -423,6 +1511,13 @@ impl CoreAgentTools for SessionTools {
             .any(|call| call.tool_name.as_str() == AGENT_WAIT_TOOL_NAME);
         if has_agent_wait_call && request.calls.len() == 1 {
             return self.invoke_lone_agent_wait_batch(request).await;
+        }
+        let has_job_wait_call = request
+            .calls
+            .iter()
+            .any(|call| call.tool_name.as_str() == JOB_WAIT_TOOL_NAME);
+        if has_job_wait_call && request.calls.len() == 1 {
+            return self.invoke_lone_environment_job_wait_batch(request).await;
         }
         let has_generic_runtime_call = request
             .calls
@@ -473,6 +1568,16 @@ impl CoreAgentTools for SessionTools {
                 );
             } else if is_fleet_tool(&call.tool_name) {
                 results.push(self.invoke_fleet_call(&request, call).await?);
+            } else if is_environment_job_tool_name(call.tool_name.as_str()) {
+                results.push(
+                    self.invoke_environment_job_call(
+                        &request,
+                        call,
+                        &environments,
+                        active_env_target,
+                    )
+                    .await?,
+                );
             } else if !has_session_fs
                 && call
                     .execution_target
@@ -915,6 +2020,7 @@ mod tests {
                     process_stdin: true,
                     network: false,
                     persistent: false,
+                    ..EnvironmentCapabilities::default()
                 },
                 exec_target: Some(tools::targets::environment_target("test")),
                 cwd: Some(FsPath::new("/workspace").expect("cwd")),

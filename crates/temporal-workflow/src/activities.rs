@@ -3,11 +3,12 @@ use temporalio_macros::activities;
 use temporalio_sdk::activities::{ActivityContext, ActivityError};
 
 use crate::{
-    AppendEventsRequest, ContextCompactActivityRequest, CreateOrLoadSessionRequest,
-    CreateOrLoadSessionResult, LlmGenerateActivityRequest, PreprocessRunInputActivityRequest,
-    PreprocessRunInputActivityResult, PutBlobRequest, ReadBlobRequest, ReadBlobResult,
-    SkillCatalogRefreshActivityRequest, SkillCatalogRefreshActivityResult,
-    ToolInvokeBatchActivityRequest,
+    AppendEventsRequest, CheckEnvironmentJobWaitActivityRequest,
+    CheckEnvironmentJobWaitActivityResult, ContextCompactActivityRequest,
+    CreateOrLoadSessionRequest, CreateOrLoadSessionResult, LlmGenerateActivityRequest,
+    PreprocessRunInputActivityRequest, PreprocessRunInputActivityResult, PutBlobRequest,
+    ReadBlobRequest, ReadBlobResult, SkillCatalogRefreshActivityRequest,
+    SkillCatalogRefreshActivityResult, ToolInvokeBatchActivityRequest,
 };
 
 pub const ACTIVITY_CREATE_OR_LOAD_SESSION: &str = "WorkflowActivities::create_or_load_session";
@@ -19,6 +20,8 @@ pub const ACTIVITY_PREPROCESS_RUN_INPUT: &str = "WorkflowActivities::preprocess_
 pub const ACTIVITY_CONTEXT_COMPACT: &str = "WorkflowActivities::context_compact";
 pub const ACTIVITY_TOOL_INVOKE_BATCH: &str = "WorkflowActivities::tool_invoke_batch";
 pub const ACTIVITY_SKILL_CATALOG_REFRESH: &str = "WorkflowActivities::skill_catalog_refresh";
+pub const ACTIVITY_CHECK_ENVIRONMENT_JOB_WAIT: &str =
+    "WorkflowActivities::check_environment_job_wait";
 
 pub struct WorkflowActivities;
 
@@ -93,6 +96,14 @@ impl WorkflowActivities {
         _ctx: ActivityContext,
         _request: SkillCatalogRefreshActivityRequest,
     ) -> Result<SkillCatalogRefreshActivityResult, ActivityError> {
+        unimplemented!("workflow activity definition only")
+    }
+
+    #[activity(name = ACTIVITY_CHECK_ENVIRONMENT_JOB_WAIT)]
+    pub async fn check_environment_job_wait(
+        _ctx: ActivityContext,
+        _request: CheckEnvironmentJobWaitActivityRequest,
+    ) -> Result<CheckEnvironmentJobWaitActivityResult, ActivityError> {
         unimplemented!("workflow activity definition only")
     }
 }

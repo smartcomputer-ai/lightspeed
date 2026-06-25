@@ -9,9 +9,12 @@ use host_protocol::{
     },
     data::{
         handshake::{InitializeParams, InitializedParams},
+        jobs::{
+            JobDependencyPolicy, JobStartSpec, ListJobsParams, ReadJobsParams, StartJobsParams,
+        },
         process::{ReadProcessParams, StartProcessParams},
     },
-    shared::{CURRENT_PROTOCOL_VERSION, HostScope, ProcessId},
+    shared::{CURRENT_PROTOCOL_VERSION, HostScope, JobId, ProcessId},
 };
 use tokio::net::TcpListener;
 
@@ -68,6 +71,9 @@ async fn bridge_serves_controller_attach_and_process_data_plane() {
         .await
         .expect("attach target");
     assert!(attached.connection.capabilities.process_start);
+    assert!(attached.connection.capabilities.job_start);
+    assert!(attached.connection.capabilities.job_read);
+    assert!(attached.connection.capabilities.job_cancel);
 
     let mut data = HostDataClient::connect(
         &attached.connection.endpoint,
@@ -95,8 +101,9 @@ async fn bridge_serves_controller_attach_and_process_data_plane() {
             "-c".to_owned(),
             "printf hello".to_owned(),
         ],
-        cwd: attached.connection.default_cwd,
+        cwd: attached.connection.default_cwd.clone(),
         env: BTreeMap::new(),
+        secret_env: BTreeMap::new(),
         stdin: None,
         timeout_ms: Some(5_000),
         tty: false,
@@ -120,6 +127,57 @@ async fn bridge_serves_controller_attach_and_process_data_plane() {
         .collect::<Vec<_>>();
     assert_eq!(stdout, b"hello");
     assert_eq!(output.exit_code, Some(0));
+
+    data.start_jobs(&StartJobsParams {
+        namespace: "session_1".to_owned(),
+        request_id: "server".to_owned(),
+        jobs: vec![JobStartSpec {
+            job_id: JobId::new("job-1"),
+            name: Some("server-job".to_owned()),
+            argv: vec![
+                "/bin/sh".to_owned(),
+                "-c".to_owned(),
+                "printf job-ok".to_owned(),
+            ],
+            cwd: attached.connection.default_cwd.clone(),
+            env: BTreeMap::new(),
+            secret_env: BTreeMap::new(),
+            stdin: None,
+            timeout_ms: Some(5_000),
+            depends_on: Vec::new(),
+            dependency_policy: JobDependencyPolicy::AllSucceeded,
+            queue_key: None,
+        }],
+    })
+    .await
+    .expect("start job");
+    let listed = data
+        .list_jobs(&ListJobsParams {
+            namespace: "session_1".to_owned(),
+            limit: Some(10),
+        })
+        .await
+        .expect("list jobs");
+    assert_eq!(listed.jobs[0].job_id.as_str(), "job-1");
+    let jobs = data
+        .read_jobs(&ReadJobsParams {
+            namespace: "session_1".to_owned(),
+            jobs: vec![JobId::new("job-1")],
+            after_seq: None,
+            max_bytes: None,
+            include_artifacts: false,
+            wait_ms: Some(5_000),
+        })
+        .await
+        .expect("read job");
+    let job = &jobs.jobs[0];
+    assert_eq!(job.summary.exit_code, Some(0));
+    let job_stdout = job
+        .output_chunks
+        .iter()
+        .flat_map(|chunk| chunk.chunk.as_slice().to_vec())
+        .collect::<Vec<_>>();
+    assert_eq!(job_stdout, b"job-ok");
 
     server_task.abort();
 }

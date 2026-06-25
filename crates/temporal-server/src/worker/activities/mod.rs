@@ -7,14 +7,15 @@ use temporalio_sdk::activities::{ActivityContext, ActivityError};
 
 use crate::fleet::FleetChildRuntime;
 use crate::worker::{
-    ACTIVITY_APPEND_EVENTS, ACTIVITY_CONTEXT_COMPACT, ACTIVITY_CREATE_OR_LOAD_SESSION,
-    ACTIVITY_LLM_GENERATE, ACTIVITY_PREPROCESS_RUN_INPUT, ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB,
-    ACTIVITY_SKILL_CATALOG_REFRESH, ACTIVITY_TOOL_INVOKE_BATCH, AppendEventsRequest,
-    ContextCompactActivityRequest, CreateOrLoadSessionRequest, CreateOrLoadSessionResult,
-    LlmGenerateActivityRequest, PreprocessRunInputActivityRequest,
-    PreprocessRunInputActivityResult, PutBlobRequest, ReadBlobRequest, ReadBlobResult,
-    SkillCatalogRefreshActivityRequest, SkillCatalogRefreshActivityResult,
-    ToolInvokeBatchActivityRequest,
+    ACTIVITY_APPEND_EVENTS, ACTIVITY_CHECK_ENVIRONMENT_JOB_WAIT, ACTIVITY_CONTEXT_COMPACT,
+    ACTIVITY_CREATE_OR_LOAD_SESSION, ACTIVITY_LLM_GENERATE, ACTIVITY_PREPROCESS_RUN_INPUT,
+    ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB, ACTIVITY_SKILL_CATALOG_REFRESH,
+    ACTIVITY_TOOL_INVOKE_BATCH, AppendEventsRequest, CheckEnvironmentJobWaitActivityRequest,
+    CheckEnvironmentJobWaitActivityResult, ContextCompactActivityRequest,
+    CreateOrLoadSessionRequest, CreateOrLoadSessionResult, LlmGenerateActivityRequest,
+    PreprocessRunInputActivityRequest, PreprocessRunInputActivityResult, PutBlobRequest,
+    ReadBlobRequest, ReadBlobResult, SkillCatalogRefreshActivityRequest,
+    SkillCatalogRefreshActivityResult, ToolInvokeBatchActivityRequest,
 };
 
 mod common;
@@ -119,6 +120,10 @@ mod tests {
         assert_eq!(
             WorkerActivities::skill_catalog_refresh.name(),
             temporal_workflow::WorkflowActivities::skill_catalog_refresh.name()
+        );
+        assert_eq!(
+            WorkerActivities::check_environment_job_wait.name(),
+            temporal_workflow::WorkflowActivities::check_environment_job_wait.name()
         );
     }
 
@@ -295,5 +300,14 @@ impl WorkerActivities {
         request: SkillCatalogRefreshActivityRequest,
     ) -> Result<SkillCatalogRefreshActivityResult, ActivityError> {
         skills::refresh_skill_catalog(self.state.skill_catalog(), request).await
+    }
+
+    #[activity(name = ACTIVITY_CHECK_ENVIRONMENT_JOB_WAIT)]
+    pub async fn check_environment_job_wait(
+        self: Arc<Self>,
+        _ctx: ActivityContext,
+        request: CheckEnvironmentJobWaitActivityRequest,
+    ) -> Result<CheckEnvironmentJobWaitActivityResult, ActivityError> {
+        tools::check_environment_job_wait(self.state.tools(), request).await
     }
 }

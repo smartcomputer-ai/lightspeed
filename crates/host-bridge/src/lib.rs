@@ -1,6 +1,7 @@
 pub mod config;
 pub mod filesystem;
 pub mod gateway;
+pub mod jobs;
 pub mod process;
 pub mod rpc;
 pub mod server;
@@ -25,7 +26,9 @@ use host_protocol::{
     },
 };
 
-use crate::{config::BridgeConfig, filesystem::LocalFileSystem, process::ProcessManager};
+use crate::{
+    config::BridgeConfig, filesystem::LocalFileSystem, jobs::JobManager, process::ProcessManager,
+};
 
 #[derive(Clone)]
 pub struct BridgeRuntime {
@@ -34,6 +37,7 @@ pub struct BridgeRuntime {
     capabilities: HostCapabilities,
     filesystem: LocalFileSystem,
     processes: ProcessManager,
+    jobs: JobManager,
     next_connection_id: Arc<AtomicU64>,
 }
 
@@ -47,12 +51,14 @@ impl BridgeRuntime {
             !config.read_only_fs,
         );
         let processes = ProcessManager::new(config.cwd.clone(), config.fs_root.clone());
+        let jobs = JobManager::new(config.cwd.clone(), config.fs_root.clone())?;
         Ok(Self {
             config: Arc::new(config),
             advertise_base_url: Arc::new(advertise_base_url),
             capabilities,
             filesystem,
             processes,
+            jobs,
             next_connection_id: Arc::new(AtomicU64::new(1)),
         })
     }
@@ -139,6 +145,10 @@ impl BridgeRuntime {
         &self.processes
     }
 
+    pub fn jobs(&self) -> &JobManager {
+        &self.jobs
+    }
+
     fn host_cwd(&self) -> anyhow::Result<HostPath> {
         let cwd = self.config.cwd.to_string_lossy();
         Ok(HostPath::new(cwd.as_ref())?)
@@ -155,6 +165,13 @@ fn host_capabilities(config: &BridgeConfig) -> HostCapabilities {
         process_output_polling: true,
         process_output_notifications: false,
         process_pty: false,
+        job_start: true,
+        job_list: true,
+        job_read: true,
+        job_cancel: true,
+        job_wait_hint: false,
+        job_dependencies: true,
+        job_queue_keys: true,
     }
 }
 

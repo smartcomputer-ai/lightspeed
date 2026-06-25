@@ -1,0 +1,38 @@
+{
+  "jobs": [
+    {
+      "artifacts": [
+        {
+          "kind": "file",
+          "metadata": {
+            "role": "report"
+          },
+          "path": "/workspace/result.txt"
+        }
+      ],
+      "outputChunks": [
+        {
+          "chunk": "b2sK",
+          "seq": 1,
+          "stream": "stdout"
+        }
+      ],
+      "outputNextSeq": 2,
+      "summary": {
+        "createdAtMs": 1,
+        "dependencies": [
+          "checkout"
+        ],
+        "exitCode": 0,
+        "finishedAtMs": 4,
+        "jobId": "tests",
+        "name": "tests",
+        "namespace": "session_1",
+        "queuedAtMs": 2,
+        "queueKey": "repo",
+        "startedAtMs": 3,
+        "status": "succeeded"
+      }
+    }
+  ]
+}

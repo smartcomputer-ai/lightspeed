@@ -37,6 +37,7 @@ struct ProcessEntry {
 struct ProcessState {
     child: Child,
     stdin: Option<ChildStdin>,
+    redactions: Vec<Vec<u8>>,
     chunks: Vec<ProcessOutputChunk>,
     next_seq: u64,
     exited: bool,
@@ -75,6 +76,14 @@ impl ProcessManager {
             .map(|path| self.resolve_cwd(path))
             .transpose()?
             .unwrap_or_else(|| self.cwd.clone());
+        for name in params.secret_env.keys() {
+            if params.env.contains_key(name) {
+                return Err(HostError::new(
+                    HostErrorCode::InvalidRequest,
+                    format!("process env collides with secret env: {name}"),
+                ));
+            }
+        }
 
         let mut command = Command::new(&params.argv[0]);
         command
@@ -83,6 +92,9 @@ impl ProcessManager {
             .envs(params.env.iter())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        for (name, value) in &params.secret_env {
+            command.env(name, value.expose());
+        }
         if params.stdin.is_some() || params.pipe_stdin {
             command.stdin(Stdio::piped());
         } else {
@@ -115,10 +127,17 @@ impl ProcessManager {
         }
 
         let process_id = params.process_id;
+        let redactions = params
+            .secret_env
+            .values()
+            .filter(|value| !value.is_empty())
+            .map(|value| value.expose().as_bytes().to_vec())
+            .collect();
         let entry = Arc::new(ProcessEntry {
             state: Mutex::new(ProcessState {
                 child,
                 stdin,
+                redactions,
                 chunks: Vec::new(),
                 next_seq: 0,
                 exited: false,
@@ -321,12 +340,13 @@ where
             }
         };
         let mut state = entry.state.lock().await;
+        let chunk = redact_bytes(&buffer[..read], &state.redactions);
         let seq = state.next_seq;
         state.next_seq += 1;
         state.chunks.push(ProcessOutputChunk {
             seq,
             stream,
-            chunk: ByteChunk::from(buffer[..read].to_vec()),
+            chunk: ByteChunk::from(chunk),
         });
         entry.notify.notify_waiters();
     }
@@ -412,6 +432,29 @@ fn response_from_state(
     }
 }
 
+fn redact_bytes(bytes: &[u8], redactions: &[Vec<u8>]) -> Vec<u8> {
+    let mut output = bytes.to_vec();
+    for secret in redactions {
+        if secret.is_empty() || secret.len() > output.len() {
+            continue;
+        }
+        let mut index = 0;
+        while let Some(offset) = find_subslice(&output[index..], secret) {
+            let start = index + offset;
+            let end = start + secret.len();
+            output.splice(start..end, b"<redacted>".iter().copied());
+            index = start + b"<redacted>".len();
+        }
+    }
+    output
+}
+
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
 fn normalize_path(path: PathBuf) -> PathBuf {
     let mut normalized = PathBuf::new();
     for component in path.components() {
@@ -431,6 +474,7 @@ fn normalize_path(path: PathBuf) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use host_protocol::shared::SecretString;
 
     #[tokio::test(flavor = "current_thread")]
     async fn process_reports_stdout_stderr_and_exit_code() {
@@ -448,6 +492,7 @@ mod tests {
                 ],
                 cwd: None,
                 env: BTreeMap::new(),
+                secret_env: BTreeMap::new(),
                 stdin: None,
                 timeout_ms: Some(5_000),
                 tty: false,
@@ -496,6 +541,7 @@ mod tests {
                 argv: vec!["/bin/sh".to_owned(), "-c".to_owned(), "cat".to_owned()],
                 cwd: None,
                 env: BTreeMap::new(),
+                secret_env: BTreeMap::new(),
                 stdin: None,
                 timeout_ms: Some(5_000),
                 tty: false,
@@ -527,5 +573,51 @@ mod tests {
             .flat_map(|chunk| chunk.chunk.as_slice().to_vec())
             .collect::<Vec<_>>();
         assert_eq!(stdout, b"hello");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn process_injects_secret_env_and_redacts_output() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().canonicalize().expect("canonical root");
+        let manager = ProcessManager::new(root.clone(), root);
+        let process_id = ProcessId::new("proc-secret");
+        manager
+            .start_process(StartProcessParams {
+                process_id: process_id.clone(),
+                argv: vec![
+                    "/bin/sh".to_owned(),
+                    "-c".to_owned(),
+                    "printf \"$SECRET_TOKEN\"".to_owned(),
+                ],
+                cwd: None,
+                env: BTreeMap::new(),
+                secret_env: BTreeMap::from([(
+                    "SECRET_TOKEN".to_owned(),
+                    SecretString::new("super-secret-token"),
+                )]),
+                stdin: None,
+                timeout_ms: Some(5_000),
+                tty: false,
+                pipe_stdin: false,
+            })
+            .await
+            .expect("start");
+
+        let output = manager
+            .read_process(ReadProcessParams {
+                process_id,
+                after_seq: None,
+                max_bytes: None,
+                wait_ms: None,
+            })
+            .await
+            .expect("read");
+        let stdout = output
+            .chunks
+            .iter()
+            .filter(|chunk| chunk.stream == ProcessOutputStream::Stdout)
+            .flat_map(|chunk| chunk.chunk.as_slice().to_vec())
+            .collect::<Vec<_>>();
+        assert_eq!(stdout, b"<redacted>");
     }
 }

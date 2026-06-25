@@ -326,6 +326,7 @@ impl GatewayAgentApi {
         let config = self.session_toolset_config(
             session_config,
             self.session_has_process_environment(session_id).await?,
+            self.session_has_job_environment(session_id).await?,
         );
         let fs_tools_enabled = config.builtin.fs.enabled();
         let toolset = resolve_toolset(ToolsetEnvironment { target: &target }, &config)

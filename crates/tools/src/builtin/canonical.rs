@@ -1,9 +1,18 @@
 //! Canonical Lightspeed built-in tool surface.
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::{
-    environment::tools::{invoke_run_process, invoke_write_process_stdin},
+    environment::{
+        jobs::{
+            JOB_CANCEL_TOOL_NAME, JOB_LIST_TOOL_NAME, JOB_READ_TOOL_NAME, JOB_START_TOOL_NAME,
+            JOB_WAIT_TOOL_NAME, visible_job_list_output, visible_job_read_output,
+        },
+        tools::{
+            invoke_job_cancel, invoke_job_list, invoke_job_read, invoke_job_start, invoke_job_wait,
+            invoke_run_process, invoke_write_process_stdin,
+        },
+    },
     error::ToolResult,
     fs::tools::{
         invoke_apply_patch, invoke_edit_file, invoke_glob, invoke_grep, invoke_list_dir,
@@ -47,6 +56,17 @@ pub(super) fn description(operation: BuiltinToolOperation, scoped_paths: bool) -
             "Run a process through the configured process executor."
         }
         BuiltinToolOperation::WriteProcessStdin => "Write input to an existing process handle.",
+        BuiltinToolOperation::JobStart => {
+            "Start one or more durable jobs on an environment and return provider-backed handles."
+        }
+        BuiltinToolOperation::JobList => "List the latest durable environment jobs.",
+        BuiltinToolOperation::JobRead => {
+            "Read durable environment job status and bounded output tails."
+        }
+        BuiltinToolOperation::JobWait => {
+            "Join one or more durable environment jobs. Long waits may park the current tool batch."
+        }
+        BuiltinToolOperation::JobCancel => "Cancel durable environment jobs.",
     };
     format!("{text}{path_guidance}")
 }
@@ -186,6 +206,11 @@ pub(super) fn input_schema(operation: BuiltinToolOperation) -> Value {
             ],
             ["handle", "input"],
         ),
+        BuiltinToolOperation::JobStart => job_start_schema(),
+        BuiltinToolOperation::JobList => job_list_schema(),
+        BuiltinToolOperation::JobRead => job_read_schema(),
+        BuiltinToolOperation::JobWait => job_wait_schema(),
+        BuiltinToolOperation::JobCancel => job_cancel_schema(),
     }
 }
 
@@ -271,5 +296,170 @@ pub(super) async fn invoke_json(
             let visible = process_visible_output(&result);
             encode_output(&result, visible)
         }
+        BuiltinToolOperation::JobStart => {
+            let env_ctx = ctx.environment()?;
+            let result = invoke_job_start(env_ctx, decode_args(arguments)?).await?;
+            let visible = result
+                .jobs
+                .iter()
+                .map(|job| format!("{}: {:?}", job.job_id.as_str(), job.status))
+                .collect::<Vec<_>>()
+                .join("\n");
+            encode_output(&result, visible)
+        }
+        BuiltinToolOperation::JobList => {
+            let env_ctx = ctx.environment()?;
+            let result = invoke_job_list(env_ctx, decode_args(arguments)?).await?;
+            let visible = visible_job_list_output(&result.jobs);
+            encode_output(&result, visible)
+        }
+        BuiltinToolOperation::JobRead => {
+            let env_ctx = ctx.environment()?;
+            let result = invoke_job_read(env_ctx, decode_args(arguments)?).await?;
+            let visible = visible_job_read_output(&result.jobs);
+            encode_output(&result, visible)
+        }
+        BuiltinToolOperation::JobWait => {
+            let env_ctx = ctx.environment()?;
+            let result = invoke_job_wait(env_ctx, decode_args(arguments)?).await?;
+            let visible = format!(
+                "{} outcome: {:?}\n{}",
+                JOB_WAIT_TOOL_NAME,
+                result.outcome,
+                visible_job_read_output(&result.jobs)
+            );
+            encode_output(&result, visible)
+        }
+        BuiltinToolOperation::JobCancel => {
+            let env_ctx = ctx.environment()?;
+            let result = invoke_job_cancel(env_ctx, decode_args(arguments)?).await?;
+            let visible = result
+                .jobs
+                .iter()
+                .map(|job| {
+                    job.summary
+                        .as_ref()
+                        .map(|summary| format!("{}: {:?}", summary.job_id.as_str(), summary.status))
+                        .or_else(|| job.error.as_ref().map(|error| format!("error: {error}")))
+                        .unwrap_or_else(|| "job_cancel: no result".to_owned())
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            encode_output(&result, visible)
+        }
     }
+}
+
+fn job_start_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "env_id": { "type": ["string", "null"], "description": "Environment id. Defaults to the active environment." },
+            "jobs": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": ["string", "null"] },
+                        "job_id": { "type": ["string", "null"], "description": "Optional durable job id. If omitted, the runtime derives one." },
+                        "argv": { "type": "array", "items": { "type": "string" } },
+                        "cwd": { "type": ["string", "null"] },
+                        "env": { "type": "object", "additionalProperties": { "type": "string" } },
+                        "stdin": { "type": ["string", "null"] },
+                        "timeout_ms": { "type": ["integer", "null"], "minimum": 0 },
+                        "depends_on": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "job_id": { "type": ["string", "null"] },
+                                    "name": { "type": ["string", "null"] }
+                                },
+                                "additionalProperties": false
+                            }
+                        },
+                        "dependency_policy": { "type": "string", "enum": ["allSucceeded", "allTerminal"] },
+                        "queue_key": { "type": ["string", "null"] }
+                    },
+                    "required": ["argv"],
+                    "additionalProperties": false
+                }
+            }
+        },
+        "required": ["jobs"],
+        "additionalProperties": false,
+        "description": JOB_START_TOOL_NAME
+    })
+}
+
+fn job_handle_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "session_id": { "type": ["string", "null"] },
+            "env_id": { "type": ["string", "null"] },
+            "job_id": { "type": "string" }
+        },
+        "required": ["job_id"],
+        "additionalProperties": false
+    })
+}
+
+fn job_read_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "jobs": { "type": "array", "items": job_handle_schema() },
+            "output_bytes": { "type": ["integer", "null"], "minimum": 0 },
+            "after_seq": { "type": ["integer", "null"], "minimum": 0 },
+            "include_artifacts": { "type": "boolean" }
+        },
+        "required": ["jobs"],
+        "additionalProperties": false,
+        "description": JOB_READ_TOOL_NAME
+    })
+}
+
+fn job_list_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "session_id": { "type": ["string", "null"], "description": "Session id to inspect. Defaults to the calling session." },
+            "env_id": { "type": ["string", "null"], "description": "Optional environment id filter." },
+            "limit": { "type": ["integer", "null"], "minimum": 1, "description": "Maximum number of latest jobs to return." }
+        },
+        "additionalProperties": false,
+        "description": JOB_LIST_TOOL_NAME
+    })
+}
+
+fn job_wait_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "jobs": { "type": "array", "items": job_handle_schema() },
+            "mode": { "type": "string", "enum": ["all", "any"] },
+            "terminal_policy": { "type": "string", "enum": ["any_terminal", "all_succeeded"] },
+            "timeout_ms": { "type": ["integer", "null"], "minimum": 0 },
+            "output_bytes": { "type": ["integer", "null"], "minimum": 0 },
+            "include_artifacts": { "type": "boolean" }
+        },
+        "required": ["jobs"],
+        "additionalProperties": false,
+        "description": JOB_WAIT_TOOL_NAME
+    })
+}
+
+fn job_cancel_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "jobs": { "type": "array", "items": job_handle_schema() },
+            "scope": { "type": "string", "enum": ["job", "dependents", "deck"] },
+            "force": { "type": "boolean" }
+        },
+        "required": ["jobs"],
+        "additionalProperties": false,
+        "description": JOB_CANCEL_TOOL_NAME
+    })
 }

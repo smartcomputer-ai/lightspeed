@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
+use host_protocol::shared::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -27,6 +28,7 @@ pub struct ProcessRequest {
     pub argv: Vec<String>,
     pub cwd: Option<FsPath>,
     pub env: BTreeMap<String, String>,
+    pub secret_env: BTreeMap<String, SecretString>,
     pub stdin: Option<Vec<u8>>,
     pub timeout_ms: Option<u64>,
     pub yield_time_ms: Option<u64>,
@@ -43,6 +45,7 @@ impl ProcessRequest {
             argv: argv.into_iter().map(Into::into).collect(),
             cwd: None,
             env: BTreeMap::new(),
+            secret_env: BTreeMap::new(),
             stdin: None,
             timeout_ms: None,
             yield_time_ms: None,

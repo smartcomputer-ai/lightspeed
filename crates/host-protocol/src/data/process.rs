@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::shared::{ByteChunk, HostPath, ProcessId};
+use crate::shared::{ByteChunk, HostPath, ProcessId, SecretString};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -15,6 +15,8 @@ pub struct StartProcessParams {
     pub cwd: Option<HostPath>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub secret_env: BTreeMap<String, SecretString>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stdin: Option<ByteChunk>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

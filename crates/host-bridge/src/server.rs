@@ -23,10 +23,12 @@ use host_protocol::{
             ReadFileParams, RemoveParams, WriteFileParams,
         },
         handshake::{InitializeParams, InitializeResponse, InitializedParams},
+        jobs::{CancelJobsParams, ListJobsParams, ReadJobsParams, StartJobsParams},
         methods::{
             FS_COPY_METHOD, FS_CREATE_DIRECTORY_METHOD, FS_GET_METADATA_METHOD,
             FS_READ_DIRECTORY_METHOD, FS_READ_FILE_METHOD, FS_REMOVE_METHOD, FS_WRITE_FILE_METHOD,
-            INITIALIZE_METHOD as DATA_INITIALIZE_METHOD, INITIALIZED_METHOD, PROCESS_READ_METHOD,
+            INITIALIZE_METHOD as DATA_INITIALIZE_METHOD, INITIALIZED_METHOD, JOB_CANCEL_METHOD,
+            JOB_LIST_METHOD, JOB_READ_METHOD, JOB_START_METHOD, PROCESS_READ_METHOD,
             PROCESS_START_METHOD, PROCESS_TERMINATE_METHOD, PROCESS_WRITE_METHOD,
         },
         process::{
@@ -336,6 +338,22 @@ async fn handle_data(
         PROCESS_TERMINATE_METHOD => {
             let params = decode_params::<TerminateProcessParams>(params)?;
             encode_result(runtime.processes().terminate_process(params).await?)
+        }
+        JOB_START_METHOD => {
+            let params = decode_params::<StartJobsParams>(params)?;
+            encode_result(runtime.jobs().start_jobs(params).await?)
+        }
+        JOB_LIST_METHOD => {
+            let params = decode_params::<ListJobsParams>(params)?;
+            encode_result(runtime.jobs().list_jobs(params).await?)
+        }
+        JOB_READ_METHOD => {
+            let params = decode_params::<ReadJobsParams>(params)?;
+            encode_result(runtime.jobs().read_jobs(params).await?)
+        }
+        JOB_CANCEL_METHOD => {
+            let params = decode_params::<CancelJobsParams>(params)?;
+            encode_result(runtime.jobs().cancel_jobs(params).await?)
         }
         other => Err(method_not_found(other)),
     }

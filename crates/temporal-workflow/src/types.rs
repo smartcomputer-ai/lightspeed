@@ -117,6 +117,7 @@ pub struct PendingRunTerminalNotification {
 }
 
 pub const FLEET_AGENT_WAIT_DIRECTIVE_KIND: &str = "lightspeed.fleet.agent_wait";
+pub const ENVIRONMENT_JOB_WAIT_DIRECTIVE_KIND: &str = "lightspeed.environment.job_wait";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentWaitDirective {
@@ -213,6 +214,84 @@ pub struct ActiveWaitSubscription {
 pub struct PendingToolBatchResume {
     pub batch_id: ToolBatchId,
     pub result: ToolInvocationBatchResult,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvironmentJobHandle {
+    pub session_id: String,
+    pub env_id: String,
+    pub job_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvironmentJobChanged {
+    pub session_id: String,
+    pub env_id: String,
+    pub job_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvironmentJobWaitDirective {
+    pub call_id: ToolCallId,
+    #[serde(default)]
+    pub handles: Vec<EnvironmentJobHandle>,
+    pub mode: EnvironmentJobWaitMode,
+    pub terminal_policy: EnvironmentJobWaitTerminalPolicy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_bytes: Option<usize>,
+    #[serde(default)]
+    pub include_artifacts: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EnvironmentJobWaitMode {
+    #[default]
+    All,
+    Any,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EnvironmentJobWaitTerminalPolicy {
+    #[default]
+    AnyTerminal,
+    AllSucceeded,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActiveEnvironmentJobWait {
+    pub batch_id: ToolBatchId,
+    pub run_id: RunId,
+    pub turn_id: TurnId,
+    pub call_id: ToolCallId,
+    #[serde(default)]
+    pub handles: Vec<EnvironmentJobHandle>,
+    pub mode: EnvironmentJobWaitMode,
+    pub terminal_policy: EnvironmentJobWaitTerminalPolicy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_bytes: Option<usize>,
+    #[serde(default)]
+    pub include_artifacts: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deadline_ms: Option<u64>,
+    pub next_check_at_ms: u64,
+    pub poll_attempt: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckEnvironmentJobWaitActivityRequest {
+    pub wait: ActiveEnvironmentJobWait,
+    pub observed_at_ms: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "status")]
+pub enum CheckEnvironmentJobWaitActivityResult {
+    Ready { result: ToolInvocationBatchResult },
+    Pending,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

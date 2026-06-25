@@ -113,6 +113,21 @@ impl GatewayAgentApi {
         }))
     }
 
+    pub(super) async fn session_has_job_environment(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<bool, AgentApiError> {
+        let runtime_environments = self.load_session_runtime_environments(session_id).await?;
+        Ok(runtime_environments.iter().any(|environment| {
+            let record = environment.record();
+            record.status == EnvironmentStatus::Ready
+                && (record.capabilities.job_start
+                    || record.capabilities.job_list
+                    || record.capabilities.job_read
+                    || record.capabilities.job_cancel)
+        }))
+    }
+
     pub(super) async fn wait_for_environment_default_target(
         &self,
         session_id: &SessionId,
@@ -159,7 +174,7 @@ pub(super) fn runtime_environment_from_binding_projection(
 ) -> Result<RuntimeEnvironment, AgentApiError> {
     crate::environment::runtime_environment_from_binding_record(
         &binding,
-        EnvironmentToolContext::new(None, blobs),
+        EnvironmentToolContext::new(None, blobs).with_session_id(binding.session_id.as_str()),
     )
     .map_err(|error| AgentApiError::internal(error.to_string()))
 }
@@ -261,6 +276,13 @@ fn api_environment_capabilities(
         fs_write: capabilities.fs_write,
         process_exec: capabilities.process_exec,
         process_stdin: capabilities.process_stdin,
+        job_start: capabilities.job_start,
+        job_list: capabilities.job_list,
+        job_read: capabilities.job_read,
+        job_cancel: capabilities.job_cancel,
+        job_wait_hint: capabilities.job_wait_hint,
+        job_dependencies: capabilities.job_dependencies,
+        job_queue_keys: capabilities.job_queue_keys,
         network: capabilities.network,
         persistent: capabilities.persistent,
     }

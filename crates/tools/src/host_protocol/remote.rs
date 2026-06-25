@@ -13,7 +13,7 @@ use engine::storage::BlobStore;
 use host_client::{HostClientError, HostDataClient, JsonRpcTransport};
 use host_protocol::{
     data::{
-        fs as remote_fs,
+        fs as remote_fs, jobs as remote_jobs,
         process::{
             self as remote_process, ProcessOutputStream, ReadProcessResponse, WriteProcessStatus,
         },
@@ -26,6 +26,7 @@ use tokio::sync::Mutex as AsyncMutex;
 use crate::{
     environment::{
         EnvironmentToolContext,
+        jobs::{JobError, JobExecResult, JobExecutor},
         process::{
             ProcessError, ProcessExecResult, ProcessExecutor, ProcessHandle, ProcessOutput,
             ProcessRequest, ProcessStatus, StreamOutput, WriteProcessStdinRequest,
@@ -92,6 +93,20 @@ where
         })
     }
 
+    pub fn job_executor(&self) -> Option<RemoteJobExecutor<T>> {
+        if !self.capabilities.job_start
+            && !self.capabilities.job_list
+            && !self.capabilities.job_read
+            && !self.capabilities.job_cancel
+        {
+            return None;
+        }
+        Some(RemoteJobExecutor {
+            client: self.client.clone(),
+            capabilities: self.capabilities.clone(),
+        })
+    }
+
     pub fn into_contexts(
         self,
         blobs: Arc<dyn BlobStore>,
@@ -100,8 +115,14 @@ where
         let process = self
             .process_executor()
             .map(|executor| Arc::new(executor) as Arc<dyn ProcessExecutor>);
+        let jobs = self
+            .job_executor()
+            .map(|executor| Arc::new(executor) as Arc<dyn JobExecutor>);
         let mut fs_ctx = FsToolContext::new(fs, blobs.clone());
         let mut env_ctx = EnvironmentToolContext::new(process, blobs);
+        if let Some(jobs) = jobs {
+            env_ctx = env_ctx.with_jobs(jobs);
+        }
         if let Some(cwd) = self.cwd {
             fs_ctx = fs_ctx.with_cwd(cwd.clone());
             env_ctx = env_ctx.with_process_cwd(cwd);
@@ -265,6 +286,7 @@ where
                     argv: request.argv,
                     cwd: request.cwd.as_ref().map(process_host_path).transpose()?,
                     env: request.env,
+                    secret_env: request.secret_env,
                     stdin: request.stdin.map(ByteChunk::from),
                     timeout_ms: request.timeout_ms,
                     tty: false,
@@ -388,6 +410,86 @@ impl<T> RemoteProcessExecutor<T> {
     }
 }
 
+#[derive(Clone)]
+pub struct RemoteJobExecutor<T> {
+    client: Arc<AsyncMutex<HostDataClient<T>>>,
+    capabilities: HostCapabilities,
+}
+
+#[async_trait]
+impl<T> JobExecutor for RemoteJobExecutor<T>
+where
+    T: JsonRpcTransport + Send + 'static,
+{
+    async fn start_jobs(
+        &self,
+        request: remote_jobs::StartJobsParams,
+    ) -> JobExecResult<remote_jobs::StartJobsResponse> {
+        if !self.capabilities.job_start {
+            return Err(JobError::Unsupported {
+                message: "host target does not support job/start".to_owned(),
+            });
+        }
+        self.client
+            .lock()
+            .await
+            .start_jobs(&request)
+            .await
+            .map_err(map_job_error)
+    }
+
+    async fn list_jobs(
+        &self,
+        request: remote_jobs::ListJobsParams,
+    ) -> JobExecResult<remote_jobs::ListJobsResponse> {
+        if !self.capabilities.job_list {
+            return Err(JobError::Unsupported {
+                message: "host target does not support job/list".to_owned(),
+            });
+        }
+        self.client
+            .lock()
+            .await
+            .list_jobs(&request)
+            .await
+            .map_err(map_job_error)
+    }
+
+    async fn read_jobs(
+        &self,
+        request: remote_jobs::ReadJobsParams,
+    ) -> JobExecResult<remote_jobs::ReadJobsResponse> {
+        if !self.capabilities.job_read {
+            return Err(JobError::Unsupported {
+                message: "host target does not support job/read".to_owned(),
+            });
+        }
+        self.client
+            .lock()
+            .await
+            .read_jobs(&request)
+            .await
+            .map_err(map_job_error)
+    }
+
+    async fn cancel_jobs(
+        &self,
+        request: remote_jobs::CancelJobsParams,
+    ) -> JobExecResult<remote_jobs::CancelJobsResponse> {
+        if !self.capabilities.job_cancel {
+            return Err(JobError::Unsupported {
+                message: "host target does not support job/cancel".to_owned(),
+            });
+        }
+        self.client
+            .lock()
+            .await
+            .cancel_jobs(&request)
+            .await
+            .map_err(map_job_error)
+    }
+}
+
 fn access_policy_for_capabilities(capabilities: &HostCapabilities) -> FileAccessPolicy {
     if capabilities.filesystem_write {
         FileAccessPolicy::FullReadWrite
@@ -452,6 +554,29 @@ fn map_process_error(error: HostClientError) -> ProcessError {
             },
         },
         other => ProcessError::Failed {
+            message: other.to_string(),
+        },
+    }
+}
+
+fn map_job_error(error: HostClientError) -> JobError {
+    match error {
+        HostClientError::Host(error) => match error.code {
+            HostErrorCode::Unsupported | HostErrorCode::CapabilityUnavailable => {
+                JobError::Unsupported {
+                    message: error.message,
+                }
+            }
+            HostErrorCode::InvalidRequest | HostErrorCode::NotFound | HostErrorCode::Conflict => {
+                JobError::InvalidRequest {
+                    message: error.message,
+                }
+            }
+            _ => JobError::Failed {
+                message: error.message,
+            },
+        },
+        other => JobError::Failed {
             message: other.to_string(),
         },
     }
@@ -642,6 +767,7 @@ mod tests {
                 argv: vec!["sh".to_owned(), "-lc".to_owned(), "cat".to_owned()],
                 cwd: Some(FsPath::new("/workspace").expect("cwd")),
                 env: BTreeMap::new(),
+                secret_env: BTreeMap::new(),
                 stdin: None,
                 timeout_ms: Some(60_000),
                 yield_time_ms: Some(10),
@@ -721,6 +847,7 @@ mod tests {
                     argv: vec!["true".to_owned()],
                     cwd: None,
                     env: BTreeMap::new(),
+                    secret_env: BTreeMap::new(),
                     stdin: None,
                     timeout_ms: Some(1_000),
                     yield_time_ms: Some(1),

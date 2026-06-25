@@ -6,6 +6,7 @@
 mod auth;
 mod blob;
 mod environment;
+mod environment_jobs;
 mod mcp;
 mod messaging;
 mod oauth;
@@ -31,7 +32,7 @@ pub const VFS_SCHEMA_SQL: &str = include_str!("../migrations/002_vfs.sql");
 pub const MCP_SCHEMA_SQL: &str = include_str!("../migrations/003_mcp.sql");
 pub const AUTH_SCHEMA_SQL: &str = include_str!("../migrations/004_auth.sql");
 pub const MESSAGING_SCHEMA_SQL: &str = include_str!("../migrations/005_messaging.sql");
-pub const ENVIRONMENT_SCHEMA_SQL: &str = include_str!("../migrations/006_environment_registry.sql");
+pub const ENVIRONMENT_SCHEMA_SQL: &str = include_str!("../migrations/006_environments.sql");
 pub const PROFILE_SCHEMA_SQL: &str = include_str!("../migrations/007_agent_profiles.sql");
 
 pub const DEFAULT_INLINE_THRESHOLD_BYTES: usize = 64 * 1024;

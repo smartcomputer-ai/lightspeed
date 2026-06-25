@@ -20,7 +20,7 @@ use crate::{
 };
 
 use super::{
-    BuiltinToolOperation,
+    BuiltinToolOperation, canonical,
     shared::{
         invalid_request, nullable_integer, nullable_string, object, optional_boolean,
         optional_enum, process_visible_output, string, visible_with_truncation,
@@ -43,6 +43,13 @@ pub(super) fn description(
         BuiltinToolOperation::Grep => "Searches file contents with a regular expression.",
         BuiltinToolOperation::Glob => "Finds files by glob pattern.",
         BuiltinToolOperation::RunProcess => "Executes a shell command.",
+        BuiltinToolOperation::JobStart
+        | BuiltinToolOperation::JobList
+        | BuiltinToolOperation::JobRead
+        | BuiltinToolOperation::JobWait
+        | BuiltinToolOperation::JobCancel => {
+            return Ok(canonical::description(operation, scoped_paths));
+        }
         BuiltinToolOperation::ApplyPatch
         | BuiltinToolOperation::ListDir
         | BuiltinToolOperation::WriteProcessStdin => return Err(unsupported(operation)),
@@ -202,6 +209,11 @@ pub(super) fn input_schema(operation: BuiltinToolOperation) -> ToolResult<Value>
             ],
             ["command"],
         ),
+        BuiltinToolOperation::JobStart
+        | BuiltinToolOperation::JobList
+        | BuiltinToolOperation::JobRead
+        | BuiltinToolOperation::JobWait
+        | BuiltinToolOperation::JobCancel => return Ok(canonical::input_schema(operation)),
         BuiltinToolOperation::ApplyPatch
         | BuiltinToolOperation::ListDir
         | BuiltinToolOperation::WriteProcessStdin => return Err(unsupported(operation)),
@@ -285,6 +297,13 @@ pub(super) async fn invoke_json(
             let result = invoke_run_process(env_ctx, args.into_run_process_args()).await?;
             let visible = process_visible_output(&result);
             encode_output(&result, visible)
+        }
+        BuiltinToolOperation::JobStart
+        | BuiltinToolOperation::JobList
+        | BuiltinToolOperation::JobRead
+        | BuiltinToolOperation::JobWait
+        | BuiltinToolOperation::JobCancel => {
+            canonical::invoke_json(operation, ctx, arguments).await
         }
         BuiltinToolOperation::ApplyPatch
         | BuiltinToolOperation::ListDir

@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 
 use async_trait::async_trait;
 use host_client::{
@@ -6,9 +6,13 @@ use host_client::{
 };
 use host_protocol::{
     control::handshake::ControllerInitializeParams,
-    data::{fs::ReadFileParams, methods::PROCESS_OUTPUT_METHOD},
+    data::{
+        fs::ReadFileParams,
+        jobs::{JobDependencyPolicy, JobStartSpec, ListJobsParams, StartJobsParams},
+        methods::PROCESS_OUTPUT_METHOD,
+    },
     error::HostErrorCode,
-    shared::{ByteChunk, CURRENT_PROTOCOL_VERSION, HostPath},
+    shared::{ByteChunk, CURRENT_PROTOCOL_VERSION, HostPath, JobId},
 };
 use serde_json::{Value, json};
 
@@ -71,6 +75,91 @@ async fn data_client_sends_typed_request_and_decodes_response() {
             }
         })]
     );
+}
+
+#[tokio::test]
+async fn data_client_sends_typed_job_start_request() {
+    let transport = MockTransport::with_recv([json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+            "jobs": [
+                {
+                    "createdAtMs": 1,
+                    "jobId": "job-1",
+                    "namespace": "session_1",
+                    "status": "queued"
+                }
+            ]
+        }
+    })]);
+    let mut client = HostDataClient::new(transport);
+
+    let response = client
+        .start_jobs(&StartJobsParams {
+            namespace: "session_1".to_owned(),
+            request_id: "request-1".to_owned(),
+            jobs: vec![JobStartSpec {
+                job_id: JobId::new("job-1"),
+                name: None,
+                argv: vec![
+                    "/bin/sh".to_owned(),
+                    "-c".to_owned(),
+                    "printf ok".to_owned(),
+                ],
+                cwd: None,
+                env: Default::default(),
+                secret_env: BTreeMap::new(),
+                stdin: None,
+                timeout_ms: Some(1_000),
+                depends_on: Vec::new(),
+                dependency_policy: JobDependencyPolicy::AllSucceeded,
+                queue_key: None,
+            }],
+        })
+        .await
+        .expect("response");
+
+    assert_eq!(response.jobs[0].job_id.as_str(), "job-1");
+
+    let transport = client.into_rpc().into_inner();
+    assert_eq!(transport.sent[0]["method"], "job/start");
+    assert_eq!(transport.sent[0]["params"]["jobs"][0]["jobId"], "job-1");
+    assert_eq!(transport.sent[0]["params"]["jobs"][0]["argv"][0], "/bin/sh");
+}
+
+#[tokio::test]
+async fn data_client_sends_typed_job_list_request() {
+    let transport = MockTransport::with_recv([json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+            "jobs": [
+                {
+                    "createdAtMs": 2,
+                    "jobId": "job-2",
+                    "namespace": "session_1",
+                    "status": "running"
+                }
+            ]
+        }
+    })]);
+    let mut client = HostDataClient::new(transport);
+
+    let response = client
+        .list_jobs(&ListJobsParams {
+            namespace: "session_1".to_owned(),
+            limit: Some(5),
+        })
+        .await
+        .expect("response");
+
+    assert_eq!(response.jobs[0].job_id.as_str(), "job-2");
+
+    let transport = client.into_rpc().into_inner();
+    assert_eq!(transport.sent[0]["method"], "job/list");
+    assert_eq!(transport.sent[0]["params"]["namespace"], "session_1");
+    assert_eq!(transport.sent[0]["params"]["limit"], 5);
 }
 
 #[tokio::test]

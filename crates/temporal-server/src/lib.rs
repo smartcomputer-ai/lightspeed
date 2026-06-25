@@ -4,6 +4,7 @@
 //! deterministic workflow contract remains in `temporal-workflow`.
 
 pub mod config;
+pub(crate) mod credential_injection;
 pub mod environment;
 pub mod fleet;
 pub mod gateway;

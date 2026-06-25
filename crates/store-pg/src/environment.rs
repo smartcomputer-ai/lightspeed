@@ -1,12 +1,15 @@
 use async_trait::async_trait;
+use auth_registry::{AuthGrantId, AuthProviderId, SecretId};
 use engine::SessionId;
 use environment_registry::{
-    CreateSessionEnvironmentBinding, EnvironmentId, EnvironmentProviderHeartbeat,
-    EnvironmentProviderId, EnvironmentProviderKind, EnvironmentProviderRecord,
-    EnvironmentProviderStatus, EnvironmentProviderStore, EnvironmentRegistryError,
-    EnvironmentTargetRecord, EnvironmentTargetStore, ListEnvironmentProviders,
-    ListEnvironmentTargets, RegisterEnvironmentProvider, SessionEnvironmentBindingRecord,
-    SessionEnvironmentBindingStatus, SessionEnvironmentBindingStore, SessionEnvironmentKind,
+    CreateSessionEnvironmentBinding, CreateSessionEnvironmentCredential, EnvironmentId,
+    EnvironmentProviderHeartbeat, EnvironmentProviderId, EnvironmentProviderKind,
+    EnvironmentProviderRecord, EnvironmentProviderStatus, EnvironmentProviderStore,
+    EnvironmentRegistryError, EnvironmentTargetRecord, EnvironmentTargetStore,
+    ListEnvironmentProviders, ListEnvironmentTargets, ListSessionEnvironmentCredentials,
+    RegisterEnvironmentProvider, SessionEnvironmentBindingRecord, SessionEnvironmentBindingStatus,
+    SessionEnvironmentBindingStore, SessionEnvironmentCredentialRecord,
+    SessionEnvironmentCredentialSource, SessionEnvironmentCredentialStore, SessionEnvironmentKind,
     UpdateEnvironmentProviderStatus, UpdateEnvironmentTargetStatus,
     UpdateSessionEnvironmentBindingStatus, UpsertEnvironmentTargetRecord,
 };
@@ -57,6 +60,18 @@ const BINDING_COLUMNS: &str = r#"
     connection_json,
     cwd,
     fs_routes_json,
+    created_at_ms,
+    updated_at_ms
+"#;
+
+const CREDENTIAL_COLUMNS: &str = r#"
+    session_id,
+    env_id,
+    env_name,
+    source_kind,
+    grant_id,
+    auth_provider_id,
+    secret_id,
     created_at_ms,
     updated_at_ms
 "#;
@@ -597,6 +612,115 @@ impl SessionEnvironmentBindingStore for PgStore {
     }
 }
 
+#[async_trait]
+impl SessionEnvironmentCredentialStore for PgStore {
+    async fn bind_credential(
+        &self,
+        record: CreateSessionEnvironmentCredential,
+    ) -> Result<SessionEnvironmentCredentialRecord, EnvironmentRegistryError> {
+        let record = record.into_record();
+        record.validate()?;
+        let (source_kind, grant_id, auth_provider_id, secret_id) =
+            credential_source_columns(&record.source);
+        let query = format!(
+            r#"
+            INSERT INTO session_environment_credentials (
+                universe_id,
+                session_id,
+                env_id,
+                env_name,
+                source_kind,
+                grant_id,
+                auth_provider_id,
+                secret_id,
+                created_at_ms,
+                updated_at_ms
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
+            ON CONFLICT (universe_id, session_id, env_id, env_name) DO UPDATE SET
+                source_kind = EXCLUDED.source_kind,
+                grant_id = EXCLUDED.grant_id,
+                auth_provider_id = EXCLUDED.auth_provider_id,
+                secret_id = EXCLUDED.secret_id,
+                updated_at_ms = EXCLUDED.updated_at_ms
+            RETURNING {CREDENTIAL_COLUMNS}
+            "#
+        );
+        let row = sqlx::query(&query)
+            .bind(self.config.universe_id)
+            .bind(record.session_id.as_str())
+            .bind(record.env_id.as_str())
+            .bind(&record.env_name)
+            .bind(source_kind)
+            .bind(grant_id)
+            .bind(auth_provider_id)
+            .bind(secret_id)
+            .bind(record.created_at_ms)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|error| environment_sql_error("bind session environment credential", error))?;
+        credential_from_row(&row)
+    }
+
+    async fn list_credentials(
+        &self,
+        request: ListSessionEnvironmentCredentials,
+    ) -> Result<Vec<SessionEnvironmentCredentialRecord>, EnvironmentRegistryError> {
+        SessionEnvironmentBindingStore::read_binding(self, &request.session_id, &request.env_id)
+            .await?;
+        let query = format!(
+            r#"
+            SELECT {CREDENTIAL_COLUMNS}
+            FROM session_environment_credentials
+            WHERE universe_id = $1 AND session_id = $2 AND env_id = $3
+            ORDER BY env_name
+            "#
+        );
+        let rows = sqlx::query(&query)
+            .bind(self.config.universe_id)
+            .bind(request.session_id.as_str())
+            .bind(request.env_id.as_str())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|error| {
+                environment_sql_error("list session environment credentials", error)
+            })?;
+        rows.iter().map(credential_from_row).collect()
+    }
+
+    async fn unbind_credential(
+        &self,
+        session_id: &SessionId,
+        env_id: &EnvironmentId,
+        env_name: &str,
+    ) -> Result<SessionEnvironmentCredentialRecord, EnvironmentRegistryError> {
+        let query = format!(
+            r#"
+            DELETE FROM session_environment_credentials
+            WHERE universe_id = $1 AND session_id = $2 AND env_id = $3 AND env_name = $4
+            RETURNING {CREDENTIAL_COLUMNS}
+            "#
+        );
+        let row = sqlx::query(&query)
+            .bind(self.config.universe_id)
+            .bind(session_id.as_str())
+            .bind(env_id.as_str())
+            .bind(env_name)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|error| {
+                environment_sql_error("unbind session environment credential", error)
+            })?;
+        let Some(row) = row else {
+            return Err(EnvironmentRegistryError::NotFound {
+                kind: "session_environment_credential",
+                id: format!("{session_id}/{}/{env_name}", env_id.as_str()),
+            });
+        };
+        credential_from_row(&row)
+    }
+}
+
 fn provider_from_row(
     row: &sqlx::postgres::PgRow,
 ) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError> {
@@ -750,6 +874,55 @@ fn binding_from_row(
     Ok(record)
 }
 
+fn credential_from_row(
+    row: &sqlx::postgres::PgRow,
+) -> Result<SessionEnvironmentCredentialRecord, EnvironmentRegistryError> {
+    let session_id: String = row
+        .try_get("session_id")
+        .map_err(|error| environment_sql_error("decode credential session id", error))?;
+    let env_id: String = row
+        .try_get("env_id")
+        .map_err(|error| environment_sql_error("decode credential env id", error))?;
+    let source_kind: String = row
+        .try_get("source_kind")
+        .map_err(|error| environment_sql_error("decode credential source kind", error))?;
+    let grant_id: Option<String> = row
+        .try_get("grant_id")
+        .map_err(|error| environment_sql_error("decode credential grant id", error))?;
+    let auth_provider_id: Option<String> = row
+        .try_get("auth_provider_id")
+        .map_err(|error| environment_sql_error("decode credential auth provider id", error))?;
+    let secret_id: Option<String> = row
+        .try_get("secret_id")
+        .map_err(|error| environment_sql_error("decode credential secret id", error))?;
+    let source =
+        credential_source_from_columns(&source_kind, grant_id, auth_provider_id, secret_id)?;
+    let record = SessionEnvironmentCredentialRecord {
+        session_id: SessionId::try_new(session_id).map_err(|error| {
+            EnvironmentRegistryError::Store {
+                message: format!("decode credential session id: {error}"),
+            }
+        })?,
+        env_id: EnvironmentId::try_new(env_id).map_err(|error| {
+            EnvironmentRegistryError::Store {
+                message: format!("decode credential env id: {error}"),
+            }
+        })?,
+        env_name: row
+            .try_get("env_name")
+            .map_err(|error| environment_sql_error("decode credential env name", error))?,
+        source,
+        created_at_ms: row
+            .try_get("created_at_ms")
+            .map_err(|error| environment_sql_error("decode credential created_at_ms", error))?,
+        updated_at_ms: row
+            .try_get("updated_at_ms")
+            .map_err(|error| environment_sql_error("decode credential updated_at_ms", error))?,
+    };
+    record.validate()?;
+    Ok(record)
+}
+
 fn json_value(
     action: &'static str,
     value: &impl serde::Serialize,
@@ -757,6 +930,97 @@ fn json_value(
     serde_json::to_value(value).map_err(|error| EnvironmentRegistryError::Store {
         message: format!("{action}: {error}"),
     })
+}
+
+fn credential_source_columns(
+    source: &SessionEnvironmentCredentialSource,
+) -> (&'static str, Option<&str>, Option<&str>, Option<&str>) {
+    match source {
+        SessionEnvironmentCredentialSource::AuthGrant { grant_id } => {
+            ("auth_grant", Some(grant_id.as_str()), None, None)
+        }
+        SessionEnvironmentCredentialSource::AuthProviderCredential { provider_id } => (
+            "auth_provider_credential",
+            None,
+            Some(provider_id.as_str()),
+            None,
+        ),
+        SessionEnvironmentCredentialSource::DirectSecret { secret_id } => {
+            ("direct_secret", None, None, Some(secret_id.as_str()))
+        }
+    }
+}
+
+fn credential_source_from_columns(
+    source_kind: &str,
+    grant_id: Option<String>,
+    auth_provider_id: Option<String>,
+    secret_id: Option<String>,
+) -> Result<SessionEnvironmentCredentialSource, EnvironmentRegistryError> {
+    match source_kind {
+        "auth_grant" => {
+            let Some(grant_id) = grant_id else {
+                return Err(EnvironmentRegistryError::Store {
+                    message: "credential source auth_grant missing grant_id".to_owned(),
+                });
+            };
+            if auth_provider_id.is_some() || secret_id.is_some() {
+                return Err(EnvironmentRegistryError::Store {
+                    message: "credential source auth_grant has extra source columns".to_owned(),
+                });
+            }
+            Ok(SessionEnvironmentCredentialSource::AuthGrant {
+                grant_id: AuthGrantId::try_new(grant_id).map_err(|error| {
+                    EnvironmentRegistryError::Store {
+                        message: format!("decode credential grant id: {error}"),
+                    }
+                })?,
+            })
+        }
+        "auth_provider_credential" => {
+            let Some(provider_id) = auth_provider_id else {
+                return Err(EnvironmentRegistryError::Store {
+                    message: "credential source auth_provider_credential missing provider_id"
+                        .to_owned(),
+                });
+            };
+            if grant_id.is_some() || secret_id.is_some() {
+                return Err(EnvironmentRegistryError::Store {
+                    message: "credential source auth_provider_credential has extra source columns"
+                        .to_owned(),
+                });
+            }
+            Ok(SessionEnvironmentCredentialSource::AuthProviderCredential {
+                provider_id: AuthProviderId::try_new(provider_id).map_err(|error| {
+                    EnvironmentRegistryError::Store {
+                        message: format!("decode credential provider id: {error}"),
+                    }
+                })?,
+            })
+        }
+        "direct_secret" => {
+            let Some(secret_id) = secret_id else {
+                return Err(EnvironmentRegistryError::Store {
+                    message: "credential source direct_secret missing secret_id".to_owned(),
+                });
+            };
+            if grant_id.is_some() || auth_provider_id.is_some() {
+                return Err(EnvironmentRegistryError::Store {
+                    message: "credential source direct_secret has extra source columns".to_owned(),
+                });
+            }
+            Ok(SessionEnvironmentCredentialSource::DirectSecret {
+                secret_id: SecretId::try_new(secret_id).map_err(|error| {
+                    EnvironmentRegistryError::Store {
+                        message: format!("decode credential secret id: {error}"),
+                    }
+                })?,
+            })
+        }
+        other => Err(EnvironmentRegistryError::Store {
+            message: format!("unsupported credential source kind '{other}'"),
+        }),
+    }
 }
 
 fn json_column<T: serde::de::DeserializeOwned>(

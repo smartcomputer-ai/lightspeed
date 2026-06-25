@@ -47,6 +47,7 @@ macro_rules! string_id {
 string_id!(HostTargetId);
 string_id!(HostConnectionId);
 string_id!(ProcessId);
+string_id!(JobId);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -102,6 +103,20 @@ pub struct HostCapabilities {
     pub process_output_notifications: bool,
     #[serde(default)]
     pub process_pty: bool,
+    #[serde(default)]
+    pub job_start: bool,
+    #[serde(default)]
+    pub job_list: bool,
+    #[serde(default)]
+    pub job_read: bool,
+    #[serde(default)]
+    pub job_cancel: bool,
+    #[serde(default)]
+    pub job_wait_hint: bool,
+    #[serde(default)]
+    pub job_dependencies: bool,
+    #[serde(default)]
+    pub job_queue_keys: bool,
 }
 
 impl HostCapabilities {
@@ -119,6 +134,17 @@ impl HostCapabilities {
         self.process_terminate = true;
         self.process_output_polling = true;
         self.process_output_notifications = true;
+        self
+    }
+
+    pub fn with_jobs(mut self) -> Self {
+        self.job_start = true;
+        self.job_list = true;
+        self.job_read = true;
+        self.job_cancel = true;
+        self.job_wait_hint = false;
+        self.job_dependencies = true;
+        self.job_queue_keys = true;
         self
     }
 }
@@ -179,6 +205,63 @@ impl<'de> Deserialize<'de> for ByteChunk {
             .decode(encoded)
             .map(Self)
             .map_err(SerdeError::custom)
+    }
+}
+
+/// Secret string carried over the host data protocol.
+///
+/// It serializes as a string because it is a wire value, but `Debug` is
+/// redacted so ordinary structured logging does not print plaintext.
+#[derive(Clone, PartialEq, Eq)]
+pub struct SecretString(String);
+
+impl SecretString {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl fmt::Debug for SecretString {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("SecretString(<redacted>)")
+    }
+}
+
+impl From<String> for SecretString {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl From<&str> for SecretString {
+    fn from(value: &str) -> Self {
+        Self(value.to_owned())
+    }
+}
+
+impl Serialize for SecretString {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for SecretString {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        String::deserialize(deserializer).map(Self)
     }
 }
 

@@ -368,6 +368,90 @@ mod tests {
     }
 
     #[test]
+    fn env_credentials_bind_parse_accepts_grant_source() {
+        let cli = Cli::try_parse_from([
+            "lightspeed",
+            "env",
+            "credentials",
+            "bind",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
+            "--session",
+            "session_1",
+            "--env-id",
+            "local-host",
+            "--env-name",
+            "GITHUB_TOKEN",
+            "--grant-id",
+            "authgrant_repo",
+        ])
+        .expect("parse env credentials bind");
+        assert!(matches!(cli.command, Command::Env(_)));
+    }
+
+    #[test]
+    fn env_credentials_bind_rejects_multiple_sources() {
+        let error = Cli::try_parse_from([
+            "lightspeed",
+            "env",
+            "credentials",
+            "bind",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
+            "--session",
+            "session_1",
+            "--env-id",
+            "local-host",
+            "--env-name",
+            "GITHUB_TOKEN",
+            "--grant-id",
+            "authgrant_repo",
+            "--secret-id",
+            "secret_repo",
+        ])
+        .expect_err("reject multiple credential sources");
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn env_credentials_list_parse_accepts_environment() {
+        let cli = Cli::try_parse_from([
+            "lightspeed",
+            "env",
+            "credentials",
+            "list",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
+            "--session",
+            "session_1",
+            "--env-id",
+            "local-host",
+        ])
+        .expect("parse env credentials list");
+        assert!(matches!(cli.command, Command::Env(_)));
+    }
+
+    #[test]
+    fn env_credentials_unbind_parse_accepts_env_name() {
+        let cli = Cli::try_parse_from([
+            "lightspeed",
+            "env",
+            "credentials",
+            "unbind",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
+            "--session",
+            "session_1",
+            "--env-id",
+            "local-host",
+            "--env-name",
+            "GITHUB_TOKEN",
+        ])
+        .expect("parse env credentials unbind");
+        assert!(matches!(cli.command, Command::Env(_)));
+    }
+
+    #[test]
     fn vfs_mount_delete_parse_accepts_session_and_path() {
         let cli = Cli::try_parse_from([
             "lightspeed",

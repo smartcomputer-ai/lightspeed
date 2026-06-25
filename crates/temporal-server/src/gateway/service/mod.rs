@@ -3,6 +3,7 @@
 mod api_config;
 mod auth_api;
 mod blobs;
+mod environment_credentials;
 mod environment_lifecycle;
 mod environment_projection;
 mod environment_providers;
@@ -16,6 +17,7 @@ mod oauth_api;
 mod parse;
 mod profiles;
 mod prompts;
+mod session_jobs;
 mod skills;
 mod tools_api;
 mod vfs_api;
@@ -28,6 +30,7 @@ use auth_api::{
     parse_auth_grant_id, registry_auth_grant_status_for_filter,
 };
 use blobs::{get_blob, has_blobs, put_blob, put_blobs};
+use environment_lifecycle::{parse_core_session_id, parse_registry_environment_id};
 use environment_providers::{map_environment_registry_error, parse_environment_provider_id};
 use environments::{
     activate_environment_command, deactivate_environment_command, parse_environment_id,
@@ -110,11 +113,22 @@ use api::{
     SessionEnvironmentAttachParams, SessionEnvironmentAttachResponse,
     SessionEnvironmentCapabilitiesView, SessionEnvironmentCloseParams,
     SessionEnvironmentCloseResponse, SessionEnvironmentCreateParams,
-    SessionEnvironmentCreateResponse, SessionEnvironmentDeactivateParams,
+    SessionEnvironmentCreateResponse, SessionEnvironmentCredentialBindParams,
+    SessionEnvironmentCredentialBindResponse, SessionEnvironmentCredentialListParams,
+    SessionEnvironmentCredentialListResponse, SessionEnvironmentCredentialSourceView,
+    SessionEnvironmentCredentialUnbindParams, SessionEnvironmentCredentialUnbindResponse,
+    SessionEnvironmentCredentialView, SessionEnvironmentDeactivateParams,
     SessionEnvironmentDeactivateResponse, SessionEnvironmentKindView, SessionEnvironmentListParams,
     SessionEnvironmentListResponse, SessionEnvironmentReadParams, SessionEnvironmentReadResponse,
     SessionEnvironmentStatusView, SessionEnvironmentView, SessionEventsReadParams,
-    SessionEventsReadResponse, SessionMcpLinkParams, SessionMcpLinkResponse, SessionMcpListParams,
+    SessionEventsReadResponse, SessionJobArtifactView, SessionJobCancelEntryView,
+    SessionJobCancelParams, SessionJobCancelResponse, SessionJobCancelScopeView,
+    SessionJobCreateParams, SessionJobCreateResponse, SessionJobDependencyInput,
+    SessionJobDependencyPolicyView, SessionJobHandleInput, SessionJobHandleRecordView,
+    SessionJobHandleView, SessionJobListParams, SessionJobListResponse, SessionJobOutputChunkView,
+    SessionJobOutputStreamView, SessionJobReadEntryView, SessionJobReadParams,
+    SessionJobReadResponse, SessionJobStartSpecInput, SessionJobStartedView, SessionJobStatusView,
+    SessionJobSummaryView, SessionMcpLinkParams, SessionMcpLinkResponse, SessionMcpListParams,
     SessionMcpListResponse, SessionMcpUnlinkParams, SessionMcpUnlinkResponse, SessionReadParams,
     SessionReadResponse, SessionStartParams, SessionStartResponse, SessionToolsUpdateParams,
     SessionToolsUpdateResponse, SessionUpdateParams, SessionUpdateResponse, SessionView,
@@ -559,6 +573,7 @@ impl GatewayAgentApi {
         &self,
         session_config: &SessionConfig,
         include_process_tools: bool,
+        include_job_tools: bool,
     ) -> ToolsetConfig {
         let mut config = ToolsetConfig::empty();
         config.builtin = match effective_filesystem_tool_mode(session_config) {
@@ -583,6 +598,9 @@ impl GatewayAgentApi {
         }
         if include_process_tools {
             config.builtin.process = tools::toolset::EnvironmentToolsetConfig::basic();
+        }
+        if include_job_tools {
+            config.builtin.process = config.builtin.process.with_jobs();
         }
         config
     }
@@ -1706,6 +1724,69 @@ impl AgentApiService for GatewayAgentApi {
         params: SessionEnvironmentCloseParams,
     ) -> Result<AgentApiOutcome<SessionEnvironmentCloseResponse>, AgentApiError> {
         self.close_session_environment_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn bind_session_environment_credential(
+        &self,
+        params: SessionEnvironmentCredentialBindParams,
+    ) -> Result<AgentApiOutcome<SessionEnvironmentCredentialBindResponse>, AgentApiError> {
+        self.bind_session_environment_credential_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn list_session_environment_credentials(
+        &self,
+        params: SessionEnvironmentCredentialListParams,
+    ) -> Result<AgentApiOutcome<SessionEnvironmentCredentialListResponse>, AgentApiError> {
+        self.list_session_environment_credential_records(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn unbind_session_environment_credential(
+        &self,
+        params: SessionEnvironmentCredentialUnbindParams,
+    ) -> Result<AgentApiOutcome<SessionEnvironmentCredentialUnbindResponse>, AgentApiError> {
+        self.unbind_session_environment_credential_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn create_session_jobs(
+        &self,
+        params: SessionJobCreateParams,
+    ) -> Result<AgentApiOutcome<SessionJobCreateResponse>, AgentApiError> {
+        self.create_session_job_records(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn list_session_jobs(
+        &self,
+        params: SessionJobListParams,
+    ) -> Result<AgentApiOutcome<SessionJobListResponse>, AgentApiError> {
+        self.list_session_job_records(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn read_session_jobs(
+        &self,
+        params: SessionJobReadParams,
+    ) -> Result<AgentApiOutcome<SessionJobReadResponse>, AgentApiError> {
+        self.read_session_job_records(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn cancel_session_jobs(
+        &self,
+        params: SessionJobCancelParams,
+    ) -> Result<AgentApiOutcome<SessionJobCancelResponse>, AgentApiError> {
+        self.cancel_session_job_records(params)
             .await
             .map(AgentApiOutcome::new)
     }

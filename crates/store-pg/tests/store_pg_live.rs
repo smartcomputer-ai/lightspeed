@@ -8,7 +8,7 @@ use auth_registry::{
     SecretStore, SecretValue, TokenEndpointAuthMethod, state_hash,
 };
 use engine::{
-    BlobRef,
+    BlobRef, RunId, ToolCallId, TurnId,
     session::{
         AgentHandle, DynamicEvent, DynamicJoins, DynamicUncommittedSessionEvent, EventSeq,
         SessionId, SessionPosition,
@@ -20,11 +20,12 @@ use engine::{
     },
 };
 use environment_registry::{
-    CreateSessionEnvironmentBinding, EnvironmentId, EnvironmentProviderCapabilities,
-    EnvironmentProviderHeartbeat, EnvironmentProviderId, EnvironmentProviderKind,
-    EnvironmentProviderStatus, EnvironmentProviderStore, EnvironmentTargetStore,
-    HostControllerConnectionSpec, ListEnvironmentProviders, ListEnvironmentTargets,
-    RegisterEnvironmentProvider, SessionEnvironmentBindingStatus, SessionEnvironmentBindingStore,
+    CreateJobHandle, CreateSessionEnvironmentBinding, EnvironmentId,
+    EnvironmentProviderCapabilities, EnvironmentProviderHeartbeat, EnvironmentProviderId,
+    EnvironmentProviderKind, EnvironmentProviderStatus, EnvironmentProviderStore,
+    EnvironmentTargetStore, HostControllerConnectionSpec, JobHandleStore, ListEnvironmentProviders,
+    ListEnvironmentTargets, ListJobHandles, RegisterEnvironmentProvider,
+    SessionEnvironmentBindingStatus, SessionEnvironmentBindingStore,
     SessionEnvironmentCapabilities, SessionEnvironmentFsRoute, SessionEnvironmentFsRouteAccess,
     SessionEnvironmentKind, UpdateEnvironmentProviderStatus, UpdateEnvironmentTargetStatus,
     UpdateSessionEnvironmentBindingStatus, UpsertEnvironmentTargetRecord,
@@ -33,7 +34,7 @@ use host_protocol::{
     control::targets::HostTargetStatus,
     shared::{
         HostCapabilities, HostConnectionSpec, HostPath, HostScope, HostTargetId, HostTransport,
-        ImplementationInfo,
+        ImplementationInfo, JobId,
     },
 };
 use mcp_registry::{
@@ -237,6 +238,7 @@ async fn pg_live_clone_copies_resources_and_links_sessions() {
                 process_stdin: true,
                 network: false,
                 persistent: true,
+                ..SessionEnvironmentCapabilities::default()
             },
             connection: HostConnectionSpec {
                 target_id: target_id.clone(),
@@ -916,6 +918,7 @@ async fn pg_live_environment_registry_crud_and_session_bindings() {
                 process_stdin: true,
                 network: false,
                 persistent: true,
+                ..SessionEnvironmentCapabilities::default()
             },
             connection: HostConnectionSpec {
                 target_id: target_id.clone(),
@@ -945,6 +948,52 @@ async fn pg_live_environment_registry_crud_and_session_bindings() {
             .expect("list bindings"),
         vec![binding.clone()]
     );
+
+    let job_handle = CreateJobHandle {
+        session_id: session_id.clone(),
+        env_id: env_id.clone(),
+        provider_id: provider_id.clone(),
+        target_id: target_id.clone(),
+        namespace: session_id.as_str().to_owned(),
+        job_id: JobId::new("job-1"),
+        name: Some("checkout".to_owned()),
+        queue_key: Some("repo".to_owned()),
+        created_by_run_id: Some(RunId::new(1)),
+        created_by_turn_id: Some(TurnId::new(2)),
+        created_by_tool_call_id: Some(ToolCallId::new("call_1")),
+        created_at_ms: 45,
+        start_request_hash: "hash-1".to_owned(),
+    };
+    let created_jobs = store
+        .create_job_handles(vec![job_handle.clone()])
+        .await
+        .expect("create job handle");
+    assert_eq!(created_jobs.len(), 1);
+    assert_eq!(created_jobs[0].job_id.as_str(), "job-1");
+
+    let retried_jobs = store
+        .create_job_handles(vec![job_handle])
+        .await
+        .expect("idempotent create job handle");
+    assert_eq!(retried_jobs, created_jobs);
+
+    let listed_jobs = store
+        .list_job_handles(ListJobHandles {
+            session_id: session_id.clone(),
+            env_id: Some(env_id.clone()),
+            limit: Some(10),
+        })
+        .await
+        .expect("list job handles");
+    assert_eq!(listed_jobs, created_jobs);
+
+    let read_job = store
+        .read_job_handle(&session_id, &env_id, &JobId::new("job-1"))
+        .await
+        .expect("read job handle");
+    assert_eq!(read_job.namespace, session_id.as_str());
+    assert_eq!(read_job.queue_key.as_deref(), Some("repo"));
+    assert_eq!(read_job.start_request_hash, "hash-1");
 
     let degraded = store
         .update_binding_status(UpdateSessionEnvironmentBindingStatus {

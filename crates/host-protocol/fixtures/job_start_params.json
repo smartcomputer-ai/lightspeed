@@ -1,0 +1,27 @@
+{
+  "jobs": [
+    {
+      "argv": [
+        "git",
+        "status"
+      ],
+      "cwd": "/workspace",
+      "dependencyPolicy": "allSucceeded",
+      "dependsOn": [
+        {
+          "name": "setup"
+        }
+      ],
+      "env": {
+        "RUST_LOG": "debug"
+      },
+      "name": "checkout",
+      "jobId": "checkout",
+      "queueKey": "repo",
+      "stdin": "aGVsbG8K",
+      "timeoutMs": 60000
+    }
+  ],
+  "namespace": "session_1",
+  "requestId": "request-1"
+}
