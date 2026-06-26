@@ -77,8 +77,8 @@ builds on them rather than replacing them.
   (`crates/host-protocol/src/control/targets.rs`). The sandbox/provider lifecycle
   abstraction is substantially built.
 - **A runtime provider registry and first bridge provider.**
-  `crates/environment-registry` plus the PostgreSQL migration in
-  `crates/store-pg/migrations/006_environment_registry.sql` store provider
+  `crates/environments` plus the PostgreSQL migration in
+  `crates/store-pg/migrations/006_environments.sql` store provider
   records, observed targets, and session environment bindings. The gateway owns
   the public session environment API and uses host-protocol controllers to
   create, attach, and close targets. `crates/host-bridge` is the first real

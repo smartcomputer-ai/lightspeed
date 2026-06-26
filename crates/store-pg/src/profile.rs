@@ -1,6 +1,6 @@
 use api::{AgentProfile, AgentProfileInput, AgentProfileSummary, ProfileId};
 use async_trait::async_trait;
-use profile_registry::{
+use profiles::{
     AgentProfileExt, AgentProfileInputExt, AgentProfileUpdatePatchExt, ProfileError, ProfileStore,
     UpdateAgentProfile,
 };

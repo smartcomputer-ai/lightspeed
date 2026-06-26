@@ -1,6 +1,6 @@
 use super::*;
 
-use environment_registry::{
+use ::environments::{
     CreateSessionEnvironmentBinding, EnvironmentId as RegistryEnvironmentId,
     EnvironmentProviderKind as RegistryProviderKind, EnvironmentProviderRecord,
     EnvironmentProviderStatus as RegistryProviderStatus, EnvironmentTargetRecord,
@@ -133,13 +133,13 @@ impl GatewayAgentApi {
         let loaded = self.load_session_state(&session_id).await?;
         self.require_open_session(&session_id, &loaded)?;
 
-        let binding = environment_registry::SessionEnvironmentBindingStore::read_binding(
+        let binding = ::environments::SessionEnvironmentBindingStore::read_binding(
             self.store.as_ref(),
             &session_id,
             &env_id,
         )
         .await
-        .map_err(map_environment_registry_error)?;
+        .map_err(map_environments_error)?;
         let is_active = loaded
             .state
             .tooling
@@ -161,12 +161,12 @@ impl GatewayAgentApi {
         }
 
         if params.close_target.unwrap_or(true) {
-            let provider = environment_registry::EnvironmentProviderStore::read_provider(
+            let provider = ::environments::EnvironmentProviderStore::read_provider(
                 self.store.as_ref(),
                 &binding.provider_id,
             )
             .await
-            .map_err(map_environment_registry_error)?;
+            .map_err(map_environments_error)?;
             let mut controller = self
                 .host_controller_connector
                 .connect(&provider.controller_connection)
@@ -177,7 +177,7 @@ impl GatewayAgentApi {
                     force: params.force,
                 })
                 .await?;
-            let _ = environment_registry::EnvironmentTargetStore::update_target_status(
+            let _ = ::environments::EnvironmentTargetStore::update_target_status(
                 self.store.as_ref(),
                 UpdateEnvironmentTargetStatus {
                     provider_id: binding.provider_id.clone(),
@@ -187,10 +187,10 @@ impl GatewayAgentApi {
                 },
             )
             .await
-            .map_err(map_environment_registry_error)?;
+            .map_err(map_environments_error)?;
         }
 
-        let detached = environment_registry::SessionEnvironmentBindingStore::update_binding_status(
+        let detached = ::environments::SessionEnvironmentBindingStore::update_binding_status(
             self.store.as_ref(),
             UpdateSessionEnvironmentBindingStatus {
                 session_id: session_id.clone(),
@@ -200,7 +200,7 @@ impl GatewayAgentApi {
             },
         )
         .await
-        .map_err(map_environment_registry_error)?;
+        .map_err(map_environments_error)?;
 
         let response = self
             .project_session_environment_lifecycle_response(&session_id, detached.env_id.as_str())
@@ -214,14 +214,14 @@ impl GatewayAgentApi {
 
     async fn read_online_environment_provider(
         &self,
-        provider_id: &environment_registry::EnvironmentProviderId,
+        provider_id: &::environments::EnvironmentProviderId,
     ) -> Result<EnvironmentProviderRecord, AgentApiError> {
-        let provider = environment_registry::EnvironmentProviderStore::read_provider(
+        let provider = ::environments::EnvironmentProviderStore::read_provider(
             self.store.as_ref(),
             provider_id,
         )
         .await
-        .map_err(map_environment_registry_error)?;
+        .map_err(map_environments_error)?;
         if provider.status != RegistryProviderStatus::Online {
             return Err(AgentApiError::rejected(format!(
                 "environment provider is not online: {provider_id}"
@@ -247,12 +247,12 @@ impl GatewayAgentApi {
             )));
         }
         let now = now_ms()?;
-        let target = environment_registry::EnvironmentTargetStore::upsert_target(
+        let target = ::environments::EnvironmentTargetStore::upsert_target(
             self.store.as_ref(),
             UpsertEnvironmentTargetRecord::from((provider.provider_id.clone(), target, now)),
         )
         .await
-        .map_err(map_environment_registry_error)?;
+        .map_err(map_environments_error)?;
         let persistent = matches!(kind, SessionEnvironmentKind::AttachedHost);
         let capabilities =
             SessionEnvironmentCapabilities::from_host(&connection.capabilities, persistent);
@@ -260,7 +260,7 @@ impl GatewayAgentApi {
             .default_cwd
             .clone()
             .or_else(|| target.default_cwd.clone());
-        let binding = environment_registry::SessionEnvironmentBindingStore::create_binding(
+        let binding = ::environments::SessionEnvironmentBindingStore::create_binding(
             self.store.as_ref(),
             CreateSessionEnvironmentBinding {
                 session_id,
@@ -277,7 +277,7 @@ impl GatewayAgentApi {
             },
         )
         .await
-        .map_err(map_environment_registry_error)?;
+        .map_err(map_environments_error)?;
         Ok(binding)
     }
 

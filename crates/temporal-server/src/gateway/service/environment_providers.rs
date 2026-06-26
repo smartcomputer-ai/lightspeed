@@ -1,6 +1,6 @@
 use super::*;
 
-use environment_registry::{
+use ::environments::{
     EnvironmentProviderCapabilities as RegistryProviderCapabilities,
     EnvironmentProviderHeartbeat as RegistryProviderHeartbeat, EnvironmentProviderId,
     EnvironmentProviderKind as RegistryProviderKind, EnvironmentProviderRecord,
@@ -30,7 +30,7 @@ impl GatewayAgentApi {
         let (capabilities, implementation) = self
             .initialize_environment_provider_controller(&controller_connection)
             .await?;
-        let provider = environment_registry::EnvironmentProviderStore::register_provider(
+        let provider = ::environments::EnvironmentProviderStore::register_provider(
             self.store.as_ref(),
             RegisterEnvironmentProvider {
                 provider_id: parse_environment_provider_id(params.provider_id)?,
@@ -45,7 +45,7 @@ impl GatewayAgentApi {
             },
         )
         .await
-        .map_err(map_environment_registry_error)?;
+        .map_err(map_environments_error)?;
 
         Ok(EnvironmentProviderRegisterResponse {
             provider: environment_provider_view(&provider),
@@ -64,7 +64,7 @@ impl GatewayAgentApi {
             .map(registry_target_summary)
             .collect::<Result<Vec<_>, _>>()?;
 
-        let provider = environment_registry::EnvironmentProviderStore::update_provider_heartbeat(
+        let provider = ::environments::EnvironmentProviderStore::update_provider_heartbeat(
             self.store.as_ref(),
             RegistryProviderHeartbeat {
                 provider_id: provider_id.clone(),
@@ -74,7 +74,7 @@ impl GatewayAgentApi {
             },
         )
         .await
-        .map_err(map_environment_registry_error)?;
+        .map_err(map_environments_error)?;
 
         if observed_targets.is_empty() && provider.capabilities.list_targets {
             observed_targets = self
@@ -85,12 +85,12 @@ impl GatewayAgentApi {
 
         let mut targets = Vec::with_capacity(observed_targets.len());
         for target in observed_targets {
-            let target = environment_registry::EnvironmentTargetStore::upsert_target(
+            let target = ::environments::EnvironmentTargetStore::upsert_target(
                 self.store.as_ref(),
                 UpsertEnvironmentTargetRecord::from((provider_id.clone(), target, observed_at_ms)),
             )
             .await
-            .map_err(map_environment_registry_error)?;
+            .map_err(map_environments_error)?;
             targets.push(environment_target_summary_view(&target));
         }
 
@@ -104,7 +104,7 @@ impl GatewayAgentApi {
         &self,
         params: EnvironmentProviderUnregisterParams,
     ) -> Result<EnvironmentProviderUnregisterResponse, AgentApiError> {
-        let provider = environment_registry::EnvironmentProviderStore::update_provider_status(
+        let provider = ::environments::EnvironmentProviderStore::update_provider_status(
             self.store.as_ref(),
             UpdateEnvironmentProviderStatus {
                 provider_id: parse_environment_provider_id(params.provider_id)?,
@@ -113,7 +113,7 @@ impl GatewayAgentApi {
             },
         )
         .await
-        .map_err(map_environment_registry_error)?;
+        .map_err(map_environments_error)?;
 
         Ok(EnvironmentProviderUnregisterResponse {
             provider: environment_provider_view(&provider),
@@ -124,7 +124,7 @@ impl GatewayAgentApi {
         &self,
         params: EnvironmentProviderListParams,
     ) -> Result<EnvironmentProviderListResponse, AgentApiError> {
-        let providers = environment_registry::EnvironmentProviderStore::list_providers(
+        let providers = ::environments::EnvironmentProviderStore::list_providers(
             self.store.as_ref(),
             ListEnvironmentProviders {
                 status: params.status.map(registry_provider_status),
@@ -132,7 +132,7 @@ impl GatewayAgentApi {
             },
         )
         .await
-        .map_err(map_environment_registry_error)?
+        .map_err(map_environments_error)?
         .into_iter()
         .map(|provider| environment_provider_view(&provider))
         .collect();
@@ -144,13 +144,10 @@ impl GatewayAgentApi {
         params: EnvironmentProviderTargetListParams,
     ) -> Result<EnvironmentProviderTargetListResponse, AgentApiError> {
         let provider_id = parse_environment_provider_id(params.provider_id)?;
-        environment_registry::EnvironmentProviderStore::read_provider(
-            self.store.as_ref(),
-            &provider_id,
-        )
-        .await
-        .map_err(map_environment_registry_error)?;
-        let targets = environment_registry::EnvironmentTargetStore::list_targets(
+        ::environments::EnvironmentProviderStore::read_provider(self.store.as_ref(), &provider_id)
+            .await
+            .map_err(map_environments_error)?;
+        let targets = ::environments::EnvironmentTargetStore::list_targets(
             self.store.as_ref(),
             ListEnvironmentTargets {
                 provider_id: Some(provider_id),
@@ -158,7 +155,7 @@ impl GatewayAgentApi {
             },
         )
         .await
-        .map_err(map_environment_registry_error)?
+        .map_err(map_environments_error)?
         .into_iter()
         .map(|target| environment_target_summary_view(&target))
         .collect();
@@ -178,9 +175,7 @@ impl GatewayAgentApi {
             .await?;
         validate_controller_protocol_version(response.protocol_version)?;
         let capabilities = RegistryProviderCapabilities::from_controller(response.capabilities);
-        capabilities
-            .validate()
-            .map_err(map_environment_registry_error)?;
+        capabilities.validate().map_err(map_environments_error)?;
         validate_implementation(&response.implementation)?;
         Ok((capabilities, response.implementation))
     }
@@ -467,7 +462,7 @@ fn api_host_capabilities(value: &HostCapabilities) -> HostCapabilitiesView {
     }
 }
 
-pub(super) fn map_environment_registry_error(error: EnvironmentRegistryError) -> AgentApiError {
+pub(super) fn map_environments_error(error: EnvironmentRegistryError) -> AgentApiError {
     match error {
         EnvironmentRegistryError::AlreadyExists { kind, id } => {
             AgentApiError::conflict(format!("environment registry {kind} already exists: {id}"))

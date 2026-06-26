@@ -10,7 +10,7 @@
   brokering, GitHub auth, provider request lowering, or MCP tool execution.
 
 **Implementation Notes**
-- First cut implemented: `mcp-registry` owns provider-independent registry
+- First cut implemented: `mcp` owns provider-independent registry
   DTOs, validation, store trait, and in-memory test adapter.
 - First cut implemented: `store-pg` owns the universe-scoped `mcp_servers`
   table, migration wiring, and `PgStore` implementation of the registry trait.
@@ -353,7 +353,7 @@ crates/cli/src/mcp.rs
 ```
 
 If a new shared crate becomes necessary, keep it narrow, for example
-`mcp-registry` for DTOs and traits used by both gateway and CLI. Do not create
+`mcp` for DTOs and traits used by both gateway and CLI. Do not create
 a general Lightspeed MCP client/runtime crate in P68; Lightspeed is still not executing
 MCP tool calls in this milestone.
 

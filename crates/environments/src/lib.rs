@@ -11,7 +11,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use auth_registry::{AuthGrantId, AuthProviderId, SecretId};
+use auth::{AuthGrantId, AuthProviderId, SecretId};
 use engine::{
     RunId, SessionId, StringIdError, ToolCallId, ToolExecutionTarget, TurnId,
     validate_general_string_id,

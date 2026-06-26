@@ -1,14 +1,14 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use async_trait::async_trait;
-use auth_registry::{
+use auth::{
     AuthGrantRecord, AuthGrantStore, AuthProviderKind, AuthProviderStatus, AuthProviderStore,
     AuthTokenBroker, DEFAULT_GITHUB_API_BASE_URL, GitHubAppRuntime, GrantRefreshLock,
     HttpGitHubApiClient, HttpOAuthTokenClient, OAuthClientStore, OAuthRefreshRuntime,
     RegistryTokenBroker, SecretStore, TokenAudience,
 };
 use engine::SessionId;
-use environment_registry::{
+use environments::{
     EnvironmentId, ListSessionEnvironmentCredentials, SessionEnvironmentCredentialSource,
     SessionEnvironmentCredentialStore,
 };

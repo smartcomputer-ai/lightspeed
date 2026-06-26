@@ -1,7 +1,7 @@
 use async_trait::async_trait;
-use auth_registry::{AuthGrantId, AuthProviderId, SecretId};
+use auth::{AuthGrantId, AuthProviderId, SecretId};
 use engine::SessionId;
-use environment_registry::{
+use environments::{
     CreateSessionEnvironmentBinding, CreateSessionEnvironmentCredential, EnvironmentId,
     EnvironmentProviderHeartbeat, EnvironmentProviderId, EnvironmentProviderKind,
     EnvironmentProviderRecord, EnvironmentProviderStatus, EnvironmentProviderStore,

@@ -407,7 +407,7 @@ impl HttpGitHubApiClient {
         let http = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .timeout(std::time::Duration::from_secs(30))
-            .user_agent("lightspeed-auth-registry")
+            .user_agent("lightspeed-auth")
             .build()
             .map_err(|error| GitHubAppError::Http {
                 status: None,

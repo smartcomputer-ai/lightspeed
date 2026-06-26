@@ -8,7 +8,7 @@
 //! worker processes.
 
 use async_trait::async_trait;
-use auth_registry::{
+use auth::{
     AuthFlowId, AuthFlowRecord, AuthFlowStore, AuthGrantId, AuthRegistryError,
     CreateAuthFlowRecord, CreateOAuthClientRecord, FinishAuthFlow, GrantLockGuard,
     GrantRefreshLock, OAuthClientId, OAuthClientRecord, OAuthClientStore, PrincipalRef, SecretId,

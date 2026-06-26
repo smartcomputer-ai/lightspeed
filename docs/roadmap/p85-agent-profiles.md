@@ -6,7 +6,7 @@
 - Final shape: profile wire DTOs and `ProfileSource` live in `crates/api/` so
   every client and runtime boundary speaks the same wire types. Runtime registry
   behavior (`ProfileStore`, validation helpers, patch application, and
-  `ProfileError`) lives in `crates/profile-registry/`, which depends on `api`
+  `ProfileError`) lives in `crates/profiles/`, which depends on `api`
   without duplicating profile types.
 - Builds on **P83 (Fleet Subagent Control Plane)** — `agent_spawn` and the Fleet
   service that compiles agent intent into session/run/resource operations — and
@@ -29,7 +29,7 @@ P85 is implemented end-to-end with these concrete pieces:
   `ProfileSource`, and `AgentProfileUpdatePatch`. Profile documents reuse
   existing `api` config/resource input types instead of creating a second
   dialect.
-- **Registry contract crate** in `crates/profile-registry/`: typed
+- **Registry contract crate** in `crates/profiles/`: typed
   `ProfileError`, `UpdateAgentProfile`, profile validation/patch helper traits,
   and the substrate-neutral `ProfileStore` trait over the `api` DTOs.
 - **Public JSON-RPC surface**: `profiles/create`, `profiles/read`,
@@ -141,7 +141,7 @@ boundary rather than in a separate crate:
    types, `ProfileSource`, `ProfileId`, and method DTOs. This avoids a second
    config dialect and lets CLI, gateway, Fleet tools, and generated clients reuse
    the same contract.
-2. **`crates/profile-registry/`** — owns registry-only behavior around those
+2. **`crates/profiles/`** — owns registry-only behavior around those
    DTOs: validation helpers, typed errors, update records, patch application, and
    the substrate-neutral `ProfileStore` trait. It depends on `api`; `api` does not
    depend back on it.
@@ -438,7 +438,7 @@ bridge starts the session with `tools.messaging = true`.
   and optional `SessionStartParams.profile`. No layering/`extends` in v1.
   Regenerated committed contract artifacts (`cargo run -p api --bin
   export-schema`).
-- `crates/profile-registry/`: typed `ProfileError`, `UpdateAgentProfile`,
+- `crates/profiles/`: typed `ProfileError`, `UpdateAgentProfile`,
   validation/patch helper traits, and the `ProfileStore` trait over `api` profile
   DTOs.
 - `crates/store-pg/src/profile.rs` + `migrations/007_agent_profiles.sql`:
@@ -472,7 +472,7 @@ bridge starts the session with `tools.messaging = true`.
   JSON-RPC routing and schema export coverage live in `cargo test -p api`.
 
 ### S2. Registry storage + API CRUD
-- Completed: `profile-registry` owns `ProfileStore`, typed errors, validation,
+- Completed: `profiles` owns `ProfileStore`, typed errors, validation,
   and update helpers; `store-pg` implements it with the `agent_profiles` table;
   `api` exposes `profiles/create|read|list|update|delete` DTOs/methods with
   optimistic concurrency on `update`; `read` returns the stored document
@@ -692,8 +692,8 @@ current working directory for stdin/literal input).
 To let `import`/`check` validate `providerId` / `targetId` without starting a
 session, expose the **already-existing** registry list capability through a thin,
 additive read API. The internal plumbing is fully in place: `list_providers` and
-`list_targets` already exist on the `environment-registry` store traits and are
-already implemented in `store-pg` (migration `006_environment_registry.sql`
+`list_targets` already exist on the `environments` store traits and are
+already implemented in `store-pg` (migration `006_environments.sql`
 tables and indexes). Only the API exposure layer is missing.
 
 - `environmentProviders/list { status?, providerKind? } -> { providers[] }`

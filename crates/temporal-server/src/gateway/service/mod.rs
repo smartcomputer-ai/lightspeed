@@ -26,12 +26,12 @@ mod workflow;
 #[cfg(test)]
 use api_config::*;
 use auth_api::{
-    api_auth_provider_kind, auth_grant_import_draft, auth_grant_view, map_auth_registry_error,
+    api_auth_provider_kind, auth_grant_import_draft, auth_grant_view, map_auth_error,
     parse_auth_grant_id, registry_auth_grant_status_for_filter,
 };
 use blobs::{get_blob, has_blobs, put_blob, put_blobs};
 use environment_lifecycle::{parse_core_session_id, parse_registry_environment_id};
-use environment_providers::{map_environment_registry_error, parse_environment_provider_id};
+use environment_providers::{map_environments_error, parse_environment_provider_id};
 use environments::{
     activate_environment_command, deactivate_environment_command, parse_environment_id,
 };
@@ -43,7 +43,7 @@ use github_api::{
 use host_controllers::{HostControllerConnector, WebSocketHostControllerConnector};
 use input::{context_entry_input_from_api, run_input_from_api};
 use mcp_api::{
-    apply_session_mcp_link, create_mcp_server_record, linked_session_mcp, map_mcp_registry_error,
+    apply_session_mcp_link, create_mcp_server_record, linked_session_mcp, map_mcp_error,
     mcp_server_view, parse_mcp_server_id, parse_mcp_tool_name, remove_session_mcp_link,
     session_mcp_link_from_record,
 };
@@ -154,7 +154,7 @@ use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use messaging::{MessagingError, OutboundPayload, OutboxStore, ReadPendingOutbound};
 
-use auth_registry::{
+use auth::{
     AuthFlowStore, AuthGrantStore, AuthProviderStore, GitHubApiClient, HttpGitHubApiClient,
     HttpOAuthMetadataClient, HttpOAuthTokenClient, McpOAuthDriver, OAuthClientStore,
     OAuthFlowService, OAuthMetadataClient, OAuthTokenClient, SecretStore, StartAuthFlow,
@@ -169,7 +169,7 @@ use engine::{
     TurnConfigPatch, skill_activation_context_key,
     storage::{BlobStore, BlobStoreError, ReadSessionEvents, SessionStore},
 };
-use mcp_registry::McpRegistryStore;
+use mcp::McpRegistryStore;
 use store_pg::PgStore;
 use temporalio_client::{
     Client, WorkflowDescribeOptions, WorkflowHandle, WorkflowQueryOptions, WorkflowSignalOptions,
@@ -1984,7 +1984,7 @@ impl AgentApiService for GatewayAgentApi {
             .store
             .create_server(record)
             .await
-            .map_err(map_mcp_registry_error)?;
+            .map_err(map_mcp_error)?;
         Ok(AgentApiOutcome::new(McpServerCreateResponse {
             server: mcp_server_view(server),
         }))
@@ -1996,11 +1996,11 @@ impl AgentApiService for GatewayAgentApi {
     ) -> Result<AgentApiOutcome<McpServerListResponse>, AgentApiError> {
         let servers = self
             .store
-            .list_servers(mcp_registry::ListMcpServers {
+            .list_servers(mcp::ListMcpServers {
                 status: params.status.map(mcp_api::registry_status_for_filter),
             })
             .await
-            .map_err(map_mcp_registry_error)?
+            .map_err(map_mcp_error)?
             .into_iter()
             .map(mcp_server_view)
             .collect();
@@ -2016,7 +2016,7 @@ impl AgentApiService for GatewayAgentApi {
             .store
             .read_server(&server_id)
             .await
-            .map_err(map_mcp_registry_error)?;
+            .map_err(map_mcp_error)?;
         Ok(AgentApiOutcome::new(McpServerReadResponse {
             server: mcp_server_view(server),
         }))
@@ -2031,7 +2031,7 @@ impl AgentApiService for GatewayAgentApi {
             .store
             .delete_server(&server_id)
             .await
-            .map_err(map_mcp_registry_error)?;
+            .map_err(map_mcp_error)?;
         Ok(AgentApiOutcome::new(McpServerDeleteResponse {
             server: mcp_server_view(server),
         }))
@@ -2049,7 +2049,7 @@ impl AgentApiService for GatewayAgentApi {
             .store
             .read_server(&server_id)
             .await
-            .map_err(map_mcp_registry_error)?;
+            .map_err(map_mcp_error)?;
         let grant = match params.auth_grant_id.clone() {
             Some(grant_id) => {
                 let grant_id = parse_auth_grant_id(grant_id)?;
@@ -2057,7 +2057,7 @@ impl AgentApiService for GatewayAgentApi {
                     self.store
                         .read_grant(&grant_id)
                         .await
-                        .map_err(map_auth_registry_error)?,
+                        .map_err(map_auth_error)?,
                 )
             }
             None => None,
@@ -2166,7 +2166,7 @@ impl AgentApiService for GatewayAgentApi {
         self.store
             .put_secret(draft.secret.clone())
             .await
-            .map_err(map_auth_registry_error)?;
+            .map_err(map_auth_error)?;
         match self.store.create_grant(draft.grant).await {
             Ok(record) => Ok(AgentApiOutcome::new(AuthGrantImportResponse {
                 grant: auth_grant_view(record),
@@ -2175,7 +2175,7 @@ impl AgentApiService for GatewayAgentApi {
                 // The secret is orphaned without its grant; clean up best-effort
                 // so a failed import does not leave sealed values behind.
                 let _ = self.store.delete_secret(&draft.secret.secret_id).await;
-                Err(map_auth_registry_error(error))
+                Err(map_auth_error(error))
             }
         }
     }
@@ -2186,11 +2186,11 @@ impl AgentApiService for GatewayAgentApi {
     ) -> Result<AgentApiOutcome<AuthGrantListResponse>, AgentApiError> {
         let grants = self
             .store
-            .list_grants(auth_registry::ListAuthGrants {
+            .list_grants(auth::ListAuthGrants {
                 status: params.status.map(registry_auth_grant_status_for_filter),
             })
             .await
-            .map_err(map_auth_registry_error)?;
+            .map_err(map_auth_error)?;
         Ok(AgentApiOutcome::new(AuthGrantListResponse {
             grants: grants.into_iter().map(auth_grant_view).collect(),
         }))
@@ -2205,7 +2205,7 @@ impl AgentApiService for GatewayAgentApi {
             .store
             .read_grant(&grant_id)
             .await
-            .map_err(map_auth_registry_error)?;
+            .map_err(map_auth_error)?;
         Ok(AgentApiOutcome::new(AuthGrantReadResponse {
             grant: auth_grant_view(record),
         }))
@@ -2218,13 +2218,9 @@ impl AgentApiService for GatewayAgentApi {
         let grant_id = parse_auth_grant_id(params.grant_id)?;
         let record = self
             .store
-            .update_grant_status(
-                &grant_id,
-                auth_registry::AuthGrantStatus::Revoked,
-                now_ms()?,
-            )
+            .update_grant_status(&grant_id, auth::AuthGrantStatus::Revoked, now_ms()?)
             .await
-            .map_err(map_auth_registry_error)?;
+            .map_err(map_auth_error)?;
         Ok(AgentApiOutcome::new(AuthGrantRevokeResponse {
             grant: auth_grant_view(record),
         }))
@@ -2239,7 +2235,7 @@ impl AgentApiService for GatewayAgentApi {
             self.store
                 .put_secret(secret.clone())
                 .await
-                .map_err(map_auth_registry_error)?;
+                .map_err(map_auth_error)?;
         }
         match self.store.create_oauth_client(draft.client).await {
             Ok(record) => Ok(AgentApiOutcome::new(AuthClientCreateResponse {
@@ -2251,7 +2247,7 @@ impl AgentApiService for GatewayAgentApi {
                 if let Some(secret) = &draft.secret {
                     let _ = self.store.delete_secret(&secret.secret_id).await;
                 }
-                Err(map_auth_registry_error(error))
+                Err(map_auth_error(error))
             }
         }
     }
@@ -2264,7 +2260,7 @@ impl AgentApiService for GatewayAgentApi {
             .store
             .list_oauth_clients()
             .await
-            .map_err(map_auth_registry_error)?;
+            .map_err(map_auth_error)?;
         Ok(AgentApiOutcome::new(AuthClientListResponse {
             clients: clients.into_iter().map(oauth_client_view).collect(),
         }))
@@ -2279,7 +2275,7 @@ impl AgentApiService for GatewayAgentApi {
             .store
             .read_oauth_client(&client_id)
             .await
-            .map_err(map_auth_registry_error)?;
+            .map_err(map_auth_error)?;
         Ok(AgentApiOutcome::new(AuthClientReadResponse {
             client: oauth_client_view(record),
         }))
@@ -2294,7 +2290,7 @@ impl AgentApiService for GatewayAgentApi {
             .store
             .delete_oauth_client(&client_id)
             .await
-            .map_err(map_auth_registry_error)?;
+            .map_err(map_auth_error)?;
         // The stored client secret is unreachable without its client.
         if let Some(secret_id) = &record.client_secret {
             let _ = self.store.delete_secret(secret_id).await;
@@ -2321,10 +2317,10 @@ impl AgentApiService for GatewayAgentApi {
                 redirect_uri: oauth_redirect_uri(&self.public_base_url),
                 scopes: params.scopes,
                 audience: params.audience,
-                principal: auth_registry::PrincipalRef::universe_default(),
+                principal: auth::PrincipalRef::universe_default(),
             })
             .await
-            .map_err(map_auth_registry_error)?;
+            .map_err(map_auth_error)?;
         Ok(AgentApiOutcome::new(AuthFlowStartResponse {
             flow_id: started.flow.flow_id.as_str().to_owned(),
             authorize_url: started.authorize_url,
@@ -2341,7 +2337,7 @@ impl AgentApiService for GatewayAgentApi {
             .oauth_flows
             .read_flow(&flow_id)
             .await
-            .map_err(map_auth_registry_error)?;
+            .map_err(map_auth_error)?;
         Ok(AgentApiOutcome::new(AuthFlowStatusResponse {
             flow: auth_flow_view(record, self.oauth_flows.now_ms()),
         }))
@@ -2354,13 +2350,13 @@ impl AgentApiService for GatewayAgentApi {
         let draft = auth_provider_create_draft(params, now_ms()?)?;
         // A model_oauth binding must point at a real, active grant; validate
         // before committing the provider row.
-        if let auth_registry::AuthProviderConfig::ModelOAuth(config) = &draft.provider.config {
+        if let auth::AuthProviderConfig::ModelOAuth(config) = &draft.provider.config {
             let grant = self
                 .store
                 .read_grant(&config.grant_id)
                 .await
-                .map_err(map_auth_registry_error)?;
-            if grant.status != auth_registry::AuthGrantStatus::Active {
+                .map_err(map_auth_error)?;
+            if grant.status != auth::AuthGrantStatus::Active {
                 return Err(AgentApiError::rejected(format!(
                     "auth grant {} is not active: {:?}",
                     grant.grant_id, grant.status
@@ -2373,7 +2369,7 @@ impl AgentApiService for GatewayAgentApi {
             self.store
                 .put_secret(secret.clone())
                 .await
-                .map_err(map_auth_registry_error)?;
+                .map_err(map_auth_error)?;
         }
         match self.store.create_auth_provider(draft.provider).await {
             Ok(record) => Ok(AgentApiOutcome::new(AuthProviderCreateResponse {
@@ -2383,7 +2379,7 @@ impl AgentApiService for GatewayAgentApi {
                 if let Some(secret) = &draft.secret {
                     let _ = self.store.delete_secret(&secret.secret_id).await;
                 }
-                Err(map_auth_registry_error(error))
+                Err(map_auth_error(error))
             }
         }
     }
@@ -2396,7 +2392,7 @@ impl AgentApiService for GatewayAgentApi {
             .store
             .list_auth_providers()
             .await
-            .map_err(map_auth_registry_error)?;
+            .map_err(map_auth_error)?;
         Ok(AgentApiOutcome::new(AuthProviderListResponse {
             providers: providers.into_iter().map(auth_provider_view).collect(),
         }))
@@ -2411,7 +2407,7 @@ impl AgentApiService for GatewayAgentApi {
             .store
             .read_auth_provider(&provider_id)
             .await
-            .map_err(map_auth_registry_error)?;
+            .map_err(map_auth_error)?;
         Ok(AgentApiOutcome::new(AuthProviderReadResponse {
             provider: auth_provider_view(record),
         }))
@@ -2428,7 +2424,7 @@ impl AgentApiService for GatewayAgentApi {
             .store
             .delete_auth_provider(&provider_id)
             .await
-            .map_err(map_auth_registry_error)?;
+            .map_err(map_auth_error)?;
         if let Some(secret_id) = &record.credential_secret {
             let _ = self.store.delete_secret(secret_id).await;
         }
@@ -2442,7 +2438,7 @@ impl AgentApiService for GatewayAgentApi {
         params: AuthGitHubInstallationListParams,
     ) -> Result<AgentApiOutcome<AuthGitHubInstallationListResponse>, AgentApiError> {
         let (provider, app_jwt) = self.github_provider_jwt(params.provider_id).await?;
-        let auth_registry::AuthProviderConfig::GitHubApp(config) = &provider.config else {
+        let auth::AuthProviderConfig::GitHubApp(config) = &provider.config else {
             return Err(AgentApiError::rejected(format!(
                 "auth provider {} is not a github_app provider",
                 provider.provider_id
@@ -2463,7 +2459,7 @@ impl AgentApiService for GatewayAgentApi {
         params: AuthGitHubInstallationGrantParams,
     ) -> Result<AgentApiOutcome<AuthGitHubInstallationGrantResponse>, AgentApiError> {
         let (provider, app_jwt) = self.github_provider_jwt(params.provider_id).await?;
-        let auth_registry::AuthProviderConfig::GitHubApp(config) = &provider.config else {
+        let auth::AuthProviderConfig::GitHubApp(config) = &provider.config else {
             return Err(AgentApiError::rejected(format!(
                 "auth provider {} is not a github_app provider",
                 provider.provider_id
@@ -2496,7 +2492,7 @@ impl AgentApiService for GatewayAgentApi {
             .store
             .create_grant(draft)
             .await
-            .map_err(map_auth_registry_error)?;
+            .map_err(map_auth_error)?;
         Ok(AgentApiOutcome::new(AuthGitHubInstallationGrantResponse {
             grant: auth_grant_view(record),
         }))
@@ -2524,16 +2520,15 @@ impl GatewayAgentApi {
     async fn ensure_mcp_oauth_client(
         &self,
         server_id: &str,
-    ) -> Result<auth_registry::OAuthClientId, AgentApiError> {
+    ) -> Result<auth::OAuthClientId, AgentApiError> {
         // A manually registered `mcp:<server_id>` client always wins: reuse
         // it without touching the catalog or the network, so login works
         // even when the catalog record is named differently or absent.
-        let client_id =
-            auth_registry::mcp_oauth_client_id(server_id).map_err(map_auth_registry_error)?;
+        let client_id = auth::mcp_oauth_client_id(server_id).map_err(map_auth_error)?;
         match self.store.read_oauth_client(&client_id).await {
             Ok(existing) => return Ok(existing.client_id),
-            Err(auth_registry::AuthRegistryError::ClientNotFound { .. }) => {}
-            Err(error) => return Err(map_auth_registry_error(error)),
+            Err(auth::AuthRegistryError::ClientNotFound { .. }) => {}
+            Err(error) => return Err(map_auth_error(error)),
         }
 
         let server_id = parse_mcp_server_id(server_id.to_owned())?;
@@ -2541,7 +2536,7 @@ impl GatewayAgentApi {
             .store
             .read_server(&server_id)
             .await
-            .map_err(map_mcp_registry_error)?;
+            .map_err(map_mcp_error)?;
         let target = mcp_oauth_target_from_record(&record)?;
         let redirect_uri = oauth_redirect_uri(&self.public_base_url);
         let cimd = cimd_config(&self.public_base_url);
@@ -2562,24 +2557,18 @@ impl GatewayAgentApi {
 
     /// Load a GitHub App provider and sign its app JWT for control-plane
     /// calls (installation listing/verification). The JWT and the key only
-    /// exist in memory inside [`auth_registry::SecretValue`] wrappers.
+    /// exist in memory inside [`auth::SecretValue`] wrappers.
     async fn github_provider_jwt(
         &self,
         provider_id: String,
-    ) -> Result<
-        (
-            auth_registry::AuthProviderRecord,
-            auth_registry::SecretValue,
-        ),
-        AgentApiError,
-    > {
+    ) -> Result<(auth::AuthProviderRecord, auth::SecretValue), AgentApiError> {
         let provider_id = parse_auth_provider_id(provider_id)?;
         let provider = self
             .store
             .read_auth_provider(&provider_id)
             .await
-            .map_err(map_auth_registry_error)?;
-        let auth_registry::AuthProviderConfig::GitHubApp(config) = &provider.config else {
+            .map_err(map_auth_error)?;
+        let auth::AuthProviderConfig::GitHubApp(config) = &provider.config else {
             return Err(AgentApiError::rejected(format!(
                 "auth provider {provider_id} is not a github_app provider"
             )));
@@ -2593,8 +2582,8 @@ impl GatewayAgentApi {
             .store
             .read_secret(credential_secret)
             .await
-            .map_err(map_auth_registry_error)?;
-        let app_jwt = auth_registry::sign_github_app_jwt(&config.app_id, &private_key, now_ms()?)
+            .map_err(map_auth_error)?;
+        let app_jwt = auth::sign_github_app_jwt(&config.app_id, &private_key, now_ms()?)
             .map_err(map_github_app_error)?;
         Ok((provider, app_jwt))
     }
@@ -2604,7 +2593,7 @@ impl GatewayAgentApi {
     /// route, not via JSON-RPC.
     pub async fn complete_oauth_callback(
         &self,
-        callback: auth_registry::AuthCallback,
+        callback: auth::AuthCallback,
     ) -> OAuthCallbackOutcome {
         match self.oauth_flows.complete_callback(callback).await {
             Ok(record) => match (&record.grant_id, &record.error) {
@@ -2619,7 +2608,7 @@ impl GatewayAgentApi {
                 },
             },
             Err(error) => OAuthCallbackOutcome::Rejected {
-                message: map_auth_registry_error(error).message,
+                message: map_auth_error(error).message,
             },
         }
     }

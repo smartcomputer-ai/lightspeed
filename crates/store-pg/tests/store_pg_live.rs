@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
-use auth_registry::{
+use auth::{
     AuthFlowId, AuthFlowStore, AuthGrantId, AuthGrantStatus, AuthGrantStore, AuthGrantTokenRefresh,
     AuthProviderKind, AuthRegistryError, CreateAuthFlowRecord, CreateAuthGrantRecord,
     CreateOAuthClientRecord, FinishAuthFlow, GrantRefreshLock, ListAuthGrants, OAuthClientId,
@@ -19,7 +19,7 @@ use engine::{
         SessionLinkDirection, SessionStore, UpsertSessionLink,
     },
 };
-use environment_registry::{
+use environments::{
     CreateJobHandle, CreateSessionEnvironmentBinding, EnvironmentId,
     EnvironmentProviderCapabilities, EnvironmentProviderHeartbeat, EnvironmentProviderId,
     EnvironmentProviderKind, EnvironmentProviderStatus, EnvironmentProviderStore,
@@ -37,7 +37,7 @@ use host_protocol::{
         ImplementationInfo, JobId,
     },
 };
-use mcp_registry::{
+use mcp::{
     CreateMcpServerRecord, ListMcpServers, McpApprovalPolicy, McpRegistryError, McpRegistryStore,
     McpServerAuthPolicy, McpServerId, McpServerStatus, RemoteMcpTransport,
 };
@@ -754,9 +754,9 @@ async fn pg_live_vfs_catalog_tracks_workspace_heads_and_mounts() {
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires local/up.sh or compatible Postgres + MinIO env"]
-async fn pg_live_mcp_registry_crud_and_universe_isolation() {
-    let left = live_store("mcp-registry-left", 1024).await;
-    let right = live_store("mcp-registry-right", 1024).await;
+async fn pg_live_mcp_crud_and_universe_isolation() {
+    let left = live_store("mcp-left", 1024).await;
+    let right = live_store("mcp-right", 1024).await;
     let server_id = McpServerId::new("crm");
 
     let created = left
@@ -813,8 +813,8 @@ async fn pg_live_mcp_registry_crud_and_universe_isolation() {
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires local/up.sh or compatible Postgres + MinIO env"]
-async fn pg_live_environment_registry_crud_and_session_bindings() {
-    let store = live_store("environment-registry", 1024).await;
+async fn pg_live_environments_crud_and_session_bindings() {
+    let store = live_store("environments", 1024).await;
     let provider_id = EnvironmentProviderId::new("bridge-local");
     let target_id = HostTargetId::new("local-host");
     let session_id = SessionId::new("session-env");
@@ -1441,7 +1441,7 @@ async fn pg_live_grant_refresh_updates_token_refs_and_lock_serializes() {
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires local/up.sh or compatible Postgres + MinIO env"]
 async fn pg_live_auth_providers_crud_and_credential_fk() {
-    use auth_registry::{
+    use auth::{
         AuthProviderConfig, AuthProviderId, AuthProviderStatus, AuthProviderStore,
         CreateAuthProviderRecord, GitHubAppConfig, SECRET_KIND_GITHUB_APP_PRIVATE_KEY,
     };

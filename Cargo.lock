@@ -181,7 +181,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
-name = "auth-registry"
+name = "auth"
 version = "0.1.0"
 dependencies = [
  "async-trait",
@@ -885,11 +885,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "environment-registry"
+name = "environments"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "auth-registry",
+ "auth",
  "engine",
  "host-protocol",
  "serde",
@@ -1978,7 +1978,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0e7465ac9959cc2b1404e8e2367b43684a6d13790fe23056cc8c6c5a6b7bcb94"
 
 [[package]]
-name = "mcp-registry"
+name = "mcp"
 version = "0.1.0"
 dependencies = [
  "async-trait",
@@ -2553,7 +2553,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "profile-registry"
+name = "profiles"
 version = "0.1.0"
 dependencies = [
  "api",
@@ -3715,15 +3715,15 @@ dependencies = [
  "aes-gcm",
  "api",
  "async-trait",
- "auth-registry",
+ "auth",
  "base64",
  "engine",
- "environment-registry",
+ "environments",
  "host-protocol",
- "mcp-registry",
+ "mcp",
  "messaging",
  "object_store",
- "profile-registry",
+ "profiles",
  "rand 0.8.6",
  "serde",
  "serde_json",
@@ -3845,21 +3845,21 @@ dependencies = [
  "api",
  "api-projection",
  "async-trait",
- "auth-registry",
+ "auth",
  "axum",
  "base64",
  "clap",
  "dotenvy",
  "engine",
- "environment-registry",
+ "environments",
  "futures",
  "host-client",
  "host-protocol",
  "llm-clients",
  "llm-runtime",
- "mcp-registry",
+ "mcp",
  "messaging",
- "profile-registry",
+ "profiles",
  "serde",
  "serde_json",
  "store-pg",

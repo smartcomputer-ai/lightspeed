@@ -2,7 +2,7 @@
 
 **Status**
 - In progress; design review decisions folded in on 2026-06-10.
-- G1 implemented on 2026-06-10: `auth-registry` crate (grant/secret records,
+- G1 implemented on 2026-06-10: `auth` crate (grant/secret records,
   store traits, `SecretValue` redacted wrapper, `TokenAudience`,
   `RegistryTokenBroker` with typed `AuthBrokerError` kinds, in-memory test
   adapters); `store-pg` `auth_secrets`/`auth_grants` tables with AES-256-GCM
@@ -12,7 +12,7 @@
   injection and redacted persisted request blobs; worker
   `BrokerSecretResolver` wiring; and P68 link-time grant validation
   (status/kind/audience).
-- G2 + G3 implemented in one cut on 2026-06-10: `auth-registry` gained
+- G2 + G3 implemented in one cut on 2026-06-10: `auth` gained
   `OAuthClientRecord`/`AuthFlowRecord` + store traits, PKCE/state helpers
   (RFC 7636 S256, state stored only as SHA-256 hash), the `OAuthTokenClient`
   trait with a reqwest implementation shared by code exchange and refresh,
@@ -29,7 +29,7 @@
   `auth/clients/create|list|read|delete` and `auth/flows/start|status`;
   the CLI gained `lightspeed auth client add|list|read|remove` and
   `lightspeed auth login <client>` with status polling.
-- G4 implemented on 2026-06-10: `auth-registry::mcp_oauth` driver with PRM
+- G4 implemented on 2026-06-10: `auth::mcp_oauth` driver with PRM
   (RFC 9728) and AS metadata (RFC 8414/OIDC) discovery, CIMD + DCR + manual
   client identification, lazy `mcp:<server_id>` client upsert triggered by
   `auth/flows/start` (`lightspeed auth login mcp:<server>`), and the
@@ -610,7 +610,7 @@ be usable without going through MCP commands.
 Suggested first-cut changes:
 
 ```text
-crates/auth-registry/
+crates/auth/
   grant/secret records, statuses, validation
   SecretStore and AuthGrantStore traits
   AuthTokenBroker trait, TokenAudience, typed AuthError kinds
@@ -620,7 +620,7 @@ crates/auth-registry/
 crates/store-pg/src/auth.rs (+ migration)
   auth_secrets and auth_grants tables
   AEAD encryption with configured master key (KMS envelope later)
-  PgStore impls of the auth-registry store traits
+  PgStore impls of the auth store traits
 
 crates/api/src/lib.rs
   public auth grant DTOs and methods
@@ -638,10 +638,10 @@ crates/llm-runtime/src/secrets.rs
   SecretResolver trait owned by llm-runtime, no auth/store dependencies
 ```
 
-The narrow shared crate exists from the start (`auth-registry`, mirroring the
-`mcp-registry` precedent) rather than waiting for shared code to grow.
+The narrow shared crate exists from the start (`auth`, mirroring the
+`mcp` precedent) rather than waiting for shared code to grow.
 Dependency direction is deliberate: `llm-runtime` defines its own resolver
-boundary and never depends on `auth-registry` or `store-pg`; `temporal-server`
+boundary and never depends on `auth` or `store-pg`; `temporal-server`
 adapts the broker to that boundary. Keep provider drivers behind traits so
 `oauth2`, GitHub client helpers, or MCP SDK helpers can be swapped without
 schema churn.
@@ -694,7 +694,7 @@ Longer-term policy can add:
 ## G1: Secret Store And Static Bearer
 
 Implement encrypted secret storage and static bearer grants as one vertical
-slice: `auth-registry` crate, Postgres-backed encrypted storage,
+slice: `auth` crate, Postgres-backed encrypted storage,
 `auth/grants/import|list|read|revoke`, broker resolution, `llm-runtime`
 `SecretResolver` with OpenAI Responses `authorization` injection and redacted
 persisted requests, and P68 link-time grant validation. Provider records, auth
@@ -808,7 +808,7 @@ Acceptance criteria:
   G1; OAuth-minted grants carry kind `mcp_oauth`, provider id
   `mcp:<server_id>`, and the canonical resource as audience).
 
-Implemented 2026-06-10: `auth-registry::mcp_oauth` (`McpOAuthDriver`,
+Implemented 2026-06-10: `auth::mcp_oauth` (`McpOAuthDriver`,
 `McpOAuthTarget`, `OAuthMetadataClient` trait + reqwest impl, typed
 `McpOAuthError` kinds), gateway lazy upsert in `auth/flows/start` when the
 client id is `mcp:<server_id>` (so `lightspeed auth login mcp:<server>` needs no
@@ -847,7 +847,7 @@ Acceptance criteria:
 Implemented 2026-06-10 (mint slice): generic `auth_providers` table in
 migration 004 (one table for all provider kinds — typed `AuthProviderConfig`
 enum decoded from `config_json` at the store boundary, GitHub Apps first),
-`auth-registry::github` (JWT signing via `jsonwebtoken`, `GitHubApiClient`
+`auth::github` (JWT signing via `jsonwebtoken`, `GitHubApiClient`
 trait + reqwest impl, typed `GitHubAppError` kinds, RFC 3339 parsing),
 `TokenAudience::GitHubApi`, broker `GitHubAppRuntime`,
 `auth/providers/create|list|read|delete` +
@@ -871,7 +871,7 @@ Refactored 2026-06-11: provider-kind dispatch moved behind the
 status/audience enforcement, and the per-grant single-flight lock around a
 generic fast-path/renew skeleton; stored/OAuth-refreshable tokens are served
 by a built-in source, and `GitHubAppRuntime` lives in
-`auth-registry::github` as a registered source (`with_token_source`), so
+`auth::github` as a registered source (`with_token_source`), so
 `broker.rs` carries no GitHub imports and the next provider kind
 (`github_app_user`) is a new source impl, not a new broker branch.
 

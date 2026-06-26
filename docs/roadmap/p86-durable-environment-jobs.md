@@ -410,7 +410,7 @@ records and a store trait in a registry crate, with in-memory and Postgres
 adapters outside the deterministic engine.
 
 The registry belongs at the environment boundary for v1. The smallest
-implementation can add `JobHandleStore` and DTOs to `environment-registry`,
+implementation can add `JobHandleStore` and DTOs to `environments`,
 beside `SessionEnvironmentBindingStore`, because a job handle is meaningful only
 with the session environment/provider/target tuple that accepted it. If the
 surface later grows beyond environment-scoped handles, it can split into a
@@ -940,8 +940,8 @@ Job handle records must still avoid accidental leakage:
 
 ### G1. Contracts And Job Handle Registry
 
-- Add environment job DTOs and validation to `environment-registry`.
-- Add a `JobHandleStore` trait to `environment-registry` with in-memory and
+- Add environment job DTOs and validation to `environments`.
+- Add a `JobHandleStore` trait to `environments` with in-memory and
   Postgres implementations for handle ownership/routing/idempotency only.
 - Add a Postgres table keyed by `(universe_id, session_id, env_id, job_id)` and
   indexed by `(session_id, env_id)` for listing.

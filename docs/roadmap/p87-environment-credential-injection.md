@@ -326,7 +326,7 @@ records, not in the environment binding row.
 
 ### G1. Registry And Store
 
-- [x] Add DTOs and a store trait in `environment-registry` for
+- [x] Add DTOs and a store trait in `environments` for
   environment credential bindings.
 - [x] Add `session_environment_credentials` to `006_environments.sql` with the
   normalized table above.

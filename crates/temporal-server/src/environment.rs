@@ -3,7 +3,7 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use engine::{CoreAgentState, SessionId, ToolExecutionTarget, storage::BlobStore};
-use environment_registry::{
+use environments::{
     SessionEnvironmentBindingRecord, SessionEnvironmentBindingStatus, SessionEnvironmentFsRoute,
     SessionEnvironmentFsRouteAccess, SessionEnvironmentKind,
 };
@@ -436,7 +436,7 @@ fn environment_status_from_binding(status: SessionEnvironmentBindingStatus) -> E
 }
 
 fn environment_capabilities_from_binding(
-    capabilities: environment_registry::SessionEnvironmentCapabilities,
+    capabilities: environments::SessionEnvironmentCapabilities,
 ) -> EnvironmentCapabilities {
     EnvironmentCapabilities {
         fs_read: capabilities.fs_read,

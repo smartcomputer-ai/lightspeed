@@ -1,4 +1,4 @@
-# auth-registry
+# auth
 
 Generic auth grant, secret, and token-broker substrate for Lightspeed (P69).
 
@@ -73,7 +73,7 @@ token), `auth/clients/create` (client secret), and `auth/providers/create`
 ## Build & test
 
 ```bash
-cargo test -p auth-registry
+cargo test -p auth
 # encrypted store impl (needs local infra):
 cargo test -p store-pg --test store_pg_live -- --ignored
 ```

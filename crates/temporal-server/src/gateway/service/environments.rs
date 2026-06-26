@@ -1,7 +1,7 @@
 use super::*;
 
+use ::environments::SessionEnvironmentBindingRecord;
 use engine::ToolExecutionTarget;
-use environment_registry::SessionEnvironmentBindingRecord;
 use tools::{
     environment::EnvironmentToolContext,
     environment::projection::{
@@ -30,13 +30,12 @@ impl GatewayAgentApi {
             .environments()
             .cloned()
             .collect::<Vec<_>>();
-        let bindings =
-            environment_registry::SessionEnvironmentBindingStore::list_bindings_for_session(
-                self.store.as_ref(),
-                session_id,
-            )
-            .await
-            .map_err(map_environment_registry_error)?;
+        let bindings = ::environments::SessionEnvironmentBindingStore::list_bindings_for_session(
+            self.store.as_ref(),
+            session_id,
+        )
+        .await
+        .map_err(map_environments_error)?;
         let blobs: Arc<dyn BlobStore> = self.store.clone();
         for binding in bindings {
             environments.push(runtime_environment_from_binding_projection(

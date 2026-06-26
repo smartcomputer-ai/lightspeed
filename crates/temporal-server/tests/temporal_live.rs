@@ -119,13 +119,13 @@ async fn temporal_live_outbox_enqueue_read_ack_round_trip() -> anyhow::Result<()
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires local/up.sh or compatible Temporal + Postgres env"]
-async fn temporal_live_mcp_registry_and_session_links_materialize() -> anyhow::Result<()> {
+async fn temporal_live_mcp_and_session_links_materialize() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().expect("live test lock");
     let _ = dotenvy::dotenv();
     require_storage_live_env()?;
 
     let activities = fake_worker_activities().await?;
-    run_with_live_worker(activities, run_mcp_registry_live_client).await
+    run_with_live_worker(activities, run_mcp_live_client).await
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -1943,7 +1943,7 @@ async fn run_admission_failure_live_client(
     Ok(())
 }
 
-async fn run_mcp_registry_live_client(
+async fn run_mcp_live_client(
     client: Client,
     task_queue: String,
     session_id: SessionId,

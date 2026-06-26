@@ -34,10 +34,10 @@ cargo test -p test-support
 cargo test -p tools
 cargo test -p store-fs
 cargo test -p store-pg
-cargo test -p mcp-registry
+cargo test -p mcp
 cargo test -p messaging
-cargo test -p auth-registry
-cargo test -p environment-registry
+cargo test -p auth
+cargo test -p environments
 cargo test -p llm-runtime
 cargo test -p llm-clients
 cargo test -p eval
@@ -103,16 +103,16 @@ cargo run -p cli -- chat --api-url http://127.0.0.1:18080/rpc --session session_
   grant/secret storage.
 - `crates/messaging/` — channel-neutral outbound message types and the
   delivery outbox store trait backing the messaging tools and bridges (P71).
-- `crates/mcp-registry/` — provider-independent remote MCP server catalog DTOs,
+- `crates/mcp/` — provider-independent remote MCP server catalog DTOs,
   validation, and store traits.
-- `crates/profile-registry/` — agent profile registry validation helpers,
+- `crates/profiles/` — agent profile registry validation helpers,
   errors, update records, and the substrate-neutral `ProfileStore` trait over
   `api` profile DTOs.
-- `crates/auth-registry/` — generic auth grant/secret/provider records,
+- `crates/auth/` — generic auth grant/secret/provider records,
   OAuth client and authorization-flow records, PKCE helpers, the MCP OAuth
   and GitHub App drivers, store traits, typed broker errors, and the runtime
   token broker with single-flight refresh and on-demand minting (P69).
-- `crates/environment-registry/` — environment provider, host target, and
+- `crates/environments/` — environment provider, host target, and
   session environment binding DTOs, validation, errors, and store traits.
 - `crates/eval/` — eval harness for agent/tool workflows.
 - `crates/llm-runtime/` — CoreAgent LLM runtime from planned requests to

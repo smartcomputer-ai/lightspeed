@@ -260,7 +260,7 @@ async fn in_memory_store_binds_lists_rebinds_and_unbinds_credentials() {
             env_id: EnvironmentId::new("local"),
             env_name: "GITHUB_TOKEN".to_owned(),
             source: SessionEnvironmentCredentialSource::AuthGrant {
-                grant_id: auth_registry::AuthGrantId::new("authgrant_repo"),
+                grant_id: auth::AuthGrantId::new("authgrant_repo"),
             },
             created_at_ms: 100,
         })
@@ -274,7 +274,7 @@ async fn in_memory_store_binds_lists_rebinds_and_unbinds_credentials() {
             env_id: EnvironmentId::new("local"),
             env_name: "GITHUB_TOKEN".to_owned(),
             source: SessionEnvironmentCredentialSource::DirectSecret {
-                secret_id: auth_registry::SecretId::new("authsec_token"),
+                secret_id: auth::SecretId::new("authsec_token"),
             },
             created_at_ms: 110,
         })

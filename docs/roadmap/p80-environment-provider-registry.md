@@ -339,8 +339,8 @@ expose pre-existing attachable targets.
 
 ## Store Traits
 
-Add an environment registry crate, likely `crates/environment-registry`, with
-traits similar to `mcp-registry`:
+Add an environment registry crate, likely `crates/environments`, with
+traits similar to `mcp`:
 
 ```text
 EnvironmentProviderStore
@@ -411,17 +411,17 @@ At minimum:
 
 ### G1: Registry Crate
 
-Add `crates/environment-registry` with provider, target, binding DTOs, statuses,
+Add `crates/environments` with provider, target, binding DTOs, statuses,
 validation, errors, and in-memory stores.
 
-Implemented in `crates/environment-registry`.
+Implemented in `crates/environments`.
 
 ### G2: Postgres Store
 
 Add `store-pg` tables and trait implementations for providers, targets, and
 session environment bindings.
 
-Implemented through `store-pg` migration `006_environment_registry.sql` and
+Implemented through `store-pg` migration `006_environments.sql` and
 the `PgStore` environment registry trait implementations.
 
 ### G3: Internal Provider API

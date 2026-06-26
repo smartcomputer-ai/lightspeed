@@ -1,5 +1,5 @@
 use super::*;
-use profile_registry::{ProfileError, ProfileSourceExt, ProfileStore, UpdateAgentProfile};
+use ::profiles::{ProfileError, ProfileSourceExt, ProfileStore, UpdateAgentProfile};
 
 const PROFILE_INSTRUCTIONS_CONTEXT_KEY: &str = "instructions.050.profile";
 
@@ -412,7 +412,7 @@ impl GatewayAgentApi {
             .store
             .read_server(&server_id)
             .await
-            .map_err(map_mcp_registry_error)?;
+            .map_err(map_mcp_error)?;
         let grant = match params.auth_grant_id.clone() {
             Some(grant_id) => {
                 let grant_id = parse_auth_grant_id(grant_id)?;
@@ -420,7 +420,7 @@ impl GatewayAgentApi {
                     self.store
                         .read_grant(&grant_id)
                         .await
-                        .map_err(map_auth_registry_error)?,
+                        .map_err(map_auth_error)?,
                 )
             }
             None => None,

@@ -172,7 +172,7 @@ fn environment_view_maps_record_and_active_status() {
         tools::environment::projection::EnvironmentStatus::Ready,
     );
 
-    let view = environments::session_environment_view(&record, Some("local"));
+    let view = super::environments::session_environment_view(&record, Some("local"));
 
     assert_eq!(view.env_id, "local");
     assert_eq!(view.kind, SessionEnvironmentKindView::AttachedHost);
@@ -189,10 +189,10 @@ fn environment_activation_lowers_to_default_env_target_command() {
         "local",
         tools::environment::projection::EnvironmentStatus::Ready,
     );
-    let target =
-        environments::activation_target_for_environment_record(&record).expect("activation target");
+    let target = super::environments::activation_target_for_environment_record(&record)
+        .expect("activation target");
 
-    let command = environments::activate_environment_command(target.clone());
+    let command = super::environments::activate_environment_command(target.clone());
 
     assert!(matches!(
         command,
@@ -202,7 +202,7 @@ fn environment_activation_lowers_to_default_env_target_command() {
 
 #[test]
 fn environment_deactivation_lowers_to_clear_env_target_command() {
-    let command = environments::deactivate_environment_command();
+    let command = super::environments::deactivate_environment_command();
 
     assert!(matches!(
         command,
@@ -212,7 +212,7 @@ fn environment_deactivation_lowers_to_clear_env_target_command() {
 
 #[test]
 fn invalid_environment_id_maps_to_invalid_request() {
-    let error = environments::parse_environment_id("bad id".to_owned())
+    let error = super::environments::parse_environment_id("bad id".to_owned())
         .expect_err("invalid environment id");
 
     assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
@@ -225,7 +225,7 @@ fn inactive_environment_cannot_be_activation_target() {
         tools::environment::projection::EnvironmentStatus::Detached,
     );
 
-    let error = environments::activation_target_for_environment_record(&record)
+    let error = super::environments::activation_target_for_environment_record(&record)
         .expect_err("detached environment");
 
     assert_eq!(error.kind, AgentApiErrorKind::Rejected);
@@ -235,7 +235,7 @@ fn inactive_environment_cannot_be_activation_target() {
 fn mcp_link_materializes_remote_tool_patch() {
     let tool_name = ToolName::new("mcp_crm");
     let tools = BTreeMap::new();
-    let record = test_mcp_server_record("crm", mcp_registry::McpServerStatus::Active);
+    let record = test_mcp_server_record("crm", mcp::McpServerStatus::Active);
     let draft = session_mcp_link_from_record(
         api::SessionMcpLinkParams {
             session_id: "session_1".to_owned(),
@@ -267,20 +267,20 @@ fn mcp_link_materializes_remote_tool_patch() {
 
 fn test_auth_grant_record(
     grant_id: &str,
-    provider_kind: auth_registry::AuthProviderKind,
-    status: auth_registry::AuthGrantStatus,
+    provider_kind: auth::AuthProviderKind,
+    status: auth::AuthGrantStatus,
     audience: Option<&str>,
-) -> auth_registry::AuthGrantRecord {
-    auth_registry::CreateAuthGrantRecord {
-        grant_id: auth_registry::AuthGrantId::new(grant_id),
+) -> auth::AuthGrantRecord {
+    auth::CreateAuthGrantRecord {
+        grant_id: auth::AuthGrantId::new(grant_id),
         provider_id: "static".to_owned(),
         provider_kind,
-        principal: auth_registry::PrincipalRef::universe_default(),
+        principal: auth::PrincipalRef::universe_default(),
         display_name: None,
         subject_hint: None,
         scopes: Vec::new(),
         audience: audience.map(str::to_owned),
-        access_token_secret: Some(auth_registry::SecretId::new("authsec_1")),
+        access_token_secret: Some(auth::SecretId::new("authsec_1")),
         refresh_token_secret: None,
         oauth_client: None,
         expires_at_ms: None,
@@ -306,12 +306,12 @@ fn mcp_link_params_with_grant(grant_id: &str) -> api::SessionMcpLinkParams {
 
 #[test]
 fn mcp_link_with_grant_materializes_auth_ref_for_bearer_server() {
-    let mut record = test_mcp_server_record("crm", mcp_registry::McpServerStatus::Active);
-    record.auth_policy = mcp_registry::McpServerAuthPolicy::RequiredBearer;
+    let mut record = test_mcp_server_record("crm", mcp::McpServerStatus::Active);
+    record.auth_policy = mcp::McpServerAuthPolicy::RequiredBearer;
     let grant = test_auth_grant_record(
         "authgrant_1",
-        auth_registry::AuthProviderKind::StaticBearer,
-        auth_registry::AuthGrantStatus::Active,
+        auth::AuthProviderKind::StaticBearer,
+        auth::AuthGrantStatus::Active,
         Some("https://crm.example.com"),
     );
 
@@ -333,12 +333,12 @@ fn mcp_link_with_grant_materializes_auth_ref_for_bearer_server() {
 
 #[test]
 fn mcp_link_rejects_revoked_grant() {
-    let mut record = test_mcp_server_record("crm", mcp_registry::McpServerStatus::Active);
-    record.auth_policy = mcp_registry::McpServerAuthPolicy::RequiredBearer;
+    let mut record = test_mcp_server_record("crm", mcp::McpServerStatus::Active);
+    record.auth_policy = mcp::McpServerAuthPolicy::RequiredBearer;
     let grant = test_auth_grant_record(
         "authgrant_1",
-        auth_registry::AuthProviderKind::StaticBearer,
-        auth_registry::AuthGrantStatus::Revoked,
+        auth::AuthProviderKind::StaticBearer,
+        auth::AuthGrantStatus::Revoked,
         None,
     );
 
@@ -354,8 +354,8 @@ fn mcp_link_rejects_revoked_grant() {
 
 #[test]
 fn mcp_link_rejects_grant_kind_incompatible_with_auth_policy() {
-    let mut record = test_mcp_server_record("crm", mcp_registry::McpServerStatus::Active);
-    record.auth_policy = mcp_registry::McpServerAuthPolicy::RequiredOAuth {
+    let mut record = test_mcp_server_record("crm", mcp::McpServerStatus::Active);
+    record.auth_policy = mcp::McpServerAuthPolicy::RequiredOAuth {
         resource: "https://crm.example.com".to_owned(),
         scopes_default: Vec::new(),
         protected_resource_metadata_url: None,
@@ -363,8 +363,8 @@ fn mcp_link_rejects_grant_kind_incompatible_with_auth_policy() {
     };
     let grant = test_auth_grant_record(
         "authgrant_1",
-        auth_registry::AuthProviderKind::StaticBearer,
-        auth_registry::AuthGrantStatus::Active,
+        auth::AuthProviderKind::StaticBearer,
+        auth::AuthGrantStatus::Active,
         None,
     );
 
@@ -380,12 +380,12 @@ fn mcp_link_rejects_grant_kind_incompatible_with_auth_policy() {
 
 #[test]
 fn mcp_link_rejects_grant_audience_that_does_not_cover_server() {
-    let mut record = test_mcp_server_record("crm", mcp_registry::McpServerStatus::Active);
-    record.auth_policy = mcp_registry::McpServerAuthPolicy::OptionalBearer;
+    let mut record = test_mcp_server_record("crm", mcp::McpServerStatus::Active);
+    record.auth_policy = mcp::McpServerAuthPolicy::OptionalBearer;
     let grant = test_auth_grant_record(
         "authgrant_1",
-        auth_registry::AuthProviderKind::StaticBearer,
-        auth_registry::AuthGrantStatus::Active,
+        auth::AuthProviderKind::StaticBearer,
+        auth::AuthGrantStatus::Active,
         Some("https://other.example.com"),
     );
 
@@ -401,11 +401,11 @@ fn mcp_link_rejects_grant_audience_that_does_not_cover_server() {
 
 #[test]
 fn mcp_link_rejects_grant_for_no_auth_server() {
-    let record = test_mcp_server_record("crm", mcp_registry::McpServerStatus::Active);
+    let record = test_mcp_server_record("crm", mcp::McpServerStatus::Active);
     let grant = test_auth_grant_record(
         "authgrant_1",
-        auth_registry::AuthProviderKind::StaticBearer,
-        auth_registry::AuthGrantStatus::Active,
+        auth::AuthProviderKind::StaticBearer,
+        auth::AuthGrantStatus::Active,
         None,
     );
 
@@ -421,8 +421,8 @@ fn mcp_link_rejects_grant_for_no_auth_server() {
 
 #[test]
 fn mcp_link_requires_grant_for_required_auth_server() {
-    let mut record = test_mcp_server_record("crm", mcp_registry::McpServerStatus::Active);
-    record.auth_policy = mcp_registry::McpServerAuthPolicy::RequiredBearer;
+    let mut record = test_mcp_server_record("crm", mcp::McpServerStatus::Active);
+    record.auth_policy = mcp::McpServerAuthPolicy::RequiredBearer;
     let mut params = mcp_link_params_with_grant("authgrant_1");
     params.auth_grant_id = None;
 
@@ -1512,21 +1512,18 @@ fn test_environment_record(
     }
 }
 
-fn test_mcp_server_record(
-    server_id: &str,
-    status: mcp_registry::McpServerStatus,
-) -> mcp_registry::McpServerRecord {
-    mcp_registry::CreateMcpServerRecord {
-        server_id: mcp_registry::McpServerId::new(server_id),
+fn test_mcp_server_record(server_id: &str, status: mcp::McpServerStatus) -> mcp::McpServerRecord {
+    mcp::CreateMcpServerRecord {
+        server_id: mcp::McpServerId::new(server_id),
         display_name: Some(format!("{server_id} MCP")),
         server_url: format!("https://{server_id}.example.com/mcp"),
-        transport: mcp_registry::RemoteMcpTransport::Auto,
+        transport: mcp::RemoteMcpTransport::Auto,
         default_server_label: server_id.to_owned(),
         description: None,
         allowed_tools: None,
-        approval_default: mcp_registry::McpApprovalPolicy::ProviderDefault,
+        approval_default: mcp::McpApprovalPolicy::ProviderDefault,
         defer_loading_default: None,
-        auth_policy: mcp_registry::McpServerAuthPolicy::None,
+        auth_policy: mcp::McpServerAuthPolicy::None,
         status,
         created_at_ms: 1,
     }
@@ -1642,15 +1639,12 @@ fn auth_client_drafts_encrypt_secret_and_default_to_basic_auth() {
         .expect("draft oauth client");
 
     let secret = draft.secret.expect("client secret drafted");
-    assert_eq!(
-        secret.secret_kind,
-        auth_registry::SECRET_KIND_OAUTH_CLIENT_SECRET
-    );
+    assert_eq!(secret.secret_kind, auth::SECRET_KIND_OAUTH_CLIENT_SECRET);
     assert_eq!(secret.value.expose(), "shh-secret");
     assert_eq!(draft.client.client_secret, Some(secret.secret_id.clone()));
     assert_eq!(
         draft.client.token_endpoint_auth_method,
-        auth_registry::TokenEndpointAuthMethod::ClientSecretBasic
+        auth::TokenEndpointAuthMethod::ClientSecretBasic
     );
     // Provider id defaults to the client id.
     assert_eq!(draft.client.provider_id, "crm");
@@ -1666,7 +1660,7 @@ fn auth_client_drafts_without_secret_default_to_public_client() {
     assert!(draft.secret.is_none());
     assert_eq!(
         draft.client.token_endpoint_auth_method,
-        auth_registry::TokenEndpointAuthMethod::None
+        auth::TokenEndpointAuthMethod::None
     );
 }
 
@@ -1706,8 +1700,8 @@ fn oauth_redirect_uris_normalize_trailing_slashes() {
 
 #[test]
 fn mcp_oauth_targets_come_from_oauth_policies_only() {
-    let mut record = test_mcp_server_record("playground", mcp_registry::McpServerStatus::Active);
-    record.auth_policy = mcp_registry::McpServerAuthPolicy::RequiredOAuth {
+    let mut record = test_mcp_server_record("playground", mcp::McpServerStatus::Active);
+    record.auth_policy = mcp::McpServerAuthPolicy::RequiredOAuth {
         resource: "https://playground.example.com/mcp".to_owned(),
         scopes_default: vec!["tools.run".to_owned()],
         protected_resource_metadata_url: Some(
@@ -1726,8 +1720,8 @@ fn mcp_oauth_targets_come_from_oauth_policies_only() {
         Some("https://as.example.com")
     );
 
-    let mut bearer = test_mcp_server_record("bearer", mcp_registry::McpServerStatus::Active);
-    bearer.auth_policy = mcp_registry::McpServerAuthPolicy::RequiredBearer;
+    let mut bearer = test_mcp_server_record("bearer", mcp::McpServerStatus::Active);
+    bearer.auth_policy = mcp::McpServerAuthPolicy::RequiredBearer;
     let error = oauth_api::mcp_oauth_target_from_record(&bearer)
         .expect_err("bearer servers cannot be logged into");
     assert_eq!(error.kind, AgentApiErrorKind::Rejected);
@@ -1762,14 +1756,14 @@ fn cimd_documents_declare_a_public_pkce_client() {
 
 #[test]
 fn auth_flow_views_carry_derived_status() {
-    let record = auth_registry::CreateAuthFlowRecord {
-        flow_id: auth_registry::AuthFlowId::new("authflow_1"),
-        client_id: auth_registry::OAuthClientId::new("crm"),
+    let record = auth::CreateAuthFlowRecord {
+        flow_id: auth::AuthFlowId::new("authflow_1"),
+        client_id: auth::OAuthClientId::new("crm"),
         provider_id: "crm".to_owned(),
-        provider_kind: auth_registry::AuthProviderKind::McpOAuth,
-        principal: auth_registry::PrincipalRef::universe_default(),
-        state_hash: auth_registry::state_hash("state-1"),
-        pkce_verifier_secret: auth_registry::SecretId::new("authsec_pkce"),
+        provider_kind: auth::AuthProviderKind::McpOAuth,
+        principal: auth::PrincipalRef::universe_default(),
+        state_hash: auth::state_hash("state-1"),
+        pkce_verifier_secret: auth::SecretId::new("authsec_pkce"),
         redirect_uri: "http://127.0.0.1:18080/auth/callback".to_owned(),
         scopes: Vec::new(),
         audience: Some("https://crm.example.com/mcp".to_owned()),

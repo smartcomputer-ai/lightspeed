@@ -7,7 +7,7 @@ use engine::{
     ToolInvocationBatchResult, ToolInvocationResult,
     storage::{BlobStore, BlobStoreError},
 };
-use environment_registry::{
+use environments::{
     CreateJobHandle, EnvironmentId, EnvironmentRegistryError, JobHandleRecord, JobHandleStore,
     ListJobHandles, SessionEnvironmentBindingRecord, SessionEnvironmentBindingStatus,
     SessionEnvironmentBindingStore,
@@ -651,7 +651,7 @@ impl SessionTools {
                 limit: Some(limit),
             })
             .await
-            .map_err(map_environment_registry_error)?;
+            .map_err(map_environments_error)?;
 
         let environments = if &session_id == current_session_id {
             current_environments.clone()
@@ -1158,7 +1158,7 @@ impl SessionTools {
         let bindings = bindings
             .list_bindings_for_session(session_id)
             .await
-            .map_err(map_environment_registry_error)?;
+            .map_err(map_environments_error)?;
         for binding in bindings {
             if binding.status != SessionEnvironmentBindingStatus::Ready {
                 continue;
@@ -1644,7 +1644,7 @@ fn map_catalog_error(error: VfsCatalogError) -> CoreAgentIoError {
     io_error(format!("load VFS mounts: {error}"))
 }
 
-fn map_environment_registry_error(error: EnvironmentRegistryError) -> CoreAgentIoError {
+fn map_environments_error(error: EnvironmentRegistryError) -> CoreAgentIoError {
     io_error(format!("load session environment bindings: {error}"))
 }
 

@@ -1,7 +1,7 @@
 use super::*;
 
+use ::environments::HostControllerConnectionSpec;
 use async_trait::async_trait;
-use environment_registry::HostControllerConnectionSpec;
 use host_client::{HostClientError, HostControllerClient, WebSocketConnectOptions};
 use host_protocol::{
     control::{

@@ -46,8 +46,8 @@ impl GatewayAgentApi {
 pub(super) fn create_mcp_server_record(
     params: McpServerCreateParams,
     created_at_ms: i64,
-) -> Result<mcp_registry::CreateMcpServerRecord, AgentApiError> {
-    Ok(mcp_registry::CreateMcpServerRecord {
+) -> Result<mcp::CreateMcpServerRecord, AgentApiError> {
+    Ok(mcp::CreateMcpServerRecord {
         server_id: parse_mcp_server_id(params.server_id)?,
         display_name: params.display_name,
         server_url: params.server_url,
@@ -63,7 +63,7 @@ pub(super) fn create_mcp_server_record(
     })
 }
 
-pub(super) fn mcp_server_view(record: mcp_registry::McpServerRecord) -> api::McpServerView {
+pub(super) fn mcp_server_view(record: mcp::McpServerRecord) -> api::McpServerView {
     api::McpServerView {
         server_id: record.server_id.as_str().to_owned(),
         display_name: record.display_name,
@@ -83,23 +83,23 @@ pub(super) fn mcp_server_view(record: mcp_registry::McpServerRecord) -> api::Mcp
 
 pub(super) fn session_mcp_link_from_record(
     params: SessionMcpLinkParams,
-    record: &mcp_registry::McpServerRecord,
-    grant: Option<&auth_registry::AuthGrantRecord>,
+    record: &mcp::McpServerRecord,
+    grant: Option<&auth::AuthGrantRecord>,
 ) -> Result<SessionMcpLinkDraft, AgentApiError> {
     match record.status {
-        mcp_registry::McpServerStatus::Disabled => {
+        mcp::McpServerStatus::Disabled => {
             return Err(AgentApiError::rejected(format!(
                 "MCP server is disabled: {}",
                 record.server_id
             )));
         }
-        mcp_registry::McpServerStatus::NeedsAuthConfig => {
+        mcp::McpServerStatus::NeedsAuthConfig => {
             return Err(AgentApiError::rejected(format!(
                 "MCP server needs auth configuration before linking: {}",
                 record.server_id
             )));
         }
-        mcp_registry::McpServerStatus::Active | mcp_registry::McpServerStatus::Unverified => {}
+        mcp::McpServerStatus::Active | mcp::McpServerStatus::Unverified => {}
     }
 
     let tool_name = match params.tool_id {
@@ -218,10 +218,8 @@ pub(super) fn linked_session_mcp_tool_ids(
         .collect()
 }
 
-pub(super) fn parse_mcp_server_id(
-    server_id: String,
-) -> Result<mcp_registry::McpServerId, AgentApiError> {
-    mcp_registry::McpServerId::try_new(server_id)
+pub(super) fn parse_mcp_server_id(server_id: String) -> Result<mcp::McpServerId, AgentApiError> {
+    mcp::McpServerId::try_new(server_id)
         .map_err(|error| AgentApiError::invalid_request(format!("invalid MCP server id: {error}")))
 }
 
@@ -230,22 +228,20 @@ pub(super) fn parse_mcp_tool_name(tool_id: String) -> Result<ToolName, AgentApiE
         .map_err(|error| AgentApiError::invalid_request(format!("invalid MCP tool id: {error}")))
 }
 
-pub(super) fn map_mcp_registry_error(error: mcp_registry::McpRegistryError) -> AgentApiError {
+pub(super) fn map_mcp_error(error: mcp::McpRegistryError) -> AgentApiError {
     match error {
-        mcp_registry::McpRegistryError::AlreadyExists { server_id } => {
+        mcp::McpRegistryError::AlreadyExists { server_id } => {
             AgentApiError::conflict(format!("MCP server already exists: {server_id}"))
         }
-        mcp_registry::McpRegistryError::NotFound { server_id } => {
+        mcp::McpRegistryError::NotFound { server_id } => {
             AgentApiError::not_found(format!("MCP server not found: {server_id}"))
         }
-        mcp_registry::McpRegistryError::InvalidInput { message } => {
-            AgentApiError::invalid_request(message)
-        }
-        mcp_registry::McpRegistryError::Store { message } => AgentApiError::internal(message),
+        mcp::McpRegistryError::InvalidInput { message } => AgentApiError::invalid_request(message),
+        mcp::McpRegistryError::Store { message } => AgentApiError::internal(message),
     }
 }
 
-fn default_mcp_tool_name(server_id: &mcp_registry::McpServerId) -> Result<ToolName, AgentApiError> {
+fn default_mcp_tool_name(server_id: &mcp::McpServerId) -> Result<ToolName, AgentApiError> {
     let mut tool_id = String::from("mcp_");
     for ch in server_id.as_str().chars() {
         if tool_id.len() >= 64 {
@@ -261,20 +257,17 @@ fn default_mcp_tool_name(server_id: &mcp_registry::McpServerId) -> Result<ToolNa
 }
 
 fn auth_ref_for_link(
-    record: &mcp_registry::McpServerRecord,
-    grant: Option<&auth_registry::AuthGrantRecord>,
+    record: &mcp::McpServerRecord,
+    grant: Option<&auth::AuthGrantRecord>,
 ) -> Result<Option<engine::SecretRef>, AgentApiError> {
     match (&record.auth_policy, grant) {
-        (mcp_registry::McpServerAuthPolicy::None, Some(_)) => Err(AgentApiError::invalid_request(
+        (mcp::McpServerAuthPolicy::None, Some(_)) => Err(AgentApiError::invalid_request(
             "authGrantId is only valid for MCP servers with an auth policy",
         )),
-        (mcp_registry::McpServerAuthPolicy::RequiredBearer, None)
-        | (mcp_registry::McpServerAuthPolicy::RequiredOAuth { .. }, None) => {
-            Err(AgentApiError::rejected(format!(
-                "MCP server requires an auth grant: {}",
-                record.server_id
-            )))
-        }
+        (mcp::McpServerAuthPolicy::RequiredBearer, None)
+        | (mcp::McpServerAuthPolicy::RequiredOAuth { .. }, None) => Err(AgentApiError::rejected(
+            format!("MCP server requires an auth grant: {}", record.server_id),
+        )),
         (_, Some(grant)) => {
             auth_api::validate_mcp_grant_for_link(record, grant)?;
             Ok(Some(engine::SecretRef {
@@ -296,39 +289,35 @@ fn validate_mcp_patch(
         .map_err(|error| AgentApiError::invalid_request(error.to_string()))
 }
 
-fn registry_transport(value: api::RemoteMcpTransport) -> mcp_registry::RemoteMcpTransport {
+fn registry_transport(value: api::RemoteMcpTransport) -> mcp::RemoteMcpTransport {
     match value {
-        api::RemoteMcpTransport::StreamableHttp => mcp_registry::RemoteMcpTransport::StreamableHttp,
-        api::RemoteMcpTransport::Sse => mcp_registry::RemoteMcpTransport::Sse,
-        api::RemoteMcpTransport::Auto => mcp_registry::RemoteMcpTransport::Auto,
+        api::RemoteMcpTransport::StreamableHttp => mcp::RemoteMcpTransport::StreamableHttp,
+        api::RemoteMcpTransport::Sse => mcp::RemoteMcpTransport::Sse,
+        api::RemoteMcpTransport::Auto => mcp::RemoteMcpTransport::Auto,
     }
 }
 
-fn api_transport(value: mcp_registry::RemoteMcpTransport) -> api::RemoteMcpTransport {
+fn api_transport(value: mcp::RemoteMcpTransport) -> api::RemoteMcpTransport {
     match value {
-        mcp_registry::RemoteMcpTransport::StreamableHttp => api::RemoteMcpTransport::StreamableHttp,
-        mcp_registry::RemoteMcpTransport::Sse => api::RemoteMcpTransport::Sse,
-        mcp_registry::RemoteMcpTransport::Auto => api::RemoteMcpTransport::Auto,
+        mcp::RemoteMcpTransport::StreamableHttp => api::RemoteMcpTransport::StreamableHttp,
+        mcp::RemoteMcpTransport::Sse => api::RemoteMcpTransport::Sse,
+        mcp::RemoteMcpTransport::Auto => api::RemoteMcpTransport::Auto,
     }
 }
 
-fn registry_approval(value: api::RemoteMcpApprovalPolicy) -> mcp_registry::McpApprovalPolicy {
+fn registry_approval(value: api::RemoteMcpApprovalPolicy) -> mcp::McpApprovalPolicy {
     match value {
-        api::RemoteMcpApprovalPolicy::ProviderDefault => {
-            mcp_registry::McpApprovalPolicy::ProviderDefault
-        }
-        api::RemoteMcpApprovalPolicy::Always => mcp_registry::McpApprovalPolicy::Always,
-        api::RemoteMcpApprovalPolicy::Never => mcp_registry::McpApprovalPolicy::Never,
+        api::RemoteMcpApprovalPolicy::ProviderDefault => mcp::McpApprovalPolicy::ProviderDefault,
+        api::RemoteMcpApprovalPolicy::Always => mcp::McpApprovalPolicy::Always,
+        api::RemoteMcpApprovalPolicy::Never => mcp::McpApprovalPolicy::Never,
     }
 }
 
-fn api_approval(value: mcp_registry::McpApprovalPolicy) -> api::RemoteMcpApprovalPolicy {
+fn api_approval(value: mcp::McpApprovalPolicy) -> api::RemoteMcpApprovalPolicy {
     match value {
-        mcp_registry::McpApprovalPolicy::ProviderDefault => {
-            api::RemoteMcpApprovalPolicy::ProviderDefault
-        }
-        mcp_registry::McpApprovalPolicy::Always => api::RemoteMcpApprovalPolicy::Always,
-        mcp_registry::McpApprovalPolicy::Never => api::RemoteMcpApprovalPolicy::Never,
+        mcp::McpApprovalPolicy::ProviderDefault => api::RemoteMcpApprovalPolicy::ProviderDefault,
+        mcp::McpApprovalPolicy::Always => api::RemoteMcpApprovalPolicy::Always,
+        mcp::McpApprovalPolicy::Never => api::RemoteMcpApprovalPolicy::Never,
     }
 }
 
@@ -352,21 +341,17 @@ fn api_engine_approval(value: &engine::RemoteMcpApprovalPolicy) -> api::RemoteMc
     }
 }
 
-fn registry_auth_policy(value: api::McpServerAuthPolicy) -> mcp_registry::McpServerAuthPolicy {
+fn registry_auth_policy(value: api::McpServerAuthPolicy) -> mcp::McpServerAuthPolicy {
     match value {
-        api::McpServerAuthPolicy::None => mcp_registry::McpServerAuthPolicy::None,
-        api::McpServerAuthPolicy::OptionalBearer => {
-            mcp_registry::McpServerAuthPolicy::OptionalBearer
-        }
-        api::McpServerAuthPolicy::RequiredBearer => {
-            mcp_registry::McpServerAuthPolicy::RequiredBearer
-        }
+        api::McpServerAuthPolicy::None => mcp::McpServerAuthPolicy::None,
+        api::McpServerAuthPolicy::OptionalBearer => mcp::McpServerAuthPolicy::OptionalBearer,
+        api::McpServerAuthPolicy::RequiredBearer => mcp::McpServerAuthPolicy::RequiredBearer,
         api::McpServerAuthPolicy::OptionalOAuth {
             resource,
             scopes_default,
             protected_resource_metadata_url,
             authorization_server,
-        } => mcp_registry::McpServerAuthPolicy::OptionalOAuth {
+        } => mcp::McpServerAuthPolicy::OptionalOAuth {
             resource,
             scopes_default,
             protected_resource_metadata_url,
@@ -377,7 +362,7 @@ fn registry_auth_policy(value: api::McpServerAuthPolicy) -> mcp_registry::McpSer
             scopes_default,
             protected_resource_metadata_url,
             authorization_server,
-        } => mcp_registry::McpServerAuthPolicy::RequiredOAuth {
+        } => mcp::McpServerAuthPolicy::RequiredOAuth {
             resource,
             scopes_default,
             protected_resource_metadata_url,
@@ -386,16 +371,12 @@ fn registry_auth_policy(value: api::McpServerAuthPolicy) -> mcp_registry::McpSer
     }
 }
 
-fn api_auth_policy(value: mcp_registry::McpServerAuthPolicy) -> api::McpServerAuthPolicy {
+fn api_auth_policy(value: mcp::McpServerAuthPolicy) -> api::McpServerAuthPolicy {
     match value {
-        mcp_registry::McpServerAuthPolicy::None => api::McpServerAuthPolicy::None,
-        mcp_registry::McpServerAuthPolicy::OptionalBearer => {
-            api::McpServerAuthPolicy::OptionalBearer
-        }
-        mcp_registry::McpServerAuthPolicy::RequiredBearer => {
-            api::McpServerAuthPolicy::RequiredBearer
-        }
-        mcp_registry::McpServerAuthPolicy::OptionalOAuth {
+        mcp::McpServerAuthPolicy::None => api::McpServerAuthPolicy::None,
+        mcp::McpServerAuthPolicy::OptionalBearer => api::McpServerAuthPolicy::OptionalBearer,
+        mcp::McpServerAuthPolicy::RequiredBearer => api::McpServerAuthPolicy::RequiredBearer,
+        mcp::McpServerAuthPolicy::OptionalOAuth {
             resource,
             scopes_default,
             protected_resource_metadata_url,
@@ -406,7 +387,7 @@ fn api_auth_policy(value: mcp_registry::McpServerAuthPolicy) -> api::McpServerAu
             protected_resource_metadata_url,
             authorization_server,
         },
-        mcp_registry::McpServerAuthPolicy::RequiredOAuth {
+        mcp::McpServerAuthPolicy::RequiredOAuth {
             resource,
             scopes_default,
             protected_resource_metadata_url,
@@ -420,26 +401,24 @@ fn api_auth_policy(value: mcp_registry::McpServerAuthPolicy) -> api::McpServerAu
     }
 }
 
-fn registry_status(value: api::McpServerStatus) -> mcp_registry::McpServerStatus {
+fn registry_status(value: api::McpServerStatus) -> mcp::McpServerStatus {
     match value {
-        api::McpServerStatus::Active => mcp_registry::McpServerStatus::Active,
-        api::McpServerStatus::NeedsAuthConfig => mcp_registry::McpServerStatus::NeedsAuthConfig,
-        api::McpServerStatus::Unverified => mcp_registry::McpServerStatus::Unverified,
-        api::McpServerStatus::Disabled => mcp_registry::McpServerStatus::Disabled,
+        api::McpServerStatus::Active => mcp::McpServerStatus::Active,
+        api::McpServerStatus::NeedsAuthConfig => mcp::McpServerStatus::NeedsAuthConfig,
+        api::McpServerStatus::Unverified => mcp::McpServerStatus::Unverified,
+        api::McpServerStatus::Disabled => mcp::McpServerStatus::Disabled,
     }
 }
 
-pub(super) fn registry_status_for_filter(
-    value: api::McpServerStatus,
-) -> mcp_registry::McpServerStatus {
+pub(super) fn registry_status_for_filter(value: api::McpServerStatus) -> mcp::McpServerStatus {
     registry_status(value)
 }
 
-fn api_status(value: mcp_registry::McpServerStatus) -> api::McpServerStatus {
+fn api_status(value: mcp::McpServerStatus) -> api::McpServerStatus {
     match value {
-        mcp_registry::McpServerStatus::Active => api::McpServerStatus::Active,
-        mcp_registry::McpServerStatus::NeedsAuthConfig => api::McpServerStatus::NeedsAuthConfig,
-        mcp_registry::McpServerStatus::Unverified => api::McpServerStatus::Unverified,
-        mcp_registry::McpServerStatus::Disabled => api::McpServerStatus::Disabled,
+        mcp::McpServerStatus::Active => api::McpServerStatus::Active,
+        mcp::McpServerStatus::NeedsAuthConfig => api::McpServerStatus::NeedsAuthConfig,
+        mcp::McpServerStatus::Unverified => api::McpServerStatus::Unverified,
+        mcp::McpServerStatus::Disabled => api::McpServerStatus::Disabled,
     }
 }

@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use engine::{RunId, SessionId, ToolCallId, TurnId};
-use environment_registry::{
+use environments::{
     CreateJobHandle, EnvironmentId, EnvironmentProviderId, EnvironmentRegistryError,
     JobHandleRecord, JobHandleStore, ListJobHandles,
 };

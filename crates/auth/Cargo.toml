@@ -1,5 +1,5 @@
 [package]
-name = "auth-registry"
+name = "auth"
 version = "0.1.0"
 edition = "2024"
 

@@ -6,16 +6,16 @@ edition = "2024"
 [dependencies]
 aes-gcm = "0.10"
 api = { path = "../api" }
-auth-registry = { path = "../auth-registry" }
+auth = { path = "../auth" }
 base64 = "0.22"
 engine = { path = "../engine" }
-environment-registry = { path = "../environment-registry" }
+environments = { path = "../environments" }
 host-protocol = { path = "../host-protocol" }
 async-trait = "0.1"
-mcp-registry = { path = "../mcp-registry" }
+mcp = { path = "../mcp" }
 messaging = { path = "../messaging" }
 object_store = { version = "0.13.1", features = ["aws"] }
-profile-registry = { path = "../profile-registry" }
+profiles = { path = "../profiles" }
 rand = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -7,7 +7,7 @@
 //! be deleted out from under it.
 
 use async_trait::async_trait;
-use auth_registry::{
+use auth::{
     AuthProviderConfig, AuthProviderId, AuthProviderRecord, AuthProviderStatus, AuthProviderStore,
     AuthRegistryError, CreateAuthProviderRecord, SecretId,
 };

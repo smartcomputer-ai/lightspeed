@@ -1,8 +1,8 @@
-use async_trait::async_trait;
-use mcp_registry::{
+use ::mcp::{
     CreateMcpServerRecord, ListMcpServers, McpApprovalPolicy, McpRegistryError, McpRegistryStore,
     McpServerAuthPolicy, McpServerId, McpServerRecord, McpServerStatus, RemoteMcpTransport,
 };
+use async_trait::async_trait;
 use sqlx::Row;
 
 use crate::PgStore;

@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use auth_registry::{
+use auth::{
     AuthBrokerError, AuthGrantId, AuthProviderConfig, AuthProviderId, AuthProviderStatus,
     AuthProviderStore, AuthRegistryError, AuthTokenBroker, SecretStore, TokenAudience,
     model_auth_provider_id,
@@ -202,7 +202,7 @@ fn broker_error_to_resolve_error(
 mod tests {
     use std::sync::Arc;
 
-    use auth_registry::{
+    use auth::{
         AuthGrantStatus, AuthGrantStore, AuthProviderKind, CreateAuthGrantRecord,
         InMemoryAuthGrantStore, InMemoryGrantLocks, InMemorySecretStore, PrincipalRef,
         PutSecretRecord, RegistryTokenBroker, SECRET_KIND_STATIC_BEARER, SecretId, SecretStore,
@@ -330,25 +330,23 @@ mod tests {
         ))
     }
 
-    async fn provider_key_resolver(
-        status: auth_registry::AuthProviderStatus,
-    ) -> StoredProviderKeyResolver {
-        let providers = Arc::new(auth_registry::InMemoryAuthProviderStore::new());
+    async fn provider_key_resolver(status: auth::AuthProviderStatus) -> StoredProviderKeyResolver {
+        let providers = Arc::new(auth::InMemoryAuthProviderStore::new());
         let secrets = Arc::new(InMemorySecretStore::new());
         secrets
             .put_secret(PutSecretRecord {
                 secret_id: SecretId::new("authsec_llm"),
-                secret_kind: auth_registry::SECRET_KIND_MODEL_API_KEY.to_owned(),
+                secret_kind: auth::SECRET_KIND_MODEL_API_KEY.to_owned(),
                 value: SecretValue::new("stored-api-key"),
                 created_at_ms: 10,
             })
             .await
             .expect("put secret");
         providers
-            .create_auth_provider(auth_registry::CreateAuthProviderRecord {
+            .create_auth_provider(auth::CreateAuthProviderRecord {
                 provider_id: AuthProviderId::new(model_auth_provider_id("openai")),
                 display_name: None,
-                config: AuthProviderConfig::ModelApiKey(auth_registry::ModelApiKeyConfig::default()),
+                config: AuthProviderConfig::ModelApiKey(auth::ModelApiKeyConfig::default()),
                 credential_secret: Some(SecretId::new("authsec_llm")),
                 status,
                 created_at_ms: 10,
@@ -401,22 +399,22 @@ mod tests {
 
     #[tokio::test]
     async fn non_llm_provider_rows_fail_with_a_kind_error() {
-        let providers = Arc::new(auth_registry::InMemoryAuthProviderStore::new());
+        let providers = Arc::new(auth::InMemoryAuthProviderStore::new());
         let secrets = Arc::new(InMemorySecretStore::new());
         secrets
             .put_secret(PutSecretRecord {
                 secret_id: SecretId::new("authsec_pem"),
-                secret_kind: auth_registry::SECRET_KIND_GITHUB_APP_PRIVATE_KEY.to_owned(),
+                secret_kind: auth::SECRET_KIND_GITHUB_APP_PRIVATE_KEY.to_owned(),
                 value: SecretValue::new("pem"),
                 created_at_ms: 10,
             })
             .await
             .expect("put secret");
         providers
-            .create_auth_provider(auth_registry::CreateAuthProviderRecord {
+            .create_auth_provider(auth::CreateAuthProviderRecord {
                 provider_id: AuthProviderId::new("model:openai"),
                 display_name: None,
-                config: AuthProviderConfig::GitHubApp(auth_registry::GitHubAppConfig {
+                config: AuthProviderConfig::GitHubApp(auth::GitHubAppConfig {
                     app_id: "12345".to_owned(),
                     api_base_url: "https://api.github.com".to_owned(),
                 }),
@@ -442,7 +440,7 @@ mod tests {
         grant_audience: Option<&str>,
         binding_audience: Option<&str>,
     ) -> StoredProviderKeyResolver {
-        let providers = Arc::new(auth_registry::InMemoryAuthProviderStore::new());
+        let providers = Arc::new(auth::InMemoryAuthProviderStore::new());
         let grants = Arc::new(InMemoryAuthGrantStore::new());
         let secrets = Arc::new(InMemorySecretStore::new());
         grants
@@ -475,10 +473,10 @@ mod tests {
             .await
             .expect("put secret");
         providers
-            .create_auth_provider(auth_registry::CreateAuthProviderRecord {
+            .create_auth_provider(auth::CreateAuthProviderRecord {
                 provider_id: AuthProviderId::new(model_auth_provider_id("anthropic")),
                 display_name: None,
-                config: AuthProviderConfig::ModelOAuth(auth_registry::ModelOAuthConfig {
+                config: AuthProviderConfig::ModelOAuth(auth::ModelOAuthConfig {
                     grant_id: AuthGrantId::new("authgrant_model"),
                     audience: binding_audience.map(str::to_owned),
                 }),

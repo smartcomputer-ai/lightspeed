@@ -1,12 +1,12 @@
 use super::*;
 
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
-use engine::validate_general_string_id;
-use environment_registry::{
+use ::environments::{
     CreateJobHandle, EnvironmentId as RegistryEnvironmentId, JobHandleRecord, JobHandleStore,
     ListJobHandles, SessionEnvironmentBindingRecord, SessionEnvironmentBindingStatus,
     SessionEnvironmentBindingStore,
 };
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
+use engine::validate_general_string_id;
 use host_client::{HostClientError, HostDataClient, WebSocketConnectOptions};
 use host_protocol::{
     data::{
@@ -132,7 +132,7 @@ impl GatewayAgentApi {
             .collect::<Vec<_>>();
         let stored = JobHandleStore::create_job_handles(self.store.as_ref(), records)
             .await
-            .map_err(map_environment_registry_error)?;
+            .map_err(map_environments_error)?;
         let handle_by_job_id = stored
             .iter()
             .map(|record| {
@@ -194,7 +194,7 @@ impl GatewayAgentApi {
             },
         )
         .await
-        .map_err(map_environment_registry_error)?;
+        .map_err(map_environments_error)?;
         Ok(SessionJobListResponse {
             jobs: records.iter().map(session_job_record_view).collect(),
         })
@@ -392,7 +392,7 @@ impl GatewayAgentApi {
     ) -> Result<SessionEnvironmentBindingRecord, AgentApiError> {
         SessionEnvironmentBindingStore::read_binding(self.store.as_ref(), session_id, env_id)
             .await
-            .map_err(map_environment_registry_error)
+            .map_err(map_environments_error)
     }
 
     async fn connect_client_for_job_record(

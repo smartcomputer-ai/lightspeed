@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use auth_registry::{
+use auth::{
     AuthGrantStore, AuthProviderKind, AuthProviderStore, AuthTokenBroker, GitHubAppRuntime,
     GrantRefreshLock, HttpGitHubApiClient, HttpOAuthTokenClient, OAuthClientStore,
     OAuthRefreshRuntime, RegistryTokenBroker, SecretStore,

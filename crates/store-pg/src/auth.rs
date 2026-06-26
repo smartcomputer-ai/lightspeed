@@ -3,17 +3,17 @@
 //! Secret values are sealed with AES-256-GCM before insertion. The AAD binds
 //! each ciphertext to its universe, secret id, and secret kind, so rows cannot
 //! be swapped or relabeled without failing decryption. Plaintext exists only
-//! inside [`auth_registry::SecretValue`] wrappers in adapter memory.
+//! inside [`auth::SecretValue`] wrappers in adapter memory.
 
-use aes_gcm::aead::{Aead, Payload};
-use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
-use async_trait::async_trait;
-use auth_registry::{
+use ::auth::{
     AuthGrantId, AuthGrantRecord, AuthGrantStatus, AuthGrantStore, AuthGrantTokenRefresh,
     AuthProviderKind, AuthRegistryError, CreateAuthGrantRecord, ListAuthGrants, OAuthClientId,
     PrincipalKind, PrincipalRef, PutSecretRecord, SecretId, SecretRecordMeta, SecretStore,
     SecretValue,
 };
+use aes_gcm::aead::{Aead, Payload};
+use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
+use async_trait::async_trait;
 use rand::RngCore;
 use sqlx::Row;
 

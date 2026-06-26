@@ -1,11 +1,11 @@
 use super::*;
 
-use auth_registry::{AuthGrantId, AuthGrantStatus, AuthProviderId, AuthProviderStatus, SecretId};
-use environment_registry::{
+use ::environments::{
     CreateSessionEnvironmentCredential, ListSessionEnvironmentCredentials,
     SessionEnvironmentBindingStatus, SessionEnvironmentCredentialRecord,
     SessionEnvironmentCredentialSource, SessionEnvironmentCredentialStore,
 };
+use auth::{AuthGrantId, AuthGrantStatus, AuthProviderId, AuthProviderStatus, SecretId};
 
 impl GatewayAgentApi {
     pub(super) async fn bind_session_environment_credential_record(
@@ -15,13 +15,13 @@ impl GatewayAgentApi {
         let session_id = parse_core_session_id(params.session_id)?;
         let env_id = parse_registry_environment_id(params.env_id)?;
         validate_credential_env_name(&params.env_name)?;
-        let binding = environment_registry::SessionEnvironmentBindingStore::read_binding(
+        let binding = ::environments::SessionEnvironmentBindingStore::read_binding(
             self.store.as_ref(),
             &session_id,
             &env_id,
         )
         .await
-        .map_err(map_environment_registry_error)?;
+        .map_err(map_environments_error)?;
         if binding.status == SessionEnvironmentBindingStatus::Detached {
             return Err(AgentApiError::rejected(format!(
                 "environment is detached: {}",
@@ -40,7 +40,7 @@ impl GatewayAgentApi {
             },
         )
         .await
-        .map_err(map_environment_registry_error)?;
+        .map_err(map_environments_error)?;
         Ok(SessionEnvironmentCredentialBindResponse {
             credential: session_environment_credential_view(credential),
         })
@@ -57,7 +57,7 @@ impl GatewayAgentApi {
             ListSessionEnvironmentCredentials { session_id, env_id },
         )
         .await
-        .map_err(map_environment_registry_error)?;
+        .map_err(map_environments_error)?;
         Ok(SessionEnvironmentCredentialListResponse {
             credentials: credentials
                 .into_iter()
@@ -80,7 +80,7 @@ impl GatewayAgentApi {
             &params.env_name,
         )
         .await
-        .map_err(map_environment_registry_error)?;
+        .map_err(map_environments_error)?;
         Ok(SessionEnvironmentCredentialUnbindResponse {
             credential: session_environment_credential_view(credential),
         })
@@ -95,10 +95,9 @@ impl GatewayAgentApi {
                 let grant_id = AuthGrantId::try_new(grant_id).map_err(|error| {
                     AgentApiError::invalid_request(format!("invalid grant_id: {error}"))
                 })?;
-                let grant =
-                    auth_registry::AuthGrantStore::read_grant(self.store.as_ref(), &grant_id)
-                        .await
-                        .map_err(map_auth_registry_error)?;
+                let grant = auth::AuthGrantStore::read_grant(self.store.as_ref(), &grant_id)
+                    .await
+                    .map_err(map_auth_error)?;
                 if grant.status != AuthGrantStatus::Active {
                     return Err(AgentApiError::rejected(format!(
                         "auth grant is not active: {grant_id}"
@@ -110,12 +109,10 @@ impl GatewayAgentApi {
                 let provider_id = AuthProviderId::try_new(provider_id).map_err(|error| {
                     AgentApiError::invalid_request(format!("invalid provider_id: {error}"))
                 })?;
-                let provider = auth_registry::AuthProviderStore::read_auth_provider(
-                    self.store.as_ref(),
-                    &provider_id,
-                )
-                .await
-                .map_err(map_auth_registry_error)?;
+                let provider =
+                    auth::AuthProviderStore::read_auth_provider(self.store.as_ref(), &provider_id)
+                        .await
+                        .map_err(map_auth_error)?;
                 if provider.status != AuthProviderStatus::Active {
                     return Err(AgentApiError::rejected(format!(
                         "auth provider is not active: {provider_id}"
@@ -132,9 +129,9 @@ impl GatewayAgentApi {
                 let secret_id = SecretId::try_new(secret_id).map_err(|error| {
                     AgentApiError::invalid_request(format!("invalid secret_id: {error}"))
                 })?;
-                let _ = auth_registry::SecretStore::read_secret(self.store.as_ref(), &secret_id)
+                let _ = auth::SecretStore::read_secret(self.store.as_ref(), &secret_id)
                     .await
-                    .map_err(map_auth_registry_error)?;
+                    .map_err(map_auth_error)?;
                 Ok(SessionEnvironmentCredentialSource::DirectSecret { secret_id })
             }
         }

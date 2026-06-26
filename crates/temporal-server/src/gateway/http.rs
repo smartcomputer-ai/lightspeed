@@ -104,9 +104,9 @@ async fn oauth_callback(
     State(api): State<Arc<GatewayAgentApi>>,
     Query(query): Query<OAuthCallbackQuery>,
 ) -> (StatusCode, Html<String>) {
-    let callback = auth_registry::AuthCallback {
+    let callback = auth::AuthCallback {
         state: query.state.unwrap_or_default(),
-        code: query.code.map(auth_registry::SecretValue::new),
+        code: query.code.map(auth::SecretValue::new),
         error: query.error,
         error_description: query.error_description,
     };
