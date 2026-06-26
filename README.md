@@ -28,12 +28,12 @@ What constitutes an "agent harness" is a rapidly expanding set of table-stakes f
 - [x] Flexible prompt and instruction configuration features
 - [x] Reusable agent profiles for named or inline session setup across CLI, bridge, and Fleet spawns
 - [x] Hosted MCP, including various authentication methods such as API keys, OAuth flows
-- [x] Sub-agents (aka. "fleets"), letting agents start or manage other agents (planned)
-- [ ] Sandboxes, including delegating work to standard coding agents inside sandboxes (in progress)
+- [x] Sub-agents (aka. "fleets"), letting agents start or manage other agents
+- [ ] Sandboxes, including delegating work to standard coding agents inside sandboxes 
   - [x] Dedicated VMs that connect via a bridge daemon to the agent
-  - [ ] Ad-hoc sandboxes
-  - [ ] Jobs for long running tasks: downloads, start a coding agent like Codex, etc
-- [ ] Timers, schedules, wake-ups (planned)
+  - [ ] Ad-hoc sandboxes (in progress)
+  - [x] Jobs for long running tasks: downloads, start a coding agent like Codex, etc
+- [ ] Timers, schedules, wake-ups (in progress)
 - [ ] Multi-tenant support (in progress)
 - [ ] Other model support via the "Completion API" standard (in progress)
 - [x] CLI to connect to running agent sessions
