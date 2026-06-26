@@ -5,12 +5,16 @@ use engine::{
 };
 use temporal_workflow::{SkillCatalogRefreshActivityRequest, SkillCatalogRefreshActivityResult};
 use temporalio_sdk::activities::ActivityError;
-use tools::skills::{
-    conventional_vfs_skill_root_specs, prepare_skill_catalog_publication,
-    resolve_mounted_vfs_skill_roots, skill_catalog_context_input,
+use tools::{
+    environment::EnvironmentToolContext,
+    skills::{
+        conventional_vfs_skill_root_specs, prepare_skill_catalog_publication,
+        resolve_mounted_vfs_skill_roots, skill_catalog_context_input,
+    },
+    targets::ENV_TARGET_NAMESPACE,
 };
 
-use crate::environment::SessionEnvironmentManager;
+use crate::environment::{SessionEnvironmentManager, runtime_environment_from_binding_record};
 
 use super::{common::activity_error, state::SkillCatalogActivityDeps};
 
@@ -54,10 +58,31 @@ pub(super) async fn refresh_skill_catalog(
             .entries
             .push(active_environment_active_entry(active_ref));
     }
+    if let Some(target) = request.active_environment_target.clone() {
+        state
+            .tooling
+            .routing
+            .default_targets
+            .insert(ENV_TARGET_NAMESPACE.to_owned(), target);
+    }
 
+    let environments = ::environments::SessionEnvironmentBindingStore::list_bindings_for_session(
+        deps.environment_bindings.as_ref(),
+        &request.session_id,
+    )
+    .await
+    .map_err(activity_error)?
+    .into_iter()
+    .map(|binding| {
+        let tool_context = EnvironmentToolContext::new(None, deps.blobs.clone())
+            .with_session_id(binding.session_id.as_str());
+        runtime_environment_from_binding_record(&binding, tool_context)
+    })
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(activity_error)?;
     let manager = SessionEnvironmentManager::new(deps.blobs.clone(), deps.mount_store.clone());
     let mut commands = manager
-        .refresh_projection_for_mounts(&state, mounts.clone())
+        .refresh_projection_for_runtime_environments(&state, mounts.clone(), environments)
         .await
         .map(|refresh| refresh.commands)
         .map_err(activity_error)?;
@@ -185,5 +210,208 @@ fn active_projection_entry(
         provider_kind: input.provider_kind,
         provider_item_id: input.provider_item_id,
         token_estimate: input.token_estimate,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use async_trait::async_trait;
+    use engine::{
+        SessionId, ToolExecutionTarget,
+        storage::{BlobStore, InMemoryBlobStore},
+    };
+    use environments::{
+        CreateSessionEnvironmentBinding, EnvironmentId, EnvironmentProviderId,
+        InMemoryEnvironmentRegistryStore, SessionEnvironmentBindingStatus,
+        SessionEnvironmentBindingStore, SessionEnvironmentCapabilities, SessionEnvironmentFsRoute,
+        SessionEnvironmentFsRouteAccess, SessionEnvironmentKind,
+    };
+    use host_protocol::shared::{
+        HostCapabilities, HostConnectionSpec, HostPath, HostScope, HostTargetId, HostTransport,
+    };
+    use tools::environment::projection::{EnvironmentActive, EnvironmentCatalogSnapshot};
+    use vfs::{
+        CompareAndSetVfsWorkspaceHead, CreateVfsWorkspaceRecord, VfsCatalogError, VfsMountRecord,
+        VfsMountStore, VfsPath, VfsWorkspaceId, VfsWorkspaceRecord, VfsWorkspaceStore,
+    };
+
+    use super::*;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn skill_catalog_refresh_preserves_bound_active_environment_projection() {
+        let blobs: Arc<dyn BlobStore> = Arc::new(InMemoryBlobStore::new());
+        let vfs = Arc::new(EmptyVfsStore);
+        let bindings = Arc::new(InMemoryEnvironmentRegistryStore::new());
+        bindings
+            .create_binding(test_binding("session_1", "devbox"))
+            .await
+            .expect("create binding");
+        let deps = SkillCatalogActivityDeps {
+            blobs: blobs.clone(),
+            workspace_store: vfs.clone(),
+            mount_store: vfs,
+            environment_bindings: bindings,
+        };
+
+        let result = refresh_skill_catalog(
+            Some(&deps),
+            SkillCatalogRefreshActivityRequest {
+                session_id: SessionId::new("session_1"),
+                active_catalog_ref: None,
+                active_vfs_catalog_ref: None,
+                active_environment_catalog_ref: None,
+                active_environment_active_ref: None,
+                active_environment_target: Some(ToolExecutionTarget::new("env", "devbox")),
+            },
+        )
+        .await
+        .expect("refresh skill catalog");
+
+        let catalog_ref = result
+            .commands
+            .iter()
+            .find_map(|command| match command {
+                CoreAgentCommand::UpsertContext { key, entry }
+                    if key.as_str() == ENVIRONMENT_CATALOG_CONTEXT_KEY =>
+                {
+                    Some(entry.content_ref.clone())
+                }
+                _ => None,
+            })
+            .expect("environment catalog command");
+        let catalog: EnvironmentCatalogSnapshot =
+            serde_json::from_slice(&blobs.read_bytes(&catalog_ref).await.expect("catalog blob"))
+                .expect("catalog json");
+        assert_eq!(catalog.active_env_id.as_deref(), Some("devbox"));
+        assert_eq!(catalog.environments.len(), 1);
+        assert_eq!(catalog.environments[0].env_id, "devbox");
+        assert!(catalog.environments[0].capabilities.process_exec);
+
+        let active_ref = result
+            .commands
+            .iter()
+            .find_map(|command| match command {
+                CoreAgentCommand::UpsertContext { key, entry }
+                    if key.as_str() == ENVIRONMENT_ACTIVE_CONTEXT_KEY =>
+                {
+                    Some(entry.content_ref.clone())
+                }
+                _ => None,
+            })
+            .expect("active environment command");
+        let active: EnvironmentActive =
+            serde_json::from_slice(&blobs.read_bytes(&active_ref).await.expect("active blob"))
+                .expect("active json");
+        assert_eq!(active.env_id, "devbox");
+    }
+
+    fn test_binding(session_id: &str, env_id: &str) -> CreateSessionEnvironmentBinding {
+        CreateSessionEnvironmentBinding {
+            session_id: SessionId::new(session_id),
+            env_id: EnvironmentId::new(env_id),
+            provider_id: EnvironmentProviderId::new("bridge-local"),
+            target_id: HostTargetId::new("local-host"),
+            kind: SessionEnvironmentKind::AttachedHost,
+            status: SessionEnvironmentBindingStatus::Ready,
+            capabilities: SessionEnvironmentCapabilities {
+                fs_read: true,
+                fs_write: true,
+                process_exec: true,
+                process_stdin: true,
+                persistent: true,
+                ..SessionEnvironmentCapabilities::default()
+            },
+            connection: HostConnectionSpec {
+                target_id: HostTargetId::new("local-host"),
+                endpoint: "ws://127.0.0.1:9001/data".to_owned(),
+                transport: HostTransport::WebSocket,
+                scope: HostScope::Session {
+                    session_id: session_id.to_owned(),
+                },
+                default_cwd: Some(HostPath::new("/workspace").expect("cwd")),
+                capabilities: HostCapabilities::filesystem(true, true).with_process(),
+            },
+            cwd: Some(HostPath::new("/workspace").expect("cwd")),
+            fs_routes: vec![SessionEnvironmentFsRoute {
+                path: HostPath::root(),
+                source_path: None,
+                access: SessionEnvironmentFsRouteAccess::ReadWrite,
+                same_state_as_active_env: Some(EnvironmentId::new(env_id)),
+            }],
+            created_at_ms: 1,
+        }
+    }
+
+    struct EmptyVfsStore;
+
+    #[async_trait]
+    impl VfsMountStore for EmptyVfsStore {
+        async fn put_mount(&self, _record: VfsMountRecord) -> Result<(), VfsCatalogError> {
+            Ok(())
+        }
+
+        async fn list_mounts(
+            &self,
+            _session_id: &SessionId,
+        ) -> Result<Vec<VfsMountRecord>, VfsCatalogError> {
+            Ok(Vec::new())
+        }
+
+        async fn remove_mount(
+            &self,
+            _session_id: &SessionId,
+            _mount_path: &VfsPath,
+        ) -> Result<(), VfsCatalogError> {
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl VfsWorkspaceStore for EmptyVfsStore {
+        async fn create_workspace(
+            &self,
+            record: CreateVfsWorkspaceRecord,
+        ) -> Result<VfsWorkspaceRecord, VfsCatalogError> {
+            Ok(VfsWorkspaceRecord {
+                workspace_id: record.workspace_id,
+                base_snapshot_ref: record.base_snapshot_ref,
+                head_snapshot_ref: record.head_snapshot_ref,
+                revision: 0,
+                created_at_ms: record.created_at_ms,
+                updated_at_ms: record.created_at_ms,
+            })
+        }
+
+        async fn read_workspace(
+            &self,
+            workspace_id: &VfsWorkspaceId,
+        ) -> Result<VfsWorkspaceRecord, VfsCatalogError> {
+            Err(VfsCatalogError::NotFound {
+                kind: "workspace",
+                id: workspace_id.to_string(),
+            })
+        }
+
+        async fn compare_and_set_head(
+            &self,
+            request: CompareAndSetVfsWorkspaceHead,
+        ) -> Result<VfsWorkspaceRecord, VfsCatalogError> {
+            Err(VfsCatalogError::NotFound {
+                kind: "workspace",
+                id: request.workspace_id.to_string(),
+            })
+        }
+
+        async fn delete_workspace(
+            &self,
+            workspace_id: &VfsWorkspaceId,
+        ) -> Result<VfsWorkspaceRecord, VfsCatalogError> {
+            Err(VfsCatalogError::NotFound {
+                kind: "workspace",
+                id: workspace_id.to_string(),
+            })
+        }
     }
 }

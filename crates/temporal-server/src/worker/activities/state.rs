@@ -9,6 +9,7 @@ use engine::{
     CoreAgentLlm, CoreAgentTools, ProviderApiKind,
     storage::{BlobStore, SessionStore},
 };
+use environments::SessionEnvironmentBindingStore;
 use llm_clients::{anthropic::messages as am, openai::responses as oai};
 use llm_runtime::{
     AnthropicMessagesLlmAdapter, LlmAdapterRegistry, LlmRuntime, OpenAiResponsesLlmAdapter,
@@ -51,6 +52,7 @@ pub struct SkillCatalogActivityDeps {
     pub(super) blobs: Arc<dyn BlobStore>,
     pub(super) workspace_store: Arc<dyn VfsWorkspaceStore>,
     pub(super) mount_store: Arc<dyn VfsMountStore>,
+    pub(super) environment_bindings: Arc<dyn SessionEnvironmentBindingStore>,
 }
 
 #[derive(Clone)]
@@ -102,11 +104,13 @@ impl ActivityState {
         mut self,
         workspace_store: Arc<dyn VfsWorkspaceStore>,
         mount_store: Arc<dyn VfsMountStore>,
+        environment_bindings: Arc<dyn SessionEnvironmentBindingStore>,
     ) -> Self {
         self.skill_catalog = Some(SkillCatalogActivityDeps {
             blobs: self.storage.blobs.clone(),
             workspace_store,
             mount_store,
+            environment_bindings,
         });
         self
     }
@@ -129,8 +133,13 @@ impl ActivityState {
         let sessions: Arc<dyn SessionStore> = store.clone();
         let blobs: Arc<dyn BlobStore> = store.clone();
         let workspace_store: Arc<dyn VfsWorkspaceStore> = store.clone();
-        let mount_store: Arc<dyn VfsMountStore> = store;
-        Self::new(sessions, blobs, llm, tools).with_skill_catalog_deps(workspace_store, mount_store)
+        let mount_store: Arc<dyn VfsMountStore> = store.clone();
+        let environment_bindings: Arc<dyn SessionEnvironmentBindingStore> = store;
+        Self::new(sessions, blobs, llm, tools).with_skill_catalog_deps(
+            workspace_store,
+            mount_store,
+            environment_bindings,
+        )
     }
 
     pub fn from_pg_store_with_default_runtime(store: Arc<PgStore>) -> anyhow::Result<Self> {

@@ -429,6 +429,8 @@ pub struct SkillCatalogRefreshActivityRequest {
     pub active_vfs_catalog_ref: Option<BlobRef>,
     pub active_environment_catalog_ref: Option<BlobRef>,
     pub active_environment_active_ref: Option<BlobRef>,
+    #[serde(default)]
+    pub active_environment_target: Option<engine::ToolExecutionTarget>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

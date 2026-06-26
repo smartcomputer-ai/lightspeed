@@ -170,6 +170,13 @@ async fn refresh_skill_catalog_before_run(
                     ENVIRONMENT_ACTIVE_CONTEXT_KEY,
                     ContextEntryKind::EnvironmentActive,
                 ),
+                active_environment_target: drive
+                    .state()
+                    .tooling
+                    .routing
+                    .default_targets
+                    .get("env")
+                    .cloned(),
             },
             activity_options(),
         )
