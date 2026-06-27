@@ -44,7 +44,11 @@ export async function startTelegramBridge(
     console.warn("telegram: TELEGRAM_ALLOWED_CHAT_IDS is empty; all chats can trigger the bridge");
   }
   if (config.allowFrom.length === 0) {
-    console.warn("telegram: TELEGRAM_ALLOW_FROM is empty; any sender in an allowed chat can chat");
+    console.warn(
+      hasPairableBinding(routing, "telegram")
+        ? "telegram: TELEGRAM_ALLOW_FROM is empty; matching pairable bindings require pairing"
+        : "telegram: TELEGRAM_ALLOW_FROM is empty; any sender in an allowed chat can chat",
+    );
   }
 
   const policy: ChannelPolicy = {
@@ -211,6 +215,14 @@ export async function startTelegramBridge(
       deliver: (binding, payload) => deliverTelegramPayload(bot, binding, payload),
     },
   };
+}
+
+function hasPairableBinding(routing: BridgeRouting, channel: "telegram" | "whatsapp"): boolean {
+  return routing.bindings.some(
+    (binding) =>
+      binding.pairing &&
+      (binding.match.channel === channel || binding.match.channel === "*"),
+  );
 }
 
 async function deliverTelegramPayload(

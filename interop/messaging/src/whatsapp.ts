@@ -52,7 +52,11 @@ export async function startWhatsAppBridge(
     console.warn("whatsapp: WHATSAPP_ALLOWED_JIDS is empty; all chats can trigger the bridge");
   }
   if (config.allowFrom.length === 0) {
-    console.warn("whatsapp: WHATSAPP_ALLOW_FROM is empty; any sender in an allowed chat can chat");
+    console.warn(
+      hasPairableBinding(routing, "whatsapp")
+        ? "whatsapp: WHATSAPP_ALLOW_FROM is empty; matching pairable bindings require pairing"
+        : "whatsapp: WHATSAPP_ALLOW_FROM is empty; any sender in an allowed chat can chat",
+    );
   }
 
   const policy: ChannelPolicy = {
@@ -142,6 +146,14 @@ export async function startWhatsAppBridge(
       },
     },
   };
+}
+
+function hasPairableBinding(routing: BridgeRouting, channel: "telegram" | "whatsapp"): boolean {
+  return routing.bindings.some(
+    (binding) =>
+      binding.pairing &&
+      (binding.match.channel === channel || binding.match.channel === "*"),
+  );
 }
 
 async function deliverWhatsAppPayload(
