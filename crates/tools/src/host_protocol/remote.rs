@@ -3,9 +3,10 @@
 use std::{
     collections::BTreeMap,
     sync::{
-        Arc, Mutex as StdMutex,
+        Arc, LazyLock, Mutex as StdMutex,
         atomic::{AtomicU64, Ordering},
     },
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use async_trait::async_trait;
@@ -39,6 +40,13 @@ use crate::{
 };
 
 static NEXT_PROCESS_EXECUTOR_ID: AtomicU64 = AtomicU64::new(1);
+static PROCESS_ID_NONCE: LazyLock<String> = LazyLock::new(|| {
+    let started_at_nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    format!("{}-{started_at_nanos}", std::process::id())
+});
 
 pub struct RemoteHostConnection<T> {
     client: Arc<AsyncMutex<HostDataClient<T>>>,
@@ -353,7 +361,11 @@ where
 impl<T> RemoteProcessExecutor<T> {
     fn next_process_id(&self) -> ProcessId {
         let id = self.next_process_id.fetch_add(1, Ordering::Relaxed);
-        ProcessId::new(format!("proc-{}-{id}", self.process_id_prefix))
+        ProcessId::new(format!(
+            "proc-{}-{}-{id}",
+            PROCESS_ID_NONCE.as_str(),
+            self.process_id_prefix
+        ))
     }
 
     fn next_seq_for(&self, process_id: &str) -> ProcessExecResult<Option<u64>> {

@@ -22,6 +22,11 @@ use tokio::{
     time::Instant,
 };
 
+#[cfg(not(test))]
+const TERMINAL_PROCESS_RETENTION: Duration = Duration::from_secs(60);
+#[cfg(test)]
+const TERMINAL_PROCESS_RETENTION: Duration = Duration::from_millis(10);
+
 #[derive(Clone)]
 pub struct ProcessManager {
     cwd: PathBuf,
@@ -43,6 +48,7 @@ struct ProcessState {
     exited: bool,
     exit_code: Option<i32>,
     failure: Option<String>,
+    cleanup_scheduled: bool,
 }
 
 impl ProcessManager {
@@ -143,6 +149,7 @@ impl ProcessManager {
                 exited: false,
                 exit_code: None,
                 failure: None,
+                cleanup_scheduled: false,
             }),
             notify: Notify::new(),
         });
@@ -198,7 +205,7 @@ impl ProcessManager {
             .map(|wait_ms| Instant::now() + Duration::from_millis(wait_ms));
 
         loop {
-            let response = {
+            let (response, schedule_cleanup) = {
                 let mut state = entry.state.lock().await;
                 update_exit_status(&mut state)?;
                 let response = response_from_state(&state, after_seq, params.max_bytes);
@@ -211,9 +218,20 @@ impl ProcessManager {
                 } else {
                     done
                 };
-                if should_return { Some(response) } else { None }
+                let schedule_cleanup = done && !state.cleanup_scheduled;
+                if should_return {
+                    if schedule_cleanup {
+                        state.cleanup_scheduled = true;
+                    }
+                    (Some(response), schedule_cleanup)
+                } else {
+                    (None, false)
+                }
             };
             if let Some(response) = response {
+                if schedule_cleanup {
+                    self.schedule_terminal_cleanup(params.process_id.clone(), entry.clone());
+                }
                 return Ok(response);
             }
 
@@ -315,6 +333,20 @@ impl ProcessManager {
             .await
             .get(process_id.as_str())
             .cloned()
+    }
+
+    fn schedule_terminal_cleanup(&self, process_id: ProcessId, entry: Arc<ProcessEntry>) {
+        let processes = self.processes.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(TERMINAL_PROCESS_RETENTION).await;
+            let mut processes = processes.lock().await;
+            if processes
+                .get(process_id.as_str())
+                .is_some_and(|current| Arc::ptr_eq(current, &entry))
+            {
+                processes.remove(process_id.as_str());
+            }
+        });
     }
 }
 
@@ -527,6 +559,47 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(stdout, b"out");
         assert_eq!(stderr, b"err");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn terminal_process_records_are_pruned() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().canonicalize().expect("canonical root");
+        let manager = ProcessManager::new(root.clone(), root);
+        let process_id = ProcessId::new("proc-reused");
+        let params = StartProcessParams {
+            process_id: process_id.clone(),
+            argv: vec!["/bin/sh".to_owned(), "-c".to_owned(), "true".to_owned()],
+            cwd: None,
+            env: BTreeMap::new(),
+            secret_env: BTreeMap::new(),
+            stdin: None,
+            timeout_ms: Some(5_000),
+            tty: false,
+            pipe_stdin: false,
+        };
+
+        manager
+            .start_process(params.clone())
+            .await
+            .expect("start first");
+        let output = manager
+            .read_process(ReadProcessParams {
+                process_id: process_id.clone(),
+                after_seq: None,
+                max_bytes: None,
+                wait_ms: None,
+            })
+            .await
+            .expect("read terminal output");
+        assert!(output.exited);
+
+        tokio::time::sleep(TERMINAL_PROCESS_RETENTION * 2).await;
+
+        manager
+            .start_process(params)
+            .await
+            .expect("start reused id");
     }
 
     #[tokio::test(flavor = "current_thread")]
