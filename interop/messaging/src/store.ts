@@ -33,13 +33,31 @@ export interface MessageState {
   error?: string;
 }
 
+export interface PairingState {
+  channel: string;
+  accountId: string;
+  chatId: string;
+  bindingId: string;
+  pairedAtMs: number;
+  updatedAtMs: number;
+}
+
+export interface PairingInit {
+  channel: string;
+  accountId: string;
+  chatId: string;
+  bindingId: string;
+}
+
 export interface BridgeState {
   bindings: Record<string, BindingState>;
+  pairings: Record<string, PairingState>;
   messages: Record<string, MessageState>;
 }
 
 const EMPTY_STATE: BridgeState = {
   bindings: {},
+  pairings: {},
   messages: {},
 };
 
@@ -121,6 +139,28 @@ export class JsonBridgeStore {
     await this.persist();
   }
 
+  async getPairing(key: string): Promise<PairingState | null> {
+    const state = await this.load();
+    return state.pairings[key] ?? null;
+  }
+
+  async pairConversation(key: string, init: PairingInit): Promise<PairingState> {
+    const state = await this.load();
+    const now = Date.now();
+    const existing = state.pairings[key];
+    const next: PairingState = {
+      channel: init.channel,
+      accountId: init.accountId,
+      chatId: init.chatId,
+      bindingId: init.bindingId,
+      pairedAtMs: existing?.pairedAtMs ?? now,
+      updatedAtMs: now,
+    };
+    state.pairings[key] = next;
+    await this.persist();
+    return next;
+  }
+
   async beginMessage(key: string): Promise<"new" | "duplicate" | "inflight"> {
     const state = await this.load();
     const existing = state.messages[key];
@@ -171,6 +211,7 @@ export class JsonBridgeStore {
       this.state = structuredClone(EMPTY_STATE);
     }
     this.state.bindings ??= {};
+    this.state.pairings ??= {};
     this.state.messages ??= {};
     return this.state;
   }

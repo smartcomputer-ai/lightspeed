@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { BindingAccessCandidate } from "../src/config.js";
 import type { LightspeedReply, LightspeedRoomEvent, LightspeedSessionBridge, LightspeedTurn } from "../src/lightspeed.js";
 import { MessagingBridgeRuntime, type ChannelPolicy, type NormalizedInbound } from "../src/runtime.js";
 import { JsonBridgeStore } from "../src/store.js";
@@ -117,6 +118,15 @@ const io = () => ({
   sendReply: async (text: string) => {
     replies.push(text);
   },
+});
+
+const pairableBinding = (overrides: Partial<BindingAccessCandidate> = {}): BindingAccessCandidate => ({
+  bindingId: "lukas-telegram",
+  pairing: { code: "PAIRME" },
+  profile: { kind: "named", profileId: "personal" },
+  profileLabel: "personal",
+  sessionKey: "lukas",
+  ...overrides,
 });
 
 describe("MessagingBridgeRuntime", () => {
@@ -256,6 +266,85 @@ describe("MessagingBridgeRuntime", () => {
     expect(lightspeed.calls.filter((call) => call.kind === "turn")).toHaveLength(0);
     expect(replies).toHaveLength(1);
     expect(replies[0]).toContain("not authorized");
+  });
+
+  it("pairs a direct chat by exact code before forwarding later turns", async () => {
+    const dm = {
+      isDirect: true,
+      conversationKey: "telegram:dm-pairing",
+      pairingKey: "telegram:pair-dm",
+      chatId: "dm-1",
+      turnAllowed: false,
+      bindingCandidates: [pairableBinding()],
+    };
+
+    await runtime.handleInbound(inbound({ ...dm, text: "hello", messageId: "before" }), policy, io());
+    await runtime.flush();
+    expect(replies.at(-1)).toContain("not paired");
+    expect(lightspeed.calls.filter((call) => call.kind === "turn")).toHaveLength(0);
+
+    await runtime.handleInbound(inbound({ ...dm, text: "PAIRME", messageId: "pair" }), policy, io());
+    await runtime.flush();
+    expect(replies.at(-1)).toContain("Paired");
+    expect(lightspeed.calls.filter((call) => call.kind === "turn")).toHaveLength(0);
+
+    await runtime.handleInbound(inbound({ ...dm, text: "after", messageId: "after" }), policy, io());
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await runtime.flush();
+
+    const turns = lightspeed.calls.filter((call) => call.kind === "turn");
+    expect(turns).toHaveLength(1);
+    expect(turns[0]?.texts[0]).toContain("after");
+  });
+
+  it("pairs a whole group and then allows any group sender through that binding", async () => {
+    const group = {
+      isDirect: false,
+      conversationKey: "telegram:group-pairing-thread",
+      pairingKey: "telegram:pair-group",
+      chatId: "group-1",
+      turnAllowed: false,
+      bindingCandidates: [pairableBinding()],
+    };
+
+    await runtime.handleInbound(inbound({ ...group, text: "ambient" }), policy, io());
+    await runtime.flush();
+    expect(replies).toHaveLength(0);
+    expect(lightspeed.calls).toHaveLength(0);
+
+    await runtime.handleInbound(
+      inbound({ ...group, text: "@lightspeed_bot help", mentionedBot: true, messageId: "prompt" }),
+      policy,
+      io(),
+    );
+    await runtime.flush();
+    expect(replies.at(-1)).toContain("not paired");
+    expect(lightspeed.calls).toHaveLength(0);
+
+    await runtime.handleInbound(inbound({ ...group, text: "PAIRME", messageId: "pair-group" }), policy, io());
+    await runtime.flush();
+    expect(replies.at(-1)).toContain("Paired");
+
+    await runtime.handleInbound(
+      inbound({
+        ...group,
+        text: "@lightspeed_bot status?",
+        mentionedBot: true,
+        messageId: "after-group",
+        senderId: "user-2",
+        senderName: "Bob",
+        turnAllowed: false,
+      }),
+      policy,
+      io(),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await runtime.flush();
+
+    const turns = lightspeed.calls.filter((call) => call.kind === "turn");
+    expect(turns).toHaveLength(1);
+    expect(turns[0]?.texts[0]).toContain("Bob");
+    expect(turns[0]?.texts[0]).toContain("status?");
   });
 
   it("drops a denied group sender silently", async () => {

@@ -2,21 +2,24 @@
   "_comment": "Example BRIDGE_CONFIG file. Copy to bridge.config.json, set BRIDGE_CONFIG=bridge.config.json in .env, and edit. JSON has no comments, so see README 'Access control and bindings' for field docs. Env vars (TELEGRAM_*, WHATSAPP_*) override the matching values here.",
 
   "telegram": {
-    "allowFrom": ["@lukas", "123456789"],
+    "allowFrom": [],
     "controlAllowFrom": ["@lukas"]
   },
   "whatsapp": {
-    "allowFrom": ["41790000000@s.whatsapp.net", "41790000001"],
+    "allowFrom": [],
     "controlAllowFrom": ["41790000000@s.whatsapp.net"]
   },
 
   "bindings": [
     {
-      "match": { "channel": "telegram", "handle": "@lukas" },
+      "id": "personal-telegram",
+      "match": { "channel": "telegram", "scope": "direct" },
       "profile": "personal",
-      "sessionKey": "lukas"
+      "sessionKey": "lukas",
+      "pairing": { "codeEnv": "PERSONAL_PAIRING_CODE" }
     },
     {
+      "id": "eng-room",
       "match": { "channel": "telegram", "chatId": "-1001234567890", "scope": "group" },
       "profile": {
         "kind": "inline",
@@ -35,11 +38,14 @@
           "environments": []
         }
       },
-      "sessionKey": "eng-support-room"
+      "sessionKey": "eng-support-room",
+      "pairing": { "code": "demo-room-code" }
     },
     {
+      "id": "support-whatsapp",
       "match": { "channel": "whatsapp", "scope": "direct" },
-      "profile": { "kind": "named", "profileId": "support" }
+      "profile": { "kind": "named", "profileId": "support" },
+      "pairing": { "codeEnv": "SUPPORT_PAIRING_CODE" }
     },
     {
       "match": { "channel": "*" }

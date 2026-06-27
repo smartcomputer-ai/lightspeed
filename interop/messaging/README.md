@@ -7,10 +7,10 @@ Lightspeed gateway. It binds each chat/thread to a stable Lightspeed session, cl
 inbound traffic, submits addressed messages as runs, appends unaddressed group
 chatter as session context, and sends assistant replies back to the channel.
 
-Access is gated by **sender handle**, and conversations bind to **agent
-profiles** that configure model, tools, instructions, mounted
-workspaces/snapshots, linked MCP servers, and attached execution environments. See
-[Access control and bindings](#access-control-and-bindings).
+Access is gated by **sender handle** or **pairing code**, and conversations bind
+to **agent profiles** that configure model, tools, instructions, mounted
+workspaces/snapshots, linked MCP servers, and attached execution environments.
+See [Access control and bindings](#access-control-and-bindings).
 
 ## How a message flows
 
@@ -25,9 +25,13 @@ Every allowed inbound message is classified:
 - **Control** — `/activation mention|always|silent`, `/status`. Restricted to
   `*_CONTROL_ALLOW_FROM` senders (with the list empty, direct chats are
   trusted; group members are not).
+- **Pairing required** — the conversation matches a pairable binding but has
+  not sent the configured code yet. No message reaches Lightspeed until the
+  chat pairs.
 - **Denied** — the sender is not on the channel's turn allowlist
-  (`*_ALLOW_FROM`). Direct chats get one authorization-error reply; group
-  members are dropped silently. With the allowlist empty, anyone may chat.
+  (`*_ALLOW_FROM`) and is not covered by a paired binding. Direct chats get one
+  authorization-error reply; group members are dropped silently. With the
+  allowlist empty, anyone may chat unless a pairable binding requires pairing.
 
 Replies anchor contextually: in groups the reply quotes the first message of
 the answered batch (the question), and only on the first chunk of a long
@@ -79,6 +83,33 @@ Each channel has a turn allowlist (`*_ALLOW_FROM`, env CSV or the config file):
 A separate `*_CONTROL_ALLOW_FROM` gates control commands; empty trusts direct
 chats only.
 
+### Pairing codes (security)
+
+Bindings may require chat-level pairing instead of maintaining sender handles:
+
+```jsonc
+{
+  "id": "personal-whatsapp",
+  "match": { "channel": "whatsapp", "scope": "direct" },
+  "profile": "personal",
+  "sessionKey": "lukas",
+  "pairing": { "codeEnv": "PERSONAL_PAIRING_CODE" }
+}
+```
+
+Use `"pairing": { "code": "hardcoded-code" }` for local/private deployments, or
+`"codeEnv"` to load the code from an environment variable. Pairable bindings
+must have a stable `id`; the bridge persists that id after a successful pairing.
+
+Until paired, direct chats receive: `This chat is not paired yet. Send the
+pairing code to connect it.` Group chats are quieter: ambient messages are
+dropped, and the bridge only prompts when the bot is addressed or a trigger
+prefix is used. Sending the exact code pairs the chat and returns `Paired. You
+can now message Lightspeed from this chat.`
+
+Group pairing is by chat, not by member. Once a group is paired to a binding,
+any member of that group can use the bound profile/session.
+
 ### Profiles and bindings (configuration)
 
 The bridge does not provision skills or system prompts directly. Instead each
@@ -92,11 +123,12 @@ inline in a binding. A complete, runnable example is in
 
 ```jsonc
 {
-  "telegram": { "allowFrom": ["@lukas"], "controlAllowFrom": ["@lukas"] },
+  "telegram": { "allowFrom": [], "controlAllowFrom": ["@lukas"] },
 
   "bindings": [
-    { "match": { "channel": "telegram", "handle": ["@lukas", "6071843755"] }, "profile": "personal", "sessionKey": "lukas" },
+    { "id": "personal-telegram", "match": { "channel": "telegram" }, "profile": "personal", "sessionKey": "lukas", "pairing": { "codeEnv": "PERSONAL_PAIRING_CODE" } },
     {
+      "id": "eng-room",
       "match": { "channel": "telegram", "chatId": "-100123", "scope": "group" },
       "profile": {
         "kind": "inline",
@@ -107,14 +139,17 @@ inline in a binding. A complete, runnable example is in
           ]
         }
       },
-      "sessionKey": "eng-room"
+      "sessionKey": "eng-room",
+      "pairing": { "code": "demo-room-code" }
     },
     { "match": { "channel": "*" } }
   ]
 }
 ```
 
-- **Bindings** are evaluated top-to-bottom, first match wins. `match` filters by
+- **Bindings** are evaluated top-to-bottom, first match wins. Consecutive
+  matching pairable bindings may share the same broad match; before a chat is
+  paired, the code selects which binding id to persist. `match` filters by
   `channel` (`telegram` | `whatsapp` | `*`), and optional `handle`, `chatId`,
   and `scope` (`direct` | `group`). `handle` may be one string or an array of
   aliases for the same sender.
@@ -149,8 +184,8 @@ environments, messaging tool only.
   serialization, denied handling, control commands.
 - `src/lightspeed.ts` — `session/start { profile }`, `context/append`,
   `run/start`, awaitRun, and reply extraction.
-- `src/store.ts` — bindings (chat → session, profile label, activation, cursor) plus
-  message dedupe records in `.bridge-state.json`.
+- `src/store.ts` — pairings, bindings (chat → session, profile label,
+  activation, cursor), plus message dedupe records in `.bridge-state.json`.
 - `src/telegram.ts` — grammY adapter with native mention/reply detection.
 - `src/whatsapp.ts` — Baileys adapter with `mentionedJid`/quoted-author
   detection for a WhatsApp Web spare account.

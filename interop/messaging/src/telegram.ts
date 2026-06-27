@@ -102,6 +102,7 @@ export async function startTelegramBridge(
     const threadId = message.message_thread_id;
     const conversationParts = ["telegram", config.accountId, chatId, threadId ?? "main"];
     const conversationKey = `telegram:${stableHash(conversationParts)}`;
+    const pairingKey = `telegram:${stableHash(["telegram", config.accountId, chatId])}`;
     const messageKey = `telegram:${stableHash([
       config.accountId,
       chatId,
@@ -138,6 +139,7 @@ export async function startTelegramBridge(
       chatId,
       ...(threadId !== undefined ? { threadId: String(threadId) } : {}),
       conversationKey,
+      pairingKey,
       conversationParts,
       messageId: String(message.message_id),
       messageKey,
@@ -160,6 +162,8 @@ export async function startTelegramBridge(
       isFromSelf: message.from?.id === me.id,
       turnAllowed: access.turnAllowed,
       controlAllowed: access.controlAllowed,
+      bindingCandidates: access.bindingCandidates,
+      bindingId: access.bindingId,
       profile: access.profile,
       profileLabel: access.profileLabel,
       sessionKey: access.sessionKey,

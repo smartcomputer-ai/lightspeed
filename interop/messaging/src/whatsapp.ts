@@ -249,6 +249,7 @@ async function handleWhatsAppMessage(
 
   const conversationParts = ["whatsapp", config.accountId, remoteJid];
   const conversationKey = `whatsapp:${stableHash(conversationParts)}`;
+  const pairingKey = `whatsapp:${stableHash(["whatsapp", config.accountId, remoteJid])}`;
   const messageKey = `whatsapp:${stableHash([
     config.accountId,
     remoteJid,
@@ -273,6 +274,7 @@ async function handleWhatsAppMessage(
     accountId: config.accountId,
     chatId: remoteJid,
     conversationKey,
+    pairingKey,
     conversationParts,
     messageId,
     messageKey,
@@ -302,6 +304,8 @@ async function handleWhatsAppMessage(
     isFromSelf: Boolean(message.key.fromMe),
     turnAllowed: access.turnAllowed,
     controlAllowed: access.controlAllowed,
+    bindingCandidates: access.bindingCandidates,
+    bindingId: access.bindingId,
     profile: access.profile,
     profileLabel: access.profileLabel,
     sessionKey: access.sessionKey,

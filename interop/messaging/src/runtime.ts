@@ -1,5 +1,5 @@
 import { RoomBuffer, TurnDebouncer } from "./batcher.js";
-import type { BridgeRuntimeConfig } from "./config.js";
+import type { BindingAccessCandidate, BridgeRuntimeConfig } from "./config.js";
 import type { ProfileSource } from "@lightspeed/agent-client";
 import type { LightspeedSessionBridge } from "./lightspeed.js";
 import { stableHash, stableSessionId } from "./ids.js";
@@ -11,6 +11,7 @@ import {
   type GroupActivation,
 } from "./policy.js";
 import type { BindingState, JsonBridgeStore } from "./store.js";
+import { extractTriggeredText } from "./text.js";
 
 export interface InboundMedia {
   base64: string;
@@ -24,6 +25,8 @@ export interface NormalizedInbound {
   chatId: string;
   threadId?: string;
   conversationKey: string;
+  /// Stable key for pairing state. Defaults to conversationKey when omitted.
+  pairingKey?: string;
   conversationParts: readonly unknown[];
   messageId: string;
   messageKey: string;
@@ -42,6 +45,10 @@ export interface NormalizedInbound {
   controlAllowed: boolean;
   /// Profile resolved for this conversation (null = default profile).
   profile?: ProfileSource | null;
+  /// Ordered binding candidates resolved for this inbound message.
+  bindingCandidates?: readonly BindingAccessCandidate[];
+  /// Selected binding id when no explicit candidate list is provided.
+  bindingId?: string | null;
   /// Configured session key for the binding, or null to derive one per
   /// conversation. Conversations sharing a key share a session.
   sessionKey?: string | null;
@@ -84,6 +91,10 @@ interface PendingTurn {
   setTyping?: (() => Promise<void>) | undefined;
   clearTyping?: (() => Promise<void>) | undefined;
 }
+
+type PairingResolution =
+  | { kind: "continue"; binding: BindingAccessCandidate; paired: boolean }
+  | { kind: "handled" };
 
 const TYPING_INTERVAL_MS = 4_500;
 const TYPING_MAX_MS = 3 * 60_000;
@@ -201,17 +212,30 @@ export class MessagingBridgeRuntime {
   }
 
   async handleInbound(message: NormalizedInbound, policy: ChannelPolicy, options: HandleInboundOptions): Promise<void> {
-    const binding = await this.ensureBinding(message, policy);
-    this.profileByConversation.set(message.conversationKey, message.profile ?? null);
+    const resolution = await this.resolvePairing(message, policy, options);
+    if (resolution.kind === "handled") {
+      return;
+    }
+    const selected = resolution.binding;
+    const effectiveMessage: NormalizedInbound = {
+      ...message,
+      bindingId: selected.bindingId,
+      profile: selected.profile,
+      profileLabel: selected.profileLabel,
+      sessionKey: selected.sessionKey,
+      turnAllowed: resolution.paired || message.turnAllowed,
+    };
+    const binding = await this.ensureBinding(effectiveMessage, policy);
+    this.profileByConversation.set(effectiveMessage.conversationKey, selected.profile);
     const classification = classifyInbound(
       {
-        text: message.text,
-        isDirect: message.isDirect,
-        isFromSelf: message.isFromSelf,
-        mentionedBot: message.mentionedBot,
-        isReplyToBot: message.isReplyToBot,
-        turnAllowed: message.turnAllowed,
-        controlAllowed: message.controlAllowed,
+        text: effectiveMessage.text,
+        isDirect: effectiveMessage.isDirect,
+        isFromSelf: effectiveMessage.isFromSelf,
+        mentionedBot: effectiveMessage.mentionedBot,
+        isReplyToBot: effectiveMessage.isReplyToBot,
+        turnAllowed: effectiveMessage.turnAllowed,
+        controlAllowed: effectiveMessage.controlAllowed,
       },
       {
         activation: binding.activation,
@@ -233,35 +257,35 @@ export class MessagingBridgeRuntime {
         return;
       }
       case "control":
-        await this.handleControl(message, classification.command, options);
+        await this.handleControl(effectiveMessage, classification.command, options);
         return;
       case "roomEvent": {
-        if (this.seenRoomKeys.has(message.messageKey)) {
+        if (this.seenRoomKeys.has(effectiveMessage.messageKey)) {
           return;
         }
-        this.rememberRoomKey(message.messageKey);
-        this.rooms.push(message.conversationKey, {
-          key: roomContextKey(message),
+        this.rememberRoomKey(effectiveMessage.messageKey);
+        this.rooms.push(effectiveMessage.conversationKey, {
+          key: roomContextKey(effectiveMessage),
           text: formatEnvelope({
-            provider: message.provider,
-            chatLabel: message.chatLabel,
-            isDirect: message.isDirect,
-            senderName: message.senderName,
-            timestampMs: message.timestampMs,
+            provider: effectiveMessage.provider,
+            chatLabel: effectiveMessage.chatLabel,
+            isDirect: effectiveMessage.isDirect,
+            senderName: effectiveMessage.senderName,
+            timestampMs: effectiveMessage.timestampMs,
             text: classification.text,
-            messageId: message.messageId,
+            messageId: effectiveMessage.messageId,
           }),
         });
         return;
       }
       case "userTurn": {
-        const state = await this.store.beginMessage(message.messageKey);
+        const state = await this.store.beginMessage(effectiveMessage.messageKey);
         if (state !== "new") {
-          this.log(`bridge: skipped ${state} message ${message.messageKey}`);
+          this.log(`bridge: skipped ${state} message ${effectiveMessage.messageKey}`);
           return;
         }
-        this.turns.push(message.conversationKey, {
-          message,
+        this.turns.push(effectiveMessage.conversationKey, {
+          message: effectiveMessage,
           text: classification.text,
           sendReply: options.sendReply,
           setTyping: options.setTyping,
@@ -277,6 +301,73 @@ export class MessagingBridgeRuntime {
     this.turns.flushAll();
     await this.rooms.drainAll();
     await Promise.allSettled([...this.queues.values()]);
+  }
+
+  private async resolvePairing(
+    message: NormalizedInbound,
+    policy: ChannelPolicy,
+    options: HandleInboundOptions,
+  ): Promise<PairingResolution> {
+    const candidates = bindingCandidatesForMessage(message);
+    const pairingCandidates = candidates.filter(
+      (candidate): candidate is BindingAccessCandidate & {
+        bindingId: string;
+        pairing: NonNullable<BindingAccessCandidate["pairing"]>;
+      } =>
+        candidate.bindingId !== null && candidate.pairing !== null,
+    );
+    const pairingKey = message.pairingKey ?? message.conversationKey;
+
+    if (pairingCandidates.length === 0) {
+      return { kind: "continue", binding: candidates[0] ?? defaultBindingCandidate(message), paired: false };
+    }
+
+    const paired = await this.store.getPairing(pairingKey);
+    if (paired) {
+      const binding = candidates.find((candidate) => candidate.bindingId === paired.bindingId);
+      if (binding) {
+        return { kind: "continue", binding, paired: true };
+      }
+    }
+
+    if (message.isFromSelf) {
+      return { kind: "handled" };
+    }
+
+    const codeText = message.text.trim();
+    const matched = codeText
+      ? pairingCandidates.find((candidate) => candidate.pairing.code === codeText)
+      : undefined;
+    if (matched) {
+      const state = await this.store.beginMessage(message.messageKey);
+      if (state !== "new") {
+        return { kind: "handled" };
+      }
+      await this.store.pairConversation(pairingKey, {
+        channel: message.provider,
+        accountId: message.accountId,
+        chatId: message.chatId,
+        bindingId: matched.bindingId,
+      });
+      const reply = "Paired. You can now message Lightspeed from this chat.";
+      await options.sendReply(reply);
+      await this.store.markMessageDone(message.messageKey, reply);
+      this.log(`bridge: paired ${message.provider} chat ${message.chatId} to binding ${matched.bindingId}`);
+      return { kind: "handled" };
+    }
+
+    if (!shouldNotifyPairingRequired(message, policy)) {
+      return { kind: "handled" };
+    }
+
+    const state = await this.store.beginMessage(message.messageKey);
+    if (state !== "new") {
+      return { kind: "handled" };
+    }
+    const reply = "This chat is not paired yet. Send the pairing code to connect it.";
+    await options.sendReply(reply);
+    await this.store.markMessageDone(message.messageKey, reply);
+    return { kind: "handled" };
   }
 
   private async ensureBinding(
@@ -478,6 +569,40 @@ function roomContextKey(message: NormalizedInbound): string {
     message.messageId,
     message.senderId,
   ])}`;
+}
+
+function bindingCandidatesForMessage(message: NormalizedInbound): BindingAccessCandidate[] {
+  if (message.bindingCandidates && message.bindingCandidates.length > 0) {
+    return [...message.bindingCandidates];
+  }
+  return [defaultBindingCandidate(message)];
+}
+
+function defaultBindingCandidate(message: NormalizedInbound): BindingAccessCandidate {
+  return {
+    bindingId: message.bindingId ?? null,
+    pairing: null,
+    profile: message.profile ?? null,
+    profileLabel: message.profileLabel ?? null,
+    sessionKey: message.sessionKey ?? null,
+  };
+}
+
+function shouldNotifyPairingRequired(message: NormalizedInbound, policy: ChannelPolicy): boolean {
+  if (message.isDirect) {
+    return true;
+  }
+  if (message.mentionedBot || message.isReplyToBot) {
+    return true;
+  }
+  return (
+    extractTriggeredText(message.text, {
+      botUsername: policy.botUsername ?? null,
+      mentionNames: policy.mentionNames,
+      prefixes: policy.triggerPrefixes,
+      requireTrigger: true,
+    }) !== null
+  );
 }
 
 const AUDIO_ADMISSION_FAILURE_KINDS = new Set([

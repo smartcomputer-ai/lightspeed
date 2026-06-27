@@ -36,9 +36,19 @@ export interface BindingMatch {
   scope?: BindingScope;
 }
 
+export interface BindingPairingConfig {
+  /// Pairing code accepted from chat. Kept in memory only; persisted state stores
+  /// the selected binding id, never this code.
+  code: string;
+  /// Optional env var name used to load the code.
+  codeEnv?: string;
+}
+
 /// A rule mapping matched conversations to a profile and a session key.
 /// Bindings are evaluated top-to-bottom, first match wins.
 export interface BindingRule {
+  /// Stable id used by persistent pairing state. Required when `pairing` is set.
+  id?: string;
   match: BindingMatch;
   /// Agent profile source for matched conversations. A string is treated as a
   /// named profile id; an object is passed through as a ProfileSource.
@@ -47,6 +57,9 @@ export interface BindingRule {
   /// key share a session. Omitted means the bridge derives a per-conversation
   /// key, so each conversation gets its own session.
   sessionKey?: string;
+  /// Optional chat pairing gate. Until a matching conversation sends the code,
+  /// no turn or room context reaches Lightspeed.
+  pairing?: BindingPairingConfig;
 }
 
 export interface TelegramBridgeConfig {
@@ -133,7 +146,7 @@ export async function loadBridgeConfig(env: NodeJS.ProcessEnv = process.env): Pr
   if (fileConfig.recipes !== undefined) {
     throw new Error("recipes are no longer supported; use bindings[].profile");
   }
-  const bindings = parseBindings(fileConfig.bindings);
+  const bindings = parseBindings(fileConfig.bindings, env);
   const telegramToken = env.TELEGRAM_BOT_TOKEN ?? fileConfig.telegram?.botToken ?? "";
   const telegramEnabled =
     parseBoolean(env.TELEGRAM_ENABLED, fileConfig.telegram?.enabled ?? Boolean(telegramToken));
@@ -232,6 +245,9 @@ export interface ChannelAccessConfig {
 export interface InboundAccess {
   turnAllowed: boolean;
   controlAllowed: boolean;
+  bindingCandidates: BindingAccessCandidate[];
+  bindingId: string | null;
+  pairing: BindingPairingConfig | null;
   profileLabel: string | null;
   profile: ProfileSource | null;
   sessionKey: string | null;
@@ -242,7 +258,8 @@ export function resolveInboundAccess(
   access: ChannelAccessConfig,
   bindings: readonly BindingRule[],
 ): InboundAccess {
-  const binding = resolveBinding(query, bindings);
+  const bindingCandidates = resolveBindingCandidates(query, bindings);
+  const binding = bindingCandidates[0] ?? defaultBindingCandidate();
   return {
     turnAllowed: !handleDenied(access.allowFrom, query.handles),
     // With no explicit control allowlist, direct chats are trusted for control
@@ -251,6 +268,9 @@ export function resolveInboundAccess(
       access.controlAllowFrom.length > 0
         ? !handleDenied(access.controlAllowFrom, query.handles)
         : query.scope === "direct",
+    bindingCandidates,
+    bindingId: binding.bindingId,
+    pairing: binding.pairing,
     profileLabel: binding.profileLabel,
     profile: binding.profile,
     sessionKey: binding.sessionKey,
@@ -263,21 +283,65 @@ export interface ResolvedBinding {
   sessionKey: string | null;
 }
 
+export interface BindingAccessCandidate extends ResolvedBinding {
+  bindingId: string | null;
+  pairing: BindingPairingConfig | null;
+}
+
 /// Finds the first binding rule matching the conversation. Returns the profile
 /// source (or null for the default profile) and the configured session key (or
 /// null, meaning the bridge derives a per-conversation key). When no rule
 /// matches, returns the default profile with a derived key.
 export function resolveBinding(query: BindingQuery, bindings: readonly BindingRule[]): ResolvedBinding {
-  for (const rule of bindings) {
-    if (bindingMatches(rule.match, query)) {
-      return {
-        profile: rule.profile ?? null,
-        profileLabel: labelForProfile(rule.profile),
-        sessionKey: rule.sessionKey ?? null,
-      };
-    }
+  const binding = resolveBindingCandidates(query, bindings)[0];
+  if (binding) {
+    return {
+      profile: binding.profile,
+      profileLabel: binding.profileLabel,
+      sessionKey: binding.sessionKey,
+    };
   }
   return { profile: null, profileLabel: null, sessionKey: null };
+}
+
+/// Returns the ordered binding candidates relevant to one inbound message.
+/// Pairable rules may share the same broad match, so all consecutive matching
+/// pairable rules are exposed before a non-pairing fallback stops resolution.
+export function resolveBindingCandidates(
+  query: BindingQuery,
+  bindings: readonly BindingRule[],
+): BindingAccessCandidate[] {
+  const candidates: BindingAccessCandidate[] = [];
+  for (const rule of bindings) {
+    if (!bindingMatches(rule.match, query)) {
+      continue;
+    }
+    candidates.push(candidateForRule(rule));
+    if (!rule.pairing) {
+      break;
+    }
+  }
+  return candidates.length > 0 ? candidates : [defaultBindingCandidate()];
+}
+
+function candidateForRule(rule: BindingRule): BindingAccessCandidate {
+  return {
+    bindingId: rule.id ?? null,
+    pairing: rule.pairing ?? null,
+    profile: rule.profile ?? null,
+    profileLabel: labelForProfile(rule.profile),
+    sessionKey: rule.sessionKey ?? null,
+  };
+}
+
+function defaultBindingCandidate(): BindingAccessCandidate {
+  return {
+    bindingId: null,
+    pairing: null,
+    profile: null,
+    profileLabel: null,
+    sessionKey: null,
+  };
 }
 
 function bindingMatches(match: BindingMatch, query: BindingQuery): boolean {
@@ -328,17 +392,17 @@ function normalizeHandle(handle: string): string {
   return handle.trim().toLowerCase().replace(/^@/, "");
 }
 
-export function parseBindings(raw: unknown): BindingRule[] {
+export function parseBindings(raw: unknown, env: NodeJS.ProcessEnv = process.env): BindingRule[] {
   if (raw === undefined || raw === null) {
     return [];
   }
   if (!Array.isArray(raw)) {
     throw new Error("bindings must be an array");
   }
-  return raw.map((entry, index) => parseBinding(index, entry));
+  return raw.map((entry, index) => parseBinding(index, entry, env));
 }
 
-function parseBinding(index: number, raw: unknown): BindingRule {
+function parseBinding(index: number, raw: unknown, env: NodeJS.ProcessEnv): BindingRule {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     throw new Error(`bindings[${index}] must be an object`);
   }
@@ -358,7 +422,12 @@ function parseBinding(index: number, raw: unknown): BindingRule {
   if (record.recipe !== undefined) {
     throw new Error(`bindings[${index}].recipe is no longer supported; use bindings[${index}].profile`);
   }
+  const id = optionalString(record.id);
   const profile = parseOptionalProfileSource(record.profile, `bindings[${index}].profile`);
+  const pairing = parseOptionalPairing(record.pairing, `bindings[${index}].pairing`, env);
+  if (pairing && id === undefined) {
+    throw new Error(`bindings[${index}].id is required when pairing is configured`);
+  }
   const matchRule: BindingMatch = { channel };
   const handle = optionalStringOrStringArray(match.handle);
   if (handle !== undefined) matchRule.handle = handle;
@@ -366,10 +435,36 @@ function parseBinding(index: number, raw: unknown): BindingRule {
   if (chatId !== undefined) matchRule.chatId = chatId;
   if (scope !== undefined) matchRule.scope = scope as BindingScope;
   const rule: BindingRule = { match: matchRule };
+  if (id !== undefined) rule.id = id;
   if (profile !== undefined) rule.profile = profile;
   const sessionKey = optionalString(record.sessionKey);
   if (sessionKey !== undefined) rule.sessionKey = sessionKey;
+  if (pairing !== undefined) rule.pairing = pairing;
   return rule;
+}
+
+function parseOptionalPairing(
+  raw: unknown,
+  path: string,
+  env: NodeJS.ProcessEnv,
+): BindingPairingConfig | undefined {
+  if (raw === undefined || raw === null) {
+    return undefined;
+  }
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error(`${path} must be an object`);
+  }
+  const record = raw as Record<string, unknown>;
+  const codeEnv = optionalString(record.codeEnv ?? record.code_env);
+  const literalCode = optionalString(record.code);
+  const envCode = codeEnv ? optionalString(env[codeEnv]) : undefined;
+  const code = envCode ?? literalCode;
+  if (code === undefined) {
+    throw new Error(`${path}.code or ${path}.codeEnv is required`);
+  }
+  const pairing: BindingPairingConfig = { code };
+  if (codeEnv !== undefined) pairing.codeEnv = codeEnv;
+  return pairing;
 }
 
 function parseOptionalProfileSource(raw: unknown, path: string): ProfileSource | undefined {

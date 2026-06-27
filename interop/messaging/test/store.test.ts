@@ -72,3 +72,21 @@ describe("JsonBridgeStore bindings", () => {
     expect(refreshed.activation).toBe("silent");
   });
 });
+
+describe("JsonBridgeStore pairings", () => {
+  it("creates and persists paired conversations", async () => {
+    const store = new JsonBridgeStore(filePath);
+    await store.pairConversation("pair-1", {
+      channel: "telegram",
+      accountId: "default",
+      chatId: "chat-1",
+      bindingId: "lukas-telegram",
+    });
+
+    const reloaded = new JsonBridgeStore(filePath);
+    const pairing = await reloaded.getPairing("pair-1");
+    expect(pairing?.bindingId).toBe("lukas-telegram");
+    expect(pairing?.chatId).toBe("chat-1");
+    expect(pairing?.pairedAtMs).toBeGreaterThan(0);
+  });
+});

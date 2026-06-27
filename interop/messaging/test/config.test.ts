@@ -76,6 +76,45 @@ describe("parseBindings", () => {
     ]);
   });
 
+  it("parses binding pairing codes from config and env", () => {
+    expect(
+      parseBindings([
+        {
+          id: "lukas-telegram",
+          match: { channel: "telegram" },
+          profile: "personal",
+          sessionKey: "lukas",
+          pairing: { code: "LOCALCODE" },
+        },
+      ])[0],
+    ).toMatchObject({
+      id: "lukas-telegram",
+      pairing: { code: "LOCALCODE" },
+    });
+
+    expect(
+      parseBindings(
+        [
+          {
+            id: "anna-whatsapp",
+            match: { channel: "whatsapp" },
+            pairing: { codeEnv: "ANNA_PAIRING_CODE" },
+          },
+        ],
+        { ANNA_PAIRING_CODE: "ENVCODE" },
+      )[0],
+    ).toMatchObject({
+      id: "anna-whatsapp",
+      pairing: { code: "ENVCODE", codeEnv: "ANNA_PAIRING_CODE" },
+    });
+  });
+
+  it("requires a stable binding id for pairable bindings", () => {
+    expect(() =>
+      parseBindings([{ match: { channel: "telegram" }, pairing: { code: "CODE" } }]),
+    ).toThrow(/id is required/);
+  });
+
   it("rejects legacy binding recipes", () => {
     expect(() => parseBindings([{ match: { channel: "*" }, recipe: "personal" }])).toThrow(
       /recipe is no longer supported/,
@@ -221,5 +260,34 @@ describe("resolveInboundAccess", () => {
     );
     expect(access.turnAllowed).toBe(true);
     expect(access.controlAllowed).toBe(false);
+  });
+
+  it("exposes consecutive pairable candidates before the fallback binding", () => {
+    const access = resolveInboundAccess(
+      { channel: "whatsapp", handles: ["41790000000"], chatId: "dm", scope: "direct" },
+      { allowFrom: [], controlAllowFrom: [] },
+      parseBindings([
+        {
+          id: "lukas-whatsapp",
+          match: { channel: "whatsapp", scope: "direct" },
+          profile: "lukas",
+          pairing: { code: "LUKAS" },
+        },
+        {
+          id: "anna-whatsapp",
+          match: { channel: "whatsapp", scope: "direct" },
+          profile: "anna",
+          pairing: { code: "ANNA" },
+        },
+        { match: { channel: "*" } },
+      ]),
+    );
+
+    expect(access.bindingCandidates.map((candidate) => candidate.bindingId)).toEqual([
+      "lukas-whatsapp",
+      "anna-whatsapp",
+      null,
+    ]);
+    expect(access.profileLabel).toBe("lukas");
   });
 });
