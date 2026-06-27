@@ -1762,6 +1762,20 @@ mod tests {
             Ok("run_1".to_owned())
         }
 
+        async fn enqueue_run(
+            &self,
+            session_id: &SessionId,
+            input: Vec<api::InputItem>,
+            submission_id: engine::SubmissionId,
+        ) -> Result<String, api::AgentApiError> {
+            self.started_runs.lock().expect("fleet lock").push((
+                session_id.clone(),
+                input,
+                submission_id,
+            ));
+            Ok("run_1".to_owned())
+        }
+
         async fn read_session(
             &self,
             session_id: &SessionId,

@@ -333,6 +333,8 @@ pub struct AgentSendOutput {
     pub target_session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub submission_id: Option<String>,
     pub status: AgentSendStatus,
 }
 
@@ -440,7 +442,7 @@ pub fn fleet_tool_bundles(config: &FleetToolsetConfig) -> ToolResult<Vec<ToolSpe
         )?,
         function_bundle(
             AGENT_SEND_TOOL_NAME,
-            "Deliver a message to a reachable session, admitting a run on the recipient. Use to parent for callbacks or to session for linked children and peers.",
+            "Deliver a message to a reachable session, queueing a run on the recipient and returning once admitted. Use to parent for callbacks or to session for linked children and peers.",
             send_input_schema(),
         )?,
         function_bundle(

@@ -281,6 +281,63 @@ impl GatewayAgentApi {
         }
     }
 
+    pub(super) async fn wait_for_run_admitted(
+        &self,
+        session_id: &SessionId,
+        submission_id: &SubmissionId,
+        baseline_failures: usize,
+    ) -> Result<RunId, AgentApiError> {
+        let started = Instant::now();
+        loop {
+            if started.elapsed() > self.operation_timeout {
+                return Err(AgentApiError::internal(format!(
+                    "timed out waiting for agent run admission: {submission_id}"
+                )));
+            }
+            let Some(status) = self.query_status_optional(session_id).await? else {
+                tokio::time::sleep(self.poll_interval).await;
+                continue;
+            };
+            if let Some(failure) = status
+                .admission_failures
+                .iter()
+                .skip(baseline_failures)
+                .rev()
+                .find(|failure| failure.submission_id.as_ref() == Some(submission_id))
+            {
+                return Err(map_admission_failure_to_api_error(failure));
+            }
+            if let Some(active) = status
+                .active_run
+                .as_ref()
+                .filter(|run| run.submission_id.as_ref() == Some(submission_id))
+            {
+                return Ok(RunId::new(active.run_id));
+            }
+            if let Some(queued) = status
+                .queued_runs
+                .iter()
+                .find(|run| run.submission_id.as_ref() == Some(submission_id))
+            {
+                return Ok(RunId::new(queued.run_id));
+            }
+            if let Some(completed) = status
+                .completed_runs
+                .iter()
+                .rev()
+                .find(|run| run.submission_id.as_ref() == Some(submission_id))
+            {
+                return Ok(RunId::new(completed.run_id));
+            }
+            if let Some(error) = status.last_error {
+                return Err(AgentApiError::internal(format!(
+                    "agent workflow reported error: {error}"
+                )));
+            }
+            tokio::time::sleep(self.poll_interval).await;
+        }
+    }
+
     pub(super) async fn wait_for_closed_session(
         &self,
         session_id: &SessionId,

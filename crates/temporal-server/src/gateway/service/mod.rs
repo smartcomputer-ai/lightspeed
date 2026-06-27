@@ -240,6 +240,11 @@ enum ExistingRunSubmission {
     Reject,
 }
 
+enum ExistingAdmittedRunSubmission {
+    ReturnRun { run_id: RunId },
+    Reject,
+}
+
 fn existing_run_submission(
     state: &engine::CoreAgentState,
     submission_id: &SubmissionId,
@@ -286,6 +291,61 @@ fn existing_run_submission(
             _ => ExistingRunSubmission::ReturnRun {
                 run_id: completed.run_id,
                 status: completed.status,
+            },
+        });
+    }
+    None
+}
+
+fn existing_admitted_run_submission(
+    state: &engine::CoreAgentState,
+    submission_id: &SubmissionId,
+    input: &[ContextEntryInput],
+    run_config: &RunConfig,
+) -> Option<ExistingAdmittedRunSubmission> {
+    if let Some(active) = state
+        .runs
+        .active
+        .as_ref()
+        .filter(|run| run.submission_id.as_ref() == Some(submission_id))
+    {
+        return Some(
+            if active.input.input == input && &active.run_config == run_config {
+                ExistingAdmittedRunSubmission::ReturnRun {
+                    run_id: active.run_id,
+                }
+            } else {
+                ExistingAdmittedRunSubmission::Reject
+            },
+        );
+    }
+    if let Some(queued) = state
+        .runs
+        .queued
+        .iter()
+        .find(|run| run.submission_id.as_ref() == Some(submission_id))
+    {
+        return Some(
+            if queued.input == input && &queued.run_config == run_config {
+                ExistingAdmittedRunSubmission::ReturnRun {
+                    run_id: queued.run_id,
+                }
+            } else {
+                ExistingAdmittedRunSubmission::Reject
+            },
+        );
+    }
+    if let Some(completed) = state
+        .runs
+        .completed
+        .iter()
+        .find(|run| run.submission_id.as_ref() == Some(submission_id))
+    {
+        let digest = run_submission_digest(input, run_config);
+        return Some(match completed.submission_digest {
+            Some(existing) if existing != digest => ExistingAdmittedRunSubmission::Reject,
+            _ => ExistingAdmittedRunSubmission::ReturnRun {
+                run_id: completed.run_id,
             },
         });
     }
@@ -640,6 +700,54 @@ impl GatewayAgentApi {
         Ok(())
     }
 
+    pub(crate) async fn enqueue_run_for_fleet(
+        &self,
+        session_id: &SessionId,
+        input: Vec<InputItem>,
+        submission_id: SubmissionId,
+    ) -> Result<String, AgentApiError> {
+        let loaded = self
+            .load_session_state_with_current_run_context(session_id)
+            .await?;
+        let run_config = self.run_config_for_start(session_id, None).await?;
+        let input = run_input_from_api(self.store.as_ref(), &input).await?;
+        if let Some(existing) =
+            existing_admitted_run_submission(&loaded.state, &submission_id, &input, &run_config)
+        {
+            return match existing {
+                ExistingAdmittedRunSubmission::ReturnRun { run_id } => {
+                    Ok(format!("run_{}", run_id.as_u64()))
+                }
+                ExistingAdmittedRunSubmission::Reject => {
+                    Err(duplicate_submission_error(&submission_id))
+                }
+            };
+        }
+        if loaded.state.lifecycle.status != CoreAgentStatus::Open {
+            return Err(AgentApiError::rejected(format!(
+                "session is not open: {session_id}"
+            )));
+        }
+        let status_before_signal = self.query_status_optional(session_id).await?;
+        let baseline_admission_failures = status_before_signal
+            .as_ref()
+            .map(|status| status.admission_failures.len())
+            .unwrap_or(0);
+        let command = engine::CoreAgentCodec
+            .encode_command(&CoreAgentCommand::RequestRun {
+                submission_id: Some(submission_id.clone()),
+                input,
+                run_config,
+            })
+            .map_err(|error| AgentApiError::internal(error.to_string()))?;
+        self.signal_submit_admission(session_id, AgentAdmission { command })
+            .await?;
+        let run_id = self
+            .wait_for_run_admitted(session_id, &submission_id, baseline_admission_failures)
+            .await?;
+        Ok(format!("run_{}", run_id.as_u64()))
+    }
+
     async fn start_session_internal(
         &self,
         params: SessionStartParams,
@@ -784,7 +892,15 @@ impl GatewayAgentApi {
             .iter()
             .find(|run| run.run_id == run_id)
             .map(|run| run.status)
-            .or_else(|| loaded.state.runs.active.as_ref().map(|run| run.status))
+            .or_else(|| {
+                loaded
+                    .state
+                    .runs
+                    .active
+                    .as_ref()
+                    .filter(|run| run.run_id == run_id)
+                    .map(|run| run.status)
+            })
             .unwrap_or(fallback_status);
         self.projector()
             .project_run(&loaded.entries, run_id, status)

@@ -54,6 +54,8 @@ const DEFAULT_RECENT_TRANSCRIPT_EVENT_LIMIT: u32 = 20;
 const MAX_RECENT_EVENT_LIMIT: u32 = 100;
 const MAX_DIRECT_LINKS: usize = 100;
 const MAX_AGENT_WAIT_HANDLES: usize = 32;
+const MAX_AGENT_READ_VISIBLE_CHARS: usize = 20_000;
+const MAX_AGENT_READ_VISIBLE_RUNS: usize = 2;
 
 #[derive(Clone)]
 pub struct FleetService {
@@ -228,6 +230,7 @@ impl FleetService {
             return Ok(AgentSendOutput {
                 target_session_id: None,
                 run_id: None,
+                submission_id: None,
                 status: AgentSendStatus::NotReachable,
             });
         };
@@ -238,6 +241,7 @@ impl FleetService {
             return Ok(AgentSendOutput {
                 target_session_id: Some(target_session_id.as_str().to_owned()),
                 run_id: None,
+                submission_id: None,
                 status: AgentSendStatus::NotReachable,
             });
         }
@@ -246,17 +250,15 @@ impl FleetService {
             .start_session(&target_session_id, false, None)
             .await?;
         let input = send_run_input(&context, &args)?;
+        let submission_id = send_submission_id(&context, &target_session_id);
         let run_id = self
             .runtime
-            .start_run(
-                &target_session_id,
-                input,
-                send_submission_id(&context, &target_session_id),
-            )
+            .enqueue_run(&target_session_id, input, submission_id.clone())
             .await?;
         Ok(AgentSendOutput {
             target_session_id: Some(target_session_id.as_str().to_owned()),
             run_id: Some(run_id),
+            submission_id: Some(submission_id.as_str().to_owned()),
             status: AgentSendStatus::Delivered,
         })
     }
@@ -979,6 +981,13 @@ pub trait FleetChildRuntime: Send + Sync {
         submission_id: SubmissionId,
     ) -> Result<String, AgentApiError>;
 
+    async fn enqueue_run(
+        &self,
+        session_id: &SessionId,
+        input: Vec<InputItem>,
+        submission_id: SubmissionId,
+    ) -> Result<String, AgentApiError>;
+
     async fn read_session(&self, session_id: &SessionId) -> Result<SessionView, AgentApiError>;
 
     async fn read_session_events(
@@ -1056,6 +1065,17 @@ impl FleetChildRuntime for AgentApiFleetRuntime {
             })
             .await?;
         Ok(response.result.run.id)
+    }
+
+    async fn enqueue_run(
+        &self,
+        session_id: &SessionId,
+        input: Vec<InputItem>,
+        submission_id: SubmissionId,
+    ) -> Result<String, AgentApiError> {
+        self.api
+            .enqueue_run_for_fleet(session_id, input, submission_id)
+            .await
     }
 
     async fn read_session(&self, session_id: &SessionId) -> Result<SessionView, AgentApiError> {
@@ -1298,8 +1318,11 @@ impl FleetToolExecutor {
         let args: AgentReadArgs = self.decode_args(call).await?;
         match self.service.read(args).await {
             Ok(output) => {
-                let visible = read_model_visible_text(&output);
-                self.succeeded(call.call_id.clone(), &output, visible).await
+                let visible =
+                    read_model_visible_context_entries(self.blobs.as_ref(), &call.call_id, &output)
+                        .await?;
+                self.succeeded_with_entries(call.call_id.clone(), &output, visible)
+                    .await
             }
             Err(error) => {
                 fleet_failed_result(self.blobs.as_ref(), call.call_id.clone(), error.to_string())
@@ -1383,6 +1406,30 @@ impl FleetToolExecutor {
             ToolCallStatus::Succeeded,
             visible_ref,
         )];
+        Ok(ToolInvocationResult {
+            call_id,
+            status: ToolCallStatus::Succeeded,
+            output_ref: Some(output_ref),
+            model_visible_context_entries,
+            error_ref: None,
+            effects: Vec::new(),
+        })
+    }
+
+    async fn succeeded_with_entries<T>(
+        &self,
+        call_id: ToolCallId,
+        output: &T,
+        model_visible_context_entries: Vec<ContextEntryInput>,
+    ) -> Result<ToolInvocationResult, CoreAgentIoError>
+    where
+        T: Serialize,
+    {
+        let output_ref = self
+            .blobs
+            .put_bytes(serde_json::to_vec(output).map_err(io_error)?)
+            .await
+            .map_err(map_blob_error)?;
         Ok(ToolInvocationResult {
             call_id,
             status: ToolCallStatus::Succeeded,
@@ -2010,7 +2057,16 @@ fn send_model_visible_text(output: &AgentSendOutput) -> String {
         output.run_id.as_deref(),
     ) {
         (AgentSendStatus::Delivered, Some(target_session_id), Some(run_id)) => {
-            format!("Delivered message to session {target_session_id} as run {run_id}.")
+            match output.submission_id.as_deref() {
+                Some(submission_id) => format!(
+                    "Delivered message to session {target_session_id} as queued run {run_id} (submission {submission_id})."
+                ),
+                None => {
+                    format!(
+                        "Delivered message to session {target_session_id} as queued run {run_id}."
+                    )
+                }
+            }
         }
         (AgentSendStatus::NotReachable, Some(target_session_id), _) => {
             format!("Session {target_session_id} is not reachable.")
@@ -2266,6 +2322,102 @@ fn read_model_visible_text(output: &AgentReadOutput) -> String {
     )
 }
 
+async fn read_model_visible_context_entries(
+    blobs: &dyn BlobStore,
+    call_id: &ToolCallId,
+    output: &AgentReadOutput,
+) -> Result<Vec<ContextEntryInput>, CoreAgentIoError> {
+    let summary_ref = blobs
+        .put_bytes(read_model_visible_text(output).into_bytes())
+        .await
+        .map_err(map_blob_error)?;
+    let mut entries = vec![ToolInvocationResult::tool_result_context_entry(
+        call_id,
+        ToolCallStatus::Succeeded,
+        summary_ref,
+    )];
+    if let Some(transcript) = agent_read_visible_run_transcripts(output) {
+        append_wait_text_message(
+            blobs,
+            &mut entries,
+            transcript,
+            Some(format!("Agent run transcript from {}", output.session_id)),
+        )
+        .await?;
+    }
+    Ok(entries)
+}
+
+fn agent_read_visible_run_transcripts(output: &AgentReadOutput) -> Option<String> {
+    let runs = output.session.get("runs")?.as_array()?;
+    let mut sections = Vec::new();
+    let mut remaining = MAX_AGENT_READ_VISIBLE_CHARS;
+    for run in runs.iter().rev() {
+        if sections.len() >= MAX_AGENT_READ_VISIBLE_RUNS || remaining == 0 {
+            break;
+        }
+        let Some(section) = agent_read_visible_run_section(&output.session_id, run) else {
+            continue;
+        };
+        let section = truncate_chars(&section, remaining);
+        remaining = remaining.saturating_sub(section.chars().count());
+        sections.push(section);
+    }
+    (!sections.is_empty()).then(|| sections.join("\n\n---\n\n"))
+}
+
+fn agent_read_visible_run_section(session_id: &str, run: &Value) -> Option<String> {
+    let run_id = run.get("id").and_then(Value::as_str).unwrap_or("unknown");
+    let status = run
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let items = run.get("items").and_then(Value::as_array)?;
+    let mut lines = Vec::new();
+    for item in items {
+        match item.get("type").and_then(Value::as_str) {
+            Some("assistantMessage") => {
+                if let Some(text) = item.get("text").and_then(Value::as_str)
+                    && !text.trim().is_empty()
+                {
+                    lines.push(format!("Assistant message:\n{}", text.trim()));
+                }
+            }
+            Some("toolResult") => {
+                if let Some(output) = item.get("output").and_then(Value::as_str)
+                    && !output.trim().is_empty()
+                {
+                    lines.push(format!("Tool result:\n{}", output.trim()));
+                }
+            }
+            _ => {}
+        }
+    }
+    if lines.is_empty() {
+        return None;
+    }
+    let mut text = format!(
+        "Agent run transcript\ntarget_session_id: {session_id}\nrun_id: {run_id}\nstatus: {status}"
+    );
+    text.push_str("\n\n");
+    text.push_str(&lines.join("\n\n"));
+    Some(text)
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    const TRUNCATED: &str = "\n[truncated]";
+    if value.chars().count() <= max_chars {
+        return value.to_owned();
+    }
+    if max_chars <= TRUNCATED.chars().count() {
+        return value.chars().take(max_chars).collect();
+    }
+    let keep = max_chars - TRUNCATED.chars().count();
+    let mut truncated = value.chars().take(keep).collect::<String>();
+    truncated.push_str(TRUNCATED);
+    truncated
+}
+
 fn cancel_model_visible_text(output: &AgentCancelOutput) -> String {
     match output.scope {
         AgentCancelScope::ActiveRun => format!(
@@ -2461,6 +2613,20 @@ mod tests {
         }
 
         async fn start_run(
+            &self,
+            session_id: &SessionId,
+            input: Vec<InputItem>,
+            submission_id: SubmissionId,
+        ) -> Result<String, AgentApiError> {
+            self.started_runs.lock().expect("lock").push((
+                session_id.clone(),
+                input,
+                submission_id,
+            ));
+            Ok("run_1".to_owned())
+        }
+
+        async fn enqueue_run(
             &self,
             session_id: &SessionId,
             input: Vec<InputItem>,
@@ -2999,6 +3165,12 @@ mod tests {
 
         assert_eq!(output.target_session_id.as_deref(), Some(child.as_str()));
         assert_eq!(output.run_id.as_deref(), Some("run_1"));
+        assert!(
+            output
+                .submission_id
+                .as_deref()
+                .is_some_and(|submission_id| submission_id.starts_with("fleet_send_"))
+        );
         assert_eq!(output.status, AgentSendStatus::Delivered);
         assert_eq!(
             runtime.started_sessions.lock().expect("lock").as_slice(),
@@ -3048,6 +3220,12 @@ mod tests {
 
         assert_eq!(output.target_session_id.as_deref(), Some(parent.as_str()));
         assert_eq!(output.run_id.as_deref(), Some("run_1"));
+        assert!(
+            output
+                .submission_id
+                .as_deref()
+                .is_some_and(|submission_id| submission_id.starts_with("fleet_send_"))
+        );
         let started_runs = runtime.started_runs.lock().expect("lock");
         assert_eq!(started_runs[0].0, parent);
         let envelope = text_item_json(&started_runs[0].1[0]);
@@ -3651,9 +3829,21 @@ mod tests {
         let child = open_source_session(sessions.as_ref()).await;
         let blobs = Arc::new(engine::storage::InMemoryBlobStore::new());
         let runtime = Arc::new(FakeRuntime::default());
+        let mut run = api_run_view("run_1", ApiRunStatus::Completed);
+        run.items.push(api::SessionItemView::ToolResult {
+            id: "item_1".to_owned(),
+            call_id: "call_shell".to_owned(),
+            output: Some("/opt\n## main...origin/main".to_owned()),
+            is_error: false,
+            status: api::ToolItemStatus::Succeeded,
+        });
+        run.items.push(api::SessionItemView::AssistantMessage {
+            id: "item_2".to_owned(),
+            text: "Command completed.".to_owned(),
+        });
         runtime.sessions.lock().expect("lock").insert(
             child.clone(),
-            api_session_view(&child, api::SessionStatus::Idle, Vec::new()),
+            api_session_view(&child, api::SessionStatus::Idle, vec![run]),
         );
         let service = FleetService::new(sessions, runtime);
         let executor = FleetToolExecutor::new(blobs.clone(), service);
@@ -3684,6 +3874,22 @@ mod tests {
         let visible_ref = visible_tool_result_ref(&result);
         let visible = blobs.read_text(&visible_ref).await.expect("read visible");
         assert!(visible.contains("Read agent parent"));
+        let visible_messages = result
+            .model_visible_context_entries
+            .iter()
+            .filter(|entry| matches!(entry.kind, ContextEntryKind::Message { .. }))
+            .collect::<Vec<_>>();
+        assert_eq!(visible_messages.len(), 1);
+        let transcript = blobs
+            .read_text(&visible_messages[0].content_ref)
+            .await
+            .expect("read transcript");
+        assert!(transcript.contains("Agent run transcript"));
+        assert!(transcript.contains("target_session_id: parent"));
+        assert!(transcript.contains("run_id: run_1"));
+        assert!(transcript.contains("status: completed"));
+        assert!(transcript.contains("Tool result:\n/opt"));
+        assert!(transcript.contains("Assistant message:\nCommand completed."));
     }
 
     #[tokio::test(flavor = "current_thread")]

@@ -80,6 +80,7 @@ pub struct AgentActiveRunSummary {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentQueuedRunSummary {
+    pub run_id: u64,
     pub submission_id: Option<SubmissionId>,
     pub input: Vec<ContextEntryInput>,
 }
