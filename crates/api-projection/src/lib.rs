@@ -4,19 +4,20 @@
 //! client-facing API. It does not admit commands or execute side effects beyond
 //! reading blob-backed text needed to materialize views.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use api::{
     ActiveToolsView, AgentApiError, CompactionPolicyInput, ContextConfigInput,
     ContextEntryInputView, ContextEntryKindView, ContextMessageRoleView, ContextView, EventCursor,
     EventJoinsView, FilesystemToolMode as ApiFilesystemToolMode, GenerationConfig, InputItem,
     MediaKind, ModelConfig, ProviderContextDisplayView, ProviderNativeToolExecutionView,
-    ReasoningEffort, RunDefaultsConfig, RunStatus as ApiRunStatus, RunView, SessionConfigView,
-    SessionEventKindView, SessionEventView, SessionItemView, SessionStatus as ApiSessionStatus,
-    SessionView, TokenEstimateQualityView, TokenEstimateView, ToolBatchView, ToolCallDisplayGroup,
-    ToolCallDisplayView, ToolCallEventView, ToolCallView, ToolChoiceConfig, ToolChoiceModeConfig,
-    ToolConfigView, ToolEffectView, ToolExecutionTargetView, ToolItemStatus, ToolKindView,
-    ToolParallelismView, ToolTargetRequirementView, ToolView,
+    ReasoningEffort, RunAcceptedSourceView, RunDefaultsConfig, RunStatus as ApiRunStatus, RunView,
+    RunViewSource, SessionConfigView, SessionEventKindView, SessionEventView, SessionItemView,
+    SessionStatus as ApiSessionStatus, SessionView, TokenEstimateQualityView, TokenEstimateView,
+    ToolBatchView, ToolCallDisplayGroup, ToolCallDisplayView, ToolCallEventView, ToolCallView,
+    ToolChoiceConfig, ToolChoiceModeConfig, ToolConfigView, ToolEffectView,
+    ToolExecutionTargetView, ToolItemStatus, ToolKindView, ToolParallelismView,
+    ToolTargetRequirementView, ToolView,
 };
 use engine::{ApplyEvent, ToolExecutionTarget};
 use engine::{
@@ -26,8 +27,8 @@ use engine::{
     CoreAgentEventKind, CoreAgentJoins, CoreAgentLifecycleEvent, CoreAgentState, CoreAgentStatus,
     CoreApplyEvent, EventSeq, LlmGenerationStatus, ModelSelection,
     OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND, ObservedToolCall, ProviderApiKind, ProviderParams,
-    RunEvent, RunFailure, RunId, RunStatus, SessionConfig, SessionId, SteeringId, ToolBatchId,
-    ToolCallStatus, ToolChoice, ToolChoiceMode, ToolConfigEvent, ToolEvent, ToolKind,
+    RunEvent, RunFailure, RunId, RunSource, RunStatus, SessionConfig, SessionId, SteeringId,
+    ToolBatchId, ToolCallStatus, ToolChoice, ToolChoiceMode, ToolConfigEvent, ToolEvent, ToolKind,
     ToolParallelism, ToolSpec, ToolTargetRequirement, TurnEvent, TurnId,
     storage::{
         BlobStore, BlobStoreError, DynamicSessionEntry, ReadSessionEvents, SessionRecord,
@@ -107,7 +108,8 @@ impl<'a> CoreAgentProjector<'a> {
         status: RunStatus,
     ) -> Result<RunView, AgentApiError> {
         let projection = CoreAgentProjection::new(entries);
-        let context_entries = projection.context_entries_for_run(run_id);
+        let source = projection.accepted_source_for_run(run_id);
+        let context_entries = projection.context_entries_for_run_with_source(run_id, source);
         let mut items = Vec::new();
 
         for item in &context_entries {
@@ -118,9 +120,18 @@ impl<'a> CoreAgentProjector<'a> {
         Ok(RunView {
             id: api_run_id(run_id),
             status: core_run_status_to_api_status(status),
-            input: self
-                .project_input_entries(&projection.accepted_input_for_run(run_id))
-                .await?,
+            source: match source {
+                Some(RunSource::Input { input }) => RunViewSource::Input {
+                    items: self.project_input_entries(input).await?,
+                },
+                Some(RunSource::Context { triggers }) => RunViewSource::Context {
+                    keys: triggers
+                        .iter()
+                        .map(|trigger| trigger.key.as_str().to_owned())
+                        .collect(),
+                },
+                None => RunViewSource::Input { items: Vec::new() },
+            },
             items,
             tool_batches: self
                 .project_tool_batches_for_run(&projection, &context_entries, run_id)
@@ -340,15 +351,23 @@ impl<'a> CoreAgentProjector<'a> {
                 CoreAgentLifecycleEvent::Closed => Ok(SessionEventKindView::SessionClosed),
             },
             CoreAgentEventKind::Run(event) => match event {
-                RunEvent::Accepted {
-                    run_id,
-                    submission_id,
-                    input,
-                    ..
-                } => Ok(SessionEventKindView::RunAccepted {
-                    run_id: api_run_id(*run_id),
-                    submission_id: submission_id.as_ref().map(|id| id.as_str().to_owned()),
-                    input: project_context_entry_inputs(input),
+                RunEvent::Accepted(accepted) => Ok(SessionEventKindView::RunAccepted {
+                    run_id: api_run_id(accepted.run_id),
+                    submission_id: accepted
+                        .submission_id
+                        .as_ref()
+                        .map(|id| id.as_str().to_owned()),
+                    source: match &accepted.source {
+                        RunSource::Input { input } => RunAcceptedSourceView::Input {
+                            entries: project_context_entry_inputs(input),
+                        },
+                        RunSource::Context { triggers } => RunAcceptedSourceView::Context {
+                            keys: triggers
+                                .iter()
+                                .map(|trigger| trigger.key.as_str().to_owned())
+                                .collect(),
+                        },
+                    },
                 }),
                 RunEvent::Started { run_id } => Ok(SessionEventKindView::RunStarted {
                     run_id: api_run_id(*run_id),
@@ -779,24 +798,33 @@ impl<'a> CoreAgentProjection<'a> {
         self.entries
     }
 
-    pub fn accepted_input_for_run(&self, run_id: RunId) -> Vec<ContextEntryInput> {
-        self.entries
-            .iter()
-            .find_map(|entry| {
-                let CoreAgentEventKind::Run(RunEvent::Accepted {
-                    run_id: event_run_id,
-                    input,
-                    ..
-                }) = &entry.event.kind
-                else {
-                    return None;
-                };
-                (*event_run_id == run_id).then(|| input.clone())
-            })
-            .unwrap_or_default()
+    pub fn accepted_source_for_run(&self, run_id: RunId) -> Option<&'a RunSource> {
+        self.entries.iter().find_map(|entry| {
+            let CoreAgentEventKind::Run(RunEvent::Accepted(accepted)) = &entry.event.kind else {
+                return None;
+            };
+            (accepted.run_id == run_id).then_some(&accepted.source)
+        })
     }
 
     pub fn context_entries_for_run(&self, run_id: RunId) -> Vec<&'a ContextEntry> {
+        self.context_entries_for_run_with_source(run_id, self.accepted_source_for_run(run_id))
+    }
+
+    /// Variant taking an already-located accepted source so callers projecting
+    /// a full `RunView` scan the event log for the acceptance event only once.
+    pub fn context_entries_for_run_with_source(
+        &self,
+        run_id: RunId,
+        source: Option<&'a RunSource>,
+    ) -> Vec<&'a ContextEntry> {
+        let mut trigger_entry_ids = BTreeSet::new();
+        if let Some(RunSource::Context { triggers }) = source {
+            for trigger in triggers {
+                trigger_entry_ids.insert(trigger.entry_id);
+            }
+        }
+        let mut seen = BTreeSet::new();
         self.entries
             .iter()
             .filter_map(|entry| {
@@ -805,13 +833,13 @@ impl<'a> CoreAgentProjection<'a> {
                 else {
                     return None;
                 };
-                Some(
-                    entries
-                        .iter()
-                        .filter(move |entry| context_entry_run_id(entry) == Some(run_id)),
-                )
+                Some(entries.iter().filter(|entry| {
+                    context_entry_run_id(entry) == Some(run_id)
+                        || trigger_entry_ids.contains(&entry.entry_id)
+                }))
             })
             .flatten()
+            .filter(|entry| seen.insert(entry.entry_id))
             .collect()
     }
 }
@@ -1696,6 +1724,29 @@ mod tests {
     }
 
     #[test]
+    fn context_entries_for_run_prefers_resolved_trigger_entry_ids_over_replaced_keys() {
+        let key = engine::ContextEntryKey::new("message.1");
+        let mut original = context_entry(1, ContextEntrySource::ContextEdit);
+        original.key = Some(key.clone());
+        original.preview = Some("original".to_owned());
+        let mut replacement = context_entry(2, ContextEntrySource::ContextEdit);
+        replacement.key = Some(key.clone());
+        replacement.preview = Some("replacement".to_owned());
+        let run_id = RunId::new(7);
+        let entries = vec![
+            entry(1, vec![original]),
+            accepted_context_run_entry(2, run_id, key, ContextEntryId::new(1)),
+            entry(3, vec![replacement]),
+        ];
+
+        let projected = CoreAgentProjection::new(&entries).context_entries_for_run(run_id);
+
+        assert_eq!(projected.len(), 1);
+        assert_eq!(projected[0].entry_id, ContextEntryId::new(1));
+        assert_eq!(projected[0].preview.as_deref(), Some("original"));
+    }
+
+    #[test]
     fn context_entry_input_projection_is_ref_backed() {
         let blob_ref = BlobRef::from_bytes(b"hello");
         let projected = project_context_entry_inputs(&[ContextEntryInput {
@@ -1946,6 +1997,34 @@ mod tests {
                     base_revision: seq - 1,
                     entries,
                 }),
+            },
+        }
+    }
+
+    fn accepted_context_run_entry(
+        seq: u64,
+        run_id: RunId,
+        key: engine::ContextEntryKey,
+        entry_id: ContextEntryId,
+    ) -> CoreAgentEntry {
+        CoreAgentEntry {
+            position: SessionPosition {
+                seq: EventSeq::new(seq),
+            },
+            observed_at_ms: seq,
+            joins: CoreAgentJoins::default(),
+            event: engine::CoreAgentEvent {
+                kind: CoreAgentEventKind::Run(engine::RunEvent::Accepted(
+                    engine::AcceptedRunEvent {
+                        run_id,
+                        submission_id: None,
+                        source: engine::RunSource::Context {
+                            triggers: vec![engine::RunSourceContextTrigger { key, entry_id }],
+                        },
+                        run_config: engine::RunConfig::default(),
+                        config_revision: 0,
+                    },
+                )),
             },
         }
     }

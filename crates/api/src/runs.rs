@@ -4,15 +4,26 @@ use super::*;
 #[serde(rename_all = "camelCase")]
 pub struct RunStartParams {
     pub session_id: SessionId,
-    pub input: Vec<InputItem>,
+    pub source: RunStartSource,
     /// Client-supplied idempotency key, unique per session. Retrying
-    /// `run/start` with the same submission id and the same input/config
+    /// `run/start` with the same submission id and the same source/config
     /// returns the original run instead of starting a second one; reusing a
-    /// submission id with different input or config is rejected.
+    /// submission id with different source or config is rejected.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub submission_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config: Option<RunStartConfig>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum RunStartSource {
+    Input { items: Vec<InputItem> },
+    Context { keys: Vec<String> },
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

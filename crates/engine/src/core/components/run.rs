@@ -4,21 +4,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ActiveToolBatch, BlobRef, CompletedToolBatch, ContextEntryId, ContextEntryInput,
-    CoreAgentEventKind, CoreAgentEventProposal, CoreAgentJoins, CoreAgentState, CoreAgentStatus,
-    DomainError, PlanNext, PlanningError, RunConfig, RunId, SteeringId, SubmissionId, ToolBatchId,
-    TurnId, TurnOutcome, TurnState, TurnStatus,
+    ContextEntryKey, CoreAgentEventKind, CoreAgentEventProposal, CoreAgentJoins, CoreAgentState,
+    CoreAgentStatus, DomainError, PlanNext, PlanningError, RunConfig, RunId, SteeringId,
+    SubmissionId, ToolBatchId, TurnId, TurnOutcome, TurnState, TurnStatus,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Event {
-    Accepted {
-        run_id: RunId,
-        submission_id: Option<SubmissionId>,
-        input: Vec<ContextEntryInput>,
-        run_config: RunConfig,
-        config_revision: u64,
-    },
+    Accepted(AcceptedRunEvent),
     Started {
         run_id: RunId,
     },
@@ -47,16 +41,9 @@ pub enum Event {
 pub struct AcceptedRun {
     pub run_id: RunId,
     pub submission_id: Option<SubmissionId>,
-    pub input: Vec<ContextEntryInput>,
+    pub source: RunSource,
     pub run_config: RunConfig,
     pub config_revision: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RunInputBatch {
-    pub input: Vec<ContextEntryInput>,
-    pub entry_ids: Vec<ContextEntryId>,
-    pub consumed_by_turn_id: Option<TurnId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,7 +59,9 @@ pub struct ActiveRun {
     pub run_id: RunId,
     pub status: RunStatus,
     pub submission_id: Option<SubmissionId>,
-    pub input: RunInputBatch,
+    pub source: RunSource,
+    pub input_entry_ids: Vec<ContextEntryId>,
+    pub input_consumed_by_turn_id: Option<TurnId>,
     pub run_config: RunConfig,
     pub config_revision: u64,
     pub steering: Vec<SteeringBatch>,
@@ -113,6 +102,103 @@ pub struct RunRecord {
 pub struct RunFailure {
     pub kind: RunFailureKind,
     pub message_ref: Option<BlobRef>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AcceptedRunEvent {
+    pub run_id: RunId,
+    pub submission_id: Option<SubmissionId>,
+    pub source: RunSource,
+    pub run_config: RunConfig,
+    pub config_revision: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunRequestCommand {
+    pub submission_id: Option<SubmissionId>,
+    pub source: RunRequestSource,
+    pub run_config: RunConfig,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "type")]
+pub enum RunRequestSource {
+    Input { input: Vec<ContextEntryInput> },
+    Context { keys: Vec<ContextEntryKey> },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunSourceContextTrigger {
+    pub key: ContextEntryKey,
+    pub entry_id: ContextEntryId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "type")]
+pub enum RunSource {
+    Input {
+        input: Vec<ContextEntryInput>,
+    },
+    Context {
+        triggers: Vec<RunSourceContextTrigger>,
+    },
+}
+
+impl RunRequestSource {
+    pub fn input(&self) -> &[ContextEntryInput] {
+        match self {
+            Self::Input { input } => input,
+            Self::Context { .. } => &[],
+        }
+    }
+
+    pub fn context_keys(&self) -> &[ContextEntryKey] {
+        match self {
+            Self::Input { .. } => &[],
+            Self::Context { keys } => keys,
+        }
+    }
+}
+
+impl RunSource {
+    pub fn input(&self) -> &[ContextEntryInput] {
+        match self {
+            Self::Input { input } => input,
+            Self::Context { .. } => &[],
+        }
+    }
+
+    pub fn context_triggers(&self) -> &[RunSourceContextTrigger] {
+        match self {
+            Self::Input { .. } => &[],
+            Self::Context { triggers } => triggers,
+        }
+    }
+
+    pub fn context_keys(&self) -> Vec<ContextEntryKey> {
+        match self {
+            Self::Input { .. } => Vec::new(),
+            Self::Context { triggers } => {
+                triggers.iter().map(|trigger| trigger.key.clone()).collect()
+            }
+        }
+    }
+
+    /// Whether this accepted source matches a client-requested source.
+    /// Context sources compare by trigger keys; resolved entry ids are an
+    /// admission-time snapshot, not part of the request identity.
+    pub fn matches_request(&self, request: &RunRequestSource) -> bool {
+        match (self, request) {
+            (Self::Input { input }, RunRequestSource::Input { input: requested }) => {
+                input == requested
+            }
+            (Self::Context { triggers }, RunRequestSource::Context { keys: requested }) => triggers
+                .iter()
+                .map(|trigger| &trigger.key)
+                .eq(requested.iter()),
+            _ => false,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -276,13 +362,14 @@ pub(crate) fn latest_turn_is_terminal_run_outcome(
 
 pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(), DomainError> {
     match event {
-        Event::Accepted {
-            run_id,
-            submission_id,
-            input,
-            run_config,
-            config_revision,
-        } => {
+        Event::Accepted(accepted) => {
+            let AcceptedRunEvent {
+                run_id,
+                submission_id,
+                source,
+                run_config,
+                config_revision,
+            } = accepted;
             if state.lifecycle.status != CoreAgentStatus::Open {
                 return Err(DomainError::InvariantViolation(
                     "runs can only be accepted while session is open".into(),
@@ -308,7 +395,7 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
             state.runs.queued.push(AcceptedRun {
                 run_id: *run_id,
                 submission_id: submission_id.clone(),
-                input: input.clone(),
+                source: source.clone(),
                 run_config: run_config.clone(),
                 config_revision: *config_revision,
             });
@@ -343,11 +430,9 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
                 run_id: *run_id,
                 status: RunStatus::Active,
                 submission_id: queued.submission_id,
-                input: RunInputBatch {
-                    input: queued.input,
-                    entry_ids: Vec::new(),
-                    consumed_by_turn_id: None,
-                },
+                source: queued.source,
+                input_entry_ids: Vec::new(),
+                input_consumed_by_turn_id: None,
                 run_config: queued.run_config,
                 config_revision: queued.config_revision,
                 steering: Vec::new(),
@@ -447,7 +532,7 @@ pub(crate) enum SubmissionMatch {
 pub(crate) fn match_existing_submission(
     state: &CoreAgentState,
     submission_id: &SubmissionId,
-    input: &[ContextEntryInput],
+    source: &RunRequestSource,
     run_config: &RunConfig,
 ) -> Option<SubmissionMatch> {
     if let Some(active) = state
@@ -457,7 +542,7 @@ pub(crate) fn match_existing_submission(
         .filter(|run| run.submission_id.as_ref() == Some(submission_id))
     {
         return Some(
-            if active.input.input == input && &active.run_config == run_config {
+            if active.source.matches_request(source) && &active.run_config == run_config {
                 SubmissionMatch::Identical
             } else {
                 SubmissionMatch::Different
@@ -471,7 +556,7 @@ pub(crate) fn match_existing_submission(
         .find(|run| run.submission_id.as_ref() == Some(submission_id))
     {
         return Some(
-            if queued.input == input && &queued.run_config == run_config {
+            if queued.source.matches_request(source) && &queued.run_config == run_config {
                 SubmissionMatch::Identical
             } else {
                 SubmissionMatch::Different
@@ -484,11 +569,11 @@ pub(crate) fn match_existing_submission(
         .iter()
         .find(|run| run.submission_id.as_ref() == Some(submission_id))
     {
-        // Completed runs keep only a digest of their accepted input/config.
+        // Completed runs keep only a digest of their accepted source/config.
         // A record without a digest cannot be compared and is treated as a
         // retry, which is the safe behavior for retried clients.
         return Some(match completed.submission_digest {
-            Some(digest) if digest != submission_digest(input, run_config) => {
+            Some(digest) if digest != run_submission_digest(source, run_config) => {
                 SubmissionMatch::Different
             }
             _ => SubmissionMatch::Identical,
@@ -500,10 +585,10 @@ pub(crate) fn match_existing_submission(
 /// Deterministic digest of a run submission's payload. FNV-1a over the
 /// serde_json encoding; collision resistance is not a goal — this guards
 /// against client bugs, not adversaries.
-pub(crate) fn submission_digest(input: &[ContextEntryInput], run_config: &RunConfig) -> u64 {
+pub fn run_submission_digest(source: &RunRequestSource, run_config: &RunConfig) -> u64 {
     const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
-    let bytes = serde_json::to_vec(&(input, run_config))
+    let bytes = serde_json::to_vec(&(source, run_config))
         .expect("run submission payload serializes to JSON");
     let mut hash = FNV_OFFSET;
     for byte in bytes {
@@ -511,6 +596,17 @@ pub(crate) fn submission_digest(input: &[ContextEntryInput], run_config: &RunCon
         hash = hash.wrapping_mul(FNV_PRIME);
     }
     hash
+}
+
+pub(crate) fn source_request_equivalent(source: &RunSource) -> RunRequestSource {
+    match source {
+        RunSource::Input { input } => RunRequestSource::Input {
+            input: input.clone(),
+        },
+        RunSource::Context { triggers } => RunRequestSource::Context {
+            keys: triggers.iter().map(|trigger| trigger.key.clone()).collect(),
+        },
+    }
 }
 
 pub(crate) fn active_run_mut(
@@ -566,10 +662,12 @@ fn finish_active_run(
         .active
         .take()
         .expect("active run checked before take");
-    let submission_digest = active_run
-        .submission_id
-        .as_ref()
-        .map(|_| submission_digest(&active_run.input.input, &active_run.run_config));
+    let submission_digest = active_run.submission_id.as_ref().map(|_| {
+        run_submission_digest(
+            &source_request_equivalent(&active_run.source),
+            &active_run.run_config,
+        )
+    });
     state.runs.completed.push(RunRecord {
         run_id: active_run.run_id,
         status,

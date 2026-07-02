@@ -1816,7 +1816,7 @@ mod tests {
             Ok(api::RunView {
                 id: run_id.to_owned(),
                 status: api::RunStatus::Cancelled,
-                input: Vec::new(),
+                source: api::RunViewSource::Input { items: Vec::new() },
                 items: Vec::new(),
                 tool_batches: Vec::new(),
             })

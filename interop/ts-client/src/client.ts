@@ -5,6 +5,7 @@ import type {
   InputItem,
   RunStartConfig,
   RunStartParams,
+  RunStartSource,
   SessionEventView,
   SessionEventsReadParams,
 } from "./generated/types.js";
@@ -157,9 +158,25 @@ export class LightspeedClient implements RpcCaller {
     input: InputItem[],
     options: StartRunOptions = {},
   ): Promise<AgentApiOutcomeOfRunStartResponse> {
+    return this.startRunWithSource(sessionId, { type: "input", items: input }, options);
+  }
+
+  startRunFromContext(
+    sessionId: string,
+    keys: string[],
+    options: StartRunOptions = {},
+  ): Promise<AgentApiOutcomeOfRunStartResponse> {
+    return this.startRunWithSource(sessionId, { type: "context", keys }, options);
+  }
+
+  startRunWithSource(
+    sessionId: string,
+    source: RunStartSource,
+    options: StartRunOptions = {},
+  ): Promise<AgentApiOutcomeOfRunStartResponse> {
     const params: RunStartParams = {
       sessionId,
-      input,
+      source,
       submissionId:
         options.submissionId === undefined ? generateSubmissionId() : options.submissionId,
     };

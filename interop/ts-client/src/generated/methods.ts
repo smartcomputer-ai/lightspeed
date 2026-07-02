@@ -20,6 +20,7 @@ export const METHODS = [
   "session/close",
   "context/compact",
   "context/append",
+  "context/remove",
   "outbox/read",
   "outbox/ack",
   "run/start",
@@ -36,6 +37,13 @@ export const METHODS = [
   "session/environments/activate",
   "session/environments/deactivate",
   "session/environments/close",
+  "session/environments/credentials/bind",
+  "session/environments/credentials/list",
+  "session/environments/credentials/unbind",
+  "session/jobs/create",
+  "session/jobs/list",
+  "session/jobs/read",
+  "session/jobs/cancel",
   "environmentProviders/register",
   "environmentProviders/heartbeat",
   "environmentProviders/unregister",
@@ -153,6 +161,10 @@ export interface MethodMap {
     params: Api.ContextAppendParams;
     result: Api.AgentApiOutcomeOfContextAppendResponse;
   };
+  "context/remove": {
+    params: Api.ContextRemoveParams;
+    result: Api.AgentApiOutcomeOfContextRemoveResponse;
+  };
   "outbox/read": {
     params: Api.OutboxReadParams;
     result: Api.AgentApiOutcomeOfOutboxReadResponse;
@@ -216,6 +228,34 @@ export interface MethodMap {
   "session/environments/close": {
     params: Api.SessionEnvironmentCloseParams;
     result: Api.AgentApiOutcomeOfSessionEnvironmentCloseResponse;
+  };
+  "session/environments/credentials/bind": {
+    params: Api.SessionEnvironmentCredentialBindParams;
+    result: Api.AgentApiOutcomeOfSessionEnvironmentCredentialBindResponse;
+  };
+  "session/environments/credentials/list": {
+    params: Api.SessionEnvironmentCredentialListParams;
+    result: Api.AgentApiOutcomeOfSessionEnvironmentCredentialListResponse;
+  };
+  "session/environments/credentials/unbind": {
+    params: Api.SessionEnvironmentCredentialUnbindParams;
+    result: Api.AgentApiOutcomeOfSessionEnvironmentCredentialUnbindResponse;
+  };
+  "session/jobs/create": {
+    params: Api.SessionJobCreateParams;
+    result: Api.AgentApiOutcomeOfSessionJobCreateResponse;
+  };
+  "session/jobs/list": {
+    params: Api.SessionJobListParams;
+    result: Api.AgentApiOutcomeOfSessionJobListResponse;
+  };
+  "session/jobs/read": {
+    params: Api.SessionJobReadParams;
+    result: Api.AgentApiOutcomeOfSessionJobReadResponse;
+  };
+  "session/jobs/cancel": {
+    params: Api.SessionJobCancelParams;
+    result: Api.AgentApiOutcomeOfSessionJobCancelResponse;
   };
   "environmentProviders/register": {
     params: Api.EnvironmentProviderRegisterParams;
@@ -436,6 +476,9 @@ export const rpc = {
   contextAppend(client: RpcCaller, params: Api.ContextAppendParams): Promise<Api.AgentApiOutcomeOfContextAppendResponse> {
     return client.call("context/append", params);
   },
+  contextRemove(client: RpcCaller, params: Api.ContextRemoveParams): Promise<Api.AgentApiOutcomeOfContextRemoveResponse> {
+    return client.call("context/remove", params);
+  },
   outboxRead(client: RpcCaller, params: Api.OutboxReadParams): Promise<Api.AgentApiOutcomeOfOutboxReadResponse> {
     return client.call("outbox/read", params);
   },
@@ -483,6 +526,27 @@ export const rpc = {
   },
   sessionEnvironmentsClose(client: RpcCaller, params: Api.SessionEnvironmentCloseParams): Promise<Api.AgentApiOutcomeOfSessionEnvironmentCloseResponse> {
     return client.call("session/environments/close", params);
+  },
+  sessionEnvironmentsCredentialsBind(client: RpcCaller, params: Api.SessionEnvironmentCredentialBindParams): Promise<Api.AgentApiOutcomeOfSessionEnvironmentCredentialBindResponse> {
+    return client.call("session/environments/credentials/bind", params);
+  },
+  sessionEnvironmentsCredentialsList(client: RpcCaller, params: Api.SessionEnvironmentCredentialListParams): Promise<Api.AgentApiOutcomeOfSessionEnvironmentCredentialListResponse> {
+    return client.call("session/environments/credentials/list", params);
+  },
+  sessionEnvironmentsCredentialsUnbind(client: RpcCaller, params: Api.SessionEnvironmentCredentialUnbindParams): Promise<Api.AgentApiOutcomeOfSessionEnvironmentCredentialUnbindResponse> {
+    return client.call("session/environments/credentials/unbind", params);
+  },
+  sessionJobsCreate(client: RpcCaller, params: Api.SessionJobCreateParams): Promise<Api.AgentApiOutcomeOfSessionJobCreateResponse> {
+    return client.call("session/jobs/create", params);
+  },
+  sessionJobsList(client: RpcCaller, params: Api.SessionJobListParams): Promise<Api.AgentApiOutcomeOfSessionJobListResponse> {
+    return client.call("session/jobs/list", params);
+  },
+  sessionJobsRead(client: RpcCaller, params: Api.SessionJobReadParams): Promise<Api.AgentApiOutcomeOfSessionJobReadResponse> {
+    return client.call("session/jobs/read", params);
+  },
+  sessionJobsCancel(client: RpcCaller, params: Api.SessionJobCancelParams): Promise<Api.AgentApiOutcomeOfSessionJobCancelResponse> {
+    return client.call("session/jobs/cancel", params);
   },
   environmentProvidersRegister(client: RpcCaller, params: Api.EnvironmentProviderRegisterParams): Promise<Api.AgentApiOutcomeOfEnvironmentProviderRegisterResponse> {
     return client.call("environmentProviders/register", params);

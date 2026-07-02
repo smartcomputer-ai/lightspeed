@@ -19,7 +19,7 @@ use engine::{
     ContextEntryKind, ContextMessageRole, CoreAgentAction, CoreAgentCodec, CoreAgentCommand,
     CoreAgentDrive, CoreAgentDriveError, CoreAgentEntry, CoreAgentEventKind, CoreAgentState,
     CoreAgentStatus, CoreApplyEvent, ENVIRONMENT_ACTIVE_CONTEXT_KEY,
-    ENVIRONMENT_CATALOG_CONTEXT_KEY, LlmGenerationRequest, RunEvent, RunStatus,
+    ENVIRONMENT_CATALOG_CONTEXT_KEY, LlmGenerationRequest, RunConfig, RunEvent, RunStatus,
     SKILL_CATALOG_CONTEXT_KEY, SessionId, SessionPosition, SubmissionId, ToolCallStatus, ToolEvent,
     ToolInvocationBatchRequest, ToolInvocationBatchResult, ToolInvocationResult,
     VFS_CATALOG_CONTEXT_KEY,
@@ -155,13 +155,18 @@ impl AgentSessionWorkflow {
         }
     }
 
-    #[signal(name = "submit_admission")]
-    pub fn submit_admission(
+    /// Queues a batch of admissions atomically: entries in one signal are
+    /// processed contiguously, so a multi-entry `context/append` cannot
+    /// interleave with admissions from concurrent requests.
+    #[signal(name = "submit_admissions")]
+    pub fn submit_admissions(
         &mut self,
         _ctx: &mut SyncWorkflowContext<Self>,
-        admission: AgentAdmission,
+        admissions: Vec<AgentAdmission>,
     ) {
-        self.queue_admission(admission);
+        for admission in admissions {
+            self.queue_admission(admission);
+        }
     }
 
     #[signal(name = "subscribe_run")]

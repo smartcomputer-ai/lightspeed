@@ -32,6 +32,7 @@ fn admission_failure_status_does_not_poison_later_admission() {
     let mut workflow = AgentSessionWorkflow::default();
     workflow.admission_failures.push(AgentAdmissionFailure {
         submission_id: Some(SubmissionId::new("submit_rejected")),
+        context_key: None,
         kind: AgentAdmissionFailureKind::RejectedCommand,
         message: "session must be open".to_owned(),
     });
@@ -55,11 +56,13 @@ fn admission_failure_status_does_not_poison_later_admission() {
 #[test]
 fn request_run_submission_id_is_available_for_failure_correlation() {
     let submission_id = SubmissionId::new("submit_test");
-    let command = CoreAgentCommand::RequestRun {
+    let command = CoreAgentCommand::RequestRun(engine::RunRequestCommand {
         submission_id: Some(submission_id.clone()),
-        input: user_input(engine::BlobRef::from_bytes(b"hello")),
+        source: engine::RunRequestSource::Input {
+            input: user_input(engine::BlobRef::from_bytes(b"hello")),
+        },
         run_config: crate::default_run_config(),
-    };
+    });
 
     assert_eq!(drive::command_submission_id(&command), Some(submission_id));
     assert_eq!(
@@ -70,23 +73,25 @@ fn request_run_submission_id_is_available_for_failure_correlation() {
 
 #[test]
 fn request_run_with_audio_input_needs_preprocessing() {
-    let command = CoreAgentCommand::RequestRun {
+    let command = CoreAgentCommand::RequestRun(engine::RunRequestCommand {
         submission_id: Some(SubmissionId::new("submit_audio")),
-        input: vec![ContextEntryInput {
-            kind: ContextEntryKind::Message {
-                role: ContextMessageRole::User,
-            },
-            content_ref: engine::BlobRef::from_bytes(b"audio"),
-            media_type: Some("audio/ogg".to_owned()),
-            preview: Some("[audio]".to_owned()),
-            provider_kind: None,
-            provider_item_id: None,
-            token_estimate: None,
-        }],
+        source: engine::RunRequestSource::Input {
+            input: vec![ContextEntryInput {
+                kind: ContextEntryKind::Message {
+                    role: ContextMessageRole::User,
+                },
+                content_ref: engine::BlobRef::from_bytes(b"audio"),
+                media_type: Some("audio/ogg".to_owned()),
+                preview: Some("[audio]".to_owned()),
+                provider_kind: None,
+                provider_item_id: None,
+                token_estimate: None,
+            }],
+        },
         run_config: crate::default_run_config(),
-    };
+    });
 
-    assert!(admissions::command_needs_run_input_preprocessing(&command));
+    assert!(admissions::command_needs_input_preprocessing(&command));
 }
 
 #[test]
@@ -436,11 +441,13 @@ fn continue_as_new_policy_uses_default_threshold() {
 
 fn encoded_request_run(submission_id: &str) -> DynamicCommand {
     CoreAgentCodec
-        .encode_command(&CoreAgentCommand::RequestRun {
+        .encode_command(&CoreAgentCommand::RequestRun(engine::RunRequestCommand {
             submission_id: Some(SubmissionId::new(submission_id)),
-            input: user_input(engine::BlobRef::from_bytes(submission_id.as_bytes())),
+            source: engine::RunRequestSource::Input {
+                input: user_input(engine::BlobRef::from_bytes(submission_id.as_bytes())),
+            },
             run_config: crate::default_run_config(),
-        })
+        }))
         .expect("encode request run")
 }
 
@@ -459,7 +466,10 @@ fn user_input(content_ref: engine::BlobRef) -> Vec<ContextEntryInput> {
 }
 
 fn admission(command: DynamicCommand) -> AgentAdmission {
-    AgentAdmission { command }
+    AgentAdmission {
+        command,
+        context_key: None,
+    }
 }
 
 fn agent_session_args_with_close_on_terminal(close_on_terminal: bool) -> AgentSessionArgs {

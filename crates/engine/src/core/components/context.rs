@@ -5,10 +5,11 @@ use serde::{Deserialize, Serialize};
 use crate::{
     BlobRef, CompactionPolicy, ContextEntryKey, ContextItemId, CoreAgentEventKind,
     CoreAgentEventProposal, CoreAgentJoins, CoreAgentState, CoreAgentStatus, DomainError, PlanNext,
-    PlanningError, ProviderApiKind, RunId, RunStatus, SkillId, SteeringId, ToolBatchId, ToolCallId,
-    ToolName, TurnId,
+    PlanningError, ProviderApiKind, RunId, RunSource, RunSourceContextTrigger, RunStatus, SkillId,
+    SteeringId, ToolBatchId, ToolCallId, ToolName, TurnId,
 };
 
+const RESERVED_RUN_CONTEXT_KEY_PREFIX: &str = "run";
 const INSTRUCTIONS_KEY_PREFIX: &str = "instructions.";
 pub const VFS_CATALOG_CONTEXT_KEY: &str = "environment.vfs_catalog";
 pub const ENVIRONMENT_CATALOG_CONTEXT_KEY: &str = "environment.catalog";
@@ -413,14 +414,13 @@ fn mark_context_entries_consumed_by_turn(
 ) -> Result<(), DomainError> {
     let active_run = crate::core::components::run::active_run_mut(state, run_id)?;
 
-    if active_run.input.consumed_by_turn_id.is_none()
+    if active_run.input_consumed_by_turn_id.is_none()
         && active_run
-            .input
-            .entry_ids
+            .input_entry_ids
             .iter()
             .all(|entry_id| consumed_ids.contains(entry_id))
     {
-        active_run.input.consumed_by_turn_id = Some(turn_id);
+        active_run.input_consumed_by_turn_id = Some(turn_id);
     }
 
     for steering in &mut active_run.steering {
@@ -481,6 +481,7 @@ pub(crate) fn validate_external_context_edit(
     key: &ContextEntryKey,
     entry: &ContextEntryInput,
 ) -> Result<(), DomainError> {
+    validate_external_context_key(key)?;
     validate_external_context_edit_entry(key, entry)
 }
 
@@ -488,7 +489,9 @@ pub(crate) fn validate_external_context_prefix_replacement(
     key_prefix: &ContextEntryKey,
     entries: &std::collections::BTreeMap<ContextEntryKey, ContextEntryInput>,
 ) -> Result<(), DomainError> {
+    validate_external_context_key(key_prefix)?;
     for (key, entry) in entries {
+        validate_external_context_key(key)?;
         if !context_key_starts_with(key, key_prefix) {
             return Err(DomainError::InvariantViolation(format!(
                 "context replacement entry key {} is outside prefix {}",
@@ -496,6 +499,21 @@ pub(crate) fn validate_external_context_prefix_replacement(
             )));
         }
         validate_external_context_edit_entry(key, entry)?;
+    }
+    Ok(())
+}
+
+pub fn validate_external_context_key(key: &ContextEntryKey) -> Result<(), DomainError> {
+    if key.as_str() == RESERVED_RUN_CONTEXT_KEY_PREFIX
+        || key
+            .as_str()
+            .strip_prefix(RESERVED_RUN_CONTEXT_KEY_PREFIX)
+            .is_some_and(|suffix| suffix.starts_with('.'))
+    {
+        return Err(DomainError::InvariantViolation(format!(
+            "context key {} uses reserved internal prefix {}",
+            key, RESERVED_RUN_CONTEXT_KEY_PREFIX
+        )));
     }
     Ok(())
 }
@@ -543,6 +561,51 @@ pub(crate) fn validate_context_key_exists(
             key
         )))
     }
+}
+
+pub(crate) fn validate_run_trigger_context_keys(
+    state: &CoreAgentState,
+    keys: &[ContextEntryKey],
+) -> Result<Vec<RunSourceContextTrigger>, DomainError> {
+    if keys.is_empty() {
+        return Err(DomainError::InvariantViolation(
+            "run trigger context keys must not be empty".to_owned(),
+        ));
+    }
+    let mut seen = BTreeSet::new();
+    let mut triggers = Vec::with_capacity(keys.len());
+    for key in keys {
+        if !seen.insert(key.clone()) {
+            return Err(DomainError::InvariantViolation(format!(
+                "duplicate run trigger context key: {key}"
+            )));
+        }
+        let Some(entry) = current_key_entry(state, key) else {
+            return Err(DomainError::InvariantViolation(format!(
+                "run trigger context key {key} does not exist"
+            )));
+        };
+        triggers.push(RunSourceContextTrigger {
+            key: key.clone(),
+            entry_id: entry.entry_id,
+        });
+    }
+    Ok(triggers)
+}
+
+pub(crate) fn run_input_context_keys(
+    run_id: RunId,
+    input_len: usize,
+) -> Result<Vec<ContextEntryKey>, DomainError> {
+    (0..input_len)
+        .map(|index| {
+            let index = input_index(index)?;
+            Ok(ContextEntryKey::new(format!(
+                "run.{}.input.{index}",
+                run_id.as_u64()
+            )))
+        })
+        .collect()
 }
 
 pub(crate) fn validate_run_input_entries(entries: &[ContextEntryInput]) -> Result<(), DomainError> {
@@ -830,22 +893,24 @@ fn missing_run_input_entries(state: &CoreAgentState) -> Result<Vec<ContextEntry>
     let Some(active_run) = state.runs.active.as_ref() else {
         return Ok(Vec::new());
     };
-    if active_run.input.entry_ids.len() >= active_run.input.input.len() {
+    let RunSource::Input { input } = &active_run.source else {
+        return Ok(Vec::new());
+    };
+    if active_run.input_entry_ids.len() >= input.len() {
         return Ok(Vec::new());
     }
 
+    let keys = run_input_context_keys(active_run.run_id, input.len())?;
     context_entries_from_inputs(
         state,
-        active_run
-            .input
-            .input
+        input
             .iter()
             .enumerate()
-            .skip(active_run.input.entry_ids.len())
+            .skip(active_run.input_entry_ids.len())
             .map(|(index, entry)| {
                 let input_index = input_index(index)?;
                 Ok((
-                    None,
+                    Some(keys[index].clone()),
                     ContextEntrySource::RunInput {
                         run_id: active_run.run_id,
                         input_index,
@@ -1306,22 +1371,28 @@ fn record_entry_materialization(
         } => {
             let active_run = crate::core::components::run::active_run_mut(state, *run_id)?;
             let index = *input_index as usize;
-            let Some(expected) = active_run.input.input.get(index) else {
+            let RunSource::Input { input } = &active_run.source else {
+                return Err(DomainError::InvariantViolation(format!(
+                    "run input context entry {} references context-triggered run {}",
+                    entry.entry_id, run_id
+                )));
+            };
+            let Some(expected) = input.get(index) else {
                 return Err(DomainError::InvariantViolation(format!(
                     "run input context entry {} references missing input index {}",
                     entry.entry_id, input_index
                 )));
             };
-            validate_entry_matches_input(entry, expected)?;
-            if active_run.input.entry_ids.len() != index {
+            validate_entry_matches_input(entry, expected, true)?;
+            if active_run.input_entry_ids.len() != index {
                 return Err(DomainError::InvariantViolation(format!(
                     "run input context entry {} expected input index {}, got {}",
                     entry.entry_id,
-                    active_run.input.entry_ids.len(),
+                    active_run.input_entry_ids.len(),
                     input_index
                 )));
             }
-            active_run.input.entry_ids.push(entry.entry_id);
+            active_run.input_entry_ids.push(entry.entry_id);
             Ok(())
         }
         ContextEntrySource::Steering {
@@ -1347,7 +1418,7 @@ fn record_entry_materialization(
                     entry.entry_id, input_index
                 )));
             };
-            validate_entry_matches_input(entry, expected)?;
+            validate_entry_matches_input(entry, expected, false)?;
             if steering.entry_ids.len() != index {
                 return Err(DomainError::InvariantViolation(format!(
                     "steering context entry {} expected input index {}, got {}",
@@ -1370,8 +1441,9 @@ fn record_entry_materialization(
 fn validate_entry_matches_input(
     entry: &ContextEntry,
     input: &ContextEntryInput,
+    allow_key: bool,
 ) -> Result<(), DomainError> {
-    if entry.key.is_some() {
+    if entry.key.is_some() && !allow_key {
         return Err(DomainError::InvariantViolation(format!(
             "run materialized context entry {} must not have a key",
             entry.entry_id
@@ -1451,8 +1523,8 @@ fn validate_entry_is_not_unconsumed_active_run_input(
         return Ok(());
     };
 
-    if active_run.input.consumed_by_turn_id.is_none()
-        && active_run.input.entry_ids.contains(&entry_id)
+    if active_run.input_consumed_by_turn_id.is_none()
+        && active_run.input_entry_ids.contains(&entry_id)
     {
         return Err(DomainError::InvariantViolation(format!(
             "cannot remove unconsumed run input context entry {}",

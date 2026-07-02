@@ -161,21 +161,23 @@ async fn openai_responses_live_core_session_uses_no_auth_remote_mcp_echo() {
         .drive_command(DriveCommand {
             session_id: session_id.clone(),
             observed_at_ms: 20,
-            command: CoreAgentCommand::RequestRun {
+            command: CoreAgentCommand::RequestRun(engine::RunRequestCommand {
                 submission_id: None,
-                input: vec![ContextEntryInput {
-                    kind: ContextEntryKind::Message {
-                        role: ContextMessageRole::User,
-                    },
-                    content_ref: input_ref,
-                    media_type: None,
-                    preview: None,
-                    provider_kind: None,
-                    provider_item_id: None,
-                    token_estimate: None,
-                }],
+                source: engine::RunRequestSource::Input {
+                    input: vec![ContextEntryInput {
+                        kind: ContextEntryKind::Message {
+                            role: ContextMessageRole::User,
+                        },
+                        content_ref: input_ref,
+                        media_type: None,
+                        preview: None,
+                        provider_kind: None,
+                        provider_item_id: None,
+                        token_estimate: None,
+                    }],
+                },
                 run_config: run_config(),
-            },
+            }),
             max_steps: Some(32),
         })
         .await

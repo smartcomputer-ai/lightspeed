@@ -3,8 +3,8 @@ mod support;
 use std::sync::{Arc, Mutex};
 
 use api::{
-    AgentApiService, BlobPutParams, InputItem, MediaKind, RunStartParams, RunStatus,
-    SessionConfigInput, SessionItemView, SessionStartParams,
+    AgentApiService, BlobPutParams, InputItem, MediaKind, RunStartParams, RunStartSource,
+    RunStatus, SessionConfigInput, SessionItemView, SessionStartParams,
 };
 use api_projection::model_to_api;
 use async_trait::async_trait;
@@ -112,12 +112,14 @@ async fn run_audio_preprocess_live_client(
         .start_run(RunStartParams {
             submission_id: None,
             session_id: session_id.as_str().to_owned(),
-            input: vec![InputItem::Media {
-                blob_ref: audio.result.blob_ref,
-                mime: "audio/ogg".to_owned(),
-                kind: MediaKind::Audio,
-                name: Some("voice-note.ogg".to_owned()),
-            }],
+            source: RunStartSource::Input {
+                items: vec![InputItem::Media {
+                    blob_ref: audio.result.blob_ref,
+                    mime: "audio/ogg".to_owned(),
+                    kind: MediaKind::Audio,
+                    name: Some("voice-note.ogg".to_owned()),
+                }],
+            },
             config: None,
         })
         .await?;
@@ -200,12 +202,14 @@ async fn run_transcodable_audio_preprocess_live_client(
         .start_run(RunStartParams {
             submission_id: None,
             session_id: session_id.as_str().to_owned(),
-            input: vec![InputItem::Media {
-                blob_ref: audio.result.blob_ref,
-                mime: "audio/x-aac".to_owned(),
-                kind: MediaKind::Audio,
-                name: Some("voice-note.aac".to_owned()),
-            }],
+            source: RunStartSource::Input {
+                items: vec![InputItem::Media {
+                    blob_ref: audio.result.blob_ref,
+                    mime: "audio/x-aac".to_owned(),
+                    kind: MediaKind::Audio,
+                    name: Some("voice-note.aac".to_owned()),
+                }],
+            },
             config: None,
         })
         .await?;

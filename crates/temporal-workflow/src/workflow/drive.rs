@@ -10,7 +10,7 @@ pub(super) async fn append_command(
     drive: &mut CoreAgentDrive,
     command: CoreAgentCommand,
 ) -> anyhow::Result<()> {
-    match admit_and_append_command(ctx, drive, command).await? {
+    match admit_and_append_command(ctx, drive, command, None).await? {
         CommandAdmissionResult::Accepted => Ok(()),
         CommandAdmissionResult::Rejected(failure) => {
             anyhow::bail!("workflow setup command rejected: {}", failure.message)
@@ -22,6 +22,7 @@ pub(super) async fn admit_and_append_command(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     drive: &mut CoreAgentDrive,
     command: CoreAgentCommand,
+    context_key: Option<ContextEntryKey>,
 ) -> anyhow::Result<CommandAdmissionResult> {
     let submission_id = command_submission_id(&command);
     let action = match drive.admit_command(command, workflow_time_ms(ctx)) {
@@ -29,6 +30,7 @@ pub(super) async fn admit_and_append_command(
         Err(CoreAgentDriveError::Command(CommandError::Rejected(rejection))) => {
             return Ok(CommandAdmissionResult::Rejected(AgentAdmissionFailure {
                 submission_id,
+                context_key,
                 kind: AgentAdmissionFailureKind::RejectedCommand,
                 message: rejection.to_string(),
             }));
@@ -50,7 +52,7 @@ pub(super) async fn admit_and_append_command(
 
 pub(super) fn command_submission_id(command: &CoreAgentCommand) -> Option<SubmissionId> {
     match command {
-        CoreAgentCommand::RequestRun { submission_id, .. } => submission_id.clone(),
+        CoreAgentCommand::RequestRun(request) => request.submission_id.clone(),
         _ => None,
     }
 }
@@ -69,7 +71,7 @@ pub(super) async fn process_pending_tool_batch_resumes(
             batch_id: resume.batch_id,
             result: resume.result,
         };
-        match admit_and_append_command(ctx, &mut drive, command).await? {
+        match admit_and_append_command(ctx, &mut drive, command, None).await? {
             CommandAdmissionResult::Accepted => {}
             CommandAdmissionResult::Rejected(failure) => {
                 anyhow::bail!(
@@ -135,7 +137,7 @@ async fn maybe_close_on_terminal(
     if !should_close_on_terminal(args, drive.state()) {
         return Ok(());
     }
-    match admit_and_append_command(ctx, drive, CoreAgentCommand::CloseSession).await? {
+    match admit_and_append_command(ctx, drive, CoreAgentCommand::CloseSession, None).await? {
         CommandAdmissionResult::Accepted => Ok(()),
         CommandAdmissionResult::Rejected(failure) => {
             anyhow::bail!(
@@ -229,13 +231,8 @@ fn apply_entries(
     run_submissions: &mut BTreeMap<u64, Option<SubmissionId>>,
 ) -> anyhow::Result<()> {
     for entry in entries {
-        if let CoreAgentEventKind::Run(RunEvent::Accepted {
-            run_id,
-            submission_id,
-            ..
-        }) = &entry.event.kind
-        {
-            run_submissions.insert(run_id.as_u64(), submission_id.clone());
+        if let CoreAgentEventKind::Run(RunEvent::Accepted(accepted)) = &entry.event.kind {
+            run_submissions.insert(accepted.run_id.as_u64(), accepted.submission_id.clone());
         }
         apply.apply(state, entry)?;
     }

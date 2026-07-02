@@ -15,19 +15,21 @@ export interface BridgeRuntimeConfig {
   debounceMs: number;
   turnMaxBatch: number;
   turnMaxWaitMs: number;
-  /// Room-event batching toward context/append.
-  roomFlushMs: number;
-  roomFlushMax: number;
-  /// Max room events buffered per chat between flushes; overflow is dropped.
-  roomBudget: number;
+  /// Room-context retention watermarks, counted in messages (P89). When a
+  /// conversation's unconsumed room backlog exceeds `roomRetentionHigh`, the
+  /// bridge removes the oldest messages down to `roomRetentionLow` via
+  /// `context/remove`. `roomRetentionHigh: 0` disables retention.
+  roomRetentionHigh: number;
+  roomRetentionLow: number;
 }
 
 export type BindingScope = "direct" | "group";
 export type BindingHandleMatch = string | string[];
+export type BindingChannelMatch = "telegram" | "whatsapp" | "*" | ("telegram" | "whatsapp")[];
 
 export interface BindingMatch {
-  /// Channel to match, or `*` for any channel.
-  channel: "telegram" | "whatsapp" | "*";
+  /// Channel(s) to match, or `*` for any channel.
+  channel: BindingChannelMatch;
   /// Sender handle(s) (telegram id/@username, whatsapp jid). Omit to match any.
   handle?: BindingHandleMatch;
   /// Channel chat id (telegram chat id, whatsapp jid). Omit to match any.
@@ -136,13 +138,21 @@ export async function loadBridgeConfig(env: NodeJS.ProcessEnv = process.env): Pr
       env.BRIDGE_TURN_MAX_WAIT_MS,
       fileConfig.runtime?.turnMaxWaitMs ?? 2_500,
     ),
-    roomFlushMs: parsePositiveInt(env.BRIDGE_ROOM_FLUSH_MS, fileConfig.runtime?.roomFlushMs ?? 30_000),
-    roomFlushMax: parsePositiveInt(
-      env.BRIDGE_ROOM_FLUSH_MAX,
-      fileConfig.runtime?.roomFlushMax ?? 20,
+    roomRetentionHigh: parseNonNegativeInt(
+      env.BRIDGE_ROOM_RETENTION_HIGH,
+      fileConfig.runtime?.roomRetentionHigh ?? 300,
     ),
-    roomBudget: parsePositiveInt(env.BRIDGE_ROOM_BUDGET, fileConfig.runtime?.roomBudget ?? 50),
+    roomRetentionLow: parseNonNegativeInt(
+      env.BRIDGE_ROOM_RETENTION_LOW,
+      fileConfig.runtime?.roomRetentionLow ?? 200,
+    ),
   };
+  if (runtime.roomRetentionHigh > 0 && runtime.roomRetentionLow >= runtime.roomRetentionHigh) {
+    throw new Error(
+      "BRIDGE_ROOM_RETENTION_LOW must be smaller than BRIDGE_ROOM_RETENTION_HIGH " +
+        `(got low=${runtime.roomRetentionLow}, high=${runtime.roomRetentionHigh})`,
+    );
+  }
   if (fileConfig.recipes !== undefined) {
     throw new Error("recipes are no longer supported; use bindings[].profile");
   }
@@ -345,7 +355,7 @@ function defaultBindingCandidate(): BindingAccessCandidate {
 }
 
 function bindingMatches(match: BindingMatch, query: BindingQuery): boolean {
-  if (match.channel !== "*" && match.channel !== query.channel) {
+  if (!bindingChannelMatches(match.channel, query.channel)) {
     return false;
   }
   if (match.scope !== undefined && match.scope !== query.scope) {
@@ -358,6 +368,19 @@ function bindingMatches(match: BindingMatch, query: BindingQuery): boolean {
     return false;
   }
   return true;
+}
+
+function bindingChannelMatches(
+  configured: BindingChannelMatch,
+  actual: BindingQuery["channel"],
+): boolean {
+  if (configured === "*") {
+    return true;
+  }
+  if (Array.isArray(configured)) {
+    return configured.includes(actual);
+  }
+  return configured === actual;
 }
 
 /// Case-insensitive handle comparison that ignores a leading `@`, so a config
@@ -411,10 +434,7 @@ function parseBinding(index: number, raw: unknown, env: NodeJS.ProcessEnv): Bind
   if (typeof match !== "object" || match === null || Array.isArray(match)) {
     throw new Error(`bindings[${index}].match must be an object`);
   }
-  const channel = optionalString(match.channel) ?? "*";
-  if (channel !== "telegram" && channel !== "whatsapp" && channel !== "*") {
-    throw new Error(`bindings[${index}].match.channel must be telegram, whatsapp, or *`);
-  }
+  const channel = parseBindingChannel(match.channel, `bindings[${index}].match.channel`);
   const scope = optionalString(match.scope);
   if (scope !== undefined && scope !== "direct" && scope !== "group") {
     throw new Error(`bindings[${index}].match.scope must be direct or group`);
@@ -441,6 +461,32 @@ function parseBinding(index: number, raw: unknown, env: NodeJS.ProcessEnv): Bind
   if (sessionKey !== undefined) rule.sessionKey = sessionKey;
   if (pairing !== undefined) rule.pairing = pairing;
   return rule;
+}
+
+function parseBindingChannel(raw: unknown, path: string): BindingChannelMatch {
+  if (raw === undefined || raw === null) {
+    return "*";
+  }
+  if (Array.isArray(raw)) {
+    const channels = raw
+      .map((entry) => optionalString(entry))
+      .filter((entry): entry is string => entry !== undefined);
+    if (channels.length === 0) {
+      return "*";
+    }
+    const unique = [...new Set(channels)];
+    for (const channel of unique) {
+      if (channel !== "telegram" && channel !== "whatsapp") {
+        throw new Error(`${path} array entries must be telegram or whatsapp`);
+      }
+    }
+    return unique as ("telegram" | "whatsapp")[];
+  }
+  const channel = optionalString(raw) ?? "*";
+  if (channel !== "telegram" && channel !== "whatsapp" && channel !== "*") {
+    throw new Error(`${path} must be telegram, whatsapp, *, or an array of channels`);
+  }
+  return channel;
 }
 
 function parseOptionalPairing(
@@ -532,6 +578,16 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
   }
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+/// Like parsePositiveInt but 0 is a valid value (used by settings where 0
+/// means "disabled").
+function parseNonNegativeInt(value: string | undefined, fallback: number): number {
+  if (value === undefined || value.trim() === "") {
+    return fallback;
+  }
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {

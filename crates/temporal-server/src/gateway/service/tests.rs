@@ -762,22 +762,28 @@ fn existing_run_submission_rejects_completed_duplicate_with_different_input() {
     let run_config = RunConfig::default();
     let original_input = vec![test_user_message_input(BlobRef::from_bytes(b"original"))];
     let changed_input = vec![test_user_message_input(BlobRef::from_bytes(b"changed"))];
+    let original_source = engine::RunRequestSource::Input {
+        input: original_input.clone(),
+    };
+    let changed_source = engine::RunRequestSource::Input {
+        input: changed_input,
+    };
     let mut state = engine::CoreAgentState::new();
     state.runs.completed.push(engine::RunRecord {
         run_id: RunId::new(7),
         status: RunStatus::Completed,
         submission_id: Some(submission_id.clone()),
-        submission_digest: Some(run_submission_digest(&original_input, &run_config)),
+        submission_digest: Some(engine::run_submission_digest(&original_source, &run_config)),
         output_ref: None,
         failure: None,
     });
 
     assert!(matches!(
-        existing_run_submission(&state, &submission_id, &changed_input, &run_config),
+        existing_run_submission(&state, &submission_id, &changed_source, &run_config),
         Some(ExistingRunSubmission::Reject)
     ));
     let Some(ExistingRunSubmission::ReturnRun { run_id, status }) =
-        existing_run_submission(&state, &submission_id, &original_input, &run_config)
+        existing_run_submission(&state, &submission_id, &original_source, &run_config)
     else {
         panic!("identical duplicate should return existing completed run");
     };
@@ -1203,11 +1209,11 @@ async fn run_input_from_api_rejects_missing_audio_blob() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn context_entry_input_from_api_rejects_media() {
+async fn context_entry_input_from_api_accepts_media() {
     let store = engine::storage::InMemoryBlobStore::new();
     let blob_ref = store.put_bytes(vec![1, 2, 3]).await.expect("store blob");
 
-    let error = context_entry_input_from_api(
+    let entry = context_entry_input_from_api(
         &store,
         &InputItem::Media {
             blob_ref: blob_ref.as_str().to_owned(),
@@ -1217,8 +1223,17 @@ async fn context_entry_input_from_api_rejects_media() {
         },
     )
     .await
-    .expect_err("media must be rejected in context/append");
-    assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
+    .expect("context/append should accept supported media");
+
+    assert_eq!(
+        entry.kind,
+        engine::ContextEntryKind::Message {
+            role: engine::ContextMessageRole::User,
+        }
+    );
+    assert_eq!(entry.content_ref, blob_ref);
+    assert_eq!(entry.media_type.as_deref(), Some("image/png"));
+    assert_eq!(entry.preview.as_deref(), Some("[image]"));
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -1395,6 +1410,7 @@ async fn vfs_snapshot_commit_rejects_missing_file_blob_refs() {
 fn failure(kind: AgentAdmissionFailureKind) -> AgentAdmissionFailure {
     AgentAdmissionFailure {
         submission_id: Some(SubmissionId::new("submit_test")),
+        context_key: None,
         kind,
         message: "admission failed".to_owned(),
     }

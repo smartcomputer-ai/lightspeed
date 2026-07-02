@@ -62,11 +62,22 @@ pub enum SessionStatus {
 pub struct RunView {
     pub id: RunId,
     pub status: RunStatus,
-    pub input: Vec<InputItem>,
+    pub source: RunViewSource,
     #[serde(default)]
     pub items: Vec<SessionItemView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tool_batches: Vec<ToolBatchView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum RunViewSource {
+    Input { items: Vec<InputItem> },
+    Context { keys: Vec<String> },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

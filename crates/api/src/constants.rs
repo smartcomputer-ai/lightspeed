@@ -15,6 +15,7 @@ pub const METHOD_SESSION_EVENTS_READ: &str = "session/events/read";
 pub const METHOD_SESSION_CLOSE: &str = "session/close";
 pub const METHOD_CONTEXT_COMPACT: &str = "context/compact";
 pub const METHOD_CONTEXT_APPEND: &str = "context/append";
+pub const METHOD_CONTEXT_REMOVE: &str = "context/remove";
 pub const METHOD_OUTBOX_READ: &str = "outbox/read";
 pub const METHOD_OUTBOX_ACK: &str = "outbox/ack";
 pub const METHOD_RUN_START: &str = "run/start";

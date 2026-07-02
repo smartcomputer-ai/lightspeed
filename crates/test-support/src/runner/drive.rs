@@ -522,7 +522,7 @@ fn should_refresh_run_context_before_admitting(
     state: &CoreAgentState,
     command: &CoreAgentCommand,
 ) -> bool {
-    matches!(command, CoreAgentCommand::RequestRun { .. })
+    matches!(command, CoreAgentCommand::RequestRun(_))
         && state.runs.active.is_none()
         && state.runs.queued.is_empty()
 }
@@ -1042,6 +1042,16 @@ mod tests {
         }]
     }
 
+    fn request_run_command(content_ref: BlobRef) -> CoreAgentCommand {
+        CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+            submission_id: None,
+            source: engine::RunRequestSource::Input {
+                input: user_input(content_ref),
+            },
+            run_config: run_config(),
+        })
+    }
+
     fn config() -> SessionConfig {
         SessionConfig {
             model: ModelSelection {
@@ -1222,11 +1232,7 @@ mod tests {
             .drive_command(DriveCommand {
                 session_id: session_id.clone(),
                 observed_at_ms: 20,
-                command: CoreAgentCommand::RequestRun {
-                    submission_id: None,
-                    input: user_input(BlobRef::from_bytes(b"input")),
-                    run_config: run_config(),
-                },
+                command: request_run_command(BlobRef::from_bytes(b"input")),
                 max_steps: Some(64),
             })
             .await
@@ -1327,11 +1333,7 @@ mod tests {
             .drive_command(DriveCommand {
                 session_id: child_id,
                 observed_at_ms: 30,
-                command: CoreAgentCommand::RequestRun {
-                    submission_id: None,
-                    input: user_input(BlobRef::from_bytes(b"child input")),
-                    run_config: run_config(),
-                },
+                command: request_run_command(BlobRef::from_bytes(b"child input")),
                 max_steps: Some(64),
             })
             .await
@@ -1412,11 +1414,7 @@ mod tests {
             .drive_command(DriveCommand {
                 session_id: session_id.clone(),
                 observed_at_ms: 20,
-                command: CoreAgentCommand::RequestRun {
-                    submission_id: None,
-                    input: user_input(BlobRef::from_bytes(b"input")),
-                    run_config: run_config(),
-                },
+                command: request_run_command(BlobRef::from_bytes(b"input")),
                 max_steps: Some(64),
             })
             .await
@@ -1519,11 +1517,7 @@ mod tests {
             .drive_command(DriveCommand {
                 session_id: session_id.clone(),
                 observed_at_ms: 20,
-                command: CoreAgentCommand::RequestRun {
-                    submission_id: None,
-                    input: user_input(BlobRef::from_bytes(b"first input")),
-                    run_config: run_config(),
-                },
+                command: request_run_command(BlobRef::from_bytes(b"first input")),
                 max_steps: Some(64),
             })
             .await
@@ -1613,11 +1607,7 @@ mod tests {
             .drive_command(DriveCommand {
                 session_id: session_id.clone(),
                 observed_at_ms: 40,
-                command: CoreAgentCommand::RequestRun {
-                    submission_id: None,
-                    input: user_input(BlobRef::from_bytes(b"second input")),
-                    run_config: run_config(),
-                },
+                command: request_run_command(BlobRef::from_bytes(b"second input")),
                 max_steps: Some(64),
             })
             .await
@@ -1761,11 +1751,7 @@ mod tests {
             .drive_command(DriveCommand {
                 session_id,
                 observed_at_ms: 20,
-                command: CoreAgentCommand::RequestRun {
-                    submission_id: None,
-                    input: user_input(BlobRef::from_bytes(b"input")),
-                    run_config: run_config(),
-                },
+                command: request_run_command(BlobRef::from_bytes(b"input")),
                 max_steps: Some(96),
             })
             .await
@@ -1908,11 +1894,7 @@ mod tests {
             .drive_command(DriveCommand {
                 session_id: session_id.clone(),
                 observed_at_ms: 20,
-                command: CoreAgentCommand::RequestRun {
-                    submission_id: None,
-                    input: user_input(BlobRef::from_bytes(b"input")),
-                    run_config: run_config(),
-                },
+                command: request_run_command(BlobRef::from_bytes(b"input")),
                 max_steps: Some(96),
             })
             .await
@@ -2103,11 +2085,7 @@ mod tests {
             .drive_command(DriveCommand {
                 session_id: session_id.clone(),
                 observed_at_ms: 20,
-                command: CoreAgentCommand::RequestRun {
-                    submission_id: None,
-                    input: user_input(BlobRef::from_bytes(b"input")),
-                    run_config: run_config(),
-                },
+                command: request_run_command(BlobRef::from_bytes(b"input")),
                 max_steps: Some(32),
             })
             .await
@@ -2131,11 +2109,7 @@ mod tests {
             .drive_command(DriveCommand {
                 session_id,
                 observed_at_ms: 30,
-                command: CoreAgentCommand::RequestRun {
-                    submission_id: None,
-                    input: user_input(BlobRef::from_bytes(b"input-2")),
-                    run_config: run_config(),
-                },
+                command: request_run_command(BlobRef::from_bytes(b"input-2")),
                 max_steps: Some(32),
             })
             .await
@@ -2180,11 +2154,7 @@ mod tests {
             .drive_command(DriveCommand {
                 session_id,
                 observed_at_ms: 20,
-                command: CoreAgentCommand::RequestRun {
-                    submission_id: None,
-                    input: user_input(BlobRef::from_bytes(b"input")),
-                    run_config: run_config(),
-                },
+                command: request_run_command(BlobRef::from_bytes(b"input")),
                 max_steps: Some(64),
             })
             .await

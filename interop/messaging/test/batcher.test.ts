@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { RoomBuffer, TurnDebouncer, type RoomEventItem } from "../src/batcher.js";
+import { TurnDebouncer } from "../src/batcher.js";
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -79,93 +79,5 @@ describe("TurnDebouncer", () => {
       ["a", ["one"]],
       ["b", ["two"]],
     ]);
-  });
-});
-
-describe("RoomBuffer", () => {
-  function event(id: number): RoomEventItem {
-    return { key: `key-${id}`, text: `message ${id}` };
-  }
-
-  it("flushes on the timer", async () => {
-    const flushes: RoomEventItem[][] = [];
-    const buffer = new RoomBuffer({
-      flushMs: 30_000,
-      flushMax: 20,
-      budget: 50,
-      onFlush: async (_key, events) => {
-        flushes.push(events);
-      },
-    });
-
-    buffer.push("chat", event(1));
-    buffer.push("chat", event(2));
-    expect(flushes).toHaveLength(0);
-    await vi.advanceTimersByTimeAsync(30_000);
-    expect(flushes).toEqual([[event(1), event(2)]]);
-    expect(buffer.bufferedCount("chat")).toBe(0);
-  });
-
-  it("flushes when reaching flushMax", async () => {
-    const flushes: RoomEventItem[][] = [];
-    const buffer = new RoomBuffer({
-      flushMs: 30_000,
-      flushMax: 3,
-      budget: 50,
-      onFlush: async (_key, events) => {
-        flushes.push(events);
-      },
-    });
-
-    buffer.push("chat", event(1));
-    buffer.push("chat", event(2));
-    buffer.push("chat", event(3));
-    await vi.runAllTimersAsync();
-    expect(flushes).toEqual([[event(1), event(2), event(3)]]);
-  });
-
-  it("drops the oldest events beyond the budget and reports the count", async () => {
-    let reported: { events: RoomEventItem[]; dropped: number } | null = null;
-    const buffer = new RoomBuffer({
-      flushMs: 30_000,
-      flushMax: 100,
-      budget: 3,
-      onFlush: async (_key, events, dropped) => {
-        reported = { events, dropped };
-      },
-    });
-
-    for (let index = 1; index <= 5; index += 1) {
-      buffer.push("chat", event(index));
-    }
-    await buffer.drain("chat");
-    expect(reported).toEqual({
-      events: [event(3), event(4), event(5)],
-      dropped: 2,
-    });
-  });
-
-  it("re-buffers events when a flush fails", async () => {
-    let attempts = 0;
-    const flushes: RoomEventItem[][] = [];
-    const buffer = new RoomBuffer({
-      flushMs: 30_000,
-      flushMax: 100,
-      budget: 50,
-      log: () => undefined,
-      onFlush: async (_key, events) => {
-        attempts += 1;
-        if (attempts === 1) {
-          throw new Error("gateway offline");
-        }
-        flushes.push(events);
-      },
-    });
-
-    buffer.push("chat", event(1));
-    await expect(buffer.drain("chat")).rejects.toThrow("gateway offline");
-    expect(buffer.bufferedCount("chat")).toBe(1);
-    await buffer.drain("chat");
-    expect(flushes).toEqual([[event(1)]]);
   });
 });

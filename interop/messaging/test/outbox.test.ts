@@ -56,7 +56,12 @@ class FakeRpc {
           text: entry.item.text,
         });
       }
-      return { result: { contextRevision: 1, appliedKeys: entries.map((e) => e.key), unchangedKeys: [] } };
+      return {
+        result: {
+          contextRevision: 1,
+          results: entries.map((entry) => ({ key: entry.key, status: "applied" })),
+        },
+      };
     }
     if (method === "outbox/ack") {
       this.acks.push({
@@ -185,7 +190,7 @@ describe("runUsedMessagingTool", () => {
       configRevision: 0,
       createdAtMs: 1,
       id: "session_1",
-      runs: [{ id: "run_1", input: [], items, status: "completed" }],
+      runs: [{ id: "run_1", source: { type: "input", items: [] }, items, status: "completed" }],
       status: "idle",
       updatedAtMs: 2,
     };

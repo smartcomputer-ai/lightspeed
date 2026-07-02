@@ -435,6 +435,23 @@
       ],
       "type": "object"
     },
+    "AgentApiOutcomeOfContextRemoveResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/ContextRemoveResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
     "AgentApiOutcomeOfEnvironmentProviderHeartbeatResponse": {
       "properties": {
         "notifications": {
@@ -2967,30 +2984,76 @@
     },
     "ContextAppendResponse": {
       "properties": {
-        "appliedKeys": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
         "contextRevision": {
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
-        "unchangedKeys": {
+        "results": {
           "items": {
-            "type": "string"
+            "$ref": "#/definitions/ContextAppendResult"
           },
           "type": "array"
         }
       },
       "required": [
         "contextRevision",
-        "appliedKeys",
-        "unchangedKeys"
+        "results"
       ],
       "type": "object"
+    },
+    "ContextAppendResult": {
+      "properties": {
+        "activationText": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "activationTextTruncated": {
+          "description": "True when `activation_text` was cut off at the server-side length cap.\nThe committed context entry always holds the full text.",
+          "type": "boolean"
+        },
+        "entry": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ContextEntryInputView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "failure": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/InputAdmissionFailureView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "key": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/definitions/ContextAppendStatus"
+        }
+      },
+      "required": [
+        "key",
+        "status"
+      ],
+      "type": "object"
+    },
+    "ContextAppendStatus": {
+      "enum": [
+        "applied",
+        "unchanged",
+        "failed"
+      ],
+      "type": "string"
     },
     "ContextCompactParams": {
       "properties": {
@@ -3257,6 +3320,78 @@
       "enum": [
         "user",
         "assistant"
+      ],
+      "type": "string"
+    },
+    "ContextRemoveParams": {
+      "properties": {
+        "keys": {
+          "description": "Active context keys to remove. Removing a key that is already absent\nis a per-key no-op (`absent`), so retries are idempotent. Keys under\nreserved runtime namespaces (`run.`) are rejected request-level.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "keys"
+      ],
+      "type": "object"
+    },
+    "ContextRemoveResponse": {
+      "properties": {
+        "contextRevision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "results": {
+          "items": {
+            "$ref": "#/definitions/ContextRemoveResult"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "contextRevision",
+        "results"
+      ],
+      "type": "object"
+    },
+    "ContextRemoveResult": {
+      "properties": {
+        "failure": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/InputAdmissionFailureView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "key": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/definitions/ContextRemoveStatus"
+        }
+      },
+      "required": [
+        "key",
+        "status"
+      ],
+      "type": "object"
+    },
+    "ContextRemoveStatus": {
+      "enum": [
+        "removed",
+        "absent",
+        "failed"
       ],
       "type": "string"
     },
@@ -4454,6 +4589,35 @@
           "type": "array"
         }
       },
+      "type": "object"
+    },
+    "InputAdmissionFailureKind": {
+      "enum": [
+        "unsupportedMedia",
+        "unsupportedAudioMime",
+        "blobMissing",
+        "blobTooLarge",
+        "audioDurationTooLong",
+        "transcoderUnavailable",
+        "transcodeFailure",
+        "transcriptionFailure",
+        "admissionRejected"
+      ],
+      "type": "string"
+    },
+    "InputAdmissionFailureView": {
+      "properties": {
+        "kind": {
+          "$ref": "#/definitions/InputAdmissionFailureKind"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "message"
+      ],
       "type": "object"
     },
     "InputItem": {
@@ -5789,6 +5953,48 @@
       ],
       "type": "string"
     },
+    "RunAcceptedSourceView": {
+      "oneOf": [
+        {
+          "properties": {
+            "entries": {
+              "items": {
+                "$ref": "#/definitions/ContextEntryInputView"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "input",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "entries"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "keys": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "context",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "keys"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "RunCancelParams": {
       "properties": {
         "runId": {
@@ -5929,17 +6135,14 @@
             }
           ]
         },
-        "input": {
-          "items": {
-            "$ref": "#/definitions/InputItem"
-          },
-          "type": "array"
-        },
         "sessionId": {
           "type": "string"
         },
+        "source": {
+          "$ref": "#/definitions/RunStartSource"
+        },
         "submissionId": {
-          "description": "Client-supplied idempotency key, unique per session. Retrying\n`run/start` with the same submission id and the same input/config\nreturns the original run instead of starting a second one; reusing a\nsubmission id with different input or config is rejected.",
+          "description": "Client-supplied idempotency key, unique per session. Retrying\n`run/start` with the same submission id and the same source/config\nreturns the original run instead of starting a second one; reusing a\nsubmission id with different source or config is rejected.",
           "type": [
             "string",
             "null"
@@ -5948,7 +6151,7 @@
       },
       "required": [
         "sessionId",
-        "input"
+        "source"
       ],
       "type": "object"
     },
@@ -5962,6 +6165,48 @@
         "run"
       ],
       "type": "object"
+    },
+    "RunStartSource": {
+      "oneOf": [
+        {
+          "properties": {
+            "items": {
+              "items": {
+                "$ref": "#/definitions/InputItem"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "input",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "items"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "keys": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "context",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "keys"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "RunStatus": {
       "enum": [
@@ -5979,18 +6224,15 @@
         "id": {
           "type": "string"
         },
-        "input": {
-          "items": {
-            "$ref": "#/definitions/InputItem"
-          },
-          "type": "array"
-        },
         "items": {
           "default": [],
           "items": {
             "$ref": "#/definitions/SessionItemView"
           },
           "type": "array"
+        },
+        "source": {
+          "$ref": "#/definitions/RunViewSource"
         },
         "status": {
           "$ref": "#/definitions/RunStatus"
@@ -6005,9 +6247,51 @@
       "required": [
         "id",
         "status",
-        "input"
+        "source"
       ],
       "type": "object"
+    },
+    "RunViewSource": {
+      "oneOf": [
+        {
+          "properties": {
+            "items": {
+              "items": {
+                "$ref": "#/definitions/InputItem"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "input",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "items"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "keys": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "context",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "keys"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "SandboxTargetSpecView": {
       "properties": {
@@ -6895,14 +7179,11 @@
         },
         {
           "properties": {
-            "input": {
-              "items": {
-                "$ref": "#/definitions/ContextEntryInputView"
-              },
-              "type": "array"
-            },
             "runId": {
               "type": "string"
+            },
+            "source": {
+              "$ref": "#/definitions/RunAcceptedSourceView"
             },
             "submissionId": {
               "type": [
@@ -6918,7 +7199,7 @@
           "required": [
             "type",
             "runId",
-            "input"
+            "source"
           ],
           "type": "object"
         },

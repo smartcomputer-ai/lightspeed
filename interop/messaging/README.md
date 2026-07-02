@@ -14,14 +14,23 @@ See [Access control and bindings](#access-control-and-bindings).
 
 ## How a message flows
 
-Every allowed inbound message is classified:
+Every allowed inbound message is classified, then admitted through one of the
+Lightspeed input paths:
 
-- **User turn** — direct messages, group messages that @mention the bot,
-  reply to a bot message, or start with a trigger prefix. Rapid consecutive
-  messages are debounced (default 500ms quiet window) into one run.
-- **Room event** — any other group message. It is buffered and appended to
-  the bound session via `context/append` (batched, idempotent per message),
-  so the next activated turn already knows the conversation. No LLM call.
+- **User turn** — direct messages, `always` group messages, and explicitly
+  triggered messages start a run. Direct and `always` turns use
+  `run/start source=input`, which atomically ingests text/media and starts
+  work. Mention-mode group turns append the inbound message first and start
+  with `run/start source=context`, so the run is triggered by the committed
+  context keys instead of duplicate input.
+- **Room event** — any other allowed group message. Ingest is eager: every
+  allowed group message — text-only or media-bearing — is downloaded as needed
+  and appended as session context through `context/append` at receipt, before
+  activation is evaluated, so audio transcripts can participate in activation
+  and room history survives bridge restarts. Transcript activation is matched
+  only against server-derived media entries; plain text was already
+  mention-checked at classification. No LLM call is started unless activation
+  matches after append.
 - **Control** — `/activation mention|always|silent`, `/status`. Restricted to
   `*_CONTROL_ALLOW_FROM` senders (with the list empty, direct chats are
   trusted; group members are not).
@@ -63,6 +72,34 @@ runtime with `/activation`:
 - `always` — every group message becomes a turn (use with care; pair with
   P71 G5 delivery policies once those exist).
 - `silent` — listen only; trigger prefixes remain as the escape hatch.
+
+Activation is evaluated against native adapter facts (mentions and replies),
+raw message text/captions, and `activationText` returned by `context/append`.
+For audio messages, `activationText` is the transcript text, matched against
+the configured `triggerPrefixes`, `mentionNames`, and the bot's username — so
+a voice note that says a trigger prefix or mention name can start a run in
+mention mode after transcription succeeds. Direct messages are always active
+and skip the transcript-matching step. A group voice note whose transcription
+fails never starts a run.
+
+## Room context retention
+
+Eager ingest makes session context grow per room message, so the bridge
+bounds each conversation's **unconsumed backlog**: room entries appended
+since the last run the bridge started there. When the backlog exceeds
+`BRIDGE_ROOM_RETENTION_HIGH` messages, the oldest messages are removed via
+`context/remove` down to `BRIDGE_ROOM_RETENTION_LOW`, oldest first and only
+while the conversation is idle (no queued or in-flight turn, and never a
+queued turn's trigger keys). The watermark gap keeps the room span
+append-only between prunes, so provider prompt caches stay warm. Entries any
+run has already seen are consumed history and are never pruned — their
+lifecycle belongs to server-side compaction. The backlog list is in-memory;
+a bridge restart starts it empty, which only delays pruning.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `BRIDGE_ROOM_RETENTION_HIGH` | `300` | Unconsumed backlog size (in messages) that triggers a prune; `0` disables retention |
+| `BRIDGE_ROOM_RETENTION_LOW` | `200` | Backlog size a prune reduces to (must be smaller than `HIGH`) |
 
 ## Access control and bindings
 
@@ -126,7 +163,7 @@ inline in a binding. A complete, runnable example is in
   "telegram": { "allowFrom": [], "controlAllowFrom": ["@lukas"] },
 
   "bindings": [
-    { "id": "personal-telegram", "match": { "channel": "telegram" }, "profile": "personal", "sessionKey": "lukas", "pairing": { "codeEnv": "PERSONAL_PAIRING_CODE" } },
+    { "id": "personal-chat", "match": { "channel": ["telegram", "whatsapp"] }, "profile": "personal", "sessionKey": "lukas", "pairing": { "codeEnv": "PERSONAL_PAIRING_CODE" } },
     {
       "id": "eng-room",
       "match": { "channel": "telegram", "chatId": "-100123", "scope": "group" },
@@ -150,15 +187,19 @@ inline in a binding. A complete, runnable example is in
 - **Bindings** are evaluated top-to-bottom, first match wins. Consecutive
   matching pairable bindings may share the same broad match; before a chat is
   paired, the code selects which binding id to persist. `match` filters by
-  `channel` (`telegram` | `whatsapp` | `*`), and optional `handle`, `chatId`,
-  and `scope` (`direct` | `group`). `handle` may be one string or an array of
-  aliases for the same sender.
+  `channel` (`telegram` | `whatsapp` | `*`, or an array such as
+  `["telegram", "whatsapp"]`), and optional `handle`, `chatId`, and `scope`
+  (`direct` | `group`). `handle` may be one string or an array of aliases for
+  the same sender.
 - **`profile`** is optional. A string is shorthand for a named registry profile.
   An object is passed as a `ProfileSource`, either `{ "kind": "named",
   "profileId": "support" }` or `{ "kind": "inline", "profile": { ... } }`.
-- **`sessionKey`** ties conversations to a session. Conversations sharing a key
-  share one session (e.g. a team and its members); omit it and each
-  conversation gets its own. There is no `/new` — a conversation always resolves
+- **`sessionKey`** ties conversations to a session within one channel/account.
+  Conversations sharing a key on the same provider account share one session
+  (e.g. a team and its members); omit it and each conversation gets its own.
+  The provider/account remain part of the derived session id, so a combined
+  Telegram+WhatsApp binding shares profile and pairing policy, not one
+  cross-channel transcript. There is no `/new` — a conversation always resolves
   to the session for its key.
 - **Profile documents** reuse the API profile shape: `config`, `instructions`,
   `mounts`, `mcp`, and `environments`. The bridge passes them to
@@ -179,11 +220,11 @@ environments, messaging tool only.
 - `src/policy.ts` — inbound classification (incl. the `denied` outcome),
   control-command parsing, and the message envelope
   (`[telegram:group Engineering] Alice (12:01Z): ...`).
-- `src/batcher.ts` — turn debouncing and room-event buffering/budgets.
+- `src/batcher.ts` — turn debouncing.
 - `src/runtime.ts` — orchestration: bindings, dedupe, per-conversation
   serialization, denied handling, control commands.
 - `src/lightspeed.ts` — `session/start { profile }`, `context/append`,
-  `run/start`, awaitRun, and reply extraction.
+  `context/remove`, `run/start`, awaitRun, and reply extraction.
 - `src/store.ts` — pairings, bindings (chat → session, profile label,
   activation, cursor), plus message dedupe records in `.bridge-state.json`.
 - `src/telegram.ts` — grammY adapter with native mention/reply detection.
@@ -270,14 +311,31 @@ Loop protection: the bridge ignores its own messages (`fromMe`, bot user id)
 and deduplicates inbound deliveries; room-event appends are idempotent per
 message key, so channel redelivery is harmless.
 
-The bridge handles text, images, and documents on both channels (P71 G3):
-photos and supported document attachments (PDF up to 10MB; markdown, plain
-text, CSV, and JSON up to 1MB) in user turns are downloaded, stored in CAS
-via `blob/put`, and attached to the run as input the model sees natively.
-Media is only downloaded for messages that activate a turn — unaddressed
-group attachments buffer as `(sent an image)` / `(sent a file: ...)`
-placeholder text. Other document types and video are caption-only; voice
-notes await audio transcription (P71 G6).
+The bridge handles text, images, documents, and audio using the same media
+boundaries as the Lightspeed API. For allowed non-control messages, current
+supported media is downloaded, stored in CAS via `blob/put`, and admitted as
+either context append entries or atomic run input:
+
+- **Images** are attached as model-visible image context/input. They do not
+  produce activation text by themselves.
+- **Documents** include PDF up to 10MB and markdown, plain text, CSV, and JSON
+  up to 1MB. They are model-visible document context/input, but document body
+  text is not treated as a wake command.
+- **Audio** is transcribed by the hosted preprocessing path. Context append
+  stores the transcript as text context and returns transcript activation text.
+  If transcription or transcoding fails, the append result is logged with a
+  typed failure and the bridge does not submit an empty context-triggered run.
+- **Video and unsupported document types** remain caption-only/unsupported;
+  the bridge does not upload raw video media.
+
+Ingest failures are split by kind. Transient append failures (network errors,
+`admissionRejected` results) leave the message marked retryable, so channel
+redelivery retries the append instead of dropping the message. Terminal ingest
+failures on an addressed mention-mode turn get an error reply in the chat
+(`Lightspeed could not ingest this message: ...`); audio failures on direct
+and `always` turns reply `Lightspeed could not transcribe this audio
+message: ...`; unaddressed group messages are logged only. Group voice notes
+that fail transcription do not start runs in any mode.
 
 While a turn is running the bridge shows a typing indicator in the chat
 (Telegram `sendChatAction`, WhatsApp `composing` presence), refreshed until

@@ -848,12 +848,12 @@ mod tests {
         ContextEntryInput, ContextEntryKey, ContextEntryKind, ContextRemovalReason,
         ContextRewriteReason, CoreAgentCommand, FunctionToolSpec, LlmGenerationFacts,
         ModelSelection, OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, ObservedToolCall,
-        OptionalConfigPatch, ProviderApiKind, RunConfig, RunFailureKind, RunStatus,
-        SKILL_ACTIVATION_PROVIDER_KIND_RUN, SKILL_CATALOG_CONTEXT_KEY, SessionConfig,
-        SessionConfigPatch, SkillId, TokenEstimate, TokenEstimateQuality, ToolBatchOutcome,
-        ToolBatchResumeDirective, ToolChoice, ToolChoiceMode, ToolEffect, ToolInvocationResult,
-        ToolKind, ToolName, ToolParallelism, ToolSpec, ToolTargetRequirement, TurnConfig,
-        TurnConfigPatch, TurnStatus, skill_activation_context_key,
+        OptionalConfigPatch, ProviderApiKind, RunConfig, RunFailureKind, RunRequestCommand,
+        RunRequestSource, RunStatus, SKILL_ACTIVATION_PROVIDER_KIND_RUN, SKILL_CATALOG_CONTEXT_KEY,
+        SessionConfig, SessionConfigPatch, SkillId, TokenEstimate, TokenEstimateQuality,
+        ToolBatchOutcome, ToolBatchResumeDirective, ToolChoice, ToolChoiceMode, ToolEffect,
+        ToolInvocationResult, ToolKind, ToolName, ToolParallelism, ToolSpec, ToolTargetRequirement,
+        TurnConfig, TurnConfigPatch, TurnStatus, skill_activation_context_key,
     };
 
     fn config() -> SessionConfig {
@@ -988,15 +988,23 @@ mod tests {
     fn request_run(drive: &mut CoreAgentDrive, input_ref: BlobRef) {
         let request = drive
             .admit_command(
-                CoreAgentCommand::RequestRun {
-                    submission_id: None,
-                    input: user_input(input_ref),
-                    run_config: run_config(),
-                },
+                request_run_command(None, user_input(input_ref), run_config()),
                 20,
             )
             .expect("request run");
         commit_action(drive, request);
+    }
+
+    fn request_run_command(
+        submission_id: Option<crate::SubmissionId>,
+        input: Vec<ContextEntryInput>,
+        run_config: RunConfig,
+    ) -> CoreAgentCommand {
+        CoreAgentCommand::RequestRun(RunRequestCommand {
+            submission_id,
+            source: RunRequestSource::Input { input },
+            run_config,
+        })
     }
 
     fn user_input(input_ref: BlobRef) -> Vec<ContextEntryInput> {
@@ -1321,11 +1329,11 @@ mod tests {
         entries.extend(commit_action(&mut drive, open));
         let request_run = drive
             .admit_command(
-                CoreAgentCommand::RequestRun {
-                    submission_id: None,
-                    input: user_input(BlobRef::from_bytes(b"input")),
-                    run_config: run_config(),
-                },
+                request_run_command(
+                    None,
+                    user_input(BlobRef::from_bytes(b"input")),
+                    run_config(),
+                ),
                 20,
             )
             .expect("request run");
@@ -1365,14 +1373,14 @@ mod tests {
 
         let error = drive
             .admit_command(
-                CoreAgentCommand::RequestRun {
-                    submission_id: None,
-                    input: vec![message_input(
+                request_run_command(
+                    None,
+                    vec![message_input(
                         ContextMessageRole::Assistant,
                         BlobRef::from_bytes(b"assistant"),
                     )],
-                    run_config: run_config(),
-                },
+                    run_config(),
+                ),
                 20,
             )
             .expect_err("assistant run input must be rejected");
@@ -1392,11 +1400,11 @@ mod tests {
 
         let action = drive
             .admit_command(
-                CoreAgentCommand::RequestRun {
-                    submission_id: None,
-                    input: vec![provider_opaque_input(BlobRef::from_bytes(b"native"))],
-                    run_config: run_config(),
-                },
+                request_run_command(
+                    None,
+                    vec![provider_opaque_input(BlobRef::from_bytes(b"native"))],
+                    run_config(),
+                ),
                 20,
             )
             .expect("provider-opaque run input");
@@ -1404,7 +1412,7 @@ mod tests {
 
         assert_eq!(drive.state().runs.queued.len(), 1);
         assert!(matches!(
-            drive.state().runs.queued[0].input[0].kind,
+            drive.state().runs.queued[0].source.input()[0].kind,
             ContextEntryKind::ProviderOpaque
         ));
     }
@@ -1432,6 +1440,92 @@ mod tests {
         assert_eq!(entry.key.as_ref(), Some(&key));
         assert!(matches!(entry.kind, ContextEntryKind::ProviderOpaque));
         assert!(matches!(entry.source, ContextEntrySource::ContextEdit));
+    }
+
+    #[test]
+    fn upsert_context_rejects_reserved_run_key_prefix() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        open_session(&mut drive);
+
+        let error = drive
+            .admit_command(
+                CoreAgentCommand::UpsertContext {
+                    key: ContextEntryKey::new("run.1.input.0"),
+                    entry: message_input(ContextMessageRole::User, BlobRef::from_bytes(b"bad")),
+                },
+                20,
+            )
+            .expect_err("reserved run context key must be rejected");
+
+        let CoreAgentDriveError::Command(crate::CommandError::Rejected(rejection)) = error else {
+            panic!("expected rejected command");
+        };
+        assert_eq!(rejection.kind, CommandRejectionKind::InvariantViolation);
+        assert!(rejection.message.contains("reserved internal prefix"));
+    }
+
+    #[test]
+    fn remove_context_rejects_reserved_run_key_prefix() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        open_session(&mut drive);
+
+        let error = drive
+            .admit_command(
+                CoreAgentCommand::RemoveContext {
+                    key: ContextEntryKey::new("run.1.input.0"),
+                },
+                20,
+            )
+            .expect_err("reserved run context key must be rejected");
+
+        let CoreAgentDriveError::Command(crate::CommandError::Rejected(rejection)) = error else {
+            panic!("expected rejected command");
+        };
+        assert_eq!(rejection.kind, CommandRejectionKind::InvariantViolation);
+        assert!(rejection.message.contains("reserved internal prefix"));
+    }
+
+    #[test]
+    fn context_source_run_acceptance_records_resolved_trigger_entry_ids() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        open_session(&mut drive);
+        let key = ContextEntryKey::new("client.message.1");
+
+        let upsert = drive
+            .admit_command(
+                CoreAgentCommand::UpsertContext {
+                    key: key.clone(),
+                    entry: message_input(ContextMessageRole::User, BlobRef::from_bytes(b"hello")),
+                },
+                20,
+            )
+            .expect("context upsert");
+        commit_action(&mut drive, upsert);
+        let entry_id = drive.state().context.entries[0].entry_id;
+
+        let request = drive
+            .admit_command(
+                CoreAgentCommand::RequestRun(RunRequestCommand {
+                    submission_id: None,
+                    source: RunRequestSource::Context {
+                        keys: vec![key.clone()],
+                    },
+                    run_config: run_config(),
+                }),
+                30,
+            )
+            .expect("context source run");
+        commit_action(&mut drive, request);
+
+        let crate::RunSource::Context { triggers } = &drive.state().runs.queued[0].source else {
+            panic!("expected context source");
+        };
+        assert_eq!(triggers.len(), 1);
+        assert_eq!(triggers[0].key, key);
+        assert_eq!(triggers[0].entry_id, entry_id);
     }
 
     #[test]
@@ -1729,7 +1823,7 @@ mod tests {
         let start_run = drive.next_action(21, 64).expect("start run");
         commit_action(&mut drive, start_run);
         let active_run = drive.state().runs.active.as_ref().expect("active run");
-        assert!(active_run.input.entry_ids.is_empty());
+        assert!(active_run.input_entry_ids.is_empty());
         assert!(drive.state().context.entries.is_empty());
 
         let materialize_input = drive.next_action(22, 64).expect("materialize input");
@@ -1747,8 +1841,8 @@ mod tests {
         ));
 
         let active_run = drive.state().runs.active.as_ref().expect("active run");
-        assert_eq!(active_run.input.entry_ids, vec![applied[0].entry_id]);
-        assert_eq!(active_run.input.consumed_by_turn_id, None);
+        assert_eq!(active_run.input_entry_ids, vec![applied[0].entry_id]);
+        assert_eq!(active_run.input_consumed_by_turn_id, None);
         assert_eq!(drive.state().context.entries.len(), 1);
 
         let start_turn = drive.next_action(23, 64).expect("start turn");
@@ -1777,8 +1871,7 @@ mod tests {
             .active
             .as_ref()
             .expect("active run")
-            .input
-            .entry_ids[0];
+            .input_entry_ids[0];
         let base_revision = drive.state().context.revision;
         let error = commit_core_event_result(
             &mut drive,
@@ -1804,8 +1897,8 @@ mod tests {
         let request = drive_until_generate(&mut drive);
 
         let active_run = drive.state().runs.active.as_ref().expect("active run");
-        let entry_id = active_run.input.entry_ids[0];
-        assert_eq!(active_run.input.consumed_by_turn_id, Some(request.turn_id));
+        let entry_id = active_run.input_entry_ids[0];
+        assert_eq!(active_run.input_consumed_by_turn_id, Some(request.turn_id));
 
         let base_revision = drive.state().context.revision;
         commit_core_event_result(
@@ -1835,8 +1928,7 @@ mod tests {
             .active
             .as_ref()
             .expect("active run")
-            .input
-            .entry_ids[0];
+            .input_entry_ids[0];
 
         let resumed = drive
             .resume_generation(
@@ -2068,11 +2160,11 @@ mod tests {
 
         let run_error = drive
             .admit_command(
-                CoreAgentCommand::RequestRun {
-                    submission_id: None,
-                    input: user_input(BlobRef::from_bytes(b"new work")),
-                    run_config: run_config(),
-                },
+                request_run_command(
+                    None,
+                    user_input(BlobRef::from_bytes(b"new work")),
+                    run_config(),
+                ),
                 31,
             )
             .expect_err("run should be rejected while compaction is pending");
@@ -2516,11 +2608,7 @@ mod tests {
 
         let error = drive
             .admit_command(
-                CoreAgentCommand::RequestRun {
-                    submission_id: None,
-                    input: user_input(BlobRef::from_bytes(b"input")),
-                    run_config,
-                },
+                request_run_command(None, user_input(BlobRef::from_bytes(b"input")), run_config),
                 20,
             )
             .expect_err("run must reject missing specific tool choice");
@@ -2541,11 +2629,11 @@ mod tests {
         commit_action(&mut drive, open);
         let request = drive
             .admit_command(
-                CoreAgentCommand::RequestRun {
-                    submission_id: None,
-                    input: user_input(BlobRef::from_bytes(b"input")),
-                    run_config: run_config(),
-                },
+                request_run_command(
+                    None,
+                    user_input(BlobRef::from_bytes(b"input")),
+                    run_config(),
+                ),
                 20,
             )
             .expect("request run");
@@ -2765,11 +2853,11 @@ mod tests {
         commit_action(&mut drive, open);
         let request = drive
             .admit_command(
-                CoreAgentCommand::RequestRun {
-                    submission_id: None,
-                    input: user_input(BlobRef::from_bytes(b"input")),
-                    run_config: run_config(),
-                },
+                request_run_command(
+                    None,
+                    user_input(BlobRef::from_bytes(b"input")),
+                    run_config(),
+                ),
                 20,
             )
             .expect("request run");
@@ -2796,11 +2884,11 @@ mod tests {
         commit_action(&mut drive, open);
         let request = drive
             .admit_command(
-                CoreAgentCommand::RequestRun {
-                    submission_id: None,
-                    input: user_input(BlobRef::from_bytes(b"input")),
-                    run_config: run_config(),
-                },
+                request_run_command(
+                    None,
+                    user_input(BlobRef::from_bytes(b"input")),
+                    run_config(),
+                ),
                 20,
             )
             .expect("request run");
@@ -2852,11 +2940,11 @@ mod tests {
         commit_action(&mut drive, open);
         let request = drive
             .admit_command(
-                CoreAgentCommand::RequestRun {
-                    submission_id: None,
-                    input: user_input(BlobRef::from_bytes(b"input")),
-                    run_config: run_config(),
-                },
+                request_run_command(
+                    None,
+                    user_input(BlobRef::from_bytes(b"input")),
+                    run_config(),
+                ),
                 20,
             )
             .expect("request run");
@@ -3114,11 +3202,11 @@ mod tests {
         input_ref: BlobRef,
     ) -> Result<CoreAgentAction, CoreAgentDriveError> {
         drive.admit_command(
-            CoreAgentCommand::RequestRun {
-                submission_id: Some(crate::SubmissionId::new(submission_id)),
-                input: user_input(input_ref),
-                run_config: run_config(),
-            },
+            request_run_command(
+                Some(crate::SubmissionId::new(submission_id)),
+                user_input(input_ref),
+                run_config(),
+            ),
             20,
         )
     }

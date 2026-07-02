@@ -505,11 +505,13 @@ impl EvalRuntime {
         let outcome = self
             .drive(
                 session_id.clone(),
-                CoreAgentCommand::RequestRun {
+                CoreAgentCommand::RequestRun(engine::RunRequestCommand {
                     submission_id: None,
-                    input: user_input(input_ref),
+                    source: engine::RunRequestSource::Input {
+                        input: user_input(input_ref),
+                    },
                     run_config: self.config.run.clone(),
-                },
+                }),
                 20,
             )
             .await?;

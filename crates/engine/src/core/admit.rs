@@ -3,8 +3,8 @@
 use crate::{
     AdmitCommand, CommandError, CommandRejection, CommandRejectionKind, ContextEntrySource,
     ContextEvent, CoreAgentCommand, CoreAgentEventKind, CoreAgentEventProposal, CoreAgentJoins,
-    CoreAgentLifecycleEvent, CoreAgentState, CoreAgentStatus, DomainError, RunEvent, RunStatus,
-    ToolConfigEvent,
+    CoreAgentLifecycleEvent, CoreAgentState, CoreAgentStatus, DomainError, RunEvent,
+    RunRequestSource, RunSource, RunStatus, ToolConfigEvent,
     core::components::{
         config::{validate_config_update_for_state, validate_run_config_for_state},
         tooling::{
@@ -84,20 +84,21 @@ impl AdmitCommand for CoreAdmitCommand {
                     }),
                 )])
             }
-            CoreAgentCommand::RequestRun {
-                submission_id,
-                input,
-                run_config,
-            } => {
+            CoreAgentCommand::RequestRun(request) => {
                 // Duplicate detection precedes every other check so a retried
                 // submission resolves idempotently even when session state has
                 // moved on (e.g. the original run completed or the session is
                 // compacting).
-                if let Some(submission_id) = submission_id.as_ref() {
+                if let Some(submission_id) = request.submission_id.as_ref() {
                     use crate::core::components::run::{
                         SubmissionMatch, match_existing_submission,
                     };
-                    match match_existing_submission(state, submission_id, &input, &run_config) {
+                    match match_existing_submission(
+                        state,
+                        submission_id,
+                        &request.source,
+                        &request.run_config,
+                    ) {
                         Some(SubmissionMatch::Identical) => return Ok(Vec::new()),
                         Some(SubmissionMatch::Different) => {
                             return reject(
@@ -116,29 +117,55 @@ impl AdmitCommand for CoreAdmitCommand {
                     state,
                     "run cannot be requested while context compaction is pending",
                 )?;
-                validate_run_config_for_state(state, &run_config)
-                    .map_err(command_rejection_from_domain)?;
-                crate::core::components::context::validate_run_input_entries(&input)
+                validate_run_config_for_state(state, &request.run_config)
                     .map_err(command_rejection_from_domain)?;
                 let next_run_id = state.id_cursors.last_run_id.checked_add(1).ok_or_else(|| {
                     CommandError::Domain(DomainError::InvariantViolation(
                         "run id cursor exhausted".to_owned(),
                     ))
                 })?;
+                let next_run_id = crate::RunId::new(next_run_id);
+                let source = match request.source {
+                    RunRequestSource::Input { input } => {
+                        if input.is_empty() {
+                            return reject(
+                                CommandRejectionKind::InvariantViolation,
+                                "run input must contain at least one entry",
+                            );
+                        }
+                        crate::core::components::context::validate_run_input_entries(&input)
+                            .map_err(command_rejection_from_domain)?;
+                        RunSource::Input { input }
+                    }
+                    RunRequestSource::Context { keys } => {
+                        let triggers =
+                            crate::core::components::context::validate_run_trigger_context_keys(
+                                state, &keys,
+                            )
+                            .map_err(command_rejection_from_domain)?;
+                        RunSource::Context { triggers }
+                    }
+                };
+                if source.input().is_empty() && source.context_triggers().is_empty() {
+                    return reject(
+                        CommandRejectionKind::InvariantViolation,
+                        "run source must contain input entries or trigger context keys",
+                    );
+                }
                 let joins = CoreAgentJoins {
-                    submission_id: submission_id.clone(),
-                    run_id: Some(crate::RunId::new(next_run_id)),
+                    submission_id: request.submission_id.clone(),
+                    run_id: Some(next_run_id),
                     ..CoreAgentJoins::default()
                 };
                 Ok(vec![CoreAgentEventProposal::new(
                     joins,
-                    CoreAgentEventKind::Run(RunEvent::Accepted {
-                        run_id: crate::RunId::new(next_run_id),
-                        submission_id,
-                        input,
-                        run_config,
+                    CoreAgentEventKind::Run(RunEvent::Accepted(crate::AcceptedRunEvent {
+                        run_id: next_run_id,
+                        submission_id: request.submission_id,
+                        source,
+                        run_config: request.run_config,
                         config_revision: state.lifecycle.config_revision,
-                    }),
+                    })),
                 )])
             }
             CoreAgentCommand::UpsertContext { key, entry } => {
@@ -209,6 +236,8 @@ impl AdmitCommand for CoreAdmitCommand {
                     state,
                     "context cannot be edited while context compaction is pending",
                 )?;
+                crate::core::components::context::validate_external_context_key(&key)
+                    .map_err(command_rejection_from_domain)?;
                 crate::core::components::context::validate_context_key_exists(state, &key)
                     .map_err(unknown_reference_rejection_from_domain)?;
                 Ok(vec![CoreAgentEventProposal::new(

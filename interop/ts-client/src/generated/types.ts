@@ -245,6 +245,19 @@ export type ToolChoiceModeConfig =
 export type FilesystemToolMode = "none" | "readOnly" | "edit";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "RunViewSource".
+ */
+export type RunViewSource =
+  | {
+      items: InputItem[];
+      type: "input";
+    }
+  | {
+      keys: string[];
+      type: "context";
+    };
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "InputItem".
  */
 export type InputItem =
@@ -316,8 +329,8 @@ export type SessionEventKindView =
       type: "sessionClosed";
     }
   | {
-      input: ContextEntryInputView[];
       runId: string;
+      source: RunAcceptedSourceView;
       submissionId?: string | null;
       type: "runAccepted";
     }
@@ -488,6 +501,19 @@ export type SessionEventKindView =
     };
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "RunAcceptedSourceView".
+ */
+export type RunAcceptedSourceView =
+  | {
+      entries: ContextEntryInputView[];
+      type: "input";
+    }
+  | {
+      keys: string[];
+      type: "context";
+    };
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ContextEntryKindView".
  */
 export type ContextEntryKindView =
@@ -594,6 +620,30 @@ export type AuthProviderConfigView =
  * via the `definition` "AuthProviderStatus".
  */
 export type AuthProviderStatus = "active" | "needsConfiguration" | "disabled";
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "InputAdmissionFailureKind".
+ */
+export type InputAdmissionFailureKind =
+  | "unsupportedMedia"
+  | "unsupportedAudioMime"
+  | "blobMissing"
+  | "blobTooLarge"
+  | "audioDurationTooLong"
+  | "transcoderUnavailable"
+  | "transcodeFailure"
+  | "transcriptionFailure"
+  | "admissionRejected";
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ContextAppendStatus".
+ */
+export type ContextAppendStatus = "applied" | "unchanged" | "failed";
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ContextRemoveStatus".
+ */
+export type ContextRemoveStatus = "removed" | "absent" | "failed";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "HostTransportView".
@@ -764,6 +814,44 @@ export type SessionEnvironmentKindView = "sandbox" | "attachedHost";
  * via the `definition` "SessionEnvironmentStatusView".
  */
 export type SessionEnvironmentStatusView = "attaching" | "ready" | "degraded" | "detached";
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionEnvironmentCredentialSourceView".
+ */
+export type SessionEnvironmentCredentialSourceView =
+  | {
+      grantId: string;
+      type: "authGrant";
+    }
+  | {
+      providerId: string;
+      type: "authProviderCredential";
+    }
+  | {
+      secretId: string;
+      type: "directSecret";
+    };
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionJobStatusView".
+ */
+export type SessionJobStatusView =
+  | "accepted"
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancelRequested"
+  | "cancelled"
+  | "timedOut"
+  | "dependencyFailed"
+  | "interrupted"
+  | "lost";
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionJobOutputStreamView".
+ */
+export type SessionJobOutputStreamView = "stdout" | "stderr";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SkillActivationScope".
@@ -957,6 +1045,29 @@ export type ProfileSource =
     };
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "RunStartSource".
+ */
+export type RunStartSource =
+  | {
+      items: InputItem[];
+      type: "input";
+    }
+  | {
+      keys: string[];
+      type: "context";
+    };
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionJobCancelScopeView".
+ */
+export type SessionJobCancelScopeView = "job" | "dependents";
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionJobDependencyPolicyView".
+ */
+export type SessionJobDependencyPolicyView = "allSucceeded" | "allTerminal";
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionToolsUpdateInput".
  */
 export type SessionToolsUpdateInput =
@@ -1142,8 +1253,8 @@ export interface ToolConfigView {
  */
 export interface RunView {
   id: string;
-  input: InputItem[];
   items?: SessionItemView[];
+  source: RunViewSource;
   status: RunStatus;
   toolBatches?: ToolBatchView[];
 }
@@ -1673,9 +1784,32 @@ export interface AgentApiOutcomeOfContextAppendResponse {
  * via the `definition` "ContextAppendResponse".
  */
 export interface ContextAppendResponse {
-  appliedKeys: string[];
   contextRevision: number;
-  unchangedKeys: string[];
+  results: ContextAppendResult[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ContextAppendResult".
+ */
+export interface ContextAppendResult {
+  activationText?: string | null;
+  /**
+   * True when `activation_text` was cut off at the server-side length cap.
+   * The committed context entry always holds the full text.
+   */
+  activationTextTruncated?: boolean;
+  entry?: ContextEntryInputView | null;
+  failure?: InputAdmissionFailureView | null;
+  key: string;
+  status: ContextAppendStatus;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "InputAdmissionFailureView".
+ */
+export interface InputAdmissionFailureView {
+  kind: InputAdmissionFailureKind;
+  message: string;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -1691,6 +1825,31 @@ export interface AgentApiOutcomeOfContextCompactResponse {
  */
 export interface ContextCompactResponse {
   session: SessionView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfContextRemoveResponse".
+ */
+export interface AgentApiOutcomeOfContextRemoveResponse {
+  notifications?: AgentNotification[];
+  result: ContextRemoveResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ContextRemoveResponse".
+ */
+export interface ContextRemoveResponse {
+  contextRevision: number;
+  results: ContextRemoveResult[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ContextRemoveResult".
+ */
+export interface ContextRemoveResult {
+  failure?: InputAdmissionFailureView | null;
+  key: string;
+  status: ContextRemoveStatus;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -1775,6 +1934,13 @@ export interface EnvironmentTargetSummaryView {
 export interface HostCapabilitiesView {
   filesystemRead?: boolean;
   filesystemWrite?: boolean;
+  jobCancel?: boolean;
+  jobDependencies?: boolean;
+  jobList?: boolean;
+  jobQueueKeys?: boolean;
+  jobRead?: boolean;
+  jobStart?: boolean;
+  jobWaitHint?: boolean;
   processOutputNotifications?: boolean;
   processOutputPolling?: boolean;
   processPty?: boolean;
@@ -2307,6 +2473,13 @@ export interface SessionEnvironmentView {
 export interface SessionEnvironmentCapabilitiesView {
   fsRead: boolean;
   fsWrite: boolean;
+  jobCancel?: boolean;
+  jobDependencies?: boolean;
+  jobList?: boolean;
+  jobQueueKeys?: boolean;
+  jobRead?: boolean;
+  jobStart?: boolean;
+  jobWaitHint?: boolean;
   network: boolean;
   persistent: boolean;
   processExec: boolean;
@@ -2362,6 +2535,63 @@ export interface SessionEnvironmentCreateResponse {
   activeEnvId?: string | null;
   environment: SessionEnvironmentView;
   environments?: SessionEnvironmentView[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfSessionEnvironmentCredentialBindResponse".
+ */
+export interface AgentApiOutcomeOfSessionEnvironmentCredentialBindResponse {
+  notifications?: AgentNotification[];
+  result: SessionEnvironmentCredentialBindResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionEnvironmentCredentialBindResponse".
+ */
+export interface SessionEnvironmentCredentialBindResponse {
+  credential: SessionEnvironmentCredentialView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionEnvironmentCredentialView".
+ */
+export interface SessionEnvironmentCredentialView {
+  createdAtMs: number;
+  envId: string;
+  envName: string;
+  sessionId: string;
+  source: SessionEnvironmentCredentialSourceView;
+  updatedAtMs: number;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfSessionEnvironmentCredentialListResponse".
+ */
+export interface AgentApiOutcomeOfSessionEnvironmentCredentialListResponse {
+  notifications?: AgentNotification[];
+  result: SessionEnvironmentCredentialListResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionEnvironmentCredentialListResponse".
+ */
+export interface SessionEnvironmentCredentialListResponse {
+  credentials?: SessionEnvironmentCredentialView[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfSessionEnvironmentCredentialUnbindResponse".
+ */
+export interface AgentApiOutcomeOfSessionEnvironmentCredentialUnbindResponse {
+  notifications?: AgentNotification[];
+  result: SessionEnvironmentCredentialUnbindResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionEnvironmentCredentialUnbindResponse".
+ */
+export interface SessionEnvironmentCredentialUnbindResponse {
+  credential: SessionEnvironmentCredentialView;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -2437,6 +2667,164 @@ export interface EventLogGap {
   nextCursor?: EventCursor | null;
   requestedAfter?: EventCursor | null;
   retainedAfter?: EventCursor | null;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfSessionJobCancelResponse".
+ */
+export interface AgentApiOutcomeOfSessionJobCancelResponse {
+  notifications?: AgentNotification[];
+  result: SessionJobCancelResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionJobCancelResponse".
+ */
+export interface SessionJobCancelResponse {
+  jobs?: SessionJobCancelEntryView[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionJobCancelEntryView".
+ */
+export interface SessionJobCancelEntryView {
+  error?: string | null;
+  handle?: SessionJobHandleView | null;
+  summary?: SessionJobSummaryView | null;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionJobHandleView".
+ */
+export interface SessionJobHandleView {
+  envId: string;
+  jobId: string;
+  sessionId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionJobSummaryView".
+ */
+export interface SessionJobSummaryView {
+  createdAtMs: number;
+  dependencies?: string[];
+  exitCode?: number | null;
+  failure?: string | null;
+  finishedAtMs?: number | null;
+  jobId: string;
+  name?: string | null;
+  namespace: string;
+  queueKey?: string | null;
+  queuedAtMs?: number | null;
+  startedAtMs?: number | null;
+  status: SessionJobStatusView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfSessionJobCreateResponse".
+ */
+export interface AgentApiOutcomeOfSessionJobCreateResponse {
+  notifications?: AgentNotification[];
+  result: SessionJobCreateResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionJobCreateResponse".
+ */
+export interface SessionJobCreateResponse {
+  envId: string;
+  jobs?: SessionJobStartedView[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionJobStartedView".
+ */
+export interface SessionJobStartedView {
+  dependencies?: string[];
+  handle: SessionJobHandleView;
+  jobId: string;
+  name?: string | null;
+  queueKey?: string | null;
+  status: SessionJobStatusView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfSessionJobListResponse".
+ */
+export interface AgentApiOutcomeOfSessionJobListResponse {
+  notifications?: AgentNotification[];
+  result: SessionJobListResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionJobListResponse".
+ */
+export interface SessionJobListResponse {
+  jobs?: SessionJobHandleRecordView[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionJobHandleRecordView".
+ */
+export interface SessionJobHandleRecordView {
+  createdAtMs: number;
+  createdByRunId?: string | null;
+  createdByToolCallId?: string | null;
+  createdByTurnId?: number | null;
+  handle: SessionJobHandleView;
+  name?: string | null;
+  namespace: string;
+  providerId: string;
+  queueKey?: string | null;
+  startRequestHash: string;
+  targetId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfSessionJobReadResponse".
+ */
+export interface AgentApiOutcomeOfSessionJobReadResponse {
+  notifications?: AgentNotification[];
+  result: SessionJobReadResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionJobReadResponse".
+ */
+export interface SessionJobReadResponse {
+  jobs?: SessionJobReadEntryView[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionJobReadEntryView".
+ */
+export interface SessionJobReadEntryView {
+  artifacts?: SessionJobArtifactView[];
+  error?: string | null;
+  handle?: SessionJobHandleView | null;
+  outputChunks?: SessionJobOutputChunkView[];
+  outputNextSeq: number;
+  summary?: SessionJobSummaryView | null;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionJobArtifactView".
+ */
+export interface SessionJobArtifactView {
+  kind?: string | null;
+  metadata?: {
+    [k: string]: string;
+  };
+  path: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionJobOutputChunkView".
+ */
+export interface SessionJobOutputChunkView {
+  dataBase64: string;
+  seq: number;
+  stream: SessionJobOutputStreamView;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -3068,6 +3456,19 @@ export interface ContextConfigPatchInput {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ContextRemoveParams".
+ */
+export interface ContextRemoveParams {
+  /**
+   * Active context keys to remove. Removing a key that is already absent
+   * is a per-key no-op (`absent`), so retries are idempotent. Keys under
+   * reserved runtime namespaces (`run.`) are rejected request-level.
+   */
+  keys: string[];
+  sessionId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "EnvironmentProviderHeartbeatParams".
  */
 export interface EnvironmentProviderHeartbeatParams {
@@ -3322,13 +3723,13 @@ export interface RunStartConfig {
  */
 export interface RunStartParams {
   config?: RunStartConfig | null;
-  input: InputItem[];
   sessionId: string;
+  source: RunStartSource;
   /**
    * Client-supplied idempotency key, unique per session. Retrying
-   * `run/start` with the same submission id and the same input/config
+   * `run/start` with the same submission id and the same source/config
    * returns the original run instead of starting a second one; reusing a
-   * submission id with different input or config is rejected.
+   * submission id with different source or config is rejected.
    */
   submissionId?: string | null;
 }
@@ -3403,6 +3804,33 @@ export interface SessionEnvironmentCreateParams {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionEnvironmentCredentialBindParams".
+ */
+export interface SessionEnvironmentCredentialBindParams {
+  envId: string;
+  envName: string;
+  sessionId: string;
+  source: SessionEnvironmentCredentialSourceView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionEnvironmentCredentialListParams".
+ */
+export interface SessionEnvironmentCredentialListParams {
+  envId: string;
+  sessionId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionEnvironmentCredentialUnbindParams".
+ */
+export interface SessionEnvironmentCredentialUnbindParams {
+  envId: string;
+  envName: string;
+  sessionId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionEnvironmentDeactivateParams".
  */
 export interface SessionEnvironmentDeactivateParams {
@@ -3438,6 +3866,81 @@ export interface SessionEventsReadParams {
    * Values above the server cap are clamped, not rejected.
    */
   waitMs?: number | null;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionJobCancelParams".
+ */
+export interface SessionJobCancelParams {
+  force?: boolean;
+  jobs: SessionJobHandleInput[];
+  scope?: SessionJobCancelScopeView & string;
+  sessionId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionJobHandleInput".
+ */
+export interface SessionJobHandleInput {
+  envId?: string | null;
+  jobId: string;
+  sessionId?: string | null;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionJobCreateParams".
+ */
+export interface SessionJobCreateParams {
+  envId?: string | null;
+  jobs: SessionJobStartSpecInput[];
+  requestId: string;
+  sessionId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionJobStartSpecInput".
+ */
+export interface SessionJobStartSpecInput {
+  argv: string[];
+  cwd?: string | null;
+  dependencyPolicy?: SessionJobDependencyPolicyView & string;
+  dependsOn?: SessionJobDependencyInput[];
+  env?: {
+    [k: string]: string;
+  };
+  jobId?: string | null;
+  name?: string | null;
+  queueKey?: string | null;
+  stdin?: string | null;
+  timeoutMs?: number | null;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionJobDependencyInput".
+ */
+export interface SessionJobDependencyInput {
+  jobId?: string | null;
+  name?: string | null;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionJobListParams".
+ */
+export interface SessionJobListParams {
+  envId?: string | null;
+  limit?: number | null;
+  sessionId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionJobReadParams".
+ */
+export interface SessionJobReadParams {
+  afterSeq?: number | null;
+  includeArtifacts?: boolean;
+  jobs: SessionJobHandleInput[];
+  outputBytes?: number | null;
+  sessionId: string;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema

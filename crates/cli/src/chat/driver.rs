@@ -7,10 +7,10 @@ use anyhow::{Context, Result, anyhow};
 use api::{
     AgentApiOutcome, EventCursor, FilesystemToolMode, GenerationConfig, InlineAgentProfile,
     InputItem, ModelConfig, ProfileId, ProfileSource, ReasoningEffort as ApiReasoningEffort,
-    RunStartConfig, RunStartParams, RunStartResponse, SessionConfigInput, SessionEventKindView,
-    SessionEventView, SessionEventsReadParams, SessionItemView, SessionReadParams,
-    SessionStartParams, SessionView, ToolBatchView, ToolCallEventView, ToolCallView,
-    ToolConfigInput, ToolItemStatus,
+    RunStartConfig, RunStartParams, RunStartResponse, RunStartSource, SessionConfigInput,
+    SessionEventKindView, SessionEventView, SessionEventsReadParams, SessionItemView,
+    SessionReadParams, SessionStartParams, SessionView, ToolBatchView, ToolCallEventView,
+    ToolCallView, ToolConfigInput, ToolItemStatus,
 };
 use clap::Args;
 use serde_json::Value;
@@ -457,7 +457,9 @@ impl ChatSessionDriver {
         self.pending_run = Some(tokio::spawn(async move {
             api.start_run(RunStartParams {
                 session_id,
-                input: vec![InputItem::Text { text }],
+                source: RunStartSource::Input {
+                    items: vec![InputItem::Text { text }],
+                },
                 submission_id: Some(new_submission_id()),
                 config: Some(config),
             })
@@ -1037,8 +1039,11 @@ fn project_turns(session: &SessionView, settings: &ChatDraftSettings) -> Vec<Cha
         .runs
         .iter()
         .map(|run| {
-            let user = run
-                .input
+            let input_items = match &run.source {
+                api::RunViewSource::Input { items } => items.as_slice(),
+                api::RunViewSource::Context { .. } => &[] as &[InputItem],
+            };
+            let user = input_items
                 .iter()
                 .enumerate()
                 .find_map(|(index, item)| match item {
@@ -1710,7 +1715,7 @@ mod tests {
         let run = api::RunView {
             id: "run_7".into(),
             status: api::RunStatus::Running,
-            input: Vec::new(),
+            source: api::RunViewSource::Input { items: Vec::new() },
             items: Vec::new(),
             tool_batches: vec![ToolBatchView {
                 id: "tool_batch_1".into(),
@@ -1764,7 +1769,7 @@ mod tests {
         let run = api::RunView {
             id: "run_7".into(),
             status: api::RunStatus::Completed,
-            input: Vec::new(),
+            source: api::RunViewSource::Input { items: Vec::new() },
             items: vec![SessionItemView::ProviderContext {
                 id: "item_43".into(),
                 content_ref: "sha256:mcp".into(),
@@ -1844,7 +1849,7 @@ mod tests {
             runs: vec![api::RunView {
                 id: "run_1".into(),
                 status: api::RunStatus::Running,
-                input: Vec::new(),
+                source: api::RunViewSource::Input { items: Vec::new() },
                 items: Vec::new(),
                 tool_batches: vec![
                     ToolBatchView {
@@ -1946,7 +1951,7 @@ mod tests {
             runs: vec![api::RunView {
                 id: "run_1".into(),
                 status: api::RunStatus::Completed,
-                input: Vec::new(),
+                source: api::RunViewSource::Input { items: Vec::new() },
                 items: vec![
                     SessionItemView::SystemEvent {
                         id: "item_1".into(),
@@ -1998,7 +2003,7 @@ mod tests {
             runs: vec![api::RunView {
                 id: "run_1".into(),
                 status: api::RunStatus::Completed,
-                input: Vec::new(),
+                source: api::RunViewSource::Input { items: Vec::new() },
                 items: vec![SessionItemView::SystemEvent {
                     id: "item_1".into(),
                     text: "reasoning state rs_abc123".into(),
@@ -2234,7 +2239,9 @@ mod tests {
         assert!(!event_needs_snapshot(&SessionEventKindView::RunAccepted {
             run_id: "run_1".into(),
             submission_id: Some("submit_1".into()),
-            input: Vec::new(),
+            source: api::RunAcceptedSourceView::Input {
+                entries: Vec::new(),
+            },
         }));
         assert!(!event_needs_snapshot(&SessionEventKindView::RunStarted {
             run_id: "run_1".into(),

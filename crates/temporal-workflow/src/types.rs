@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
 use engine::{
-    BlobRef, ContextEntryInput, CoreAgentCommand, CoreAgentState, DynamicCommand, RunId, RunStatus,
-    SessionConfig, SessionId, SessionPosition, SubmissionId, ToolBatchId, ToolCallId,
-    ToolInvocationBatchResult, TurnId,
+    BlobRef, ContextEntryInput, ContextEntryKey, CoreAgentCommand, CoreAgentState, DynamicCommand,
+    RunId, RunStatus, SessionConfig, SessionId, SessionPosition, SubmissionId, ToolBatchId,
+    ToolCallId, ToolInvocationBatchResult, TurnId,
     storage::{DynamicUncommittedSessionEvent, SessionRecord},
 };
 use serde::{Deserialize, Serialize};
@@ -22,6 +22,8 @@ pub struct AgentSessionArgs {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentAdmission {
     pub command: DynamicCommand,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_key: Option<ContextEntryKey>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,8 +52,19 @@ pub struct AgentSessionStatus {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentAdmissionFailure {
     pub submission_id: Option<SubmissionId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_key: Option<ContextEntryKey>,
     pub kind: AgentAdmissionFailureKind,
     pub message: String,
+}
+
+impl AgentAdmissionFailure {
+    pub fn with_context_key(mut self, context_key: Option<ContextEntryKey>) -> Self {
+        if self.context_key.is_none() {
+            self.context_key = context_key;
+        }
+        self
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

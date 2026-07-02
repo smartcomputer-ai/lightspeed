@@ -28,6 +28,12 @@
 - [ ] run coding agent (CC or Codex) on sandbox wrappers
 
 ## Message Bridge
+- [x] [P88](p88-media-aware-context-append-and-activation.md) — media-aware
+  `context/append`, context-triggered runs, and eager bridge ingest/activation
+  for current supported media types
+- [ ] [P89](p89-room-context-retention.md) — room context retention and
+  compaction: watermarked drop-oldest pruning via `context/remove`, then
+  summarize-and-replace, so always-on group sessions stay bounded
 - [ ] Password/code-based login in channel (instead of whitelisting)
 - [ ] Support Slack
 

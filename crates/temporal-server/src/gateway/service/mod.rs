@@ -84,8 +84,9 @@ use api::{
     AuthProviderReadParams, AuthProviderReadResponse, BlobGetParams, BlobGetResponse, BlobHasItem,
     BlobHasManyParams, BlobHasManyResponse, BlobPutManyParams, BlobPutManyResponse, BlobPutParams,
     BlobPutResponse, ClientCapabilities, CompactionPolicyInput, ContextAppendParams,
-    ContextAppendResponse, ContextCompactParams, ContextCompactResponse,
-    ContextConfigInput as ApiContextConfigInput, ContextConfigPatchInput,
+    ContextAppendResponse, ContextAppendResult, ContextAppendStatus, ContextCompactParams,
+    ContextRemoveParams, ContextRemoveResponse, ContextRemoveResult, ContextRemoveStatus,
+    ContextCompactResponse, ContextConfigInput as ApiContextConfigInput, ContextConfigPatchInput,
     EnvironmentProviderCapabilitiesView, EnvironmentProviderHeartbeatParams,
     EnvironmentProviderHeartbeatResponse, EnvironmentProviderImplementationView,
     EnvironmentProviderKindView, EnvironmentProviderListParams, EnvironmentProviderListResponse,
@@ -96,17 +97,18 @@ use api::{
     EnvironmentTargetSummaryView, FieldPatch, GenerationConfig, GenerationConfigPatch,
     HostCapabilitiesView, HostControllerConnectionView, HostScopeView, HostTargetAttachRequestView,
     HostTargetCreateRequestView, HostTransportView, InitializeParams, InitializeResponse,
-    InputItem, McpServerCreateParams, McpServerCreateResponse, McpServerDeleteParams,
-    McpServerDeleteResponse, McpServerListParams, McpServerListResponse, McpServerReadParams,
-    McpServerReadResponse, MediaKind, ModelConfig, OutboundAckInput, OutboundMessageView,
-    OutboundOriginView, OutboundPayloadView, OutboundStatusView, OutboxAckParams,
-    OutboxAckResponse, OutboxReadParams, OutboxReadResponse, ProfileApplyParams,
-    ProfileApplyResponse, ProfileApplySummary, ProfileCreateParams, ProfileCreateResponse,
-    ProfileDeleteParams, ProfileDeleteResponse, ProfileDocument, ProfileInstructions,
-    ProfileListParams, ProfileListResponse, ProfileReadParams, ProfileReadResponse, ProfileSource,
-    ProfileUpdateParams, ProfileUpdateResponse, PromptInstructionView, PromptsActiveParams,
-    PromptsActiveResponse, ReasoningEffort, RunCancelParams, RunCancelResponse, RunDefaultsConfig,
-    RunDefaultsPatch, RunLimitsConfig, RunStartConfig, RunStartParams, RunStartResponse, RunView,
+    InputAdmissionFailureKind, InputAdmissionFailureView, InputItem, McpServerCreateParams,
+    McpServerCreateResponse, McpServerDeleteParams, McpServerDeleteResponse, McpServerListParams,
+    McpServerListResponse, McpServerReadParams, McpServerReadResponse, MediaKind, ModelConfig,
+    OutboundAckInput, OutboundMessageView, OutboundOriginView, OutboundPayloadView,
+    OutboundStatusView, OutboxAckParams, OutboxAckResponse, OutboxReadParams, OutboxReadResponse,
+    ProfileApplyParams, ProfileApplyResponse, ProfileApplySummary, ProfileCreateParams,
+    ProfileCreateResponse, ProfileDeleteParams, ProfileDeleteResponse, ProfileDocument,
+    ProfileInstructions, ProfileListParams, ProfileListResponse, ProfileReadParams,
+    ProfileReadResponse, ProfileSource, ProfileUpdateParams, ProfileUpdateResponse,
+    PromptInstructionView, PromptsActiveParams, PromptsActiveResponse, ReasoningEffort,
+    RunCancelParams, RunCancelResponse, RunDefaultsConfig, RunDefaultsPatch, RunLimitsConfig,
+    RunStartConfig, RunStartParams, RunStartResponse, RunStartSource, RunView,
     SandboxTargetSpecView, ServerCapabilities, ServerInfo, SessionCloseParams,
     SessionCloseResponse, SessionConfigInput, SessionConfigPatchInput,
     SessionEnvironmentActivateParams, SessionEnvironmentActivateResponse,
@@ -148,7 +150,8 @@ use api::{
 use api_projection::{
     CoreAgentProjector, MAX_EVENT_PAGE_LIMIT, ProjectSession, api_kind_from_str, api_run_id,
     decode_dynamic_entry, event_cursor, event_page_limit, map_session_store_error,
-    parse_api_run_id, read_all_session_entries, replay_core_agent_state,
+    parse_api_run_id, project_context_entry_inputs, read_all_session_entries,
+    replay_core_agent_state,
 };
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
@@ -209,6 +212,10 @@ const DEFAULT_OPERATION_TIMEOUT: Duration = Duration::from_secs(90);
 /// the cap are clamped, not rejected. The gateway HTTP request timeout must
 /// stay above this cap.
 const DEFAULT_EVENTS_WAIT_CAP: Duration = Duration::from_secs(30);
+/// Cap on `activationText` returned per `context/append` entry. The committed
+/// context blob is authoritative; activation text only needs enough of the
+/// head for trigger matching.
+const ACTIVATION_TEXT_MAX_BYTES: usize = 4096;
 
 /// Default public base URL for the gateway-hosted OAuth callback; matches
 /// `DEFAULT_GATEWAY_BIND`. Hosted deployments must set the real public URL.
@@ -245,10 +252,15 @@ enum ExistingAdmittedRunSubmission {
     Reject,
 }
 
+pub(super) enum ContextAppendWaitOutcome {
+    Applied { entry: ContextEntryInput },
+    Failed { failure: AgentAdmissionFailure },
+}
+
 fn existing_run_submission(
     state: &engine::CoreAgentState,
     submission_id: &SubmissionId,
-    input: &[ContextEntryInput],
+    source: &engine::RunRequestSource,
     run_config: &RunConfig,
 ) -> Option<ExistingRunSubmission> {
     if let Some(active) = state
@@ -258,7 +270,9 @@ fn existing_run_submission(
         .filter(|run| run.submission_id.as_ref() == Some(submission_id))
     {
         return Some(
-            if active.input.input == input && &active.run_config == run_config {
+            if active.source.matches_request(source)
+                && &active.run_config == run_config
+            {
                 ExistingRunSubmission::ReturnRun {
                     run_id: active.run_id,
                     status: active.status,
@@ -274,7 +288,7 @@ fn existing_run_submission(
         .iter()
         .find(|run| run.submission_id.as_ref() == Some(submission_id))
     {
-        if queued.input != input || &queued.run_config != run_config {
+        if !queued.source.matches_request(source) || &queued.run_config != run_config {
             return Some(ExistingRunSubmission::Reject);
         }
         return None;
@@ -285,7 +299,7 @@ fn existing_run_submission(
         .iter()
         .find(|run| run.submission_id.as_ref() == Some(submission_id))
     {
-        let digest = run_submission_digest(input, run_config);
+        let digest = engine::run_submission_digest(source, run_config);
         return Some(match completed.submission_digest {
             Some(existing) if existing != digest => ExistingRunSubmission::Reject,
             _ => ExistingRunSubmission::ReturnRun {
@@ -300,7 +314,7 @@ fn existing_run_submission(
 fn existing_admitted_run_submission(
     state: &engine::CoreAgentState,
     submission_id: &SubmissionId,
-    input: &[ContextEntryInput],
+    source: &engine::RunRequestSource,
     run_config: &RunConfig,
 ) -> Option<ExistingAdmittedRunSubmission> {
     if let Some(active) = state
@@ -310,7 +324,9 @@ fn existing_admitted_run_submission(
         .filter(|run| run.submission_id.as_ref() == Some(submission_id))
     {
         return Some(
-            if active.input.input == input && &active.run_config == run_config {
+            if active.source.matches_request(source)
+                && &active.run_config == run_config
+            {
                 ExistingAdmittedRunSubmission::ReturnRun {
                     run_id: active.run_id,
                 }
@@ -326,7 +342,9 @@ fn existing_admitted_run_submission(
         .find(|run| run.submission_id.as_ref() == Some(submission_id))
     {
         return Some(
-            if queued.input == input && &queued.run_config == run_config {
+            if queued.source.matches_request(source)
+                && &queued.run_config == run_config
+            {
                 ExistingAdmittedRunSubmission::ReturnRun {
                     run_id: queued.run_id,
                 }
@@ -341,7 +359,7 @@ fn existing_admitted_run_submission(
         .iter()
         .find(|run| run.submission_id.as_ref() == Some(submission_id))
     {
-        let digest = run_submission_digest(input, run_config);
+        let digest = engine::run_submission_digest(source, run_config);
         return Some(match completed.submission_digest {
             Some(existing) if existing != digest => ExistingAdmittedRunSubmission::Reject,
             _ => ExistingAdmittedRunSubmission::ReturnRun {
@@ -352,23 +370,178 @@ fn existing_admitted_run_submission(
     None
 }
 
-fn run_submission_digest(input: &[ContextEntryInput], run_config: &RunConfig) -> u64 {
-    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
-    let bytes = serde_json::to_vec(&(input, run_config))
-        .expect("run submission payload serializes to JSON");
-    let mut hash = FNV_OFFSET;
-    for byte in bytes {
-        hash ^= u64::from(byte);
-        hash = hash.wrapping_mul(FNV_PRIME);
-    }
-    hash
-}
-
 fn duplicate_submission_error(submission_id: &SubmissionId) -> AgentApiError {
     AgentApiError::rejected(format!(
         "submission id {submission_id} was already used by a run with different input or run config"
     ))
+}
+
+async fn context_append_result(
+    store: &dyn BlobStore,
+    key: String,
+    status: ContextAppendStatus,
+    input: &ContextEntryInput,
+    submitted_text: Option<&str>,
+) -> Result<ContextAppendResult, AgentApiError> {
+    let entry = project_context_entry_inputs(std::slice::from_ref(input))
+        .into_iter()
+        .next();
+    let activation_text = if is_audio_transcript_entry(input) {
+        let text = store
+            .read_text(&input.content_ref)
+            .await
+            .map_err(map_input_blob_store_error)?;
+        Some(crate::transcript::transcript_activation_text(&text).to_owned())
+    } else if context_append_entry_has_activation_text(input) {
+        // The submitted text is reused when it produced this exact entry so
+        // plain-text appends do not pay a blob read per response entry.
+        match submitted_text {
+            Some(text) => Some(text.to_owned()),
+            None => Some(
+                store
+                    .read_text(&input.content_ref)
+                    .await
+                    .map_err(map_input_blob_store_error)?,
+            ),
+        }
+    } else {
+        None
+    };
+    let (activation_text, activation_text_truncated) = match activation_text {
+        Some(text) => {
+            let (text, truncated) = capped_activation_text(text);
+            (Some(text), truncated)
+        }
+        None => (None, false),
+    };
+    Ok(ContextAppendResult {
+        key,
+        status,
+        entry,
+        failure: None,
+        activation_text,
+        activation_text_truncated,
+    })
+}
+
+fn capped_activation_text(text: String) -> (String, bool) {
+    if text.len() <= ACTIVATION_TEXT_MAX_BYTES {
+        return (text, false);
+    }
+    let mut end = ACTIVATION_TEXT_MAX_BYTES;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    (text[..end].to_owned(), true)
+}
+
+fn context_append_entry_has_activation_text(input: &ContextEntryInput) -> bool {
+    matches!(
+        &input.kind,
+        ContextEntryKind::Message {
+            role: ContextMessageRole::User
+        }
+    ) && input.preview.is_none()
+        && input
+            .media_type
+            .as_deref()
+            .map(|media_type| {
+                let media_type = media_type.trim().to_ascii_lowercase();
+                media_type.is_empty() || media_type == "text/plain"
+            })
+            .unwrap_or(true)
+}
+
+fn context_append_failed_result(
+    key: String,
+    failure: InputAdmissionFailureView,
+) -> ContextAppendResult {
+    ContextAppendResult {
+        key,
+        status: ContextAppendStatus::Failed,
+        entry: None,
+        failure: Some(failure),
+        activation_text: None,
+        activation_text_truncated: false,
+    }
+}
+
+fn active_entry_input(entry: &ContextEntry) -> ContextEntryInput {
+    ContextEntryInput {
+        kind: entry.kind.clone(),
+        content_ref: entry.content_ref.clone(),
+        media_type: entry.media_type.clone(),
+        preview: entry.preview.clone(),
+        provider_kind: entry.provider_kind.clone(),
+        provider_item_id: entry.provider_item_id.clone(),
+        token_estimate: entry.token_estimate.clone(),
+    }
+}
+
+fn active_context_entry_matches_input(active: &ContextEntry, input: &ContextEntryInput) -> bool {
+    let active_input = active_entry_input(active);
+    active_input == *input || audio_input_matches_transcript(input, &active_input)
+}
+
+fn audio_input_matches_transcript(input: &ContextEntryInput, active: &ContextEntryInput) -> bool {
+    input
+        .media_type
+        .as_deref()
+        .is_some_and(|mime| mime.trim().to_ascii_lowercase().starts_with("audio/"))
+        && is_audio_transcript_entry(active)
+        && active.provider_item_id.as_deref() == Some(input.content_ref.as_str())
+}
+
+fn is_audio_transcript_entry(input: &ContextEntryInput) -> bool {
+    input.provider_kind.as_deref() == Some(crate::transcript::AUDIO_TRANSCRIPT_PROVIDER_KIND)
+}
+
+fn input_admission_failure_from_api_error(error: AgentApiError) -> InputAdmissionFailureView {
+    let kind = match error.kind {
+        AgentApiErrorKind::UnsupportedAudioMime => InputAdmissionFailureKind::UnsupportedAudioMime,
+        AgentApiErrorKind::AudioBlobTooLarge => InputAdmissionFailureKind::BlobTooLarge,
+        AgentApiErrorKind::AudioDurationTooLong => InputAdmissionFailureKind::AudioDurationTooLong,
+        AgentApiErrorKind::TranscoderUnavailable => {
+            InputAdmissionFailureKind::TranscoderUnavailable
+        }
+        AgentApiErrorKind::TranscodeFailure => InputAdmissionFailureKind::TranscodeFailure,
+        AgentApiErrorKind::TranscriptionFailure => InputAdmissionFailureKind::TranscriptionFailure,
+        AgentApiErrorKind::NotFound => InputAdmissionFailureKind::BlobMissing,
+        _ => InputAdmissionFailureKind::UnsupportedMedia,
+    };
+    InputAdmissionFailureView {
+        kind,
+        message: error.message,
+    }
+}
+
+fn input_admission_failure_from_workflow(
+    failure: &AgentAdmissionFailure,
+) -> InputAdmissionFailureView {
+    let kind = match failure.kind {
+        AgentAdmissionFailureKind::UnsupportedAudioMime => {
+            InputAdmissionFailureKind::UnsupportedAudioMime
+        }
+        AgentAdmissionFailureKind::AudioBlobMissing => InputAdmissionFailureKind::BlobMissing,
+        AgentAdmissionFailureKind::AudioBlobTooLarge => InputAdmissionFailureKind::BlobTooLarge,
+        AgentAdmissionFailureKind::AudioDurationTooLong => {
+            InputAdmissionFailureKind::AudioDurationTooLong
+        }
+        AgentAdmissionFailureKind::TranscoderUnavailable => {
+            InputAdmissionFailureKind::TranscoderUnavailable
+        }
+        AgentAdmissionFailureKind::TranscodeFailure => InputAdmissionFailureKind::TranscodeFailure,
+        AgentAdmissionFailureKind::TranscriptionFailure => {
+            InputAdmissionFailureKind::TranscriptionFailure
+        }
+        AgentAdmissionFailureKind::InvalidCommand | AgentAdmissionFailureKind::RejectedCommand => {
+            InputAdmissionFailureKind::AdmissionRejected
+        }
+    };
+    InputAdmissionFailureView {
+        kind,
+        message: failure.message.clone(),
+    }
 }
 
 pub struct GatewayAgentApiBuilder {
@@ -711,8 +884,9 @@ impl GatewayAgentApi {
             .await?;
         let run_config = self.run_config_for_start(session_id, None).await?;
         let input = run_input_from_api(self.store.as_ref(), &input).await?;
+        let source = engine::RunRequestSource::Input { input };
         if let Some(existing) =
-            existing_admitted_run_submission(&loaded.state, &submission_id, &input, &run_config)
+            existing_admitted_run_submission(&loaded.state, &submission_id, &source, &run_config)
         {
             return match existing {
                 ExistingAdmittedRunSubmission::ReturnRun { run_id } => {
@@ -733,15 +907,15 @@ impl GatewayAgentApi {
             .as_ref()
             .map(|status| status.admission_failures.len())
             .unwrap_or(0);
-        let command = engine::CoreAgentCodec
-            .encode_command(&CoreAgentCommand::RequestRun {
+        self.submit_core_command(
+            session_id,
+            CoreAgentCommand::RequestRun(engine::RunRequestCommand {
                 submission_id: Some(submission_id.clone()),
-                input,
+                source,
                 run_config,
-            })
-            .map_err(|error| AgentApiError::internal(error.to_string()))?;
-        self.signal_submit_admission(session_id, AgentAdmission { command })
-            .await?;
+            }),
+        )
+        .await?;
         let run_id = self
             .wait_for_run_admitted(session_id, &submission_id, baseline_admission_failures)
             .await?;
@@ -1068,14 +1242,14 @@ impl AgentApiService for GatewayAgentApi {
             .config_revision
             .checked_add(1)
             .ok_or_else(|| AgentApiError::internal("config revision exhausted"))?;
-        let command = engine::CoreAgentCodec
-            .encode_command(&CoreAgentCommand::PatchSessionConfig {
+        self.submit_core_command(
+            &session_id,
+            CoreAgentCommand::PatchSessionConfig {
                 expected_revision: Some(loaded.state.lifecycle.config_revision),
                 patch,
-            })
-            .map_err(|error| AgentApiError::internal(error.to_string()))?;
-        self.signal_submit_admission(&session_id, AgentAdmission { command })
-            .await?;
+            },
+        )
+        .await?;
         self.wait_for_config_revision(&session_id, target_revision, baseline_failures)
             .await?;
         let loaded = self.load_session_state(&session_id).await?;
@@ -1228,10 +1402,7 @@ impl AgentApiService for GatewayAgentApi {
                 "session cannot close with active work",
             ));
         }
-        let command = engine::CoreAgentCodec
-            .encode_command(&CoreAgentCommand::CloseSession)
-            .map_err(|error| AgentApiError::internal(error.to_string()))?;
-        self.signal_submit_admission(&session_id, AgentAdmission { command })
+        self.submit_core_command(&session_id, CoreAgentCommand::CloseSession)
             .await?;
         let session = self.wait_for_closed_session(&session_id).await?;
         Ok(AgentApiOutcome::new(SessionCloseResponse { session }))
@@ -1266,6 +1437,18 @@ impl AgentApiService for GatewayAgentApi {
     ) -> Result<AgentApiOutcome<ContextAppendResponse>, AgentApiError> {
         const MAX_CONTEXT_APPEND_ENTRIES: usize = 64;
 
+        enum PreparedAppend {
+            Ready {
+                key: ContextEntryKey,
+                input: ContextEntryInput,
+                /// Submitted text kept in hand so the response does not
+                /// re-read the blob it was just written from. Only valid for
+                /// the entry it produced (checked via `content_ref`).
+                text: Option<String>,
+            },
+            Failed(ContextAppendResult),
+        }
+
         let session_id = SessionId::try_new(params.session_id).map_err(|error| {
             AgentApiError::invalid_request(format!("invalid session id: {error}"))
         })?;
@@ -1280,7 +1463,7 @@ impl AgentApiService for GatewayAgentApi {
             )));
         }
 
-        let mut keyed = Vec::with_capacity(params.entries.len());
+        let mut prepared = Vec::with_capacity(params.entries.len());
         let mut seen_keys = BTreeSet::new();
         for entry in &params.entries {
             let key = ContextEntryKey::try_new(entry.key.clone()).map_err(|error| {
@@ -1291,63 +1474,233 @@ impl AgentApiService for GatewayAgentApi {
                     "duplicate context key in append batch: {key}"
                 )));
             }
-            let input = context_entry_input_from_api(self.store.as_ref(), &entry.item).await?;
-            keyed.push((key, input));
+            match context_entry_input_from_api(self.store.as_ref(), &entry.item).await {
+                Ok(input) => {
+                    let text = match &entry.item {
+                        InputItem::Text { text } => Some(text.trim().to_owned()),
+                        _ => None,
+                    };
+                    prepared.push(PreparedAppend::Ready { key, input, text });
+                }
+                Err(error) if matches!(entry.item, InputItem::Media { .. }) => {
+                    prepared.push(PreparedAppend::Failed(context_append_failed_result(
+                        key.as_str().to_owned(),
+                        input_admission_failure_from_api_error(error),
+                    )));
+                }
+                Err(error) => return Err(error),
+            }
         }
 
         let loaded = self.load_session_state(&session_id).await?;
-        self.require_open_idle_session(&session_id, &loaded, "context append")?;
-        let mut applied_keys = Vec::new();
-        let mut unchanged_keys = Vec::new();
+        if loaded.state.lifecycle.status != CoreAgentStatus::Open {
+            return Err(AgentApiError::rejected(format!(
+                "session is not open: {session_id}"
+            )));
+        }
+        let mut ordered = Vec::with_capacity(prepared.len());
         let mut pending = Vec::new();
-        for (key, input) in keyed {
-            let unchanged = loaded.state.context.entries.iter().any(|active| {
-                active.key.as_ref() == Some(&key)
-                    && active.kind == input.kind
-                    && active.content_ref == input.content_ref
-                    && active.media_type == input.media_type
-                    && active.preview == input.preview
-                    && active.provider_kind == input.provider_kind
-                    && active.provider_item_id == input.provider_item_id
-                    && active.token_estimate == input.token_estimate
-            });
-            if unchanged {
-                unchanged_keys.push(key.as_str().to_owned());
-            } else {
-                applied_keys.push(key.as_str().to_owned());
-                pending.push((key, input));
+        for prepared in prepared {
+            match prepared {
+                PreparedAppend::Failed(result) => ordered.push(PreparedAppend::Failed(result)),
+                PreparedAppend::Ready { key, input, text } => {
+                    if let Some(active) = loaded
+                        .state
+                        .context
+                        .entries
+                        .iter()
+                        .find(|active| active.key.as_ref() == Some(&key))
+                        .filter(|active| active_context_entry_matches_input(active, &input))
+                    {
+                        let effective = active_entry_input(active);
+                        let text = text.filter(|_| effective.content_ref == input.content_ref);
+                        ordered.push(PreparedAppend::Ready {
+                            key,
+                            input: effective,
+                            text,
+                        });
+                    } else {
+                        ordered.push(PreparedAppend::Ready {
+                            key: key.clone(),
+                            input: input.clone(),
+                            text,
+                        });
+                        pending.push((key, input));
+                    }
+                }
             }
         }
-        if pending.is_empty() {
-            return Ok(AgentApiOutcome::new(ContextAppendResponse {
-                context_revision: loaded.state.context.revision,
-                applied_keys,
-                unchanged_keys,
-            }));
-        }
-
-        let baseline_failures = self
-            .query_status_optional(&session_id)
-            .await?
-            .map(|status| status.admission_failures.len())
-            .unwrap_or(0);
-        for (key, entry) in &pending {
-            self.submit_core_command(
+        let (context_revision, outcomes) = if pending.is_empty() {
+            (loaded.state.context.revision, BTreeMap::new())
+        } else {
+            let baseline_failures = self
+                .query_status_optional(&session_id)
+                .await?
+                .map(|status| status.admission_failures.len())
+                .unwrap_or(0);
+            self.submit_core_commands(
                 &session_id,
-                CoreAgentCommand::UpsertContext {
-                    key: key.clone(),
-                    entry: entry.clone(),
-                },
+                pending
+                    .iter()
+                    .map(|(key, entry)| CoreAgentCommand::UpsertContext {
+                        key: key.clone(),
+                        entry: entry.clone(),
+                    })
+                    .collect(),
             )
             .await?;
+            self.wait_for_context_append_outcomes(&session_id, &pending, baseline_failures)
+                .await?
+        };
+        let mut response_results = Vec::with_capacity(ordered.len());
+        for item in ordered {
+            match item {
+                PreparedAppend::Failed(result) => response_results.push(result),
+                PreparedAppend::Ready { key, input, text } => {
+                    let result = match outcomes.get(&key) {
+                        Some(ContextAppendWaitOutcome::Applied { entry }) => {
+                            let text = text
+                                .as_deref()
+                                .filter(|_| entry.content_ref == input.content_ref);
+                            context_append_result(
+                                self.store.as_ref(),
+                                key.as_str().to_owned(),
+                                ContextAppendStatus::Applied,
+                                entry,
+                                text,
+                            )
+                            .await?
+                        }
+                        Some(ContextAppendWaitOutcome::Failed { failure }) => {
+                            context_append_failed_result(
+                                key.as_str().to_owned(),
+                                input_admission_failure_from_workflow(failure),
+                            )
+                        }
+                        None => {
+                            context_append_result(
+                                self.store.as_ref(),
+                                key.as_str().to_owned(),
+                                ContextAppendStatus::Unchanged,
+                                &input,
+                                text.as_deref(),
+                            )
+                            .await?
+                        }
+                    };
+                    response_results.push(result);
+                }
+            }
         }
-        let context_revision = self
-            .wait_for_context_entries_applied(&session_id, &pending, baseline_failures)
-            .await?;
         Ok(AgentApiOutcome::new(ContextAppendResponse {
             context_revision,
-            applied_keys,
-            unchanged_keys,
+            results: response_results,
+        }))
+    }
+
+    async fn remove_context(
+        &self,
+        params: ContextRemoveParams,
+    ) -> Result<AgentApiOutcome<ContextRemoveResponse>, AgentApiError> {
+        const MAX_CONTEXT_REMOVE_KEYS: usize = 64;
+
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        if params.keys.is_empty() {
+            return Err(AgentApiError::invalid_request(
+                "context/remove requires at least one key",
+            ));
+        }
+        if params.keys.len() > MAX_CONTEXT_REMOVE_KEYS {
+            return Err(AgentApiError::invalid_request(format!(
+                "context/remove accepts at most {MAX_CONTEXT_REMOVE_KEYS} keys per call"
+            )));
+        }
+        let mut keys = Vec::with_capacity(params.keys.len());
+        let mut seen_keys = BTreeSet::new();
+        for key in params.keys {
+            let key = ContextEntryKey::try_new(key).map_err(|error| {
+                AgentApiError::invalid_request(format!("invalid context key: {error}"))
+            })?;
+            engine::validate_external_context_key(&key).map_err(|error| {
+                AgentApiError::invalid_request(format!("invalid context key: {error}"))
+            })?;
+            if !seen_keys.insert(key.clone()) {
+                return Err(AgentApiError::invalid_request(format!(
+                    "duplicate context key in remove batch: {key}"
+                )));
+            }
+            keys.push(key);
+        }
+
+        let loaded = self.load_session_state(&session_id).await?;
+        if loaded.state.lifecycle.status != CoreAgentStatus::Open {
+            return Err(AgentApiError::rejected(format!(
+                "session is not open: {session_id}"
+            )));
+        }
+        let mut pending = Vec::new();
+        let mut absent = BTreeSet::new();
+        for key in &keys {
+            let present = loaded
+                .state
+                .context
+                .entries
+                .iter()
+                .any(|entry| entry.key.as_ref() == Some(key));
+            if present {
+                pending.push(key.clone());
+            } else {
+                absent.insert(key.clone());
+            }
+        }
+        let (context_revision, outcomes) = if pending.is_empty() {
+            (loaded.state.context.revision, BTreeMap::new())
+        } else {
+            let baseline_failures = self
+                .query_status_optional(&session_id)
+                .await?
+                .map(|status| status.admission_failures.len())
+                .unwrap_or(0);
+            self.submit_core_commands(
+                &session_id,
+                pending
+                    .iter()
+                    .map(|key| CoreAgentCommand::RemoveContext { key: key.clone() })
+                    .collect(),
+            )
+            .await?;
+            self.wait_for_context_keys_removed(&session_id, &pending, baseline_failures)
+                .await?
+        };
+        let results = keys
+            .into_iter()
+            .map(|key| {
+                if absent.contains(&key) {
+                    return ContextRemoveResult {
+                        key: key.as_str().to_owned(),
+                        status: ContextRemoveStatus::Absent,
+                        failure: None,
+                    };
+                }
+                match outcomes.get(&key) {
+                    Some(Some(failure)) => ContextRemoveResult {
+                        key: key.as_str().to_owned(),
+                        status: ContextRemoveStatus::Failed,
+                        failure: Some(input_admission_failure_from_workflow(failure)),
+                    },
+                    _ => ContextRemoveResult {
+                        key: key.as_str().to_owned(),
+                        status: ContextRemoveStatus::Removed,
+                        failure: None,
+                    },
+                }
+            })
+            .collect();
+        Ok(AgentApiOutcome::new(ContextRemoveResponse {
+            context_revision,
+            results,
         }))
     }
 
@@ -1431,9 +1784,34 @@ impl AgentApiService for GatewayAgentApi {
         let run_config = self
             .run_config_for_start(&session_id, params.config)
             .await?;
-        let input = run_input_from_api(self.store.as_ref(), &params.input).await?;
+        let source = match params.source {
+            RunStartSource::Input { items } => engine::RunRequestSource::Input {
+                input: run_input_from_api(self.store.as_ref(), &items).await?,
+            },
+            RunStartSource::Context { keys } => {
+                if keys.is_empty() {
+                    return Err(AgentApiError::invalid_request(
+                        "run/start source=context requires at least one key",
+                    ));
+                }
+                let mut parsed = Vec::with_capacity(keys.len());
+                let mut seen = BTreeSet::new();
+                for key in keys {
+                    let key = ContextEntryKey::try_new(key).map_err(|error| {
+                        AgentApiError::invalid_request(format!("invalid context key: {error}"))
+                    })?;
+                    if !seen.insert(key.clone()) {
+                        return Err(AgentApiError::invalid_request(format!(
+                            "duplicate trigger context key: {key}"
+                        )));
+                    }
+                    parsed.push(key);
+                }
+                engine::RunRequestSource::Context { keys: parsed }
+            }
+        };
         if let Some(existing) =
-            existing_run_submission(&loaded.state, &submission_id, &input, &run_config)
+            existing_run_submission(&loaded.state, &submission_id, &source, &run_config)
         {
             return match existing {
                 ExistingRunSubmission::ReturnRun { run_id, status } => {
@@ -1455,15 +1833,15 @@ impl AgentApiService for GatewayAgentApi {
             .unwrap_or(0);
         let wait_for_admission_drain = client_supplied_submission_id
             || status_has_submission(status_before_signal.as_ref(), &submission_id);
-        let command = engine::CoreAgentCodec
-            .encode_command(&CoreAgentCommand::RequestRun {
+        self.submit_core_command(
+            &session_id,
+            CoreAgentCommand::RequestRun(engine::RunRequestCommand {
                 submission_id: Some(submission_id.clone()),
-                input,
+                source,
                 run_config,
-            })
-            .map_err(|error| AgentApiError::internal(error.to_string()))?;
-        self.signal_submit_admission(&session_id, AgentAdmission { command })
-            .await?;
+            }),
+        )
+        .await?;
         let run = self
             .wait_for_run_accepted(
                 &session_id,
@@ -1512,10 +1890,7 @@ impl AgentApiService for GatewayAgentApi {
                 )));
             }
         }
-        let command = engine::CoreAgentCodec
-            .encode_command(&CoreAgentCommand::RequestRunCancellation)
-            .map_err(|error| AgentApiError::internal(error.to_string()))?;
-        self.signal_submit_admission(&session_id, AgentAdmission { command })
+        self.submit_core_command(&session_id, CoreAgentCommand::RequestRunCancellation)
             .await?;
         let run = self
             .wait_for_cancelled_run(&session_id, requested_run_id)

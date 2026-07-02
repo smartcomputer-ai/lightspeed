@@ -88,11 +88,13 @@ async fn fake_llm_tool_loop_completes_a_run() {
         .drive_command(DriveCommand {
             session_id: session_id.clone(),
             observed_at_ms: 13,
-            command: CoreAgentCommand::RequestRun {
+            command: CoreAgentCommand::RequestRun(engine::RunRequestCommand {
                 submission_id: Some(SubmissionId::new("submit_test")),
-                input: user_input(input_ref),
+                source: engine::RunRequestSource::Input {
+                    input: user_input(input_ref),
+                },
                 run_config: default_run_config(),
-            },
+            }),
             max_steps: Some(64),
         })
         .await
@@ -134,11 +136,13 @@ fn core_command_admission_uses_core_agent_codec_shape() {
     use engine::CommandCodec;
 
     let codec = CoreAgentCodec;
-    let command = CoreAgentCommand::RequestRun {
+    let command = CoreAgentCommand::RequestRun(engine::RunRequestCommand {
         submission_id: Some(SubmissionId::new("submit_test")),
-        input: user_input(BlobRef::from_bytes(b"hello")),
+        source: engine::RunRequestSource::Input {
+            input: user_input(BlobRef::from_bytes(b"hello")),
+        },
         run_config: default_run_config(),
-    };
+    });
     let dynamic = codec.encode_command(&command).expect("encode command");
     assert_eq!(dynamic.kind, "lightspeed.core.command");
     assert_eq!(

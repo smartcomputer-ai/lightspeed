@@ -5,9 +5,9 @@ use std::sync::Arc;
 use api::{
     AgentApiError, AgentApiService, AgentProfile, AgentProfileSummary, EventCursor, InputItem,
     MediaKind, ProfileId, ProfileListParams, ProfileReadParams, ProfileSource, RunCancelParams,
-    RunStartParams, RunStatus as ApiRunStatus, SessionCloseParams, SessionEnvironmentListParams,
-    SessionEnvironmentListResponse, SessionEventsReadParams, SessionEventsReadResponse,
-    SessionReadParams, SessionView,
+    RunStartParams, RunStartSource, RunStatus as ApiRunStatus, SessionCloseParams,
+    SessionEnvironmentListParams, SessionEnvironmentListResponse, SessionEventsReadParams,
+    SessionEventsReadResponse, SessionReadParams, SessionView,
 };
 use api_projection::{MAX_EVENT_PAGE_LIMIT, read_all_session_entries, replay_core_agent_state};
 use async_trait::async_trait;
@@ -1059,7 +1059,7 @@ impl FleetChildRuntime for AgentApiFleetRuntime {
             .api
             .start_run(RunStartParams {
                 session_id: session_id.as_str().to_owned(),
-                input,
+                source: RunStartSource::Input { items: input },
                 submission_id: Some(submission_id.as_str().to_owned()),
                 config: None,
             })
@@ -4111,13 +4111,15 @@ mod tests {
         events.extend([
             core_uncommitted_event(
                 30,
-                engine::CoreAgentEventKind::Run(engine::RunEvent::Accepted {
-                    run_id,
-                    submission_id: None,
-                    input: Vec::new(),
-                    run_config: RunConfig::default(),
-                    config_revision: 0,
-                }),
+                engine::CoreAgentEventKind::Run(engine::RunEvent::Accepted(
+                    engine::AcceptedRunEvent {
+                        run_id,
+                        submission_id: None,
+                        source: engine::RunSource::Input { input: Vec::new() },
+                        run_config: RunConfig::default(),
+                        config_revision: 0,
+                    },
+                )),
             ),
             core_uncommitted_event(
                 31,
@@ -4235,7 +4237,7 @@ mod tests {
         api::RunView {
             id: run_id.to_owned(),
             status,
-            input: Vec::new(),
+            source: api::RunViewSource::Input { items: Vec::new() },
             items: Vec::new(),
             tool_batches: Vec::new(),
         }

@@ -18,7 +18,7 @@ use api::{
     EnvironmentProviderRegisterParams, HostControllerConnectionView, HostTargetAttachRequestView,
     HostTargetCreateRequestView, HostTransportView, InputItem, ProfileCreateParams,
     ProfileDeleteParams, ProfileDocument, ProfileEnvironment, ProfileId, ProfileSource,
-    RunStartParams, RunStatus, SandboxTargetSpecView, SessionConfigInput,
+    RunStartParams, RunStartSource, RunStatus, SandboxTargetSpecView, SessionConfigInput,
     SessionEnvironmentAttachParams, SessionEnvironmentCloseParams, SessionEnvironmentCreateParams,
     SessionEnvironmentCredentialBindParams, SessionEnvironmentCredentialListParams,
     SessionEnvironmentCredentialSourceView, SessionEnvironmentCredentialUnbindParams,
@@ -278,9 +278,11 @@ async fn run_host_bridge_client(
         .start_run(RunStartParams {
             submission_id: None,
             session_id: session_id.as_str().to_owned(),
-            input: vec![InputItem::Text {
-                text: "write a file through the host bridge, then read it back".to_owned(),
-            }],
+            source: RunStartSource::Input {
+                items: vec![InputItem::Text {
+                    text: "write a file through the host bridge, then read it back".to_owned(),
+                }],
+            },
             config: None,
         })
         .await?;
@@ -382,9 +384,11 @@ async fn run_host_bridge_jobs_client(
         .start_run(RunStartParams {
             submission_id: None,
             session_id: session_id.as_str().to_owned(),
-            input: vec![InputItem::Text {
-                text: "start, list, wait for, and read a durable environment job".to_owned(),
-            }],
+            source: RunStartSource::Input {
+                items: vec![InputItem::Text {
+                    text: "start, list, wait for, and read a durable environment job".to_owned(),
+                }],
+            },
             config: None,
         })
         .await?;
@@ -1190,9 +1194,11 @@ async fn run_fake_provider_client(
         .start_run(RunStartParams {
             submission_id: None,
             session_id: session_id.as_str().to_owned(),
-            input: vec![InputItem::Text {
-                text: "run a command in the attached provider target".to_owned(),
-            }],
+            source: RunStartSource::Input {
+                items: vec![InputItem::Text {
+                    text: "run a command in the attached provider target".to_owned(),
+                }],
+            },
             config: None,
         })
         .await?;
@@ -1243,9 +1249,11 @@ async fn run_fake_provider_client(
         .start_run(RunStartParams {
             submission_id: None,
             session_id: session_id.as_str().to_owned(),
-            input: vec![InputItem::Text {
-                text: "run a command in the created provider target".to_owned(),
-            }],
+            source: RunStartSource::Input {
+                items: vec![InputItem::Text {
+                    text: "run a command in the created provider target".to_owned(),
+                }],
+            },
             config: None,
         })
         .await?;
@@ -1379,9 +1387,11 @@ async fn run_profile_environment_client(
         .start_run(RunStartParams {
             submission_id: None,
             session_id: session_id.as_str().to_owned(),
-            input: vec![InputItem::Text {
-                text: "run a command in the profile attached provider target".to_owned(),
-            }],
+            source: RunStartSource::Input {
+                items: vec![InputItem::Text {
+                    text: "run a command in the profile attached provider target".to_owned(),
+                }],
+            },
             config: None,
         })
         .await?;

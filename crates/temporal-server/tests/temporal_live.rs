@@ -4,14 +4,14 @@ use std::{env, future::Future, sync::Arc, time::Duration};
 
 use api::{
     AgentApiErrorKind, AgentApiService, AgentProfileInput, AgentProfileUpdatePatch,
-    ContextAppendEntry, ContextAppendParams, FieldPatch, InitializeParams, InputItem,
-    McpServerCreateParams, McpServerDeleteParams, McpServerListParams, McpServerReadParams,
-    McpServerStatus, ProfileApplyParams, ProfileCreateParams, ProfileDeleteParams, ProfileDocument,
-    ProfileId, ProfileInstructions, ProfileListParams, ProfileMcpLink, ProfileReadParams,
-    ProfileSource, ProfileUpdateParams, RemoteMcpApprovalPolicy, RemoteMcpTransport,
-    RunStartParams, SessionConfigInput, SessionEventsReadParams, SessionItemView,
-    SessionMcpLinkParams, SessionMcpListParams, SessionMcpUnlinkParams, SessionReadParams,
-    SessionStartParams, SessionStatus, ToolConfigInput,
+    ContextAppendEntry, ContextAppendParams, ContextAppendStatus, FieldPatch, InitializeParams,
+    InputItem, McpServerCreateParams, McpServerDeleteParams, McpServerListParams,
+    McpServerReadParams, McpServerStatus, ProfileApplyParams, ProfileCreateParams,
+    ProfileDeleteParams, ProfileDocument, ProfileId, ProfileInstructions, ProfileListParams,
+    ProfileMcpLink, ProfileReadParams, ProfileSource, ProfileUpdateParams, RemoteMcpApprovalPolicy,
+    RemoteMcpTransport, RunStartParams, RunStartSource, SessionConfigInput,
+    SessionEventsReadParams, SessionItemView, SessionMcpLinkParams, SessionMcpListParams,
+    SessionMcpUnlinkParams, SessionReadParams, SessionStartParams, SessionStatus, ToolConfigInput,
 };
 use api_projection::model_to_api;
 use async_trait::async_trait;
@@ -612,9 +612,11 @@ async fn run_fake_live_client(
         .start_run(RunStartParams {
             submission_id: None,
             session_id: session_id.as_str().to_owned(),
-            input: vec![InputItem::Text {
-                text: "hello temporal agent".to_owned(),
-            }],
+            source: RunStartSource::Input {
+                items: vec![InputItem::Text {
+                    text: "hello temporal agent".to_owned(),
+                }],
+            },
             config: None,
         })
         .await?;
@@ -626,9 +628,11 @@ async fn run_fake_live_client(
         .start_run(RunStartParams {
             submission_id: Some("live-retry-1".to_owned()),
             session_id: session_id.as_str().to_owned(),
-            input: vec![InputItem::Text {
-                text: "second session-start input".to_owned(),
-            }],
+            source: RunStartSource::Input {
+                items: vec![InputItem::Text {
+                    text: "second session-start input".to_owned(),
+                }],
+            },
             config: None,
         })
         .await?;
@@ -642,9 +646,11 @@ async fn run_fake_live_client(
         .start_run(RunStartParams {
             submission_id: Some("live-retry-1".to_owned()),
             session_id: session_id.as_str().to_owned(),
-            input: vec![InputItem::Text {
-                text: "second session-start input".to_owned(),
-            }],
+            source: RunStartSource::Input {
+                items: vec![InputItem::Text {
+                    text: "second session-start input".to_owned(),
+                }],
+            },
             config: None,
         })
         .await?;
@@ -655,9 +661,11 @@ async fn run_fake_live_client(
         .start_run(RunStartParams {
             submission_id: Some("live-retry-1".to_owned()),
             session_id: session_id.as_str().to_owned(),
-            input: vec![InputItem::Text {
-                text: "different input".to_owned(),
-            }],
+            source: RunStartSource::Input {
+                items: vec![InputItem::Text {
+                    text: "different input".to_owned(),
+                }],
+            },
             config: None,
         })
         .await;
@@ -1232,9 +1240,11 @@ async fn run_fleet_wait_live_client(
         .start_run(RunStartParams {
             submission_id: None,
             session_id: session_id.as_str().to_owned(),
-            input: vec![InputItem::Text {
-                text: format!("WAIT_FOR_CHILD {child_session_id} {child_run_id}"),
-            }],
+            source: RunStartSource::Input {
+                items: vec![InputItem::Text {
+                    text: format!("WAIT_FOR_CHILD {child_session_id} {child_run_id}"),
+                }],
+            },
             config: None,
         })
         .await?;
@@ -1514,9 +1524,11 @@ async fn run_continue_as_new_live_client(
     api.start_run(RunStartParams {
         submission_id: None,
         session_id: session_id.as_str().to_owned(),
-        input: vec![InputItem::Text {
-            text: "first run before continue as new".to_owned(),
-        }],
+        source: RunStartSource::Input {
+            items: vec![InputItem::Text {
+                text: "first run before continue as new".to_owned(),
+            }],
+        },
         config: None,
     })
     .await?;
@@ -1525,9 +1537,11 @@ async fn run_continue_as_new_live_client(
         .start_run(RunStartParams {
             submission_id: None,
             session_id: session_id.as_str().to_owned(),
-            input: vec![InputItem::Text {
-                text: "second run after continue as new".to_owned(),
-            }],
+            source: RunStartSource::Input {
+                items: vec![InputItem::Text {
+                    text: "second run after continue as new".to_owned(),
+                }],
+            },
             config: None,
         })
         .await?;
@@ -1573,9 +1587,11 @@ async fn run_missing_session_live_client(
         .start_run(RunStartParams {
             submission_id: None,
             session_id: session_id.as_str().to_owned(),
-            input: vec![InputItem::Text {
-                text: "this should not create a session".to_owned(),
-            }],
+            source: RunStartSource::Input {
+                items: vec![InputItem::Text {
+                    text: "this should not create a session".to_owned(),
+                }],
+            },
             config: None,
         })
         .await
@@ -1733,10 +1749,17 @@ async fn run_context_append_live_client(
         })
         .await?;
     assert_eq!(
-        appended.result.applied_keys,
-        vec!["channel.room.msg-1", "channel.room.msg-2"]
+        appended
+            .result
+            .results
+            .iter()
+            .map(|result| (result.key.as_str(), result.status))
+            .collect::<Vec<_>>(),
+        vec![
+            ("channel.room.msg-1", ContextAppendStatus::Applied),
+            ("channel.room.msg-2", ContextAppendStatus::Applied)
+        ]
     );
-    assert!(appended.result.unchanged_keys.is_empty());
     let first_revision = appended.result.context_revision;
 
     // Room events are visible as ordinary user-message context items.
@@ -1779,10 +1802,17 @@ async fn run_context_append_live_client(
             ],
         })
         .await?;
-    assert!(replayed.result.applied_keys.is_empty());
     assert_eq!(
-        replayed.result.unchanged_keys,
-        vec!["channel.room.msg-1", "channel.room.msg-2"]
+        replayed
+            .result
+            .results
+            .iter()
+            .map(|result| (result.key.as_str(), result.status))
+            .collect::<Vec<_>>(),
+        vec![
+            ("channel.room.msg-1", ContextAppendStatus::Unchanged),
+            ("channel.room.msg-2", ContextAppendStatus::Unchanged)
+        ]
     );
     assert_eq!(replayed.result.context_revision, first_revision);
 
@@ -1798,7 +1828,15 @@ async fn run_context_append_live_client(
             }],
         })
         .await?;
-    assert_eq!(edited.result.applied_keys, vec!["channel.room.msg-2"]);
+    assert_eq!(
+        edited
+            .result
+            .results
+            .iter()
+            .map(|result| (result.key.as_str(), result.status))
+            .collect::<Vec<_>>(),
+        vec![("channel.room.msg-2", ContextAppendStatus::Applied)]
+    );
     assert!(edited.result.context_revision > first_revision);
 
     // Invalid input is rejected at admission with a typed error.
@@ -1834,9 +1872,11 @@ async fn run_context_append_live_client(
         .start_run(RunStartParams {
             submission_id: None,
             session_id: session_id.as_str().to_owned(),
-            input: vec![InputItem::Text {
-                text: "summarize the room".to_owned(),
-            }],
+            source: RunStartSource::Input {
+                items: vec![InputItem::Text {
+                    text: "summarize the room".to_owned(),
+                }],
+            },
             config: None,
         })
         .await?;
@@ -1874,10 +1914,11 @@ async fn run_admission_failure_live_client(
     let handle = client.get_workflow_handle::<AgentSessionWorkflow>(session_id.as_str());
     handle
         .signal(
-            AgentSessionWorkflow::submit_admission,
-            AgentAdmission {
+            AgentSessionWorkflow::submit_admissions,
+            vec![AgentAdmission {
                 command: DynamicCommand::new("lightspeed.core.command", 999, serde_json::json!({})),
-            },
+                context_key: None,
+            }],
             WorkflowSignalOptions::default(),
         )
         .await?;
@@ -1892,9 +1933,11 @@ async fn run_admission_failure_live_client(
         .start_run(RunStartParams {
             submission_id: None,
             session_id: session_id.as_str().to_owned(),
-            input: vec![InputItem::Text {
-                text: "valid run after malformed command".to_owned(),
-            }],
+            source: RunStartSource::Input {
+                items: vec![InputItem::Text {
+                    text: "valid run after malformed command".to_owned(),
+                }],
+            },
             config: None,
         })
         .await?;
@@ -1905,10 +1948,11 @@ async fn run_admission_failure_live_client(
     let close_command = CoreAgentCodec.encode_command(&CoreAgentCommand::CloseSession)?;
     handle
         .signal(
-            AgentSessionWorkflow::submit_admission,
-            AgentAdmission {
+            AgentSessionWorkflow::submit_admissions,
+            vec![AgentAdmission {
                 command: close_command,
-            },
+                context_key: None,
+            }],
             WorkflowSignalOptions::default(),
         )
         .await?;
@@ -1918,9 +1962,11 @@ async fn run_admission_failure_live_client(
         .start_run(RunStartParams {
             submission_id: None,
             session_id: session_id.as_str().to_owned(),
-            input: vec![InputItem::Text {
-                text: "run after close should be rejected".to_owned(),
-            }],
+            source: RunStartSource::Input {
+                items: vec![InputItem::Text {
+                    text: "run after close should be rejected".to_owned(),
+                }],
+            },
             config: None,
         })
         .await
@@ -2208,9 +2254,11 @@ async fn run_profiles_live_client(
         .start_run(RunStartParams {
             submission_id: None,
             session_id: session_id.as_str().to_owned(),
-            input: vec![InputItem::Text {
-                text: "run after profile start".to_owned(),
-            }],
+            source: RunStartSource::Input {
+                items: vec![InputItem::Text {
+                    text: "run after profile start".to_owned(),
+                }],
+            },
             config: None,
         })
         .await?;
@@ -2265,9 +2313,11 @@ async fn run_openai_live_client(
         .start_run(RunStartParams {
             submission_id: None,
             session_id: session_id.as_str().to_owned(),
-            input: vec![InputItem::Text {
-                text: "Reply with exactly: real llm agent ok".to_owned(),
-            }],
+            source: RunStartSource::Input {
+                items: vec![InputItem::Text {
+                    text: "Reply with exactly: real llm agent ok".to_owned(),
+                }],
+            },
             config: None,
         })
         .await?;
