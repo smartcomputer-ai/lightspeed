@@ -14,6 +14,8 @@ pipeline runner.
 Use these files as the index:
 
 - `README.md` — current overview, crate map, runtime model, commands.
+- `docs/design.md` — public design walk-through (deterministic core, context
+  management, CAS offloading, Temporal hosting), moved out of the README.
 - `docs/spec/01-agent-idea.md` — working design notes for the new agent direction.
 - `Cargo.toml` — workspace membership.
 - `interop/` — API contract artifacts, private clients, and bridge packages.
