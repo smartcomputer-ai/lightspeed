@@ -1,11 +1,6 @@
 # Lightspeed Design
 
-<!-- TODO(lukas): WRITE — 2-3 sentences of standalone framing, since this no longer
-has the README above it. Who is this doc for, what does it cover, and a link back
-to the README for the "what/why". E.g.: "This is the design walk-through behind
-Lightspeed (see the README for what it is and why). It covers the deterministic
-core, context management, the CAS offloading seam, and how it all runs inside
-Temporal." -->
+This is the design walk-through behind Lightspeed — see the [README](../README.md) for what it is and why it exists. It covers the deterministic core, context management, the CAS offloading seam, and how the pieces run inside a durable workflow engine such as Temporal.
 
 At the heart of every agent is a carefully engineered state machine that manages what goes into the context window of the LLM. We start with that core and then layer various systems on top until we have a complete, working agent.
 
@@ -15,7 +10,9 @@ The [core engine](../crates/engine/src/core/components/) is implemented as an ev
 > [!NOTE]
 > The event log we are talking of here is separate from the Temporal event history (or other workflow). We are talking specifically of the events that constitute an agent's session state. These events are stored in Lightspeed's own Postgres event store.
 
-When a command arrives, it is converted to an event, which is then recorded in the event log. The event is then applied to the core state. Then a "next step decider" figures out what to do next. If effects need to be issued, the decider outputs a list of effect _intents_, which then get later executed against the LLM providers or tool call surfaces. The results of these effects get sent back to the event log to be recorded and then sent to the FSM, resulting in an event loop.
+When a command arrives, it is validated at the admission boundary, converted to an event, and recorded in the event log. The event is then applied to the core state. Then a "next step decider" figures out what to do next. If effects need to be issued, the decider outputs a list of effect _intents_, which then get executed against the LLM providers or tool call surfaces. The results of these effects get sent back to the event log to be recorded and then applied to the FSM, resulting in an event loop.
+
+A concrete round: a user message is admitted and recorded; the decider plans an LLM turn intent; the LLM response comes back containing two tool calls and is recorded; the decider emits two tool intents; their results are recorded; the decider plans the next LLM turn — and so on, until there is no work left and the session goes idle.
 ```mermaid
 flowchart TD
   Command["User / API command"] --> Log
@@ -36,27 +33,13 @@ flowchart TD
 ```
 This stack is entirely workflow engine agnostic, and it can be thoroughly tested in isolation by simulating the effect adapters.
 
-<!-- TODO(lukas): EXPAND — the event loop is described, but three things readers
-will ask about the core are missing:
-  1. What does the "next step decider" actually consider? A concrete example
-     (e.g. "LLM response contained two tool calls -> decider emits two tool
-     intents; results recorded -> decider plans the next LLM turn") would make
-     the loop tangible.
-  2. Determinism over time: sessions run for weeks to months, so the code
-     replaying old events WILL be newer than the code that wrote them. How do
-     you handle event schema evolution / versioned decision logic so replay
-     stays deterministic across deploys?
-  3. Command admission: what gets validated before a command becomes an event
-     (you mention admission boundaries for provider params in AGENTS.md — one
-     paragraph on that boundary belongs here). -->
-
 ## Context Management & Provider APIs
-The purpose of the deterministic core is to decide what goes into the context window of the next LLM turn, plus the provider API configurations. Anything that does not pertain to this problem, needs to live elsewhere. In Lightspeed, we call the history and state of an individual context window a _session_.
+The purpose of the deterministic core is to decide what goes into the context window of the next LLM turn, plus the provider API configurations. Anything that does not pertain to this problem needs to live elsewhere. In Lightspeed, we call the history and state of an individual context window a _session_.
 
 So, what are the things that need to feed into the LLM session?
 1) Top-level instructions (prompts/system messages)
 2) Configured tool definitions (including MCP)
-3) Transcript/message items, which can the split further:
+3) Transcript/message items, which can be split further:
 	- Inputs: user messages, business events
 	- LLM output items: responses, reasoning traces, tool calls, compaction traces
 	- Tool results
@@ -65,23 +48,12 @@ So, what are the things that need to feed into the LLM session?
 
 The main challenge is how to balance what goes into the context window each turn, what to retain when compacting the context window (because it is full), and how to do all this with as much LLM caching consistency as possible.
 
-Lightspeed adds the _absolute minimal_ abstraction over the LLM provider data structures and APIs. Many agent SDKs (e.g. LangChain) convert the provider specific data into a unified structure and then convert it back when they pass it back to the LLM. We, on the other hand, extract only the information that is needed to decide and branch inside the deterministic core. The provider-native data is stored inside blobs inside content addressed storage.
+Lightspeed adds the _absolute minimal_ abstraction over the LLM provider data structures and APIs. Many agent SDKs (e.g. LangChain) convert the provider specific data into a unified structure and then convert it back when they pass it back to the LLM. We, on the other hand, extract only the information that is needed to decide and branch inside the deterministic core. The provider-native data is stored as blobs in content addressed storage.
 
-<!-- TODO(lukas): EXPAND — this section poses "the main challenge" (what to include
-each turn, what to retain when compacting, cache consistency) and then never says
-how Lightspeed answers it. That's the biggest gap in the doc. Add a few paragraphs:
-  - Compaction: how does it work here? (Provider-native compaction is a checked
-    README feature — how does the core represent a compaction event, what
-    survives it, how does the transcript get rebuilt afterward?)
-  - Cache consistency: what does the core actually do to keep prompt prefixes
-    stable across turns (ordering rules, when actively-managed items like skill
-    catalogs are allowed to change, etc.)?
-  - A worked example of "reducer facts vs. opaque blob" for one real provider
-    item (e.g. an Anthropic tool-use block) would make the minimal-abstraction
-    claim concrete instead of asserted. -->
+Compaction follows the same philosophy: it is provider-native, not a homegrown summarizer. The core treats compaction as a first-class part of the session: it decides when the context window needs compacting, records a compaction-requested event, and marks the affected context pending until the compaction result event lands. The actual compaction runs through the provider's own mechanism (e.g. OpenAI Responses or Anthropic Messages compaction), so the compacted trace stays in the provider's native format.
 
 ## Offloading to CAS
-Workflow engines differentiate between the deterministic code that expresses the business logic and the code that executes effects such as database calls or API calls, usually called "activities" or "tasks". This introduces an important seam that need to be carefully managed. Specifically, the data that travels back and forth between workflow and activities needs to be kept to a minimum, because all those transitions are logged and stored (which is part of the magic that makes the workflows "durable").
+Workflow engines differentiate between the deterministic code that expresses the business logic and the code that executes effects such as database calls or API calls, usually called "activities" or "tasks". This introduces an important seam that needs to be carefully managed. Specifically, the data that travels back and forth between workflow and activities needs to be kept to a minimum, because all those transitions are logged and stored (which is part of the magic that makes the workflows "durable").
 
 ```mermaid
 flowchart TD
@@ -93,7 +65,7 @@ flowchart TD
   Workflow --> History[("Workflow history<br/>must stay small")]
   Activity <--> Store[("Blob / CAS store<br/>large context, tool output,<br/>provider-native data")]
 ```
-Lightspeed solves this by offloading all data that is not directly needed by the workflow logic to a content addressed storage (CAS) system. The structures that are passed between workflow and activities are extremely thin, keeping workflow state and log size small and efficient. So, instead of passing, say, the entire user input message to the LLM activity, we first store it in the CAS and then only pass a reference to the blob—and vice versa with model outputs.
+Lightspeed solves this by offloading all data that is not directly needed by the workflow logic to a content addressed storage (CAS) system. The structures that are passed between workflow and activities are extremely thin, keeping workflow state and log size small and efficient. So, instead of passing, say, the entire user input message to the LLM activity, we first store it in the CAS and then only pass a reference to the blob, and vice versa with model outputs.
 
 ## Hosting inside a Workflow Runtime (e.g. Temporal)
 With the above pieces in place, running an agent inside a workflow runtime becomes feasible and pleasant. We just have to put it all together.
@@ -123,51 +95,30 @@ flowchart TD
 
   Runtime --> External["LLM providers<br/>tools / environments"]
 ```
-The Temporal workflow owns an instance of the deterministic core—aka a "session". It drives the core state machine until it is idle. When not idle, it sends the effect intents via activities to real APIs and services, such as LLM providers. It also logs all events that constitute a session state in a Postgres store (or optionally a file system store, for testing). Small CAS blobs get stored in Postgres, large blobs go to S3 (also supporting different blob providers).
+The Temporal workflow owns an instance of the deterministic core — aka a "session". It drives the core state machine until it is idle. When not idle, it sends the effect intents via activities to real APIs and services, such as LLM providers. It also logs all events that constitute a session state in a Postgres store (or optionally a file system store, for testing). Small CAS blobs get stored in Postgres, large blobs go to S3 (also supporting different blob providers).
 
-<!-- TODO(lukas): EXPAND — the questions every experienced Temporal reader will ask
-of this section, in rough priority order:
-  1. History growth: you promise runs of weeks to months, and Temporal workflows
-     have hard history limits. Do you continue-as-new? What state carries over,
-     and how does the Lightspeed event log make that cheap? This is probably the
-     single most-anticipated paragraph in the doc for the newsletter audience.
-  2. Replay vs. session log: when Temporal replays the workflow, what is
-     recomputed vs. reloaded? Spell out the relationship between the two logs
-     the NOTE at the top only hints at.
-  3. Failure semantics: what happens when an LLM/tool activity fails or times
-     out — retry policies, idempotency of recording result events, exactly-once
-     vs. at-least-once at the event-log boundary.
-  4. Signals/queries: how do user messages reach a running workflow
-     (signal-with-start?), and what do queries serve? -->
+Commands reach a running session as Temporal signals: the gateway submits admissions (a validated command plus optional context key), the workflow queues them, and the drive loop admits them into the session log. A `status` query serves session state to the gateway without touching the log.
 
-Around the main stack, there is also a gateway API and CLI tooling to make interacting with the whole Lightspeed system easier. Agent profiles live on that public API boundary: a profile is a reusable setup document for session config, instructions, mounts, MCP links, and environments. The hosted runtime resolves and applies profiles outside the deterministic core.
+Because sessions can run for weeks to months and Temporal caps workflow history, the workflow continues-as-new whenever it is idle and Temporal suggests it (or a configured history threshold is crossed). This is where the event-sourced design pays off twice: the workflow start arguments are tiny—a session id, the session config, a blob ref for instructions—because the entire session state rehydrates from Lightspeed's own event log. Workflow history stays bounded no matter how long the agent lives, and a worker crash or deploy simply replays into the same state.
 
-<!-- TODO(lukas): WRITE — missing sections that would round the doc out. Suggested,
-in order of value:
+## The Client API Boundary
+Clients — the CLI, messaging bridges, editors, future frontends — consume the typed `api` crate surface through the JSON-RPC gateway, never the reducer internals. `run/start` is an acceptance boundary, not a final-output boundary: it returns once the run is admitted, and clients follow `session/events/read` or refresh `session/read` for progress and completion. This keeps the public contract stable while the core evolves underneath it.
 
-  ## Tools, VFS & Environments
-  The README headlines a virtual file system, skills, hosted MCP, and bridged
-  VMs/sandboxes, but the design doc never explains the tool-execution side.
-  One section covering: how a tool intent becomes a tool-package call, how the
-  CAS-backed VFS gives the agent file tools without an OS, and how environments
-  /the bridge daemon fit the "borrow a computer" goal from the README.
+Agent profiles live on this boundary too: a profile is a reusable setup document for session config, instructions, mounts, MCP links, and environments. The hosted runtime resolves and applies profiles outside the deterministic core.
 
-  ## Sub-agents & Sessions Spawning Sessions
-  Fleets are a checked feature: is a sub-agent just another session workflow,
-  and how do parent/child communicate (events? signals?)? Two paragraphs.
+## Tools, Environments & Sub-agents
+Tool intents are executed by tool packages outside the core. The important ones for the harness-without-an-OS story: a CAS-backed virtual file system gives the agent standard file tools (read, glob, patch) with no operating system attached; web fetch/search/extract tools work the same way. When a task genuinely needs a machine, the agent borrows one; dedicated VMs connect through a bridge daemon, and durable jobs run long tasks (downloads, delegated coding agents) on that borrowed compute while the harness stays outside.
 
-  ## Client API Boundary
-  How clients observe a run: run/start as an acceptance boundary (not a
-  final-output boundary), session/events/read for progress, why clients consume
-  `api` views instead of reducer internals. You have strong opinions here (see
-  AGENTS.md architecture rules) that deserve public prose.
+Sub-agents are not a separate concept: a fleet is just more sessions. The fleet control plane clones or forks a session and starts an additional session workflow for it. Callbacks flow back as ordinary Temporal signals.
 
-  ## Supporting Other Workflow Engines
-  The README claims Restate/Inngest/etc. are coming. One section on what the
-  substrate-neutral "drive machine" looks like and what a new engine adapter
-  actually has to implement would make that claim credible instead of
-  aspirational.
+## Crate Map
+Where the pieces above live:
 
-  Optionally, close the doc with a short crate map paragraph linking each design
-  concept above to its crate (engine, temporal-workflow, temporal-server,
-  llm-runtime, store-pg/fs, tools), so readers can jump from prose to code. -->
+- `crates/engine` — the deterministic core: session log, state, decider, codecs
+- `crates/temporal-workflow` / `crates/temporal-server` — the session workflow, worker activities, and the JSON-RPC gateway
+- `crates/llm-runtime` / `crates/llm-clients` — effect adapters from planned LLM requests down to provider-native API calls
+- `crates/tools` — tool packages: VFS, web, environments, messaging, prompts, skills, fleet
+- `crates/store-pg` / `crates/store-fs` — session log and CAS storage backends
+- `crates/api` / `crates/api-projection` — the client-facing types and projection helpers
+
+The full crate index lives in [`AGENTS.md`](../AGENTS.md) at the repo root.
