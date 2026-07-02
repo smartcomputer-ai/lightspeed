@@ -362,21 +362,23 @@ async fn anthropic_messages_live_selects_and_activates_the_matching_skill() {
         .drive_command(DriveCommand {
             session_id,
             observed_at_ms: 20,
-            command: CoreAgentCommand::RequestRun {
+            command: CoreAgentCommand::RequestRun(engine::RunRequestCommand {
                 submission_id: None,
-                input: vec![ContextEntryInput {
-                    kind: ContextEntryKind::Message {
-                        role: ContextMessageRole::User,
-                    },
-                    content_ref: input_ref,
-                    media_type: None,
-                    preview: None,
-                    provider_kind: None,
-                    provider_item_id: None,
-                    token_estimate: None,
-                }],
+                source: engine::RunRequestSource::Input {
+                    input: vec![ContextEntryInput {
+                        kind: ContextEntryKind::Message {
+                            role: ContextMessageRole::User,
+                        },
+                        content_ref: input_ref,
+                        media_type: None,
+                        preview: None,
+                        provider_kind: None,
+                        provider_item_id: None,
+                        token_estimate: None,
+                    }],
+                },
                 run_config: run_config(),
-            },
+            }),
             max_steps: Some(128),
         })
         .await

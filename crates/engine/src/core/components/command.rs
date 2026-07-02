@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ContextEntryInput, ContextEntryKey, RunConfig, SessionConfig, SessionConfigPatch, SubmissionId,
+    ContextEntryInput, ContextEntryKey, RunRequestCommand, SessionConfig, SessionConfigPatch,
     ToolBatchId, ToolExecutionTarget, ToolInvocationBatchResult, ToolName, ToolPatch, ToolSpec,
 };
 
@@ -43,11 +43,7 @@ pub enum CoreAgentCommand {
         key: ContextEntryKey,
     },
     CompactContext,
-    RequestRun {
-        submission_id: Option<SubmissionId>,
-        input: Vec<ContextEntryInput>,
-        run_config: RunConfig,
-    },
+    RequestRun(RunRequestCommand),
     RequestRunSteering {
         input: Vec<ContextEntryInput>,
     },

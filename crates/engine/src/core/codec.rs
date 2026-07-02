@@ -199,7 +199,7 @@ fn core_agent_event_envelope_kind(event: &CoreAgentEvent) -> &'static str {
             CoreAgentLifecycleEvent::Closed => "lightspeed.core.lifecycle.closed",
         },
         CoreAgentEventKind::Run(event) => match event {
-            RunEvent::Accepted { .. } => "lightspeed.core.run.accepted",
+            RunEvent::Accepted(_) => "lightspeed.core.run.accepted",
             RunEvent::Started { .. } => "lightspeed.core.run.started",
             RunEvent::SteeringAccepted { .. } => "lightspeed.core.run.steering_accepted",
             RunEvent::CancellationRequested { .. } => "lightspeed.core.run.cancellation_requested",
@@ -299,8 +299,8 @@ fn codec_failure(error: impl std::fmt::Display) -> CodecError {
 #[cfg(test)]
 mod tests {
     use crate::{
-        CoreAgentCommand, CoreAgentEventKind, CoreAgentJoins, CoreAgentLifecycleEvent,
-        CorrelationId, EventSeq, RunId, SessionPosition, ToolBatchId, ToolEvent, TurnId,
+        CoreAgentEventKind, CoreAgentJoins, CoreAgentLifecycleEvent, CorrelationId, EventSeq,
+        RunId, SessionPosition, ToolBatchId, ToolEvent, TurnId,
     };
 
     use super::*;

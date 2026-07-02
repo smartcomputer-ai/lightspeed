@@ -1,4 +1,5 @@
 import {
+  areJidsSameUser,
   DisconnectReason,
   downloadMediaMessage,
   fetchLatestBaileysVersion,
@@ -30,6 +31,12 @@ import type { BindingState } from "./store.js";
 import { splitMessageText } from "./text.js";
 
 const MAX_WHATSAPP_IMAGE_BYTES = 10 * 1024 * 1024;
+
+export interface WhatsAppOwnIdentity {
+  id?: string | null;
+  lid?: string | null;
+  phoneNumber?: string | null;
+}
 
 export interface RunningWhatsAppBridge {
   stop: () => Promise<void>;
@@ -240,8 +247,12 @@ async function handleWhatsAppMessage(
     return;
   }
 
-  const ownJid = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
+  const ownJids = collectOwnWhatsAppJids(sock.user, config.accountId);
   const contextInfo = extractContextInfo(content);
+  const mentionedJids = contextInfo?.mentionedJid ?? [];
+  const mentionedBot = whatsappMentionsOwnIdentity(mentionedJids, ownJids);
+  const normalizedText =
+    rawText && mentionedBot ? stripOwnWhatsAppMentions(rawText, mentionedJids, ownJids) : rawText;
   const isGroup = remoteJid.endsWith("@g.us");
   const senderJid = message.key.participant
     ? jidNormalizedUser(message.key.participant)
@@ -294,7 +305,7 @@ async function handleWhatsAppMessage(
     senderName: message.pushName?.trim() || senderJid.split("@")[0] || senderJid,
     timestampMs: Number(message.messageTimestamp ?? 0) * 1000,
     text:
-      rawText ||
+      normalizedText ||
       (hasDocument
         ? `(sent a file: ${document?.fileName ?? "document"})`
         : hasAudio
@@ -304,14 +315,12 @@ async function handleWhatsAppMessage(
           : "(sent an image)"),
     isDirect: !isGroup,
     chatLabel: isGroup ? remoteJid.split("@")[0] || remoteJid : "dm",
-    mentionedBot: Boolean(
-      ownJid && contextInfo?.mentionedJid?.some((jid) => jidNormalizedUser(jid) === ownJid),
-    ),
+    mentionedBot,
     isReplyToBot: Boolean(
       contextInfo?.quotedMessage &&
-        ownJid &&
+        ownJids.length > 0 &&
         contextInfo.participant &&
-        jidNormalizedUser(contextInfo.participant) === ownJid,
+        whatsappJidMatchesAny(contextInfo.participant, ownJids),
     ),
     isFromSelf: Boolean(message.key.fromMe),
     turnAllowed: access.turnAllowed,
@@ -343,6 +352,87 @@ async function handleWhatsAppMessage(
       await sock.sendPresenceUpdate("paused", remoteJid);
     },
   });
+}
+
+export function collectOwnWhatsAppJids(
+  user: WhatsAppOwnIdentity | null | undefined,
+  accountId: string,
+): string[] {
+  const ownJids = new Set<string>();
+  addWhatsAppJidCandidate(ownJids, user?.id);
+  addWhatsAppJidCandidate(ownJids, user?.lid);
+  addWhatsAppJidCandidate(ownJids, user?.phoneNumber);
+  addWhatsAppJidCandidate(ownJids, accountId);
+  return [...ownJids];
+}
+
+export function whatsappMentionsOwnIdentity(
+  mentionedJids: readonly (string | null | undefined)[],
+  ownJids: readonly string[],
+): boolean {
+  return mentionedJids.some((jid) => whatsappJidMatchesAny(jid, ownJids));
+}
+
+export function stripOwnWhatsAppMentions(
+  text: string,
+  mentionedJids: readonly (string | null | undefined)[],
+  ownJids: readonly string[],
+): string {
+  let result = text;
+  for (const mentionedJid of mentionedJids) {
+    if (!whatsappJidMatchesAny(mentionedJid, ownJids)) {
+      continue;
+    }
+    const user = whatsappJidUser(mentionedJid);
+    if (!user) {
+      continue;
+    }
+    result = result.replace(new RegExp(`@${escapeRegExp(user)}\\b[:,]?\\s*`, "g"), " ");
+  }
+  const stripped = result.replace(/\s+/g, " ").trim();
+  return stripped || text.trim();
+}
+
+function addWhatsAppJidCandidate(target: Set<string>, value: string | null | undefined): void {
+  const normalized = normalizeWhatsAppJid(value);
+  if (normalized) {
+    target.add(normalized);
+  }
+}
+
+function normalizeWhatsAppJid(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const jid = trimmed.includes("@")
+    ? trimmed
+    : /^\d+$/.test(trimmed)
+      ? `${trimmed}@s.whatsapp.net`
+      : null;
+  return jid ? jidNormalizedUser(jid) : null;
+}
+
+function whatsappJidMatchesAny(
+  candidate: string | null | undefined,
+  ownJids: readonly string[],
+): boolean {
+  const normalized = normalizeWhatsAppJid(candidate);
+  return Boolean(
+    normalized &&
+      ownJids.some(
+        (ownJid) => normalized === ownJid || areJidsSameUser(normalized, ownJid),
+      ),
+  );
+}
+
+function whatsappJidUser(jid: string | null | undefined): string | null {
+  const normalized = normalizeWhatsAppJid(jid);
+  return normalized?.split("@")[0]?.split(":")[0] ?? null;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 async function downloadWhatsAppImage(

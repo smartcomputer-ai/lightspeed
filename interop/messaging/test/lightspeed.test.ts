@@ -26,7 +26,7 @@ function sessionFixture(): SessionView {
     runs: [
       {
         id: "run_1",
-        input: [{ type: "text", text: "question" }],
+        source: { type: "input", items: [{ type: "text", text: "question" }] },
         items: [
           { id: "u1", type: "userMessage", text: "question" },
           { id: "a1", type: "assistantMessage", text: "old answer" },
@@ -35,7 +35,7 @@ function sessionFixture(): SessionView {
       },
       {
         id: "run_2",
-        input: [{ type: "text", text: "follow up" }],
+        source: { type: "input", items: [{ type: "text", text: "follow up" }] },
         items: [
           { id: "u2", type: "userMessage", text: "follow up" },
           { id: "a3", type: "assistantMessage", text: "first part" },
@@ -72,11 +72,28 @@ interface RecordedCall {
 
 class FakeClient {
   readonly calls: RecordedCall[] = [];
+  /// Awaited inside each blob/put; lets tests gate uploads on a barrier.
+  blobPutBarrier?: () => Promise<void>;
+  private blobCount = 0;
 
   async call(method: string, params: Record<string, unknown>): Promise<unknown> {
     this.calls.push({ method, params });
     if (method === "session/read") {
       return { result: { session: sessionFixture() } };
+    }
+    if (method === "blob/put") {
+      const blobRef = `blob_${this.blobCount}`;
+      this.blobCount += 1;
+      await this.blobPutBarrier?.();
+      return { result: { blobRef } };
+    }
+    if (method === "context/append") {
+      const entries = params.entries as { key: string }[];
+      return {
+        result: {
+          results: entries.map((entry) => ({ key: entry.key, status: "committed" })),
+        },
+      };
     }
     return { result: {} };
   }
@@ -187,6 +204,60 @@ describe("LightspeedSessionBridge.ensureSession", () => {
       sessionId: "session_profile",
       profile: { kind: "named", profileId: "support" },
     });
+  });
+
+  it("uploads context media concurrently and keeps entry order", async () => {
+    const client = new FakeClient();
+    // Barrier: no blob/put resolves until all three have started. A
+    // sequential implementation would deadlock here and time the test out.
+    let started = 0;
+    let release!: () => void;
+    const allStarted = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    client.blobPutBarrier = async () => {
+      started += 1;
+      if (started === 3) {
+        release();
+      }
+      await allStarted;
+    };
+
+    const appended = await bridge(client).appendMessageContext({
+      sessionId: "session_media",
+      key: "channel.room.k",
+      text: "look at these",
+      media: [
+        { base64: "AA==", mime: "image/png" },
+        { base64: "AQ==", mime: "image/jpeg", name: "photo.jpg" },
+        { base64: "Ag==", mime: "audio/ogg" },
+      ],
+    });
+
+    const append = client.calls.find((call) => call.method === "context/append");
+    const entries = append?.params.entries as {
+      key: string;
+      item: { type: string; mime?: string; blobRef?: string; name?: string };
+    }[];
+    expect(entries.map((entry) => entry.key)).toEqual([
+      "channel.room.k.text",
+      "channel.room.k.media.0",
+      "channel.room.k.media.1",
+      "channel.room.k.media.2",
+    ]);
+    // Entries stay in input order even though the uploads ran concurrently.
+    expect(entries.slice(1).map((entry) => entry.item.mime)).toEqual([
+      "image/png",
+      "image/jpeg",
+      "audio/ogg",
+    ]);
+    expect(entries.slice(1).map((entry) => entry.item.blobRef)).toEqual([
+      "blob_0",
+      "blob_1",
+      "blob_2",
+    ]);
+    expect(entries[2]?.item.name).toBe("photo.jpg");
+    expect(appended.keys).toEqual(entries.map((entry) => entry.key));
   });
 
   it("awaits each submitted run from a fresh cursor", async () => {

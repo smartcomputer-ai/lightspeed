@@ -95,7 +95,10 @@ describe("LightspeedClient", () => {
     await expect(
       client.call("run/start", {
         sessionId: "session_1",
-        input: [{ type: "text", text: "hello" }],
+        source: {
+          type: "input",
+          items: [{ type: "text", text: "hello" }],
+        },
         submissionId: "sub_1",
       }),
     ).rejects.toMatchObject({
@@ -120,7 +123,7 @@ describe("LightspeedClient", () => {
             run: {
               id: "run_1",
               status: "queued",
-              input: [],
+              source: { type: "input", items: [] },
               items: [],
               toolBatches: [],
             },
@@ -142,8 +145,48 @@ describe("LightspeedClient", () => {
     expect(firstParams.submissionId).not.toBe("");
     expect(bodies[1]?.params).toMatchObject({
       sessionId: "session_1",
+      source: {
+        type: "input",
+        items: [{ type: "text", text: "hello again" }],
+      },
       submissionId: "sub_fixed",
       config: null,
+    });
+  });
+
+  it("can start runs from context keys", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      bodies.push(decodeBody(init));
+      return jsonResponse({
+        id: bodies.length,
+        result: {
+          result: {
+            run: {
+              id: "run_1",
+              status: "queued",
+              source: { type: "input", items: [] },
+              items: [],
+              toolBatches: [],
+            },
+          },
+          notifications: [],
+        },
+      });
+    }) as unknown as typeof fetch;
+    const client = new LightspeedClient({ endpoint: "http://lightspeed.local/rpc", fetch: fetchImpl });
+
+    await client.startRunFromContext("session_1", ["channel.telegram.msg.1.text"], {
+      submissionId: "sub_context",
+    });
+
+    expect(bodies[0]?.params).toMatchObject({
+      sessionId: "session_1",
+      source: {
+        type: "context",
+        keys: ["channel.telegram.msg.1.text"],
+      },
+      submissionId: "sub_context",
     });
   });
 

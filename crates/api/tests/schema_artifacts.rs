@@ -7,7 +7,7 @@ use std::{fs, path::PathBuf};
 
 use api::{
     AgentApiOutcome, AgentNotification, EventCursor, InputItem, RunStartParams, RunStartResponse,
-    RunStatus, RunView, SessionEventsReadParams,
+    RunStartSource, RunStatus, RunView, RunViewSource, SessionEventsReadParams,
 };
 use serde_json::{Value, json};
 
@@ -49,9 +49,11 @@ fn serialized_fixtures_validate_against_exported_schemas() {
 
     let params = RunStartParams {
         session_id: "session_1".to_owned(),
-        input: vec![InputItem::Text {
-            text: "hello".to_owned(),
-        }],
+        source: RunStartSource::Input {
+            items: vec![InputItem::Text {
+                text: "hello".to_owned(),
+            }],
+        },
         submission_id: Some("retry_1".to_owned()),
         config: None,
     };
@@ -61,9 +63,11 @@ fn serialized_fixtures_validate_against_exported_schemas() {
     let run = RunView {
         id: "run_1".to_owned(),
         status: RunStatus::Completed,
-        input: vec![InputItem::Text {
-            text: "hello".to_owned(),
-        }],
+        source: RunViewSource::Input {
+            items: vec![InputItem::Text {
+                text: "hello".to_owned(),
+            }],
+        },
         items: Vec::new(),
         tool_batches: Vec::new(),
     };

@@ -10,9 +10,11 @@ fn notification_serializes_as_json_rpc_lite_shape() {
         run: RunView {
             id: "run_1".to_owned(),
             status: RunStatus::Completed,
-            input: vec![InputItem::Text {
-                text: "hello".to_owned(),
-            }],
+            source: RunViewSource::Input {
+                items: vec![InputItem::Text {
+                    text: "hello".to_owned(),
+                }],
+            },
             items: Vec::new(),
             tool_batches: Vec::new(),
         },
@@ -29,7 +31,10 @@ fn notification_serializes_as_json_rpc_lite_shape() {
                 "run": {
                     "id": "run_1",
                     "status": "completed",
-                    "input": [{ "type": "text", "text": "hello" }],
+                    "source": {
+                        "type": "input",
+                        "items": [{ "type": "text", "text": "hello" }]
+                    },
                     "items": []
                 }
             }
@@ -244,6 +249,33 @@ async fn dispatch_json_rpc_routes_context_compact() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn dispatch_json_rpc_routes_context_remove() {
+    let response = dispatch_json_rpc(
+        &TestService,
+        JsonRpcRequest {
+            id: RequestId::Number(1),
+            method: METHOD_CONTEXT_REMOVE.to_owned(),
+            params: Some(json!({
+                "sessionId": "session_1",
+                "keys": ["channel.room.batch-1"]
+            })),
+        },
+    )
+    .await;
+
+    assert!(response.error.is_none());
+    assert_eq!(
+        response.result.expect("result")["result"]["results"],
+        json!([
+            {
+                "key": "channel.room.batch-1",
+                "status": "removed"
+            }
+        ])
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn dispatch_json_rpc_routes_context_append() {
     let response = dispatch_json_rpc(
         &TestService,
@@ -265,8 +297,13 @@ async fn dispatch_json_rpc_routes_context_append() {
 
     assert!(response.error.is_none());
     assert_eq!(
-        response.result.expect("result")["result"]["appliedKeys"],
-        json!(["channel.room.batch-1"])
+        response.result.expect("result")["result"]["results"],
+        json!([
+            {
+                "key": "channel.room.batch-1",
+                "status": "applied"
+            }
+        ])
     );
 }
 
@@ -954,7 +991,10 @@ async fn dispatch_json_rpc_routes_run_start_with_config() {
             method: METHOD_RUN_START.to_owned(),
             params: Some(json!({
                 "sessionId": "session_1",
-                "input": [{ "type": "text", "text": "hello" }],
+                "source": {
+                    "type": "input",
+                    "items": [{ "type": "text", "text": "hello" }]
+                },
                 "config": {
                     "model": {
                         "providerId": "openai",
@@ -1364,7 +1404,7 @@ fn run_view_can_expose_tool_batches() {
     let run = RunView {
         id: "run_1".to_owned(),
         status: RunStatus::Running,
-        input: Vec::new(),
+        source: RunViewSource::Input { items: Vec::new() },
         items: Vec::new(),
         tool_batches: vec![ToolBatchView {
             id: "tool_batch_1".to_owned(),
@@ -1608,12 +1648,36 @@ impl AgentApiService for TestService {
     ) -> Result<AgentApiOutcome<ContextAppendResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(ContextAppendResponse {
             context_revision: 1,
-            applied_keys: params
+            results: params
                 .entries
                 .iter()
-                .map(|entry| entry.key.clone())
+                .map(|entry| ContextAppendResult {
+                    key: entry.key.clone(),
+                    status: ContextAppendStatus::Applied,
+                    entry: None,
+                    failure: None,
+                    activation_text: None,
+                    activation_text_truncated: false,
+                })
                 .collect(),
-            unchanged_keys: Vec::new(),
+        }))
+    }
+
+    async fn remove_context(
+        &self,
+        params: ContextRemoveParams,
+    ) -> Result<AgentApiOutcome<ContextRemoveResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(ContextRemoveResponse {
+            context_revision: 1,
+            results: params
+                .keys
+                .iter()
+                .map(|key| ContextRemoveResult {
+                    key: key.clone(),
+                    status: ContextRemoveStatus::Removed,
+                    failure: None,
+                })
+                .collect(),
         }))
     }
 
@@ -2684,7 +2748,7 @@ fn test_run(id: RunId, status: RunStatus) -> RunView {
     RunView {
         id,
         status,
-        input: Vec::new(),
+        source: RunViewSource::Input { items: Vec::new() },
         items: Vec::new(),
         tool_batches: Vec::new(),
     }

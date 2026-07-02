@@ -4,6 +4,7 @@ import {
   type InputItem,
   type ProfileSource,
   type RunStatus,
+  type RunView,
   type SessionConfigInput,
   type SessionItemView,
   type SessionView,
@@ -31,9 +32,30 @@ export interface LightspeedTurn {
   media?: readonly LightspeedTurnMedia[];
 }
 
-export interface LightspeedRoomEvent {
+export interface LightspeedContextMessage {
+  sessionId: string;
+  /// Profile to provision the session with on first creation (null = default).
+  profile?: ProfileSource | null;
+  /// Stable base context key for this inbound message.
   key: string;
   text: string;
+  media?: readonly LightspeedTurnMedia[];
+}
+
+export interface LightspeedContextAppend {
+  keys: string[];
+  /// Server-derived activation text per committed entry key (e.g. voice
+  /// transcripts under `.media.` keys). Kept per-key so callers can weigh
+  /// media-derived text differently from the echo of submitted text.
+  activationText: { key: string; text: string }[];
+  failures: { key: string; kind: string; message: string }[];
+}
+
+export interface LightspeedContextRemoval {
+  key: string;
+  /// `absent` means the key was already gone; retries are per-key no-ops.
+  status: "removed" | "absent" | "failed";
+  failure: { kind: string; message: string } | null;
 }
 
 export interface LightspeedReply {
@@ -46,8 +68,6 @@ export interface LightspeedReply {
   /// outbox tail, and a noop means deliberate silence.
   messagingToolUsed: boolean;
 }
-
-const CONTEXT_APPEND_BATCH_LIMIT = 64;
 
 export class LightspeedSessionBridge {
   private readonly startedSessions = new Set<string>();
@@ -75,58 +95,127 @@ export class LightspeedSessionBridge {
     this.startedSessions.add(sessionId);
   }
 
-  /// Appends unaddressed room chatter as session context without starting a
-  /// run. Idempotent per entry key, so channel redelivery is harmless.
-  async appendRoomEvents(
-    sessionId: string,
-    events: readonly LightspeedRoomEvent[],
-    profile?: ProfileSource | null,
-  ): Promise<void> {
-    if (events.length === 0) {
-      return;
-    }
-    await this.ensureSession(sessionId, profile);
-    for (let start = 0; start < events.length; start += CONTEXT_APPEND_BATCH_LIMIT) {
-      const batch = events.slice(start, start + CONTEXT_APPEND_BATCH_LIMIT);
-      await this.client.call("context/append", {
-        sessionId,
-        entries: batch.map((event) => ({
-          key: event.key,
-          item: { type: "text", text: event.text },
-        })),
+  async appendMessageContext(message: LightspeedContextMessage): Promise<LightspeedContextAppend> {
+    await this.ensureSession(message.sessionId, message.profile);
+
+    const entries: { key: string; item: InputItem }[] = [];
+    const text = message.text.trim();
+    if (text) {
+      entries.push({
+        key: `${message.key}.text`,
+        item: { type: "text", text },
       });
     }
+    const mediaItems = await Promise.all(
+      (message.media ?? []).map((media) => this.putMediaItem(media)),
+    );
+    for (const [index, item] of mediaItems.entries()) {
+      entries.push({ key: `${message.key}.media.${index}`, item });
+    }
+    if (entries.length === 0) {
+      return { keys: [], activationText: [], failures: [] };
+    }
+    const appended = await this.client.call("context/append", {
+      sessionId: message.sessionId,
+      entries,
+    });
+    const keys: string[] = [];
+    const activationText: { key: string; text: string }[] = [];
+    const failures: { key: string; kind: string; message: string }[] = [];
+    for (const result of appended.result.results) {
+      if (result.status === "failed") {
+        failures.push({
+          key: result.key,
+          kind: result.failure?.kind ?? "unsupportedMedia",
+          message: result.failure?.message ?? "context append failed",
+        });
+        continue;
+      }
+      keys.push(result.key);
+      if (result.activationText?.trim()) {
+        activationText.push({ key: result.key, text: result.activationText });
+      }
+    }
+    return { keys, activationText, failures };
+  }
+
+  /// Removes active-context keys in one atomic admission signal. Callers
+  /// chunk to at most 64 keys per call (the server admission cap). Removing
+  /// an already-absent key is a per-key `absent` no-op, so retries after a
+  /// partial prune are idempotent.
+  async removeContext(
+    sessionId: string,
+    keys: readonly string[],
+  ): Promise<LightspeedContextRemoval[]> {
+    const removed = await this.client.call("context/remove", {
+      sessionId,
+      keys: [...keys],
+    });
+    return removed.result.results.map((result) => ({
+      key: result.key,
+      status: result.status,
+      failure: result.failure
+        ? {
+            kind: result.failure.kind ?? "unknown",
+            message: result.failure.message ?? "context remove failed",
+          }
+        : null,
+    }));
   }
 
   async submitTurn(turn: LightspeedTurn): Promise<LightspeedReply> {
     await this.ensureSession(turn.sessionId, turn.profile);
 
-    const input: InputItem[] = [{ type: "text", text: turn.text }];
-    for (const media of turn.media ?? []) {
-      const put = await this.client.call("blob/put", { bytesBase64: media.base64 });
-      input.push({
-        type: "media",
-        blobRef: put.result.blobRef,
-        mime: media.mime,
-        kind: mediaKindForMime(media.mime),
-        ...(media.name !== undefined ? { name: media.name } : {}),
-      });
-    }
+    const input: InputItem[] = [
+      { type: "text", text: turn.text },
+      ...(await Promise.all((turn.media ?? []).map((media) => this.putMediaItem(media)))),
+    ];
     const submissionId = stableSubmissionId(turn.provider, [
       turn.accountId,
       turn.conversationKey,
       ...turn.submissionParts,
     ]);
     const started = await this.client.startRun(turn.sessionId, input, { submissionId });
-    const run = started.result.run;
+    return this.replyForRun(turn.sessionId, started.result.run);
+  }
 
+  async submitContextTurn(turn: Omit<LightspeedTurn, "text" | "media"> & { contextKeys: readonly string[] }): Promise<LightspeedReply> {
+    await this.ensureSession(turn.sessionId, turn.profile);
+    if (turn.contextKeys.length === 0) {
+      throw new Error("cannot start a Lightspeed run without context keys");
+    }
+    const submissionId = stableSubmissionId(turn.provider, [
+      turn.accountId,
+      turn.conversationKey,
+      ...turn.submissionParts,
+    ]);
+    const started = await this.client.startRunFromContext(turn.sessionId, [...turn.contextKeys], {
+      submissionId,
+    });
+    return this.replyForRun(turn.sessionId, started.result.run);
+  }
+
+  /// Uploads one media attachment to the blob store and returns the media
+  /// input item referencing it.
+  private async putMediaItem(media: LightspeedTurnMedia): Promise<InputItem> {
+    const put = await this.client.call("blob/put", { bytesBase64: media.base64 });
+    return {
+      type: "media",
+      blobRef: put.result.blobRef,
+      mime: media.mime,
+      kind: mediaKindForMime(media.mime),
+      ...(media.name !== undefined ? { name: media.name } : {}),
+    };
+  }
+
+  private async replyForRun(sessionId: string, run: RunView): Promise<LightspeedReply> {
     // Do not seed this from bridge state. That cursor is process-local run
     // progress, not a durable chat cursor; starting after a terminal event can
     // make awaitRun long-poll forever even though the run is already complete.
     let cursor: EventCursor | null = null;
     const terminalStatus = terminalRunStatus(run.status);
     if (terminalStatus === "running") {
-      const awaited = await this.client.awaitRun(turn.sessionId, run.id, {
+      const awaited = await this.client.awaitRun(sessionId, run.id, {
         after: cursor,
         limit: this.config.eventLimit,
         waitMs: this.config.waitMs,
@@ -147,14 +236,14 @@ export class LightspeedSessionBridge {
       throw new Error("Lightspeed run was cancelled");
     }
 
-    const read = await this.client.call("session/read", { sessionId: turn.sessionId });
+    const read = await this.client.call("session/read", { sessionId });
     const text =
       extractAssistantText(read.result.session, run.id) ??
       "Lightspeed completed the run, but no assistant text was available.";
     return {
       cursor,
       runId: run.id,
-      sessionId: turn.sessionId,
+      sessionId,
       text,
       messagingToolUsed: runUsedMessagingTool(read.result.session, run.id),
     };

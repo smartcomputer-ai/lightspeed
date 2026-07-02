@@ -203,10 +203,12 @@ pub(super) async fn context_entry_input_from_api(
             }
             Ok(user_message_input(blob_ref))
         }
-        InputItem::Media { .. } => Err(AgentApiError::invalid_request(
-            "media items are not supported in context/append yet; room media \
-             arrives as placeholder text in the P71 G3 first cut",
-        )),
+        InputItem::Media {
+            blob_ref,
+            mime,
+            kind,
+            name,
+        } => media_message_input(store, blob_ref, mime, *kind, name.as_deref()).await,
     }
 }
 

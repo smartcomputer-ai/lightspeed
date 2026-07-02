@@ -100,7 +100,7 @@ impl AgentSessionWorkflow {
                 .map(|run| AgentQueuedRunSummary {
                     run_id: run.run_id.as_u64(),
                     submission_id: run.submission_id.clone(),
-                    input: run.input.clone(),
+                    input: run.source.input().to_vec(),
                 })
                 .collect(),
             completed_runs: self

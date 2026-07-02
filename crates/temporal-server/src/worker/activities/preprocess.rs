@@ -22,6 +22,7 @@ use temporal_workflow::{
 };
 
 use super::state::PreprocessActivityDeps;
+use crate::transcript::{AUDIO_TRANSCRIPT_PROVIDER_KIND, transcript_content, transcript_header};
 
 const MAX_AUDIO_BYTES: u64 = 25 * 1024 * 1024;
 const MAX_AUDIO_DURATION_MS: u64 = 10 * 60 * 1000;
@@ -367,7 +368,7 @@ async fn transcribe_entry(
         })
         .await
         .map_err(map_transcription_error)?;
-    let transcript_text = format!("[audio transcript: {name}]\n{}", transcript.text.trim());
+    let transcript_text = transcript_content(&name, &transcript.text);
     let transcript_ref = blobs
         .put_bytes(transcript_text.into_bytes())
         .await
@@ -384,9 +385,9 @@ async fn transcribe_entry(
         },
         content_ref: transcript_ref,
         media_type: Some("text/plain".to_owned()),
-        preview: Some(format!("[audio transcript: {name}]")),
-        provider_kind: None,
-        provider_item_id: None,
+        preview: Some(transcript_header(&name)),
+        provider_kind: Some(AUDIO_TRANSCRIPT_PROVIDER_KIND.to_owned()),
+        provider_item_id: Some(entry.content_ref.as_str().to_owned()),
         token_estimate: None,
     })
 }

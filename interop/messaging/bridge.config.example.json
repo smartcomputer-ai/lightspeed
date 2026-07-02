@@ -12,8 +12,8 @@
 
   "bindings": [
     {
-      "id": "personal-telegram",
-      "match": { "channel": "telegram", "scope": "direct" },
+      "id": "personal-chat",
+      "match": { "channel": ["telegram", "whatsapp"], "scope": "direct" },
       "profile": "personal",
       "sessionKey": "lukas",
       "pairing": { "codeEnv": "PERSONAL_PAIRING_CODE" }

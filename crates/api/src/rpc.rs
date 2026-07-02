@@ -277,6 +277,7 @@ api_methods! {
     METHOD_SESSION_CLOSE => close_session(SessionCloseParams) -> SessionCloseResponse,
     METHOD_CONTEXT_COMPACT => compact_context(ContextCompactParams) -> ContextCompactResponse,
     METHOD_CONTEXT_APPEND => append_context(ContextAppendParams) -> ContextAppendResponse,
+    METHOD_CONTEXT_REMOVE => remove_context(ContextRemoveParams) -> ContextRemoveResponse,
     METHOD_OUTBOX_READ => read_outbox(OutboxReadParams) -> OutboxReadResponse,
     METHOD_OUTBOX_ACK => ack_outbox(OutboxAckParams) -> OutboxAckResponse,
     METHOD_RUN_START => start_run(RunStartParams) -> RunStartResponse,

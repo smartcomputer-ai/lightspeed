@@ -141,11 +141,13 @@ async fn openai_responses_live_engine_prunes_and_reuses_provider_compaction() {
         .drive_command(DriveCommand {
             session_id: session_id.clone(),
             observed_at_ms: 20,
-            command: CoreAgentCommand::RequestRun {
+            command: CoreAgentCommand::RequestRun(engine::RunRequestCommand {
                 submission_id: None,
-                input: user_input(first_input_ref.clone()),
+                source: engine::RunRequestSource::Input {
+                    input: user_input(first_input_ref.clone()),
+                },
                 run_config: run_config(),
-            },
+            }),
             max_steps: Some(128),
         })
         .await
@@ -193,11 +195,13 @@ async fn openai_responses_live_engine_prunes_and_reuses_provider_compaction() {
         .drive_command(DriveCommand {
             session_id,
             observed_at_ms: 30,
-            command: CoreAgentCommand::RequestRun {
+            command: CoreAgentCommand::RequestRun(engine::RunRequestCommand {
                 submission_id: None,
-                input: user_input(second_input_ref),
+                source: engine::RunRequestSource::Input {
+                    input: user_input(second_input_ref),
+                },
                 run_config: run_config(),
-            },
+            }),
             max_steps: Some(128),
         })
         .await

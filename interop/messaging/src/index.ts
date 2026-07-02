@@ -21,7 +21,7 @@ export {
   resolveInboundAccess,
 } from "./config.js";
 export { extractAssistantText, LightspeedSessionBridge, runUsedMessagingTool } from "./lightspeed.js";
-export type { LightspeedReply, LightspeedRoomEvent, LightspeedTurn, LightspeedTurnMedia } from "./lightspeed.js";
+export type { LightspeedReply, LightspeedTurn, LightspeedTurnMedia } from "./lightspeed.js";
 export { DeliveryError, OutboxTailer } from "./outbox.js";
 export type { ChannelDeliverer, DeliveryResult, OutboxTailerOptions } from "./outbox.js";
 export { classifyInbound, formatEnvelope, parseControlCommand, shouldQuoteChunk } from "./policy.js";
@@ -35,8 +35,8 @@ export type {
   GroupActivation,
   ReplyToMode,
 } from "./policy.js";
-export { RoomBuffer, TurnDebouncer } from "./batcher.js";
-export type { RoomBufferOptions, RoomEventItem, TurnDebouncerOptions } from "./batcher.js";
+export { TurnDebouncer } from "./batcher.js";
+export type { TurnDebouncerOptions } from "./batcher.js";
 export { MessagingBridgeRuntime } from "./runtime.js";
 export type {
   ChannelPolicy,

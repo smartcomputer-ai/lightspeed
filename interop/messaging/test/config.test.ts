@@ -31,6 +31,40 @@ describe("loadBridgeConfig", () => {
       /recipes are no longer supported/,
     );
   });
+
+  it("defaults room retention watermarks to 300/200", async () => {
+    const config = await loadBridgeConfig({});
+    expect(config.runtime.roomRetentionHigh).toBe(300);
+    expect(config.runtime.roomRetentionLow).toBe(200);
+  });
+
+  it("parses room retention watermarks from env, including 0 to disable", async () => {
+    const config = await loadBridgeConfig({
+      BRIDGE_ROOM_RETENTION_HIGH: "50",
+      BRIDGE_ROOM_RETENTION_LOW: "10",
+    });
+    expect(config.runtime.roomRetentionHigh).toBe(50);
+    expect(config.runtime.roomRetentionLow).toBe(10);
+
+    // 0 disables retention; the LOW < HIGH check does not apply then.
+    const disabled = await loadBridgeConfig({ BRIDGE_ROOM_RETENTION_HIGH: "0" });
+    expect(disabled.runtime.roomRetentionHigh).toBe(0);
+  });
+
+  it("rejects a LOW watermark at or above HIGH", async () => {
+    await expect(
+      loadBridgeConfig({
+        BRIDGE_ROOM_RETENTION_HIGH: "100",
+        BRIDGE_ROOM_RETENTION_LOW: "100",
+      }),
+    ).rejects.toThrow(/BRIDGE_ROOM_RETENTION_LOW must be smaller/);
+    await expect(
+      loadBridgeConfig({
+        BRIDGE_ROOM_RETENTION_HIGH: "100",
+        BRIDGE_ROOM_RETENTION_LOW: "150",
+      }),
+    ).rejects.toThrow(/BRIDGE_ROOM_RETENTION_LOW must be smaller/);
+  });
 });
 
 describe("parseBindings", () => {
@@ -74,6 +108,34 @@ describe("parseBindings", () => {
         sessionKey: "lukas",
       },
     ]);
+  });
+
+  it("parses channel arrays", () => {
+    const bindings = parseBindings([
+      {
+        id: "lukas-chat",
+        match: { channel: ["telegram", "whatsapp"] },
+        profile: "personal",
+        sessionKey: "lukas",
+        pairing: { code: "LOCALCODE" },
+      },
+    ]);
+
+    expect(bindings).toEqual<BindingRule[]>([
+      {
+        id: "lukas-chat",
+        match: { channel: ["telegram", "whatsapp"] },
+        profile: { kind: "named", profileId: "personal" },
+        sessionKey: "lukas",
+        pairing: { code: "LOCALCODE" },
+      },
+    ]);
+  });
+
+  it("rejects invalid channel array entries", () => {
+    expect(() => parseBindings([{ match: { channel: ["telegram", "email"] } }])).toThrow(
+      /array entries must be telegram or whatsapp/,
+    );
   });
 
   it("parses binding pairing codes from config and env", () => {
@@ -168,6 +230,28 @@ describe("resolveBinding", () => {
       profileLabel: "personal",
       sessionKey: "lukas",
     });
+  });
+
+  it("matches any configured channel in a binding channel array", () => {
+    const channelBindings = parseBindings([
+      {
+        match: { channel: ["telegram", "whatsapp"] },
+        profile: "personal",
+        sessionKey: "lukas",
+      },
+    ]);
+    for (const channel of ["telegram", "whatsapp"] as const) {
+      expect(
+        resolveBinding(
+          { channel, handles: ["123"], chatId: "dm", scope: "direct" },
+          channelBindings,
+        ),
+      ).toEqual({
+        profile: { kind: "named", profileId: "personal" },
+        profileLabel: "personal",
+        sessionKey: "lukas",
+      });
+    }
   });
 
   it("matches a group rule by chatId and scope", () => {

@@ -77,6 +77,11 @@ pub trait AgentApiService: Send + Sync {
         params: ContextAppendParams,
     ) -> Result<AgentApiOutcome<ContextAppendResponse>, AgentApiError>;
 
+    async fn remove_context(
+        &self,
+        params: ContextRemoveParams,
+    ) -> Result<AgentApiOutcome<ContextRemoveResponse>, AgentApiError>;
+
     async fn read_outbox(
         &self,
         params: OutboxReadParams,

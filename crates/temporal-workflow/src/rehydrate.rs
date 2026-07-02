@@ -71,15 +71,10 @@ fn accumulate(
 ) -> Result<(), RehydrateError> {
     use engine::ApplyEvent;
 
-    if let CoreAgentEventKind::Run(RunEvent::Accepted {
-        run_id,
-        submission_id,
-        ..
-    }) = &entry.event.kind
-    {
+    if let CoreAgentEventKind::Run(RunEvent::Accepted(accepted)) = &entry.event.kind {
         reduced
             .run_submissions
-            .insert(run_id.as_u64(), submission_id.clone());
+            .insert(accepted.run_id.as_u64(), accepted.submission_id.clone());
     }
     apply
         .apply(&mut reduced.core_state, entry)

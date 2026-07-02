@@ -14,27 +14,49 @@ impl GatewayAgentApi {
         session_id: &SessionId,
         command: CoreAgentCommand,
     ) -> Result<(), AgentApiError> {
-        let command = engine::CoreAgentCodec
-            .encode_command(&command)
-            .map_err(|error| AgentApiError::internal(error.to_string()))?;
-        self.signal_submit_admission(session_id, AgentAdmission { command })
-            .await
+        self.submit_core_commands(session_id, vec![command]).await
     }
 
-    /// Signal an encoded admission to the session workflow. A raw Temporal
-    /// `NotFound` is classified: a workflow that exists but failed at
-    /// bootstrap is reported as `session_bootstrap_failed`, not the misleading
-    /// "agent workflow not found".
-    pub(super) async fn signal_submit_admission(
+    /// Encodes commands and signals them as one admission batch. Context
+    /// upserts carry their key so admission failures can be attributed back
+    /// to the entry that caused them.
+    pub(super) async fn submit_core_commands(
         &self,
         session_id: &SessionId,
-        admission: AgentAdmission,
+        commands: Vec<CoreAgentCommand>,
+    ) -> Result<(), AgentApiError> {
+        let mut admissions = Vec::with_capacity(commands.len());
+        for command in commands {
+            let context_key = match &command {
+                CoreAgentCommand::UpsertContext { key, .. }
+                | CoreAgentCommand::RemoveContext { key } => Some(key.clone()),
+                _ => None,
+            };
+            let command = engine::CoreAgentCodec
+                .encode_command(&command)
+                .map_err(|error| AgentApiError::internal(error.to_string()))?;
+            admissions.push(AgentAdmission {
+                command,
+                context_key,
+            });
+        }
+        self.signal_submit_admissions(session_id, admissions).await
+    }
+
+    /// Signal an encoded admission batch to the session workflow. A raw
+    /// Temporal `NotFound` is classified: a workflow that exists but failed at
+    /// bootstrap is reported as `session_bootstrap_failed`, not the misleading
+    /// "agent workflow not found".
+    pub(super) async fn signal_submit_admissions(
+        &self,
+        session_id: &SessionId,
+        admissions: Vec<AgentAdmission>,
     ) -> Result<(), AgentApiError> {
         match self
             .workflow_handle(session_id)
             .signal(
-                AgentSessionWorkflow::submit_admission,
-                admission,
+                AgentSessionWorkflow::submit_admissions,
+                admissions,
                 WorkflowSignalOptions::default(),
             )
             .await
@@ -141,13 +163,38 @@ impl GatewayAgentApi {
         }
     }
 
+    /// Waits for exact context entries to commit; any per-entry admission
+    /// failure is escalated to a call-level typed error. Built on the same
+    /// wait loop as `context/append`.
     pub(super) async fn wait_for_context_entries_applied(
         &self,
         session_id: &SessionId,
         expected: &[(ContextEntryKey, ContextEntryInput)],
         baseline_failures: usize,
     ) -> Result<u64, AgentApiError> {
+        let (context_revision, outcomes) = self
+            .wait_for_context_append_outcomes(session_id, expected, baseline_failures)
+            .await?;
+        for outcome in outcomes.values() {
+            if let ContextAppendWaitOutcome::Failed { failure } = outcome {
+                return Err(map_admission_failure_to_api_error(failure));
+            }
+        }
+        Ok(context_revision)
+    }
+
+    pub(super) async fn wait_for_context_append_outcomes(
+        &self,
+        session_id: &SessionId,
+        expected: &[(ContextEntryKey, ContextEntryInput)],
+        baseline_failures: usize,
+    ) -> Result<(u64, BTreeMap<ContextEntryKey, ContextAppendWaitOutcome>), AgentApiError> {
+        let expected_keys = expected
+            .iter()
+            .map(|(key, _)| key.clone())
+            .collect::<BTreeSet<_>>();
         let started = Instant::now();
+        let mut outcomes = BTreeMap::new();
         loop {
             if started.elapsed() > self.operation_timeout {
                 return Err(AgentApiError::internal(format!(
@@ -155,9 +202,16 @@ impl GatewayAgentApi {
                 )));
             }
             if let Some(status) = self.query_status_optional(session_id).await? {
-                if status.admission_failures.len() > baseline_failures {
-                    if let Some(failure) = status.admission_failures.last() {
-                        return Err(map_admission_failure_to_api_error(failure));
+                for failure in status.admission_failures.iter().skip(baseline_failures) {
+                    let Some(key) = failure.context_key.as_ref() else {
+                        continue;
+                    };
+                    if expected_keys.contains(key) {
+                        outcomes.entry(key.clone()).or_insert_with(|| {
+                            ContextAppendWaitOutcome::Failed {
+                                failure: failure.clone(),
+                            }
+                        });
                     }
                 }
                 if let Some(error) = status.last_error {
@@ -167,15 +221,87 @@ impl GatewayAgentApi {
                 }
             }
             let loaded = self.load_session_state(session_id).await?;
-            let all_applied = expected.iter().all(|(key, input)| {
-                loaded.state.context.entries.iter().any(|entry| {
-                    entry.key.as_ref() == Some(key)
-                        && entry.kind == input.kind
-                        && entry.content_ref == input.content_ref
-                })
-            });
-            if all_applied {
-                return Ok(loaded.state.context.revision);
+            for (key, input) in expected {
+                if outcomes.contains_key(key) {
+                    continue;
+                }
+                if let Some(active) = loaded
+                    .state
+                    .context
+                    .entries
+                    .iter()
+                    .find(|entry| entry.key.as_ref() == Some(key))
+                    .filter(|entry| active_context_entry_matches_input(entry, input))
+                {
+                    outcomes.insert(
+                        key.clone(),
+                        ContextAppendWaitOutcome::Applied {
+                            entry: active_entry_input(active),
+                        },
+                    );
+                }
+            }
+            if outcomes.len() == expected.len() {
+                return Ok((loaded.state.context.revision, outcomes));
+            }
+            tokio::time::sleep(self.poll_interval).await;
+        }
+    }
+
+    /// Waits until each key is absent from active context (removed) or its
+    /// removal admission failed. Mirrors `wait_for_context_append_outcomes`
+    /// with an absence condition instead of an effective-entry match.
+    pub(super) async fn wait_for_context_keys_removed(
+        &self,
+        session_id: &SessionId,
+        expected: &[ContextEntryKey],
+        baseline_failures: usize,
+    ) -> Result<(u64, BTreeMap<ContextEntryKey, Option<AgentAdmissionFailure>>), AgentApiError>
+    {
+        let expected_keys = expected.iter().cloned().collect::<BTreeSet<_>>();
+        let started = Instant::now();
+        let mut outcomes: BTreeMap<ContextEntryKey, Option<AgentAdmissionFailure>> =
+            BTreeMap::new();
+        loop {
+            if started.elapsed() > self.operation_timeout {
+                return Err(AgentApiError::internal(format!(
+                    "timed out waiting for context entries to be removed: {session_id}"
+                )));
+            }
+            if let Some(status) = self.query_status_optional(session_id).await? {
+                for failure in status.admission_failures.iter().skip(baseline_failures) {
+                    let Some(key) = failure.context_key.as_ref() else {
+                        continue;
+                    };
+                    if expected_keys.contains(key) {
+                        outcomes
+                            .entry(key.clone())
+                            .or_insert_with(|| Some(failure.clone()));
+                    }
+                }
+                if let Some(error) = status.last_error {
+                    return Err(AgentApiError::internal(format!(
+                        "agent workflow reported error: {error}"
+                    )));
+                }
+            }
+            let loaded = self.load_session_state(session_id).await?;
+            for key in expected {
+                if outcomes.contains_key(key) {
+                    continue;
+                }
+                let present = loaded
+                    .state
+                    .context
+                    .entries
+                    .iter()
+                    .any(|entry| entry.key.as_ref() == Some(key));
+                if !present {
+                    outcomes.insert(key.clone(), None);
+                }
+            }
+            if outcomes.len() == expected.len() {
+                return Ok((loaded.state.context.revision, outcomes));
             }
             tokio::time::sleep(self.poll_interval).await;
         }
@@ -251,12 +377,9 @@ impl GatewayAgentApi {
                 .filter(|run| run.submission_id.as_ref() == Some(submission_id))
                 .filter(|_| can_return_matching_run)
             {
-                let run = self
+                return self
                     .project_run_by_id(session_id, RunId::new(active.run_id), active.status)
-                    .await?;
-                if !run.input.is_empty() {
-                    return Ok(run);
-                }
+                    .await;
             }
             if let Some(run) = status
                 .completed_runs
@@ -265,12 +388,9 @@ impl GatewayAgentApi {
                 .find(|run| run.submission_id.as_ref() == Some(submission_id))
                 .filter(|_| can_return_matching_run)
             {
-                let run = self
+                return self
                     .project_run_by_id(session_id, RunId::new(run.run_id), run.status)
-                    .await?;
-                if !run.input.is_empty() {
-                    return Ok(run);
-                }
+                    .await;
             }
             if let Some(error) = status.last_error {
                 return Err(AgentApiError::internal(format!(

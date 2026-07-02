@@ -20,6 +20,7 @@ export type Classification =
 
 export interface ClassifyInput {
   text: string;
+  hasMedia?: boolean;
   isDirect: boolean;
   isFromSelf: boolean;
   mentionedBot: boolean;
@@ -62,7 +63,7 @@ export function classifyInbound(
     return { kind: "drop", reason: "self" };
   }
   const text = message.text.trim();
-  if (!text) {
+  if (!text && !message.hasMedia) {
     return { kind: "drop", reason: "empty" };
   }
 

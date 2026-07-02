@@ -226,6 +226,21 @@
       }
     },
     {
+      "method": "context/remove",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/ContextRemoveParams"
+        },
+        "type": "ContextRemoveParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfContextRemoveResponse"
+        },
+        "type": "AgentApiOutcome<ContextRemoveResponse>"
+      }
+    },
+    {
       "method": "outbox/read",
       "params": {
         "schema": {

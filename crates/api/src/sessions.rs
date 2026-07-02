@@ -372,8 +372,87 @@ pub struct ContextAppendEntry {
 #[serde(rename_all = "camelCase")]
 pub struct ContextAppendResponse {
     pub context_revision: u64,
-    pub applied_keys: Vec<String>,
-    pub unchanged_keys: Vec<String>,
+    pub results: Vec<ContextAppendResult>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextAppendResult {
+    pub key: String,
+    pub status: ContextAppendStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry: Option<ContextEntryInputView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<InputAdmissionFailureView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activation_text: Option<String>,
+    /// True when `activation_text` was cut off at the server-side length cap.
+    /// The committed context entry always holds the full text.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub activation_text_truncated: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum ContextAppendStatus {
+    Applied,
+    Unchanged,
+    Failed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct InputAdmissionFailureView {
+    pub kind: InputAdmissionFailureKind,
+    pub message: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum InputAdmissionFailureKind {
+    UnsupportedMedia,
+    UnsupportedAudioMime,
+    BlobMissing,
+    BlobTooLarge,
+    AudioDurationTooLong,
+    TranscoderUnavailable,
+    TranscodeFailure,
+    TranscriptionFailure,
+    AdmissionRejected,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextRemoveParams {
+    pub session_id: SessionId,
+    /// Active context keys to remove. Removing a key that is already absent
+    /// is a per-key no-op (`absent`), so retries are idempotent. Keys under
+    /// reserved runtime namespaces (`run.`) are rejected request-level.
+    pub keys: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextRemoveResponse {
+    pub context_revision: u64,
+    pub results: Vec<ContextRemoveResult>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextRemoveResult {
+    pub key: String,
+    pub status: ContextRemoveStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<InputAdmissionFailureView>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum ContextRemoveStatus {
+    Removed,
+    Absent,
+    Failed,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -595,7 +674,7 @@ pub enum SessionEventKindView {
     RunAccepted {
         run_id: RunId,
         submission_id: Option<String>,
-        input: Vec<ContextEntryInputView>,
+        source: RunAcceptedSourceView,
     },
     RunStarted {
         run_id: RunId,
@@ -735,6 +814,17 @@ pub enum SessionEventKindView {
         turn_id: String,
         batch_id: String,
     },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum RunAcceptedSourceView {
+    Input { entries: Vec<ContextEntryInputView> },
+    Context { keys: Vec<String> },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
