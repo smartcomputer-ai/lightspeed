@@ -677,10 +677,10 @@ mod tests {
     use engine::{
         AgentHandle, CompactionPolicy, ContextCompactionRequest, ContextCompactionResult,
         ContextCompactionStatus, ContextConfig, ContextEntryInput, ContextEntryKey,
-        ContextEntryKind, ContextMessageRole, CoreAgentCommand, CoreAgentEventKind,
-        FunctionToolSpec, LlmFinish, ModelSelection, ObservedToolCall, ProviderApiKind, RunConfig,
-        RunStatus, SessionConfig, SessionId, ToolCallResult, ToolKind, ToolName, ToolParallelism,
-        ToolSpec, ToolTargetRequirement, TurnConfig, TurnEvent,
+        ContextEntryKind, ContextMessageRole, CoreAgentCommand, CoreAgentEvent, FunctionToolSpec,
+        LlmFinish, ModelSelection, ObservedToolCall, ProviderApiKind, RunConfig, RunStatus,
+        SessionConfig, SessionId, ToolCallResult, ToolKind, ToolName, ToolParallelism, ToolSpec,
+        ToolTargetRequirement, TurnConfig, TurnEvent,
         storage::{
             BlobStore, CreateForkedSession, CreateSession, InMemoryBlobStore, InMemorySessionStore,
             SessionStore,
@@ -1170,8 +1170,8 @@ mod tests {
         assert!(outcome.accepted);
         assert!(!outcome.state.context.pending_compaction);
         assert!(outcome.emitted_entries.iter().any(|entry| matches!(
-            &entry.event.kind,
-            CoreAgentEventKind::Context(engine::ContextEvent::CompactionFinished {
+            &entry.event,
+            CoreAgentEvent::Context(engine::ContextEvent::CompactionFinished {
                 status: ContextCompactionStatus::Failed,
                 failure_ref: Some(_),
                 ..
@@ -1437,8 +1437,8 @@ mod tests {
         ));
         assert!(outcome.emitted_entries.iter().any(|entry| {
             matches!(
-                &entry.event.kind,
-                CoreAgentEventKind::Context(engine::ContextEvent::EntriesApplied { entries, .. })
+                &entry.event,
+                CoreAgentEvent::Context(engine::ContextEvent::EntriesApplied { entries, .. })
                     if entries.iter().any(|entry| {
                         matches!(entry.kind, ContextEntryKind::SkillCatalog)
                     })
@@ -1554,8 +1554,8 @@ mod tests {
         assert!(first_report.sources.iter().all(|source| source.published));
         assert!(first_outcome.emitted_entries.iter().any(|entry| {
             matches!(
-                &entry.event.kind,
-                CoreAgentEventKind::Context(engine::ContextEvent::KeyPrefixReplaced {
+                &entry.event,
+                CoreAgentEvent::Context(engine::ContextEvent::KeyPrefixReplaced {
                     key_prefix,
                     entries,
                     ..
@@ -1620,8 +1620,8 @@ mod tests {
         );
         assert!(second_outcome.emitted_entries.iter().any(|entry| {
             matches!(
-                &entry.event.kind,
-                CoreAgentEventKind::Context(engine::ContextEvent::KeyPrefixReplaced {
+                &entry.event,
+                CoreAgentEvent::Context(engine::ContextEvent::KeyPrefixReplaced {
                     key_prefix,
                     entries,
                     ..
@@ -1758,8 +1758,8 @@ mod tests {
         assert_eq!(outcome.state.runs.completed[0].status, RunStatus::Completed);
         assert!(outcome.emitted_entries.iter().all(|entry| {
             !matches!(
-                &entry.event.kind,
-                CoreAgentEventKind::Context(engine::ContextEvent::EntriesApplied { entries, .. })
+                &entry.event,
+                CoreAgentEvent::Context(engine::ContextEvent::EntriesApplied { entries, .. })
                     if entries.iter().any(|entry| {
                         matches!(entry.kind, ContextEntryKind::SkillActivation { .. })
                     })
@@ -1947,8 +1947,8 @@ mod tests {
         outcome
             .emitted_entries
             .iter()
-            .find_map(|entry| match &entry.event.kind {
-                CoreAgentEventKind::Tool(engine::ToolEvent::CallCompleted { result, .. })
+            .find_map(|entry| match &entry.event {
+                CoreAgentEvent::Tool(engine::ToolEvent::CallCompleted { result, .. })
                     if result.call_id.as_str() == call_id =>
                 {
                     result.output_ref.clone()
@@ -2092,8 +2092,8 @@ mod tests {
         assert_eq!(failed.state.runs.completed[0].status, RunStatus::Failed);
         assert!(failed.emitted_entries.iter().any(|entry| {
             matches!(
-                &entry.event.kind,
-                CoreAgentEventKind::Turn(TurnEvent::Completed {
+                &entry.event,
+                CoreAgentEvent::Turn(TurnEvent::Completed {
                     outcome: engine::TurnOutcome::Failed {
                         failure_ref: Some(_)
                     },
@@ -2161,8 +2161,8 @@ mod tests {
         assert_eq!(outcome.state.runs.completed[0].status, RunStatus::Completed);
         assert!(outcome.emitted_entries.iter().any(|entry| {
             matches!(
-                &entry.event.kind,
-                CoreAgentEventKind::Tool(engine::ToolEvent::CallCompleted {
+                &entry.event,
+                CoreAgentEvent::Tool(engine::ToolEvent::CallCompleted {
                     result: ToolCallResult {
                         status: ToolCallStatus::Failed,
                         error_ref: Some(_),

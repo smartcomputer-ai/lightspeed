@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ActiveRun, BlobRef, CoreAgentEventKind, CoreAgentEventProposal, CoreAgentJoins, CoreAgentState,
+    ActiveRun, BlobRef, CoreAgentEvent, CoreAgentEventProposal, CoreAgentJoins, CoreAgentState,
     CoreAgentStatus, DomainError, ObservedToolCall, PlanningError, RunId, RunStatus, TokenEstimate,
     TurnId,
 };
@@ -72,7 +72,7 @@ pub fn plan_next(state: &CoreAgentState) -> Result<Vec<CoreAgentEventProposal>, 
         turn_id: Some(turn_id),
         ..CoreAgentJoins::default()
     };
-    let kind = CoreAgentEventKind::Turn(Event::Started {
+    let kind = CoreAgentEvent::Turn(Event::Started {
         turn_id,
         run_id: active_run.run_id,
     });
@@ -107,7 +107,7 @@ fn decide_active_turn_progress(
             };
             Ok(vec![CoreAgentEventProposal::new(
                 joins,
-                CoreAgentEventKind::Turn(Event::Planned {
+                CoreAgentEvent::Turn(Event::Planned {
                     turn_id,
                     run_id: active_run.run_id,
                     request_fingerprint: request.request_fingerprint,
@@ -135,7 +135,7 @@ fn decide_active_turn_progress(
             };
             Ok(vec![CoreAgentEventProposal::new(
                 joins,
-                CoreAgentEventKind::Turn(Event::GenerationRequested {
+                CoreAgentEvent::Turn(Event::GenerationRequested {
                     turn_id,
                     run_id: active_run.run_id,
                 }),

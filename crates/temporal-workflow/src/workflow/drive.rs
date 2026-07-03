@@ -181,11 +181,11 @@ async fn append_events(
     let entries = drive.resume_appended(appended.entries)?;
     let deferred_waits = entries
         .iter()
-        .filter_map(|entry| wait_directive_for_event(&entry.event.kind).transpose())
+        .filter_map(|entry| wait_directive_for_event(&entry.event).transpose())
         .collect::<anyhow::Result<Vec<_>>>()?;
     let deferred_environment_job_waits = entries
         .iter()
-        .filter_map(|entry| job_waits::directive_for_event(&entry.event.kind).transpose())
+        .filter_map(|entry| job_waits::directive_for_event(&entry.event).transpose())
         .collect::<anyhow::Result<Vec<_>>>()?;
     ctx.state_mut(|state| -> anyhow::Result<()> {
         apply_entries(&mut state.core_state, &entries, &mut state.run_submissions)?;
@@ -225,7 +225,7 @@ fn apply_entries(
     run_submissions: &mut BTreeMap<u64, Option<SubmissionId>>,
 ) -> anyhow::Result<()> {
     for entry in entries {
-        if let CoreAgentEventKind::Run(RunEvent::Accepted(accepted)) = &entry.event.kind {
+        if let CoreAgentEvent::Run(RunEvent::Accepted(accepted)) = &entry.event {
             run_submissions.insert(accepted.run_id.as_u64(), accepted.submission_id.clone());
         }
         engine::apply_event(state, entry)?;

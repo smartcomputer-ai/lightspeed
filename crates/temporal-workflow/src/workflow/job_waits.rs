@@ -1,4 +1,4 @@
-use engine::{CoreAgentEventKind, ToolEvent};
+use engine::{CoreAgentEvent, ToolEvent};
 use temporalio_sdk::WorkflowContext;
 
 use crate::{
@@ -24,9 +24,9 @@ pub(super) struct DeferredEnvironmentJobWait {
 }
 
 pub(super) fn directive_for_event(
-    event: &CoreAgentEventKind,
+    event: &CoreAgentEvent,
 ) -> anyhow::Result<Option<DeferredEnvironmentJobWait>> {
-    let CoreAgentEventKind::Tool(ToolEvent::BatchDeferred {
+    let CoreAgentEvent::Tool(ToolEvent::BatchDeferred {
         run_id,
         turn_id,
         batch_id,

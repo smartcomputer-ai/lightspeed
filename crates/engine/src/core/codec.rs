@@ -1,5 +1,5 @@
 use crate::{
-    CodecError, ContextEvent, CoreAgentEntry, CoreAgentEvent, CoreAgentEventKind, CoreAgentJoins,
+    CodecError, ContextEvent, CoreAgentEntry, CoreAgentEvent, CoreAgentJoins,
     CoreAgentLifecycleEvent, CorrelationId, DynamicEvent, RunEvent, RunId, SubmissionId,
     ToolBatchId, ToolCallId, ToolConfigEvent, ToolEvent, TurnEvent, TurnId,
     UncommittedCoreAgentEvent,
@@ -101,15 +101,15 @@ fn ensure_core_agent_event_envelope(kind: &str, version: u32) -> Result<(), Code
 }
 
 fn core_agent_event_envelope_kind(event: &CoreAgentEvent) -> &'static str {
-    match &event.kind {
-        CoreAgentEventKind::Lifecycle(event) => match event {
+    match event {
+        CoreAgentEvent::Lifecycle(event) => match event {
             CoreAgentLifecycleEvent::Opened { .. } => "lightspeed.core.lifecycle.opened",
             CoreAgentLifecycleEvent::ConfigChanged { .. } => {
                 "lightspeed.core.lifecycle.config_changed"
             }
             CoreAgentLifecycleEvent::Closed => "lightspeed.core.lifecycle.closed",
         },
-        CoreAgentEventKind::Run(event) => match event {
+        CoreAgentEvent::Run(event) => match event {
             RunEvent::Accepted(_) => "lightspeed.core.run.accepted",
             RunEvent::Started { .. } => "lightspeed.core.run.started",
             RunEvent::SteeringAccepted { .. } => "lightspeed.core.run.steering_accepted",
@@ -118,14 +118,14 @@ fn core_agent_event_envelope_kind(event: &CoreAgentEvent) -> &'static str {
             RunEvent::Failed { .. } => "lightspeed.core.run.failed",
             RunEvent::Cancelled { .. } => "lightspeed.core.run.cancelled",
         },
-        CoreAgentEventKind::Turn(event) => match event {
+        CoreAgentEvent::Turn(event) => match event {
             TurnEvent::Started { .. } => "lightspeed.core.turn.started",
             TurnEvent::Planned { .. } => "lightspeed.core.turn.planned",
             TurnEvent::GenerationRequested { .. } => "lightspeed.core.turn.generation_requested",
             TurnEvent::GenerationCompleted { .. } => "lightspeed.core.turn.generation_completed",
             TurnEvent::Completed { .. } => "lightspeed.core.turn.completed",
         },
-        CoreAgentEventKind::Context(event) => match event {
+        CoreAgentEvent::Context(event) => match event {
             ContextEvent::EntriesApplied { .. } => "lightspeed.core.context.entries_applied",
             ContextEvent::EntriesRemoved { .. } => "lightspeed.core.context.entries_removed",
             ContextEvent::KeysRemoved { .. } => "lightspeed.core.context.keys_removed",
@@ -138,7 +138,7 @@ fn core_agent_event_envelope_kind(event: &CoreAgentEvent) -> &'static str {
                 "lightspeed.core.context.compaction_finished"
             }
         },
-        CoreAgentEventKind::ToolConfig(event) => match event {
+        CoreAgentEvent::ToolConfig(event) => match event {
             ToolConfigEvent::ToolsReplaced { .. } => "lightspeed.core.tool_config.tools_replaced",
             ToolConfigEvent::ToolsPatched { .. } => "lightspeed.core.tool_config.tools_patched",
             ToolConfigEvent::DefaultTargetSet { .. } => {
@@ -148,7 +148,7 @@ fn core_agent_event_envelope_kind(event: &CoreAgentEvent) -> &'static str {
                 "lightspeed.core.tool_config.default_target_cleared"
             }
         },
-        CoreAgentEventKind::Tool(event) => match event {
+        CoreAgentEvent::Tool(event) => match event {
             ToolEvent::BatchStarted { .. } => "lightspeed.core.tool.batch_started",
             ToolEvent::CallStarted { .. } => "lightspeed.core.tool.call_started",
             ToolEvent::CallCompleted { .. } => "lightspeed.core.tool.call_completed",
@@ -210,8 +210,8 @@ fn codec_failure(error: impl std::fmt::Display) -> CodecError {
 #[cfg(test)]
 mod tests {
     use crate::{
-        CoreAgentEventKind, CoreAgentJoins, CoreAgentLifecycleEvent, CorrelationId, EventSeq,
-        RunId, SessionPosition, ToolBatchId, ToolEvent, TurnId,
+        CoreAgentEvent, CoreAgentJoins, CoreAgentLifecycleEvent, CorrelationId, EventSeq, RunId,
+        SessionPosition, ToolBatchId, ToolEvent, TurnId,
     };
 
     use super::*;
@@ -219,9 +219,7 @@ mod tests {
     #[test]
     fn core_agent_event_round_trips_through_dynamic_envelope() {
         let codec = CoreAgentCodec;
-        let event = CoreAgentEvent {
-            kind: CoreAgentEventKind::Lifecycle(CoreAgentLifecycleEvent::Closed),
-        };
+        let event = CoreAgentEvent::Lifecycle(CoreAgentLifecycleEvent::Closed);
 
         let encoded = codec.encode_event(&event).expect("encode event");
         assert_eq!(encoded.kind, "lightspeed.core.lifecycle.closed");
@@ -237,18 +235,14 @@ mod tests {
             "lightspeed.custom.lifecycle.closed",
             CORE_AGENT_SCHEMA_VERSION,
             serde_json::json!({
-                "kind": {
-                    "lifecycle": "closed"
-                }
+                "lifecycle": "closed"
             }),
         );
         let foreign_version = DynamicEvent::new(
             "lightspeed.core.lifecycle.closed",
             CORE_AGENT_SCHEMA_VERSION + 1,
             serde_json::json!({
-                "kind": {
-                    "lifecycle": "closed"
-                }
+                "lifecycle": "closed"
             }),
         );
 
@@ -266,9 +260,7 @@ mod tests {
     fn core_agent_lifecycle_fixture_matches_codec() {
         assert_fixture_round_trip(
             include_str!("../../fixtures/core_lifecycle_closed_dynamic_event.json"),
-            CoreAgentEvent {
-                kind: CoreAgentEventKind::Lifecycle(CoreAgentLifecycleEvent::Closed),
-            },
+            CoreAgentEvent::Lifecycle(CoreAgentLifecycleEvent::Closed),
         );
     }
 
@@ -276,13 +268,11 @@ mod tests {
     fn core_agent_tool_fixture_matches_codec() {
         assert_fixture_round_trip(
             include_str!("../../fixtures/core_tool_batch_completed_dynamic_event.json"),
-            CoreAgentEvent {
-                kind: CoreAgentEventKind::Tool(ToolEvent::BatchCompleted {
-                    run_id: RunId::new(1),
-                    turn_id: TurnId::new(2),
-                    batch_id: ToolBatchId::new(3),
-                }),
-            },
+            CoreAgentEvent::Tool(ToolEvent::BatchCompleted {
+                run_id: RunId::new(1),
+                turn_id: TurnId::new(2),
+                batch_id: ToolBatchId::new(3),
+            }),
         );
     }
 
@@ -305,13 +295,11 @@ mod tests {
                 correlation_id: Some(CorrelationId::new("corr-1")),
                 ..CoreAgentJoins::default()
             },
-            event: CoreAgentEvent {
-                kind: CoreAgentEventKind::Tool(ToolEvent::BatchCompleted {
-                    run_id: RunId::new(1),
-                    turn_id: TurnId::new(2),
-                    batch_id: ToolBatchId::new(3),
-                }),
-            },
+            event: CoreAgentEvent::Tool(ToolEvent::BatchCompleted {
+                run_id: RunId::new(1),
+                turn_id: TurnId::new(2),
+                batch_id: ToolBatchId::new(3),
+            }),
         };
 
         assert_eq!(

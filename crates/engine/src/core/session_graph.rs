@@ -3,8 +3,8 @@
 use thiserror::Error;
 
 use crate::{
-    CodecError, CoreAgentCodec, CoreAgentEvent, CoreAgentEventKind, CoreAgentJoins,
-    CoreAgentLifecycleEvent, CoreAgentState, ToolConfigEvent, UncommittedCoreAgentEvent,
+    CodecError, CoreAgentCodec, CoreAgentEvent, CoreAgentJoins, CoreAgentLifecycleEvent,
+    CoreAgentState, ToolConfigEvent, UncommittedCoreAgentEvent,
     session::DynamicUncommittedSessionEvent,
 };
 
@@ -36,21 +36,17 @@ pub fn core_agent_clone_opening_events(
     let mut events = vec![codec.encode_uncommitted(&UncommittedCoreAgentEvent {
         observed_at_ms,
         joins: CoreAgentJoins::default(),
-        event: CoreAgentEvent {
-            kind: CoreAgentEventKind::Lifecycle(CoreAgentLifecycleEvent::Opened { config }),
-        },
+        event: CoreAgentEvent::Lifecycle(CoreAgentLifecycleEvent::Opened { config }),
     })?];
 
     if !state.tooling.tools.is_empty() {
         events.push(codec.encode_uncommitted(&UncommittedCoreAgentEvent {
             observed_at_ms,
             joins: CoreAgentJoins::default(),
-            event: CoreAgentEvent {
-                kind: CoreAgentEventKind::ToolConfig(ToolConfigEvent::ToolsReplaced {
-                    base_revision: 0,
-                    tools: state.tooling.tools.clone(),
-                }),
-            },
+            event: CoreAgentEvent::ToolConfig(ToolConfigEvent::ToolsReplaced {
+                base_revision: 0,
+                tools: state.tooling.tools.clone(),
+            }),
         })?);
     }
 
@@ -58,11 +54,9 @@ pub fn core_agent_clone_opening_events(
         events.push(codec.encode_uncommitted(&UncommittedCoreAgentEvent {
             observed_at_ms,
             joins: CoreAgentJoins::default(),
-            event: CoreAgentEvent {
-                kind: CoreAgentEventKind::ToolConfig(ToolConfigEvent::DefaultTargetSet {
-                    target: target.clone(),
-                }),
-            },
+            event: CoreAgentEvent::ToolConfig(ToolConfigEvent::DefaultTargetSet {
+                target: target.clone(),
+            }),
         })?);
     }
 

@@ -11,7 +11,7 @@
 use std::collections::BTreeMap;
 
 use engine::{
-    CoreAgentCodec, CoreAgentEntry, CoreAgentEventKind, CoreAgentState, RunEvent, SubmissionId,
+    CoreAgentCodec, CoreAgentEntry, CoreAgentEvent, CoreAgentState, RunEvent, SubmissionId,
     storage::DynamicSessionEntry,
 };
 
@@ -63,7 +63,7 @@ pub fn reduce_session_entries(
 }
 
 fn accumulate(reduced: &mut ReducedSession, entry: &CoreAgentEntry) -> Result<(), RehydrateError> {
-    if let CoreAgentEventKind::Run(RunEvent::Accepted(accepted)) = &entry.event.kind {
+    if let CoreAgentEvent::Run(RunEvent::Accepted(accepted)) = &entry.event {
         reduced
             .run_submissions
             .insert(accepted.run_id.as_u64(), accepted.submission_id.clone());

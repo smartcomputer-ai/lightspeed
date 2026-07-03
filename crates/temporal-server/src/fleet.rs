@@ -4111,23 +4111,21 @@ mod tests {
         events.extend([
             core_uncommitted_event(
                 30,
-                engine::CoreAgentEventKind::Run(engine::RunEvent::Accepted(
-                    engine::AcceptedRunEvent {
-                        run_id,
-                        submission_id: None,
-                        source: engine::RunSource::Input { input: Vec::new() },
-                        run_config: RunConfig::default(),
-                        config_revision: 0,
-                    },
-                )),
+                engine::CoreAgentEvent::Run(engine::RunEvent::Accepted(engine::AcceptedRunEvent {
+                    run_id,
+                    submission_id: None,
+                    source: engine::RunSource::Input { input: Vec::new() },
+                    run_config: RunConfig::default(),
+                    config_revision: 0,
+                })),
             ),
             core_uncommitted_event(
                 31,
-                engine::CoreAgentEventKind::Run(engine::RunEvent::Started { run_id }),
+                engine::CoreAgentEvent::Run(engine::RunEvent::Started { run_id }),
             ),
             core_uncommitted_event(
                 32,
-                engine::CoreAgentEventKind::Run(engine::RunEvent::Completed {
+                engine::CoreAgentEvent::Run(engine::RunEvent::Completed {
                     run_id,
                     output_ref: Some(output_ref),
                 }),
@@ -4145,13 +4143,13 @@ mod tests {
 
     fn core_uncommitted_event(
         observed_at_ms: u64,
-        kind: engine::CoreAgentEventKind,
+        event: engine::CoreAgentEvent,
     ) -> engine::storage::DynamicUncommittedSessionEvent {
         engine::CoreAgentCodec
             .encode_uncommitted(&engine::UncommittedCoreAgentEvent {
                 observed_at_ms,
                 joins: Default::default(),
-                event: engine::CoreAgentEvent { kind },
+                event,
             })
             .expect("encode core event")
     }

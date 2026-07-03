@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ActiveToolBatch, BlobRef, CompletedToolBatch, ContextEntryId, ContextEntryInput,
-    ContextEntryKey, CoreAgentEventKind, CoreAgentEventProposal, CoreAgentJoins, CoreAgentState,
+    ContextEntryKey, CoreAgentEvent, CoreAgentEventProposal, CoreAgentJoins, CoreAgentState,
     CoreAgentStatus, DomainError, PlanningError, RunConfig, RunId, SteeringId, SubmissionId,
     ToolBatchId, TurnId, TurnOutcome, TurnState, TurnStatus,
 };
@@ -235,7 +235,7 @@ pub fn plan_next(state: &CoreAgentState) -> Result<Vec<CoreAgentEventProposal>, 
                 };
                 return Ok(vec![CoreAgentEventProposal::new(
                     joins,
-                    CoreAgentEventKind::Run(Event::Cancelled {
+                    CoreAgentEvent::Run(Event::Cancelled {
                         run_id: active_run.run_id,
                     }),
                 )]);
@@ -258,7 +258,7 @@ pub fn plan_next(state: &CoreAgentState) -> Result<Vec<CoreAgentEventProposal>, 
         submission_id: queued.submission_id.clone(),
         ..CoreAgentJoins::default()
     };
-    let kind = CoreAgentEventKind::Run(Event::Started {
+    let kind = CoreAgentEvent::Run(Event::Started {
         run_id: queued.run_id,
     });
 
@@ -273,13 +273,13 @@ fn terminal_run_proposal(
     };
     let kind = match (&turn.status, turn.outcome.as_ref()) {
         (TurnStatus::Completed, Some(TurnOutcome::FinalOutput { output_ref })) => {
-            Some(CoreAgentEventKind::Run(Event::Completed {
+            Some(CoreAgentEvent::Run(Event::Completed {
                 run_id: active_run.run_id,
                 output_ref: output_ref.clone(),
             }))
         }
         (TurnStatus::Failed, Some(TurnOutcome::Failed { failure_ref })) => {
-            Some(CoreAgentEventKind::Run(Event::Failed {
+            Some(CoreAgentEvent::Run(Event::Failed {
                 run_id: active_run.run_id,
                 failure: RunFailure {
                     kind: RunFailureKind::ModelFailure,
@@ -288,7 +288,7 @@ fn terminal_run_proposal(
             }))
         }
         (TurnStatus::Cancelled, Some(TurnOutcome::Cancelled)) => {
-            Some(CoreAgentEventKind::Run(Event::Failed {
+            Some(CoreAgentEvent::Run(Event::Failed {
                 run_id: active_run.run_id,
                 failure: RunFailure {
                     kind: RunFailureKind::Cancelled,

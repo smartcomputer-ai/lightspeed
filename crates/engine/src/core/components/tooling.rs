@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::{
     ActiveRun, BlobRef, ContextEntry, ContextEntryInput, ContextEntryKind, ContextEntrySource,
-    ContextEvent, CoreAgentEventKind, CoreAgentEventProposal, CoreAgentJoins, CoreAgentState,
+    ContextEvent, CoreAgentEvent, CoreAgentEventProposal, CoreAgentJoins, CoreAgentState,
     CoreAgentStatus, DomainError, PlanningError, ProviderApiKind, RunId, RunStatus, ToolBatchId,
     ToolCallId, ToolEffect, ToolName, TurnId, TurnOutcome, TurnStatus,
     core::components::context::context_entries_from_inputs,
@@ -154,7 +154,7 @@ pub fn plan_next(state: &CoreAgentState) -> Result<Vec<CoreAgentEventProposal>, 
         };
         return Ok(vec![CoreAgentEventProposal::new(
             joins,
-            CoreAgentEventKind::Tool(Event::BatchStarted {
+            CoreAgentEvent::Tool(Event::BatchStarted {
                 run_id: active_run.run_id,
                 turn_id: *turn_id,
                 batch_id,
@@ -1019,7 +1019,7 @@ fn decide_active_tool_batch_invocations(
         };
         proposals.push(CoreAgentEventProposal::new(
             joins,
-            CoreAgentEventKind::Tool(Event::CallStarted {
+            CoreAgentEvent::Tool(Event::CallStarted {
                 run_id: batch.run_id,
                 turn_id: batch.turn_id,
                 batch_id: batch.batch_id,
@@ -1064,7 +1064,7 @@ fn decide_active_tool_batch_completion(
     if !result_items.is_empty() {
         proposals.push(CoreAgentEventProposal::new(
             joins.clone(),
-            CoreAgentEventKind::Context(ContextEvent::EntriesApplied {
+            CoreAgentEvent::Context(ContextEvent::EntriesApplied {
                 base_revision: state.context.revision,
                 entries: result_items,
             }),
@@ -1072,7 +1072,7 @@ fn decide_active_tool_batch_completion(
     }
     proposals.push(CoreAgentEventProposal::new(
         joins,
-        CoreAgentEventKind::Tool(Event::BatchCompleted {
+        CoreAgentEvent::Tool(Event::BatchCompleted {
             run_id: batch.run_id,
             turn_id: batch.turn_id,
             batch_id: batch.batch_id,

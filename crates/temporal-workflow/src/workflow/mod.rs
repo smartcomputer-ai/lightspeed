@@ -17,7 +17,7 @@ use std::{collections::BTreeMap, time::UNIX_EPOCH};
 use engine::{
     BlobRef, CommandError, ContextEntryInput, ContextEntryKey, ContextEntryKind,
     ContextMessageRole, CoreAgentAction, CoreAgentCommand, CoreAgentDrive, CoreAgentDriveError,
-    CoreAgentEntry, CoreAgentEventKind, CoreAgentState, CoreAgentStatus,
+    CoreAgentEntry, CoreAgentEvent, CoreAgentState, CoreAgentStatus,
     ENVIRONMENT_ACTIVE_CONTEXT_KEY, ENVIRONMENT_CATALOG_CONTEXT_KEY, LlmGenerationRequest,
     RunConfig, RunEvent, RunStatus, SKILL_CATALOG_CONTEXT_KEY, SessionId, SessionPosition,
     SubmissionId, ToolCallStatus, ToolEvent, ToolInvocationBatchRequest, ToolInvocationBatchResult,

@@ -14,7 +14,7 @@ use thiserror::Error;
 use crate::{
     BlobRef, CodecError, CommandError, ContextCompactionRequest, ContextCompactionResult,
     ContextEntryInput, ContextEntryKind, ContextEntrySource, ContextEvent, ContextMessageRole,
-    CoreAgentCodec, CoreAgentEntry, CoreAgentEventKind, CoreAgentEventProposal, CoreAgentJoins,
+    CoreAgentCodec, CoreAgentEntry, CoreAgentEvent, CoreAgentEventProposal, CoreAgentJoins,
     CoreAgentState, CoreAgentStatus, DomainError, LlmFinish, LlmGenerationRequest,
     LlmGenerationResult, LlmGenerationStatus, LlmRequest, PlanningError, SessionId,
     SessionPosition, ToolBatchId, ToolBatchOutcome, ToolBatchResumeDirective, ToolCallResult,
@@ -293,14 +293,14 @@ pub fn rebuild_llm_request_for_planned_turn(
 ) -> Result<Option<LlmRequest>, DomainError> {
     let mut state = CoreAgentState::new();
     for entry in entries {
-        if let CoreAgentEventKind::Turn(TurnEvent::Planned {
+        if let CoreAgentEvent::Turn(TurnEvent::Planned {
             turn_id,
             run_id,
             request_fingerprint,
             config_revision,
             context_revision,
             toolset_revision,
-        }) = &entry.event.kind
+        }) = &entry.event
             && *turn_id == target_turn_id
         {
             let active_run = state.runs.active.as_ref().ok_or_else(|| {
@@ -370,7 +370,7 @@ pub fn generation_result_proposals(
     if !context_entries.is_empty() {
         proposals.push(CoreAgentEventProposal::new(
             joins.clone(),
-            CoreAgentEventKind::Context(ContextEvent::EntriesApplied {
+            CoreAgentEvent::Context(ContextEvent::EntriesApplied {
                 base_revision: state.context.revision,
                 entries: context_entries,
             }),
@@ -378,7 +378,7 @@ pub fn generation_result_proposals(
     }
     proposals.push(CoreAgentEventProposal::new(
         joins.clone(),
-        CoreAgentEventKind::Turn(TurnEvent::GenerationCompleted {
+        CoreAgentEvent::Turn(TurnEvent::GenerationCompleted {
             turn_id: result.turn_id,
             run_id: result.run_id,
             status: result.status,
@@ -387,7 +387,7 @@ pub fn generation_result_proposals(
     ));
     proposals.push(CoreAgentEventProposal::new(
         joins,
-        CoreAgentEventKind::Turn(TurnEvent::Completed {
+        CoreAgentEvent::Turn(TurnEvent::Completed {
             turn_id: result.turn_id,
             outcome,
         }),
@@ -503,7 +503,7 @@ pub fn context_compaction_result_proposals(
         )?;
         proposals.push(CoreAgentEventProposal::new(
             CoreAgentJoins::default(),
-            CoreAgentEventKind::Context(ContextEvent::EntriesApplied {
+            CoreAgentEvent::Context(ContextEvent::EntriesApplied {
                 base_revision,
                 entries,
             }),
@@ -514,7 +514,7 @@ pub fn context_compaction_result_proposals(
     }
     proposals.push(CoreAgentEventProposal::new(
         CoreAgentJoins::default(),
-        CoreAgentEventKind::Context(ContextEvent::CompactionFinished {
+        CoreAgentEvent::Context(ContextEvent::CompactionFinished {
             base_revision,
             status: result.status,
             failure_ref: result.failure_ref,
@@ -615,7 +615,7 @@ pub fn tool_batch_deferred_proposals(
     };
     Ok(vec![CoreAgentEventProposal::new(
         joins,
-        CoreAgentEventKind::Tool(ToolEvent::BatchDeferred {
+        CoreAgentEvent::Tool(ToolEvent::BatchDeferred {
             run_id: batch.run_id,
             turn_id: batch.turn_id,
             batch_id: batch.batch_id,
@@ -657,7 +657,7 @@ pub fn resume_deferred_tool_batch_proposals(
     };
     let mut proposals = vec![CoreAgentEventProposal::new(
         joins,
-        CoreAgentEventKind::Tool(ToolEvent::BatchResumed {
+        CoreAgentEvent::Tool(ToolEvent::BatchResumed {
             run_id: result.run_id,
             turn_id: result.turn_id,
             batch_id: result.batch_id,
@@ -682,7 +682,7 @@ fn tool_call_completed_proposals(result: ToolInvocationBatchResult) -> Vec<CoreA
             };
             CoreAgentEventProposal::new(
                 joins,
-                CoreAgentEventKind::Tool(ToolEvent::CallCompleted {
+                CoreAgentEvent::Tool(ToolEvent::CallCompleted {
                     run_id: result.run_id,
                     turn_id: result.turn_id,
                     batch_id: result.batch_id,
@@ -927,7 +927,7 @@ mod tests {
 
     fn commit_core_event_result(
         drive: &mut CoreAgentDrive,
-        kind: CoreAgentEventKind,
+        kind: CoreAgentEvent,
         observed_at_ms: u64,
     ) -> Result<Vec<CoreAgentEntry>, CoreAgentDriveError> {
         let proposal = CoreAgentEventProposal::new(CoreAgentJoins::default(), kind);
@@ -1225,9 +1225,7 @@ mod tests {
             }
             let entries = commit_action(drive, action);
             for entry in entries {
-                if let CoreAgentEventKind::Turn(event @ TurnEvent::Planned { .. }) =
-                    entry.event.kind
-                {
+                if let CoreAgentEvent::Turn(event @ TurnEvent::Planned { .. }) = entry.event {
                     planned = Some(event);
                 }
             }
@@ -1818,9 +1816,9 @@ mod tests {
 
         let materialize_input = drive.next_action(22, 64).expect("materialize input");
         let entries = commit_action(&mut drive, materialize_input);
-        let CoreAgentEventKind::Context(ContextEvent::EntriesApplied {
+        let CoreAgentEvent::Context(ContextEvent::EntriesApplied {
             entries: applied, ..
-        }) = &entries[0].event.kind
+        }) = &entries[0].event
         else {
             panic!("expected context entries");
         };
@@ -1838,8 +1836,8 @@ mod tests {
         let start_turn = drive.next_action(23, 64).expect("start turn");
         let entries = commit_action(&mut drive, start_turn);
         assert!(matches!(
-            entries[0].event.kind,
-            CoreAgentEventKind::Turn(TurnEvent::Started { .. })
+            entries[0].event,
+            CoreAgentEvent::Turn(TurnEvent::Started { .. })
         ));
         assert_eq!(drive.state().context.entries.len(), 1);
     }
@@ -1865,7 +1863,7 @@ mod tests {
         let base_revision = drive.state().context.revision;
         let error = commit_core_event_result(
             &mut drive,
-            CoreAgentEventKind::Context(ContextEvent::EntriesRemoved {
+            CoreAgentEvent::Context(ContextEvent::EntriesRemoved {
                 base_revision,
                 entry_ids: vec![entry_id],
                 reason: ContextRemovalReason::Pruned,
@@ -1893,7 +1891,7 @@ mod tests {
         let base_revision = drive.state().context.revision;
         commit_core_event_result(
             &mut drive,
-            CoreAgentEventKind::Context(ContextEvent::EntriesRemoved {
+            CoreAgentEvent::Context(ContextEvent::EntriesRemoved {
                 base_revision,
                 entry_ids: vec![entry_id],
                 reason: ContextRemovalReason::Pruned,
@@ -1956,9 +1954,9 @@ mod tests {
             .next_action(32, 64)
             .expect("provider compaction prune");
         let entries = commit_action(&mut drive, prune);
-        let CoreAgentEventKind::Context(ContextEvent::EntriesRemoved {
+        let CoreAgentEvent::Context(ContextEvent::EntriesRemoved {
             entry_ids, reason, ..
-        }) = &entries[0].event.kind
+        }) = &entries[0].event
         else {
             panic!("expected context removal");
         };
@@ -2003,8 +2001,8 @@ mod tests {
             .admit_command(CoreAgentCommand::CompactContext, 30)
             .expect("manual compaction");
         let requested_entries = commit_action(&mut drive, request_compaction);
-        let CoreAgentEventKind::Context(ContextEvent::CompactionRequested { trigger, .. }) =
-            &requested_entries[0].event.kind
+        let CoreAgentEvent::Context(ContextEvent::CompactionRequested { trigger, .. }) =
+            &requested_entries[0].event
         else {
             panic!("expected compaction request");
         };
@@ -2037,12 +2035,12 @@ mod tests {
             .expect("resume compaction");
         let completed_entries = commit_action(&mut drive, completed);
         assert!(matches!(
-            completed_entries[0].event.kind,
-            CoreAgentEventKind::Context(ContextEvent::EntriesApplied { .. })
+            completed_entries[0].event,
+            CoreAgentEvent::Context(ContextEvent::EntriesApplied { .. })
         ));
         assert!(matches!(
-            completed_entries[1].event.kind,
-            CoreAgentEventKind::Context(ContextEvent::CompactionFinished {
+            completed_entries[1].event,
+            CoreAgentEvent::Context(ContextEvent::CompactionFinished {
                 status: ContextCompactionStatus::Succeeded,
                 ..
             })
@@ -2051,9 +2049,9 @@ mod tests {
 
         let prune = drive.next_action(33, 64).expect("prune compacted entries");
         let pruned_entries = commit_action(&mut drive, prune);
-        let CoreAgentEventKind::Context(ContextEvent::EntriesRemoved {
+        let CoreAgentEvent::Context(ContextEvent::EntriesRemoved {
             entry_ids, reason, ..
-        }) = &pruned_entries[0].event.kind
+        }) = &pruned_entries[0].event
         else {
             panic!("expected provider compaction prune");
         };
@@ -2109,11 +2107,11 @@ mod tests {
             .expect("resume failed compaction");
         let completed_entries = commit_action(&mut drive, completed);
 
-        let CoreAgentEventKind::Context(ContextEvent::CompactionFinished {
+        let CoreAgentEvent::Context(ContextEvent::CompactionFinished {
             status,
             failure_ref: event_failure_ref,
             ..
-        }) = &completed_entries[0].event.kind
+        }) = &completed_entries[0].event
         else {
             panic!("expected compaction finished");
         };
@@ -2212,8 +2210,8 @@ mod tests {
 
         let action = drive.next_action(30, 64).expect("high watermark plan");
         let requested_entries = commit_action(&mut drive, action);
-        let CoreAgentEventKind::Context(ContextEvent::CompactionRequested { trigger, .. }) =
-            &requested_entries[0].event.kind
+        let CoreAgentEvent::Context(ContextEvent::CompactionRequested { trigger, .. }) =
+            &requested_entries[0].event
         else {
             panic!("expected compaction request");
         };
@@ -2272,8 +2270,8 @@ mod tests {
         let action = drive.next_action(30, 64).expect("high watermark plan");
         let requested_entries = commit_action(&mut drive, action);
         assert!(matches!(
-            requested_entries[0].event.kind,
-            CoreAgentEventKind::Context(ContextEvent::CompactionRequested {
+            requested_entries[0].event,
+            CoreAgentEvent::Context(ContextEvent::CompactionRequested {
                 trigger: ContextCompactionTrigger::HighWatermark,
                 ..
             })
@@ -2320,7 +2318,7 @@ mod tests {
         assert_eq!(drive.state().context.revision, 1);
         let error = commit_core_event_result(
             &mut drive,
-            CoreAgentEventKind::Context(ContextEvent::EntriesRemoved {
+            CoreAgentEvent::Context(ContextEvent::EntriesRemoved {
                 base_revision: 0,
                 entry_ids: vec![entry_id],
                 reason: ContextRemovalReason::Pruned,
@@ -2343,7 +2341,7 @@ mod tests {
 
         let error = commit_core_event_result(
             &mut drive,
-            CoreAgentEventKind::Context(ContextEvent::EntriesApplied {
+            CoreAgentEvent::Context(ContextEvent::EntriesApplied {
                 base_revision,
                 entries: vec![
                     context_edit_entry(1, Some(key.clone()), b"first"),
@@ -2389,7 +2387,7 @@ mod tests {
 
         let error = commit_core_event_result(
             &mut drive,
-            CoreAgentEventKind::Context(ContextEvent::StateReplaced {
+            CoreAgentEvent::Context(ContextEvent::StateReplaced {
                 base_revision,
                 entries: vec![context_edit_entry(1, None, b"new")],
                 reason: ContextRewriteReason::PolicyChanged,
@@ -2432,9 +2430,9 @@ mod tests {
 
         let materialize_steering = drive.next_action(32, 64).expect("materialize steering");
         let entries = commit_action(&mut drive, materialize_steering);
-        let CoreAgentEventKind::Context(ContextEvent::EntriesApplied {
+        let CoreAgentEvent::Context(ContextEvent::EntriesApplied {
             entries: applied, ..
-        }) = &entries[0].event.kind
+        }) = &entries[0].event
         else {
             panic!("expected context entries");
         };
@@ -2972,8 +2970,8 @@ mod tests {
         let fail_run = drive.next_action(31, 8).expect("fail run");
         let entries = commit_action(&mut drive, fail_run);
         assert!(matches!(
-            entries[0].event.kind,
-            CoreAgentEventKind::Run(crate::RunEvent::Failed { .. })
+            entries[0].event,
+            CoreAgentEvent::Run(crate::RunEvent::Failed { .. })
         ));
         assert!(drive.state().runs.active.is_none());
         let completed = drive.state().runs.completed.last().expect("completed run");
@@ -3005,8 +3003,8 @@ mod tests {
             .expect("defer tool batch");
         let entries = commit_action(&mut drive, deferred);
         assert!(matches!(
-            entries[0].event.kind,
-            CoreAgentEventKind::Tool(ToolEvent::BatchDeferred { .. })
+            entries[0].event,
+            CoreAgentEvent::Tool(ToolEvent::BatchDeferred { .. })
         ));
 
         let active_run = drive.state().runs.active.as_ref().expect("active run");
@@ -3051,12 +3049,12 @@ mod tests {
             .expect("resume command");
         let entries = commit_action(&mut drive, resumed);
         assert!(matches!(
-            entries[0].event.kind,
-            CoreAgentEventKind::Tool(ToolEvent::BatchResumed { .. })
+            entries[0].event,
+            CoreAgentEvent::Tool(ToolEvent::BatchResumed { .. })
         ));
         assert!(matches!(
-            entries[1].event.kind,
-            CoreAgentEventKind::Tool(ToolEvent::CallCompleted { .. })
+            entries[1].event,
+            CoreAgentEvent::Tool(ToolEvent::CallCompleted { .. })
         ));
 
         let active_run = drive.state().runs.active.as_ref().expect("active run");
@@ -3084,8 +3082,8 @@ mod tests {
         let completed = drive.next_action(93, 64).expect("complete batch");
         let entries = commit_action(&mut drive, completed);
         assert!(entries.iter().any(|entry| matches!(
-            entry.event.kind,
-            CoreAgentEventKind::Tool(ToolEvent::BatchCompleted { .. })
+            entry.event,
+            CoreAgentEvent::Tool(ToolEvent::BatchCompleted { .. })
         )));
         let active_run = drive.state().runs.active.as_ref().expect("active run");
         assert!(active_run.tool_batches.get(&request.batch_id).is_none());
@@ -3111,8 +3109,8 @@ mod tests {
         let entries = commit_action(&mut drive, completed);
         assert_eq!(entries.len(), 1);
         assert!(matches!(
-            entries[0].event.kind,
-            CoreAgentEventKind::Tool(ToolEvent::CallCompleted { .. })
+            entries[0].event,
+            CoreAgentEvent::Tool(ToolEvent::CallCompleted { .. })
         ));
 
         let active_run = drive.state().runs.active.as_ref().expect("active run");
@@ -3127,15 +3125,15 @@ mod tests {
         let entries = commit_action(&mut drive, completed);
         assert!(entries.iter().all(|entry| {
             !matches!(
-                entry.event.kind,
-                CoreAgentEventKind::Tool(
+                entry.event,
+                CoreAgentEvent::Tool(
                     ToolEvent::BatchDeferred { .. } | ToolEvent::BatchResumed { .. }
                 )
             )
         }));
         assert!(entries.iter().any(|entry| matches!(
-            entry.event.kind,
-            CoreAgentEventKind::Tool(ToolEvent::BatchCompleted { .. })
+            entry.event,
+            CoreAgentEvent::Tool(ToolEvent::BatchCompleted { .. })
         )));
     }
 

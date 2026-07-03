@@ -1,9 +1,9 @@
 use super::*;
 
 pub(super) fn wait_directive_for_event(
-    event: &CoreAgentEventKind,
+    event: &CoreAgentEvent,
 ) -> anyhow::Result<Option<DeferredWait>> {
-    let CoreAgentEventKind::Tool(ToolEvent::BatchDeferred {
+    let CoreAgentEvent::Tool(ToolEvent::BatchDeferred {
         run_id,
         turn_id,
         batch_id,

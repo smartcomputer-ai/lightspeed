@@ -7,7 +7,7 @@ use std::{
 use async_trait::async_trait;
 use engine::{
     AgentHandle, BlobRef, ContextConfig, ContextEntryInput, ContextEntryKind, ContextMessageRole,
-    CoreAgentCommand, CoreAgentEventKind, ModelSelection, ProviderApiKind, RunConfig, RunStatus,
+    CoreAgentCommand, CoreAgentEvent, ModelSelection, ProviderApiKind, RunConfig, RunStatus,
     SessionConfig, SessionId,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
 };
@@ -408,8 +408,8 @@ async fn openai_responses_live_selects_and_activates_the_matching_skill() {
     assert!(
         outcome.emitted_entries.iter().all(|entry| {
             !matches!(
-                &entry.event.kind,
-                CoreAgentEventKind::Context(engine::ContextEvent::EntriesApplied { entries, .. })
+                &entry.event,
+                CoreAgentEvent::Context(engine::ContextEvent::EntriesApplied { entries, .. })
                     if entries.iter().any(|entry| {
                         matches!(entry.kind, ContextEntryKind::SkillActivation { .. })
                     })
@@ -470,8 +470,7 @@ async fn selected_skill_read_call_id(
     entries: &[engine::CoreAgentEntry],
 ) -> Option<engine::ToolCallId> {
     for entry in entries {
-        let CoreAgentEventKind::Tool(engine::ToolEvent::CallCompleted { result, .. }) =
-            &entry.event.kind
+        let CoreAgentEvent::Tool(engine::ToolEvent::CallCompleted { result, .. }) = &entry.event
         else {
             continue;
         };
@@ -489,8 +488,7 @@ async fn selected_skill_read_call_id(
 async fn read_paths(blobs: &dyn BlobStore, entries: &[engine::CoreAgentEntry]) -> Vec<String> {
     let mut paths = Vec::new();
     for entry in entries {
-        let CoreAgentEventKind::Tool(engine::ToolEvent::CallCompleted { result, .. }) =
-            &entry.event.kind
+        let CoreAgentEvent::Tool(engine::ToolEvent::CallCompleted { result, .. }) = &entry.event
         else {
             continue;
         };
@@ -512,9 +510,8 @@ async fn read_file_result(blobs: &dyn BlobStore, output_ref: &BlobRef) -> Option
 async fn assistant_text(blobs: &dyn BlobStore, entries: &[engine::CoreAgentEntry]) -> String {
     let mut text = String::new();
     for entry in entries {
-        if let CoreAgentEventKind::Context(engine::ContextEvent::EntriesApplied {
-            entries, ..
-        }) = &entry.event.kind
+        if let CoreAgentEvent::Context(engine::ContextEvent::EntriesApplied { entries, .. }) =
+            &entry.event
         {
             for item in entries {
                 if matches!(

@@ -24,7 +24,7 @@ use engine::{
     CompactionPolicy, ContextCompactionStatus, ContextCompactionTrigger, ContextEntry,
     ContextEntryId, ContextEntryInput, ContextEntryKind, ContextEntrySource, ContextEvent,
     ContextMessageRole, ContextRemovalReason, ContextRewriteReason, CoreAgentCodec, CoreAgentEntry,
-    CoreAgentEventKind, CoreAgentJoins, CoreAgentLifecycleEvent, CoreAgentState, CoreAgentStatus,
+    CoreAgentEvent, CoreAgentJoins, CoreAgentLifecycleEvent, CoreAgentState, CoreAgentStatus,
     EventSeq, LlmGenerationStatus, ModelSelection, OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND,
     ObservedToolCall, ProviderApiKind, ProviderParams, RunEvent, RunFailure, RunId, RunSource,
     RunStatus, SessionConfig, SessionId, SteeringId, ToolBatchId, ToolCallStatus, ToolChoice,
@@ -327,16 +327,16 @@ impl<'a> CoreAgentProjector<'a> {
             session_id: session_id.as_str().to_owned(),
             observed_at_ms: entry.observed_at_ms,
             joins: event_joins_to_api(&entry.joins),
-            kind: self.project_event_kind(&entry.event.kind).await?,
+            kind: self.project_event_kind(&entry.event).await?,
         })
     }
 
     pub async fn project_event_kind(
         &self,
-        kind: &CoreAgentEventKind,
+        kind: &CoreAgentEvent,
     ) -> Result<SessionEventKindView, AgentApiError> {
         match kind {
-            CoreAgentEventKind::Lifecycle(event) => match event {
+            CoreAgentEvent::Lifecycle(event) => match event {
                 CoreAgentLifecycleEvent::Opened { config } => {
                     Ok(SessionEventKindView::SessionOpened {
                         model: Some(model_to_api(&config.model)),
@@ -350,7 +350,7 @@ impl<'a> CoreAgentProjector<'a> {
                 }
                 CoreAgentLifecycleEvent::Closed => Ok(SessionEventKindView::SessionClosed),
             },
-            CoreAgentEventKind::Run(event) => match event {
+            CoreAgentEvent::Run(event) => match event {
                 RunEvent::Accepted(accepted) => Ok(SessionEventKindView::RunAccepted {
                     run_id: api_run_id(accepted.run_id),
                     submission_id: accepted
@@ -400,7 +400,7 @@ impl<'a> CoreAgentProjector<'a> {
                     run_id: api_run_id(*run_id),
                 }),
             },
-            CoreAgentEventKind::Turn(event) => match event {
+            CoreAgentEvent::Turn(event) => match event {
                 TurnEvent::Started { turn_id, run_id } => Ok(SessionEventKindView::TurnStarted {
                     run_id: api_run_id(*run_id),
                     turn_id: api_turn_id(*turn_id),
@@ -431,7 +431,7 @@ impl<'a> CoreAgentProjector<'a> {
                     turn_id: api_turn_id(*turn_id),
                 }),
             },
-            CoreAgentEventKind::Context(event) => match event {
+            CoreAgentEvent::Context(event) => match event {
                 ContextEvent::EntriesApplied {
                     base_revision,
                     entries,
@@ -520,7 +520,7 @@ impl<'a> CoreAgentProjector<'a> {
                         .map(|blob_ref| blob_ref.as_str().to_owned()),
                 }),
             },
-            CoreAgentEventKind::ToolConfig(event) => match event {
+            CoreAgentEvent::ToolConfig(event) => match event {
                 ToolConfigEvent::ToolsReplaced { base_revision, .. } => {
                     Ok(SessionEventKindView::ToolsReplaced {
                         base_revision: *base_revision,
@@ -557,7 +557,7 @@ impl<'a> CoreAgentProjector<'a> {
                     })
                 }
             },
-            CoreAgentEventKind::Tool(event) => match event {
+            CoreAgentEvent::Tool(event) => match event {
                 ToolEvent::BatchStarted {
                     run_id,
                     turn_id,
@@ -657,7 +657,7 @@ impl<'a> CoreAgentProjector<'a> {
         let mut completed_batches = BTreeMap::new();
 
         for entry in projection.entries() {
-            let CoreAgentEventKind::Tool(event) = &entry.event.kind else {
+            let CoreAgentEvent::Tool(event) = &entry.event else {
                 continue;
             };
             match event {
@@ -800,7 +800,7 @@ impl<'a> CoreAgentProjection<'a> {
 
     pub fn accepted_source_for_run(&self, run_id: RunId) -> Option<&'a RunSource> {
         self.entries.iter().find_map(|entry| {
-            let CoreAgentEventKind::Run(RunEvent::Accepted(accepted)) = &entry.event.kind else {
+            let CoreAgentEvent::Run(RunEvent::Accepted(accepted)) = &entry.event else {
                 return None;
             };
             (accepted.run_id == run_id).then_some(&accepted.source)
@@ -828,8 +828,8 @@ impl<'a> CoreAgentProjection<'a> {
         self.entries
             .iter()
             .filter_map(|entry| {
-                let CoreAgentEventKind::Context(ContextEvent::EntriesApplied { entries, .. }) =
-                    &entry.event.kind
+                let CoreAgentEvent::Context(ContextEvent::EntriesApplied { entries, .. }) =
+                    &entry.event
                 else {
                     return None;
                 };
@@ -948,8 +948,8 @@ pub fn event_cursor(seq: EventSeq) -> EventCursor {
 }
 
 pub fn started_run_id(entries: &[CoreAgentEntry]) -> Option<RunId> {
-    entries.iter().find_map(|entry| match &entry.event.kind {
-        CoreAgentEventKind::Run(RunEvent::Started { run_id, .. }) => Some(*run_id),
+    entries.iter().find_map(|entry| match &entry.event {
+        CoreAgentEvent::Run(RunEvent::Started { run_id, .. }) => Some(*run_id),
         _ => None,
     })
 }
@@ -1451,11 +1451,11 @@ fn tool_effects_for_run(
 ) -> BTreeMap<String, Vec<ToolEffectView>> {
     let mut effects = BTreeMap::new();
     for entry in projection.entries() {
-        let CoreAgentEventKind::Tool(ToolEvent::CallCompleted {
+        let CoreAgentEvent::Tool(ToolEvent::CallCompleted {
             run_id: event_run_id,
             result,
             ..
-        }) = &entry.event.kind
+        }) = &entry.event
         else {
             continue;
         };
@@ -1811,7 +1811,7 @@ mod tests {
         let projector = CoreAgentProjector::new(&blobs);
 
         let removed = projector
-            .project_event_kind(&CoreAgentEventKind::Context(ContextEvent::EntriesRemoved {
+            .project_event_kind(&CoreAgentEvent::Context(ContextEvent::EntriesRemoved {
                 base_revision: 7,
                 entry_ids: vec![ContextEntryId::new(11), ContextEntryId::new(12)],
                 reason: ContextRemovalReason::ProviderCompacted,
@@ -1829,7 +1829,7 @@ mod tests {
         );
 
         let replaced = projector
-            .project_event_kind(&CoreAgentEventKind::Context(ContextEvent::StateReplaced {
+            .project_event_kind(&CoreAgentEvent::Context(ContextEvent::StateReplaced {
                 base_revision: 8,
                 entries: Vec::new(),
                 reason: ContextRewriteReason::ProviderCompacted,
@@ -1990,12 +1990,10 @@ mod tests {
             },
             observed_at_ms: seq,
             joins: CoreAgentJoins::default(),
-            event: engine::CoreAgentEvent {
-                kind: CoreAgentEventKind::Context(ContextEvent::EntriesApplied {
-                    base_revision: seq - 1,
-                    entries,
-                }),
-            },
+            event: CoreAgentEvent::Context(ContextEvent::EntriesApplied {
+                base_revision: seq - 1,
+                entries,
+            }),
         }
     }
 
@@ -2011,19 +2009,15 @@ mod tests {
             },
             observed_at_ms: seq,
             joins: CoreAgentJoins::default(),
-            event: engine::CoreAgentEvent {
-                kind: CoreAgentEventKind::Run(engine::RunEvent::Accepted(
-                    engine::AcceptedRunEvent {
-                        run_id,
-                        submission_id: None,
-                        source: engine::RunSource::Context {
-                            triggers: vec![engine::RunSourceContextTrigger { key, entry_id }],
-                        },
-                        run_config: engine::RunConfig::default(),
-                        config_revision: 0,
-                    },
-                )),
-            },
+            event: CoreAgentEvent::Run(engine::RunEvent::Accepted(engine::AcceptedRunEvent {
+                run_id,
+                submission_id: None,
+                source: engine::RunSource::Context {
+                    triggers: vec![engine::RunSourceContextTrigger { key, entry_id }],
+                },
+                run_config: engine::RunConfig::default(),
+                config_revision: 0,
+            })),
         }
     }
 

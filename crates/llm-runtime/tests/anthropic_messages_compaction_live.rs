@@ -11,7 +11,7 @@ use engine::{
     ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND, AgentHandle, BlobRef, CompactionPolicy,
     ContextCompactionStatus, ContextCompactionTrigger, ContextConfig, ContextEntryInput,
     ContextEntryKey, ContextEntryKind, ContextMessageRole, ContextRemovalReason, CoreAgentCommand,
-    CoreAgentEventKind, ModelSelection, ProviderApiKind, RunConfig, RunStatus, SessionConfig,
+    CoreAgentEvent, ModelSelection, ProviderApiKind, RunConfig, RunStatus, SessionConfig,
     SessionId, TokenEstimate, TokenEstimateQuality, TurnConfig,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
 };
@@ -423,8 +423,8 @@ fn has_compaction_requested(
 ) -> bool {
     entries.iter().any(|entry| {
         matches!(
-            &entry.event.kind,
-            CoreAgentEventKind::Context(engine::ContextEvent::CompactionRequested {
+            &entry.event,
+            CoreAgentEvent::Context(engine::ContextEvent::CompactionRequested {
                 trigger,
                 ..
             }) if *trigger == expected_trigger
@@ -438,8 +438,8 @@ fn has_compaction_finished(
 ) -> bool {
     entries.iter().any(|entry| {
         matches!(
-            &entry.event.kind,
-            CoreAgentEventKind::Context(engine::ContextEvent::CompactionFinished {
+            &entry.event,
+            CoreAgentEvent::Context(engine::ContextEvent::CompactionFinished {
                 status,
                 ..
             }) if *status == expected_status
@@ -450,8 +450,8 @@ fn has_compaction_finished(
 fn has_provider_compacted_removal(entries: &[engine::CoreAgentEntry]) -> bool {
     entries.iter().any(|entry| {
         matches!(
-            &entry.event.kind,
-            CoreAgentEventKind::Context(engine::ContextEvent::EntriesRemoved {
+            &entry.event,
+            CoreAgentEvent::Context(engine::ContextEvent::EntriesRemoved {
                 reason: ContextRemovalReason::ProviderCompacted,
                 ..
             })
@@ -462,9 +462,8 @@ fn has_provider_compacted_removal(entries: &[engine::CoreAgentEntry]) -> bool {
 async fn assistant_text(blobs: &dyn BlobStore, entries: &[engine::CoreAgentEntry]) -> String {
     let mut text = String::new();
     for entry in entries {
-        if let CoreAgentEventKind::Context(engine::ContextEvent::EntriesApplied {
-            entries, ..
-        }) = &entry.event.kind
+        if let CoreAgentEvent::Context(engine::ContextEvent::EntriesApplied { entries, .. }) =
+            &entry.event
         {
             for item in entries {
                 if matches!(
@@ -492,11 +491,11 @@ async fn compaction_failure_text(
     entries: &[engine::CoreAgentEntry],
 ) -> String {
     for entry in entries {
-        if let CoreAgentEventKind::Context(engine::ContextEvent::CompactionFinished {
+        if let CoreAgentEvent::Context(engine::ContextEvent::CompactionFinished {
             status: ContextCompactionStatus::Failed,
             failure_ref: Some(failure_ref),
             ..
-        }) = &entry.event.kind
+        }) = &entry.event
         {
             return blobs
                 .read_text(failure_ref)

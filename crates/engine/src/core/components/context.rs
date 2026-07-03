@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    BlobRef, CompactionPolicy, ContextEntryKey, ContextItemId, CoreAgentEventKind,
+    BlobRef, CompactionPolicy, ContextEntryKey, ContextItemId, CoreAgentEvent,
     CoreAgentEventProposal, CoreAgentJoins, CoreAgentState, CoreAgentStatus, DomainError,
     PlanningError, ProviderApiKind, RunId, RunSource, RunSourceContextTrigger, RunStatus, SkillId,
     SteeringId, ToolBatchId, ToolCallId, ToolName, TurnId,
@@ -845,7 +845,7 @@ fn compaction_requested_proposal(
 ) -> CoreAgentEventProposal {
     CoreAgentEventProposal::new(
         CoreAgentJoins::default(),
-        CoreAgentEventKind::Context(Event::CompactionRequested {
+        CoreAgentEvent::Context(Event::CompactionRequested {
             base_revision: state.context.revision,
             trigger,
         }),
@@ -975,7 +975,7 @@ fn provider_compacted_prune_proposal(
 
     Ok(Some(CoreAgentEventProposal::new(
         CoreAgentJoins::default(),
-        CoreAgentEventKind::Context(Event::EntriesRemoved {
+        CoreAgentEvent::Context(Event::EntriesRemoved {
             base_revision: state.context.revision,
             entry_ids,
             reason: ContextRemovalReason::ProviderCompacted,
@@ -1106,7 +1106,7 @@ fn entries_applied_proposal(
             run_id: Some(run_id),
             ..CoreAgentJoins::default()
         },
-        CoreAgentEventKind::Context(Event::EntriesApplied {
+        CoreAgentEvent::Context(Event::EntriesApplied {
             base_revision: state.context.revision,
             entries,
         }),

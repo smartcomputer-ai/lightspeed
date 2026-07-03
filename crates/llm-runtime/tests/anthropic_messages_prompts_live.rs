@@ -10,7 +10,7 @@ use std::{
 use async_trait::async_trait;
 use engine::{
     AgentHandle, ContextConfig, ContextEntryInput, ContextEntryKind, ContextMessageRole,
-    CoreAgentCommand, CoreAgentEventKind, ModelSelection, ProviderApiKind, RunConfig, RunStatus,
+    CoreAgentCommand, CoreAgentEvent, ModelSelection, ProviderApiKind, RunConfig, RunStatus,
     SessionConfig, SessionId,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
 };
@@ -388,9 +388,8 @@ fn run_config() -> RunConfig {
 async fn assistant_text(blobs: &dyn BlobStore, entries: &[engine::CoreAgentEntry]) -> String {
     let mut text = String::new();
     for entry in entries {
-        if let CoreAgentEventKind::Context(engine::ContextEvent::EntriesApplied {
-            entries, ..
-        }) = &entry.event.kind
+        if let CoreAgentEvent::Context(engine::ContextEvent::EntriesApplied { entries, .. }) =
+            &entry.event
         {
             for item in entries {
                 if matches!(

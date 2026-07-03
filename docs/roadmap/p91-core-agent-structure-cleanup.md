@@ -9,7 +9,13 @@
   carries `CoreAgentCommand` directly (the `InvalidCommand` admission failure
   kind became unrepresentable and was removed), and decode guards the
   `lightspeed.core.` prefix + version instead of a 30-entry kind allowlist.
-  Slices 2–4 pending.
+- Slice 2 completed 2026-07-03: `CoreAgentEvent` wrapper struct deleted — the
+  enum (formerly `CoreAgentEventKind`) is now the event. `entry.event.kind` →
+  `entry.event`, `CoreAgentEventProposal.kind` → `.event`, and stored envelope
+  payloads lost one nesting level (`{"kind":{"lifecycle":"closed"}}` →
+  `{"lifecycle":"closed"}`); engine fixtures regenerated. Existing persisted
+  logs with the old payload shape are invalidated (greenfield, no migration).
+  Slices 3–4 pending.
 - Engine-focused refactor with downstream fixups in `temporal-workflow`,
   `temporal-server`, `api-projection`, `test-support`, `store-fs`, `store-pg`,
   and `eval`.

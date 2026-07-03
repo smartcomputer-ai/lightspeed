@@ -2,7 +2,7 @@
 
 use crate::{
     CommandError, CommandRejection, CommandRejectionKind, ContextEntrySource, ContextEvent,
-    CoreAgentCommand, CoreAgentEventKind, CoreAgentEventProposal, CoreAgentJoins,
+    CoreAgentCommand, CoreAgentEvent, CoreAgentEventProposal, CoreAgentJoins,
     CoreAgentLifecycleEvent, CoreAgentState, CoreAgentStatus, DomainError, RunEvent,
     RunRequestSource, RunSource, RunStatus, ToolConfigEvent,
     core::components::{
@@ -30,7 +30,7 @@ pub fn admit_command(
                 .map_err(command_rejection_from_domain)?;
             Ok(vec![CoreAgentEventProposal::new(
                 CoreAgentJoins::default(),
-                CoreAgentEventKind::Lifecycle(CoreAgentLifecycleEvent::Opened { config }),
+                CoreAgentEvent::Lifecycle(CoreAgentLifecycleEvent::Opened { config }),
             )])
         }
         CoreAgentCommand::PatchSessionConfig {
@@ -73,7 +73,7 @@ pub fn admit_command(
                 })?;
             Ok(vec![CoreAgentEventProposal::new(
                 CoreAgentJoins::default(),
-                CoreAgentEventKind::Lifecycle(CoreAgentLifecycleEvent::ConfigChanged {
+                CoreAgentEvent::Lifecycle(CoreAgentLifecycleEvent::ConfigChanged {
                     config,
                     revision,
                 }),
@@ -152,7 +152,7 @@ pub fn admit_command(
             };
             Ok(vec![CoreAgentEventProposal::new(
                 joins,
-                CoreAgentEventKind::Run(RunEvent::Accepted(crate::AcceptedRunEvent {
+                CoreAgentEvent::Run(RunEvent::Accepted(crate::AcceptedRunEvent {
                     run_id: next_run_id,
                     submission_id: request.submission_id,
                     source,
@@ -179,7 +179,7 @@ pub fn admit_command(
             .map_err(CommandError::Domain)?;
             Ok(vec![CoreAgentEventProposal::new(
                 CoreAgentJoins::default(),
-                CoreAgentEventKind::Context(ContextEvent::EntriesApplied {
+                CoreAgentEvent::Context(ContextEvent::EntriesApplied {
                     base_revision: state.context.revision,
                     entries,
                 }),
@@ -216,7 +216,7 @@ pub fn admit_command(
             .map_err(CommandError::Domain)?;
             Ok(vec![CoreAgentEventProposal::new(
                 CoreAgentJoins::default(),
-                CoreAgentEventKind::Context(ContextEvent::KeyPrefixReplaced {
+                CoreAgentEvent::Context(ContextEvent::KeyPrefixReplaced {
                     base_revision: state.context.revision,
                     key_prefix,
                     entries,
@@ -235,7 +235,7 @@ pub fn admit_command(
                 .map_err(unknown_reference_rejection_from_domain)?;
             Ok(vec![CoreAgentEventProposal::new(
                 CoreAgentJoins::default(),
-                CoreAgentEventKind::Context(ContextEvent::KeysRemoved {
+                CoreAgentEvent::Context(ContextEvent::KeysRemoved {
                     base_revision: state.context.revision,
                     keys: vec![key],
                 }),
@@ -260,7 +260,7 @@ pub fn admit_command(
             }
             Ok(vec![CoreAgentEventProposal::new(
                 CoreAgentJoins::default(),
-                CoreAgentEventKind::Lifecycle(CoreAgentLifecycleEvent::Closed),
+                CoreAgentEvent::Lifecycle(CoreAgentLifecycleEvent::Closed),
             )])
         }
         CoreAgentCommand::RequestRunSteering { input } => {
@@ -283,7 +283,7 @@ pub fn admit_command(
             };
             Ok(vec![CoreAgentEventProposal::new(
                 joins,
-                CoreAgentEventKind::Run(RunEvent::SteeringAccepted {
+                CoreAgentEvent::Run(RunEvent::SteeringAccepted {
                     run_id: active_run.run_id,
                     steering_id: crate::SteeringId::new(next_steering_id),
                     input,
@@ -299,7 +299,7 @@ pub fn admit_command(
             };
             Ok(vec![CoreAgentEventProposal::new(
                 joins,
-                CoreAgentEventKind::Run(RunEvent::CancellationRequested {
+                CoreAgentEvent::Run(RunEvent::CancellationRequested {
                     run_id: active_run.run_id,
                 }),
             )])
@@ -319,7 +319,7 @@ pub fn admit_command(
 
             Ok(vec![CoreAgentEventProposal::new(
                 CoreAgentJoins::default(),
-                CoreAgentEventKind::ToolConfig(ToolConfigEvent::ToolsReplaced {
+                CoreAgentEvent::ToolConfig(ToolConfigEvent::ToolsReplaced {
                     base_revision: state.tooling.revision,
                     tools,
                 }),
@@ -340,7 +340,7 @@ pub fn admit_command(
 
             Ok(vec![CoreAgentEventProposal::new(
                 CoreAgentJoins::default(),
-                CoreAgentEventKind::ToolConfig(ToolConfigEvent::ToolsPatched {
+                CoreAgentEvent::ToolConfig(ToolConfigEvent::ToolsPatched {
                     base_revision: state.tooling.revision,
                     patch,
                 }),
@@ -352,7 +352,7 @@ pub fn admit_command(
 
             Ok(vec![CoreAgentEventProposal::new(
                 CoreAgentJoins::default(),
-                CoreAgentEventKind::ToolConfig(ToolConfigEvent::DefaultTargetSet { target }),
+                CoreAgentEvent::ToolConfig(ToolConfigEvent::DefaultTargetSet { target }),
             )])
         }
         CoreAgentCommand::ClearDefaultToolTarget { namespace } => {
@@ -362,7 +362,7 @@ pub fn admit_command(
 
             Ok(vec![CoreAgentEventProposal::new(
                 CoreAgentJoins::default(),
-                CoreAgentEventKind::ToolConfig(ToolConfigEvent::DefaultTargetCleared { namespace }),
+                CoreAgentEvent::ToolConfig(ToolConfigEvent::DefaultTargetCleared { namespace }),
             )])
         }
     }

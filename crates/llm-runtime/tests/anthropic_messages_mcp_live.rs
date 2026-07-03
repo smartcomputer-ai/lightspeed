@@ -8,7 +8,7 @@ use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
 use engine::{
     AgentHandle, ContextConfig, ContextEntryInput, ContextEntryKind, ContextMessageRole,
-    CoreAgentCommand, CoreAgentEventKind, ModelSelection, ProviderApiKind, RemoteMcpApprovalPolicy,
+    CoreAgentCommand, CoreAgentEvent, ModelSelection, ProviderApiKind, RemoteMcpApprovalPolicy,
     RemoteMcpToolSpec, RunConfig, RunStatus, SessionConfig, SessionId, ToolKind, ToolName,
     ToolParallelism, ToolSpec, ToolTargetRequirement,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
@@ -195,7 +195,7 @@ async fn anthropic_messages_live_core_session_uses_no_auth_remote_mcp_echo() {
         !outcome
             .emitted_entries
             .iter()
-            .any(|entry| matches!(entry.event.kind, CoreAgentEventKind::Tool(_))),
+            .any(|entry| matches!(entry.event, CoreAgentEvent::Tool(_))),
         "direct remote MCP must not create Lightspeed tool events"
     );
 
@@ -263,9 +263,8 @@ fn run_config() -> RunConfig {
 async fn assistant_text(blobs: &dyn BlobStore, entries: &[engine::CoreAgentEntry]) -> String {
     let mut text = String::new();
     for entry in entries {
-        if let CoreAgentEventKind::Context(engine::ContextEvent::EntriesApplied {
-            entries, ..
-        }) = &entry.event.kind
+        if let CoreAgentEvent::Context(engine::ContextEvent::EntriesApplied { entries, .. }) =
+            &entry.event
         {
             for item in entries {
                 if matches!(
@@ -294,9 +293,8 @@ async fn mcp_context_items(
 ) -> Vec<Value> {
     let mut items = Vec::new();
     for entry in entries {
-        if let CoreAgentEventKind::Context(engine::ContextEvent::EntriesApplied {
-            entries, ..
-        }) = &entry.event.kind
+        if let CoreAgentEvent::Context(engine::ContextEvent::EntriesApplied { entries, .. }) =
+            &entry.event
         {
             for item in entries {
                 if matches!(
