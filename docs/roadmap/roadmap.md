@@ -21,6 +21,10 @@
 - [ ] incremental tool discovery support (at least OAI)
 
 ## Environmnets & Sandboxes
+- [ ] Fix host-bridge fs routing doubled path: absolute guest paths get
+      re-prefixed with the bridge root, so file-tool reads of shell-written
+      absolute paths fail (`environment_provider_live` host-bridge agent
+      test; pre-dates P90)
 - [ ] Finalize sandbox protocol (look at Codex's protocol)
 - [ ] Write first sandbox integration
 - [ ] Allow agent to request new sandbox/env

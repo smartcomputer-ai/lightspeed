@@ -2370,7 +2370,7 @@ async fn temporal_live_two_universes_share_one_worker_with_isolation() -> anyhow
         task_queue.clone(),
         None,
         stores,
-    ));
+    )?);
 
     let activities = WorkerActivities::with_runtime(universes.clone());
     let mut worker =
@@ -2530,7 +2530,7 @@ async fn temporal_live_api_key_mode_scopes_requests() -> anyhow::Result<()> {
         task_queue.clone(),
         None,
         stores.clone(),
-    ));
+    )?);
 
     // Two universes, one key each. Keys are minted below the API on purpose:
     // provisioning is out-of-band (server api-key create).

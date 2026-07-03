@@ -25,9 +25,10 @@ use crate::{
 };
 
 use super::preprocess::{
-    AudioTranscoder, AudioTranscriber, UnavailableAudioTranscriber,
+    AudioTranscoder, AudioTranscriber, OpenAiAudioTranscriber, UnavailableAudioTranscriber,
     default_audio_transcoder_from_env, default_openai_audio_transcriber,
 };
+use crate::universe::DeploymentClients;
 
 #[derive(Clone)]
 pub struct StorageActivityDeps {
@@ -177,6 +178,44 @@ impl ActivityState {
         Ok(state)
     }
 
+    /// Build a universe's activity state over the deployment's shared HTTP
+    /// clients. Marginal per-universe cost is the resolver layers and tool
+    /// registry only; every HTTP client is shared (P90 follow-up).
+    pub fn from_pg_store_with_shared_clients(
+        store: Arc<PgStore>,
+        fleet_runtime: Option<Arc<dyn FleetChildRuntime>>,
+        clients: &DeploymentClients,
+    ) -> anyhow::Result<Self> {
+        let blobs: Arc<dyn BlobStore> = store.clone();
+        let broker = registry_token_broker_with_clients(
+            store.clone(),
+            clients.oauth_token.clone(),
+            clients.github.clone(),
+        );
+        let secrets: Arc<dyn SecretResolver> = Arc::new(BrokerSecretResolver::new(broker.clone()));
+        let provider_keys = stored_provider_key_resolver(store.clone(), broker);
+        let transcriber: Arc<dyn AudioTranscriber> = Arc::new(OpenAiAudioTranscriber::new(
+            clients.openai_audio.clone(),
+            provider_keys.clone(),
+        ));
+        let llm = llm_runtime_with_clients(
+            blobs,
+            Some(secrets),
+            Some(provider_keys),
+            clients.openai.clone(),
+            clients.anthropic.clone(),
+        );
+        let tools = match fleet_runtime {
+            Some(fleet_runtime) => session_tools_with_fleet(store.clone(), fleet_runtime),
+            None => session_tools(store.clone()),
+        };
+        let mut state = Self::from_pg_store(store, llm, tools).with_audio_transcriber(transcriber);
+        if let Some(transcoder) = clients.audio_transcoder.clone() {
+            state = state.with_audio_transcoder(transcoder);
+        }
+        Ok(state)
+    }
+
     pub async fn from_env() -> anyhow::Result<Self> {
         let store = pg_store_from_env().await?;
         Self::from_pg_store_with_default_runtime(store)
@@ -227,27 +266,38 @@ fn stored_provider_key_resolver(
 }
 
 fn registry_token_broker(store: Arc<PgStore>) -> anyhow::Result<Arc<dyn AuthTokenBroker>> {
+    let token_client: Arc<dyn auth::OAuthTokenClient> = Arc::new(
+        HttpOAuthTokenClient::new()
+            .map_err(|error| anyhow::anyhow!("construct oauth token client: {error}"))?,
+    );
+    let github_api: Arc<dyn auth::GitHubApiClient> = Arc::new(
+        HttpGitHubApiClient::new()
+            .map_err(|error| anyhow::anyhow!("construct github api client: {error}"))?,
+    );
+    Ok(registry_token_broker_with_clients(
+        store,
+        token_client,
+        github_api,
+    ))
+}
+
+fn registry_token_broker_with_clients(
+    store: Arc<PgStore>,
+    token_client: Arc<dyn auth::OAuthTokenClient>,
+    github_api: Arc<dyn auth::GitHubApiClient>,
+) -> Arc<dyn AuthTokenBroker> {
     let grants: Arc<dyn AuthGrantStore> = store.clone();
     let secrets: Arc<dyn SecretStore> = store.clone();
     let clients: Arc<dyn OAuthClientStore> = store.clone();
     let providers: Arc<dyn AuthProviderStore> = store.clone();
     let locks: Arc<dyn GrantRefreshLock> = store;
-    let token_client = HttpOAuthTokenClient::new()
-        .map_err(|error| anyhow::anyhow!("construct oauth token client: {error}"))?;
-    let github_api = HttpGitHubApiClient::new()
-        .map_err(|error| anyhow::anyhow!("construct github api client: {error}"))?;
     let broker = RegistryTokenBroker::new(grants.clone(), secrets.clone(), locks)
-        .with_oauth_refresh(OAuthRefreshRuntime::new(clients, Arc::new(token_client)))
+        .with_oauth_refresh(OAuthRefreshRuntime::new(clients, token_client))
         .with_token_source(
             AuthProviderKind::GitHubApp,
-            Arc::new(GitHubAppRuntime::new(
-                providers,
-                Arc::new(github_api),
-                grants,
-                secrets,
-            )),
+            Arc::new(GitHubAppRuntime::new(providers, github_api, grants, secrets)),
         );
-    Ok(Arc::new(broker))
+    Arc::new(broker)
 }
 
 /// Builds the default LLM runtime. Adapters register unconditionally:
@@ -260,10 +310,27 @@ fn default_llm_runtime(
     secrets: Option<Arc<dyn SecretResolver>>,
     provider_keys: Option<Arc<dyn ProviderKeyResolver>>,
 ) -> anyhow::Result<Arc<dyn CoreAgentLlm>> {
+    let openai = Arc::new(oai::Client::new(oai::Config::from_env_allow_missing_key())?);
+    let anthropic = Arc::new(am::Client::new(am::Config::from_env_allow_missing_key())?);
+    Ok(llm_runtime_with_clients(
+        blobs,
+        secrets,
+        provider_keys,
+        openai,
+        anthropic,
+    ))
+}
+
+fn llm_runtime_with_clients(
+    blobs: Arc<dyn BlobStore>,
+    secrets: Option<Arc<dyn SecretResolver>>,
+    provider_keys: Option<Arc<dyn ProviderKeyResolver>>,
+    openai: Arc<oai::Client>,
+    anthropic: Arc<am::Client>,
+) -> Arc<dyn CoreAgentLlm> {
     let mut registry = LlmAdapterRegistry::new();
 
-    let openai = oai::Client::new(oai::Config::from_env_allow_missing_key())?;
-    let mut adapter = OpenAiResponsesLlmAdapter::new(Arc::new(openai), blobs.clone());
+    let mut adapter = OpenAiResponsesLlmAdapter::new(openai, blobs.clone());
     if let Some(secrets) = &secrets {
         adapter = adapter.with_secret_resolver(secrets.clone());
     }
@@ -274,8 +341,7 @@ fn default_llm_runtime(
     registry.insert_generation_adapter(ProviderApiKind::OpenAiResponses, adapter.clone());
     registry.insert_compaction_adapter(ProviderApiKind::OpenAiResponses, adapter);
 
-    let anthropic = am::Client::new(am::Config::from_env_allow_missing_key())?;
-    let mut adapter = AnthropicMessagesLlmAdapter::new(Arc::new(anthropic), blobs);
+    let mut adapter = AnthropicMessagesLlmAdapter::new(anthropic, blobs);
     if let Some(secrets) = &secrets {
         adapter = adapter.with_secret_resolver(secrets.clone());
     }
@@ -286,7 +352,7 @@ fn default_llm_runtime(
     registry.insert_generation_adapter(ProviderApiKind::AnthropicMessages, adapter.clone());
     registry.insert_compaction_adapter(ProviderApiKind::AnthropicMessages, adapter);
 
-    Ok(Arc::new(LlmRuntime::new(registry)))
+    Arc::new(LlmRuntime::new(registry))
 }
 
 fn default_audio_transcriber(

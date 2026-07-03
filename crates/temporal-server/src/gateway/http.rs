@@ -251,8 +251,9 @@ pub async fn serve_gateway(config: GatewayServerConfig) -> anyhow::Result<()> {
         config.task_queue.clone(),
         Some(public_base_url.clone()),
         stores,
-    ));
+    )?);
     prewarm_single_universe(&mode, &runtime).await?;
+    runtime.spawn_idle_sweeper();
     let state = Arc::new(GatewayState::multi(mode, runtime, public_base_url));
     let app = gateway_router(state, config.max_request_body_bytes);
     let listener = tokio::net::TcpListener::bind(config.bind).await?;

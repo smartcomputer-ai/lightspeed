@@ -32,7 +32,7 @@ mod tools;
 pub use preprocess::{
     AudioTranscodeError, AudioTranscodeOutput, AudioTranscodeRequest, AudioTranscoder,
     AudioTranscriber, AudioTranscription, AudioTranscriptionError, AudioTranscriptionRequest,
-    FfmpegAudioTranscoder,
+    FfmpegAudioTranscoder, default_audio_transcoder_from_env,
 };
 pub use state::{
     ActivityState, LlmActivityDeps, PreprocessActivityDeps, SkillCatalogActivityDeps,

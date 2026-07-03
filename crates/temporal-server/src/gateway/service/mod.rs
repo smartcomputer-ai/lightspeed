@@ -703,6 +703,12 @@ struct GatewaySessionMetadata {
     cwd: Option<String>,
 }
 
+impl GatewaySessionMetadata {
+    fn is_empty(&self) -> bool {
+        self.cwd.is_none()
+    }
+}
+
 pub struct GatewayAgentApi {
     client: Client,
     store: Arc<PgStore>,
@@ -790,15 +796,32 @@ impl GatewayAgentApi {
         Ok(metadata.get(session_id).cloned().unwrap_or_default())
     }
 
+    /// The metadata map is bounded by session lifetime, not session count:
+    /// empty metadata never occupies an entry (most sessions carry no cwd)
+    /// and `close_session` removes the entry. Writing empty metadata is a
+    /// removal so an entry can also be cleared by overwriting.
     fn write_session_metadata(
         &self,
         session_id: SessionId,
         metadata: GatewaySessionMetadata,
     ) -> Result<(), AgentApiError> {
+        let mut map = self
+            .metadata
+            .write()
+            .map_err(|_| AgentApiError::internal("gateway metadata lock poisoned"))?;
+        if metadata.is_empty() {
+            map.remove(&session_id);
+        } else {
+            map.insert(session_id, metadata);
+        }
+        Ok(())
+    }
+
+    fn remove_session_metadata(&self, session_id: &SessionId) -> Result<(), AgentApiError> {
         self.metadata
             .write()
             .map_err(|_| AgentApiError::internal("gateway metadata lock poisoned"))?
-            .insert(session_id, metadata);
+            .remove(session_id);
         Ok(())
     }
 
@@ -1395,6 +1418,7 @@ impl AgentApiService for GatewayAgentApi {
         })?;
         let loaded = self.load_session_state(&session_id).await?;
         if loaded.state.lifecycle.status == CoreAgentStatus::Closed {
+            self.remove_session_metadata(&session_id)?;
             return Ok(AgentApiOutcome::new(SessionCloseResponse {
                 session: self.project_session_by_id(&session_id).await?,
             }));
@@ -1407,6 +1431,7 @@ impl AgentApiService for GatewayAgentApi {
         self.submit_core_command(&session_id, CoreAgentCommand::CloseSession)
             .await?;
         let session = self.wait_for_closed_session(&session_id).await?;
+        self.remove_session_metadata(&session_id)?;
         Ok(AgentApiOutcome::new(SessionCloseResponse { session }))
     }
 

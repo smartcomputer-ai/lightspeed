@@ -343,8 +343,9 @@ async fn run_both(args: BothArgs) -> anyhow::Result<()> {
         task_queue.clone(),
         Some(public_base_url.clone()),
         stores,
-    ));
+    )?);
     prewarm_single_universe(&mode, &universes).await?;
+    universes.spawn_idle_sweeper();
     let activities = WorkerActivities::with_runtime(universes.clone());
     let mut temporal_worker =
         worker::worker_with_activities(&runtime, client.clone(), task_queue.clone(), activities)?;

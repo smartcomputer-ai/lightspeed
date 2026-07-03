@@ -19,6 +19,7 @@ pub use activities::{
     AudioTranscoder, AudioTranscriber, AudioTranscription, AudioTranscriptionError,
     AudioTranscriptionRequest, FfmpegAudioTranscoder, LlmActivityDeps, PreprocessActivityDeps,
     SkillCatalogActivityDeps, StorageActivityDeps, ToolActivityDeps, WorkerActivities,
+    default_audio_transcoder_from_env,
 };
 pub use fake::{FakeLlm, FakeTools};
 pub use secrets::{BrokerSecretResolver, StoredProviderKeyResolver};
@@ -79,7 +80,8 @@ pub async fn run_worker(config: WorkerServerConfig) -> anyhow::Result<()> {
         config.task_queue.clone(),
         None,
         stores,
-    ));
+    )?);
+    universes.spawn_idle_sweeper();
     let activities = WorkerActivities::with_runtime(universes);
     let mut worker =
         worker_with_activities(&runtime, client, config.task_queue.clone(), activities)?;
