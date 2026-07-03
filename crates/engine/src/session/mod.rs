@@ -6,11 +6,11 @@
 //! agent domain.
 
 pub mod codec;
-pub mod dynamic;
 pub mod ids;
 pub mod log;
+pub mod stored;
 
 pub use codec::*;
-pub use dynamic::*;
 pub use ids::*;
 pub use log::*;
+pub use stored::*;

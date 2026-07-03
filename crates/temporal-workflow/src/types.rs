@@ -4,7 +4,7 @@ use engine::{
     BlobRef, ContextEntryInput, ContextEntryKey, CoreAgentCommand, CoreAgentState, RunId,
     RunStatus, SessionConfig, SessionId, SessionPosition, SubmissionId, ToolBatchId, ToolCallId,
     ToolInvocationBatchResult, TurnId,
-    storage::{DynamicUncommittedSessionEvent, SessionRecord},
+    storage::{SessionRecord, UncommittedStoredEvent},
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -408,7 +408,7 @@ pub struct ReadBlobResult {
 pub struct AppendEventsRequest {
     pub session_id: SessionId,
     pub expected_head: Option<SessionPosition>,
-    pub events: Vec<DynamicUncommittedSessionEvent>,
+    pub events: Vec<UncommittedStoredEvent>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -14,4 +14,4 @@ pub mod storage;
 
 pub use blob::*;
 pub use core::*;
-pub use session::{CodecError, DynamicEvent};
+pub use session::{CodecError, StoredEvent};

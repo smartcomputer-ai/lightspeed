@@ -20,7 +20,7 @@
 //! ```
 //!
 //! Session logs are append-oriented JSONL files with one committed
-//! `DynamicSessionEntry` per line, which keeps replay streamable and leaves
+//! `StoredSessionEntry` per line, which keeps replay streamable and leaves
 //! `session.json` as a compact index record for listing and head checks.
 
 mod blob;

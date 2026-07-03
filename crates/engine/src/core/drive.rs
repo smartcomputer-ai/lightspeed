@@ -21,7 +21,7 @@ use crate::{
     ToolCallStatus, ToolEvent, ToolInvocationBatchRequest, ToolInvocationBatchResult,
     ToolInvocationRequest, ToolInvocationResult, TurnEvent, TurnId, TurnOutcome,
     core::components::context::context_entries_from_inputs,
-    session::{DynamicSessionEntry, DynamicUncommittedSessionEvent},
+    session::{StoredSessionEntry, UncommittedStoredEvent},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,7 +29,7 @@ use crate::{
 pub enum CoreAgentAction {
     AppendEvents {
         expected_head: Option<SessionPosition>,
-        events: Vec<DynamicUncommittedSessionEvent>,
+        events: Vec<UncommittedStoredEvent>,
     },
     GenerateLlm {
         request: LlmGenerationRequest,
@@ -115,7 +115,7 @@ impl CoreAgentDrive {
 
     pub fn resume_appended(
         &mut self,
-        entries: Vec<DynamicSessionEntry>,
+        entries: Vec<StoredSessionEntry>,
     ) -> Result<Vec<CoreAgentEntry>, CoreAgentDriveError> {
         let decoded = entries
             .iter()
@@ -914,7 +914,7 @@ mod tests {
                     seq: crate::EventSeq::new(seq),
                 };
                 head = Some(position.clone());
-                DynamicSessionEntry {
+                StoredSessionEntry {
                     position,
                     observed_at_ms: event.observed_at_ms,
                     joins: event.joins,
@@ -934,7 +934,7 @@ mod tests {
         let uncommitted = proposal.into_uncommitted(observed_at_ms);
         let event = CoreAgentCodec.encode_uncommitted(&uncommitted)?;
         let seq = drive.head().map_or(1, |position| position.seq.as_u64() + 1);
-        let entry = DynamicSessionEntry {
+        let entry = StoredSessionEntry {
             position: SessionPosition {
                 seq: crate::EventSeq::new(seq),
             },

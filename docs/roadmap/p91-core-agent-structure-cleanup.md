@@ -1,7 +1,7 @@
 # P91: CoreAgent Structure Cleanup — Closed Event Model And Core FSM
 
 **Status**
-- Proposed 2026-07-03.
+- Proposed 2026-07-03. **Completed 2026-07-03** (all four slices).
 - Slice 1 completed 2026-07-03: open kernel deleted (`AgentDomain`,
   codec traits, generic session workflow helpers, `replay()`, compat shim),
   `admit_command` / `apply_event` / `plan_next` are plain functions,
@@ -21,7 +21,12 @@
   `ListAgentSessions` and the `AgentHandle` id type deleted;
   `fleet::default_agent_handle()` gone. Existing Postgres stacks must be
   reset (`local/` helpers) — the schema changed without a migration.
-  Slice 4 pending.
+- Slice 4 completed 2026-07-03: `DynamicEvent` → `StoredEvent`,
+  `DynamicSessionEntry` → `StoredSessionEntry`,
+  `DynamicUncommittedSessionEvent` → `UncommittedStoredEvent`, `DynamicJoins`
+  → `StoredJoins`; `session/dynamic.rs` → `session/stored.rs`; engine fixture
+  files, `decode_dynamic_entry` → `decode_stored_entry`, and related test
+  names and comments renamed. Stored bytes unchanged.
 - Engine-focused refactor with downstream fixups in `temporal-workflow`,
   `temporal-server`, `api-projection`, `test-support`, `store-fs`, `store-pg`,
   and `eval`.

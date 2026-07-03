@@ -3387,9 +3387,9 @@ mod tests {
                 session_id: child.clone(),
                 expected_head: None,
                 events: vec![
-                    dynamic_test_event(30, "lightspeed.test.1"),
-                    dynamic_test_event(31, "lightspeed.test.2"),
-                    dynamic_test_event(32, "lightspeed.test.3"),
+                    stored_test_event(30, "lightspeed.test.1"),
+                    stored_test_event(31, "lightspeed.test.2"),
+                    stored_test_event(32, "lightspeed.test.3"),
                 ],
             })
             .await
@@ -4129,7 +4129,7 @@ mod tests {
     fn core_uncommitted_event(
         observed_at_ms: u64,
         event: engine::CoreAgentEvent,
-    ) -> engine::storage::DynamicUncommittedSessionEvent {
+    ) -> engine::storage::UncommittedStoredEvent {
         engine::CoreAgentCodec
             .encode_uncommitted(&engine::UncommittedCoreAgentEvent {
                 observed_at_ms,
@@ -4239,14 +4239,14 @@ mod tests {
         }
     }
 
-    fn dynamic_test_event(
+    fn stored_test_event(
         at_ms: u64,
         kind: &'static str,
-    ) -> engine::storage::DynamicUncommittedSessionEvent {
-        engine::storage::DynamicUncommittedSessionEvent {
+    ) -> engine::storage::UncommittedStoredEvent {
+        engine::storage::UncommittedStoredEvent {
             observed_at_ms: at_ms,
             joins: Default::default(),
-            event: engine::DynamicEvent::new(kind, 1, Value::Object(Default::default())),
+            event: engine::StoredEvent::new(kind, 1, Value::Object(Default::default())),
         }
     }
 

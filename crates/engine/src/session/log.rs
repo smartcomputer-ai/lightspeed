@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-use crate::session::{DynamicEvent, EventSeq};
+use crate::session::{EventSeq, StoredEvent};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionPosition {
@@ -23,8 +23,8 @@ pub struct UncommittedSessionEvent<E, J = ()> {
     pub event: E,
 }
 
-pub type DynamicJoins = BTreeMap<String, String>;
+pub type StoredJoins = BTreeMap<String, String>;
 
-pub type DynamicSessionEntry = SessionEntry<DynamicEvent, DynamicJoins>;
+pub type StoredSessionEntry = SessionEntry<StoredEvent, StoredJoins>;
 
-pub type DynamicUncommittedSessionEvent = UncommittedSessionEvent<DynamicEvent, DynamicJoins>;
+pub type UncommittedStoredEvent = UncommittedSessionEvent<StoredEvent, StoredJoins>;

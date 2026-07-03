@@ -9,7 +9,7 @@ pub mod blobs;
 pub mod session;
 
 pub use crate::session::{
-    DynamicSessionEntry, DynamicUncommittedSessionEvent, SessionEntry, UncommittedSessionEvent,
+    SessionEntry, StoredSessionEntry, UncommittedSessionEvent, UncommittedStoredEvent,
 };
 pub use blobs::{
     BlobCacheLimits, BlobCacheStats, BlobEdge, BlobGraphStore, BlobInfo, BlobStore, BlobStoreError,

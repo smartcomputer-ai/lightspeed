@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 
 use engine::{
     CoreAgentCodec, CoreAgentEntry, CoreAgentEvent, CoreAgentState, RunEvent, SubmissionId,
-    storage::DynamicSessionEntry,
+    storage::StoredSessionEntry,
 };
 
 /// Outcome of reducing a session's persisted log.
@@ -49,7 +49,7 @@ impl std::error::Error for RehydrateError {}
 /// activity and any in-workflow cold path must use it so reduced state is
 /// identical regardless of where replay runs.
 pub fn reduce_session_entries(
-    entries: &[DynamicSessionEntry],
+    entries: &[StoredSessionEntry],
 ) -> Result<ReducedSession, RehydrateError> {
     let mut reduced = ReducedSession::default();
     for entry in entries {

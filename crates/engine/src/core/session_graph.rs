@@ -4,8 +4,7 @@ use thiserror::Error;
 
 use crate::{
     CodecError, CoreAgentCodec, CoreAgentEvent, CoreAgentJoins, CoreAgentLifecycleEvent,
-    CoreAgentState, ToolConfigEvent, UncommittedCoreAgentEvent,
-    session::DynamicUncommittedSessionEvent,
+    CoreAgentState, ToolConfigEvent, UncommittedCoreAgentEvent, session::UncommittedStoredEvent,
 };
 
 #[derive(Debug, Error)]
@@ -20,13 +19,13 @@ pub enum CoreAgentCloneError {
 /// Materializes the source state needed to open a config-only clone.
 ///
 /// `SessionStore::create_cloned_session` stays domain-neutral and persists the
-/// dynamic events passed by the caller. CoreAgent hosts should replay the source
+/// stored events passed by the caller. CoreAgent hosts should replay the source
 /// state, call this helper, then pass the returned events as the clone's
 /// `opening_events`.
 pub fn core_agent_clone_opening_events(
     state: &CoreAgentState,
     observed_at_ms: u64,
-) -> Result<Vec<DynamicUncommittedSessionEvent>, CoreAgentCloneError> {
+) -> Result<Vec<UncommittedStoredEvent>, CoreAgentCloneError> {
     let config = state
         .lifecycle
         .config

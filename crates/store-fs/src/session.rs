@@ -6,7 +6,7 @@ use std::{
 
 use async_trait::async_trait;
 use engine::{
-    session::{DynamicSessionEntry, EventSeq, SessionId, SessionPosition},
+    session::{EventSeq, SessionId, SessionPosition, StoredSessionEntry},
     storage::{
         AppendSessionEvents, AppendSessionEventsResult, CreateSession, ReadSessionEvents,
         SessionPage, SessionRecord, SessionStore, SessionStoreError,
@@ -78,7 +78,7 @@ impl FsSessionStore {
     async fn read_entries_unlocked(
         &self,
         session_id: &SessionId,
-    ) -> Result<Vec<DynamicSessionEntry>, SessionStoreError> {
+    ) -> Result<Vec<StoredSessionEntry>, SessionStoreError> {
         let events_path = self.events_path(session_id);
         let content = fs::read_to_string(&events_path).await.map_err(|error| {
             if error.kind() == io::ErrorKind::NotFound {
@@ -92,7 +92,7 @@ impl FsSessionStore {
 
         let mut entries = Vec::new();
         for (index, line) in content.lines().enumerate() {
-            let entry: DynamicSessionEntry =
+            let entry: StoredSessionEntry =
                 serde_json::from_str(line).map_err(|error| SessionStoreError::Store {
                     message: format!(
                         "decode session event log '{}' line {}: {error}",
@@ -216,7 +216,7 @@ impl SessionStore for FsSessionStore {
                     .map_or(1, |position| position.seq.as_u64().saturating_add(1)),
             );
             let position = SessionPosition { seq: next_seq };
-            let entry = DynamicSessionEntry {
+            let entry = StoredSessionEntry {
                 position: position.clone(),
                 observed_at_ms: event.observed_at_ms,
                 joins: event.joins,
@@ -291,7 +291,7 @@ impl SessionStore for FsSessionStore {
     }
 }
 
-fn reconcile_record(mut record: SessionRecord, entries: &[DynamicSessionEntry]) -> SessionRecord {
+fn reconcile_record(mut record: SessionRecord, entries: &[StoredSessionEntry]) -> SessionRecord {
     if let Some(last) = entries.last() {
         record.head = Some(last.position.clone());
         record.updated_at_ms = last.observed_at_ms;
@@ -304,7 +304,7 @@ fn reconcile_record(mut record: SessionRecord, entries: &[DynamicSessionEntry]) 
 
 async fn append_entries(
     path: &Path,
-    entries: &[DynamicSessionEntry],
+    entries: &[StoredSessionEntry],
 ) -> Result<(), SessionStoreError> {
     let mut file = fs::OpenOptions::new()
         .append(true)
@@ -366,14 +366,14 @@ fn session_io_error(action: &str, path: &Path, error: io::Error) -> SessionStore
 #[cfg(test)]
 mod tests {
     use super::*;
-    use engine::session::{DynamicEvent, DynamicJoins, DynamicUncommittedSessionEvent};
+    use engine::session::{StoredEvent, StoredJoins, UncommittedStoredEvent};
     use engine::storage::SessionStore;
 
-    fn open_event(at_ms: u64) -> DynamicUncommittedSessionEvent {
-        DynamicUncommittedSessionEvent {
+    fn open_event(at_ms: u64) -> UncommittedStoredEvent {
+        UncommittedStoredEvent {
             observed_at_ms: at_ms,
-            joins: DynamicJoins::default(),
-            event: DynamicEvent::new(
+            joins: StoredJoins::default(),
+            event: StoredEvent::new(
                 "lightspeed.test.lifecycle.closed",
                 1,
                 serde_json::Value::Object(Default::default()),

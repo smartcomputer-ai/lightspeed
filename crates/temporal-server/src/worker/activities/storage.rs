@@ -1,8 +1,8 @@
 use engine::{
     BlobRef, SessionId, SessionPosition,
     storage::{
-        AppendSessionEvents, AppendSessionEventsResult, CreateSession, DynamicSessionEntry,
-        DynamicUncommittedSessionEvent, ReadSessionEvents, SessionStore, SessionStoreError,
+        AppendSessionEvents, AppendSessionEventsResult, CreateSession, ReadSessionEvents,
+        SessionStore, SessionStoreError, StoredSessionEntry, UncommittedStoredEvent,
     },
 };
 use temporal_workflow::{
@@ -172,8 +172,8 @@ async fn confirm_existing_append(
 
 fn committed_entries_match_request(
     expected_head: &Option<SessionPosition>,
-    entries: &[DynamicSessionEntry],
-    events: &[DynamicUncommittedSessionEvent],
+    entries: &[StoredSessionEntry],
+    events: &[UncommittedStoredEvent],
 ) -> bool {
     if entries.len() != events.len() {
         return false;
@@ -197,7 +197,7 @@ fn committed_entries_match_request(
 async fn read_all_session_events(
     store: &dyn SessionStore,
     session_id: &SessionId,
-) -> Result<Vec<DynamicSessionEntry>, ActivityError> {
+) -> Result<Vec<StoredSessionEntry>, ActivityError> {
     let mut after = None;
     let mut entries = Vec::new();
     loop {
@@ -222,7 +222,7 @@ mod tests {
     use std::{collections::BTreeMap, sync::Arc};
 
     use engine::{
-        DynamicEvent,
+        StoredEvent,
         storage::{BlobStore, InMemoryBlobStore, InMemorySessionStore, SessionPage, SessionRecord},
     };
     use serde_json::json;
@@ -233,14 +233,14 @@ mod tests {
         observed_at_ms: u64,
         joins: impl IntoIterator<Item = (&'static str, &'static str)>,
         payload: serde_json::Value,
-    ) -> DynamicUncommittedSessionEvent {
-        DynamicUncommittedSessionEvent {
+    ) -> UncommittedStoredEvent {
+        UncommittedStoredEvent {
             observed_at_ms,
             joins: joins
                 .into_iter()
                 .map(|(key, value)| (key.to_owned(), value.to_owned()))
                 .collect::<BTreeMap<_, _>>(),
-            event: DynamicEvent::new("lightspeed.test.event", 1, payload),
+            event: StoredEvent::new("lightspeed.test.event", 1, payload),
         }
     }
 

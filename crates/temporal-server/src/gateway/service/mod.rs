@@ -149,9 +149,8 @@ use api::{
 };
 use api_projection::{
     CoreAgentProjector, MAX_EVENT_PAGE_LIMIT, ProjectSession, api_kind_from_str, api_run_id,
-    decode_dynamic_entry, event_cursor, event_page_limit, map_session_store_error,
-    parse_api_run_id, project_context_entry_inputs, read_all_session_entries,
-    replay_core_agent_state,
+    decode_stored_entry, event_cursor, event_page_limit, map_session_store_error, parse_api_run_id,
+    project_context_entry_inputs, read_all_session_entries, replay_core_agent_state,
 };
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
@@ -1390,7 +1389,7 @@ impl AgentApiService for GatewayAgentApi {
             let codec = engine::CoreAgentCodec;
             let mut events = Vec::with_capacity(page.entries.len());
             for entry in &page.entries {
-                let entry = decode_dynamic_entry(&codec, entry)?;
+                let entry = decode_stored_entry(&codec, entry)?;
                 events.push(self.projector().project_entry(&session_id, &entry).await?);
             }
 

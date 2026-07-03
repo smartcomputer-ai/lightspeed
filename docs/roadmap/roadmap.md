@@ -1,7 +1,7 @@
 # Lightspeed Roadmap
 
 ## Core
-- [ ] [P91](p91-core-agent-structure-cleanup.md) — cleanup of CoreAgent structures: delete the SDK-era open-kernel layer, commit to a closed event vocabulary and core FSM
+- [x] [P91](p91-core-agent-structure-cleanup.md) — cleanup of CoreAgent structures: delete the SDK-era open-kernel layer, commit to a closed event vocabulary and core FSM
 - [ ] optimize: we're rading all session events to get latest state, this will get expensve in the future
 
 ## Fleet (sub-agents)

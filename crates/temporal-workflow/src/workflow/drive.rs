@@ -161,7 +161,7 @@ async fn append_events(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     drive: &mut CoreAgentDrive,
     expected_head: Option<SessionPosition>,
-    events: Vec<engine::storage::DynamicUncommittedSessionEvent>,
+    events: Vec<engine::storage::UncommittedStoredEvent>,
 ) -> anyhow::Result<Vec<CoreAgentEntry>> {
     if events.is_empty() {
         return Ok(Vec::new());

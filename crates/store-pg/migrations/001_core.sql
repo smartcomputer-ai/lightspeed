@@ -311,7 +311,7 @@ COMMENT ON TABLE sessions IS
 COMMENT ON TABLE session_links IS
     'Directed, typed relationships between sessions (e.g. visibility/access/configure). Plain data in v1, not enforced; set independently of clone/fork lineage.';
 COMMENT ON TABLE session_events IS
-    'Append-only dynamic session entries stored as canonical JSONB with generated query columns.';
+    'Append-only stored session entries as canonical JSONB with generated query columns.';
 COMMENT ON TABLE cas_blobs IS
     'Universe-scoped CAS catalog keyed by sha256 digest; small payloads inline, large payloads external.';
 COMMENT ON TABLE cas_session_roots IS

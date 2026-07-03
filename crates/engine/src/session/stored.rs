@@ -2,13 +2,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DynamicEvent {
+pub struct StoredEvent {
     pub kind: String,
     pub version: u32,
     pub payload: Value,
 }
 
-impl DynamicEvent {
+impl StoredEvent {
     pub fn new(kind: impl Into<String>, version: u32, payload: Value) -> Self {
         Self {
             kind: kind.into(),
@@ -25,8 +25,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn dynamic_event_round_trips_as_language_neutral_envelope() {
-        let event = DynamicEvent::new(
+    fn stored_event_round_trips_as_language_neutral_envelope() {
+        let event = StoredEvent::new(
             "lightspeed.run.started",
             1,
             json!({
@@ -49,7 +49,7 @@ mod tests {
             })
         );
         assert_eq!(
-            serde_json::from_value::<DynamicEvent>(value).expect("deserialize event"),
+            serde_json::from_value::<StoredEvent>(value).expect("deserialize event"),
             event
         );
     }

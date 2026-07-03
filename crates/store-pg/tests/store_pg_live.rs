@@ -10,8 +10,7 @@ use auth::{
 use engine::{
     BlobRef, RunId, ToolCallId, TurnId,
     session::{
-        DynamicEvent, DynamicJoins, DynamicUncommittedSessionEvent, EventSeq, SessionId,
-        SessionPosition,
+        EventSeq, SessionId, SessionPosition, StoredEvent, StoredJoins, UncommittedStoredEvent,
     },
     storage::{
         AppendSessionEvents, BlobEdge, BlobGraphStore, BlobStore, CreateClonedSession,
@@ -1641,11 +1640,11 @@ fn live_object_store() -> Arc<dyn ObjectStore> {
     Arc::new(store)
 }
 
-fn open_event(at_ms: u64) -> DynamicUncommittedSessionEvent {
-    DynamicUncommittedSessionEvent {
+fn open_event(at_ms: u64) -> UncommittedStoredEvent {
+    UncommittedStoredEvent {
         observed_at_ms: at_ms,
-        joins: DynamicJoins::default(),
-        event: DynamicEvent::new(
+        joins: StoredJoins::default(),
+        event: StoredEvent::new(
             "lightspeed.test.lifecycle.closed",
             1,
             serde_json::Value::Object(Default::default()),

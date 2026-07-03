@@ -1,9 +1,9 @@
 use crate::{
     CodecError, ContextEvent, CoreAgentEntry, CoreAgentEvent, CoreAgentJoins,
-    CoreAgentLifecycleEvent, CorrelationId, DynamicEvent, RunEvent, RunId, SubmissionId,
+    CoreAgentLifecycleEvent, CorrelationId, RunEvent, RunId, StoredEvent, SubmissionId,
     ToolBatchId, ToolCallId, ToolConfigEvent, ToolEvent, TurnEvent, TurnId,
     UncommittedCoreAgentEvent,
-    session::{DynamicJoins, DynamicSessionEntry, DynamicUncommittedSessionEvent},
+    session::{StoredJoins, StoredSessionEntry, UncommittedStoredEvent},
 };
 
 const CORE_AGENT_EVENT_KIND_PREFIX: &str = "lightspeed.core.";
@@ -13,21 +13,21 @@ const CORE_AGENT_SCHEMA_VERSION: u32 = 1;
 pub struct CoreAgentCodec;
 
 impl CoreAgentCodec {
-    pub fn encode_event(&self, event: &CoreAgentEvent) -> Result<DynamicEvent, CodecError> {
-        Ok(DynamicEvent::new(
+    pub fn encode_event(&self, event: &CoreAgentEvent) -> Result<StoredEvent, CodecError> {
+        Ok(StoredEvent::new(
             core_agent_event_envelope_kind(event),
             CORE_AGENT_SCHEMA_VERSION,
             serde_json::to_value(event).map_err(codec_failure)?,
         ))
     }
 
-    pub fn decode_event(&self, event: &DynamicEvent) -> Result<CoreAgentEvent, CodecError> {
+    pub fn decode_event(&self, event: &StoredEvent) -> Result<CoreAgentEvent, CodecError> {
         ensure_core_agent_event_envelope(&event.kind, event.version)?;
         serde_json::from_value(event.payload.clone()).map_err(codec_failure)
     }
 
-    pub fn encode_joins(&self, joins: &CoreAgentJoins) -> DynamicJoins {
-        let mut encoded = DynamicJoins::new();
+    pub fn encode_joins(&self, joins: &CoreAgentJoins) -> StoredJoins {
+        let mut encoded = StoredJoins::new();
         insert_numeric(&mut encoded, "run_id", joins.run_id.map(RunId::as_u64));
         insert_numeric(&mut encoded, "turn_id", joins.turn_id.map(TurnId::as_u64));
         insert_numeric(
@@ -45,7 +45,7 @@ impl CoreAgentCodec {
         encoded
     }
 
-    pub fn decode_joins(&self, joins: &DynamicJoins) -> Result<CoreAgentJoins, CodecError> {
+    pub fn decode_joins(&self, joins: &StoredJoins) -> Result<CoreAgentJoins, CodecError> {
         Ok(CoreAgentJoins {
             run_id: parse_numeric(joins, "run_id")?.map(RunId::new),
             turn_id: parse_numeric(joins, "turn_id")?.map(TurnId::new),
@@ -56,8 +56,8 @@ impl CoreAgentCodec {
         })
     }
 
-    pub fn encode_entry(&self, entry: &CoreAgentEntry) -> Result<DynamicSessionEntry, CodecError> {
-        Ok(DynamicSessionEntry {
+    pub fn encode_entry(&self, entry: &CoreAgentEntry) -> Result<StoredSessionEntry, CodecError> {
+        Ok(StoredSessionEntry {
             position: entry.position.clone(),
             observed_at_ms: entry.observed_at_ms,
             joins: self.encode_joins(&entry.joins),
@@ -65,7 +65,7 @@ impl CoreAgentCodec {
         })
     }
 
-    pub fn decode_entry(&self, entry: &DynamicSessionEntry) -> Result<CoreAgentEntry, CodecError> {
+    pub fn decode_entry(&self, entry: &StoredSessionEntry) -> Result<CoreAgentEntry, CodecError> {
         Ok(CoreAgentEntry {
             position: entry.position.clone(),
             observed_at_ms: entry.observed_at_ms,
@@ -77,8 +77,8 @@ impl CoreAgentCodec {
     pub fn encode_uncommitted(
         &self,
         event: &UncommittedCoreAgentEvent,
-    ) -> Result<DynamicUncommittedSessionEvent, CodecError> {
-        Ok(DynamicUncommittedSessionEvent {
+    ) -> Result<UncommittedStoredEvent, CodecError> {
+        Ok(UncommittedStoredEvent {
             observed_at_ms: event.observed_at_ms,
             joins: self.encode_joins(&event.joins),
             event: self.encode_event(&event.event)?,
@@ -159,31 +159,31 @@ fn core_agent_event_envelope_kind(event: &CoreAgentEvent) -> &'static str {
     }
 }
 
-fn insert_numeric(joins: &mut DynamicJoins, key: &'static str, value: Option<u64>) {
+fn insert_numeric(joins: &mut StoredJoins, key: &'static str, value: Option<u64>) {
     if let Some(value) = value {
         joins.insert(key.to_owned(), value.to_string());
     }
 }
 
-fn insert_string<T: ToString>(joins: &mut DynamicJoins, key: &'static str, value: Option<&T>) {
+fn insert_string<T: ToString>(joins: &mut StoredJoins, key: &'static str, value: Option<&T>) {
     if let Some(value) = value {
         joins.insert(key.to_owned(), value.to_string());
     }
 }
 
-fn parse_numeric(joins: &DynamicJoins, key: &'static str) -> Result<Option<u64>, CodecError> {
+fn parse_numeric(joins: &StoredJoins, key: &'static str) -> Result<Option<u64>, CodecError> {
     joins
         .get(key)
         .map(|value: &String| {
             value.parse::<u64>().map_err(|error| CodecError::Failed {
-                message: format!("invalid dynamic join {key}: {error}"),
+                message: format!("invalid stored join {key}: {error}"),
             })
         })
         .transpose()
 }
 
 fn parse_string_id<T, F>(
-    joins: &DynamicJoins,
+    joins: &StoredJoins,
     key: &'static str,
     parse: F,
 ) -> Result<Option<T>, CodecError>
@@ -195,7 +195,7 @@ where
         .cloned()
         .map(|value| {
             parse(value).map_err(|error| CodecError::Failed {
-                message: format!("invalid dynamic join {key}: {error}"),
+                message: format!("invalid stored join {key}: {error}"),
             })
         })
         .transpose()
@@ -217,7 +217,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn core_agent_event_round_trips_through_dynamic_envelope() {
+    fn core_agent_event_round_trips_through_stored_envelope() {
         let codec = CoreAgentCodec;
         let event = CoreAgentEvent::Lifecycle(CoreAgentLifecycleEvent::Closed);
 
@@ -231,14 +231,14 @@ mod tests {
     #[test]
     fn foreign_envelope_kinds_and_versions_are_unsupported() {
         let codec = CoreAgentCodec;
-        let foreign_kind = DynamicEvent::new(
+        let foreign_kind = StoredEvent::new(
             "lightspeed.custom.lifecycle.closed",
             CORE_AGENT_SCHEMA_VERSION,
             serde_json::json!({
                 "lifecycle": "closed"
             }),
         );
-        let foreign_version = DynamicEvent::new(
+        let foreign_version = StoredEvent::new(
             "lightspeed.core.lifecycle.closed",
             CORE_AGENT_SCHEMA_VERSION + 1,
             serde_json::json!({
@@ -259,7 +259,7 @@ mod tests {
     #[test]
     fn core_agent_lifecycle_fixture_matches_codec() {
         assert_fixture_round_trip(
-            include_str!("../../fixtures/core_lifecycle_closed_dynamic_event.json"),
+            include_str!("../../fixtures/core_lifecycle_closed_stored_event.json"),
             CoreAgentEvent::Lifecycle(CoreAgentLifecycleEvent::Closed),
         );
     }
@@ -267,7 +267,7 @@ mod tests {
     #[test]
     fn core_agent_tool_fixture_matches_codec() {
         assert_fixture_round_trip(
-            include_str!("../../fixtures/core_tool_batch_completed_dynamic_event.json"),
+            include_str!("../../fixtures/core_tool_batch_completed_stored_event.json"),
             CoreAgentEvent::Tool(ToolEvent::BatchCompleted {
                 run_id: RunId::new(1),
                 turn_id: TurnId::new(2),
@@ -277,12 +277,12 @@ mod tests {
     }
 
     #[test]
-    fn core_agent_dynamic_entry_fixture_matches_codec() {
+    fn core_agent_stored_entry_fixture_matches_codec() {
         let codec = CoreAgentCodec;
-        let fixture_entry = serde_json::from_str::<DynamicSessionEntry>(include_str!(
-            "../../fixtures/core_tool_batch_completed_dynamic_entry.json"
+        let fixture_entry = serde_json::from_str::<StoredSessionEntry>(include_str!(
+            "../../fixtures/core_tool_batch_completed_stored_entry.json"
         ))
-        .expect("fixture is a dynamic session entry");
+        .expect("fixture is a stored session entry");
         let typed_entry = CoreAgentEntry {
             position: SessionPosition {
                 seq: EventSeq::new(42),
@@ -315,7 +315,7 @@ mod tests {
     fn assert_fixture_round_trip(fixture: &str, event: CoreAgentEvent) {
         let codec = CoreAgentCodec;
         let fixture_event =
-            serde_json::from_str::<DynamicEvent>(fixture).expect("fixture is a dynamic event");
+            serde_json::from_str::<StoredEvent>(fixture).expect("fixture is a stored event");
 
         assert_eq!(
             codec.encode_event(&event).expect("encode event"),

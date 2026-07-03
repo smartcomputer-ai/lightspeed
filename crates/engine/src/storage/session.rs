@@ -1,7 +1,7 @@
 //! Session event-log storage contract.
 
 use crate::session::{
-    DynamicSessionEntry, DynamicUncommittedSessionEvent, EventSeq, SessionId, SessionPosition,
+    EventSeq, SessionId, SessionPosition, StoredSessionEntry, UncommittedStoredEvent,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -31,7 +31,7 @@ pub struct CreateClonedSession {
     pub session_id: SessionId,
     pub created_at_ms: u64,
     #[serde(default)]
-    pub opening_events: Vec<DynamicUncommittedSessionEvent>,
+    pub opening_events: Vec<UncommittedStoredEvent>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,12 +48,12 @@ pub struct CreateForkedSession {
 pub struct AppendSessionEvents {
     pub session_id: SessionId,
     pub expected_head: Option<SessionPosition>,
-    pub events: Vec<DynamicUncommittedSessionEvent>,
+    pub events: Vec<UncommittedStoredEvent>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppendSessionEventsResult {
-    pub entries: Vec<DynamicSessionEntry>,
+    pub entries: Vec<StoredSessionEntry>,
     pub head: Option<SessionPosition>,
 }
 
@@ -102,7 +102,7 @@ pub struct SessionLinkRecord {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionPage {
-    pub entries: Vec<DynamicSessionEntry>,
+    pub entries: Vec<StoredSessionEntry>,
     pub next_after: Option<EventSeq>,
     pub complete: bool,
 }
@@ -231,7 +231,7 @@ pub struct InMemorySessionStore {
 #[derive(Default)]
 struct InMemorySessionStoreInner {
     records: BTreeMap<SessionId, SessionRecord>,
-    entries: BTreeMap<SessionId, Vec<DynamicSessionEntry>>,
+    entries: BTreeMap<SessionId, Vec<StoredSessionEntry>>,
     links: BTreeMap<(SessionId, SessionId, String), SessionLinkRecord>,
 }
 
@@ -519,7 +519,7 @@ pub fn validate_relationship(relationship: &str) -> Result<(), SessionStoreError
     Ok(())
 }
 
-pub fn largest_safe_fork_seq(entries: &[DynamicSessionEntry], head: u64) -> EventSeq {
+pub fn largest_safe_fork_seq(entries: &[StoredSessionEntry], head: u64) -> EventSeq {
     let ranges = core_run_ranges(entries);
     let earliest_open = ranges
         .values()
@@ -532,7 +532,7 @@ pub fn largest_safe_fork_seq(entries: &[DynamicSessionEntry], head: u64) -> Even
 pub fn validate_fork_point(
     session_id: &SessionId,
     source_seq: EventSeq,
-    entries: &[DynamicSessionEntry],
+    entries: &[StoredSessionEntry],
     head: u64,
 ) -> Result<(), SessionStoreError> {
     let source_seq_u64 = source_seq.as_u64();
@@ -570,7 +570,7 @@ struct RunRange {
     terminal_seq: Option<u64>,
 }
 
-fn core_run_ranges(entries: &[DynamicSessionEntry]) -> BTreeMap<u64, RunRange> {
+fn core_run_ranges(entries: &[StoredSessionEntry]) -> BTreeMap<u64, RunRange> {
     let mut ranges = BTreeMap::new();
     for entry in entries {
         let Some(boundary) = run_boundary(entry) else {
@@ -595,7 +595,7 @@ struct RunBoundary {
     terminal: bool,
 }
 
-fn run_boundary(entry: &DynamicSessionEntry) -> Option<RunBoundary> {
+fn run_boundary(entry: &StoredSessionEntry) -> Option<RunBoundary> {
     let run_id = entry
         .joins
         .get("run_id")
@@ -627,8 +627,8 @@ fn run_boundary(entry: &DynamicSessionEntry) -> Option<RunBoundary> {
 
 fn commit_uncommitted_events(
     record: &mut SessionRecord,
-    events: Vec<DynamicUncommittedSessionEvent>,
-) -> Vec<DynamicSessionEntry> {
+    events: Vec<UncommittedStoredEvent>,
+) -> Vec<StoredSessionEntry> {
     let mut committed = Vec::with_capacity(events.len());
     for event in events {
         let next_seq = EventSeq::new(
@@ -638,7 +638,7 @@ fn commit_uncommitted_events(
                 .map_or(1, |position| position.seq.as_u64().saturating_add(1)),
         );
         let position = SessionPosition { seq: next_seq };
-        let entry = DynamicSessionEntry {
+        let entry = StoredSessionEntry {
             position: position.clone(),
             observed_at_ms: event.observed_at_ms,
             joins: event.joins,
@@ -667,7 +667,7 @@ fn effective_head_u64(
 fn effective_entries(
     inner: &InMemorySessionStoreInner,
     session_id: &SessionId,
-) -> Result<Vec<DynamicSessionEntry>, SessionStoreError> {
+) -> Result<Vec<StoredSessionEntry>, SessionStoreError> {
     let head = effective_head_u64(inner, session_id)?;
     effective_entries_up_to(inner, session_id, head)
 }
@@ -676,7 +676,7 @@ fn effective_entries_up_to(
     inner: &InMemorySessionStoreInner,
     session_id: &SessionId,
     max_seq: u64,
-) -> Result<Vec<DynamicSessionEntry>, SessionStoreError> {
+) -> Result<Vec<StoredSessionEntry>, SessionStoreError> {
     let record =
         inner
             .records
@@ -705,7 +705,7 @@ fn local_entries_up_to(
     session_id: &SessionId,
     after: u64,
     max_seq: u64,
-) -> Result<Vec<DynamicSessionEntry>, SessionStoreError> {
+) -> Result<Vec<StoredSessionEntry>, SessionStoreError> {
     let entries =
         inner
             .entries
@@ -744,25 +744,25 @@ fn position_from_nonzero_seq(seq: EventSeq) -> Option<SessionPosition> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::{DynamicEvent, DynamicJoins};
+    use crate::session::{StoredEvent, StoredJoins};
 
-    fn test_event(at_ms: u64, kind: &'static str) -> DynamicUncommittedSessionEvent {
-        DynamicUncommittedSessionEvent {
+    fn test_event(at_ms: u64, kind: &'static str) -> UncommittedStoredEvent {
+        UncommittedStoredEvent {
             observed_at_ms: at_ms,
-            joins: DynamicJoins::default(),
-            event: DynamicEvent::new(kind, 1, serde_json::Value::Object(Default::default())),
+            joins: StoredJoins::default(),
+            event: StoredEvent::new(kind, 1, serde_json::Value::Object(Default::default())),
         }
     }
 
-    fn open_event(at_ms: u64) -> DynamicUncommittedSessionEvent {
+    fn open_event(at_ms: u64) -> UncommittedStoredEvent {
         test_event(at_ms, "lightspeed.test.lifecycle.closed")
     }
 
-    fn run_event(at_ms: u64, kind: &'static str, run_id: u64) -> DynamicUncommittedSessionEvent {
-        DynamicUncommittedSessionEvent {
+    fn run_event(at_ms: u64, kind: &'static str, run_id: u64) -> UncommittedStoredEvent {
+        UncommittedStoredEvent {
             observed_at_ms: at_ms,
-            joins: DynamicJoins::from([("run_id".to_owned(), run_id.to_string())]),
-            event: DynamicEvent::new(kind, 1, serde_json::Value::Object(Default::default())),
+            joins: StoredJoins::from([("run_id".to_owned(), run_id.to_string())]),
+            event: StoredEvent::new(kind, 1, serde_json::Value::Object(Default::default())),
         }
     }
 

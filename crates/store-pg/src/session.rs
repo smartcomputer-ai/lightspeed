@@ -1,8 +1,6 @@
 use async_trait::async_trait;
 use engine::{
-    session::{
-        DynamicSessionEntry, DynamicUncommittedSessionEvent, EventSeq, SessionId, SessionPosition,
-    },
+    session::{EventSeq, SessionId, SessionPosition, StoredSessionEntry, UncommittedStoredEvent},
     storage::{
         AppendSessionEvents, AppendSessionEventsResult, CreateClonedSession, CreateForkedSession,
         CreateSession, ListSessionLinks, ReadSessionEvents, SessionLinkDirection,
@@ -78,7 +76,7 @@ impl PgStore {
                     .map_or(1, |position| position.seq.as_u64().saturating_add(1)),
             );
             let position = SessionPosition { seq: next_seq };
-            let entry = DynamicSessionEntry {
+            let entry = StoredSessionEntry {
                 position: position.clone(),
                 observed_at_ms: event.observed_at_ms,
                 joins: event.joins,
@@ -173,7 +171,7 @@ impl PgStore {
     async fn read_all_effective_events(
         &self,
         session_id: &SessionId,
-    ) -> Result<Vec<DynamicSessionEntry>, SessionStoreError> {
+    ) -> Result<Vec<StoredSessionEntry>, SessionStoreError> {
         let head = self
             .load_session(session_id)
             .await?
@@ -209,7 +207,7 @@ impl PgStore {
         session_id: &SessionId,
         after: u64,
         limit: usize,
-    ) -> Result<Vec<DynamicSessionEntry>, SessionStoreError> {
+    ) -> Result<Vec<StoredSessionEntry>, SessionStoreError> {
         if limit == 0 {
             return Ok(Vec::new());
         }
@@ -330,7 +328,7 @@ impl PgStore {
         after: u64,
         through: u64,
         limit: usize,
-    ) -> Result<Vec<DynamicSessionEntry>, SessionStoreError> {
+    ) -> Result<Vec<StoredSessionEntry>, SessionStoreError> {
         let rows = sqlx::query(
             r#"
             SELECT entry_json
@@ -832,11 +830,11 @@ fn optional_event_seq_from_i64(seq: Option<i64>) -> Result<Option<EventSeq>, Ses
 
 fn session_entry_from_row(
     row: &sqlx::postgres::PgRow,
-) -> Result<DynamicSessionEntry, SessionStoreError> {
+) -> Result<StoredSessionEntry, SessionStoreError> {
     let entry_json: serde_json::Value = row
         .try_get("entry_json")
         .map_err(|error| session_sql_error("decode session event json", error))?;
-    serde_json::from_value::<DynamicSessionEntry>(entry_json).map_err(|error| {
+    serde_json::from_value::<StoredSessionEntry>(entry_json).map_err(|error| {
         SessionStoreError::Store {
             message: format!("decode session event entry: {error}"),
         }
@@ -1028,8 +1026,8 @@ async fn append_events_in_tx(
     tx: &mut Transaction<'_, Postgres>,
     universe_id: Uuid,
     mut record: SessionRecord,
-    events: Vec<DynamicUncommittedSessionEvent>,
-) -> Result<(SessionRecord, Vec<DynamicSessionEntry>), SessionStoreError> {
+    events: Vec<UncommittedStoredEvent>,
+) -> Result<(SessionRecord, Vec<StoredSessionEntry>), SessionStoreError> {
     let mut committed = Vec::with_capacity(events.len());
     for event in events {
         let next_seq = EventSeq::new(
@@ -1039,7 +1037,7 @@ async fn append_events_in_tx(
                 .map_or(1, |position| position.seq.as_u64().saturating_add(1)),
         );
         let position = SessionPosition { seq: next_seq };
-        let entry = DynamicSessionEntry {
+        let entry = StoredSessionEntry {
             position: position.clone(),
             observed_at_ms: event.observed_at_ms,
             joins: event.joins,

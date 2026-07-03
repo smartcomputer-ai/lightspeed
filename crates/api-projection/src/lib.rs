@@ -31,8 +31,8 @@ use engine::{
     ToolChoiceMode, ToolConfigEvent, ToolEvent, ToolKind, ToolParallelism, ToolSpec,
     ToolTargetRequirement, TurnEvent, TurnId,
     storage::{
-        BlobStore, BlobStoreError, DynamicSessionEntry, ReadSessionEvents, SessionRecord,
-        SessionStore, SessionStoreError,
+        BlobStore, BlobStoreError, ReadSessionEvents, SessionRecord, SessionStore,
+        SessionStoreError, StoredSessionEntry,
     },
 };
 use serde_json::Value;
@@ -874,7 +874,7 @@ pub async fn read_all_session_entries(
             .map_err(map_session_store_error)?;
         after = page.next_after;
         for entry in &page.entries {
-            entries.push(decode_dynamic_entry(&codec, entry)?);
+            entries.push(decode_stored_entry(&codec, entry)?);
         }
         if page.complete {
             return Ok(entries);
@@ -882,9 +882,9 @@ pub async fn read_all_session_entries(
     }
 }
 
-pub fn decode_dynamic_entry(
+pub fn decode_stored_entry(
     codec: &CoreAgentCodec,
-    entry: &DynamicSessionEntry,
+    entry: &StoredSessionEntry,
 ) -> Result<CoreAgentEntry, AgentApiError> {
     codec
         .decode_entry(entry)
