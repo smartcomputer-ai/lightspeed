@@ -48,7 +48,9 @@
 ## Framework/SDK
 - [ ] Temporal service design: ensure ls can be used as a Temporal service by other workflows
 - [ ] Workflows as tools (register a workflow as a tool, route to workflow)
-- [ ] Multi-tenant support in worker
+- [ ] [P90](p90-multi-tenancy.md) — multi-tenant worker: multiple universes
+      per deployment, composed workflow ids, per-request universe resolution
+      (`single` / `trusted-header` / `api-key` modes)
 - [ ] Python SDK
      - [ ] API Client
      - [ ] Workflow helpers
