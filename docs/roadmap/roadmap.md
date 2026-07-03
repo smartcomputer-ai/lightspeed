@@ -55,8 +55,7 @@
 - [x] [P90](p90-multi-tenancy.md) — multi-tenant worker: multiple universes
       per deployment, composed workflow ids, per-request universe resolution
       (`single` / `trusted-header` / `api-key` modes), principal pass-through,
-      universe/api-key admin subcommands. Deferred: per-binding bridge
-      credentials (one bridge process = one universe for now)
+      universe/api-key admin subcommands, per-binding bridge credentials
 - [ ] Python SDK
      - [ ] API Client
      - [ ] Workflow helpers

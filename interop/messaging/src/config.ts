@@ -55,7 +55,8 @@ export interface BindingPairingConfig {
 /// A rule mapping matched conversations to a profile and a session key.
 /// Bindings are evaluated top-to-bottom, first match wins.
 export interface BindingRule {
-  /// Stable id used by persistent pairing state. Required when `pairing` is set.
+  /// Stable id used by persistent pairing state. Required when `pairing` or
+  /// `auth` is set.
   id?: string;
   match: BindingMatch;
   /// Agent profile source for matched conversations. A string is treated as a
@@ -68,6 +69,22 @@ export interface BindingRule {
   /// Optional chat pairing gate. Until a matching conversation sends the code,
   /// no turn or room context reaches Lightspeed.
   pairing?: BindingPairingConfig;
+  /// Gateway credentials for matched conversations (P90 multi-tenancy):
+  /// their sessions live in the universe this credential resolves to. Omitted
+  /// means the bridge's default gateway connection. Config accepts `apiKey`,
+  /// `apiKeyEnv` (name of an env var holding the key), or `universe`;
+  /// `apiKeyEnv` is resolved at load time into `apiKey`.
+  auth?: BindingAuthConfig;
+}
+
+/// Resolved per-binding gateway credentials: exactly one of `apiKey`
+/// (`Authorization: Bearer …` against an `api-key`-mode gateway) or
+/// `universe` (`x-lightspeed-universe` against a `trusted-header`-mode
+/// gateway) — a gateway runs one auth mode, so setting both is a config
+/// error.
+export interface BindingAuthConfig {
+  apiKey?: string | null;
+  universe?: string | null;
 }
 
 export interface TelegramBridgeConfig {
@@ -299,6 +316,8 @@ export interface ResolvedBinding {
   profile: ProfileSource | null;
   profileLabel: string | null;
   sessionKey: string | null;
+  /// Per-binding gateway credentials, or null for the default connection.
+  auth: BindingAuthConfig | null;
 }
 
 export interface BindingAccessCandidate extends ResolvedBinding {
@@ -317,9 +336,10 @@ export function resolveBinding(query: BindingQuery, bindings: readonly BindingRu
       profile: binding.profile,
       profileLabel: binding.profileLabel,
       sessionKey: binding.sessionKey,
+      auth: binding.auth,
     };
   }
-  return { profile: null, profileLabel: null, sessionKey: null };
+  return { profile: null, profileLabel: null, sessionKey: null, auth: null };
 }
 
 /// Returns the ordered binding candidates relevant to one inbound message.
@@ -349,6 +369,7 @@ function candidateForRule(rule: BindingRule): BindingAccessCandidate {
     profile: rule.profile ?? null,
     profileLabel: labelForProfile(rule.profile),
     sessionKey: rule.sessionKey ?? null,
+    auth: rule.auth ?? null,
   };
 }
 
@@ -358,6 +379,7 @@ function defaultBindingCandidate(): BindingAccessCandidate {
     pairing: null,
     profile: null,
     profileLabel: null,
+    auth: null,
     sessionKey: null,
   };
 }
@@ -456,6 +478,10 @@ function parseBinding(index: number, raw: unknown, env: NodeJS.ProcessEnv): Bind
   if (pairing && id === undefined) {
     throw new Error(`bindings[${index}].id is required when pairing is configured`);
   }
+  const auth = parseOptionalBindingAuth(record.auth, `bindings[${index}].auth`, env);
+  if (auth && id === undefined) {
+    throw new Error(`bindings[${index}].id is required when auth is configured`);
+  }
   const matchRule: BindingMatch = { channel };
   const handle = optionalStringOrStringArray(match.handle);
   if (handle !== undefined) matchRule.handle = handle;
@@ -468,7 +494,52 @@ function parseBinding(index: number, raw: unknown, env: NodeJS.ProcessEnv): Bind
   const sessionKey = optionalString(record.sessionKey);
   if (sessionKey !== undefined) rule.sessionKey = sessionKey;
   if (pairing !== undefined) rule.pairing = pairing;
+  if (auth !== undefined) rule.auth = auth;
   return rule;
+}
+
+/// Parses per-binding gateway credentials. `apiKeyEnv` names an env var so
+/// key material can stay out of the config file; it resolves here, at load
+/// time, and a missing/empty variable is a startup error rather than a
+/// misrouted conversation later.
+function parseOptionalBindingAuth(
+  raw: unknown,
+  path: string,
+  env: NodeJS.ProcessEnv,
+): BindingAuthConfig | undefined {
+  if (raw === undefined || raw === null) {
+    return undefined;
+  }
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error(`${path} must be an object`);
+  }
+  const record = raw as Record<string, unknown>;
+  const apiKeyLiteral = optionalString(record.apiKey);
+  const apiKeyEnv = optionalString(record.apiKeyEnv);
+  const universe = optionalString(record.universe);
+  if (apiKeyLiteral !== undefined && apiKeyEnv !== undefined) {
+    throw new Error(`${path} must set apiKey or apiKeyEnv, not both`);
+  }
+  let apiKey = apiKeyLiteral;
+  if (apiKeyEnv !== undefined) {
+    const resolved = env[apiKeyEnv];
+    if (resolved === undefined || resolved.trim() === "") {
+      throw new Error(`${path}.apiKeyEnv names env var ${apiKeyEnv}, which is not set`);
+    }
+    apiKey = resolved.trim();
+  }
+  if (apiKey !== undefined && universe !== undefined) {
+    throw new Error(
+      `${path} must set a key (apiKey/apiKeyEnv) or a universe, not both — a gateway runs one auth mode`,
+    );
+  }
+  if (apiKey === undefined && universe === undefined) {
+    throw new Error(`${path} must set apiKey, apiKeyEnv, or universe`);
+  }
+  const auth: BindingAuthConfig = {};
+  if (apiKey !== undefined) auth.apiKey = apiKey;
+  if (universe !== undefined) auth.universe = universe;
+  return auth;
 }
 
 function parseBindingChannel(raw: unknown, path: string): BindingChannelMatch {

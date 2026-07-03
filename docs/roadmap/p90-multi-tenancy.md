@@ -46,10 +46,18 @@
   fields), README/AGENTS/env docs, and an ignored api-key live test covering
   fail-closed, cross-universe misses, principal stamping, header rejection,
   and immediate revocation.
-- Deferred from Phase 3: per-binding bridge credentials (universes mixed
-  within one bridge process). Requires persisting auth on bridge binding
-  state and threading it through the outbox poller; one bridge process
-  serves one universe until then.
+- Per-binding bridge credentials implemented 2026-07-03 (closing the Phase 3
+  deferral): binding rules accept `auth` (`apiKey`, `apiKeyEnv`, or
+  `universe`; requires a rule `id`), the bridge builds one gateway
+  connection per distinct credential (`gateway_auth.ts`), conversations
+  persist their rule id in binding state (credential resolves live from
+  config, so rotation is a restart, not a migration), all runtime paths
+  (turns, room context, retention pruning) route through the binding's
+  connection, and the outbox runs one tailer per distinct credential —
+  never two on one universe, which would double-deliver. Unknown persisted
+  auth ids fail closed instead of falling back to the default connection.
+  Covered by bridge vitest suites (config parsing/validation, per-auth
+  routing, fail-closed, connection dedupe).
 - Runtime-footprint follow-up implemented 2026-07-03: `UniverseRuntime`
   evicts cached states opportunistically on every `state_for` touch (4h
   idle timeout, LRU beyond a 1024-state cap, the just-used entry never
