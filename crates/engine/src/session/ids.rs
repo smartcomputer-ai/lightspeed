@@ -137,7 +137,6 @@ pub enum StringIdError {
 }
 
 string_id!(SessionId, validate_general_string_id);
-string_id!(AgentHandle, validate_general_string_id);
 string_id!(CorrelationId, validate_general_string_id);
 
 numeric_id!(EventSeq);

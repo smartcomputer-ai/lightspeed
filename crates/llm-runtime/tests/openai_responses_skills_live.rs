@@ -6,7 +6,7 @@ use std::{
 
 use async_trait::async_trait;
 use engine::{
-    AgentHandle, BlobRef, ContextConfig, ContextEntryInput, ContextEntryKind, ContextMessageRole,
+    BlobRef, ContextConfig, ContextEntryInput, ContextEntryKind, ContextMessageRole,
     CoreAgentCommand, CoreAgentEvent, ModelSelection, ProviderApiKind, RunConfig, RunStatus,
     SessionConfig, SessionId,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
@@ -237,7 +237,6 @@ async fn openai_responses_live_selects_and_activates_the_matching_skill() {
     sessions
         .create_session(CreateSession {
             session_id: session_id.clone(),
-            agent_handle: AgentHandle::new("lightspeed.live-skills"),
             created_at_ms: 1,
         })
         .await

@@ -6,9 +6,9 @@ use std::{
 
 use async_trait::async_trait;
 use engine::{
-    AgentHandle, ContextConfig, ContextEntryInput, ContextEntryKind, ContextMessageRole,
-    CoreAgentCommand, CoreAgentEvent, ModelSelection, ProviderApiKind, RunConfig, RunStatus,
-    SessionConfig, SessionId,
+    ContextConfig, ContextEntryInput, ContextEntryKind, ContextMessageRole, CoreAgentCommand,
+    CoreAgentEvent, ModelSelection, ProviderApiKind, RunConfig, RunStatus, SessionConfig,
+    SessionId,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
 };
 use llm_clients::openai::responses::{Client, Config};
@@ -233,7 +233,6 @@ async fn openai_responses_live_uses_vfs_prompt_instructions() {
     sessions
         .create_session(CreateSession {
             session_id: session_id.clone(),
-            agent_handle: AgentHandle::new("lightspeed.live-prompts"),
             created_at_ms: 1,
         })
         .await

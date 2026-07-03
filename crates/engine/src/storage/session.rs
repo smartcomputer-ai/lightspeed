@@ -1,8 +1,7 @@
 //! Session event-log storage contract.
 
 use crate::session::{
-    AgentHandle, DynamicSessionEntry, DynamicUncommittedSessionEvent, EventSeq, SessionId,
-    SessionPosition,
+    DynamicSessionEntry, DynamicUncommittedSessionEvent, EventSeq, SessionId, SessionPosition,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -13,7 +12,6 @@ use thiserror::Error;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionRecord {
     pub session_id: SessionId,
-    pub agent_handle: AgentHandle,
     pub head: Option<SessionPosition>,
     pub source_session_id: Option<SessionId>,
     pub source_seq: Option<EventSeq>,
@@ -24,7 +22,6 @@ pub struct SessionRecord {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreateSession {
     pub session_id: SessionId,
-    pub agent_handle: AgentHandle,
     pub created_at_ms: u64,
 }
 
@@ -32,7 +29,6 @@ pub struct CreateSession {
 pub struct CreateClonedSession {
     pub source_session_id: SessionId,
     pub session_id: SessionId,
-    pub agent_handle: AgentHandle,
     pub created_at_ms: u64,
     #[serde(default)]
     pub opening_events: Vec<DynamicUncommittedSessionEvent>,
@@ -42,17 +38,10 @@ pub struct CreateClonedSession {
 pub struct CreateForkedSession {
     pub source_session_id: SessionId,
     pub session_id: SessionId,
-    pub agent_handle: AgentHandle,
     /// Branch point in the source session's effective log. `0` means an empty
     /// inherited prefix; the child then appends from seq 1.
     pub source_seq: EventSeq,
     pub created_at_ms: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ListAgentSessions {
-    pub agent_handle: AgentHandle,
-    pub limit: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -162,11 +151,6 @@ pub trait SessionStore: Send + Sync {
         session_id: &SessionId,
     ) -> Result<Option<SessionRecord>, SessionStoreError>;
 
-    async fn list_agent_sessions(
-        &self,
-        request: ListAgentSessions,
-    ) -> Result<Vec<SessionRecord>, SessionStoreError>;
-
     async fn create_cloned_session(
         &self,
         request: CreateClonedSession,
@@ -273,7 +257,6 @@ impl SessionStore for InMemorySessionStore {
         }
         let record = SessionRecord {
             session_id: request.session_id,
-            agent_handle: request.agent_handle,
             head: None,
             source_session_id: None,
             source_seq: None,
@@ -297,22 +280,6 @@ impl SessionStore for InMemorySessionStore {
         Ok(inner.records.get(session_id).cloned())
     }
 
-    async fn list_agent_sessions(
-        &self,
-        request: ListAgentSessions,
-    ) -> Result<Vec<SessionRecord>, SessionStoreError> {
-        let inner = self.inner.read().map_err(|_| SessionStoreError::Store {
-            message: "session store read lock poisoned".into(),
-        })?;
-        Ok(inner
-            .records
-            .values()
-            .filter(|record| record.agent_handle == request.agent_handle)
-            .take(request.limit)
-            .cloned()
-            .collect())
-    }
-
     async fn create_cloned_session(
         &self,
         request: CreateClonedSession,
@@ -333,7 +300,6 @@ impl SessionStore for InMemorySessionStore {
 
         let mut record = SessionRecord {
             session_id: request.session_id,
-            agent_handle: request.agent_handle,
             head: None,
             source_session_id: Some(request.source_session_id),
             source_seq: None,
@@ -369,7 +335,6 @@ impl SessionStore for InMemorySessionStore {
         let head = position_from_nonzero_seq(request.source_seq);
         let record = SessionRecord {
             session_id: request.session_id,
-            agent_handle: request.agent_handle,
             head,
             source_session_id: Some(request.source_session_id),
             source_seq: Some(request.source_seq),
@@ -808,7 +773,6 @@ mod tests {
         store
             .create_session(CreateSession {
                 session_id: session_id.clone(),
-                agent_handle: AgentHandle::new("lightspeed.default"),
                 created_at_ms: 1,
             })
             .await
@@ -838,7 +802,6 @@ mod tests {
         store
             .create_session(CreateSession {
                 session_id: session_id.clone(),
-                agent_handle: AgentHandle::new("lightspeed.default"),
                 created_at_ms: 1,
             })
             .await
@@ -878,7 +841,6 @@ mod tests {
         store
             .create_session(CreateSession {
                 session_id: session_id.clone(),
-                agent_handle: AgentHandle::new("lightspeed.default"),
                 created_at_ms: 1,
             })
             .await
@@ -887,7 +849,6 @@ mod tests {
         let duplicate = store
             .create_session(CreateSession {
                 session_id: session_id.clone(),
-                agent_handle: AgentHandle::new("lightspeed.default"),
                 created_at_ms: 2,
             })
             .await
@@ -930,7 +891,6 @@ mod tests {
         store
             .create_session(CreateSession {
                 session_id: source_id.clone(),
-                agent_handle: AgentHandle::new("lightspeed.default"),
                 created_at_ms: 1,
             })
             .await
@@ -949,7 +909,6 @@ mod tests {
             .create_cloned_session(CreateClonedSession {
                 source_session_id: source_id.clone(),
                 session_id: child_id.clone(),
-                agent_handle: AgentHandle::new("lightspeed.default"),
                 created_at_ms: 20,
                 opening_events: vec![test_event(21, "lightspeed.test.clone.opened")],
             })
@@ -984,7 +943,6 @@ mod tests {
             store
                 .create_session(CreateSession {
                     session_id: session_id.clone(),
-                    agent_handle: AgentHandle::new("lightspeed.default"),
                     created_at_ms: 1,
                 })
                 .await
@@ -1033,7 +991,6 @@ mod tests {
         store
             .create_session(CreateSession {
                 session_id: root.clone(),
-                agent_handle: AgentHandle::new("lightspeed.default"),
                 created_at_ms: 1,
             })
             .await
@@ -1056,7 +1013,6 @@ mod tests {
             .create_forked_session(CreateForkedSession {
                 source_session_id: root.clone(),
                 session_id: fork.clone(),
-                agent_handle: AgentHandle::new("lightspeed.default"),
                 source_seq: EventSeq::new(2),
                 created_at_ms: 20,
             })
@@ -1097,7 +1053,6 @@ mod tests {
             .create_forked_session(CreateForkedSession {
                 source_session_id: fork.clone(),
                 session_id: grandchild.clone(),
-                agent_handle: AgentHandle::new("lightspeed.default"),
                 source_seq: EventSeq::new(3),
                 created_at_ms: 40,
             })
@@ -1138,7 +1093,6 @@ mod tests {
         store
             .create_session(CreateSession {
                 session_id: session_id.clone(),
-                agent_handle: AgentHandle::new("lightspeed.default"),
                 created_at_ms: 1,
             })
             .await
@@ -1167,7 +1121,6 @@ mod tests {
             .create_forked_session(CreateForkedSession {
                 source_session_id: session_id.clone(),
                 session_id: SessionId::new("bad-fork"),
-                agent_handle: AgentHandle::new("lightspeed.default"),
                 source_seq: EventSeq::new(2),
                 created_at_ms: 20,
             })

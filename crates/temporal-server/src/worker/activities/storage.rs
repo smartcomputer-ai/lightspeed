@@ -1,5 +1,5 @@
 use engine::{
-    AgentHandle, BlobRef, SessionId, SessionPosition,
+    BlobRef, SessionId, SessionPosition,
     storage::{
         AppendSessionEvents, AppendSessionEventsResult, CreateSession, DynamicSessionEntry,
         DynamicUncommittedSessionEvent, ReadSessionEvents, SessionStore, SessionStoreError,
@@ -28,7 +28,6 @@ pub(super) async fn create_or_load_session(
         .sessions
         .create_session(CreateSession {
             session_id: request.session_id.clone(),
-            agent_handle: AgentHandle::new("lightspeed.agent"),
             created_at_ms: request.observed_at_ms,
         })
         .await
@@ -250,7 +249,6 @@ mod tests {
         store
             .create_session(CreateSession {
                 session_id: session_id.clone(),
-                agent_handle: AgentHandle::new("lightspeed.test"),
                 created_at_ms: 1,
             })
             .await
@@ -304,7 +302,6 @@ mod tests {
         store
             .create_session(CreateSession {
                 session_id: session_id.clone(),
-                agent_handle: AgentHandle::new("lightspeed.agent"),
                 created_at_ms: 1,
             })
             .await
@@ -407,7 +404,6 @@ mod tests {
         let result = CreateOrLoadSessionResult {
             record: SessionRecord {
                 session_id: session_id.clone(),
-                agent_handle: AgentHandle::new("lightspeed.agent"),
                 head: None,
                 source_session_id: None,
                 source_seq: None,

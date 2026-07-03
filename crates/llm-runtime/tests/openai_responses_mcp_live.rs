@@ -1,10 +1,10 @@
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
 use engine::{
-    AgentHandle, ContextConfig, ContextEntryInput, ContextEntryKind, ContextMessageRole,
-    CoreAgentCommand, CoreAgentEvent, ModelSelection, ProviderApiKind, RemoteMcpApprovalPolicy,
-    RemoteMcpToolSpec, RunConfig, RunStatus, SessionConfig, SessionId, ToolKind, ToolName,
-    ToolParallelism, ToolSpec, ToolTargetRequirement,
+    ContextConfig, ContextEntryInput, ContextEntryKind, ContextMessageRole, CoreAgentCommand,
+    CoreAgentEvent, ModelSelection, ProviderApiKind, RemoteMcpApprovalPolicy, RemoteMcpToolSpec,
+    RunConfig, RunStatus, SessionConfig, SessionId, ToolKind, ToolName, ToolParallelism, ToolSpec,
+    ToolTargetRequirement,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
 };
 use llm_clients::openai::responses::{Client, Config};
@@ -99,7 +99,6 @@ async fn openai_responses_live_core_session_uses_no_auth_remote_mcp_echo() {
     sessions
         .create_session(CreateSession {
             session_id: session_id.clone(),
-            agent_handle: AgentHandle::new("lightspeed.live-mcp"),
             created_at_ms: 1,
         })
         .await

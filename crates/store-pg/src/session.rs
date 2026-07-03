@@ -1,15 +1,13 @@
 use async_trait::async_trait;
 use engine::{
     session::{
-        AgentHandle, DynamicSessionEntry, DynamicUncommittedSessionEvent, EventSeq, SessionId,
-        SessionPosition,
+        DynamicSessionEntry, DynamicUncommittedSessionEvent, EventSeq, SessionId, SessionPosition,
     },
     storage::{
         AppendSessionEvents, AppendSessionEventsResult, CreateClonedSession, CreateForkedSession,
-        CreateSession, ListAgentSessions, ListSessionLinks, ReadSessionEvents,
-        SessionLinkDirection, SessionLinkRecord, SessionPage, SessionRecord, SessionStore,
-        SessionStoreError, UpsertSessionLink, largest_safe_fork_seq, validate_fork_point,
-        validate_relationship,
+        CreateSession, ListSessionLinks, ReadSessionEvents, SessionLinkDirection,
+        SessionLinkRecord, SessionPage, SessionRecord, SessionStore, SessionStoreError,
+        UpsertSessionLink, largest_safe_fork_seq, validate_fork_point, validate_relationship,
     },
 };
 use sqlx::{Postgres, Row, Transaction};
@@ -25,7 +23,6 @@ use crate::{
 
 const SESSION_COLUMNS: &str = r#"
     session_id,
-    agent_handle,
     head_seq,
     source_session_id,
     source_seq,
@@ -392,11 +389,10 @@ impl SessionStore for PgStore {
             INSERT INTO sessions (
                 universe_id,
                 session_id,
-                agent_handle,
                 created_at_ms,
                 updated_at_ms
             )
-            VALUES ($1, $2, $3, $4, $4)
+            VALUES ($1, $2, $3, $3)
             ON CONFLICT (universe_id, session_id) DO NOTHING
             RETURNING {SESSION_COLUMNS}
             "#,
@@ -404,7 +400,6 @@ impl SessionStore for PgStore {
         let row = sqlx::query(&query)
             .bind(self.config.universe_id)
             .bind(request.session_id.as_str())
-            .bind(request.agent_handle.as_str())
             .bind(created_at_ms)
             .fetch_optional(&self.pool)
             .await
@@ -439,31 +434,6 @@ impl SessionStore for PgStore {
         row.as_ref().map(session_record_from_row).transpose()
     }
 
-    async fn list_agent_sessions(
-        &self,
-        request: ListAgentSessions,
-    ) -> Result<Vec<SessionRecord>, SessionStoreError> {
-        let limit = usize_to_session_i64(request.limit, "session list limit")?;
-        let query = format!(
-            r#"
-            SELECT {SESSION_COLUMNS}
-            FROM sessions
-            WHERE universe_id = $1 AND agent_handle = $2
-            ORDER BY session_id
-            LIMIT $3
-            "#,
-        );
-        let rows = sqlx::query(&query)
-            .bind(self.config.universe_id)
-            .bind(request.agent_handle.as_str())
-            .bind(limit)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|error| session_sql_error("list agent sessions", error))?;
-
-        rows.iter().map(session_record_from_row).collect()
-    }
-
     async fn create_cloned_session(
         &self,
         request: CreateClonedSession,
@@ -490,13 +460,12 @@ impl SessionStore for PgStore {
             INSERT INTO sessions (
                 universe_id,
                 session_id,
-                agent_handle,
                 source_session_id,
                 source_seq,
                 created_at_ms,
                 updated_at_ms
             )
-            VALUES ($1, $2, $3, $4, NULL, $5, $5)
+            VALUES ($1, $2, $3, NULL, $4, $4)
             ON CONFLICT (universe_id, session_id) DO NOTHING
             RETURNING {SESSION_COLUMNS}
             "#,
@@ -504,7 +473,6 @@ impl SessionStore for PgStore {
         let row = sqlx::query(&query)
             .bind(self.config.universe_id)
             .bind(request.session_id.as_str())
-            .bind(request.agent_handle.as_str())
             .bind(request.source_session_id.as_str())
             .bind(created_at_ms)
             .fetch_optional(&mut *tx)
@@ -582,14 +550,13 @@ impl SessionStore for PgStore {
             INSERT INTO sessions (
                 universe_id,
                 session_id,
-                agent_handle,
                 head_seq,
                 source_session_id,
                 source_seq,
                 created_at_ms,
                 updated_at_ms
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
+            VALUES ($1, $2, $3, $4, $5, $6, $6)
             ON CONFLICT (universe_id, session_id) DO NOTHING
             RETURNING {SESSION_COLUMNS}
             "#,
@@ -597,7 +564,6 @@ impl SessionStore for PgStore {
         let row = sqlx::query(&query)
             .bind(self.config.universe_id)
             .bind(request.session_id.as_str())
-            .bind(request.agent_handle.as_str())
             .bind(head_seq)
             .bind(request.source_session_id.as_str())
             .bind(u64_to_i64(source_seq_u64, "source_seq")?)
@@ -814,14 +780,6 @@ fn session_record_from_row(
                 message: format!("decode session id: {error}"),
             })
         })?;
-    let agent_handle = row
-        .try_get::<String, _>("agent_handle")
-        .map_err(|error| session_sql_error("decode agent handle", error))
-        .and_then(|value| {
-            AgentHandle::parse(value).map_err(|error| SessionStoreError::Store {
-                message: format!("decode agent handle: {error}"),
-            })
-        })?;
     let head_seq = row
         .try_get::<Option<i64>, _>("head_seq")
         .map_err(|error| session_sql_error("decode session head", error))?;
@@ -855,7 +813,6 @@ fn session_record_from_row(
 
     Ok(SessionRecord {
         session_id,
-        agent_handle,
         head,
         source_session_id,
         source_seq,

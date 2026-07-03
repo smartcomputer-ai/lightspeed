@@ -12,10 +12,10 @@ use api::{
 use api_projection::{MAX_EVENT_PAGE_LIMIT, read_all_session_entries, replay_core_agent_state};
 use async_trait::async_trait;
 use engine::{
-    AgentHandle, BlobRef, ContextEntryInput, ContextEntryKind, ContextMessageRole,
-    CoreAgentIoError, EventSeq, RunId, SessionId, SubmissionId, ToolBatchId, ToolBatchOutcome,
-    ToolBatchResumeDirective, ToolCallId, ToolCallStatus, ToolInvocationBatchResult,
-    ToolInvocationRequest, ToolInvocationResult, TurnId, core_agent_clone_opening_events,
+    BlobRef, ContextEntryInput, ContextEntryKind, ContextMessageRole, CoreAgentIoError, EventSeq,
+    RunId, SessionId, SubmissionId, ToolBatchId, ToolBatchOutcome, ToolBatchResumeDirective,
+    ToolCallId, ToolCallStatus, ToolInvocationBatchResult, ToolInvocationRequest,
+    ToolInvocationResult, TurnId, core_agent_clone_opening_events,
     storage::{
         BlobStore, BlobStoreError, CreateClonedSession, CreateForkedSession, ListSessionLinks,
         SessionLinkDirection, SessionRecord, SessionStore, SessionStoreError, UpsertSessionLink,
@@ -715,7 +715,6 @@ impl FleetService {
                 .create_forked_session(CreateForkedSession {
                     source_session_id: source_record.session_id.clone(),
                     session_id: child_session_id.clone(),
-                    agent_handle: source_record.agent_handle.clone(),
                     source_seq,
                     created_at_ms: context.observed_at_ms,
                 })
@@ -734,7 +733,6 @@ impl FleetService {
                 .create_cloned_session(CreateClonedSession {
                     source_session_id: source_record.session_id.clone(),
                     session_id: child_session_id.clone(),
-                    agent_handle: source_record.agent_handle.clone(),
                     created_at_ms: context.observed_at_ms,
                     opening_events,
                 })
@@ -2517,10 +2515,6 @@ fn io_error(error: impl std::fmt::Display) -> CoreAgentIoError {
     }
 }
 
-pub fn default_agent_handle() -> AgentHandle {
-    AgentHandle::new("lightspeed.agent")
-}
-
 #[cfg(test)]
 mod tests {
     use std::{collections::BTreeMap, sync::Mutex};
@@ -2577,7 +2571,6 @@ mod tests {
                 store
                     .create_session(CreateSession {
                         session_id: session_id.clone(),
-                        agent_handle: default_agent_handle(),
                         created_at_ms: 1,
                     })
                     .await
@@ -2731,7 +2724,6 @@ mod tests {
         sessions
             .create_session(CreateSession {
                 session_id: source.clone(),
-                agent_handle: default_agent_handle(),
                 created_at_ms: 1,
             })
             .await
@@ -2946,7 +2938,6 @@ mod tests {
         sessions
             .create_session(CreateSession {
                 session_id: source.clone(),
-                agent_handle: default_agent_handle(),
                 created_at_ms: 1,
             })
             .await
@@ -2984,7 +2975,6 @@ mod tests {
         sessions
             .create_session(CreateSession {
                 session_id: source.clone(),
-                agent_handle: default_agent_handle(),
                 created_at_ms: 1,
             })
             .await
@@ -3004,7 +2994,6 @@ mod tests {
             .create_cloned_session(CreateClonedSession {
                 source_session_id: source.clone(),
                 session_id: child,
-                agent_handle: default_agent_handle(),
                 created_at_ms: 3,
                 opening_events,
             })
@@ -3328,7 +3317,6 @@ mod tests {
             .create_cloned_session(CreateClonedSession {
                 source_session_id: parent.clone(),
                 session_id: child.clone(),
-                agent_handle: default_agent_handle(),
                 created_at_ms: 20,
                 opening_events: Vec::new(),
             })
@@ -3389,7 +3377,6 @@ mod tests {
             .create_cloned_session(CreateClonedSession {
                 source_session_id: parent.clone(),
                 session_id: child.clone(),
-                agent_handle: default_agent_handle(),
                 created_at_ms: 20,
                 opening_events: Vec::new(),
             })
@@ -4052,7 +4039,6 @@ mod tests {
         sessions
             .create_session(CreateSession {
                 session_id: source.clone(),
-                agent_handle: default_agent_handle(),
                 created_at_ms: 1,
             })
             .await
@@ -4076,7 +4062,6 @@ mod tests {
             .create_cloned_session(CreateClonedSession {
                 source_session_id: parent.clone(),
                 session_id: child.clone(),
-                agent_handle: default_agent_handle(),
                 created_at_ms: 20,
                 opening_events: Vec::new(),
             })

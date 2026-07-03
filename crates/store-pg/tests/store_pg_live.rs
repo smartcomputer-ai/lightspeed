@@ -10,8 +10,8 @@ use auth::{
 use engine::{
     BlobRef, RunId, ToolCallId, TurnId,
     session::{
-        AgentHandle, DynamicEvent, DynamicJoins, DynamicUncommittedSessionEvent, EventSeq,
-        SessionId, SessionPosition,
+        DynamicEvent, DynamicJoins, DynamicUncommittedSessionEvent, EventSeq, SessionId,
+        SessionPosition,
     },
     storage::{
         AppendSessionEvents, BlobEdge, BlobGraphStore, BlobStore, CreateClonedSession,
@@ -63,7 +63,6 @@ async fn pg_live_sessions_are_isolated_by_universe() {
 
     left.create_session(CreateSession {
         session_id: session_id.clone(),
-        agent_handle: AgentHandle::new("lightspeed.default"),
         created_at_ms: 1,
     })
     .await
@@ -93,7 +92,6 @@ async fn pg_live_sessions_are_isolated_by_universe() {
     right
         .create_session(CreateSession {
             session_id: session_id.clone(),
-            agent_handle: AgentHandle::new("lightspeed.default"),
             created_at_ms: 20,
         })
         .await
@@ -120,7 +118,6 @@ async fn pg_live_clone_copies_resources_and_links_sessions() {
         store
             .create_session(CreateSession {
                 session_id: session_id.clone(),
-                agent_handle: AgentHandle::new("lightspeed.default"),
                 created_at_ms: 1,
             })
             .await
@@ -261,7 +258,6 @@ async fn pg_live_clone_copies_resources_and_links_sessions() {
         .create_cloned_session(CreateClonedSession {
             source_session_id: source_id.clone(),
             session_id: clone_id.clone(),
-            agent_handle: AgentHandle::new("lightspeed.default"),
             created_at_ms: 20,
             opening_events: vec![open_event(21)],
         })
@@ -363,7 +359,6 @@ async fn pg_live_fork_stitches_reads_and_clamps_parent_tail() {
     store
         .create_session(CreateSession {
             session_id: root.clone(),
-            agent_handle: AgentHandle::new("lightspeed.default"),
             created_at_ms: 1,
         })
         .await
@@ -382,7 +377,6 @@ async fn pg_live_fork_stitches_reads_and_clamps_parent_tail() {
         .create_forked_session(CreateForkedSession {
             source_session_id: root.clone(),
             session_id: fork.clone(),
-            agent_handle: AgentHandle::new("lightspeed.default"),
             source_seq: EventSeq::new(2),
             created_at_ms: 20,
         })
@@ -429,7 +423,6 @@ async fn pg_live_fork_stitches_reads_and_clamps_parent_tail() {
         .create_forked_session(CreateForkedSession {
             source_session_id: fork.clone(),
             session_id: child.clone(),
-            agent_handle: AgentHandle::new("lightspeed.default"),
             source_seq: EventSeq::new(3),
             created_at_ms: 40,
         })
@@ -535,7 +528,6 @@ async fn pg_live_records_session_roots_and_blob_edges() {
     store
         .create_session(CreateSession {
             session_id: session_id.clone(),
-            agent_handle: AgentHandle::new("lightspeed.default"),
             created_at_ms: 1,
         })
         .await
@@ -897,7 +889,6 @@ async fn pg_live_environments_crud_and_session_bindings() {
     store
         .create_session(CreateSession {
             session_id: session_id.clone(),
-            agent_handle: AgentHandle::new("lightspeed.default"),
             created_at_ms: 35,
         })
         .await

@@ -2266,7 +2266,6 @@ mod tests {
         sessions
             .create_session(CreateSession {
                 session_id: parent.clone(),
-                agent_handle: crate::fleet::default_agent_handle(),
                 created_at_ms: 1,
             })
             .await

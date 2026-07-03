@@ -23,7 +23,6 @@ CREATE TABLE IF NOT EXISTS sessions (
     universe_id uuid NOT NULL
         REFERENCES universes (universe_id) ON DELETE CASCADE,
     session_id text NOT NULL,
-    agent_handle text NOT NULL,
     head_seq bigint,
     created_at_ms bigint NOT NULL,
     updated_at_ms bigint NOT NULL,
@@ -55,8 +54,6 @@ CREATE TABLE IF NOT EXISTS sessions (
 
     CONSTRAINT sessions_session_id_format
         CHECK (session_id ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$'),
-    CONSTRAINT sessions_agent_handle_format
-        CHECK (agent_handle ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$'),
     CONSTRAINT sessions_head_seq_positive
         CHECK (head_seq IS NULL OR head_seq > 0),
     CONSTRAINT sessions_source_seq_nonnegative
@@ -72,9 +69,6 @@ CREATE TABLE IF NOT EXISTS sessions (
     CONSTRAINT sessions_updated_after_created
         CHECK (updated_at_ms >= created_at_ms)
 );
-
-CREATE INDEX IF NOT EXISTS sessions_agent_handle_session_id_idx
-    ON sessions (universe_id, agent_handle, session_id);
 
 ALTER TABLE sessions
     ADD COLUMN IF NOT EXISTS source_session_id text;

@@ -1,10 +1,9 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use engine::{
-    AgentHandle, BlobRef, ContextEntryInput, ContextEntryKind, ContextMessageRole,
-    CoreAgentCommand, FunctionToolSpec, ModelSelection, ProviderApiKind, SessionId, SubmissionId,
-    ToolChoice, ToolChoiceMode, ToolKind, ToolName, ToolParallelism, ToolSpec,
-    ToolTargetRequirement,
+    BlobRef, ContextEntryInput, ContextEntryKind, ContextMessageRole, CoreAgentCommand,
+    FunctionToolSpec, ModelSelection, ProviderApiKind, SessionId, SubmissionId, ToolChoice,
+    ToolChoiceMode, ToolKind, ToolName, ToolParallelism, ToolSpec, ToolTargetRequirement,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
 };
 use temporal_server::worker::{
@@ -32,7 +31,6 @@ async fn runner() -> (
     sessions
         .create_session(CreateSession {
             session_id: session_id.clone(),
-            agent_handle: AgentHandle::new("lightspeed.agent"),
             created_at_ms: 1,
         })
         .await

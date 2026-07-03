@@ -8,7 +8,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use engine::{
-    ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND, AgentHandle, BlobRef, CompactionPolicy,
+    ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND, BlobRef, CompactionPolicy,
     ContextCompactionStatus, ContextCompactionTrigger, ContextConfig, ContextEntryInput,
     ContextEntryKey, ContextEntryKind, ContextMessageRole, ContextRemovalReason, CoreAgentCommand,
     CoreAgentEvent, ModelSelection, ProviderApiKind, RunConfig, RunStatus, SessionConfig,
@@ -307,7 +307,6 @@ async fn live_runner(session_id: &SessionId) -> (SessionRunner, Arc<InMemoryBlob
     sessions
         .create_session(CreateSession {
             session_id: session_id.clone(),
-            agent_handle: AgentHandle::new("lightspeed.live-anthropic-compaction"),
             created_at_ms: 1,
         })
         .await

@@ -1,11 +1,11 @@
 use std::{path::PathBuf, sync::Arc};
 
 use engine::{
-    AgentHandle, BlobRef, CompactionPolicy, ContextCompactionStatus, ContextCompactionTrigger,
-    ContextConfig, ContextEntryInput, ContextEntryKey, ContextEntryKind, ContextMessageRole,
-    ContextRemovalReason, CoreAgentCommand, CoreAgentEvent, ModelSelection,
-    OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, ProviderApiKind, RunConfig, RunStatus,
-    SessionConfig, SessionId, TokenEstimate, TokenEstimateQuality, TurnConfig,
+    BlobRef, CompactionPolicy, ContextCompactionStatus, ContextCompactionTrigger, ContextConfig,
+    ContextEntryInput, ContextEntryKey, ContextEntryKind, ContextMessageRole, ContextRemovalReason,
+    CoreAgentCommand, CoreAgentEvent, ModelSelection, OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND,
+    ProviderApiKind, RunConfig, RunStatus, SessionConfig, SessionId, TokenEstimate,
+    TokenEstimateQuality, TurnConfig,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
 };
 use llm_clients::openai::responses::{Client, Config};
@@ -99,7 +99,6 @@ async fn openai_responses_live_engine_prunes_and_reuses_provider_compaction() {
     sessions
         .create_session(CreateSession {
             session_id: session_id.clone(),
-            agent_handle: AgentHandle::new("lightspeed.live-compaction"),
             created_at_ms: 1,
         })
         .await
@@ -375,7 +374,6 @@ async fn live_runner(session_id: &SessionId) -> (SessionRunner, Arc<InMemoryBlob
     sessions
         .create_session(CreateSession {
             session_id: session_id.clone(),
-            agent_handle: AgentHandle::new("lightspeed.live-compaction"),
             created_at_ms: 1,
         })
         .await

@@ -15,7 +15,13 @@
   payloads lost one nesting level (`{"kind":{"lifecycle":"closed"}}` →
   `{"lifecycle":"closed"}`); engine fixtures regenerated. Existing persisted
   logs with the old payload shape are invalidated (greenfield, no migration).
-  Slices 3–4 pending.
+- Slice 3 completed 2026-07-03: `agent_handle` removed from `SessionRecord`,
+  the create/clone/fork requests, both stores, and the `sessions` table
+  (column, format check, and index edited out of `001_core.sql` in place);
+  `ListAgentSessions` and the `AgentHandle` id type deleted;
+  `fleet::default_agent_handle()` gone. Existing Postgres stacks must be
+  reset (`local/` helpers) — the schema changed without a migration.
+  Slice 4 pending.
 - Engine-focused refactor with downstream fixups in `temporal-workflow`,
   `temporal-server`, `api-projection`, `test-support`, `store-fs`, `store-pg`,
   and `eval`.

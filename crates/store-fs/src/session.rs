@@ -8,8 +8,8 @@ use async_trait::async_trait;
 use engine::{
     session::{DynamicSessionEntry, EventSeq, SessionId, SessionPosition},
     storage::{
-        AppendSessionEvents, AppendSessionEventsResult, CreateSession, ListAgentSessions,
-        ReadSessionEvents, SessionPage, SessionRecord, SessionStore, SessionStoreError,
+        AppendSessionEvents, AppendSessionEventsResult, CreateSession, ReadSessionEvents,
+        SessionPage, SessionRecord, SessionStore, SessionStoreError,
     },
 };
 use tokio::{fs, io::AsyncWriteExt, sync::Mutex};
@@ -149,7 +149,6 @@ impl SessionStore for FsSessionStore {
 
         let record = SessionRecord {
             session_id: request.session_id.clone(),
-            agent_handle: request.agent_handle,
             head: None,
             source_session_id: None,
             source_seq: None,
@@ -187,50 +186,6 @@ impl SessionStore for FsSessionStore {
     ) -> Result<Option<SessionRecord>, SessionStoreError> {
         let _guard = self.lock.lock().await;
         self.load_reconciled_record(session_id).await
-    }
-
-    async fn list_agent_sessions(
-        &self,
-        request: ListAgentSessions,
-    ) -> Result<Vec<SessionRecord>, SessionStoreError> {
-        let _guard = self.lock.lock().await;
-        let sessions_root = self.sessions_root();
-        let mut read_dir = match fs::read_dir(&sessions_root).await {
-            Ok(read_dir) => read_dir,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(error) => {
-                return Err(session_io_error(
-                    "read sessions directory",
-                    &sessions_root,
-                    error,
-                ));
-            }
-        };
-
-        let mut records = Vec::new();
-        while let Some(entry) = read_dir.next_entry().await.map_err(|error| {
-            session_io_error("read sessions directory entry", &sessions_root, error)
-        })? {
-            let file_type = entry.file_type().await.map_err(|error| {
-                session_io_error("read sessions directory entry type", &entry.path(), error)
-            })?;
-            if !file_type.is_dir() {
-                continue;
-            }
-
-            let record_path = entry.path().join("session.json");
-            let Some(record) = read_session_record(&record_path).await? else {
-                continue;
-            };
-            if record.agent_handle == request.agent_handle {
-                let entries = self.read_entries_unlocked(&record.session_id).await?;
-                records.push(reconcile_record(record, &entries));
-            }
-        }
-
-        records.sort_by(|left, right| left.session_id.cmp(&right.session_id));
-        records.truncate(request.limit);
-        Ok(records)
     }
 
     async fn append(
@@ -411,9 +366,7 @@ fn session_io_error(action: &str, path: &Path, error: io::Error) -> SessionStore
 #[cfg(test)]
 mod tests {
     use super::*;
-    use engine::session::{
-        AgentHandle, DynamicEvent, DynamicJoins, DynamicUncommittedSessionEvent,
-    };
+    use engine::session::{DynamicEvent, DynamicJoins, DynamicUncommittedSessionEvent};
     use engine::storage::SessionStore;
 
     fn open_event(at_ms: u64) -> DynamicUncommittedSessionEvent {
@@ -435,12 +388,10 @@ mod tests {
             .await
             .expect("open store");
         let session_id = SessionId::new("session-a");
-        let agent_handle = AgentHandle::new("lightspeed.default");
 
         store
             .create_session(CreateSession {
                 session_id: session_id.clone(),
-                agent_handle: agent_handle.clone(),
                 created_at_ms: 1,
             })
             .await
@@ -479,18 +430,6 @@ mod tests {
         assert_eq!(page.entries.len(), 1);
         assert_eq!(page.next_after, Some(EventSeq::new(1)));
         assert!(!page.complete);
-
-        assert_eq!(
-            reopened
-                .list_agent_sessions(ListAgentSessions {
-                    agent_handle,
-                    limit: 10,
-                })
-                .await
-                .expect("list sessions")
-                .len(),
-            1
-        );
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -500,12 +439,10 @@ mod tests {
             .await
             .expect("open store");
         let session_id = SessionId::new("session-a");
-        let agent_handle = AgentHandle::new("lightspeed.default");
 
         store
             .create_session(CreateSession {
                 session_id: session_id.clone(),
-                agent_handle: agent_handle.clone(),
                 created_at_ms: 1,
             })
             .await
@@ -513,7 +450,6 @@ mod tests {
         let duplicate = store
             .create_session(CreateSession {
                 session_id: session_id.clone(),
-                agent_handle,
                 created_at_ms: 2,
             })
             .await

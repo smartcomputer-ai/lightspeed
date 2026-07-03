@@ -675,7 +675,7 @@ mod tests {
 
     use async_trait::async_trait;
     use engine::{
-        AgentHandle, CompactionPolicy, ContextCompactionRequest, ContextCompactionResult,
+        CompactionPolicy, ContextCompactionRequest, ContextCompactionResult,
         ContextCompactionStatus, ContextConfig, ContextEntryInput, ContextEntryKey,
         ContextEntryKind, ContextMessageRole, CoreAgentCommand, CoreAgentEvent, FunctionToolSpec,
         LlmFinish, ModelSelection, ObservedToolCall, ProviderApiKind, RunConfig, RunStatus,
@@ -1094,7 +1094,6 @@ mod tests {
         sessions
             .create_session(CreateSession {
                 session_id: session_id.clone(),
-                agent_handle: AgentHandle::new("lightspeed.default"),
                 created_at_ms: 1,
             })
             .await
@@ -1190,7 +1189,6 @@ mod tests {
         sessions
             .create_session(CreateSession {
                 session_id: session_id.clone(),
-                agent_handle: AgentHandle::new("lightspeed.default"),
                 created_at_ms: 1,
             })
             .await
@@ -1290,7 +1288,6 @@ mod tests {
         sessions
             .create_session(CreateSession {
                 session_id: source_id.clone(),
-                agent_handle: AgentHandle::new("lightspeed.default"),
                 created_at_ms: 1,
             })
             .await
@@ -1319,7 +1316,6 @@ mod tests {
             .create_forked_session(CreateForkedSession {
                 source_session_id: source_id,
                 session_id: child_id.clone(),
-                agent_handle: AgentHandle::new("lightspeed.default"),
                 source_seq: fork_seq,
                 created_at_ms: 20,
             })
@@ -1363,7 +1359,6 @@ mod tests {
         sessions
             .create_session(CreateSession {
                 session_id: session_id.clone(),
-                agent_handle: AgentHandle::new("lightspeed.default"),
                 created_at_ms: 1,
             })
             .await
@@ -1457,7 +1452,6 @@ mod tests {
         sessions
             .create_session(CreateSession {
                 session_id: session_id.clone(),
-                agent_handle: AgentHandle::new("lightspeed.default"),
                 created_at_ms: 1,
             })
             .await
@@ -1653,7 +1647,6 @@ mod tests {
         sessions
             .create_session(CreateSession {
                 session_id: session_id.clone(),
-                agent_handle: AgentHandle::new("lightspeed.default"),
                 created_at_ms: 1,
             })
             .await
@@ -1787,7 +1780,6 @@ mod tests {
         sessions
             .create_session(CreateSession {
                 session_id: session_id.clone(),
-                agent_handle: AgentHandle::new("lightspeed.default"),
                 created_at_ms: 1,
             })
             .await
