@@ -1,28 +1,22 @@
 use super::*;
 use engine::{
-    ContextEntryInput, ContextEntryKind, ContextMessageRole, DynamicCommand, RunId, RunRecord,
-    RunStatus, ToolBatchId, ToolInvocationBatchResult, TurnId,
+    ContextEntryInput, ContextEntryKind, ContextMessageRole, RunId, RunRecord, RunStatus,
+    ToolBatchId, ToolInvocationBatchResult, TurnId,
 };
 
 #[test]
 fn pending_admissions_are_fifo() {
     let mut workflow = AgentSessionWorkflow::default();
-    workflow.queue_admission(admission(encoded_request_run("submit_1")));
-    workflow.queue_admission(admission(encoded_request_run("submit_2")));
+    workflow.queue_admission(admission(request_run("submit_1")));
+    workflow.queue_admission(admission(request_run("submit_2")));
 
     let pending = std::mem::take(&mut workflow.pending_admissions);
     assert_eq!(
-        CoreAgentCodec
-            .decode_command(&pending[0].command)
-            .expect("decode first command")
-            .submission_id_for_test(),
+        pending[0].command.submission_id_for_test(),
         Some(SubmissionId::new("submit_1"))
     );
     assert_eq!(
-        CoreAgentCodec
-            .decode_command(&pending[1].command)
-            .expect("decode second command")
-            .submission_id_for_test(),
+        pending[1].command.submission_id_for_test(),
         Some(SubmissionId::new("submit_2"))
     );
 }
@@ -36,7 +30,7 @@ fn admission_failure_status_does_not_poison_later_admission() {
         kind: AgentAdmissionFailureKind::RejectedCommand,
         message: "session must be open".to_owned(),
     });
-    workflow.queue_admission(admission(encoded_request_run("submit_later")));
+    workflow.queue_admission(admission(request_run("submit_later")));
 
     let status = workflow.status_snapshot();
 
@@ -309,7 +303,7 @@ fn continue_as_new_is_blocked_by_waits_subscriptions_and_pending_work() {
     let mut workflow = AgentSessionWorkflow::default();
     assert!(wait_loop::workflow_state_allows_continue_as_new(&workflow));
 
-    workflow.queue_admission(admission(encoded_request_run("submit_1")));
+    workflow.queue_admission(admission(request_run("submit_1")));
     assert!(!wait_loop::workflow_state_allows_continue_as_new(&workflow));
     workflow.pending_admissions.clear();
 
@@ -439,16 +433,14 @@ fn continue_as_new_policy_uses_default_threshold() {
     ));
 }
 
-fn encoded_request_run(submission_id: &str) -> DynamicCommand {
-    CoreAgentCodec
-        .encode_command(&CoreAgentCommand::RequestRun(engine::RunRequestCommand {
-            submission_id: Some(SubmissionId::new(submission_id)),
-            source: engine::RunRequestSource::Input {
-                input: user_input(engine::BlobRef::from_bytes(submission_id.as_bytes())),
-            },
-            run_config: crate::default_run_config(),
-        }))
-        .expect("encode request run")
+fn request_run(submission_id: &str) -> CoreAgentCommand {
+    CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+        submission_id: Some(SubmissionId::new(submission_id)),
+        source: engine::RunRequestSource::Input {
+            input: user_input(engine::BlobRef::from_bytes(submission_id.as_bytes())),
+        },
+        run_config: crate::default_run_config(),
+    })
 }
 
 fn user_input(content_ref: engine::BlobRef) -> Vec<ContextEntryInput> {
@@ -465,7 +457,7 @@ fn user_input(content_ref: engine::BlobRef) -> Vec<ContextEntryInput> {
     }]
 }
 
-fn admission(command: DynamicCommand) -> AgentAdmission {
+fn admission(command: CoreAgentCommand) -> AgentAdmission {
     AgentAdmission {
         command,
         context_key: None,
@@ -474,6 +466,7 @@ fn admission(command: DynamicCommand) -> AgentAdmission {
 
 fn agent_session_args_with_close_on_terminal(close_on_terminal: bool) -> AgentSessionArgs {
     AgentSessionArgs {
+        universe_id: uuid::Uuid::nil(),
         session_id: SessionId::new("session_test"),
         session_config: crate::default_session_config(engine::ModelSelection {
             api_kind: engine::ProviderApiKind::OpenAiResponses,

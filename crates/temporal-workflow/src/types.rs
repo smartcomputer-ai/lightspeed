@@ -1,15 +1,20 @@
 use std::collections::BTreeMap;
 
 use engine::{
-    BlobRef, ContextEntryInput, ContextEntryKey, CoreAgentCommand, CoreAgentState, DynamicCommand,
-    RunId, RunStatus, SessionConfig, SessionId, SessionPosition, SubmissionId, ToolBatchId,
-    ToolCallId, ToolInvocationBatchResult, TurnId,
-    storage::{DynamicUncommittedSessionEvent, SessionRecord},
+    BlobRef, ContextEntryInput, ContextEntryKey, CoreAgentCommand, CoreAgentState, RunId,
+    RunStatus, SessionConfig, SessionId, SessionPosition, SubmissionId, ToolBatchId, ToolCallId,
+    ToolInvocationBatchResult, TurnId,
+    storage::{SessionRecord, UncommittedStoredEvent},
 };
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentSessionArgs {
+    /// Universe (tenant) that owns this session. Activities route storage and
+    /// runtime resources by the universe embedded in the workflow id, which
+    /// bootstrap asserts equals `compose_workflow_id(universe_id, session_id)`.
+    pub universe_id: Uuid,
     pub session_id: SessionId,
     pub session_config: SessionConfig,
     pub instructions_ref: Option<BlobRef>,
@@ -19,9 +24,31 @@ pub struct AgentSessionArgs {
     pub close_on_terminal: bool,
 }
 
+/// Compose the Temporal workflow id for a session:
+/// `{universe_id}/{session_id}`.
+///
+/// All universes of a deployment share one task queue and one Temporal
+/// namespace; the universe prefix is what keeps client-chosen session ids
+/// collision-free across universes. `/` is reserved as the separator — session
+/// ids reject it (`api::validate_session_id`) and universe ids are UUIDs, so
+/// the composed id splits unambiguously.
+pub fn compose_workflow_id(universe_id: Uuid, session_id: &SessionId) -> String {
+    format!("{universe_id}/{session_id}")
+}
+
+/// Split a composed workflow id back into `(universe_id, session_id)`.
+/// Returns `None` for ids that do not match the composed format, including a
+/// session part that is not a valid session id.
+pub fn split_workflow_id(workflow_id: &str) -> Option<(Uuid, SessionId)> {
+    let (universe, session) = workflow_id.split_once('/')?;
+    let universe_id = Uuid::parse_str(universe).ok()?;
+    let session_id = SessionId::try_new(session).ok()?;
+    Some((universe_id, session_id))
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentAdmission {
-    pub command: DynamicCommand,
+    pub command: CoreAgentCommand,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_key: Option<ContextEntryKey>,
 }
@@ -70,7 +97,6 @@ impl AgentAdmissionFailure {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentAdmissionFailureKind {
-    InvalidCommand,
     RejectedCommand,
     UnsupportedAudioMime,
     AudioBlobMissing,
@@ -382,7 +408,7 @@ pub struct ReadBlobResult {
 pub struct AppendEventsRequest {
     pub session_id: SessionId,
     pub expected_head: Option<SessionPosition>,
-    pub events: Vec<DynamicUncommittedSessionEvent>,
+    pub events: Vec<UncommittedStoredEvent>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -450,4 +476,44 @@ pub struct SkillCatalogRefreshActivityRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SkillCatalogRefreshActivityResult {
     pub commands: Vec<CoreAgentCommand>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn workflow_id_composition_round_trips() {
+        let universe_id = Uuid::parse_str("6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f").expect("uuid");
+        let session_id = SessionId::new("session_mybot");
+        let workflow_id = compose_workflow_id(universe_id, &session_id);
+        assert_eq!(
+            workflow_id,
+            "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f/session_mybot"
+        );
+        let (split_universe, split_session) =
+            split_workflow_id(&workflow_id).expect("split composed id");
+        assert_eq!(split_universe, universe_id);
+        assert_eq!(split_session, session_id);
+    }
+
+    #[test]
+    fn split_workflow_id_rejects_non_composed_ids() {
+        // Pre-P90 ids were the bare session id; they must not silently parse.
+        assert_eq!(split_workflow_id("session_mybot"), None);
+        assert_eq!(split_workflow_id("not-a-uuid/session_mybot"), None);
+        assert_eq!(
+            split_workflow_id("6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f/"),
+            None
+        );
+        assert_eq!(split_workflow_id(""), None);
+    }
+
+    #[test]
+    fn split_workflow_id_rejects_extra_separators() {
+        // Session ids reject '/', so the first separator is authoritative and
+        // a second one makes the session part invalid.
+        let universe_id = Uuid::parse_str("6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f").expect("uuid");
+        assert_eq!(split_workflow_id(&format!("{universe_id}/a/b")), None);
+    }
 }

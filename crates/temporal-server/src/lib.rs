@@ -9,6 +9,11 @@ pub mod environment;
 pub mod fleet;
 pub mod gateway;
 pub(crate) mod transcript;
+pub mod universe;
 pub mod worker;
 
-pub use config::{default_model_from_env, pg_store_from_env, task_queue_from_env};
+pub use config::{
+    DeploymentStores, GatewayAuthMode, default_model_from_env, gateway_auth_mode_from_env,
+    pg_store_from_env, task_queue_from_env, universe_id_from_env,
+};
+pub use universe::{UniverseError, UniverseRuntime, UniverseState};

@@ -3,9 +3,8 @@
 use thiserror::Error;
 
 use crate::{
-    CodecError, CoreAgentCodec, CoreAgentEvent, CoreAgentEventKind, CoreAgentJoins,
-    CoreAgentLifecycleEvent, CoreAgentState, ToolConfigEvent, UncommittedCoreAgentEvent,
-    session::DynamicUncommittedSessionEvent,
+    CodecError, CoreAgentCodec, CoreAgentEvent, CoreAgentJoins, CoreAgentLifecycleEvent,
+    CoreAgentState, ToolConfigEvent, UncommittedCoreAgentEvent, session::UncommittedStoredEvent,
 };
 
 #[derive(Debug, Error)]
@@ -20,13 +19,13 @@ pub enum CoreAgentCloneError {
 /// Materializes the source state needed to open a config-only clone.
 ///
 /// `SessionStore::create_cloned_session` stays domain-neutral and persists the
-/// dynamic events passed by the caller. CoreAgent hosts should replay the source
+/// stored events passed by the caller. CoreAgent hosts should replay the source
 /// state, call this helper, then pass the returned events as the clone's
 /// `opening_events`.
 pub fn core_agent_clone_opening_events(
     state: &CoreAgentState,
     observed_at_ms: u64,
-) -> Result<Vec<DynamicUncommittedSessionEvent>, CoreAgentCloneError> {
+) -> Result<Vec<UncommittedStoredEvent>, CoreAgentCloneError> {
     let config = state
         .lifecycle
         .config
@@ -36,21 +35,17 @@ pub fn core_agent_clone_opening_events(
     let mut events = vec![codec.encode_uncommitted(&UncommittedCoreAgentEvent {
         observed_at_ms,
         joins: CoreAgentJoins::default(),
-        event: CoreAgentEvent {
-            kind: CoreAgentEventKind::Lifecycle(CoreAgentLifecycleEvent::Opened { config }),
-        },
+        event: CoreAgentEvent::Lifecycle(CoreAgentLifecycleEvent::Opened { config }),
     })?];
 
     if !state.tooling.tools.is_empty() {
         events.push(codec.encode_uncommitted(&UncommittedCoreAgentEvent {
             observed_at_ms,
             joins: CoreAgentJoins::default(),
-            event: CoreAgentEvent {
-                kind: CoreAgentEventKind::ToolConfig(ToolConfigEvent::ToolsReplaced {
-                    base_revision: 0,
-                    tools: state.tooling.tools.clone(),
-                }),
-            },
+            event: CoreAgentEvent::ToolConfig(ToolConfigEvent::ToolsReplaced {
+                base_revision: 0,
+                tools: state.tooling.tools.clone(),
+            }),
         })?);
     }
 
@@ -58,11 +53,9 @@ pub fn core_agent_clone_opening_events(
         events.push(codec.encode_uncommitted(&UncommittedCoreAgentEvent {
             observed_at_ms,
             joins: CoreAgentJoins::default(),
-            event: CoreAgentEvent {
-                kind: CoreAgentEventKind::ToolConfig(ToolConfigEvent::DefaultTargetSet {
-                    target: target.clone(),
-                }),
-            },
+            event: CoreAgentEvent::ToolConfig(ToolConfigEvent::DefaultTargetSet {
+                target: target.clone(),
+            }),
         })?);
     }
 

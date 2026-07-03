@@ -3,8 +3,10 @@
 //! `PgStore` is scoped to one universe. Within that universe, sessions share a
 //! CAS catalog; across universes, both metadata and object keys are isolated.
 
+mod api_keys;
 mod auth;
 mod blob;
+mod blob_cache;
 mod environment;
 mod environment_jobs;
 mod mcp;
@@ -34,6 +36,7 @@ pub const AUTH_SCHEMA_SQL: &str = include_str!("../migrations/004_auth.sql");
 pub const MESSAGING_SCHEMA_SQL: &str = include_str!("../migrations/005_messaging.sql");
 pub const ENVIRONMENT_SCHEMA_SQL: &str = include_str!("../migrations/006_environments.sql");
 pub const PROFILE_SCHEMA_SQL: &str = include_str!("../migrations/007_agent_profiles.sql");
+pub const API_KEYS_SCHEMA_SQL: &str = include_str!("../migrations/008_api_keys.sql");
 
 pub const DEFAULT_INLINE_THRESHOLD_BYTES: usize = 64 * 1024;
 
@@ -190,6 +193,7 @@ pub struct PgStore {
     pub(crate) pool: PgPool,
     pub(crate) object_store: Option<Arc<dyn ObjectStore>>,
     pub(crate) config: PgStoreConfig,
+    pub(crate) blob_cache: Option<Arc<BlobCache>>,
 }
 
 #[derive(Debug, Error)]
@@ -207,6 +211,7 @@ impl PgStore {
             pool,
             object_store: None,
             config,
+            blob_cache: None,
         }
     }
 
@@ -219,7 +224,16 @@ impl PgStore {
             pool,
             object_store: Some(object_store),
             config,
+            blob_cache: None,
         }
+    }
+
+    /// Attach a shared in-memory blob cache. The cache may be shared across
+    /// universe-bound stores: entries are keyed by `(universe_id, blob_ref)`,
+    /// so tenancy isolation matches the `cas_blobs` primary key.
+    pub fn with_blob_cache(mut self, blob_cache: Arc<BlobCache>) -> Self {
+        self.blob_cache = Some(blob_cache);
+        self
     }
 
     pub async fn connect(database_url: &str, config: PgStoreConfig) -> Result<Self, PgStoreError> {
@@ -260,6 +274,7 @@ impl PgStore {
         pool.execute(MESSAGING_SCHEMA_SQL).await?;
         pool.execute(ENVIRONMENT_SCHEMA_SQL).await?;
         pool.execute(PROFILE_SCHEMA_SQL).await?;
+        pool.execute(API_KEYS_SCHEMA_SQL).await?;
         Ok(())
     }
 
@@ -283,4 +298,48 @@ impl PgStore {
         .await?;
         Ok(())
     }
+}
+
+pub use api_keys::PgApiKeyStore;
+pub use blob_cache::BlobCache;
+
+/// Deployment-level universe listing for admin surfaces.
+pub async fn list_universes(pool: &PgPool) -> Result<Vec<(Uuid, Option<String>)>, PgStoreError> {
+    let rows: Vec<(Uuid, Option<String>)> =
+        sqlx::query_as("SELECT universe_id, slug FROM universes ORDER BY universe_id")
+            .fetch_all(pool)
+            .await?;
+    Ok(rows)
+}
+
+/// Deployment-level check whether a universe exists. Runs above the
+/// per-universe `PgStore` boundary: multi-universe deployments consult it
+/// before lazily constructing a universe's store.
+pub async fn universe_exists(pool: &PgPool, universe_id: Uuid) -> Result<bool, PgStoreError> {
+    let row: Option<(Uuid,)> =
+        sqlx::query_as("SELECT universe_id FROM universes WHERE universe_id = $1")
+            .bind(universe_id)
+            .fetch_optional(pool)
+            .await?;
+    Ok(row.is_some())
+}
+
+/// Deployment-level reverse lookup from an OAuth authorization callback's
+/// hashed `state` parameter to the universe that owns the flow.
+///
+/// The OAuth callback is hit by external authorization servers and carries no
+/// tenant header; its universe must be resolved from server-side state. Flow
+/// rows are universe-scoped, so this is the one query that intentionally
+/// searches across universes — `state_hash` values are high-entropy and
+/// unique per flow.
+pub async fn find_auth_flow_universe(
+    pool: &PgPool,
+    state_hash: &str,
+) -> Result<Option<Uuid>, PgStoreError> {
+    let row: Option<(Uuid,)> =
+        sqlx::query_as("SELECT universe_id FROM auth_flows WHERE state_hash = $1")
+            .bind(state_hash)
+            .fetch_optional(pool)
+            .await?;
+    Ok(row.map(|(universe_id,)| universe_id))
 }

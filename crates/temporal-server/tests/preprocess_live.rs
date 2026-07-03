@@ -12,8 +12,8 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use engine::SessionId;
 use support::live::{
     LIVE_TEST_LOCK, fake_worker_activities_with_audio_preprocessors,
-    fake_worker_activities_with_audio_transcriber, final_assistant_text, require_storage_live_env,
-    run_with_live_worker, wait_for_terminal_run,
+    fake_worker_activities_with_audio_transcriber, final_assistant_text, live_workflow_handle,
+    require_storage_live_env, run_with_live_worker, wait_for_terminal_run,
 };
 use temporal_server::{
     default_model_from_env,
@@ -24,7 +24,6 @@ use temporal_server::{
         AudioTranscriber, AudioTranscription, AudioTranscriptionError, AudioTranscriptionRequest,
     },
 };
-use temporal_workflow::AgentSessionWorkflow;
 use temporalio_client::{Client, WorkflowTerminateOptions};
 
 const AUDIO_BYTES: &[u8] = b"OggS fake voice note";
@@ -155,7 +154,7 @@ async fn run_audio_preprocess_live_client(
     assert_eq!(requests[0].name.as_str(), "voice-note.ogg");
     assert_eq!(requests[0].bytes.as_slice(), AUDIO_BYTES);
 
-    let handle = client.get_workflow_handle::<AgentSessionWorkflow>(session_id.as_str());
+    let handle = live_workflow_handle(&client, &session_id)?;
     let _ = handle
         .terminate(
             WorkflowTerminateOptions::builder()
@@ -252,7 +251,7 @@ async fn run_transcodable_audio_preprocess_live_client(
     assert_eq!(transcription_requests[0].name.as_str(), "voice-note.wav");
     assert_eq!(transcription_requests[0].bytes, transcoded_bytes);
 
-    let handle = client.get_workflow_handle::<AgentSessionWorkflow>(session_id.as_str());
+    let handle = live_workflow_handle(&client, &session_id)?;
     let _ = handle
         .terminate(
             WorkflowTerminateOptions::builder()

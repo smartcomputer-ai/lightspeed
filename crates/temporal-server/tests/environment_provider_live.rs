@@ -106,7 +106,10 @@ async fn temporal_live_fake_provider_create_attach_and_process_tool() -> anyhow:
     let blobs: Arc<dyn BlobStore> = store.clone();
     let llm = Arc::new(ExecCommandLlm::new(blobs.clone())) as Arc<dyn CoreAgentLlm>;
     let tools = Arc::new(SessionTools::from_pg_store(store.clone())) as Arc<dyn CoreAgentTools>;
-    let activities = WorkerActivities::new(ActivityState::from_pg_store(store, llm, tools));
+    let activities = WorkerActivities::for_universe(
+        store.config().universe_id,
+        ActivityState::from_pg_store(store, llm, tools),
+    );
 
     support::live::run_with_live_worker(activities, |client, task_queue, session_id| async move {
         run_fake_provider_client(client, task_queue, session_id, provider).await
@@ -126,7 +129,10 @@ async fn temporal_live_profile_attaches_host_environment() -> anyhow::Result<()>
     let blobs: Arc<dyn BlobStore> = store.clone();
     let llm = Arc::new(ExecCommandLlm::new(blobs.clone())) as Arc<dyn CoreAgentLlm>;
     let tools = Arc::new(SessionTools::from_pg_store(store.clone())) as Arc<dyn CoreAgentTools>;
-    let activities = WorkerActivities::new(ActivityState::from_pg_store(store, llm, tools));
+    let activities = WorkerActivities::for_universe(
+        store.config().universe_id,
+        ActivityState::from_pg_store(store, llm, tools),
+    );
 
     support::live::run_with_live_worker(activities, |client, task_queue, session_id| async move {
         run_profile_environment_client(client, task_queue, session_id, provider).await
@@ -148,7 +154,10 @@ async fn temporal_live_host_bridge_agent_reads_local_filesystem() -> anyhow::Res
     let blobs: Arc<dyn BlobStore> = store.clone();
     let llm = Arc::new(BridgeFileLlm::new(blobs.clone())) as Arc<dyn CoreAgentLlm>;
     let tools = Arc::new(SessionTools::from_pg_store(store.clone())) as Arc<dyn CoreAgentTools>;
-    let activities = WorkerActivities::new(ActivityState::from_pg_store(store, llm, tools));
+    let activities = WorkerActivities::for_universe(
+        store.config().universe_id,
+        ActivityState::from_pg_store(store, llm, tools),
+    );
 
     support::live::run_with_live_worker(activities, |client, task_queue, session_id| async move {
         run_host_bridge_client(client, task_queue, session_id, bridge_bin, bridge_root).await
@@ -170,7 +179,10 @@ async fn temporal_live_host_bridge_environment_jobs_round_trip() -> anyhow::Resu
     let blobs: Arc<dyn BlobStore> = store.clone();
     let llm = Arc::new(BridgeJobsLlm::new(blobs.clone())) as Arc<dyn CoreAgentLlm>;
     let tools = Arc::new(SessionTools::from_pg_store(store.clone())) as Arc<dyn CoreAgentTools>;
-    let activities = WorkerActivities::new(ActivityState::from_pg_store(store, llm, tools));
+    let activities = WorkerActivities::for_universe(
+        store.config().universe_id,
+        ActivityState::from_pg_store(store, llm, tools),
+    );
 
     support::live::run_with_live_worker(activities, |client, task_queue, session_id| async move {
         run_host_bridge_jobs_client(client, task_queue, session_id, bridge_bin, bridge_root).await
@@ -192,7 +204,10 @@ async fn temporal_live_host_bridge_environment_credential_injection() -> anyhow:
     let blobs: Arc<dyn BlobStore> = store.clone();
     let llm = Arc::new(ExecCommandLlm::new(blobs.clone())) as Arc<dyn CoreAgentLlm>;
     let tools = Arc::new(SessionTools::from_pg_store(store.clone())) as Arc<dyn CoreAgentTools>;
-    let activities = WorkerActivities::new(ActivityState::from_pg_store(store, llm, tools));
+    let activities = WorkerActivities::for_universe(
+        store.config().universe_id,
+        ActivityState::from_pg_store(store, llm, tools),
+    );
 
     support::live::run_with_live_worker(activities, |client, task_queue, session_id| async move {
         run_host_bridge_credential_client(client, task_queue, session_id, bridge_bin, bridge_root)
@@ -223,7 +238,10 @@ async fn run_host_bridge_client(
     let gateway = tokio::spawn({
         let api = api.clone();
         async move {
-            let app = gateway_router(api, DEFAULT_MAX_REQUEST_BODY_BYTES);
+            let app = gateway_router(
+                std::sync::Arc::new(temporal_server::gateway::GatewayState::for_api(api)),
+                DEFAULT_MAX_REQUEST_BODY_BYTES,
+            );
             axum::serve(listener, app).await
         }
     });
@@ -354,7 +372,10 @@ async fn run_host_bridge_jobs_client(
     let gateway = tokio::spawn({
         let api = api.clone();
         async move {
-            let app = gateway_router(api, DEFAULT_MAX_REQUEST_BODY_BYTES);
+            let app = gateway_router(
+                std::sync::Arc::new(temporal_server::gateway::GatewayState::for_api(api)),
+                DEFAULT_MAX_REQUEST_BODY_BYTES,
+            );
             axum::serve(listener, app).await
         }
     });
@@ -620,7 +641,10 @@ async fn run_host_bridge_credential_client(
     let gateway = tokio::spawn({
         let api = api.clone();
         async move {
-            let app = gateway_router(api, DEFAULT_MAX_REQUEST_BODY_BYTES);
+            let app = gateway_router(
+                std::sync::Arc::new(temporal_server::gateway::GatewayState::for_api(api)),
+                DEFAULT_MAX_REQUEST_BODY_BYTES,
+            );
             axum::serve(listener, app).await
         }
     });

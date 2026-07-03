@@ -8,21 +8,7 @@ pub(super) async fn process_admissions(
     let mut drive = drive_from_state(ctx)?;
     for admission in admissions {
         let context_key = admission.context_key.clone();
-        let mut command = match CoreAgentCodec.decode_command(&admission.command) {
-            Ok(command) => command,
-            Err(error) => {
-                record_admission_failure(
-                    ctx,
-                    AgentAdmissionFailure {
-                        submission_id: None,
-                        context_key: context_key.clone(),
-                        kind: AgentAdmissionFailureKind::InvalidCommand,
-                        message: format!("invalid CoreAgent command admission: {error}"),
-                    },
-                );
-                continue;
-            }
-        };
+        let mut command = admission.command;
         if command_needs_input_preprocessing(&command) {
             let session_id = drive.session_id().clone();
             match preprocess_input_entries(ctx, session_id, command).await? {

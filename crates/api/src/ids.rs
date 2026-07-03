@@ -24,6 +24,12 @@ pub enum SessionIdError {
     InvalidCharacter { index: usize, ch: char },
 }
 
+/// Validate a client-facing session id.
+///
+/// The allowed character set deliberately excludes `/`: the hosted runtime
+/// composes Temporal workflow ids as `{universe_id}/{session_id}`, and `/` is
+/// the reserved separator that makes that composition unambiguously
+/// splittable. Do not loosen this restriction.
 pub fn validate_session_id(value: &str) -> Result<(), SessionIdError> {
     if value.is_empty() {
         return Err(SessionIdError::Empty);

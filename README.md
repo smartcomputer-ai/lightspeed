@@ -38,7 +38,7 @@ What constitutes an "agent harness" is a rapidly expanding set of table-stakes f
 
 **Agent capabilities**
 - [x] **Virtual file system**: the agent uses standard file tools (read, glob, patch) without an OS attached
-- [x] **Web access**: fetch, search, and extract tools — no browser VM required
+- [x] **Web access**: fetch, search, and extract tools
 - [x] **Skills**, hosted on the VFS or inside sandboxes
 - [x] **Hosted MCP**, with API-key and OAuth authentication
 - [x] **Flexible prompt & instruction configuration**
@@ -50,7 +50,7 @@ What constitutes an "agent harness" is a rapidly expanding set of table-stakes f
 - [x] **Session fork & clone**: cheap forks of a running agent's full state, straight from the event-sourced log
 - [x] **Eval harness** for regression-testing agent and tool workflows
 - [ ] **Timers, schedules, wake-ups**
-- [ ] **Multi-tenancy**
+- [x] **Multi-tenancy**: many isolated universes (tenants) on one worker, with pluggable gateway auth
 
 **Borrowed compute**
 - [x] **Dedicated VMs**, connected to the agent via a bridge daemon
@@ -64,7 +64,7 @@ What constitutes an "agent harness" is a rapidly expanding set of table-stakes f
 **Interfaces**
 - [x] **Typed JSON-RPC API**: committed schema contract, generated TypeScript client
 - [x] **CLI** to connect to running agent sessions
-- [x] **Messaging bridges**: WhatsApp and Telegram today — media and group chats included, more channels coming
+- [x] **Messaging bridges**: WhatsApp and Telegram today; media and group chats included, more channels coming
 
 ## Design
 At the heart of every agent is a carefully engineered state machine that manages what goes into the context window of the LLM.
@@ -222,6 +222,41 @@ The `cli` package builds the `lightspeed` binary, so installed usage is equivale
 ```bash
 lightspeed chat --new
 ```
+
+### Multi-Tenancy
+
+One deployment serves many isolated *universes* (tenants): one gateway, one
+worker, one Postgres pool, one object-store bucket. Every universe's sessions,
+profiles, registries, and blobs are fully isolated; Temporal workflow ids are
+composed as `{universe_id}/{session_id}` on a shared task queue.
+
+The API never carries a universe parameter. The gateway resolves the tenant
+per request based on `LIGHTSPEED_AUTH_MODE`:
+
+- `single` (default) — the whole deployment is pinned to
+  `LIGHTSPEED_PG_UNIVERSE_ID`; no credentials. This is the local/dev mode.
+- `trusted-header` — bring your own auth: an upstream gateway authenticates
+  callers and injects `x-lightspeed-universe: <uuid>` (optionally
+  `x-lightspeed-principal: user:<id>` or `service_account:<id>`). Requests
+  without the header are rejected; set
+  `LIGHTSPEED_UNIVERSE_AUTO_CREATE=true` to create universes on first use.
+- `api-key` — built-in credentials for directly exposed deployments:
+  `Authorization: Bearer lsk_…` resolves to a universe and principal.
+
+Manage universes and keys with the server binary (the key secret prints
+exactly once):
+
+```bash
+cargo run -p temporal-server -- universe create --slug acme
+cargo run -p temporal-server -- api-key create --universe-id <uuid> --name acme-prod
+cargo run -p temporal-server -- api-key list
+cargo run -p temporal-server -- api-key revoke <key-prefix>
+```
+
+The CLI and the messaging bridge send credentials from `LIGHTSPEED_API_KEY`
+(api-key mode) or `LIGHTSPEED_UNIVERSE` (trusted-header mode) automatically.
+See [docs/roadmap/p90-multi-tenancy.md](docs/roadmap/p90-multi-tenancy.md)
+for the design.
 
 ### Stop Or Reset Local Infra
 

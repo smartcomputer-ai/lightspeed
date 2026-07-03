@@ -6,9 +6,9 @@ use std::{
 
 use async_trait::async_trait;
 use engine::{
-    AgentHandle, ContextConfig, ContextEntryInput, ContextEntryKind, ContextMessageRole,
-    CoreAgentCommand, CoreAgentEventKind, ModelSelection, ProviderApiKind, RunConfig, RunStatus,
-    SessionConfig, SessionId,
+    ContextConfig, ContextEntryInput, ContextEntryKind, ContextMessageRole, CoreAgentCommand,
+    CoreAgentEvent, ModelSelection, ProviderApiKind, RunConfig, RunStatus, SessionConfig,
+    SessionId,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
 };
 use llm_clients::openai::responses::{Client, Config};
@@ -233,7 +233,6 @@ async fn openai_responses_live_uses_vfs_prompt_instructions() {
     sessions
         .create_session(CreateSession {
             session_id: session_id.clone(),
-            agent_handle: AgentHandle::new("lightspeed.live-prompts"),
             created_at_ms: 1,
         })
         .await
@@ -358,8 +357,8 @@ async fn openai_responses_live_uses_vfs_prompt_instructions() {
     }));
     assert!(outcome.emitted_entries.iter().any(|entry| {
         matches!(
-            &entry.event.kind,
-            CoreAgentEventKind::Context(engine::ContextEvent::KeyPrefixReplaced {
+            &entry.event,
+            CoreAgentEvent::Context(engine::ContextEvent::KeyPrefixReplaced {
                 key_prefix,
                 entries,
                 ..
@@ -409,9 +408,8 @@ fn run_config() -> RunConfig {
 async fn assistant_text(blobs: &dyn BlobStore, entries: &[engine::CoreAgentEntry]) -> String {
     let mut text = String::new();
     for entry in entries {
-        if let CoreAgentEventKind::Context(engine::ContextEvent::EntriesApplied {
-            entries, ..
-        }) = &entry.event.kind
+        if let CoreAgentEvent::Context(engine::ContextEvent::EntriesApplied { entries, .. }) =
+            &entry.event
         {
             for item in entries {
                 if matches!(

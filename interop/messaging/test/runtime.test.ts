@@ -221,7 +221,85 @@ const pairableBinding = (overrides: Partial<BindingAccessCandidate> = {}): Bindi
   profile: { kind: "named", profileId: "personal" },
   profileLabel: "personal",
   sessionKey: "lukas",
+  auth: null,
   ...overrides,
+});
+
+describe("MessagingBridgeRuntime per-binding auth", () => {
+  it("routes turns and room context through the binding's own gateway connection", async () => {
+    const acme = new FakeLightspeed();
+    const routed = new MessagingBridgeRuntime({
+      lightspeed: lightspeed as unknown as LightspeedSessionBridge,
+      lightspeedByAuthBindingId: new Map([
+        ["acme", acme as unknown as LightspeedSessionBridge],
+      ]),
+      store,
+      sessionPrefix: "test",
+      log: () => undefined,
+      runtime: {
+        debounceMs: 20,
+        turnMaxBatch: 10,
+        turnMaxWaitMs: 200,
+        roomRetentionHigh: 0,
+        roomRetentionLow: 0,
+      },
+    });
+    const acmeCandidate = pairableBinding({
+      bindingId: "acme",
+      pairing: null,
+      auth: { apiKey: "lsk_acme" },
+      sessionKey: "acme",
+    });
+    await routed.handleInbound(
+      inbound({
+        isDirect: true,
+        conversationKey: "telegram:acme-dm",
+        chatId: "acme-dm",
+        text: "hello acme",
+        bindingCandidates: [acmeCandidate],
+      }),
+      policy,
+      io(),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await routed.flush();
+
+    // The turn went to the per-auth connection, not the default one.
+    expect(acme.calls.filter((call) => call.kind === "turn")).toHaveLength(1);
+    expect(lightspeed.calls).toHaveLength(0);
+    // The binding persisted which credentials it uses, for restarts.
+    const binding = await store.getBinding("telegram:acme-dm");
+    expect(binding?.authBindingId).toBe("acme");
+  });
+
+  it("fails closed when a persisted auth binding has no configured connection", async () => {
+    // Simulate a rule that was removed from config after conversations bound
+    // to it: the runtime must error, never fall back to the default
+    // connection (which would route the conversation into the wrong
+    // universe).
+    const orphanCandidate = pairableBinding({
+      bindingId: "gone",
+      pairing: null,
+      auth: { apiKey: "lsk_gone" },
+      sessionKey: "gone",
+    });
+    await runtime.handleInbound(
+      inbound({
+        isDirect: true,
+        conversationKey: "telegram:gone-dm",
+        chatId: "gone-dm",
+        text: "hello",
+        bindingCandidates: [orphanCandidate],
+      }),
+      policy,
+      io(),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await runtime.flush();
+
+    expect(lightspeed.calls).toHaveLength(0);
+    expect(replies.some((reply) => reply.includes("wrong") || reply.length > 0)).toBe(true);
+  });
 });
 
 describe("MessagingBridgeRuntime", () => {

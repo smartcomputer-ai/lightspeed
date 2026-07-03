@@ -3,8 +3,8 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    BlobRef, CompactionPolicy, ContextEntryKey, ContextItemId, CoreAgentEventKind,
-    CoreAgentEventProposal, CoreAgentJoins, CoreAgentState, CoreAgentStatus, DomainError, PlanNext,
+    BlobRef, CompactionPolicy, ContextEntryKey, ContextItemId, CoreAgentEvent,
+    CoreAgentEventProposal, CoreAgentJoins, CoreAgentState, CoreAgentStatus, DomainError,
     PlanningError, ProviderApiKind, RunId, RunSource, RunSourceContextTrigger, RunStatus, SkillId,
     SteeringId, ToolBatchId, ToolCallId, ToolName, TurnId,
 };
@@ -747,53 +747,45 @@ fn is_instructions_key(key: &ContextEntryKey) -> bool {
     key.as_str().starts_with(INSTRUCTIONS_KEY_PREFIX)
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct CoreContextPlanner;
-
-impl PlanNext for CoreContextPlanner {
-    fn plan_next(
-        &self,
-        state: &CoreAgentState,
-    ) -> Result<Vec<CoreAgentEventProposal>, PlanningError> {
-        if state.lifecycle.status != CoreAgentStatus::Open {
-            return Ok(Vec::new());
-        }
-
-        if let Some(proposal) = provider_compacted_prune_proposal(state)? {
-            return Ok(vec![proposal]);
-        }
-
-        if let Some(proposal) = high_watermark_compaction_proposal(state)? {
-            return Ok(vec![proposal]);
-        }
-
-        let Some(active_run) = state.runs.active.as_ref() else {
-            return Ok(Vec::new());
-        };
-        if active_run.status != RunStatus::Active {
-            return Ok(Vec::new());
-        }
-
-        let run_input_entries = missing_run_input_entries(state)?;
-        if !run_input_entries.is_empty() {
-            return Ok(vec![entries_applied_proposal(
-                state,
-                active_run.run_id,
-                run_input_entries,
-            )]);
-        }
-
-        let steering_entries = missing_steering_entries(state)?;
-        if !steering_entries.is_empty() {
-            return Ok(vec![entries_applied_proposal(
-                state,
-                active_run.run_id,
-                steering_entries,
-            )]);
-        }
-
-        Ok(Vec::new())
+pub fn plan_next(state: &CoreAgentState) -> Result<Vec<CoreAgentEventProposal>, PlanningError> {
+    if state.lifecycle.status != CoreAgentStatus::Open {
+        return Ok(Vec::new());
     }
+
+    if let Some(proposal) = provider_compacted_prune_proposal(state)? {
+        return Ok(vec![proposal]);
+    }
+
+    if let Some(proposal) = high_watermark_compaction_proposal(state)? {
+        return Ok(vec![proposal]);
+    }
+
+    let Some(active_run) = state.runs.active.as_ref() else {
+        return Ok(Vec::new());
+    };
+    if active_run.status != RunStatus::Active {
+        return Ok(Vec::new());
+    }
+
+    let run_input_entries = missing_run_input_entries(state)?;
+    if !run_input_entries.is_empty() {
+        return Ok(vec![entries_applied_proposal(
+            state,
+            active_run.run_id,
+            run_input_entries,
+        )]);
+    }
+
+    let steering_entries = missing_steering_entries(state)?;
+    if !steering_entries.is_empty() {
+        return Ok(vec![entries_applied_proposal(
+            state,
+            active_run.run_id,
+            steering_entries,
+        )]);
+    }
+
+    Ok(Vec::new())
 }
 
 pub(crate) fn manual_compaction_requested_proposal(
@@ -853,7 +845,7 @@ fn compaction_requested_proposal(
 ) -> CoreAgentEventProposal {
     CoreAgentEventProposal::new(
         CoreAgentJoins::default(),
-        CoreAgentEventKind::Context(Event::CompactionRequested {
+        CoreAgentEvent::Context(Event::CompactionRequested {
             base_revision: state.context.revision,
             trigger,
         }),
@@ -983,7 +975,7 @@ fn provider_compacted_prune_proposal(
 
     Ok(Some(CoreAgentEventProposal::new(
         CoreAgentJoins::default(),
-        CoreAgentEventKind::Context(Event::EntriesRemoved {
+        CoreAgentEvent::Context(Event::EntriesRemoved {
             base_revision: state.context.revision,
             entry_ids,
             reason: ContextRemovalReason::ProviderCompacted,
@@ -1114,7 +1106,7 @@ fn entries_applied_proposal(
             run_id: Some(run_id),
             ..CoreAgentJoins::default()
         },
-        CoreAgentEventKind::Context(Event::EntriesApplied {
+        CoreAgentEvent::Context(Event::EntriesApplied {
             base_revision: state.context.revision,
             entries,
         }),

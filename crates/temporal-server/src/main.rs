@@ -3,13 +3,13 @@ use std::{env, net::SocketAddr, sync::Arc, time::Duration};
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand};
 use temporal_server::{
-    config::{pg_store_from_env, task_queue_from_env},
-    fleet::AgentApiFleetRuntime,
+    config::{DeploymentStores, gateway_auth_mode_from_env, task_queue_from_env},
     gateway::{
         DEFAULT_GATEWAY_BIND, DEFAULT_MAX_REQUEST_BODY_BYTES, DEFAULT_TEMPORAL_NAMESPACE,
-        DEFAULT_TEMPORAL_TARGET, GatewayAgentApi, GatewayServerConfig, gateway_router,
-        serve_gateway,
+        DEFAULT_TEMPORAL_TARGET, GatewayServerConfig, GatewayState, gateway_router,
+        prewarm_single_universe, serve_gateway,
     },
+    universe::UniverseRuntime,
     worker::{self, WorkerActivities, WorkerServerConfig},
 };
 use tracing_subscriber::{EnvFilter, fmt};
@@ -33,11 +33,51 @@ enum Command {
     Worker(WorkerArgs),
     #[command(about = "Run the gateway and Temporal worker in one process")]
     Both(BothArgs),
+    #[command(subcommand, about = "Manage universes (tenants) of this deployment")]
+    Universe(UniverseCommand),
+    #[command(subcommand, name = "api-key", about = "Manage inbound gateway API keys")]
+    ApiKey(ApiKeyCommand),
+}
+
+#[derive(Debug, Subcommand)]
+enum UniverseCommand {
+    #[command(about = "Create a universe (generates an id when omitted)")]
+    Create {
+        #[arg(long)]
+        universe_id: Option<uuid::Uuid>,
+        #[arg(long)]
+        slug: Option<String>,
+    },
+    #[command(about = "List universes")]
+    List,
+}
+
+#[derive(Debug, Subcommand)]
+enum ApiKeyCommand {
+    #[command(about = "Mint an API key for a universe; the secret prints exactly once")]
+    Create {
+        #[arg(long)]
+        universe_id: uuid::Uuid,
+        /// Display name shown in listings.
+        #[arg(long)]
+        name: Option<String>,
+        /// Principal stamped onto grants created through this key:
+        /// `user:<id>` or `service_account:<id>`. Defaults to the universe
+        /// default principal.
+        #[arg(long)]
+        principal: Option<String>,
+    },
+    #[command(about = "List API keys (prefixes only; secrets are never stored)")]
+    List,
+    #[command(about = "Revoke an API key by its display prefix")]
+    Revoke { key_prefix: String },
 }
 
 #[derive(Clone, Debug, Args)]
 struct TemporalArgs {
-    /// Temporal task queue. Defaults to lightspeed-universe-{LIGHTSPEED_PG_UNIVERSE_ID}.
+    /// Temporal task queue shared by all universes of this deployment.
+    /// Defaults to lightspeed-agent. Deployments sharing a Temporal namespace
+    /// must set distinct queues.
     #[arg(long, env = "LIGHTSPEED_TASK_QUEUE")]
     task_queue: Option<String>,
 
@@ -167,32 +207,149 @@ async fn main() -> anyhow::Result<()> {
             .await
         }
         Some(Command::Both(args)) => run_both(args).await,
+        Some(Command::Universe(command)) => run_universe_command(command).await,
+        Some(Command::ApiKey(command)) => run_api_key_command(command).await,
         None => run_both(BothArgs::from_env()?).await,
     }
 }
 
+async fn run_universe_command(command: UniverseCommand) -> anyhow::Result<()> {
+    let stores = DeploymentStores::from_env().await?;
+    match command {
+        UniverseCommand::Create { universe_id, slug } => {
+            let universe_id = universe_id.unwrap_or_else(uuid::Uuid::new_v4);
+            let store = stores.store_for_with_slug(universe_id, slug.clone());
+            store.ensure_universe().await?;
+            println!("universe_id: {universe_id}");
+            if let Some(slug) = slug {
+                println!("slug: {slug}");
+            }
+            Ok(())
+        }
+        UniverseCommand::List => {
+            for (universe_id, slug) in store_pg::list_universes(stores.pool()).await? {
+                match slug {
+                    Some(slug) => println!("{universe_id}  {slug}"),
+                    None => println!("{universe_id}"),
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+async fn run_api_key_command(command: ApiKeyCommand) -> anyhow::Result<()> {
+    use auth::ApiKeyStore as _;
+
+    let stores = DeploymentStores::from_env().await?;
+    let api_keys = store_pg::PgApiKeyStore::new(stores.pool().clone());
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_millis() as u64;
+    match command {
+        ApiKeyCommand::Create {
+            universe_id,
+            name,
+            principal,
+        } => {
+            if !store_pg::universe_exists(stores.pool(), universe_id).await? {
+                anyhow::bail!(
+                    "unknown universe: {universe_id} (create it first: server universe create)"
+                );
+            }
+            let principal = parse_principal_arg(principal.as_deref())?;
+            let minted = auth::mint_api_key(universe_id, principal, name, now_ms);
+            api_keys
+                .create_api_key(auth::CreateApiKey {
+                    key_hash: minted.key_hash,
+                    record: minted.record.clone(),
+                })
+                .await?;
+            println!("key_prefix: {}", minted.record.key_prefix);
+            println!("universe_id: {universe_id}");
+            // The one and only time the secret leaves the process.
+            println!("secret: {}", minted.secret.expose());
+            Ok(())
+        }
+        ApiKeyCommand::List => {
+            for record in api_keys.list_api_keys().await? {
+                let status = if record.revoked_at_ms.is_some() {
+                    "revoked"
+                } else {
+                    "active"
+                };
+                println!(
+                    "{}  {}  {}  {}",
+                    record.key_prefix,
+                    record.universe_id,
+                    status,
+                    record.display_name.as_deref().unwrap_or("-"),
+                );
+            }
+            Ok(())
+        }
+        ApiKeyCommand::Revoke { key_prefix } => {
+            if api_keys.revoke_api_key(&key_prefix, now_ms).await? {
+                println!("revoked: {key_prefix}");
+                Ok(())
+            } else {
+                anyhow::bail!("no api key with prefix {key_prefix}")
+            }
+        }
+    }
+}
+
+/// Parse `--principal user:<id>` / `service_account:<id>`; `None` is the
+/// universe-default principal.
+fn parse_principal_arg(value: Option<&str>) -> anyhow::Result<auth::PrincipalRef> {
+    let Some(value) = value else {
+        return Ok(auth::PrincipalRef::universe_default());
+    };
+    let (kind, id) = value
+        .split_once(':')
+        .ok_or_else(|| anyhow::anyhow!("--principal must be user:<id> or service_account:<id>"))?;
+    let kind = match kind {
+        "user" => auth::PrincipalKind::User,
+        "service_account" => auth::PrincipalKind::ServiceAccount,
+        other => anyhow::bail!("invalid principal kind {other:?}; expected user or service_account"),
+    };
+    if id.is_empty() {
+        anyhow::bail!("--principal id must not be empty");
+    }
+    Ok(auth::PrincipalRef {
+        kind,
+        id: Some(id.to_owned()),
+    })
+}
+
 async fn run_both(args: BothArgs) -> anyhow::Result<()> {
     let task_queue = args.temporal.resolved_task_queue()?;
+    let mode = gateway_auth_mode_from_env()?;
     let runtime = worker::core_runtime()?;
     let client = temporal_server::gateway::connect_temporal(
         &args.temporal.temporal_target,
         &args.temporal.namespace,
     )
     .await?;
-    let store = pg_store_from_env().await?;
-    let api = Arc::new(
-        GatewayAgentApi::builder(client.clone(), store.clone())
-            .with_task_queue(task_queue.clone())
-            .with_public_base_url(
-                args.public_base_url
-                    .clone()
-                    .unwrap_or_else(|| format!("http://{}", args.bind)),
-            )
-            .build(),
-    );
-    let fleet_runtime = Arc::new(AgentApiFleetRuntime::new(api.clone()));
-    let activities =
-        WorkerActivities::from_pg_store_with_default_runtime_and_fleet(store, fleet_runtime)?;
+    // `both` mode: the gateway and worker share one process, one universe
+    // registry, and therefore one blob cache.
+    let stores = DeploymentStores::from_env()
+        .await?
+        .with_blob_cache(temporal_server::config::blob_cache_from_env()?);
+    let public_base_url = args
+        .public_base_url
+        .clone()
+        .unwrap_or_else(|| format!("http://{}", args.bind));
+    // Gateway and worker share one universe registry: fleet spawns and
+    // activity routing hit the same lazily-built per-universe state.
+    let universes = Arc::new(UniverseRuntime::new(
+        client.clone(),
+        task_queue.clone(),
+        Some(public_base_url.clone()),
+        stores,
+    )?);
+    prewarm_single_universe(&mode, &universes).await?;
+    let activities = WorkerActivities::with_runtime(universes.clone());
     let mut temporal_worker =
         worker::worker_with_activities(&runtime, client.clone(), task_queue.clone(), activities)?;
     let shutdown_worker = temporal_worker.shutdown_handle();
@@ -207,7 +364,8 @@ async fn run_both(args: BothArgs) -> anyhow::Result<()> {
         "temporal worker polling"
     );
 
-    let app = gateway_router(api, args.max_request_body_bytes);
+    let gateway_state = Arc::new(GatewayState::multi(mode, universes, public_base_url));
+    let app = gateway_router(gateway_state, args.max_request_body_bytes);
     let listener = tokio::net::TcpListener::bind(args.bind).await?;
     tracing::info!(target: "temporal_server", bind = %args.bind, "gateway listening");
     let gateway_future = async {

@@ -161,7 +161,7 @@ async fn append_events(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     drive: &mut CoreAgentDrive,
     expected_head: Option<SessionPosition>,
-    events: Vec<engine::storage::DynamicUncommittedSessionEvent>,
+    events: Vec<engine::storage::UncommittedStoredEvent>,
 ) -> anyhow::Result<Vec<CoreAgentEntry>> {
     if events.is_empty() {
         return Ok(Vec::new());
@@ -181,19 +181,14 @@ async fn append_events(
     let entries = drive.resume_appended(appended.entries)?;
     let deferred_waits = entries
         .iter()
-        .filter_map(|entry| wait_directive_for_event(&entry.event.kind).transpose())
+        .filter_map(|entry| wait_directive_for_event(&entry.event).transpose())
         .collect::<anyhow::Result<Vec<_>>>()?;
     let deferred_environment_job_waits = entries
         .iter()
-        .filter_map(|entry| job_waits::directive_for_event(&entry.event.kind).transpose())
+        .filter_map(|entry| job_waits::directive_for_event(&entry.event).transpose())
         .collect::<anyhow::Result<Vec<_>>>()?;
     ctx.state_mut(|state| -> anyhow::Result<()> {
-        apply_entries(
-            &CoreApplyEvent,
-            &mut state.core_state,
-            &entries,
-            &mut state.run_submissions,
-        )?;
+        apply_entries(&mut state.core_state, &entries, &mut state.run_submissions)?;
         state.queue_terminal_notifications_for_entries(&entries);
         state.head = appended.head;
         state.last_error = None;
@@ -225,16 +220,15 @@ pub(super) fn drive_from_state(
 }
 
 fn apply_entries(
-    apply: &CoreApplyEvent,
     state: &mut CoreAgentState,
     entries: &[CoreAgentEntry],
     run_submissions: &mut BTreeMap<u64, Option<SubmissionId>>,
 ) -> anyhow::Result<()> {
     for entry in entries {
-        if let CoreAgentEventKind::Run(RunEvent::Accepted(accepted)) = &entry.event.kind {
+        if let CoreAgentEvent::Run(RunEvent::Accepted(accepted)) = &entry.event {
             run_submissions.insert(accepted.run_id.as_u64(), accepted.submission_id.clone());
         }
-        apply.apply(state, entry)?;
+        engine::apply_event(state, entry)?;
     }
     Ok(())
 }

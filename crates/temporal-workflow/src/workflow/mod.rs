@@ -15,14 +15,13 @@ use std::time::Duration;
 use std::{collections::BTreeMap, time::UNIX_EPOCH};
 
 use engine::{
-    ApplyEvent, BlobRef, CommandCodec, CommandError, ContextEntryInput, ContextEntryKey,
-    ContextEntryKind, ContextMessageRole, CoreAgentAction, CoreAgentCodec, CoreAgentCommand,
-    CoreAgentDrive, CoreAgentDriveError, CoreAgentEntry, CoreAgentEventKind, CoreAgentState,
-    CoreAgentStatus, CoreApplyEvent, ENVIRONMENT_ACTIVE_CONTEXT_KEY,
-    ENVIRONMENT_CATALOG_CONTEXT_KEY, LlmGenerationRequest, RunConfig, RunEvent, RunStatus,
-    SKILL_CATALOG_CONTEXT_KEY, SessionId, SessionPosition, SubmissionId, ToolCallStatus, ToolEvent,
-    ToolInvocationBatchRequest, ToolInvocationBatchResult, ToolInvocationResult,
-    VFS_CATALOG_CONTEXT_KEY,
+    BlobRef, CommandError, ContextEntryInput, ContextEntryKey, ContextEntryKind,
+    ContextMessageRole, CoreAgentAction, CoreAgentCommand, CoreAgentDrive, CoreAgentDriveError,
+    CoreAgentEntry, CoreAgentEvent, CoreAgentState, CoreAgentStatus,
+    ENVIRONMENT_ACTIVE_CONTEXT_KEY, ENVIRONMENT_CATALOG_CONTEXT_KEY, LlmGenerationRequest,
+    RunConfig, RunEvent, RunStatus, SKILL_CATALOG_CONTEXT_KEY, SessionId, SessionPosition,
+    SubmissionId, ToolCallStatus, ToolEvent, ToolInvocationBatchRequest, ToolInvocationBatchResult,
+    ToolInvocationResult, VFS_CATALOG_CONTEXT_KEY,
 };
 use futures::{FutureExt, pin_mut, select};
 use temporalio_macros::{workflow, workflow_methods};
@@ -42,7 +41,7 @@ use crate::{
     PendingToolBatchResume, PreprocessRunInputActivityRequest, PreprocessRunInputFailure,
     PreprocessRunInputFailureKind, PreprocessRunInputOutcome, PutBlobRequest, RunSubscription,
     RunTerminalNotification, SkillCatalogRefreshActivityRequest, ToolInvokeBatchActivityRequest,
-    WorkflowActivities, activity_options, default_instructions,
+    WorkflowActivities, activity_options, compose_workflow_id, default_instructions,
 };
 
 use activity_calls::{

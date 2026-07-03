@@ -112,8 +112,9 @@ cargo run -p cli -- chat --api-url http://127.0.0.1:18080/rpc --session session_
   `api` profile DTOs.
 - `crates/auth/` — generic auth grant/secret/provider records,
   OAuth client and authorization-flow records, PKCE helpers, the MCP OAuth
-  and GitHub App drivers, store traits, typed broker errors, and the runtime
-  token broker with single-flight refresh and on-demand minting (P69).
+  and GitHub App drivers, store traits, typed broker errors, the runtime
+  token broker with single-flight refresh and on-demand minting (P69), and
+  deployment-scoped inbound API keys for gateway authentication (P90).
 - `crates/environments/` — environment provider, host target, and
   session environment binding DTOs, validation, errors, and store traits.
 - `crates/eval/` — eval harness for agent/tool workflows.
@@ -163,6 +164,11 @@ Local commands load a root `.env` file when present. The `.env` file usually exi
 | `LIGHTSPEED_CHAT_MODEL` | Default chat model |
 | `LIGHTSPEED_SECRETS_MASTER_KEY` | Base64 32-byte AES key for the encrypted secret store |
 | `LIGHTSPEED_PUBLIC_BASE_URL` | Externally reachable gateway base URL for the OAuth callback (defaults to `http://{bind}`) |
+| `LIGHTSPEED_AUTH_MODE` | Gateway tenant resolution: `single` (default), `trusted-header`, `api-key` (P90) |
+| `LIGHTSPEED_UNIVERSE_AUTO_CREATE` | `trusted-header` mode: create unknown universes on first use (default false) |
+| `LIGHTSPEED_API_KEY` | Client-side (CLI/bridge): bearer key sent to an `api-key`-mode gateway |
+| `LIGHTSPEED_UNIVERSE` | Client-side (CLI/bridge): universe header sent to a `trusted-header`-mode gateway |
+| `LIGHTSPEED_BLOB_CACHE_BYTES` | CAS blob cache budget per process (`0` disables; default 256MiB) |
 
 ## Test Rules
 

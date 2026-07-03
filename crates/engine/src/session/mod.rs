@@ -1,21 +1,16 @@
-//! Generic session event-log primitives.
+//! Session event-log primitives.
 //!
-//! This module is the internal p54 session layer. It deliberately avoids
-//! depending on CoreAgent commands, events, state, planning, or provider/tool
-//! models.
+//! This module owns the durable session-log vocabulary: ids, log entry
+//! shapes, and the stored event envelope. The CoreAgent domain in `core` is
+//! the only producer and consumer of these entries; there is no pluggable
+//! agent domain.
 
 pub mod codec;
-pub mod domain;
-pub mod dynamic;
 pub mod ids;
 pub mod log;
-pub mod replay;
-pub mod workflow;
+pub mod stored;
 
 pub use codec::*;
-pub use domain::*;
-pub use dynamic::*;
 pub use ids::*;
 pub use log::*;
-pub use replay::*;
-pub use workflow::*;
+pub use stored::*;

@@ -1,8 +1,7 @@
 # Lightspeed Roadmap
 
 ## Core
-- [ ] cleanup of CoreAgent structures (which were designed to expand the event types because we wanted Lightspeed to be a library)
-- [ ] do we need to keep agent_id in session meta data (in tables)?
+- [x] [P91](p91-core-agent-structure-cleanup.md) — cleanup of CoreAgent structures: delete the SDK-era open-kernel layer, commit to a closed event vocabulary and core FSM
 - [ ] optimize: we're rading all session events to get latest state, this will get expensve in the future
 
 ## Fleet (sub-agents)
@@ -21,6 +20,10 @@
 - [ ] incremental tool discovery support (at least OAI)
 
 ## Environmnets & Sandboxes
+- [ ] Fix host-bridge fs routing doubled path: absolute guest paths get
+      re-prefixed with the bridge root, so file-tool reads of shell-written
+      absolute paths fail (`environment_provider_live` host-bridge agent
+      test; pre-dates P90)
 - [ ] Finalize sandbox protocol (look at Codex's protocol)
 - [ ] Write first sandbox integration
 - [ ] Allow agent to request new sandbox/env
@@ -31,10 +34,10 @@
 - [x] [P88](p88-media-aware-context-append-and-activation.md) — media-aware
   `context/append`, context-triggered runs, and eager bridge ingest/activation
   for current supported media types
-- [ ] [P89](p89-room-context-retention.md) — room context retention and
+- [x] [P89](p89-room-context-retention.md) — room context retention and
   compaction: watermarked drop-oldest pruning via `context/remove`, then
   summarize-and-replace, so always-on group sessions stay bounded
-- [ ] Password/code-based login in channel (instead of whitelisting)
+- [x] Password/code-based login in channel (instead of whitelisting)
 - [ ] Support Slack
 
 ## Security Auth
@@ -48,7 +51,10 @@
 ## Framework/SDK
 - [ ] Temporal service design: ensure ls can be used as a Temporal service by other workflows
 - [ ] Workflows as tools (register a workflow as a tool, route to workflow)
-- [ ] Multi-tenant support in worker
+- [x] [P90](p90-multi-tenancy.md) — multi-tenant worker: multiple universes
+      per deployment, composed workflow ids, per-request universe resolution
+      (`single` / `trusted-header` / `api-key` modes), principal pass-through,
+      universe/api-key admin subcommands, per-binding bridge credentials
 - [ ] Python SDK
      - [ ] API Client
      - [ ] Workflow helpers

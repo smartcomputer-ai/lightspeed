@@ -5,9 +5,9 @@ use serde_json::Value;
 
 use crate::{
     ActiveRun, BlobRef, ContextEntry, ContextEntryInput, ContextEntryKind, ContextEntrySource,
-    ContextEvent, CoreAgentEventKind, CoreAgentEventProposal, CoreAgentJoins, CoreAgentState,
-    CoreAgentStatus, DomainError, PlanNext, PlanningError, ProviderApiKind, RunId, RunStatus,
-    ToolBatchId, ToolCallId, ToolEffect, ToolName, TurnId, TurnOutcome, TurnStatus,
+    ContextEvent, CoreAgentEvent, CoreAgentEventProposal, CoreAgentJoins, CoreAgentState,
+    CoreAgentStatus, DomainError, PlanningError, ProviderApiKind, RunId, RunStatus, ToolBatchId,
+    ToolCallId, ToolEffect, ToolName, TurnId, TurnOutcome, TurnStatus,
     core::components::context::context_entries_from_inputs,
 };
 
@@ -76,103 +76,95 @@ pub enum Event {
 pub type ToolConfigEvent = ConfigEvent;
 pub type ToolEvent = Event;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct CoreToolPlanner;
+pub fn plan_next(state: &CoreAgentState) -> Result<Vec<CoreAgentEventProposal>, PlanningError> {
+    if state.lifecycle.status != CoreAgentStatus::Open {
+        return Ok(Vec::new());
+    }
 
-impl PlanNext for CoreToolPlanner {
-    fn plan_next(
-        &self,
-        state: &CoreAgentState,
-    ) -> Result<Vec<CoreAgentEventProposal>, PlanningError> {
-        if state.lifecycle.status != CoreAgentStatus::Open {
-            return Ok(Vec::new());
+    let Some(active_run) = state.runs.active.as_ref() else {
+        return Ok(Vec::new());
+    };
+    if active_run.status != RunStatus::Active || active_run.active_turn_id.is_some() {
+        return Ok(Vec::new());
+    }
+
+    if let Some(batch_id) = active_run.active_tool_batch_id {
+        let proposals = decide_active_tool_batch_invocations(state, active_run, batch_id)?;
+        if proposals.is_empty() {
+            return decide_active_tool_batch_completion(state, active_run, batch_id);
         }
+        return Ok(proposals);
+    }
 
-        let Some(active_run) = state.runs.active.as_ref() else {
-            return Ok(Vec::new());
-        };
-        if active_run.status != RunStatus::Active || active_run.active_turn_id.is_some() {
-            return Ok(Vec::new());
+    for (turn_id, turn) in &active_run.turns {
+        if turn.status != TurnStatus::Completed
+            || turn.outcome.as_ref() != Some(&TurnOutcome::ToolCallsQueued)
+        {
+            continue;
         }
-
-        if let Some(batch_id) = active_run.active_tool_batch_id {
-            let proposals = decide_active_tool_batch_invocations(state, active_run, batch_id)?;
-            if proposals.is_empty() {
-                return decide_active_tool_batch_completion(state, active_run, batch_id);
-            }
-            return Ok(proposals);
-        }
-
-        for (turn_id, turn) in &active_run.turns {
-            if turn.status != TurnStatus::Completed
-                || turn.outcome.as_ref() != Some(&TurnOutcome::ToolCallsQueued)
-            {
-                continue;
-            }
-            if active_run
-                .tool_batches
+        if active_run
+            .tool_batches
+            .values()
+            .any(|batch| batch.turn_id == *turn_id)
+            || active_run
+                .completed_tool_batches
                 .values()
                 .any(|batch| batch.turn_id == *turn_id)
-                || active_run
-                    .completed_tool_batches
-                    .values()
-                    .any(|batch| batch.turn_id == *turn_id)
-            {
-                continue;
-            }
-            let Some(facts) = turn.facts.as_ref() else {
-                return Err(DomainError::InvariantViolation(format!(
-                    "completed tool-call turn {} is missing generation facts",
-                    turn_id
-                ))
-                .into());
-            };
-            if facts.tool_calls.is_empty() {
-                continue;
-            }
-            let Some(planned) = turn.planned_request.as_ref() else {
-                return Err(DomainError::InvariantViolation(format!(
-                    "tool-call turn {} is missing planned request metadata",
-                    turn_id
-                ))
-                .into());
-            };
-            if planned.toolset_revision != state.tooling.revision {
-                return Err(DomainError::InvariantViolation(format!(
-                    "planned toolset revision {} does not match active revision {}",
-                    planned.toolset_revision, state.tooling.revision
-                ))
-                .into());
-            }
-
-            let next_batch_id = state
-                .id_cursors
-                .last_tool_batch_id
-                .checked_add(1)
-                .ok_or_else(|| {
-                    DomainError::InvariantViolation("tool batch id cursor exhausted".to_owned())
-                })?;
-            let batch_id = ToolBatchId::new(next_batch_id);
-            let joins = CoreAgentJoins {
-                run_id: Some(active_run.run_id),
-                turn_id: Some(*turn_id),
-                tool_batch_id: Some(batch_id),
-                ..CoreAgentJoins::default()
-            };
-            return Ok(vec![CoreAgentEventProposal::new(
-                joins,
-                CoreAgentEventKind::Tool(Event::BatchStarted {
-                    run_id: active_run.run_id,
-                    turn_id: *turn_id,
-                    batch_id,
-                    toolset_revision: planned.toolset_revision,
-                    calls: facts.tool_calls.clone(),
-                }),
-            )]);
+        {
+            continue;
+        }
+        let Some(facts) = turn.facts.as_ref() else {
+            return Err(DomainError::InvariantViolation(format!(
+                "completed tool-call turn {} is missing generation facts",
+                turn_id
+            ))
+            .into());
+        };
+        if facts.tool_calls.is_empty() {
+            continue;
+        }
+        let Some(planned) = turn.planned_request.as_ref() else {
+            return Err(DomainError::InvariantViolation(format!(
+                "tool-call turn {} is missing planned request metadata",
+                turn_id
+            ))
+            .into());
+        };
+        if planned.toolset_revision != state.tooling.revision {
+            return Err(DomainError::InvariantViolation(format!(
+                "planned toolset revision {} does not match active revision {}",
+                planned.toolset_revision, state.tooling.revision
+            ))
+            .into());
         }
 
-        Ok(Vec::new())
+        let next_batch_id = state
+            .id_cursors
+            .last_tool_batch_id
+            .checked_add(1)
+            .ok_or_else(|| {
+                DomainError::InvariantViolation("tool batch id cursor exhausted".to_owned())
+            })?;
+        let batch_id = ToolBatchId::new(next_batch_id);
+        let joins = CoreAgentJoins {
+            run_id: Some(active_run.run_id),
+            turn_id: Some(*turn_id),
+            tool_batch_id: Some(batch_id),
+            ..CoreAgentJoins::default()
+        };
+        return Ok(vec![CoreAgentEventProposal::new(
+            joins,
+            CoreAgentEvent::Tool(Event::BatchStarted {
+                run_id: active_run.run_id,
+                turn_id: *turn_id,
+                batch_id,
+                toolset_revision: planned.toolset_revision,
+                calls: facts.tool_calls.clone(),
+            }),
+        )]);
     }
+
+    Ok(Vec::new())
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1027,7 +1019,7 @@ fn decide_active_tool_batch_invocations(
         };
         proposals.push(CoreAgentEventProposal::new(
             joins,
-            CoreAgentEventKind::Tool(Event::CallStarted {
+            CoreAgentEvent::Tool(Event::CallStarted {
                 run_id: batch.run_id,
                 turn_id: batch.turn_id,
                 batch_id: batch.batch_id,
@@ -1072,7 +1064,7 @@ fn decide_active_tool_batch_completion(
     if !result_items.is_empty() {
         proposals.push(CoreAgentEventProposal::new(
             joins.clone(),
-            CoreAgentEventKind::Context(ContextEvent::EntriesApplied {
+            CoreAgentEvent::Context(ContextEvent::EntriesApplied {
                 base_revision: state.context.revision,
                 entries: result_items,
             }),
@@ -1080,7 +1072,7 @@ fn decide_active_tool_batch_completion(
     }
     proposals.push(CoreAgentEventProposal::new(
         joins,
-        CoreAgentEventKind::Tool(Event::BatchCompleted {
+        CoreAgentEvent::Tool(Event::BatchCompleted {
             run_id: batch.run_id,
             turn_id: batch.turn_id,
             batch_id: batch.batch_id,

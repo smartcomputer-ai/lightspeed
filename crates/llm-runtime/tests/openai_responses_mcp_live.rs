@@ -1,10 +1,10 @@
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
 use engine::{
-    AgentHandle, ContextConfig, ContextEntryInput, ContextEntryKind, ContextMessageRole,
-    CoreAgentCommand, CoreAgentEventKind, ModelSelection, ProviderApiKind, RemoteMcpApprovalPolicy,
-    RemoteMcpToolSpec, RunConfig, RunStatus, SessionConfig, SessionId, ToolKind, ToolName,
-    ToolParallelism, ToolSpec, ToolTargetRequirement,
+    ContextConfig, ContextEntryInput, ContextEntryKind, ContextMessageRole, CoreAgentCommand,
+    CoreAgentEvent, ModelSelection, ProviderApiKind, RemoteMcpApprovalPolicy, RemoteMcpToolSpec,
+    RunConfig, RunStatus, SessionConfig, SessionId, ToolKind, ToolName, ToolParallelism, ToolSpec,
+    ToolTargetRequirement,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
 };
 use llm_clients::openai::responses::{Client, Config};
@@ -99,7 +99,6 @@ async fn openai_responses_live_core_session_uses_no_auth_remote_mcp_echo() {
     sessions
         .create_session(CreateSession {
             session_id: session_id.clone(),
-            agent_handle: AgentHandle::new("lightspeed.live-mcp"),
             created_at_ms: 1,
         })
         .await
@@ -194,7 +193,7 @@ async fn openai_responses_live_core_session_uses_no_auth_remote_mcp_echo() {
         !outcome
             .emitted_entries
             .iter()
-            .any(|entry| matches!(entry.event.kind, CoreAgentEventKind::Tool(_))),
+            .any(|entry| matches!(entry.event, CoreAgentEvent::Tool(_))),
         "direct remote MCP must not create Lightspeed tool events"
     );
 
@@ -263,9 +262,8 @@ fn run_config() -> RunConfig {
 async fn assistant_text(blobs: &dyn BlobStore, entries: &[engine::CoreAgentEntry]) -> String {
     let mut text = String::new();
     for entry in entries {
-        if let CoreAgentEventKind::Context(engine::ContextEvent::EntriesApplied {
-            entries, ..
-        }) = &entry.event.kind
+        if let CoreAgentEvent::Context(engine::ContextEvent::EntriesApplied { entries, .. }) =
+            &entry.event
         {
             for item in entries {
                 if matches!(
@@ -291,9 +289,8 @@ async fn assistant_text(blobs: &dyn BlobStore, entries: &[engine::CoreAgentEntry
 async fn mcp_call_items(blobs: &dyn BlobStore, entries: &[engine::CoreAgentEntry]) -> Vec<Value> {
     let mut items = Vec::new();
     for entry in entries {
-        if let CoreAgentEventKind::Context(engine::ContextEvent::EntriesApplied {
-            entries, ..
-        }) = &entry.event.kind
+        if let CoreAgentEvent::Context(engine::ContextEvent::EntriesApplied { entries, .. }) =
+            &entry.event
         {
             for item in entries {
                 if item.provider_kind.as_deref()

@@ -4,11 +4,12 @@ pub(super) async fn initialize(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     args: AgentSessionArgs,
 ) -> anyhow::Result<()> {
-    if ctx.workflow_id() != args.session_id.as_str() {
+    let expected_workflow_id = compose_workflow_id(args.universe_id, &args.session_id);
+    if ctx.workflow_id() != expected_workflow_id {
         anyhow::bail!(
-            "agent workflow id must equal session id: workflow_id={} session_id={}",
+            "agent workflow id must equal {{universe_id}}/{{session_id}}: workflow_id={} expected={}",
             ctx.workflow_id(),
-            args.session_id
+            expected_workflow_id
         );
     }
     if ctx.state(|state| state.initialized) {

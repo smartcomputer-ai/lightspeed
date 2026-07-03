@@ -11,6 +11,11 @@ export interface BindingState {
   sessionId: string;
   /// Profile label applied when the bound session was created (null = default).
   profileLabel?: string | null;
+  /// Binding-rule id whose gateway credentials this conversation uses
+  /// (null = the bridge's default connection). Persisted so the runtime and
+  /// outbox routing survive restarts; the credential itself resolves from
+  /// live config by rule id, so key rotation needs no state migration.
+  authBindingId?: string | null;
   activation: ActivationPolicy;
   cursor?: EventCursor | null;
   updatedAtMs: number;
@@ -23,6 +28,7 @@ export interface BindingInit {
   threadId?: string;
   sessionId: string;
   profileLabel?: string | null;
+  authBindingId?: string | null;
   activation: ActivationPolicy;
 }
 
@@ -86,6 +92,7 @@ export class JsonBridgeStore {
       ...(init.threadId !== undefined ? { threadId: init.threadId } : {}),
       sessionId: init.sessionId,
       profileLabel: init.profileLabel ?? null,
+      authBindingId: init.authBindingId ?? null,
       activation: init.activation,
       updatedAtMs: Date.now(),
     };
@@ -231,6 +238,7 @@ export class JsonBridgeStore {
 
 function refreshBinding(existing: BindingState, init: BindingInit): BindingState {
   const profileLabel = init.profileLabel ?? null;
+  const authBindingId = init.authBindingId ?? null;
   const threadId = init.threadId;
   const changed =
     existing.channel !== init.channel ||
@@ -238,7 +246,8 @@ function refreshBinding(existing: BindingState, init: BindingInit): BindingState
     existing.chatId !== init.chatId ||
     existing.threadId !== threadId ||
     existing.sessionId !== init.sessionId ||
-    (existing.profileLabel ?? null) !== profileLabel;
+    (existing.profileLabel ?? null) !== profileLabel ||
+    (existing.authBindingId ?? null) !== authBindingId;
   if (!changed) {
     return existing;
   }
@@ -249,6 +258,7 @@ function refreshBinding(existing: BindingState, init: BindingInit): BindingState
     chatId: init.chatId,
     sessionId: init.sessionId,
     profileLabel,
+    authBindingId,
     updatedAtMs: Date.now(),
   };
   if (threadId === undefined) {

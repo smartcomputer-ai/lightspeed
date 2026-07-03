@@ -39,7 +39,7 @@ impl AgentSessionWorkflow {
 
     pub(super) fn queue_terminal_notifications_for_entries(&mut self, entries: &[CoreAgentEntry]) {
         for entry in entries {
-            if let Some(notification) = terminal_notification_for_event(&entry.event.kind) {
+            if let Some(notification) = terminal_notification_for_event(&entry.event) {
                 self.queue_terminal_notifications(notification);
             }
         }
@@ -158,9 +158,9 @@ fn terminal_notification_for_state(
         })
 }
 
-fn terminal_notification_for_event(event: &CoreAgentEventKind) -> Option<RunTerminalNotification> {
+fn terminal_notification_for_event(event: &CoreAgentEvent) -> Option<RunTerminalNotification> {
     match event {
-        CoreAgentEventKind::Run(RunEvent::Completed { run_id, output_ref }) => {
+        CoreAgentEvent::Run(RunEvent::Completed { run_id, output_ref }) => {
             Some(RunTerminalNotification {
                 correlation_token: String::new(),
                 run_id: *run_id,
@@ -169,7 +169,7 @@ fn terminal_notification_for_event(event: &CoreAgentEventKind) -> Option<RunTerm
                 failure_message_ref: None,
             })
         }
-        CoreAgentEventKind::Run(RunEvent::Failed { run_id, failure }) => {
+        CoreAgentEvent::Run(RunEvent::Failed { run_id, failure }) => {
             Some(RunTerminalNotification {
                 correlation_token: String::new(),
                 run_id: *run_id,
@@ -178,7 +178,7 @@ fn terminal_notification_for_event(event: &CoreAgentEventKind) -> Option<RunTerm
                 failure_message_ref: failure.message_ref.clone(),
             })
         }
-        CoreAgentEventKind::Run(RunEvent::Cancelled { run_id }) => Some(RunTerminalNotification {
+        CoreAgentEvent::Run(RunEvent::Cancelled { run_id }) => Some(RunTerminalNotification {
             correlation_token: String::new(),
             run_id: *run_id,
             status: RunStatus::Cancelled,

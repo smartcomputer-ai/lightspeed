@@ -12,10 +12,10 @@ use api::{
 use api_projection::{MAX_EVENT_PAGE_LIMIT, read_all_session_entries, replay_core_agent_state};
 use async_trait::async_trait;
 use engine::{
-    AgentHandle, BlobRef, ContextEntryInput, ContextEntryKind, ContextMessageRole,
-    CoreAgentIoError, EventSeq, RunId, SessionId, SubmissionId, ToolBatchId, ToolBatchOutcome,
-    ToolBatchResumeDirective, ToolCallId, ToolCallStatus, ToolInvocationBatchResult,
-    ToolInvocationRequest, ToolInvocationResult, TurnId, core_agent_clone_opening_events,
+    BlobRef, ContextEntryInput, ContextEntryKind, ContextMessageRole, CoreAgentIoError, EventSeq,
+    RunId, SessionId, SubmissionId, ToolBatchId, ToolBatchOutcome, ToolBatchResumeDirective,
+    ToolCallId, ToolCallStatus, ToolInvocationBatchResult, ToolInvocationRequest,
+    ToolInvocationResult, TurnId, core_agent_clone_opening_events,
     storage::{
         BlobStore, BlobStoreError, CreateClonedSession, CreateForkedSession, ListSessionLinks,
         SessionLinkDirection, SessionRecord, SessionStore, SessionStoreError, UpsertSessionLink,
@@ -715,7 +715,6 @@ impl FleetService {
                 .create_forked_session(CreateForkedSession {
                     source_session_id: source_record.session_id.clone(),
                     session_id: child_session_id.clone(),
-                    agent_handle: source_record.agent_handle.clone(),
                     source_seq,
                     created_at_ms: context.observed_at_ms,
                 })
@@ -734,7 +733,6 @@ impl FleetService {
                 .create_cloned_session(CreateClonedSession {
                     source_session_id: source_record.session_id.clone(),
                     session_id: child_session_id.clone(),
-                    agent_handle: source_record.agent_handle.clone(),
                     created_at_ms: context.observed_at_ms,
                     opening_events,
                 })
@@ -2517,10 +2515,6 @@ fn io_error(error: impl std::fmt::Display) -> CoreAgentIoError {
     }
 }
 
-pub fn default_agent_handle() -> AgentHandle {
-    AgentHandle::new("lightspeed.agent")
-}
-
 #[cfg(test)]
 mod tests {
     use std::{collections::BTreeMap, sync::Mutex};
@@ -2577,7 +2571,6 @@ mod tests {
                 store
                     .create_session(CreateSession {
                         session_id: session_id.clone(),
-                        agent_handle: default_agent_handle(),
                         created_at_ms: 1,
                     })
                     .await
@@ -2731,7 +2724,6 @@ mod tests {
         sessions
             .create_session(CreateSession {
                 session_id: source.clone(),
-                agent_handle: default_agent_handle(),
                 created_at_ms: 1,
             })
             .await
@@ -2946,7 +2938,6 @@ mod tests {
         sessions
             .create_session(CreateSession {
                 session_id: source.clone(),
-                agent_handle: default_agent_handle(),
                 created_at_ms: 1,
             })
             .await
@@ -2984,7 +2975,6 @@ mod tests {
         sessions
             .create_session(CreateSession {
                 session_id: source.clone(),
-                agent_handle: default_agent_handle(),
                 created_at_ms: 1,
             })
             .await
@@ -3004,7 +2994,6 @@ mod tests {
             .create_cloned_session(CreateClonedSession {
                 source_session_id: source.clone(),
                 session_id: child,
-                agent_handle: default_agent_handle(),
                 created_at_ms: 3,
                 opening_events,
             })
@@ -3328,7 +3317,6 @@ mod tests {
             .create_cloned_session(CreateClonedSession {
                 source_session_id: parent.clone(),
                 session_id: child.clone(),
-                agent_handle: default_agent_handle(),
                 created_at_ms: 20,
                 opening_events: Vec::new(),
             })
@@ -3389,7 +3377,6 @@ mod tests {
             .create_cloned_session(CreateClonedSession {
                 source_session_id: parent.clone(),
                 session_id: child.clone(),
-                agent_handle: default_agent_handle(),
                 created_at_ms: 20,
                 opening_events: Vec::new(),
             })
@@ -3400,9 +3387,9 @@ mod tests {
                 session_id: child.clone(),
                 expected_head: None,
                 events: vec![
-                    dynamic_test_event(30, "lightspeed.test.1"),
-                    dynamic_test_event(31, "lightspeed.test.2"),
-                    dynamic_test_event(32, "lightspeed.test.3"),
+                    stored_test_event(30, "lightspeed.test.1"),
+                    stored_test_event(31, "lightspeed.test.2"),
+                    stored_test_event(32, "lightspeed.test.3"),
                 ],
             })
             .await
@@ -4052,7 +4039,6 @@ mod tests {
         sessions
             .create_session(CreateSession {
                 session_id: source.clone(),
-                agent_handle: default_agent_handle(),
                 created_at_ms: 1,
             })
             .await
@@ -4076,7 +4062,6 @@ mod tests {
             .create_cloned_session(CreateClonedSession {
                 source_session_id: parent.clone(),
                 session_id: child.clone(),
-                agent_handle: default_agent_handle(),
                 created_at_ms: 20,
                 opening_events: Vec::new(),
             })
@@ -4111,23 +4096,21 @@ mod tests {
         events.extend([
             core_uncommitted_event(
                 30,
-                engine::CoreAgentEventKind::Run(engine::RunEvent::Accepted(
-                    engine::AcceptedRunEvent {
-                        run_id,
-                        submission_id: None,
-                        source: engine::RunSource::Input { input: Vec::new() },
-                        run_config: RunConfig::default(),
-                        config_revision: 0,
-                    },
-                )),
+                engine::CoreAgentEvent::Run(engine::RunEvent::Accepted(engine::AcceptedRunEvent {
+                    run_id,
+                    submission_id: None,
+                    source: engine::RunSource::Input { input: Vec::new() },
+                    run_config: RunConfig::default(),
+                    config_revision: 0,
+                })),
             ),
             core_uncommitted_event(
                 31,
-                engine::CoreAgentEventKind::Run(engine::RunEvent::Started { run_id }),
+                engine::CoreAgentEvent::Run(engine::RunEvent::Started { run_id }),
             ),
             core_uncommitted_event(
                 32,
-                engine::CoreAgentEventKind::Run(engine::RunEvent::Completed {
+                engine::CoreAgentEvent::Run(engine::RunEvent::Completed {
                     run_id,
                     output_ref: Some(output_ref),
                 }),
@@ -4145,13 +4128,13 @@ mod tests {
 
     fn core_uncommitted_event(
         observed_at_ms: u64,
-        kind: engine::CoreAgentEventKind,
-    ) -> engine::storage::DynamicUncommittedSessionEvent {
+        event: engine::CoreAgentEvent,
+    ) -> engine::storage::UncommittedStoredEvent {
         engine::CoreAgentCodec
             .encode_uncommitted(&engine::UncommittedCoreAgentEvent {
                 observed_at_ms,
                 joins: Default::default(),
-                event: engine::CoreAgentEvent { kind },
+                event,
             })
             .expect("encode core event")
     }
@@ -4256,14 +4239,14 @@ mod tests {
         }
     }
 
-    fn dynamic_test_event(
+    fn stored_test_event(
         at_ms: u64,
         kind: &'static str,
-    ) -> engine::storage::DynamicUncommittedSessionEvent {
-        engine::storage::DynamicUncommittedSessionEvent {
+    ) -> engine::storage::UncommittedStoredEvent {
+        engine::storage::UncommittedStoredEvent {
             observed_at_ms: at_ms,
             joins: Default::default(),
-            event: engine::DynamicEvent::new(kind, 1, Value::Object(Default::default())),
+            event: engine::StoredEvent::new(kind, 1, Value::Object(Default::default())),
         }
     }
 

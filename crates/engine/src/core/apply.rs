@@ -1,19 +1,12 @@
 //! Core replay reducer for committed session events.
 
-use crate::{
-    ApplyEvent, CoreAgentEntry, CoreAgentEventKind, CoreAgentState, DomainError, EventSeq,
-};
+use crate::{CoreAgentEntry, CoreAgentEvent, CoreAgentState, DomainError, EventSeq};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct CoreApplyEvent;
-
-impl ApplyEvent for CoreApplyEvent {
-    fn apply(&self, state: &mut CoreAgentState, entry: &CoreAgentEntry) -> Result<(), DomainError> {
-        validate_next_position(state, entry)?;
-        apply_event(state, entry)?;
-        state.reduced_to = Some(entry.position.clone());
-        Ok(())
-    }
+pub fn apply_event(state: &mut CoreAgentState, entry: &CoreAgentEntry) -> Result<(), DomainError> {
+    validate_next_position(state, entry)?;
+    apply_event_kind(state, entry)?;
+    state.reduced_to = Some(entry.position.clone());
+    Ok(())
 }
 
 fn validate_next_position(
@@ -36,21 +29,19 @@ fn validate_next_position(
     Ok(())
 }
 
-fn apply_event(state: &mut CoreAgentState, entry: &CoreAgentEntry) -> Result<(), DomainError> {
-    match &entry.event.kind {
-        CoreAgentEventKind::Lifecycle(event) => {
+fn apply_event_kind(state: &mut CoreAgentState, entry: &CoreAgentEntry) -> Result<(), DomainError> {
+    match &entry.event {
+        CoreAgentEvent::Lifecycle(event) => {
             crate::core::components::lifecycle::apply_event(state, event)
         }
-        CoreAgentEventKind::Run(event) => crate::core::components::run::apply_event(state, event),
-        CoreAgentEventKind::Turn(event) => crate::core::components::turn::apply_event(state, event),
-        CoreAgentEventKind::Context(event) => {
+        CoreAgentEvent::Run(event) => crate::core::components::run::apply_event(state, event),
+        CoreAgentEvent::Turn(event) => crate::core::components::turn::apply_event(state, event),
+        CoreAgentEvent::Context(event) => {
             crate::core::components::context::apply_event(state, event)
         }
-        CoreAgentEventKind::ToolConfig(event) => {
+        CoreAgentEvent::ToolConfig(event) => {
             crate::core::components::tooling::apply_config_event(state, event)
         }
-        CoreAgentEventKind::Tool(event) => {
-            crate::core::components::tooling::apply_event(state, event)
-        }
+        CoreAgentEvent::Tool(event) => crate::core::components::tooling::apply_event(state, event),
     }
 }

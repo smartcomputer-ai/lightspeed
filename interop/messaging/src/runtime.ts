@@ -52,6 +52,9 @@ export interface NormalizedInbound {
   /// Configured session key for the binding, or null to derive one per
   /// conversation. Conversations sharing a key share a session.
   sessionKey?: string | null;
+  /// Binding-rule id whose gateway credentials route this conversation
+  /// (null = the bridge's default connection).
+  authBindingId?: string | null;
   /// Profile label recorded on the binding (informational; null = default).
   profileLabel?: string | null;
   /// Lazily fetches attached media; only invoked when the message becomes a
@@ -79,6 +82,9 @@ export interface HandleInboundOptions {
 
 export interface MessagingBridgeRuntimeOptions {
   lightspeed: LightspeedSessionBridge;
+  /// Per-auth session bridges keyed by binding-rule id, for rules that
+  /// configure their own gateway credentials (P90 multi-tenancy).
+  lightspeedByAuthBindingId?: ReadonlyMap<string, LightspeedSessionBridge>;
   store: JsonBridgeStore;
   runtime: BridgeRuntimeConfig;
   sessionPrefix: string;
@@ -168,6 +174,7 @@ function startTypingLoop(
 
 export class MessagingBridgeRuntime {
   private readonly lightspeed: LightspeedSessionBridge;
+  private readonly lightspeedByAuthBindingId: ReadonlyMap<string, LightspeedSessionBridge>;
   private readonly store: JsonBridgeStore;
   private readonly config: BridgeRuntimeConfig;
   private readonly sessionPrefix: string;
@@ -185,6 +192,7 @@ export class MessagingBridgeRuntime {
 
   constructor(options: MessagingBridgeRuntimeOptions) {
     this.lightspeed = options.lightspeed;
+    this.lightspeedByAuthBindingId = options.lightspeedByAuthBindingId ?? new Map();
     this.store = options.store;
     this.config = options.runtime;
     this.sessionPrefix = options.sessionPrefix;
@@ -199,6 +207,23 @@ export class MessagingBridgeRuntime {
     });
   }
 
+  /// Session bridge for a conversation's gateway credentials. Fails closed:
+  /// a persisted auth binding id with no configured connection (the rule was
+  /// removed or renamed) must never fall back to the default connection —
+  /// that would route the conversation into the wrong universe.
+  private lightspeedFor(authBindingId: string | null | undefined): LightspeedSessionBridge {
+    if (authBindingId == null) {
+      return this.lightspeed;
+    }
+    const lightspeed = this.lightspeedByAuthBindingId.get(authBindingId);
+    if (!lightspeed) {
+      throw new Error(
+        `no gateway credentials configured for binding ${authBindingId}; refusing to use the default connection`,
+      );
+    }
+    return lightspeed;
+  }
+
   async handleInbound(message: NormalizedInbound, policy: ChannelPolicy, options: HandleInboundOptions): Promise<void> {
     const resolution = await this.resolvePairing(message, policy, options);
     if (resolution.kind === "handled") {
@@ -211,6 +236,7 @@ export class MessagingBridgeRuntime {
       profile: selected.profile,
       profileLabel: selected.profileLabel,
       sessionKey: selected.sessionKey,
+      authBindingId: selected.auth ? selected.bindingId : (message.authBindingId ?? null),
       turnAllowed: resolution.paired || message.turnAllowed,
     };
     const binding = await this.ensureBinding(effectiveMessage, policy);
@@ -442,6 +468,7 @@ export class MessagingBridgeRuntime {
       ...(message.threadId !== undefined ? { threadId: message.threadId } : {}),
       sessionId: stableSessionId(this.sessionPrefix, sessionParts),
       profileLabel: message.profileLabel ?? null,
+      authBindingId: message.authBindingId ?? null,
       activation,
     });
   }
@@ -541,9 +568,10 @@ export class MessagingBridgeRuntime {
       // started, then failed) could prune context that run already consumed.
       this.roomBacklogs.delete(key);
       const contextKeys = batch.flatMap((turn) => [...(turn.contextKeys ?? [])]);
+      const lightspeed = this.lightspeedFor(binding.authBindingId);
       const reply =
         contextKeys.length > 0
-          ? await this.lightspeed.submitContextTurn({
+          ? await lightspeed.submitContextTurn({
               provider: first.message.provider,
               accountId: first.message.accountId,
               conversationKey: key,
@@ -552,7 +580,7 @@ export class MessagingBridgeRuntime {
               submissionParts: batch.map((turn) => turn.message.messageId),
               contextKeys,
             })
-          : await this.lightspeed.submitTurn({
+          : await lightspeed.submitTurn({
               provider: first.message.provider,
               accountId: first.message.accountId,
               conversationKey: key,
@@ -691,7 +719,10 @@ export class MessagingBridgeRuntime {
     try {
       for (let start = 0; start < evictedKeys.length; start += CONTEXT_REMOVE_BATCH_LIMIT) {
         const chunk = evictedKeys.slice(start, start + CONTEXT_REMOVE_BATCH_LIMIT);
-        const results = await this.lightspeed.removeContext(binding.sessionId, chunk);
+        const results = await this.lightspeedFor(binding.authBindingId).removeContext(
+          binding.sessionId,
+          chunk,
+        );
         for (const result of results) {
           // `absent` counts as pruned: the key is gone either way.
           if (result.status === "failed") {
@@ -764,7 +795,7 @@ export class MessagingBridgeRuntime {
     text: string,
     media: readonly InboundMedia[],
   ) {
-    return this.lightspeed.appendMessageContext({
+    return this.lightspeedFor(message.authBindingId).appendMessageContext({
       sessionId,
       profile: message.profile ?? null,
       key: roomContextKey(message),
@@ -917,6 +948,7 @@ function defaultBindingCandidate(message: NormalizedInbound): BindingAccessCandi
     profile: message.profile ?? null,
     profileLabel: message.profileLabel ?? null,
     sessionKey: message.sessionKey ?? null,
+    auth: null,
   };
 }
 

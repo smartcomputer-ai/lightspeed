@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ActiveRun, BlobRef, CoreAgentEventKind, CoreAgentEventProposal, CoreAgentJoins, CoreAgentState,
-    CoreAgentStatus, DomainError, ObservedToolCall, PlanNext, PlanningError, RunId, RunStatus,
-    TokenEstimate, TurnId,
+    ActiveRun, BlobRef, CoreAgentEvent, CoreAgentEventProposal, CoreAgentJoins, CoreAgentState,
+    CoreAgentStatus, DomainError, ObservedToolCall, PlanningError, RunId, RunStatus, TokenEstimate,
+    TurnId,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,55 +39,45 @@ pub enum Event {
 
 pub type TurnEvent = Event;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct CoreTurnPlanner;
-
-impl PlanNext for CoreTurnPlanner {
-    fn plan_next(
-        &self,
-        state: &CoreAgentState,
-    ) -> Result<Vec<CoreAgentEventProposal>, PlanningError> {
-        if state.lifecycle.status != CoreAgentStatus::Open {
-            return Ok(Vec::new());
-        }
-
-        let Some(active_run) = state.runs.active.as_ref() else {
-            return Ok(Vec::new());
-        };
-        if active_run.active_tool_batch_id.is_some() {
-            return Ok(Vec::new());
-        }
-
-        if let Some(turn_id) = active_run.active_turn_id {
-            return decide_active_turn_progress(state, active_run, turn_id);
-        }
-        if active_run.status != RunStatus::Active {
-            return Ok(Vec::new());
-        }
-        if crate::core::components::run::latest_turn_is_terminal_run_outcome(active_run)? {
-            return Ok(Vec::new());
-        }
-
-        let next_turn_id = state
-            .id_cursors
-            .last_turn_id
-            .checked_add(1)
-            .ok_or_else(|| {
-                DomainError::InvariantViolation("turn id cursor exhausted".to_owned())
-            })?;
-        let turn_id = TurnId::new(next_turn_id);
-        let joins = CoreAgentJoins {
-            run_id: Some(active_run.run_id),
-            turn_id: Some(turn_id),
-            ..CoreAgentJoins::default()
-        };
-        let kind = CoreAgentEventKind::Turn(Event::Started {
-            turn_id,
-            run_id: active_run.run_id,
-        });
-
-        Ok(vec![CoreAgentEventProposal::new(joins, kind)])
+pub fn plan_next(state: &CoreAgentState) -> Result<Vec<CoreAgentEventProposal>, PlanningError> {
+    if state.lifecycle.status != CoreAgentStatus::Open {
+        return Ok(Vec::new());
     }
+
+    let Some(active_run) = state.runs.active.as_ref() else {
+        return Ok(Vec::new());
+    };
+    if active_run.active_tool_batch_id.is_some() {
+        return Ok(Vec::new());
+    }
+
+    if let Some(turn_id) = active_run.active_turn_id {
+        return decide_active_turn_progress(state, active_run, turn_id);
+    }
+    if active_run.status != RunStatus::Active {
+        return Ok(Vec::new());
+    }
+    if crate::core::components::run::latest_turn_is_terminal_run_outcome(active_run)? {
+        return Ok(Vec::new());
+    }
+
+    let next_turn_id = state
+        .id_cursors
+        .last_turn_id
+        .checked_add(1)
+        .ok_or_else(|| DomainError::InvariantViolation("turn id cursor exhausted".to_owned()))?;
+    let turn_id = TurnId::new(next_turn_id);
+    let joins = CoreAgentJoins {
+        run_id: Some(active_run.run_id),
+        turn_id: Some(turn_id),
+        ..CoreAgentJoins::default()
+    };
+    let kind = CoreAgentEvent::Turn(Event::Started {
+        turn_id,
+        run_id: active_run.run_id,
+    });
+
+    Ok(vec![CoreAgentEventProposal::new(joins, kind)])
 }
 
 fn decide_active_turn_progress(
@@ -117,7 +107,7 @@ fn decide_active_turn_progress(
             };
             Ok(vec![CoreAgentEventProposal::new(
                 joins,
-                CoreAgentEventKind::Turn(Event::Planned {
+                CoreAgentEvent::Turn(Event::Planned {
                     turn_id,
                     run_id: active_run.run_id,
                     request_fingerprint: request.request_fingerprint,
@@ -145,7 +135,7 @@ fn decide_active_turn_progress(
             };
             Ok(vec![CoreAgentEventProposal::new(
                 joins,
-                CoreAgentEventKind::Turn(Event::GenerationRequested {
+                CoreAgentEvent::Turn(Event::GenerationRequested {
                     turn_id,
                     run_id: active_run.run_id,
                 }),

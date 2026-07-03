@@ -248,6 +248,71 @@ cp .env.example .env
 npm run dev
 ```
 
+### Gateway authentication
+
+Against a default (`single`-mode) gateway no credentials are needed. For
+multi-tenant gateways (P90), set one of:
+
+- `LIGHTSPEED_API_KEY` (or `lightspeed.apiKey` in the config file) — sent as
+  `Authorization: Bearer …` to an `api-key`-mode gateway. Mint keys with
+  `server api-key create --universe-id <uuid>`.
+- `LIGHTSPEED_UNIVERSE` (or `lightspeed.universe`) — sent as
+  `x-lightspeed-universe` to a `trusted-header`-mode gateway (the bridge acts
+  as its own trusted upstream in that topology).
+
+These are the bridge's *default* connection: bindings without their own
+`auth` use it.
+
+### Per-binding universes
+
+One bridge process can serve conversations in different universes: a binding
+rule may carry its own gateway credentials, and everything for its matched
+conversations — session start, turns, room context, retention pruning, and
+outbox delivery — flows through that connection.
+
+```jsonc
+{
+  "bindings": [
+    {
+      "id": "acme-support",
+      "match": { "channel": "telegram", "chatId": "-100123" },
+      "profile": "acme.support",
+      "auth": { "apiKeyEnv": "ACME_BRIDGE_API_KEY" }
+    },
+    {
+      "id": "globex-dm",
+      "match": { "channel": "whatsapp", "scope": "direct" },
+      "auth": { "universe": "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f" }
+    }
+  ]
+}
+```
+
+Rules:
+
+- `auth` takes exactly one of `apiKey`, `apiKeyEnv` (name of an env var, so
+  key material stays out of the config file; resolved at startup and a
+  missing variable fails the process), or `universe`. A gateway runs one
+  auth mode, so mixing a key with a universe is a config error.
+- `id` is required on rules with `auth`. The conversation's binding state
+  persists the rule id (not the credential), so key rotation only needs a
+  config change and restart — no state migration.
+- Rules sharing identical credentials share one gateway connection, and the
+  bridge runs **one outbox tailer per distinct credential** — never two on
+  the same universe, which would double-deliver.
+- Fail closed: if a stored conversation references a rule id whose `auth`
+  disappeared from config, its turns error rather than falling back to the
+  default connection (which would silently move the conversation to another
+  universe). Re-add the rule or rebind the conversation.
+- Changing a rule's universe strands the conversations' existing sessions in
+  the old universe; they continue as fresh sessions in the new one.
+- No keys are needed in a trusted co-deployment: against a
+  `trusted-header`-mode gateway, per-binding `auth: { "universe": … }` is
+  pure headers. Note that mode fails closed — the gateway requires the
+  header on every request — so the bridge's default connection must then
+  also carry a universe (`LIGHTSPEED_UNIVERSE` / `lightspeed.universe`), or
+  conversations matching auth-less bindings are rejected.
+
 The package uses a local file dependency:
 
 ```json

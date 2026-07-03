@@ -36,6 +36,7 @@ pub use types::{
     PreprocessRunInputFailure, PreprocessRunInputFailureKind, PreprocessRunInputOutcome,
     PutBlobRequest, ReadBlobRequest, ReadBlobResult, RunSubscription, RunTerminalNotification,
     SessionBootstrapPayloadTooLarge, SkillCatalogRefreshActivityRequest,
-    SkillCatalogRefreshActivityResult, ToolInvokeBatchActivityRequest,
+    SkillCatalogRefreshActivityResult, ToolInvokeBatchActivityRequest, compose_workflow_id,
+    split_workflow_id,
 };
 pub use workflow::AgentSessionWorkflow;

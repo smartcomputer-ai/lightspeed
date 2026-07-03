@@ -5,18 +5,21 @@ mod fake;
 mod secrets;
 mod session_tools;
 
+use std::sync::Arc;
+
 use temporalio_client::Client;
 use temporalio_common::{telemetry::TelemetryOptions, worker::WorkerTaskTypes};
 use temporalio_sdk::{Worker, WorkerOptions};
 use temporalio_sdk_core::{CoreRuntime, RuntimeOptions};
 
-use crate::{config::pg_store_from_env, fleet::AgentApiFleetRuntime, gateway::GatewayAgentApi};
+use crate::{config::DeploymentStores, universe::UniverseRuntime};
 
 pub use activities::{
     ActivityState, AudioTranscodeError, AudioTranscodeOutput, AudioTranscodeRequest,
     AudioTranscoder, AudioTranscriber, AudioTranscription, AudioTranscriptionError,
     AudioTranscriptionRequest, FfmpegAudioTranscoder, LlmActivityDeps, PreprocessActivityDeps,
     SkillCatalogActivityDeps, StorageActivityDeps, ToolActivityDeps, WorkerActivities,
+    default_audio_transcoder_from_env,
 };
 pub use fake::{FakeLlm, FakeTools};
 pub use secrets::{BrokerSecretResolver, StoredProviderKeyResolver};
@@ -68,15 +71,19 @@ pub fn worker_with_activities(
 pub async fn run_worker(config: WorkerServerConfig) -> anyhow::Result<()> {
     let runtime = core_runtime()?;
     let client = connect_temporal(&config.temporal_target, &config.namespace).await?;
-    let store = pg_store_from_env().await?;
-    let api = std::sync::Arc::new(
-        GatewayAgentApi::builder(client.clone(), store.clone())
-            .with_task_queue(config.task_queue.clone())
-            .build(),
-    );
-    let fleet_runtime = std::sync::Arc::new(AgentApiFleetRuntime::new(api));
-    let activities =
-        WorkerActivities::from_pg_store_with_default_runtime_and_fleet(store, fleet_runtime)?;
+    let stores = DeploymentStores::from_env()
+        .await?
+        .with_blob_cache(crate::config::blob_cache_from_env()?);
+    // The worker serves every universe of the deployment regardless of the
+    // gateway's auth mode; per-universe state resolves lazily from the
+    // universe-composed workflow id of each activity task.
+    let universes = Arc::new(UniverseRuntime::new(
+        client.clone(),
+        config.task_queue.clone(),
+        None,
+        stores,
+    )?);
+    let activities = WorkerActivities::with_runtime(universes);
     let mut worker =
         worker_with_activities(&runtime, client, config.task_queue.clone(), activities)?;
     tracing::info!(

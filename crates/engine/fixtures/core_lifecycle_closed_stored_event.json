@@ -2,8 +2,6 @@
   "kind": "lightspeed.core.lifecycle.closed",
   "version": 1,
   "payload": {
-    "kind": {
-      "lifecycle": "closed"
-    }
+    "lifecycle": "closed"
   }
 }

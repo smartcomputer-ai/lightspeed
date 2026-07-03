@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 import "dotenv/config";
-import { LightspeedClient } from "@lightspeed/agent-client";
 import { loadBridgeConfig } from "./config.js";
-import { LightspeedSessionBridge } from "./lightspeed.js";
+import { buildGatewayConnections } from "./gateway_auth.js";
 import { OutboxTailer } from "./outbox.js";
 import { MessagingBridgeRuntime } from "./runtime.js";
 import { JsonBridgeStore } from "./store.js";
@@ -13,10 +12,17 @@ type Running = RunningBridge | RunningWhatsAppBridge;
 
 const config = await loadBridgeConfig();
 const store = new JsonBridgeStore(config.store.path);
-const client = new LightspeedClient(config.lightspeed.endpoint);
-const lightspeed = new LightspeedSessionBridge(client, config.lightspeed);
+// One gateway connection per distinct credential: the default plus any
+// per-binding auth (P90 multi-tenancy).
+const connections = buildGatewayConnections(config);
 const runtime = new MessagingBridgeRuntime({
-  lightspeed,
+  lightspeed: connections.default.lightspeed,
+  lightspeedByAuthBindingId: new Map(
+    [...connections.byBindingId].map(([bindingId, connection]) => [
+      bindingId,
+      connection.lightspeed,
+    ]),
+  ),
   store,
   runtime: config.runtime,
   sessionPrefix: config.lightspeed.sessionPrefix,
@@ -36,12 +42,21 @@ if (running.length === 0) {
   throw new Error("No bridge is enabled. Set TELEGRAM_BOT_TOKEN or WHATSAPP_ENABLED=true.");
 }
 
-const outbox = new OutboxTailer({
-  client,
-  store,
-  deliverers: running.map((bridge) => bridge.deliverer),
-});
-outbox.start();
+// The outbox is universe-scoped: one tailer per distinct credential, each
+// with its own client and cursor. Connections deduplicate by credential, so
+// no universe outbox is ever read by two tailers (which would double-deliver).
+const deliverers = running.map((bridge) => bridge.deliverer);
+const outboxes = connections.distinct.map(
+  (connection) =>
+    new OutboxTailer({
+      client: connection.client,
+      store,
+      deliverers,
+    }),
+);
+for (const outbox of outboxes) {
+  outbox.start();
+}
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, () => {
@@ -51,7 +66,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
 
 async function shutdown(signal: string): Promise<void> {
   console.log(`bridge: received ${signal}, stopping`);
-  await outbox.stop().catch(() => undefined);
+  await Promise.allSettled(outboxes.map((outbox) => outbox.stop()));
   await Promise.allSettled(running.map((bridge) => bridge.stop()));
   await runtime.flush().catch(() => undefined);
   process.exit(0);

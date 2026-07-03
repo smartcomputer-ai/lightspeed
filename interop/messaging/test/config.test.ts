@@ -67,6 +67,65 @@ describe("loadBridgeConfig", () => {
   });
 });
 
+describe("parseBindings auth", () => {
+  it("parses apiKey, resolves apiKeyEnv, and parses universe", () => {
+    const bindings = parseBindings(
+      [
+        { id: "a", match: { channel: "telegram" }, auth: { apiKey: "lsk_literal" } },
+        { id: "b", match: { channel: "telegram" }, auth: { apiKeyEnv: "ACME_KEY" } },
+        {
+          id: "c",
+          match: { channel: "telegram" },
+          auth: { universe: "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f" },
+        },
+      ],
+      { ACME_KEY: "lsk_from_env" },
+    );
+    expect(bindings[0]?.auth).toEqual({ apiKey: "lsk_literal" });
+    expect(bindings[1]?.auth).toEqual({ apiKey: "lsk_from_env" });
+    expect(bindings[2]?.auth).toEqual({ universe: "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f" });
+  });
+
+  it("requires an id on rules with auth", () => {
+    expect(() =>
+      parseBindings([{ match: { channel: "telegram" }, auth: { apiKey: "lsk_x" } }], {}),
+    ).toThrow(/id is required when auth/);
+  });
+
+  it("rejects an unset apiKeyEnv at load time", () => {
+    expect(() =>
+      parseBindings(
+        [{ id: "a", match: { channel: "telegram" }, auth: { apiKeyEnv: "MISSING_KEY" } }],
+        {},
+      ),
+    ).toThrow(/MISSING_KEY/);
+  });
+
+  it("rejects mixing a key with a universe (one gateway auth mode)", () => {
+    expect(() =>
+      parseBindings(
+        [
+          {
+            id: "a",
+            match: { channel: "telegram" },
+            auth: { apiKey: "lsk_x", universe: "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f" },
+          },
+        ],
+        {},
+      ),
+    ).toThrow(/not both/);
+    expect(() =>
+      parseBindings(
+        [{ id: "a", match: { channel: "telegram" }, auth: { apiKey: "x", apiKeyEnv: "Y" } }],
+        { Y: "z" },
+      ),
+    ).toThrow(/not both/);
+    expect(() =>
+      parseBindings([{ id: "a", match: { channel: "telegram" }, auth: {} }], {}),
+    ).toThrow(/must set/);
+  });
+});
+
 describe("parseBindings", () => {
   it("parses match, named profile, inline profile, and sessionKey", () => {
     const inlineProfile: ProfileSource = {
@@ -209,6 +268,7 @@ describe("resolveBinding", () => {
       profile: { kind: "named", profileId: "personal" },
       profileLabel: "personal",
       sessionKey: "lukas",
+      auth: null,
     });
   });
 
@@ -229,6 +289,7 @@ describe("resolveBinding", () => {
       profile: { kind: "named", profileId: "personal" },
       profileLabel: "personal",
       sessionKey: "lukas",
+      auth: null,
     });
   });
 
@@ -250,6 +311,7 @@ describe("resolveBinding", () => {
         profile: { kind: "named", profileId: "personal" },
         profileLabel: "personal",
         sessionKey: "lukas",
+        auth: null,
       });
     }
   });
@@ -264,6 +326,7 @@ describe("resolveBinding", () => {
       profile: { kind: "inline", profile: { instructions: "support room" } },
       profileLabel: "inline",
       sessionKey: "eng",
+      auth: null,
     });
   });
 
@@ -277,13 +340,14 @@ describe("resolveBinding", () => {
       profile: { kind: "named", profileId: "support" },
       profileLabel: "support",
       sessionKey: null,
+      auth: null,
     });
   });
 
   it("returns the default profile when nothing matches", () => {
     expect(
       resolveBinding({ channel: "telegram", handles: ["1"], chatId: "x", scope: "direct" }, []),
-    ).toEqual({ profile: null, profileLabel: null, sessionKey: null });
+    ).toEqual({ profile: null, profileLabel: null, sessionKey: null, auth: null });
   });
 });
 

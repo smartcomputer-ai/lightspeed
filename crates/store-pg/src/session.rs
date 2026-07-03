@@ -1,15 +1,11 @@
 use async_trait::async_trait;
 use engine::{
-    session::{
-        AgentHandle, DynamicSessionEntry, DynamicUncommittedSessionEvent, EventSeq, SessionId,
-        SessionPosition,
-    },
+    session::{EventSeq, SessionId, SessionPosition, StoredSessionEntry, UncommittedStoredEvent},
     storage::{
         AppendSessionEvents, AppendSessionEventsResult, CreateClonedSession, CreateForkedSession,
-        CreateSession, ListAgentSessions, ListSessionLinks, ReadSessionEvents,
-        SessionLinkDirection, SessionLinkRecord, SessionPage, SessionRecord, SessionStore,
-        SessionStoreError, UpsertSessionLink, largest_safe_fork_seq, validate_fork_point,
-        validate_relationship,
+        CreateSession, ListSessionLinks, ReadSessionEvents, SessionLinkDirection,
+        SessionLinkRecord, SessionPage, SessionRecord, SessionStore, SessionStoreError,
+        UpsertSessionLink, largest_safe_fork_seq, validate_fork_point, validate_relationship,
     },
 };
 use sqlx::{Postgres, Row, Transaction};
@@ -25,7 +21,6 @@ use crate::{
 
 const SESSION_COLUMNS: &str = r#"
     session_id,
-    agent_handle,
     head_seq,
     source_session_id,
     source_seq,
@@ -81,7 +76,7 @@ impl PgStore {
                     .map_or(1, |position| position.seq.as_u64().saturating_add(1)),
             );
             let position = SessionPosition { seq: next_seq };
-            let entry = DynamicSessionEntry {
+            let entry = StoredSessionEntry {
                 position: position.clone(),
                 observed_at_ms: event.observed_at_ms,
                 joins: event.joins,
@@ -176,7 +171,7 @@ impl PgStore {
     async fn read_all_effective_events(
         &self,
         session_id: &SessionId,
-    ) -> Result<Vec<DynamicSessionEntry>, SessionStoreError> {
+    ) -> Result<Vec<StoredSessionEntry>, SessionStoreError> {
         let head = self
             .load_session(session_id)
             .await?
@@ -212,7 +207,7 @@ impl PgStore {
         session_id: &SessionId,
         after: u64,
         limit: usize,
-    ) -> Result<Vec<DynamicSessionEntry>, SessionStoreError> {
+    ) -> Result<Vec<StoredSessionEntry>, SessionStoreError> {
         if limit == 0 {
             return Ok(Vec::new());
         }
@@ -333,7 +328,7 @@ impl PgStore {
         after: u64,
         through: u64,
         limit: usize,
-    ) -> Result<Vec<DynamicSessionEntry>, SessionStoreError> {
+    ) -> Result<Vec<StoredSessionEntry>, SessionStoreError> {
         let rows = sqlx::query(
             r#"
             SELECT entry_json
@@ -392,11 +387,10 @@ impl SessionStore for PgStore {
             INSERT INTO sessions (
                 universe_id,
                 session_id,
-                agent_handle,
                 created_at_ms,
                 updated_at_ms
             )
-            VALUES ($1, $2, $3, $4, $4)
+            VALUES ($1, $2, $3, $3)
             ON CONFLICT (universe_id, session_id) DO NOTHING
             RETURNING {SESSION_COLUMNS}
             "#,
@@ -404,7 +398,6 @@ impl SessionStore for PgStore {
         let row = sqlx::query(&query)
             .bind(self.config.universe_id)
             .bind(request.session_id.as_str())
-            .bind(request.agent_handle.as_str())
             .bind(created_at_ms)
             .fetch_optional(&self.pool)
             .await
@@ -439,31 +432,6 @@ impl SessionStore for PgStore {
         row.as_ref().map(session_record_from_row).transpose()
     }
 
-    async fn list_agent_sessions(
-        &self,
-        request: ListAgentSessions,
-    ) -> Result<Vec<SessionRecord>, SessionStoreError> {
-        let limit = usize_to_session_i64(request.limit, "session list limit")?;
-        let query = format!(
-            r#"
-            SELECT {SESSION_COLUMNS}
-            FROM sessions
-            WHERE universe_id = $1 AND agent_handle = $2
-            ORDER BY session_id
-            LIMIT $3
-            "#,
-        );
-        let rows = sqlx::query(&query)
-            .bind(self.config.universe_id)
-            .bind(request.agent_handle.as_str())
-            .bind(limit)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|error| session_sql_error("list agent sessions", error))?;
-
-        rows.iter().map(session_record_from_row).collect()
-    }
-
     async fn create_cloned_session(
         &self,
         request: CreateClonedSession,
@@ -490,13 +458,12 @@ impl SessionStore for PgStore {
             INSERT INTO sessions (
                 universe_id,
                 session_id,
-                agent_handle,
                 source_session_id,
                 source_seq,
                 created_at_ms,
                 updated_at_ms
             )
-            VALUES ($1, $2, $3, $4, NULL, $5, $5)
+            VALUES ($1, $2, $3, NULL, $4, $4)
             ON CONFLICT (universe_id, session_id) DO NOTHING
             RETURNING {SESSION_COLUMNS}
             "#,
@@ -504,7 +471,6 @@ impl SessionStore for PgStore {
         let row = sqlx::query(&query)
             .bind(self.config.universe_id)
             .bind(request.session_id.as_str())
-            .bind(request.agent_handle.as_str())
             .bind(request.source_session_id.as_str())
             .bind(created_at_ms)
             .fetch_optional(&mut *tx)
@@ -582,14 +548,13 @@ impl SessionStore for PgStore {
             INSERT INTO sessions (
                 universe_id,
                 session_id,
-                agent_handle,
                 head_seq,
                 source_session_id,
                 source_seq,
                 created_at_ms,
                 updated_at_ms
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
+            VALUES ($1, $2, $3, $4, $5, $6, $6)
             ON CONFLICT (universe_id, session_id) DO NOTHING
             RETURNING {SESSION_COLUMNS}
             "#,
@@ -597,7 +562,6 @@ impl SessionStore for PgStore {
         let row = sqlx::query(&query)
             .bind(self.config.universe_id)
             .bind(request.session_id.as_str())
-            .bind(request.agent_handle.as_str())
             .bind(head_seq)
             .bind(request.source_session_id.as_str())
             .bind(u64_to_i64(source_seq_u64, "source_seq")?)
@@ -814,14 +778,6 @@ fn session_record_from_row(
                 message: format!("decode session id: {error}"),
             })
         })?;
-    let agent_handle = row
-        .try_get::<String, _>("agent_handle")
-        .map_err(|error| session_sql_error("decode agent handle", error))
-        .and_then(|value| {
-            AgentHandle::parse(value).map_err(|error| SessionStoreError::Store {
-                message: format!("decode agent handle: {error}"),
-            })
-        })?;
     let head_seq = row
         .try_get::<Option<i64>, _>("head_seq")
         .map_err(|error| session_sql_error("decode session head", error))?;
@@ -855,7 +811,6 @@ fn session_record_from_row(
 
     Ok(SessionRecord {
         session_id,
-        agent_handle,
         head,
         source_session_id,
         source_seq,
@@ -875,11 +830,11 @@ fn optional_event_seq_from_i64(seq: Option<i64>) -> Result<Option<EventSeq>, Ses
 
 fn session_entry_from_row(
     row: &sqlx::postgres::PgRow,
-) -> Result<DynamicSessionEntry, SessionStoreError> {
+) -> Result<StoredSessionEntry, SessionStoreError> {
     let entry_json: serde_json::Value = row
         .try_get("entry_json")
         .map_err(|error| session_sql_error("decode session event json", error))?;
-    serde_json::from_value::<DynamicSessionEntry>(entry_json).map_err(|error| {
+    serde_json::from_value::<StoredSessionEntry>(entry_json).map_err(|error| {
         SessionStoreError::Store {
             message: format!("decode session event entry: {error}"),
         }
@@ -1071,8 +1026,8 @@ async fn append_events_in_tx(
     tx: &mut Transaction<'_, Postgres>,
     universe_id: Uuid,
     mut record: SessionRecord,
-    events: Vec<DynamicUncommittedSessionEvent>,
-) -> Result<(SessionRecord, Vec<DynamicSessionEntry>), SessionStoreError> {
+    events: Vec<UncommittedStoredEvent>,
+) -> Result<(SessionRecord, Vec<StoredSessionEntry>), SessionStoreError> {
     let mut committed = Vec::with_capacity(events.len());
     for event in events {
         let next_seq = EventSeq::new(
@@ -1082,7 +1037,7 @@ async fn append_events_in_tx(
                 .map_or(1, |position| position.seq.as_u64().saturating_add(1)),
         );
         let position = SessionPosition { seq: next_seq };
-        let entry = DynamicSessionEntry {
+        let entry = StoredSessionEntry {
             position: position.clone(),
             observed_at_ms: event.observed_at_ms,
             joins: event.joins,

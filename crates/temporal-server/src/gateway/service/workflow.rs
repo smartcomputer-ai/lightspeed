@@ -1,12 +1,22 @@
 use super::*;
 
 impl GatewayAgentApi {
+    /// Universe (tenant) this gateway instance serves, taken from the bound
+    /// store. All Temporal addressing composes it into the workflow id.
+    pub(super) fn universe_id(&self) -> uuid::Uuid {
+        self.store.config().universe_id
+    }
+
+    pub(super) fn workflow_id_for(&self, session_id: &SessionId) -> String {
+        temporal_workflow::compose_workflow_id(self.universe_id(), session_id)
+    }
+
     pub(super) fn workflow_handle(
         &self,
         session_id: &SessionId,
     ) -> WorkflowHandle<Client, AgentSessionWorkflow> {
         self.client
-            .get_workflow_handle::<AgentSessionWorkflow>(session_id.as_str())
+            .get_workflow_handle::<AgentSessionWorkflow>(self.workflow_id_for(session_id))
     }
 
     pub(super) async fn submit_core_command(
@@ -32,9 +42,6 @@ impl GatewayAgentApi {
                 | CoreAgentCommand::RemoveContext { key } => Some(key.clone()),
                 _ => None,
             };
-            let command = engine::CoreAgentCodec
-                .encode_command(&command)
-                .map_err(|error| AgentApiError::internal(error.to_string()))?;
             admissions.push(AgentAdmission {
                 command,
                 context_key,
@@ -256,8 +263,13 @@ impl GatewayAgentApi {
         session_id: &SessionId,
         expected: &[ContextEntryKey],
         baseline_failures: usize,
-    ) -> Result<(u64, BTreeMap<ContextEntryKey, Option<AgentAdmissionFailure>>), AgentApiError>
-    {
+    ) -> Result<
+        (
+            u64,
+            BTreeMap<ContextEntryKey, Option<AgentAdmissionFailure>>,
+        ),
+        AgentApiError,
+    > {
         let expected_keys = expected.iter().cloned().collect::<BTreeSet<_>>();
         let started = Instant::now();
         let mut outcomes: BTreeMap<ContextEntryKey, Option<AgentAdmissionFailure>> =

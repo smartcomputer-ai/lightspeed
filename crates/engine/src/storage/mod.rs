@@ -9,8 +9,7 @@ pub mod blobs;
 pub mod session;
 
 pub use crate::session::{
-    AgentHandle, DynamicSessionEntry, DynamicUncommittedSessionEvent, SessionEntry,
-    UncommittedSessionEvent,
+    SessionEntry, StoredSessionEntry, UncommittedSessionEvent, UncommittedStoredEvent,
 };
 pub use blobs::{
     BlobCacheLimits, BlobCacheStats, BlobEdge, BlobGraphStore, BlobInfo, BlobStore, BlobStoreError,
@@ -18,8 +17,7 @@ pub use blobs::{
 };
 pub use session::{
     AppendSessionEvents, AppendSessionEventsResult, CreateClonedSession, CreateForkedSession,
-    CreateSession, InMemorySessionStore, ListAgentSessions, ListSessionLinks, ReadSessionEvents,
-    SessionLinkDirection, SessionLinkRecord, SessionPage, SessionRecord, SessionStore,
-    SessionStoreError, UpsertSessionLink, largest_safe_fork_seq, validate_fork_point,
-    validate_relationship,
+    CreateSession, InMemorySessionStore, ListSessionLinks, ReadSessionEvents, SessionLinkDirection,
+    SessionLinkRecord, SessionPage, SessionRecord, SessionStore, SessionStoreError,
+    UpsertSessionLink, largest_safe_fork_seq, validate_fork_point, validate_relationship,
 };

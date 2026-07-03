@@ -85,8 +85,8 @@ use api::{
     BlobHasManyParams, BlobHasManyResponse, BlobPutManyParams, BlobPutManyResponse, BlobPutParams,
     BlobPutResponse, ClientCapabilities, CompactionPolicyInput, ContextAppendParams,
     ContextAppendResponse, ContextAppendResult, ContextAppendStatus, ContextCompactParams,
-    ContextRemoveParams, ContextRemoveResponse, ContextRemoveResult, ContextRemoveStatus,
     ContextCompactResponse, ContextConfigInput as ApiContextConfigInput, ContextConfigPatchInput,
+    ContextRemoveParams, ContextRemoveResponse, ContextRemoveResult, ContextRemoveStatus,
     EnvironmentProviderCapabilitiesView, EnvironmentProviderHeartbeatParams,
     EnvironmentProviderHeartbeatResponse, EnvironmentProviderImplementationView,
     EnvironmentProviderKindView, EnvironmentProviderListParams, EnvironmentProviderListResponse,
@@ -149,9 +149,8 @@ use api::{
 };
 use api_projection::{
     CoreAgentProjector, MAX_EVENT_PAGE_LIMIT, ProjectSession, api_kind_from_str, api_run_id,
-    decode_dynamic_entry, event_cursor, event_page_limit, map_session_store_error,
-    parse_api_run_id, project_context_entry_inputs, read_all_session_entries,
-    replay_core_agent_state,
+    decode_stored_entry, event_cursor, event_page_limit, map_session_store_error, parse_api_run_id,
+    project_context_entry_inputs, read_all_session_entries, replay_core_agent_state,
 };
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
@@ -163,7 +162,7 @@ use auth::{
     OAuthFlowService, OAuthMetadataClient, OAuthTokenClient, SecretStore, StartAuthFlow,
 };
 use engine::{
-    BlobRef, CommandCodec, CompactionPolicy, ContextConfigPatch, ContextEntry, ContextEntryInput,
+    BlobRef, CompactionPolicy, ContextConfigPatch, ContextEntry, ContextEntryInput,
     ContextEntryKey, ContextEntryKind, ContextMessageRole, CoreAgentCommand, CoreAgentStatus,
     FilesystemToolMode, ModelSelection, OptionalConfigPatch, ProviderApiKind, ProviderParams,
     RunConfig, RunConfigPatch, RunId, RunStatus, SKILL_ACTIVATION_PROVIDER_KIND_RUN,
@@ -270,9 +269,7 @@ fn existing_run_submission(
         .filter(|run| run.submission_id.as_ref() == Some(submission_id))
     {
         return Some(
-            if active.source.matches_request(source)
-                && &active.run_config == run_config
-            {
+            if active.source.matches_request(source) && &active.run_config == run_config {
                 ExistingRunSubmission::ReturnRun {
                     run_id: active.run_id,
                     status: active.status,
@@ -324,9 +321,7 @@ fn existing_admitted_run_submission(
         .filter(|run| run.submission_id.as_ref() == Some(submission_id))
     {
         return Some(
-            if active.source.matches_request(source)
-                && &active.run_config == run_config
-            {
+            if active.source.matches_request(source) && &active.run_config == run_config {
                 ExistingAdmittedRunSubmission::ReturnRun {
                     run_id: active.run_id,
                 }
@@ -342,9 +337,7 @@ fn existing_admitted_run_submission(
         .find(|run| run.submission_id.as_ref() == Some(submission_id))
     {
         return Some(
-            if queued.source.matches_request(source)
-                && &queued.run_config == run_config
-            {
+            if queued.source.matches_request(source) && &queued.run_config == run_config {
                 ExistingAdmittedRunSubmission::ReturnRun {
                     run_id: queued.run_id,
                 }
@@ -534,9 +527,7 @@ fn input_admission_failure_from_workflow(
         AgentAdmissionFailureKind::TranscriptionFailure => {
             InputAdmissionFailureKind::TranscriptionFailure
         }
-        AgentAdmissionFailureKind::InvalidCommand | AgentAdmissionFailureKind::RejectedCommand => {
-            InputAdmissionFailureKind::AdmissionRejected
-        }
+        AgentAdmissionFailureKind::RejectedCommand => InputAdmissionFailureKind::AdmissionRejected,
     };
     InputAdmissionFailureView {
         kind,
@@ -703,6 +694,12 @@ struct GatewaySessionMetadata {
     cwd: Option<String>,
 }
 
+impl GatewaySessionMetadata {
+    fn is_empty(&self) -> bool {
+        self.cwd.is_none()
+    }
+}
+
 pub struct GatewayAgentApi {
     client: Client,
     store: Arc<PgStore>,
@@ -790,15 +787,32 @@ impl GatewayAgentApi {
         Ok(metadata.get(session_id).cloned().unwrap_or_default())
     }
 
+    /// The metadata map is bounded by session lifetime, not session count:
+    /// empty metadata never occupies an entry (most sessions carry no cwd)
+    /// and `close_session` removes the entry. Writing empty metadata is a
+    /// removal so an entry can also be cleared by overwriting.
     fn write_session_metadata(
         &self,
         session_id: SessionId,
         metadata: GatewaySessionMetadata,
     ) -> Result<(), AgentApiError> {
+        let mut map = self
+            .metadata
+            .write()
+            .map_err(|_| AgentApiError::internal("gateway metadata lock poisoned"))?;
+        if metadata.is_empty() {
+            map.remove(&session_id);
+        } else {
+            map.insert(session_id, metadata);
+        }
+        Ok(())
+    }
+
+    fn remove_session_metadata(&self, session_id: &SessionId) -> Result<(), AgentApiError> {
         self.metadata
             .write()
             .map_err(|_| AgentApiError::internal("gateway metadata lock poisoned"))?
-            .insert(session_id, metadata);
+            .remove(session_id);
         Ok(())
     }
 
@@ -845,6 +859,7 @@ impl GatewayAgentApi {
         close_on_terminal: bool,
     ) -> AgentSessionArgs {
         AgentSessionArgs {
+            universe_id: self.universe_id(),
             session_id,
             session_config,
             instructions_ref: self.instructions_ref.clone(),
@@ -974,7 +989,11 @@ impl GatewayAgentApi {
             .start_workflow(
                 AgentSessionWorkflow::run,
                 self.workflow_args(session_id.clone(), session_config, close_on_terminal),
-                WorkflowStartOptions::new(self.task_queue.clone(), session_id.as_str()).build(),
+                WorkflowStartOptions::new(
+                    self.task_queue.clone(),
+                    self.workflow_id_for(&session_id),
+                )
+                .build(),
             )
             .await
             .map_err(map_workflow_start_error);
@@ -1370,7 +1389,7 @@ impl AgentApiService for GatewayAgentApi {
             let codec = engine::CoreAgentCodec;
             let mut events = Vec::with_capacity(page.entries.len());
             for entry in &page.entries {
-                let entry = decode_dynamic_entry(&codec, entry)?;
+                let entry = decode_stored_entry(&codec, entry)?;
                 events.push(self.projector().project_entry(&session_id, &entry).await?);
             }
 
@@ -1393,6 +1412,7 @@ impl AgentApiService for GatewayAgentApi {
         })?;
         let loaded = self.load_session_state(&session_id).await?;
         if loaded.state.lifecycle.status == CoreAgentStatus::Closed {
+            self.remove_session_metadata(&session_id)?;
             return Ok(AgentApiOutcome::new(SessionCloseResponse {
                 session: self.project_session_by_id(&session_id).await?,
             }));
@@ -1405,6 +1425,7 @@ impl AgentApiService for GatewayAgentApi {
         self.submit_core_command(&session_id, CoreAgentCommand::CloseSession)
             .await?;
         let session = self.wait_for_closed_session(&session_id).await?;
+        self.remove_session_metadata(&session_id)?;
         Ok(AgentApiOutcome::new(SessionCloseResponse { session }))
     }
 
@@ -2808,7 +2829,7 @@ impl AgentApiService for GatewayAgentApi {
                 redirect_uri: oauth_redirect_uri(&self.public_base_url),
                 scopes: params.scopes,
                 audience: params.audience,
-                principal: auth::PrincipalRef::universe_default(),
+                principal: crate::gateway::principal::request_principal(),
             })
             .await
             .map_err(map_auth_error)?;
@@ -3046,6 +3067,10 @@ impl GatewayAgentApi {
         oauth_api::cimd_document(&self.public_base_url)
     }
 
+    pub fn public_base_url(&self) -> &str {
+        &self.public_base_url
+    }
+
     /// Load a GitHub App provider and sign its app JWT for control-plane
     /// calls (installation listing/verification). The JWT and the key only
     /// exist in memory inside [`auth::SecretValue`] wrappers.
@@ -3106,6 +3131,12 @@ impl GatewayAgentApi {
 }
 #[cfg(test)]
 mod tests;
+
+/// Deployment-scoped CIMD document: depends only on the public base URL, so
+/// the multi-universe HTTP edge serves it without resolving a universe.
+pub(crate) fn cimd_document_for(public_base_url: &str) -> serde_json::Value {
+    oauth_api::cimd_document(public_base_url)
+}
 
 fn outbound_message_view(message: messaging::OutboundMessage) -> OutboundMessageView {
     OutboundMessageView {

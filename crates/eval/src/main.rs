@@ -15,9 +15,9 @@ use async_trait::async_trait;
 use casefile::{EvalCase, FileExpectation, load_cases};
 use clap::{Parser, Subcommand};
 use engine::{
-    AgentHandle, ContextConfig, ContextEntryInput, ContextEntryKey, ContextEntryKind,
-    ContextMessageRole, CoreAgentCommand, ModelSelection, ProviderApiKind, RunConfig,
-    SessionConfig, SessionId, ToolExecutionTarget, ToolName, ToolSpec, TurnConfig,
+    ContextConfig, ContextEntryInput, ContextEntryKey, ContextEntryKind, ContextMessageRole,
+    CoreAgentCommand, ModelSelection, ProviderApiKind, RunConfig, SessionConfig, SessionId,
+    ToolExecutionTarget, ToolName, ToolSpec, TurnConfig,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
 };
 use llm_clients::ApiResponse;
@@ -454,7 +454,6 @@ impl EvalRuntime {
         self.sessions
             .create_session(CreateSession {
                 session_id: session_id.clone(),
-                agent_handle: AgentHandle::new("lightspeed.eval"),
                 created_at_ms: 1,
             })
             .await

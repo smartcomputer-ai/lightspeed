@@ -3,7 +3,7 @@ use std::fmt;
 use std::str::FromStr;
 
 pub use crate::session::{
-    AgentHandle, CorrelationId, EventSeq, SessionId, StringIdError, validate_general_string_id,
+    CorrelationId, EventSeq, SessionId, StringIdError, validate_general_string_id,
 };
 
 macro_rules! string_id {
@@ -162,10 +162,6 @@ mod tests {
     #[test]
     fn general_string_ids_accept_portable_values() {
         assert_eq!(SessionId::new("session-1").as_str(), "session-1");
-        assert_eq!(
-            AgentHandle::new("lightspeed.default").as_str(),
-            "lightspeed.default"
-        );
         assert_eq!(
             SubmissionId::new("client:submission_1").as_str(),
             "client:submission_1"

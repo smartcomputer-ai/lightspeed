@@ -1,0 +1,13 @@
+{
+  "kind": "lightspeed.core.tool.batch_completed",
+  "version": 1,
+  "payload": {
+    "tool": {
+      "batch_completed": {
+        "run_id": 1,
+        "turn_id": 2,
+        "batch_id": 3
+      }
+    }
+  }
+}

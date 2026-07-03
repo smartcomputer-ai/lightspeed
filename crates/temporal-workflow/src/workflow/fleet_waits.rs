@@ -1,9 +1,9 @@
 use super::*;
 
 pub(super) fn wait_directive_for_event(
-    event: &CoreAgentEventKind,
+    event: &CoreAgentEvent,
 ) -> anyhow::Result<Option<DeferredWait>> {
-    let CoreAgentEventKind::Tool(ToolEvent::BatchDeferred {
+    let CoreAgentEvent::Tool(ToolEvent::BatchDeferred {
         run_id,
         turn_id,
         batch_id,
@@ -355,8 +355,9 @@ pub(super) async fn install_deferred_wait(
     });
 
     for subscription in subscriptions {
+        let target_workflow_id = sibling_workflow_id(ctx, &subscription.target_session_id)?;
         let signal_result = ctx
-            .external_workflow(subscription.target_session_id.as_str().to_owned(), None)
+            .external_workflow(target_workflow_id, None)
             .signal(
                 AgentSessionWorkflow::subscribe_run,
                 subscription.subscription.clone(),
@@ -427,14 +428,35 @@ async fn unsubscribe_wait_subscriptions(
         }) {
             continue;
         }
+        let Ok(target_workflow_id) = sibling_workflow_id(ctx, &subscription.target_session_id)
+        else {
+            continue;
+        };
         let _ = ctx
-            .external_workflow(subscription.target_session_id.as_str().to_owned(), None)
+            .external_workflow(target_workflow_id, None)
             .signal(
                 AgentSessionWorkflow::unsubscribe_run,
                 subscription.subscription.subscription_id.clone(),
             )
             .await;
     }
+}
+
+/// Workflow id of a sibling session in the same universe. Fleet children are
+/// spawned through the parent universe's runtime, so cross-session signals
+/// compose the parent's own universe prefix (asserted at bootstrap) with the
+/// target session id.
+fn sibling_workflow_id(
+    ctx: &WorkflowContext<AgentSessionWorkflow>,
+    session_id: &SessionId,
+) -> anyhow::Result<String> {
+    let Some((universe_id, _)) = crate::split_workflow_id(ctx.workflow_id()) else {
+        anyhow::bail!(
+            "workflow id is not universe-composed ({{universe_id}}/{{session_id}}): {}",
+            ctx.workflow_id()
+        );
+    };
+    Ok(crate::compose_workflow_id(universe_id, session_id))
 }
 
 async fn build_wait_tool_batch_result(
