@@ -244,7 +244,9 @@ fn map_universe_error(error: UniverseError) -> AgentApiError {
 pub async fn serve_gateway(config: GatewayServerConfig) -> anyhow::Result<()> {
     let mode = gateway_auth_mode_from_env()?;
     let client = connect_temporal(&config.temporal_target, &config.namespace).await?;
-    let stores = DeploymentStores::from_env().await?;
+    let stores = DeploymentStores::from_env()
+        .await?
+        .with_blob_cache(crate::config::blob_cache_from_env()?);
     let public_base_url = public_base_url_or_default(&config);
     let runtime = Arc::new(UniverseRuntime::new(
         client,
@@ -253,7 +255,6 @@ pub async fn serve_gateway(config: GatewayServerConfig) -> anyhow::Result<()> {
         stores,
     )?);
     prewarm_single_universe(&mode, &runtime).await?;
-    runtime.spawn_idle_sweeper();
     let state = Arc::new(GatewayState::multi(mode, runtime, public_base_url));
     let app = gateway_router(state, config.max_request_body_bytes);
     let listener = tokio::net::TcpListener::bind(config.bind).await?;

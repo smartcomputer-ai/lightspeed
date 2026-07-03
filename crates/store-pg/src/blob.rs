@@ -19,6 +19,11 @@ impl PgStore {
         let blob_ref = BlobRef::from_bytes(&bytes);
         let digest = sha256_hex(&blob_ref)?;
         let byte_len = usize_to_blob_i64(bytes.len(), "blob byte length")?;
+        // Write-through: the ref derives from these exact bytes, so the
+        // hash-verified invariant of the cache holds by construction.
+        if let Some(cache) = &self.blob_cache {
+            cache.insert(self.config.universe_id, &blob_ref, &bytes);
+        }
 
         if self.has_blob(&blob_ref).await? {
             return Ok(blob_ref);
@@ -98,6 +103,11 @@ impl BlobStore for PgStore {
 
     async fn read_bytes(&self, blob_ref: &BlobRef) -> Result<Vec<u8>, BlobStoreError> {
         let digest = sha256_hex(blob_ref)?;
+        if let Some(cache) = &self.blob_cache {
+            if let Some(bytes) = cache.get(self.config.universe_id, blob_ref) {
+                return Ok(bytes.to_vec());
+            }
+        }
         let row = sqlx::query(
             r#"
             SELECT storage_kind, inline_bytes, object_key
@@ -148,6 +158,10 @@ impl BlobStore for PgStore {
             return Err(BlobStoreError::Store {
                 message: format!("blob hash mismatch: expected {blob_ref}, got {actual}"),
             });
+        }
+        // Only hash-verified bytes enter the cache.
+        if let Some(cache) = &self.blob_cache {
+            cache.insert(self.config.universe_id, blob_ref, &bytes);
         }
         Ok(bytes)
     }

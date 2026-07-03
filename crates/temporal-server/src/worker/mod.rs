@@ -71,7 +71,9 @@ pub fn worker_with_activities(
 pub async fn run_worker(config: WorkerServerConfig) -> anyhow::Result<()> {
     let runtime = core_runtime()?;
     let client = connect_temporal(&config.temporal_target, &config.namespace).await?;
-    let stores = DeploymentStores::from_env().await?;
+    let stores = DeploymentStores::from_env()
+        .await?
+        .with_blob_cache(crate::config::blob_cache_from_env()?);
     // The worker serves every universe of the deployment regardless of the
     // gateway's auth mode; per-universe state resolves lazily from the
     // universe-composed workflow id of each activity task.
@@ -81,7 +83,6 @@ pub async fn run_worker(config: WorkerServerConfig) -> anyhow::Result<()> {
         None,
         stores,
     )?);
-    universes.spawn_idle_sweeper();
     let activities = WorkerActivities::with_runtime(universes);
     let mut worker =
         worker_with_activities(&runtime, client, config.task_queue.clone(), activities)?;

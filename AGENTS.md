@@ -168,6 +168,7 @@ Local commands load a root `.env` file when present. The `.env` file usually exi
 | `LIGHTSPEED_UNIVERSE_AUTO_CREATE` | `trusted-header` mode: create unknown universes on first use (default false) |
 | `LIGHTSPEED_API_KEY` | Client-side (CLI/bridge): bearer key sent to an `api-key`-mode gateway |
 | `LIGHTSPEED_UNIVERSE` | Client-side (CLI/bridge): universe header sent to a `trusted-header`-mode gateway |
+| `LIGHTSPEED_BLOB_CACHE_BYTES` | CAS blob cache budget per process (`0` disables; default 256MiB) |
 
 ## Test Rules
 

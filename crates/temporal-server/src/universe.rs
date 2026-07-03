@@ -7,15 +7,19 @@
 //! Temporal client, HTTP clients, and task queue.
 //!
 //! Registry lifecycle: states build on first touch, are stamped with a
-//! last-used time on every touch, and are evicted opportunistically — after
-//! hours of idleness, or LRU-first beyond a large cap. Eviction is safe
-//! because states hold no durable data: in-flight work keeps its own `Arc`
-//! alive, and the next touch rebuilds from the shared pool and clients.
+//! last-used time on every touch, and are evicted opportunistically on the
+//! next touch of any universe — after hours of idleness, or LRU-first beyond
+//! a large cap. There is deliberately no background sweeper: with all HTTP
+//! clients deployment-shared, a lingering idle state is only resolver
+//! wrappers and a tool registry, so a fully quiet process holds nothing
+//! worth a task. Eviction is safe because states hold no durable data:
+//! in-flight work keeps its own `Arc` alive, and the next touch rebuilds
+//! from the shared pool and clients.
 
 use std::{
     collections::BTreeMap,
     sync::Arc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use auth::{GitHubApiClient, HttpGitHubApiClient, HttpOAuthTokenClient, OAuthTokenClient};
@@ -40,11 +44,6 @@ const UNIVERSE_IDLE_EVICT_MS: u64 = 4 * 60 * 60 * 1000;
 /// expected concurrently-active tenant count; the idle sweep does the real
 /// work.
 const UNIVERSE_CACHE_CAP: usize = 1024;
-
-/// Interval of the background idle sweeper. Inline eviction on every
-/// `state_for` call does the work on active deployments; the sweeper only
-/// covers a fully quiet process, so it can be lazy.
-const UNIVERSE_SWEEP_INTERVAL: Duration = Duration::from_secs(600);
 
 #[derive(Debug, Error)]
 pub enum UniverseError {
@@ -157,29 +156,6 @@ impl UniverseRuntime {
         })
     }
 
-    /// Background eviction for fully quiet processes: inline eviction runs on
-    /// every `state_for` call, so this sweeper only matters when no request or
-    /// activity touches the registry for a long time. The task holds a `Weak`
-    /// reference and exits when the runtime is dropped.
-    pub fn spawn_idle_sweeper(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
-        let runtime = Arc::downgrade(self);
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(UNIVERSE_SWEEP_INTERVAL);
-            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-            // The first tick fires immediately; skip it so a fresh runtime is
-            // not swept before it serves anything.
-            interval.tick().await;
-            loop {
-                interval.tick().await;
-                let Some(runtime) = runtime.upgrade() else {
-                    return;
-                };
-                let mut states = runtime.states.lock().await;
-                evict_universe_states(&mut states, now_ms(), None);
-            }
-        })
-    }
-
     pub fn task_queue(&self) -> &str {
         &self.task_queue
     }
@@ -198,7 +174,7 @@ impl UniverseRuntime {
         if let Some(entry) = states.get_mut(&universe_id) {
             entry.last_used_ms = now_ms;
             let state = entry.state.clone();
-            evict_universe_states(&mut states, now_ms, Some(universe_id));
+            evict_universe_states(&mut states, now_ms, universe_id);
             return Ok(state);
         }
         let exists = store_pg::universe_exists(self.stores.pool(), universe_id)
@@ -215,7 +191,7 @@ impl UniverseRuntime {
                 last_used_ms: now_ms,
             },
         );
-        evict_universe_states(&mut states, now_ms, Some(universe_id));
+        evict_universe_states(&mut states, now_ms, universe_id);
         Ok(state)
     }
 
@@ -259,7 +235,7 @@ fn now_ms() -> u64 {
 fn evict_universe_states(
     states: &mut BTreeMap<Uuid, UniverseEntry>,
     now_ms: u64,
-    just_used: Option<Uuid>,
+    just_used: Uuid,
 ) {
     let last_used = states
         .iter()
@@ -283,19 +259,18 @@ fn evict_universe_states(
 
 /// Pure eviction plan over last-used timestamps: drop everything idle longer
 /// than `idle_ms`, then drop LRU-first down to `cap`. `just_used` (the entry
-/// the current call touched, if any — the background sweeper has none) is
-/// never evicted.
+/// the current call touched) is never evicted.
 fn plan_universe_evictions(
     last_used: &BTreeMap<Uuid, u64>,
     now_ms: u64,
     idle_ms: u64,
     cap: usize,
-    just_used: Option<Uuid>,
+    just_used: Uuid,
 ) -> Vec<Uuid> {
     let mut evict = Vec::new();
     let mut remaining = Vec::new();
     for (&universe_id, &used_ms) in last_used {
-        if Some(universe_id) == just_used {
+        if universe_id == just_used {
             continue;
         }
         if now_ms.saturating_sub(used_ms) > idle_ms {
@@ -304,7 +279,7 @@ fn plan_universe_evictions(
             remaining.push((used_ms, universe_id));
         }
     }
-    let kept = remaining.len() + usize::from(just_used.is_some());
+    let kept = remaining.len() + 1; // + the just-used entry
     if kept > cap {
         remaining.sort_unstable();
         evict.extend(
@@ -334,21 +309,8 @@ mod tests {
             (uuid(2), now - 500),   // fresh
             (uuid(3), now - 5_000), // idle but just used
         ]);
-        let evicted = plan_universe_evictions(&last_used, now, idle, 100, Some(uuid(3)));
+        let evicted = plan_universe_evictions(&last_used, now, idle, 100, uuid(3));
         assert_eq!(evicted, vec![uuid(1)]);
-    }
-
-    #[test]
-    fn background_sweep_without_a_just_used_entry_evicts_all_idle() {
-        let now = 10_000_000;
-        let idle = 1_000;
-        let last_used = BTreeMap::from([
-            (uuid(1), now - 5_000), // idle
-            (uuid(2), now - 500),   // fresh
-            (uuid(3), now - 5_000), // idle
-        ]);
-        let evicted = plan_universe_evictions(&last_used, now, idle, 100, None);
-        assert_eq!(evicted, vec![uuid(1), uuid(3)]);
     }
 
     #[test]
@@ -360,7 +322,7 @@ mod tests {
             (uuid(3), now - 20),
             (uuid(4), now - 10), // just used
         ]);
-        let evicted = plan_universe_evictions(&last_used, now, u64::MAX, 2, Some(uuid(4)));
+        let evicted = plan_universe_evictions(&last_used, now, u64::MAX, 2, uuid(4));
         assert_eq!(evicted, vec![uuid(1), uuid(2)]);
     }
 
@@ -368,6 +330,6 @@ mod tests {
     fn under_cap_and_fresh_evicts_nothing() {
         let now = 10_000_000;
         let last_used = BTreeMap::from([(uuid(1), now - 10), (uuid(2), now)]);
-        assert!(plan_universe_evictions(&last_used, now, 1_000, 100, Some(uuid(2))).is_empty());
+        assert!(plan_universe_evictions(&last_used, now, 1_000, 100, uuid(2)).is_empty());
     }
 }

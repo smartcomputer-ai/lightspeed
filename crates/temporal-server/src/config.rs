@@ -4,7 +4,8 @@ use engine::{ModelSelection, ProviderApiKind};
 use object_store::ObjectStore;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use store_pg::{
-    PgStore, PgStoreConfig, S3ObjectStoreConfig, SecretsMasterKey, build_s3_object_store,
+    BlobCache, PgStore, PgStoreConfig, S3ObjectStoreConfig, SecretsMasterKey,
+    build_s3_object_store,
 };
 use temporal_workflow::{DEFAULT_MODEL, DEFAULT_TASK_QUEUE};
 use uuid::Uuid;
@@ -63,6 +64,33 @@ pub fn gateway_auth_mode_from_env() -> anyhow::Result<GatewayAuthMode> {
     }
 }
 
+/// Default CAS blob-cache budget per process. One default for every role:
+/// in `both` mode the gateway and worker share a single cache anyway, and
+/// gateway-only deployments that want less set `LIGHTSPEED_BLOB_CACHE_BYTES`.
+pub const BLOB_CACHE_DEFAULT_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Blobs larger than this bypass the cache so one media blob cannot flush
+/// the working set of small hot blobs (context entries, schemas, prompts).
+const BLOB_CACHE_MAX_ENTRY_BYTES: usize = 2 * 1024 * 1024;
+
+/// CAS blob cache from the environment: `LIGHTSPEED_BLOB_CACHE_BYTES`
+/// overrides the default; `0` disables caching.
+pub fn blob_cache_from_env() -> anyhow::Result<Option<Arc<BlobCache>>> {
+    let bytes = match optional_env("LIGHTSPEED_BLOB_CACHE_BYTES") {
+        Some(value) => value
+            .parse::<u64>()
+            .map_err(|error| anyhow::anyhow!("invalid LIGHTSPEED_BLOB_CACHE_BYTES: {error}"))?,
+        None => BLOB_CACHE_DEFAULT_BYTES,
+    };
+    if bytes == 0 {
+        return Ok(None);
+    }
+    Ok(Some(Arc::new(BlobCache::new(
+        bytes,
+        BLOB_CACHE_MAX_ENTRY_BYTES,
+    ))))
+}
+
 /// Resolve the Temporal task queue for this deployment: an explicit
 /// `LIGHTSPEED_TASK_QUEUE` wins, otherwise the shared deployment queue
 /// (`lightspeed-agent`). All universes of a deployment share one queue; the
@@ -85,6 +113,7 @@ pub struct DeploymentStores {
     object_store: Option<Arc<dyn ObjectStore>>,
     object_prefix: Option<String>,
     secrets_master_key: Option<SecretsMasterKey>,
+    blob_cache: Option<Arc<BlobCache>>,
 }
 
 impl DeploymentStores {
@@ -113,7 +142,16 @@ impl DeploymentStores {
             object_store,
             object_prefix: optional_env("LIGHTSPEED_OBJECT_STORE_PREFIX"),
             secrets_master_key,
+            blob_cache: None,
         })
+    }
+
+    /// Attach the deployment's shared CAS blob cache. Universe-bound stores
+    /// stamped from these deployment stores all share it; entries are keyed
+    /// by `(universe_id, blob_ref)`, so tenancy isolation is preserved.
+    pub fn with_blob_cache(mut self, blob_cache: Option<Arc<BlobCache>>) -> Self {
+        self.blob_cache = blob_cache;
+        self
     }
 
     pub fn pool(&self) -> &PgPool {
@@ -141,14 +179,17 @@ impl DeploymentStores {
         if let Some(master_key) = &self.secrets_master_key {
             config = config.with_secrets_master_key(master_key.clone());
         }
-        match &self.object_store {
-            Some(object_store) => Arc::new(PgStore::with_object_store(
-                self.pool.clone(),
-                object_store.clone(),
-                config,
-            )),
-            None => Arc::new(PgStore::new(self.pool.clone(), config)),
-        }
+        let store = match &self.object_store {
+            Some(object_store) => {
+                PgStore::with_object_store(self.pool.clone(), object_store.clone(), config)
+            }
+            None => PgStore::new(self.pool.clone(), config),
+        };
+        let store = match &self.blob_cache {
+            Some(blob_cache) => store.with_blob_cache(blob_cache.clone()),
+            None => store,
+        };
+        Arc::new(store)
     }
 }
 
@@ -156,7 +197,9 @@ impl DeploymentStores {
 /// `single`-mode deployments, tests, and tools that operate on one universe.
 pub async fn pg_store_from_env() -> anyhow::Result<Arc<PgStore>> {
     let universe_id = universe_id_from_env()?;
-    let stores = DeploymentStores::from_env().await?;
+    let stores = DeploymentStores::from_env()
+        .await?
+        .with_blob_cache(blob_cache_from_env()?);
     let store = stores.store_for(universe_id);
     store.ensure_universe().await?;
     Ok(store)

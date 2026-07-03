@@ -54,17 +54,29 @@
   evicts cached states opportunistically on every `state_for` touch (4h
   idle timeout, LRU beyond a 1024-state cap, the just-used entry never
   evicted; safe because states hold no durable data and in-flight work
-  keeps its own `Arc`), plus a 10-minute background sweeper
-  (`spawn_idle_sweeper`, `Weak`-held so it exits with the runtime) covering
-  fully quiet processes; all
+  keeps its own `Arc`; no background sweeper — with HTTP clients
+  deployment-shared, a lingering idle state is tens of KBs, so the inline
+  sweep on the next registry touch is sufficient); all
   universe-agnostic HTTP clients (OpenAI responses/audio, Anthropic, OAuth
   token/metadata, GitHub) moved to a deployment-scoped `DeploymentClients`
   shared across universes, so a cached universe's marginal footprint is the
   resolver layers and tool registry only; and the gateway session-metadata
   map is bounded by session lifetime (empty metadata never occupies an
-  entry, `close_session` removes it). There is no CAS/blob cache in the
-  runtime — blob reads always go to Postgres/S3 — so no per-universe blob
-  memory accrues.
+  entry, `close_session` removes it).
+- CAS blob cache implemented 2026-07-03 (`store_pg::BlobCache`, moka): one
+  deployment-wide byte-budgeted cache keyed `(universe_id, blob_ref)` —
+  mirroring the `cas_blobs` primary key, so knowing a hash never grants a
+  foreign universe access and identical bytes cache per-universe, matching
+  the store's no-cross-tenant-dedup stance. Positive-only and
+  invalidation-free (blobs are immutable; only hash-verified bytes are
+  inserted, on read-miss and write-through on put). Entries >2MiB bypass so
+  media cannot flush the hot working set. Budget:
+  `LIGHTSPEED_BLOB_CACHE_BYTES` (`0` disables), one 256MiB default for
+  every role — in `both` mode the gateway and worker share a single cache
+  via the shared `DeploymentStores`; split deployments hold one cache per
+  process and size the gateway down via the env knob if desired. This is
+  the runtime's only content cache; uncached blob reads still go to
+  Postgres/S3.
 - Builds on **P55 (Temporal Claw)**, which introduced the `universes` table and
   scoped every Postgres table by `universe_id`, but deliberately fixed one
   configured universe per worker/gateway process (`universe_id` is

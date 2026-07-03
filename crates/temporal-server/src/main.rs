@@ -331,7 +331,11 @@ async fn run_both(args: BothArgs) -> anyhow::Result<()> {
         &args.temporal.namespace,
     )
     .await?;
-    let stores = DeploymentStores::from_env().await?;
+    // `both` mode: the gateway and worker share one process, one universe
+    // registry, and therefore one blob cache.
+    let stores = DeploymentStores::from_env()
+        .await?
+        .with_blob_cache(temporal_server::config::blob_cache_from_env()?);
     let public_base_url = args
         .public_base_url
         .clone()
@@ -345,7 +349,6 @@ async fn run_both(args: BothArgs) -> anyhow::Result<()> {
         stores,
     )?);
     prewarm_single_universe(&mode, &universes).await?;
-    universes.spawn_idle_sweeper();
     let activities = WorkerActivities::with_runtime(universes.clone());
     let mut temporal_worker =
         worker::worker_with_activities(&runtime, client.clone(), task_queue.clone(), activities)?;

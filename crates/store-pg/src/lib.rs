@@ -6,6 +6,7 @@
 mod api_keys;
 mod auth;
 mod blob;
+mod blob_cache;
 mod environment;
 mod environment_jobs;
 mod mcp;
@@ -192,6 +193,7 @@ pub struct PgStore {
     pub(crate) pool: PgPool,
     pub(crate) object_store: Option<Arc<dyn ObjectStore>>,
     pub(crate) config: PgStoreConfig,
+    pub(crate) blob_cache: Option<Arc<BlobCache>>,
 }
 
 #[derive(Debug, Error)]
@@ -209,6 +211,7 @@ impl PgStore {
             pool,
             object_store: None,
             config,
+            blob_cache: None,
         }
     }
 
@@ -221,7 +224,16 @@ impl PgStore {
             pool,
             object_store: Some(object_store),
             config,
+            blob_cache: None,
         }
+    }
+
+    /// Attach a shared in-memory blob cache. The cache may be shared across
+    /// universe-bound stores: entries are keyed by `(universe_id, blob_ref)`,
+    /// so tenancy isolation matches the `cas_blobs` primary key.
+    pub fn with_blob_cache(mut self, blob_cache: Arc<BlobCache>) -> Self {
+        self.blob_cache = Some(blob_cache);
+        self
     }
 
     pub async fn connect(database_url: &str, config: PgStoreConfig) -> Result<Self, PgStoreError> {
@@ -289,6 +301,7 @@ impl PgStore {
 }
 
 pub use api_keys::PgApiKeyStore;
+pub use blob_cache::BlobCache;
 
 /// Deployment-level universe listing for admin surfaces.
 pub async fn list_universes(pool: &PgPool) -> Result<Vec<(Uuid, Option<String>)>, PgStoreError> {
