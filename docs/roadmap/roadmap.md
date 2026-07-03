@@ -50,7 +50,8 @@
 - [ ] Workflows as tools (register a workflow as a tool, route to workflow)
 - [ ] [P90](p90-multi-tenancy.md) — multi-tenant worker: multiple universes
       per deployment, composed workflow ids, per-request universe resolution
-      (`single` / `trusted-header` / `api-key` modes)
+      (`single` / `trusted-header` / `api-key` modes). Phase 1 done
+      (runtime + `single`/`trusted-header` modes); api-key + bridge phases open
 - [ ] Python SDK
      - [ ] API Client
      - [ ] Workflow helpers

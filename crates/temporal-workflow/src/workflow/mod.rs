@@ -42,7 +42,7 @@ use crate::{
     PendingToolBatchResume, PreprocessRunInputActivityRequest, PreprocessRunInputFailure,
     PreprocessRunInputFailureKind, PreprocessRunInputOutcome, PutBlobRequest, RunSubscription,
     RunTerminalNotification, SkillCatalogRefreshActivityRequest, ToolInvokeBatchActivityRequest,
-    WorkflowActivities, activity_options, default_instructions,
+    WorkflowActivities, activity_options, compose_workflow_id, default_instructions,
 };
 
 use activity_calls::{

@@ -845,6 +845,7 @@ impl GatewayAgentApi {
         close_on_terminal: bool,
     ) -> AgentSessionArgs {
         AgentSessionArgs {
+            universe_id: self.universe_id(),
             session_id,
             session_config,
             instructions_ref: self.instructions_ref.clone(),
@@ -974,7 +975,8 @@ impl GatewayAgentApi {
             .start_workflow(
                 AgentSessionWorkflow::run,
                 self.workflow_args(session_id.clone(), session_config, close_on_terminal),
-                WorkflowStartOptions::new(self.task_queue.clone(), session_id.as_str()).build(),
+                WorkflowStartOptions::new(self.task_queue.clone(), self.workflow_id_for(&session_id))
+                    .build(),
             )
             .await
             .map_err(map_workflow_start_error);
@@ -3046,6 +3048,10 @@ impl GatewayAgentApi {
         oauth_api::cimd_document(&self.public_base_url)
     }
 
+    pub fn public_base_url(&self) -> &str {
+        &self.public_base_url
+    }
+
     /// Load a GitHub App provider and sign its app JWT for control-plane
     /// calls (installation listing/verification). The JWT and the key only
     /// exist in memory inside [`auth::SecretValue`] wrappers.
@@ -3106,6 +3112,12 @@ impl GatewayAgentApi {
 }
 #[cfg(test)]
 mod tests;
+
+/// Deployment-scoped CIMD document: depends only on the public base URL, so
+/// the multi-universe HTTP edge serves it without resolving a universe.
+pub(crate) fn cimd_document_for(public_base_url: &str) -> serde_json::Value {
+    oauth_api::cimd_document(public_base_url)
+}
 
 fn outbound_message_view(message: messaging::OutboundMessage) -> OutboundMessageView {
     OutboundMessageView {

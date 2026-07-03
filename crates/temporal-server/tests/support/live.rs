@@ -71,8 +71,26 @@ where
     client_result
 }
 
+/// Universe used by live tests: the one bound by `LIGHTSPEED_PG_UNIVERSE_ID`.
+pub fn live_universe_id() -> anyhow::Result<uuid::Uuid> {
+    temporal_server::universe_id_from_env()
+}
+
+/// Temporal workflow handle for a session, addressed by the composed
+/// `{universe_id}/{session_id}` workflow id.
+pub fn live_workflow_handle(
+    client: &Client,
+    session_id: &SessionId,
+) -> anyhow::Result<temporalio_client::WorkflowHandle<Client, AgentSessionWorkflow>> {
+    let workflow_id = temporal_workflow::compose_workflow_id(live_universe_id()?, session_id);
+    Ok(client.get_workflow_handle::<AgentSessionWorkflow>(workflow_id))
+}
+
 pub async fn fake_worker_activities() -> anyhow::Result<WorkerActivities> {
-    Ok(WorkerActivities::new(fake_activity_state().await?))
+    Ok(WorkerActivities::for_universe(
+        live_universe_id()?,
+        fake_activity_state().await?,
+    ))
 }
 
 pub async fn fake_worker_activities_with_audio_transcriber(
@@ -91,7 +109,7 @@ pub async fn fake_worker_activities_with_audio_preprocessors(
     if let Some(transcoder) = transcoder {
         state = state.with_audio_transcoder(transcoder);
     }
-    Ok(WorkerActivities::new(state))
+    Ok(WorkerActivities::for_universe(live_universe_id()?, state))
 }
 
 pub async fn fake_activity_state() -> anyhow::Result<ActivityState> {
@@ -147,7 +165,7 @@ pub async fn wait_for_admission_failure(
     session_id: &SessionId,
     kind: AgentAdmissionFailureKind,
 ) -> anyhow::Result<()> {
-    let handle = client.get_workflow_handle::<AgentSessionWorkflow>(session_id.as_str());
+    let handle = live_workflow_handle(client, session_id)?;
     let started = Instant::now();
     loop {
         if started.elapsed() > Duration::from_secs(30) {

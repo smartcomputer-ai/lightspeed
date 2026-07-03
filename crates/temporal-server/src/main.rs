@@ -3,13 +3,13 @@ use std::{env, net::SocketAddr, sync::Arc, time::Duration};
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand};
 use temporal_server::{
-    config::{pg_store_from_env, task_queue_from_env},
-    fleet::AgentApiFleetRuntime,
+    config::{DeploymentStores, gateway_auth_mode_from_env, task_queue_from_env},
     gateway::{
         DEFAULT_GATEWAY_BIND, DEFAULT_MAX_REQUEST_BODY_BYTES, DEFAULT_TEMPORAL_NAMESPACE,
-        DEFAULT_TEMPORAL_TARGET, GatewayAgentApi, GatewayServerConfig, gateway_router,
-        serve_gateway,
+        DEFAULT_TEMPORAL_TARGET, GatewayServerConfig, GatewayState, gateway_router,
+        prewarm_single_universe, serve_gateway,
     },
+    universe::UniverseRuntime,
     worker::{self, WorkerActivities, WorkerServerConfig},
 };
 use tracing_subscriber::{EnvFilter, fmt};
@@ -37,7 +37,9 @@ enum Command {
 
 #[derive(Clone, Debug, Args)]
 struct TemporalArgs {
-    /// Temporal task queue. Defaults to lightspeed-universe-{LIGHTSPEED_PG_UNIVERSE_ID}.
+    /// Temporal task queue shared by all universes of this deployment.
+    /// Defaults to lightspeed-agent. Deployments sharing a Temporal namespace
+    /// must set distinct queues.
     #[arg(long, env = "LIGHTSPEED_TASK_QUEUE")]
     task_queue: Option<String>,
 
@@ -173,26 +175,28 @@ async fn main() -> anyhow::Result<()> {
 
 async fn run_both(args: BothArgs) -> anyhow::Result<()> {
     let task_queue = args.temporal.resolved_task_queue()?;
+    let mode = gateway_auth_mode_from_env()?;
     let runtime = worker::core_runtime()?;
     let client = temporal_server::gateway::connect_temporal(
         &args.temporal.temporal_target,
         &args.temporal.namespace,
     )
     .await?;
-    let store = pg_store_from_env().await?;
-    let api = Arc::new(
-        GatewayAgentApi::builder(client.clone(), store.clone())
-            .with_task_queue(task_queue.clone())
-            .with_public_base_url(
-                args.public_base_url
-                    .clone()
-                    .unwrap_or_else(|| format!("http://{}", args.bind)),
-            )
-            .build(),
-    );
-    let fleet_runtime = Arc::new(AgentApiFleetRuntime::new(api.clone()));
-    let activities =
-        WorkerActivities::from_pg_store_with_default_runtime_and_fleet(store, fleet_runtime)?;
+    let stores = DeploymentStores::from_env().await?;
+    let public_base_url = args
+        .public_base_url
+        .clone()
+        .unwrap_or_else(|| format!("http://{}", args.bind));
+    // Gateway and worker share one universe registry: fleet spawns and
+    // activity routing hit the same lazily-built per-universe state.
+    let universes = Arc::new(UniverseRuntime::new(
+        client.clone(),
+        task_queue.clone(),
+        Some(public_base_url.clone()),
+        stores,
+    ));
+    prewarm_single_universe(&mode, &universes).await?;
+    let activities = WorkerActivities::with_runtime(universes.clone());
     let mut temporal_worker =
         worker::worker_with_activities(&runtime, client.clone(), task_queue.clone(), activities)?;
     let shutdown_worker = temporal_worker.shutdown_handle();
@@ -207,7 +211,8 @@ async fn run_both(args: BothArgs) -> anyhow::Result<()> {
         "temporal worker polling"
     );
 
-    let app = gateway_router(api, args.max_request_body_bytes);
+    let gateway_state = Arc::new(GatewayState::multi(mode, universes, public_base_url));
+    let app = gateway_router(gateway_state, args.max_request_body_bytes);
     let listener = tokio::net::TcpListener::bind(args.bind).await?;
     tracing::info!(target: "temporal_server", bind = %args.bind, "gateway listening");
     let gateway_future = async {

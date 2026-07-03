@@ -3859,9 +3859,11 @@ dependencies = [
  "llm-runtime",
  "mcp",
  "messaging",
+ "object_store",
  "profiles",
  "serde",
  "serde_json",
+ "sqlx",
  "store-pg",
  "tempfile",
  "temporal-workflow",
@@ -3896,6 +3898,7 @@ dependencies = [
  "temporalio-macros",
  "temporalio-sdk",
  "temporalio-sdk-core",
+ "uuid",
 ]
 
 [[package]]
@@ -4697,6 +4700,7 @@ checksum = "ddd74a9687298c6858e9b88ec8935ec45d22e8fd5e6394fa1bd4e99a87789c76"
 dependencies = [
  "getrandom 0.4.2",
  "js-sys",
+ "serde_core",
  "wasm-bindgen",
 ]
 

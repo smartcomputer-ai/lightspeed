@@ -24,12 +24,13 @@ use engine::{
     storage::{BlobStore, ListSessionLinks, SessionLinkDirection, SessionStore},
 };
 use support::live::{
-    LIVE_TEST_LOCK, fake_worker_activities, final_assistant_text, openai_live_model,
-    require_openai_live_env, require_storage_live_env, run_with_live_worker,
-    wait_for_admission_failure, wait_for_session_status, wait_for_terminal_run,
+    LIVE_TEST_LOCK, fake_worker_activities, final_assistant_text,
+    live_workflow_handle, openai_live_model, require_openai_live_env, require_storage_live_env,
+    run_with_live_worker, wait_for_admission_failure, wait_for_session_status,
+    wait_for_terminal_run,
 };
 use temporal_server::{
-    default_model_from_env,
+    DeploymentStores, UniverseRuntime, default_model_from_env,
     fleet::{
         AgentApiFleetRuntime, FLEET_CHILD_RELATIONSHIP, FleetInvocationContext, FleetService,
         FleetToolExecutor,
@@ -533,7 +534,10 @@ where
         store.clone(),
         fleet_runtime,
     )) as Arc<dyn CoreAgentTools>;
-    let activities = WorkerActivities::new(ActivityState::from_pg_store(store.clone(), llm, tools));
+    let activities = WorkerActivities::for_universe(
+        store.config().universe_id,
+        ActivityState::from_pg_store(store.clone(), llm, tools),
+    );
     let mut worker =
         worker_with_activities(&runtime, client.clone(), task_queue.clone(), activities)?;
     let shutdown_worker = worker.shutdown_handle();
@@ -716,7 +720,7 @@ async fn run_fake_live_client(
     assert!(parked.result.complete);
     assert!(parked_started.elapsed() >= std::time::Duration::from_millis(900));
 
-    let handle = client.get_workflow_handle::<AgentSessionWorkflow>(session_id.as_str());
+    let handle = live_workflow_handle(&client, &session_id)?;
     let _ = handle
         .terminate(
             WorkflowTerminateOptions::builder()
@@ -861,7 +865,7 @@ async fn run_fleet_spawn_live_client(
     assert!(output_text.contains("Fake agent completed run"));
 
     let child_handle =
-        client.get_workflow_handle::<AgentSessionWorkflow>(child_session_id.as_str());
+        live_workflow_handle(&client, &child_session_id)?;
     let status = child_handle
         .query(
             AgentSessionWorkflow::status,
@@ -871,8 +875,8 @@ async fn run_fleet_spawn_live_client(
         .await?;
     assert_eq!(status.last_error, None);
 
-    for id in [session_id.as_str(), child_session_id.as_str()] {
-        let handle = client.get_workflow_handle::<AgentSessionWorkflow>(id);
+    for id in [&session_id, &child_session_id] {
+        let handle = live_workflow_handle(&client, id)?;
         let _ = handle
             .terminate(
                 WorkflowTerminateOptions::builder()
@@ -1042,8 +1046,8 @@ async fn run_fleet_profile_spawn_live_client(
     api.delete_profile(ProfileDeleteParams { profile_id })
         .await?;
 
-    for id in [session_id.as_str(), child_session_id.as_str()] {
-        let handle = client.get_workflow_handle::<AgentSessionWorkflow>(id);
+    for id in [&session_id, &child_session_id] {
+        let handle = live_workflow_handle(&client, id)?;
         let _ = handle
             .terminate(
                 WorkflowTerminateOptions::builder()
@@ -1271,7 +1275,7 @@ async fn run_fleet_wait_live_client(
         "expected child final output in parent output, got: {parent_output}"
     );
 
-    let parent_handle = client.get_workflow_handle::<AgentSessionWorkflow>(session_id.as_str());
+    let parent_handle = live_workflow_handle(&client, &session_id)?;
     let parent_status = parent_handle
         .query(
             AgentSessionWorkflow::status,
@@ -1283,7 +1287,7 @@ async fn run_fleet_wait_live_client(
     assert_eq!(parent_status.last_error, None);
 
     let child_handle =
-        client.get_workflow_handle::<AgentSessionWorkflow>(child_session_id.as_str());
+        live_workflow_handle(&client, &child_session_id)?;
     let child_status = child_handle
         .query(
             AgentSessionWorkflow::status,
@@ -1293,8 +1297,8 @@ async fn run_fleet_wait_live_client(
         .await?;
     assert_eq!(child_status.last_error, None);
 
-    for id in [session_id.as_str(), child_session_id.as_str()] {
-        let handle = client.get_workflow_handle::<AgentSessionWorkflow>(id);
+    for id in [&session_id, &child_session_id] {
+        let handle = live_workflow_handle(&client, id)?;
         let _ = handle
             .terminate(
                 WorkflowTerminateOptions::builder()
@@ -1329,8 +1333,7 @@ async fn run_fleet_send_report_back_live_client(
     })
     .await?;
 
-    let parent_status = client
-        .get_workflow_handle::<AgentSessionWorkflow>(session_id.as_str())
+    let parent_status = live_workflow_handle(&client, &session_id)?
         .query(
             AgentSessionWorkflow::status,
             (),
@@ -1402,8 +1405,7 @@ async fn run_fleet_send_report_back_live_client(
     assert_eq!(parent_output, "parent received mode i live result");
     wait_for_session_status(api.as_ref(), &child_session_id, SessionStatus::Closed).await?;
 
-    let parent_status = client
-        .get_workflow_handle::<AgentSessionWorkflow>(session_id.as_str())
+    let parent_status = live_workflow_handle(&client, &session_id)?
         .query(
             AgentSessionWorkflow::status,
             (),
@@ -1413,8 +1415,7 @@ async fn run_fleet_send_report_back_live_client(
     assert_eq!(parent_status.last_error, None);
     assert_eq!(parent_status.completed_runs.len(), 1);
 
-    let child_status = client
-        .get_workflow_handle::<AgentSessionWorkflow>(child_session_id.as_str())
+    let child_status = live_workflow_handle(&client, &child_session_id)?
         .query(
             AgentSessionWorkflow::status,
             (),
@@ -1423,8 +1424,8 @@ async fn run_fleet_send_report_back_live_client(
         .await?;
     assert_eq!(child_status.last_error, None);
 
-    for id in [session_id.as_str(), child_session_id.as_str()] {
-        let handle = client.get_workflow_handle::<AgentSessionWorkflow>(id);
+    for id in [&session_id, &child_session_id] {
+        let handle = live_workflow_handle(&client, id)?;
         let _ = handle
             .terminate(
                 WorkflowTerminateOptions::builder()
@@ -1472,7 +1473,7 @@ async fn wait_for_active_waits(
     expected: usize,
 ) -> anyhow::Result<()> {
     let started = std::time::Instant::now();
-    let handle = client.get_workflow_handle::<AgentSessionWorkflow>(session_id.as_str());
+    let handle = live_workflow_handle(&client, &session_id)?;
     loop {
         if started.elapsed() > Duration::from_secs(10) {
             anyhow::bail!(
@@ -1559,7 +1560,7 @@ async fn run_continue_as_new_live_client(
         "projected session should include runs committed before and after continue-as-new"
     );
 
-    let handle = client.get_workflow_handle::<AgentSessionWorkflow>(session_id.as_str());
+    let handle = live_workflow_handle(&client, &session_id)?;
     let _ = handle
         .terminate(
             WorkflowTerminateOptions::builder()
@@ -1911,7 +1912,7 @@ async fn run_admission_failure_live_client(
     })
     .await?;
 
-    let handle = client.get_workflow_handle::<AgentSessionWorkflow>(session_id.as_str());
+    let handle = live_workflow_handle(&client, &session_id)?;
     handle
         .signal(
             AgentSessionWorkflow::submit_admissions,
@@ -2091,7 +2092,7 @@ async fn run_mcp_live_client(
         .await?;
     assert_eq!(deleted.result.server.default_server_label, "crm");
 
-    let handle = client.get_workflow_handle::<AgentSessionWorkflow>(session_id.as_str());
+    let handle = live_workflow_handle(&client, &session_id)?;
     let _ = handle
         .terminate(
             WorkflowTerminateOptions::builder()
@@ -2271,7 +2272,7 @@ async fn run_profiles_live_client(
     api.delete_mcp_server(McpServerDeleteParams { server_id })
         .await?;
 
-    let handle = client.get_workflow_handle::<AgentSessionWorkflow>(session_id.as_str());
+    let handle = live_workflow_handle(&client, &session_id)?;
     let _ = handle
         .terminate(
             WorkflowTerminateOptions::builder()
@@ -2333,7 +2334,7 @@ async fn run_openai_live_client(
         "expected OpenAI-backed output, got fake output: {output}"
     );
 
-    let handle = client.get_workflow_handle::<AgentSessionWorkflow>(session_id.as_str());
+    let handle = live_workflow_handle(&client, &session_id)?;
     let _ = handle
         .terminate(
             WorkflowTerminateOptions::builder()
@@ -2342,4 +2343,163 @@ async fn run_openai_live_client(
         )
         .await;
     Ok(())
+}
+
+/// P90 isolation: two universes served by ONE worker on ONE shared task
+/// queue. The same client-chosen session id exists independently in both
+/// universes (distinct composed workflow ids), reads and registry listings
+/// never cross universes, and closing one universe's session leaves the
+/// other's untouched.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires local/up.sh, Postgres, and Temporal"]
+async fn temporal_live_two_universes_share_one_worker_with_isolation() -> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().expect("live test lock");
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+
+    let task_queue = format!("lightspeed-agent-live-{}", uuid::Uuid::new_v4().simple());
+    let temporal_target =
+        env::var("TEMPORAL_ADDRESS").unwrap_or_else(|_| DEFAULT_TEMPORAL_TARGET.to_owned());
+    let namespace =
+        env::var("TEMPORAL_NAMESPACE").unwrap_or_else(|_| DEFAULT_TEMPORAL_NAMESPACE.to_owned());
+    let runtime = core_runtime()?;
+    let client = connect_temporal(&temporal_target, &namespace).await?;
+    let stores = DeploymentStores::from_env().await?;
+    let universes = Arc::new(UniverseRuntime::new(
+        client.clone(),
+        task_queue.clone(),
+        None,
+        stores,
+    ));
+
+    let activities = WorkerActivities::with_runtime(universes.clone());
+    let mut worker =
+        worker_with_activities(&runtime, client.clone(), task_queue.clone(), activities)?;
+    let shutdown_worker = worker.shutdown_handle();
+    let worker_future = worker.run();
+    tokio::pin!(worker_future);
+
+    let universe_a = uuid::Uuid::new_v4();
+    let universe_b = uuid::Uuid::new_v4();
+    let session_id = SessionId::new(format!("session_shared_{}", uuid::Uuid::new_v4().simple()));
+
+    let client_future = async {
+        let state_a = universes.state_for(universe_a, true).await?;
+        let state_b = universes.state_for(universe_b, true).await?;
+        let api_a = state_a.api.clone();
+        let api_b = state_b.api.clone();
+
+        // The same client-chosen session id starts independently in both
+        // universes on the same queue, served by the same worker.
+        for api in [api_a.as_ref(), api_b.as_ref()] {
+            let started = api
+                .start_session(SessionStartParams {
+                    session_id: Some(session_id.as_str().to_owned()),
+                    cwd: None,
+                    config: None,
+                    profile: None,
+                })
+                .await?;
+            assert_eq!(started.result.session.status, SessionStatus::Idle);
+        }
+
+        // Distinct workflows: both composed ids are queryable and healthy.
+        for universe_id in [universe_a, universe_b] {
+            let workflow_id = temporal_workflow::compose_workflow_id(universe_id, &session_id);
+            let handle = client.get_workflow_handle::<AgentSessionWorkflow>(workflow_id);
+            let status = handle
+                .query(
+                    AgentSessionWorkflow::status,
+                    (),
+                    WorkflowQueryOptions::default(),
+                )
+                .await?;
+            assert_eq!(status.last_error, None);
+            assert_eq!(status.session_id, session_id.as_str());
+        }
+
+        // Registry isolation: a profile created in A is invisible in B, and a
+        // read through B reports not-found (no existence leak).
+        let profile_id = ProfileId::new(format!("p90.isolation.{}", uuid::Uuid::new_v4().simple()));
+        api_a
+            .create_profile(ProfileCreateParams {
+                profile: AgentProfileInput {
+                    profile_id: profile_id.clone(),
+                    display_name: Some("P90 isolation".to_owned()),
+                    description: None,
+                    document: ProfileDocument::default(),
+                },
+            })
+            .await?;
+        let listed_b = api_b.list_profiles(ProfileListParams {}).await?;
+        assert!(
+            listed_b
+                .result
+                .profiles
+                .iter()
+                .all(|profile| profile.profile_id != profile_id),
+            "universe B must not list universe A's profile"
+        );
+        let read_b = api_b
+            .read_profile(ProfileReadParams {
+                profile_id: profile_id.clone(),
+            })
+            .await;
+        match read_b {
+            Err(error) => assert_eq!(error.kind, AgentApiErrorKind::NotFound),
+            Ok(_) => anyhow::bail!("universe B must not read universe A's profile"),
+        }
+
+        // Closing A's session leaves B's session open.
+        api_a
+            .close_session(api::SessionCloseParams {
+                session_id: session_id.as_str().to_owned(),
+            })
+            .await?;
+        let closed_a = api_a
+            .read_session(SessionReadParams {
+                session_id: session_id.as_str().to_owned(),
+            })
+            .await?;
+        assert_eq!(closed_a.result.session.status, SessionStatus::Closed);
+        let open_b = api_b
+            .read_session(SessionReadParams {
+                session_id: session_id.as_str().to_owned(),
+            })
+            .await?;
+        assert_eq!(open_b.result.session.status, SessionStatus::Idle);
+
+        // Cleanup: terminate both workflows.
+        for universe_id in [universe_a, universe_b] {
+            let workflow_id = temporal_workflow::compose_workflow_id(universe_id, &session_id);
+            let handle = client.get_workflow_handle::<AgentSessionWorkflow>(workflow_id);
+            let _ = handle
+                .terminate(
+                    WorkflowTerminateOptions::builder()
+                        .reason("p90 isolation live test cleanup")
+                        .build(),
+                )
+                .await;
+        }
+        anyhow::Ok(())
+    };
+    tokio::pin!(client_future);
+
+    let client_result = loop {
+        tokio::select! {
+            worker_result = worker_future.as_mut() => {
+                return match worker_result {
+                    Ok(()) => Err(anyhow::anyhow!("Temporal worker stopped before the live test completed")),
+                    Err(error) => Err(error.context("Temporal worker failed")),
+                };
+            }
+            client_result = client_future.as_mut() => break client_result,
+        }
+    };
+
+    shutdown_worker();
+    tokio::time::timeout(Duration::from_secs(10), worker_future.as_mut())
+        .await
+        .map_err(|_| anyhow::anyhow!("Temporal worker did not shut down within 10 seconds"))??;
+    client_result
 }

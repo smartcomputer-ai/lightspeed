@@ -2,6 +2,37 @@
 
 **Status**
 - Proposed 2026-07-03.
+- Phase 1 implemented 2026-07-03: composed workflow ids
+  (`compose_workflow_id`/`split_workflow_id` in `temporal-workflow`,
+  bootstrap assertion, `universe_id` on `AgentSessionArgs`), shared
+  deployment task queue default (`lightspeed-agent`), `DeploymentStores`
+  (shared pool + object store + per-universe `PgStoreConfig` template),
+  `UniverseRuntime` (lazy per-universe `PgStore` + `GatewayAgentApi` +
+  `ActivityState`, shared by gateway and worker in `both` mode),
+  `GatewayState` edge resolution with `single` and `trusted-header` modes
+  (`LIGHTSPEED_AUTH_MODE`, `LIGHTSPEED_UNIVERSE_AUTO_CREATE`, fail closed,
+  header rejected in non-header modes), OAuth callback universe resolution
+  via deployment-level `find_auth_flow_universe(state_hash)`, and the
+  separator-invariant/edge-resolution unit tests plus an ignored
+  two-universes-one-worker live isolation test. Live coverage caught one
+  cross-workflow addressing site the static sweep missed: fleet
+  `agent_wait` subscribe/unsubscribe signals addressed sibling sessions by
+  bare session id; they now compose the parent's own universe prefix
+  (`sibling_workflow_id` in `fleet_waits.rs`). Full live suite
+  (`temporal_live`, `preprocess_live`) passes; the
+  `environment_provider_live` host-bridge agent test fails identically on
+  the pre-P90 tree (pre-existing doubled-path bug in fs routing, tracked
+  separately).
+- One mechanism deviation from the proposal: the worker derives the
+  universe by splitting the workflow id carried in each activity task's
+  `ActivityContext` rather than reading `AgentSessionArgs` or a per-request
+  DTO field. The composed workflow id is the asserted tenancy identity, so
+  this keeps a single source of truth and leaves the activity DTOs
+  unchanged; a mismatched or uncomposed workflow id fails the activity
+  non-retryably. `args.universe_id` remains the workflow-side value the
+  bootstrap assertion checks against.
+- Phases 2 (api-key mode, principal pass-through) and 3 (bridge routing,
+  universe admin surface, docs) remain open.
 - Builds on **P55 (Temporal Claw)**, which introduced the `universes` table and
   scoped every Postgres table by `universe_id`, but deliberately fixed one
   configured universe per worker/gateway process (`universe_id` is

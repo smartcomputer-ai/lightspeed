@@ -474,6 +474,7 @@ fn admission(command: DynamicCommand) -> AgentAdmission {
 
 fn agent_session_args_with_close_on_terminal(close_on_terminal: bool) -> AgentSessionArgs {
     AgentSessionArgs {
+        universe_id: uuid::Uuid::nil(),
         session_id: SessionId::new("session_test"),
         session_config: crate::default_session_config(engine::ModelSelection {
             api_kind: engine::ProviderApiKind::OpenAiResponses,

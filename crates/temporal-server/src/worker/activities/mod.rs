@@ -2,10 +2,12 @@ use std::sync::Arc;
 
 use engine::{BlobRef, ContextCompactionResult, LlmGenerationResult, ToolBatchOutcome};
 use store_pg::PgStore;
+use temporalio_common::error::ApplicationFailure;
 use temporalio_macros::activities;
 use temporalio_sdk::activities::{ActivityContext, ActivityError};
 
 use crate::fleet::FleetChildRuntime;
+use crate::universe::{UniverseError, UniverseRuntime};
 use crate::worker::{
     ACTIVITY_APPEND_EVENTS, ACTIVITY_CHECK_ENVIRONMENT_JOB_WAIT, ACTIVITY_CONTEXT_COMPACT,
     ACTIVITY_CREATE_OR_LOAD_SESSION, ACTIVITY_LLM_GENERATE, ACTIVITY_PREPROCESS_RUN_INPUT,
@@ -37,23 +39,58 @@ pub use state::{
     StorageActivityDeps, ToolActivityDeps,
 };
 
+/// Worker-side universe routing. Activities carry no universe field; the
+/// authoritative tenant identity is the composed workflow id
+/// (`{universe_id}/{session_id}`, asserted at workflow bootstrap), which every
+/// activity task carries in its `ActivityContext`.
+enum WorkerUniverses {
+    /// One pre-built state for one universe. Used by tests and single-universe
+    /// tools; activities for any other universe fail.
+    Fixed {
+        universe_id: uuid::Uuid,
+        state: Arc<ActivityState>,
+    },
+    /// Lazy per-universe resolution over the deployment runtime. Never
+    /// creates universes: a workflow for an unknown universe is a routing
+    /// error, not a provisioning request.
+    Runtime(Arc<UniverseRuntime>),
+}
+
 pub struct WorkerActivities {
-    state: Arc<ActivityState>,
+    universes: WorkerUniverses,
 }
 
 impl WorkerActivities {
-    pub fn new(state: ActivityState) -> Self {
+    /// Serve exactly one universe with an injected state (tests, fakes).
+    pub fn for_universe(universe_id: uuid::Uuid, state: ActivityState) -> Self {
         Self {
-            state: Arc::new(state),
+            universes: WorkerUniverses::Fixed {
+                universe_id,
+                state: Arc::new(state),
+            },
+        }
+    }
+
+    /// Serve any universe of the deployment, resolving state lazily.
+    pub fn with_runtime(runtime: Arc<UniverseRuntime>) -> Self {
+        Self {
+            universes: WorkerUniverses::Runtime(runtime),
         }
     }
 
     pub async fn from_env() -> anyhow::Result<Self> {
-        Ok(Self::new(ActivityState::from_env().await?))
+        let store = crate::config::pg_store_from_env().await?;
+        let universe_id = store.config().universe_id;
+        Ok(Self::for_universe(
+            universe_id,
+            ActivityState::from_pg_store_with_default_runtime(store)?,
+        ))
     }
 
     pub fn from_pg_store_with_default_runtime(store: Arc<PgStore>) -> anyhow::Result<Self> {
-        Ok(Self::new(
+        let universe_id = store.config().universe_id;
+        Ok(Self::for_universe(
+            universe_id,
             ActivityState::from_pg_store_with_default_runtime(store)?,
         ))
     }
@@ -62,9 +99,61 @@ impl WorkerActivities {
         store: Arc<PgStore>,
         fleet_runtime: Arc<dyn FleetChildRuntime>,
     ) -> anyhow::Result<Self> {
-        Ok(Self::new(
+        let universe_id = store.config().universe_id;
+        Ok(Self::for_universe(
+            universe_id,
             ActivityState::from_pg_store_with_default_runtime_and_fleet(store, fleet_runtime)?,
         ))
+    }
+
+    /// Resolve the universe of the invoking workflow from the activity
+    /// context's workflow id and return that universe's activity state.
+    async fn state_for(&self, ctx: &ActivityContext) -> Result<Arc<ActivityState>, ActivityError> {
+        let workflow_id = ctx
+            .info()
+            .workflow_execution
+            .as_ref()
+            .map(|execution| execution.workflow_id.as_str())
+            .ok_or_else(|| {
+                ActivityError::application(ApplicationFailure::non_retryable(anyhow::anyhow!(
+                    "activity task carries no workflow execution info"
+                )))
+            })?;
+        let Some((universe_id, _session_id)) = temporal_workflow::split_workflow_id(workflow_id)
+        else {
+            return Err(ActivityError::application(
+                ApplicationFailure::non_retryable(anyhow::anyhow!(
+                    "workflow id is not universe-composed ({{universe_id}}/{{session_id}}): {workflow_id}"
+                )),
+            ));
+        };
+        match &self.universes {
+            WorkerUniverses::Fixed {
+                universe_id: served,
+                state,
+            } => {
+                if *served != universe_id {
+                    return Err(ActivityError::application(
+                        ApplicationFailure::non_retryable(anyhow::anyhow!(
+                            "worker serves universe {served} but workflow {workflow_id} belongs to {universe_id}"
+                        )),
+                    ));
+                }
+                Ok(state.clone())
+            }
+            WorkerUniverses::Runtime(runtime) => runtime
+                .state_for(universe_id, false)
+                .await
+                .map(|state| state.activities.clone())
+                .map_err(|error| match error {
+                    UniverseError::Unknown { .. } => ActivityError::application(
+                        ApplicationFailure::non_retryable(anyhow::anyhow!("{error}")),
+                    ),
+                    UniverseError::Runtime(_) => ActivityError::application(
+                        ApplicationFailure::new(anyhow::anyhow!("{error}")),
+                    ),
+                }),
+        }
     }
 }
 
@@ -224,90 +313,100 @@ impl WorkerActivities {
     #[activity(name = ACTIVITY_CREATE_OR_LOAD_SESSION)]
     pub async fn create_or_load_session(
         self: Arc<Self>,
-        _ctx: ActivityContext,
+        ctx: ActivityContext,
         request: CreateOrLoadSessionRequest,
     ) -> Result<CreateOrLoadSessionResult, ActivityError> {
-        storage::create_or_load_session(self.state.storage(), request).await
+        let state = self.state_for(&ctx).await?;
+        storage::create_or_load_session(state.storage(), request).await
     }
 
     #[activity(name = ACTIVITY_PUT_BLOB)]
     pub async fn put_blob(
         self: Arc<Self>,
-        _ctx: ActivityContext,
+        ctx: ActivityContext,
         request: PutBlobRequest,
     ) -> Result<BlobRef, ActivityError> {
-        storage::put_blob(self.state.storage(), request).await
+        let state = self.state_for(&ctx).await?;
+        storage::put_blob(state.storage(), request).await
     }
 
     #[activity(name = ACTIVITY_READ_BLOB)]
     pub async fn read_blob(
         self: Arc<Self>,
-        _ctx: ActivityContext,
+        ctx: ActivityContext,
         request: ReadBlobRequest,
     ) -> Result<ReadBlobResult, ActivityError> {
-        storage::read_blob(self.state.storage(), request).await
+        let state = self.state_for(&ctx).await?;
+        storage::read_blob(state.storage(), request).await
     }
 
     #[activity(name = ACTIVITY_APPEND_EVENTS)]
     pub async fn append_events(
         self: Arc<Self>,
-        _ctx: ActivityContext,
+        ctx: ActivityContext,
         request: AppendEventsRequest,
     ) -> Result<engine::storage::AppendSessionEventsResult, ActivityError> {
-        storage::append_events(self.state.storage(), request).await
+        let state = self.state_for(&ctx).await?;
+        storage::append_events(state.storage(), request).await
     }
 
     #[activity(name = ACTIVITY_LLM_GENERATE)]
     pub async fn llm_generate(
         self: Arc<Self>,
-        _ctx: ActivityContext,
+        ctx: ActivityContext,
         request: LlmGenerateActivityRequest,
     ) -> Result<LlmGenerationResult, ActivityError> {
-        llm::generate(self.state.llm(), request).await
+        let state = self.state_for(&ctx).await?;
+        llm::generate(state.llm(), request).await
     }
 
     #[activity(name = ACTIVITY_PREPROCESS_RUN_INPUT)]
     pub async fn preprocess_run_input(
         self: Arc<Self>,
-        _ctx: ActivityContext,
+        ctx: ActivityContext,
         request: PreprocessRunInputActivityRequest,
     ) -> Result<PreprocessRunInputActivityResult, ActivityError> {
-        preprocess::preprocess_run_input(self.state.preprocess(), request).await
+        let state = self.state_for(&ctx).await?;
+        preprocess::preprocess_run_input(state.preprocess(), request).await
     }
 
     #[activity(name = ACTIVITY_CONTEXT_COMPACT)]
     pub async fn context_compact(
         self: Arc<Self>,
-        _ctx: ActivityContext,
+        ctx: ActivityContext,
         request: ContextCompactActivityRequest,
     ) -> Result<ContextCompactionResult, ActivityError> {
-        compaction::compact_context(self.state.llm(), request).await
+        let state = self.state_for(&ctx).await?;
+        compaction::compact_context(state.llm(), request).await
     }
 
     #[activity(name = ACTIVITY_TOOL_INVOKE_BATCH)]
     pub async fn tool_invoke_batch(
         self: Arc<Self>,
-        _ctx: ActivityContext,
+        ctx: ActivityContext,
         request: ToolInvokeBatchActivityRequest,
     ) -> Result<ToolBatchOutcome, ActivityError> {
-        tools::invoke_batch(self.state.tools(), request).await
+        let state = self.state_for(&ctx).await?;
+        tools::invoke_batch(state.tools(), request).await
     }
 
     #[activity(name = ACTIVITY_SKILL_CATALOG_REFRESH)]
     pub async fn skill_catalog_refresh(
         self: Arc<Self>,
-        _ctx: ActivityContext,
+        ctx: ActivityContext,
         request: SkillCatalogRefreshActivityRequest,
     ) -> Result<SkillCatalogRefreshActivityResult, ActivityError> {
-        skills::refresh_skill_catalog(self.state.skill_catalog(), request).await
+        let state = self.state_for(&ctx).await?;
+        skills::refresh_skill_catalog(state.skill_catalog(), request).await
     }
 
     #[activity(name = ACTIVITY_CHECK_ENVIRONMENT_JOB_WAIT)]
     pub async fn check_environment_job_wait(
         self: Arc<Self>,
-        _ctx: ActivityContext,
+        ctx: ActivityContext,
         request: CheckEnvironmentJobWaitActivityRequest,
     ) -> Result<CheckEnvironmentJobWaitActivityResult, ActivityError> {
-        tools::check_environment_job_wait(self.state.tools(), request).await
+        let state = self.state_for(&ctx).await?;
+        tools::check_environment_job_wait(state.tools(), request).await
     }
 }

@@ -284,3 +284,35 @@ impl PgStore {
         Ok(())
     }
 }
+
+/// Deployment-level check whether a universe exists. Runs above the
+/// per-universe `PgStore` boundary: multi-universe deployments consult it
+/// before lazily constructing a universe's store.
+pub async fn universe_exists(pool: &PgPool, universe_id: Uuid) -> Result<bool, PgStoreError> {
+    let row: Option<(Uuid,)> =
+        sqlx::query_as("SELECT universe_id FROM universes WHERE universe_id = $1")
+            .bind(universe_id)
+            .fetch_optional(pool)
+            .await?;
+    Ok(row.is_some())
+}
+
+/// Deployment-level reverse lookup from an OAuth authorization callback's
+/// hashed `state` parameter to the universe that owns the flow.
+///
+/// The OAuth callback is hit by external authorization servers and carries no
+/// tenant header; its universe must be resolved from server-side state. Flow
+/// rows are universe-scoped, so this is the one query that intentionally
+/// searches across universes — `state_hash` values are high-entropy and
+/// unique per flow.
+pub async fn find_auth_flow_universe(
+    pool: &PgPool,
+    state_hash: &str,
+) -> Result<Option<Uuid>, PgStoreError> {
+    let row: Option<(Uuid,)> =
+        sqlx::query_as("SELECT universe_id FROM auth_flows WHERE state_hash = $1")
+            .bind(state_hash)
+            .fetch_optional(pool)
+            .await?;
+    Ok(row.map(|(universe_id,)| universe_id))
+}
