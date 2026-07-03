@@ -33,7 +33,7 @@ pub(super) fn auth_grant_import_draft(
         grant_id,
         provider_id: params.provider_id.unwrap_or_else(|| "static".to_owned()),
         provider_kind: auth::AuthProviderKind::StaticBearer,
-        principal: auth::PrincipalRef::universe_default(),
+        principal: crate::gateway::principal::request_principal(),
         display_name: params.display_name,
         subject_hint: params.subject_hint,
         scopes: params.scopes,

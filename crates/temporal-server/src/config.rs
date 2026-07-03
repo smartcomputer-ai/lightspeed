@@ -24,17 +24,21 @@ pub fn universe_id_from_env() -> anyhow::Result<Uuid> {
         .map_err(|error| anyhow::anyhow!("invalid LIGHTSPEED_PG_UNIVERSE_ID: {error}"))
 }
 
-/// How the gateway resolves the universe (tenant) of each request.
+/// How the gateway resolves the universe (tenant) and principal of each
+/// request.
 ///
 /// Lightspeed requires a resolved universe per request but is unopinionated
 /// about how it is produced. `Single` pins the whole deployment to one
 /// configured universe (the pre-P90 behavior). `TrustedHeader` reads
-/// `x-lightspeed-universe` injected by an upstream gateway that owns
-/// authentication; requests without the header are rejected (fail closed).
+/// `x-lightspeed-universe` (and optionally `x-lightspeed-principal`) injected
+/// by an upstream gateway that owns authentication; requests without the
+/// header are rejected (fail closed). `ApiKey` resolves
+/// `Authorization: Bearer lsk_…` against the deployment-level api_keys table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GatewayAuthMode {
     Single { universe_id: Uuid },
     TrustedHeader { auto_create: bool },
+    ApiKey,
 }
 
 pub fn gateway_auth_mode_from_env() -> anyhow::Result<GatewayAuthMode> {
@@ -52,8 +56,9 @@ pub fn gateway_auth_mode_from_env() -> anyhow::Result<GatewayAuthMode> {
             };
             Ok(GatewayAuthMode::TrustedHeader { auto_create })
         }
+        "api-key" => Ok(GatewayAuthMode::ApiKey),
         other => anyhow::bail!(
-            "invalid LIGHTSPEED_AUTH_MODE={other:?}; expected one of: single, trusted-header"
+            "invalid LIGHTSPEED_AUTH_MODE={other:?}; expected one of: single, trusted-header, api-key"
         ),
     }
 }
@@ -118,7 +123,18 @@ impl DeploymentStores {
     /// Build the universe-bound store. Does not create the universe row;
     /// callers decide existence policy first (see `UniverseRuntime`).
     pub fn store_for(&self, universe_id: Uuid) -> Arc<PgStore> {
+        self.store_for_with_slug(universe_id, None)
+    }
+
+    pub fn store_for_with_slug(
+        &self,
+        universe_id: Uuid,
+        universe_slug: Option<String>,
+    ) -> Arc<PgStore> {
         let mut config = PgStoreConfig::new(universe_id);
+        if let Some(slug) = universe_slug {
+            config = config.with_universe_slug(slug);
+        }
         if let Some(prefix) = &self.object_prefix {
             config = config.with_object_prefix(prefix.clone());
         }

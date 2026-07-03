@@ -13,7 +13,17 @@ type Running = RunningBridge | RunningWhatsAppBridge;
 
 const config = await loadBridgeConfig();
 const store = new JsonBridgeStore(config.store.path);
-const client = new LightspeedClient(config.lightspeed.endpoint);
+const gatewayHeaders: Record<string, string> = {};
+if (config.lightspeed.apiKey) {
+  gatewayHeaders["authorization"] = `Bearer ${config.lightspeed.apiKey}`;
+}
+if (config.lightspeed.universe) {
+  gatewayHeaders["x-lightspeed-universe"] = config.lightspeed.universe;
+}
+const client = new LightspeedClient({
+  endpoint: config.lightspeed.endpoint,
+  headers: gatewayHeaders,
+});
 const lightspeed = new LightspeedSessionBridge(client, config.lightspeed);
 const runtime = new MessagingBridgeRuntime({
   lightspeed,

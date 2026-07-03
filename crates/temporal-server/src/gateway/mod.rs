@@ -1,6 +1,7 @@
 //! HTTP/JSON-RPC gateway over the Temporal-backed agent workflow.
 
 pub mod http;
+pub mod principal;
 pub(crate) mod service;
 
 pub use crate::config::{default_model_from_env, pg_store_from_env};

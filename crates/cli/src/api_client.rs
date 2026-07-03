@@ -64,6 +64,35 @@ use api::{
 };
 use serde::{Serialize, de::DeserializeOwned};
 
+/// Gateway auth headers from the environment, applied to every request:
+/// `LIGHTSPEED_API_KEY` becomes `Authorization: Bearer …` (api-key
+/// deployments) and `LIGHTSPEED_UNIVERSE` becomes `x-lightspeed-universe`
+/// (trusted-header deployments behind a proxy that forwards it). Both are
+/// optional; a plain `single`-mode gateway needs neither.
+fn auth_headers_from_env() -> reqwest::header::HeaderMap {
+    let mut headers = reqwest::header::HeaderMap::new();
+    if let Ok(api_key) = std::env::var("LIGHTSPEED_API_KEY") {
+        let api_key = api_key.trim();
+        if !api_key.is_empty() {
+            if let Ok(mut value) =
+                reqwest::header::HeaderValue::from_str(&format!("Bearer {api_key}"))
+            {
+                value.set_sensitive(true);
+                headers.insert(reqwest::header::AUTHORIZATION, value);
+            }
+        }
+    }
+    if let Ok(universe) = std::env::var("LIGHTSPEED_UNIVERSE") {
+        let universe = universe.trim();
+        if !universe.is_empty() {
+            if let Ok(value) = reqwest::header::HeaderValue::from_str(universe) {
+                headers.insert("x-lightspeed-universe", value);
+            }
+        }
+    }
+    headers
+}
+
 pub(crate) struct HttpAgentApi {
     endpoint: String,
     client: reqwest::Client,
@@ -74,7 +103,10 @@ impl HttpAgentApi {
     pub(crate) fn new(endpoint: impl Into<String>) -> Self {
         Self {
             endpoint: endpoint.into(),
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .default_headers(auth_headers_from_env())
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new()),
             next_id: AtomicU64::new(1),
         }
     }

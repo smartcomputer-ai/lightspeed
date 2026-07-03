@@ -8,8 +8,9 @@ use axum::{
     response::Html,
     routing::{get, post},
 };
+use auth::{ApiKeyStore, PrincipalKind, PrincipalRef, api_key_hash};
 use serde::Deserialize;
-use store_pg::PgStore;
+use store_pg::{PgApiKeyStore, PgStore};
 use temporalio_client::Client;
 use uuid::Uuid;
 
@@ -18,7 +19,7 @@ use crate::{
     universe::{UniverseError, UniverseRuntime},
 };
 
-use super::{GatewayAgentApi, OAuthCallbackOutcome, connect_temporal};
+use super::{GatewayAgentApi, OAuthCallbackOutcome, connect_temporal, principal};
 
 pub const DEFAULT_GATEWAY_BIND: &str = "127.0.0.1:18080";
 pub const DEFAULT_MAX_REQUEST_BODY_BYTES: usize = 64 * 1024 * 1024;
@@ -28,6 +29,12 @@ pub const DEFAULT_MAX_REQUEST_BODY_BYTES: usize = 64 * 1024 * 1024;
 /// reject requests carrying it so tenant claims cannot be smuggled past a
 /// different resolution mode.
 pub const UNIVERSE_HEADER: &str = "x-lightspeed-universe";
+
+/// Optional trusted-header caller identity, injected by the upstream gateway
+/// alongside [`UNIVERSE_HEADER`]. Value is `<kind>:<id>` with kind `user` or
+/// `service_account`, or a bare id (treated as a user id). Recorded on grants
+/// and flows for audit; never an authorization mechanism.
+pub const PRINCIPAL_HEADER: &str = "x-lightspeed-principal";
 
 #[derive(Clone, Debug)]
 pub struct GatewayServerConfig {
@@ -56,6 +63,7 @@ enum UniverseResolution {
         mode: GatewayAuthMode,
         runtime: Arc<UniverseRuntime>,
         public_base_url: String,
+        api_keys: PgApiKeyStore,
     },
 }
 
@@ -76,11 +84,13 @@ impl GatewayState {
         runtime: Arc<UniverseRuntime>,
         public_base_url: String,
     ) -> Self {
+        let api_keys = PgApiKeyStore::new(runtime.stores().pool().clone());
         Self {
             resolution: UniverseResolution::Multi {
                 mode,
                 runtime,
                 public_base_url,
+                api_keys,
             },
         }
     }
@@ -88,37 +98,122 @@ impl GatewayState {
     async fn api_for_request(
         &self,
         headers: &HeaderMap,
-    ) -> Result<Arc<GatewayAgentApi>, AgentApiError> {
+    ) -> Result<(Arc<GatewayAgentApi>, PrincipalRef), AgentApiError> {
         match &self.resolution {
             UniverseResolution::FixedApi { api } => {
-                reject_universe_header(headers)?;
-                Ok(api.clone())
+                reject_tenant_headers(headers)?;
+                Ok((api.clone(), PrincipalRef::universe_default()))
             }
-            UniverseResolution::Multi { mode, runtime, .. } => {
-                let (universe_id, create_missing) = match mode {
+            UniverseResolution::Multi {
+                mode,
+                runtime,
+                api_keys,
+                ..
+            } => {
+                let (universe_id, create_missing, principal) = match mode {
                     GatewayAuthMode::Single { universe_id } => {
-                        reject_universe_header(headers)?;
-                        (*universe_id, true)
+                        reject_tenant_headers(headers)?;
+                        (*universe_id, true, PrincipalRef::universe_default())
                     }
-                    GatewayAuthMode::TrustedHeader { auto_create } => {
-                        (universe_from_header(headers)?, *auto_create)
+                    GatewayAuthMode::TrustedHeader { auto_create } => (
+                        universe_from_header(headers)?,
+                        *auto_create,
+                        principal_from_header(headers)?,
+                    ),
+                    GatewayAuthMode::ApiKey => {
+                        reject_tenant_headers(headers)?;
+                        let record = resolve_api_key(api_keys, headers).await?;
+                        (record.universe_id, false, record.principal)
                     }
                 };
                 let state = runtime
                     .state_for(universe_id, create_missing)
                     .await
                     .map_err(map_universe_error)?;
-                Ok(state.api.clone())
+                Ok((state.api.clone(), principal))
             }
         }
     }
 }
 
-fn reject_universe_header(headers: &HeaderMap) -> Result<(), AgentApiError> {
-    if headers.contains_key(UNIVERSE_HEADER) {
+/// Resolve `Authorization: Bearer lsk_…` against the deployment api_keys
+/// table. Unknown and revoked keys are indistinguishable to the caller.
+async fn resolve_api_key(
+    api_keys: &PgApiKeyStore,
+    headers: &HeaderMap,
+) -> Result<auth::ApiKeyRecord, AgentApiError> {
+    let secret = bearer_token(headers)?;
+    let observed_at_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or(0);
+    api_keys
+        .resolve_api_key(&api_key_hash(secret), observed_at_ms)
+        .await
+        .map_err(|error| AgentApiError::internal(format!("api key resolution failed: {error}")))?
+        .ok_or_else(|| AgentApiError::rejected("invalid api key"))
+}
+
+fn bearer_token(headers: &HeaderMap) -> Result<&str, AgentApiError> {
+    let value = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .ok_or_else(|| AgentApiError::invalid_request("missing Authorization header"))?;
+    let value = value
+        .to_str()
+        .map_err(|_| AgentApiError::invalid_request("invalid Authorization header encoding"))?;
+    value
+        .strip_prefix("Bearer ")
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .ok_or_else(|| {
+            AgentApiError::invalid_request("Authorization header must be a Bearer token")
+        })
+}
+
+/// Parse the optional trusted-header principal: `<kind>:<id>` with kind
+/// `user` or `service_account`, or a bare id treated as a user id. Absent
+/// header falls back to `universe_default`.
+fn principal_from_header(headers: &HeaderMap) -> Result<PrincipalRef, AgentApiError> {
+    let Some(value) = headers.get(PRINCIPAL_HEADER) else {
+        return Ok(PrincipalRef::universe_default());
+    };
+    let value = value.to_str().map_err(|_| {
+        AgentApiError::invalid_request(format!("invalid {PRINCIPAL_HEADER} header encoding"))
+    })?;
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(PrincipalRef::universe_default());
+    }
+    let (kind, id) = match value.split_once(':') {
+        Some(("user", id)) => (PrincipalKind::User, id),
+        Some(("service_account", id)) => (PrincipalKind::ServiceAccount, id),
+        Some((other, _)) => {
+            return Err(AgentApiError::invalid_request(format!(
+                "invalid {PRINCIPAL_HEADER} kind {other:?}; expected user or service_account"
+            )));
+        }
+        None => (PrincipalKind::User, value),
+    };
+    if id.is_empty() {
         return Err(AgentApiError::invalid_request(format!(
-            "{UNIVERSE_HEADER} is not accepted in this auth mode"
+            "{PRINCIPAL_HEADER} id must not be empty"
         )));
+    }
+    Ok(PrincipalRef {
+        kind,
+        id: Some(id.to_owned()),
+    })
+}
+
+/// Modes that do not honor the trusted tenant headers must not silently
+/// ignore them: a tenant claim that is not going to be honored is rejected.
+fn reject_tenant_headers(headers: &HeaderMap) -> Result<(), AgentApiError> {
+    for header in [UNIVERSE_HEADER, PRINCIPAL_HEADER] {
+        if headers.contains_key(header) {
+            return Err(AgentApiError::invalid_request(format!(
+                "{header} is not accepted in this auth mode"
+            )));
+        }
     }
     Ok(())
 }
@@ -236,13 +331,15 @@ async fn rpc(
     headers: HeaderMap,
     Json(request): Json<JsonRpcRequest>,
 ) -> Json<JsonRpcResponse> {
-    let api = match state.api_for_request(&headers).await {
-        Ok(api) => api,
+    let (api, caller) = match state.api_for_request(&headers).await {
+        Ok(resolved) => resolved,
         Err(error) => {
             return Json(JsonRpcResponse::failure(request.id, error.into()));
         }
     };
-    Json(dispatch_json_rpc(api.as_ref(), request).await)
+    Json(
+        principal::with_request_principal(caller, dispatch_json_rpc(api.as_ref(), request)).await,
+    )
 }
 
 /// Query parameters of the OAuth authorization callback (RFC 6749 §4.1.2).
@@ -393,13 +490,63 @@ mod tests {
     }
 
     #[test]
-    fn non_header_modes_reject_universe_header_smuggling() {
-        // `single` mode (and any fixed-instance gateway) must not silently
-        // ignore a tenant claim it does not honor.
+    fn non_header_modes_reject_tenant_header_smuggling() {
+        // `single` and `api-key` modes (and any fixed-instance gateway) must
+        // not silently ignore a tenant claim they do not honor.
         let headers = headers_with_universe("6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f");
-        let error = reject_universe_header(&headers).expect_err("must reject");
+        let error = reject_tenant_headers(&headers).expect_err("must reject");
         assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
-        assert!(reject_universe_header(&HeaderMap::new()).is_ok());
+        let mut principal_headers = HeaderMap::new();
+        principal_headers.insert(PRINCIPAL_HEADER, "user:alice".parse().expect("header"));
+        let error = reject_tenant_headers(&principal_headers).expect_err("must reject");
+        assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
+        assert!(reject_tenant_headers(&HeaderMap::new()).is_ok());
+    }
+
+    #[test]
+    fn principal_header_parses_kinds_and_defaults() {
+        use auth::PrincipalKind;
+        let parse = |value: &str| {
+            let mut headers = HeaderMap::new();
+            headers.insert(PRINCIPAL_HEADER, value.parse().expect("header"));
+            principal_from_header(&headers)
+        };
+        assert_eq!(
+            principal_from_header(&HeaderMap::new()).expect("absent header"),
+            PrincipalRef::universe_default()
+        );
+        let user = parse("user:alice").expect("user principal");
+        assert_eq!(user.kind, PrincipalKind::User);
+        assert_eq!(user.id.as_deref(), Some("alice"));
+        let service = parse("service_account:bridge-1").expect("service principal");
+        assert_eq!(service.kind, PrincipalKind::ServiceAccount);
+        assert_eq!(service.id.as_deref(), Some("bridge-1"));
+        let bare = parse("alice").expect("bare principal");
+        assert_eq!(bare.kind, PrincipalKind::User);
+        assert_eq!(bare.id.as_deref(), Some("alice"));
+        let error = parse("robot:r2d2").expect_err("unknown kind");
+        assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
+        let error = parse("user:").expect_err("empty id");
+        assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
+    }
+
+    #[test]
+    fn bearer_token_requires_a_nonempty_bearer_value() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            "Bearer lsk_secret".parse().expect("header"),
+        );
+        assert_eq!(bearer_token(&headers).expect("token"), "lsk_secret");
+        let error = bearer_token(&HeaderMap::new()).expect_err("missing header");
+        assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
+        let mut basic = HeaderMap::new();
+        basic.insert(
+            axum::http::header::AUTHORIZATION,
+            "Basic dXNlcg==".parse().expect("header"),
+        );
+        let error = bearer_token(&basic).expect_err("non-bearer");
+        assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
     }
 
     #[test]

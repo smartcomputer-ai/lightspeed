@@ -3,6 +3,7 @@
 //! `PgStore` is scoped to one universe. Within that universe, sessions share a
 //! CAS catalog; across universes, both metadata and object keys are isolated.
 
+mod api_keys;
 mod auth;
 mod blob;
 mod environment;
@@ -34,6 +35,7 @@ pub const AUTH_SCHEMA_SQL: &str = include_str!("../migrations/004_auth.sql");
 pub const MESSAGING_SCHEMA_SQL: &str = include_str!("../migrations/005_messaging.sql");
 pub const ENVIRONMENT_SCHEMA_SQL: &str = include_str!("../migrations/006_environments.sql");
 pub const PROFILE_SCHEMA_SQL: &str = include_str!("../migrations/007_agent_profiles.sql");
+pub const API_KEYS_SCHEMA_SQL: &str = include_str!("../migrations/008_api_keys.sql");
 
 pub const DEFAULT_INLINE_THRESHOLD_BYTES: usize = 64 * 1024;
 
@@ -260,6 +262,7 @@ impl PgStore {
         pool.execute(MESSAGING_SCHEMA_SQL).await?;
         pool.execute(ENVIRONMENT_SCHEMA_SQL).await?;
         pool.execute(PROFILE_SCHEMA_SQL).await?;
+        pool.execute(API_KEYS_SCHEMA_SQL).await?;
         Ok(())
     }
 
@@ -283,6 +286,17 @@ impl PgStore {
         .await?;
         Ok(())
     }
+}
+
+pub use api_keys::PgApiKeyStore;
+
+/// Deployment-level universe listing for admin surfaces.
+pub async fn list_universes(pool: &PgPool) -> Result<Vec<(Uuid, Option<String>)>, PgStoreError> {
+    let rows: Vec<(Uuid, Option<String>)> =
+        sqlx::query_as("SELECT universe_id, slug FROM universes ORDER BY universe_id")
+            .fetch_all(pool)
+            .await?;
+    Ok(rows)
 }
 
 /// Deployment-level check whether a universe exists. Runs above the

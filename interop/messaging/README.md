@@ -248,6 +248,23 @@ cp .env.example .env
 npm run dev
 ```
 
+### Gateway authentication
+
+Against a default (`single`-mode) gateway no credentials are needed. For
+multi-tenant gateways (P90), set one of:
+
+- `LIGHTSPEED_API_KEY` (or `lightspeed.apiKey` in the config file) — sent as
+  `Authorization: Bearer …` to an `api-key`-mode gateway. Mint keys with
+  `server api-key create --universe-id <uuid>`.
+- `LIGHTSPEED_UNIVERSE` (or `lightspeed.universe`) — sent as
+  `x-lightspeed-universe` to a `trusted-header`-mode gateway (the bridge acts
+  as its own trusted upstream in that topology).
+
+The credential selects the universe all of this bridge's sessions live in:
+one bridge process serves one universe. To bridge several universes, run one
+bridge process per universe. Per-binding credentials (universes mixed within
+one process) are a recorded follow-up in P90.
+
 The package uses a local file dependency:
 
 ```json

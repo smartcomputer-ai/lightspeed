@@ -2810,7 +2810,7 @@ impl AgentApiService for GatewayAgentApi {
                 redirect_uri: oauth_redirect_uri(&self.public_base_url),
                 scopes: params.scopes,
                 audience: params.audience,
-                principal: auth::PrincipalRef::universe_default(),
+                principal: crate::gateway::principal::request_principal(),
             })
             .await
             .map_err(map_auth_error)?;

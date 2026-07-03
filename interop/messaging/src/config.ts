@@ -8,6 +8,12 @@ export interface LightspeedBridgeConfig {
   waitMs: number;
   eventLimit: number;
   sessionPrefix: string;
+  /// Gateway authentication. `apiKey` becomes `Authorization: Bearer …`
+  /// (api-key deployments); `universe` becomes `x-lightspeed-universe`
+  /// (trusted-header deployments). Both optional; a `single`-mode gateway
+  /// needs neither. One bridge process serves one universe.
+  apiKey?: string | null;
+  universe?: string | null;
 }
 
 export interface BridgeRuntimeConfig {
@@ -127,6 +133,8 @@ export async function loadBridgeConfig(env: NodeJS.ProcessEnv = process.env): Pr
     waitMs: parsePositiveInt(env.LIGHTSPEED_WAIT_MS, fileConfig.lightspeed?.waitMs ?? 30_000),
     eventLimit: parsePositiveInt(env.LIGHTSPEED_EVENT_LIMIT, fileConfig.lightspeed?.eventLimit ?? 128),
     sessionPrefix: env.BRIDGE_SESSION_PREFIX ?? fileConfig.lightspeed?.sessionPrefix ?? "bridge",
+    apiKey: env.LIGHTSPEED_API_KEY ?? fileConfig.lightspeed?.apiKey ?? null,
+    universe: env.LIGHTSPEED_UNIVERSE ?? fileConfig.lightspeed?.universe ?? null,
   };
   const runtime: BridgeRuntimeConfig = {
     debounceMs: parsePositiveInt(env.BRIDGE_DEBOUNCE_MS, fileConfig.runtime?.debounceMs ?? 500),

@@ -31,8 +31,25 @@
   unchanged; a mismatched or uncomposed workflow id fails the activity
   non-retryably. `args.universe_id` remains the workflow-side value the
   bootstrap assertion checks against.
-- Phases 2 (api-key mode, principal pass-through) and 3 (bridge routing,
-  universe admin surface, docs) remain open.
+- Phases 2 and 3 implemented 2026-07-03: deployment-scoped `api_keys` table
+  (`008_api_keys.sql`; hash-only storage, unique display prefix), inbound
+  `auth::api_keys` module (`mint_api_key`, `ApiKeyStore`) with the Postgres
+  impl on the shared pool (`PgApiKeyStore`), gateway `api-key` mode
+  (`Authorization: Bearer lsk_…`, tenant headers rejected, unknown/revoked
+  keys indistinguishable), request-principal propagation via a task-local
+  scope around dispatch (`gateway::principal`) replacing the
+  `universe_default()` stamping on grant/flow creation, the optional
+  `x-lightspeed-principal` header in trusted-header mode, admin subcommands
+  (`server universe create|list`, `server api-key create|list|revoke`; the
+  secret prints exactly once), client credentials in the CLI and messaging
+  bridge (`LIGHTSPEED_API_KEY`/`LIGHTSPEED_UNIVERSE` env, bridge config
+  fields), README/AGENTS/env docs, and an ignored api-key live test covering
+  fail-closed, cross-universe misses, principal stamping, header rejection,
+  and immediate revocation.
+- Deferred from Phase 3: per-binding bridge credentials (universes mixed
+  within one bridge process). Requires persisting auth on bridge binding
+  state and threading it through the outbox poller; one bridge process
+  serves one universe until then.
 - Builds on **P55 (Temporal Claw)**, which introduced the `universes` table and
   scoped every Postgres table by `universe_id`, but deliberately fixed one
   configured universe per worker/gateway process (`universe_id` is

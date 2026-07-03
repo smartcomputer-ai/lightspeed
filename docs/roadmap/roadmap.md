@@ -31,10 +31,10 @@
 - [x] [P88](p88-media-aware-context-append-and-activation.md) — media-aware
   `context/append`, context-triggered runs, and eager bridge ingest/activation
   for current supported media types
-- [ ] [P89](p89-room-context-retention.md) — room context retention and
+- [x] [P89](p89-room-context-retention.md) — room context retention and
   compaction: watermarked drop-oldest pruning via `context/remove`, then
   summarize-and-replace, so always-on group sessions stay bounded
-- [ ] Password/code-based login in channel (instead of whitelisting)
+- [x] Password/code-based login in channel (instead of whitelisting)
 - [ ] Support Slack
 
 ## Security Auth
@@ -48,10 +48,11 @@
 ## Framework/SDK
 - [ ] Temporal service design: ensure ls can be used as a Temporal service by other workflows
 - [ ] Workflows as tools (register a workflow as a tool, route to workflow)
-- [ ] [P90](p90-multi-tenancy.md) — multi-tenant worker: multiple universes
+- [x] [P90](p90-multi-tenancy.md) — multi-tenant worker: multiple universes
       per deployment, composed workflow ids, per-request universe resolution
-      (`single` / `trusted-header` / `api-key` modes). Phase 1 done
-      (runtime + `single`/`trusted-header` modes); api-key + bridge phases open
+      (`single` / `trusted-header` / `api-key` modes), principal pass-through,
+      universe/api-key admin subcommands. Deferred: per-binding bridge
+      credentials (one bridge process = one universe for now)
 - [ ] Python SDK
      - [ ] API Client
      - [ ] Workflow helpers
