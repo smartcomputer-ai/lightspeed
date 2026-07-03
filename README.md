@@ -38,7 +38,7 @@ What constitutes an "agent harness" is a rapidly expanding set of table-stakes f
 
 **Agent capabilities**
 - [x] **Virtual file system**: the agent uses standard file tools (read, glob, patch) without an OS attached
-- [x] **Web access**: fetch, search, and extract tools — no browser VM required
+- [x] **Web access**: fetch, search, and extract tools
 - [x] **Skills**, hosted on the VFS or inside sandboxes
 - [x] **Hosted MCP**, with API-key and OAuth authentication
 - [x] **Flexible prompt & instruction configuration**
@@ -64,7 +64,7 @@ What constitutes an "agent harness" is a rapidly expanding set of table-stakes f
 **Interfaces**
 - [x] **Typed JSON-RPC API**: committed schema contract, generated TypeScript client
 - [x] **CLI** to connect to running agent sessions
-- [x] **Messaging bridges**: WhatsApp and Telegram today — media and group chats included, more channels coming
+- [x] **Messaging bridges**: WhatsApp and Telegram today; media and group chats included, more channels coming
 
 ## Design
 At the heart of every agent is a carefully engineered state machine that manages what goes into the context window of the LLM.

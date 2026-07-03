@@ -1,5 +1,0 @@
-{
-  "kind": "lightspeed.core.command",
-  "version": 1,
-  "payload": "close_session"
-}

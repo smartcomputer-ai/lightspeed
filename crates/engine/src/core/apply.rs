@@ -1,19 +1,12 @@
 //! Core replay reducer for committed session events.
 
-use crate::{
-    ApplyEvent, CoreAgentEntry, CoreAgentEventKind, CoreAgentState, DomainError, EventSeq,
-};
+use crate::{CoreAgentEntry, CoreAgentEventKind, CoreAgentState, DomainError, EventSeq};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct CoreApplyEvent;
-
-impl ApplyEvent for CoreApplyEvent {
-    fn apply(&self, state: &mut CoreAgentState, entry: &CoreAgentEntry) -> Result<(), DomainError> {
-        validate_next_position(state, entry)?;
-        apply_event(state, entry)?;
-        state.reduced_to = Some(entry.position.clone());
-        Ok(())
-    }
+pub fn apply_event(state: &mut CoreAgentState, entry: &CoreAgentEntry) -> Result<(), DomainError> {
+    validate_next_position(state, entry)?;
+    apply_event_kind(state, entry)?;
+    state.reduced_to = Some(entry.position.clone());
+    Ok(())
 }
 
 fn validate_next_position(
@@ -36,7 +29,7 @@ fn validate_next_position(
     Ok(())
 }
 
-fn apply_event(state: &mut CoreAgentState, entry: &CoreAgentEntry) -> Result<(), DomainError> {
+fn apply_event_kind(state: &mut CoreAgentState, entry: &CoreAgentEntry) -> Result<(), DomainError> {
     match &entry.event.kind {
         CoreAgentEventKind::Lifecycle(event) => {
             crate::core::components::lifecycle::apply_event(state, event)

@@ -188,12 +188,7 @@ async fn append_events(
         .filter_map(|entry| job_waits::directive_for_event(&entry.event.kind).transpose())
         .collect::<anyhow::Result<Vec<_>>>()?;
     ctx.state_mut(|state| -> anyhow::Result<()> {
-        apply_entries(
-            &CoreApplyEvent,
-            &mut state.core_state,
-            &entries,
-            &mut state.run_submissions,
-        )?;
+        apply_entries(&mut state.core_state, &entries, &mut state.run_submissions)?;
         state.queue_terminal_notifications_for_entries(&entries);
         state.head = appended.head;
         state.last_error = None;
@@ -225,7 +220,6 @@ pub(super) fn drive_from_state(
 }
 
 fn apply_entries(
-    apply: &CoreApplyEvent,
     state: &mut CoreAgentState,
     entries: &[CoreAgentEntry],
     run_submissions: &mut BTreeMap<u64, Option<SubmissionId>>,
@@ -234,7 +228,7 @@ fn apply_entries(
         if let CoreAgentEventKind::Run(RunEvent::Accepted(accepted)) = &entry.event.kind {
             run_submissions.insert(accepted.run_id.as_u64(), accepted.submission_id.clone());
         }
-        apply.apply(state, entry)?;
+        engine::apply_event(state, entry)?;
     }
     Ok(())
 }

@@ -19,17 +19,17 @@ use api::{
     ToolExecutionTargetView, ToolItemStatus, ToolKindView, ToolParallelismView,
     ToolTargetRequirementView, ToolView,
 };
-use engine::{ApplyEvent, ToolExecutionTarget};
+use engine::ToolExecutionTarget;
 use engine::{
     CompactionPolicy, ContextCompactionStatus, ContextCompactionTrigger, ContextEntry,
     ContextEntryId, ContextEntryInput, ContextEntryKind, ContextEntrySource, ContextEvent,
     ContextMessageRole, ContextRemovalReason, ContextRewriteReason, CoreAgentCodec, CoreAgentEntry,
     CoreAgentEventKind, CoreAgentJoins, CoreAgentLifecycleEvent, CoreAgentState, CoreAgentStatus,
-    CoreApplyEvent, EventSeq, LlmGenerationStatus, ModelSelection,
-    OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND, ObservedToolCall, ProviderApiKind, ProviderParams,
-    RunEvent, RunFailure, RunId, RunSource, RunStatus, SessionConfig, SessionId, SteeringId,
-    ToolBatchId, ToolCallStatus, ToolChoice, ToolChoiceMode, ToolConfigEvent, ToolEvent, ToolKind,
-    ToolParallelism, ToolSpec, ToolTargetRequirement, TurnEvent, TurnId,
+    EventSeq, LlmGenerationStatus, ModelSelection, OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND,
+    ObservedToolCall, ProviderApiKind, ProviderParams, RunEvent, RunFailure, RunId, RunSource,
+    RunStatus, SessionConfig, SessionId, SteeringId, ToolBatchId, ToolCallStatus, ToolChoice,
+    ToolChoiceMode, ToolConfigEvent, ToolEvent, ToolKind, ToolParallelism, ToolSpec,
+    ToolTargetRequirement, TurnEvent, TurnId,
     storage::{
         BlobStore, BlobStoreError, DynamicSessionEntry, ReadSessionEvents, SessionRecord,
         SessionStore, SessionStoreError,
@@ -895,10 +895,8 @@ pub fn replay_core_agent_state(
     entries: &[CoreAgentEntry],
 ) -> Result<CoreAgentState, AgentApiError> {
     let mut state = CoreAgentState::new();
-    let apply = CoreApplyEvent;
     for entry in entries {
-        apply
-            .apply(&mut state, entry)
+        engine::apply_event(&mut state, entry)
             .map_err(|error| AgentApiError::internal(error.to_string()))?;
     }
     Ok(state)

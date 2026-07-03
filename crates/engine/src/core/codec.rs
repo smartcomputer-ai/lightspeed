@@ -1,43 +1,19 @@
 use crate::{
-    CodecError, CommandCodec, ContextEvent, CoreAgentCommand, CoreAgentEntry, CoreAgentEvent,
-    CoreAgentEventKind, CoreAgentJoins, CoreAgentLifecycleEvent, CorrelationId, DynamicEvent,
-    EventCodec, JoinsCodec, RunEvent, RunId, SubmissionId, ToolBatchId, ToolCallId,
-    ToolConfigEvent, ToolEvent, TurnEvent, TurnId, UncommittedCoreAgentEvent,
+    CodecError, ContextEvent, CoreAgentEntry, CoreAgentEvent, CoreAgentEventKind, CoreAgentJoins,
+    CoreAgentLifecycleEvent, CorrelationId, DynamicEvent, RunEvent, RunId, SubmissionId,
+    ToolBatchId, ToolCallId, ToolConfigEvent, ToolEvent, TurnEvent, TurnId,
+    UncommittedCoreAgentEvent,
     session::{DynamicJoins, DynamicSessionEntry, DynamicUncommittedSessionEvent},
 };
 
-const CORE_AGENT_COMMAND_KIND: &str = "lightspeed.core.command";
+const CORE_AGENT_EVENT_KIND_PREFIX: &str = "lightspeed.core.";
 const CORE_AGENT_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CoreAgentCodec;
 
-impl CommandCodec for CoreAgentCodec {
-    type Command = CoreAgentCommand;
-
-    fn encode_command(&self, command: &Self::Command) -> Result<crate::DynamicCommand, CodecError> {
-        Ok(crate::DynamicCommand::new(
-            CORE_AGENT_COMMAND_KIND,
-            CORE_AGENT_SCHEMA_VERSION,
-            serde_json::to_value(command).map_err(codec_failure)?,
-        ))
-    }
-
-    fn decode_command(&self, command: &crate::DynamicCommand) -> Result<Self::Command, CodecError> {
-        ensure_envelope(
-            &command.kind,
-            command.version,
-            CORE_AGENT_COMMAND_KIND,
-            CORE_AGENT_SCHEMA_VERSION,
-        )?;
-        serde_json::from_value(command.payload.clone()).map_err(codec_failure)
-    }
-}
-
-impl EventCodec for CoreAgentCodec {
-    type Event = CoreAgentEvent;
-
-    fn encode_event(&self, event: &Self::Event) -> Result<DynamicEvent, CodecError> {
+impl CoreAgentCodec {
+    pub fn encode_event(&self, event: &CoreAgentEvent) -> Result<DynamicEvent, CodecError> {
         Ok(DynamicEvent::new(
             core_agent_event_envelope_kind(event),
             CORE_AGENT_SCHEMA_VERSION,
@@ -45,25 +21,11 @@ impl EventCodec for CoreAgentCodec {
         ))
     }
 
-    fn decode_event(&self, event: &DynamicEvent) -> Result<Self::Event, CodecError> {
+    pub fn decode_event(&self, event: &DynamicEvent) -> Result<CoreAgentEvent, CodecError> {
         ensure_core_agent_event_envelope(&event.kind, event.version)?;
         serde_json::from_value(event.payload.clone()).map_err(codec_failure)
     }
-}
 
-impl JoinsCodec for CoreAgentCodec {
-    type Joins = CoreAgentJoins;
-
-    fn encode_joins(&self, joins: &Self::Joins) -> DynamicJoins {
-        CoreAgentCodec::encode_joins(self, joins)
-    }
-
-    fn decode_joins(&self, joins: &DynamicJoins) -> Result<Self::Joins, CodecError> {
-        CoreAgentCodec::decode_joins(self, joins)
-    }
-}
-
-impl CoreAgentCodec {
     pub fn encode_joins(&self, joins: &CoreAgentJoins) -> DynamicJoins {
         let mut encoded = DynamicJoins::new();
         insert_numeric(&mut encoded, "run_id", joins.run_id.map(RunId::as_u64));
@@ -124,24 +86,11 @@ impl CoreAgentCodec {
     }
 }
 
-fn ensure_envelope(
-    actual_kind: &str,
-    actual_version: u32,
-    expected_kind: &str,
-    expected_version: u32,
-) -> Result<(), CodecError> {
-    if actual_kind == expected_kind && actual_version == expected_version {
-        Ok(())
-    } else {
-        Err(CodecError::Unsupported {
-            kind: actual_kind.to_owned(),
-            version: actual_version,
-        })
-    }
-}
-
+/// The envelope kind is derived metadata for indexing and debugging; the
+/// payload embeds its own discriminant, so decode only guards the namespace
+/// and schema version before parsing the payload wholesale.
 fn ensure_core_agent_event_envelope(kind: &str, version: u32) -> Result<(), CodecError> {
-    if version == CORE_AGENT_SCHEMA_VERSION && is_core_agent_event_envelope_kind(kind) {
+    if version == CORE_AGENT_SCHEMA_VERSION && kind.starts_with(CORE_AGENT_EVENT_KIND_PREFIX) {
         Ok(())
     } else {
         Err(CodecError::Unsupported {
@@ -149,44 +98,6 @@ fn ensure_core_agent_event_envelope(kind: &str, version: u32) -> Result<(), Code
             version,
         })
     }
-}
-
-fn is_core_agent_event_envelope_kind(kind: &str) -> bool {
-    matches!(
-        kind,
-        "lightspeed.core.lifecycle.opened"
-            | "lightspeed.core.lifecycle.config_changed"
-            | "lightspeed.core.lifecycle.closed"
-            | "lightspeed.core.run.accepted"
-            | "lightspeed.core.run.started"
-            | "lightspeed.core.run.steering_accepted"
-            | "lightspeed.core.run.cancellation_requested"
-            | "lightspeed.core.run.completed"
-            | "lightspeed.core.run.failed"
-            | "lightspeed.core.run.cancelled"
-            | "lightspeed.core.turn.started"
-            | "lightspeed.core.turn.planned"
-            | "lightspeed.core.turn.generation_requested"
-            | "lightspeed.core.turn.generation_completed"
-            | "lightspeed.core.turn.completed"
-            | "lightspeed.core.context.entries_applied"
-            | "lightspeed.core.context.entries_removed"
-            | "lightspeed.core.context.keys_removed"
-            | "lightspeed.core.context.key_prefix_replaced"
-            | "lightspeed.core.context.state_replaced"
-            | "lightspeed.core.context.compaction_requested"
-            | "lightspeed.core.context.compaction_finished"
-            | "lightspeed.core.tool_config.tools_replaced"
-            | "lightspeed.core.tool_config.tools_patched"
-            | "lightspeed.core.tool_config.default_target_set"
-            | "lightspeed.core.tool_config.default_target_cleared"
-            | "lightspeed.core.tool.batch_started"
-            | "lightspeed.core.tool.call_started"
-            | "lightspeed.core.tool.call_completed"
-            | "lightspeed.core.tool.batch_deferred"
-            | "lightspeed.core.tool.batch_resumed"
-            | "lightspeed.core.tool.batch_completed"
-    )
 }
 
 fn core_agent_event_envelope_kind(event: &CoreAgentEvent) -> &'static str {
@@ -320,16 +231,20 @@ mod tests {
     }
 
     #[test]
-    fn old_core_agent_dynamic_envelope_names_are_unsupported() {
+    fn foreign_envelope_kinds_and_versions_are_unsupported() {
         let codec = CoreAgentCodec;
-        let old_command = crate::DynamicCommand::new(
-            "lightspeed.core_agent.command",
+        let foreign_kind = DynamicEvent::new(
+            "lightspeed.custom.lifecycle.closed",
             CORE_AGENT_SCHEMA_VERSION,
-            serde_json::json!("close_session"),
+            serde_json::json!({
+                "kind": {
+                    "lifecycle": "closed"
+                }
+            }),
         );
-        let old_event = DynamicEvent::new(
-            "lightspeed.core_agent.lifecycle.closed",
-            CORE_AGENT_SCHEMA_VERSION,
+        let foreign_version = DynamicEvent::new(
+            "lightspeed.core.lifecycle.closed",
+            CORE_AGENT_SCHEMA_VERSION + 1,
             serde_json::json!({
                 "kind": {
                     "lifecycle": "closed"
@@ -338,11 +253,11 @@ mod tests {
         );
 
         assert!(matches!(
-            codec.decode_command(&old_command),
+            codec.decode_event(&foreign_kind),
             Err(CodecError::Unsupported { .. })
         ));
         assert!(matches!(
-            codec.decode_event(&old_event),
+            codec.decode_event(&foreign_version),
             Err(CodecError::Unsupported { .. })
         ));
     }
@@ -354,28 +269,6 @@ mod tests {
             CoreAgentEvent {
                 kind: CoreAgentEventKind::Lifecycle(CoreAgentLifecycleEvent::Closed),
             },
-        );
-    }
-
-    #[test]
-    fn core_agent_command_fixture_matches_codec() {
-        let codec = CoreAgentCodec;
-        let fixture_command = serde_json::from_str::<crate::DynamicCommand>(include_str!(
-            "../../fixtures/core_close_session_dynamic_command.json"
-        ))
-        .expect("fixture is a dynamic command");
-
-        assert_eq!(
-            codec
-                .encode_command(&CoreAgentCommand::CloseSession)
-                .expect("encode command"),
-            fixture_command
-        );
-        assert_eq!(
-            codec
-                .decode_command(&fixture_command)
-                .expect("decode command"),
-            CoreAgentCommand::CloseSession
         );
     }
 

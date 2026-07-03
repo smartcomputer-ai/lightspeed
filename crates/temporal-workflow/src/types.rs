@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
 use engine::{
-    BlobRef, ContextEntryInput, ContextEntryKey, CoreAgentCommand, CoreAgentState, DynamicCommand,
-    RunId, RunStatus, SessionConfig, SessionId, SessionPosition, SubmissionId, ToolBatchId,
-    ToolCallId, ToolInvocationBatchResult, TurnId,
+    BlobRef, ContextEntryInput, ContextEntryKey, CoreAgentCommand, CoreAgentState, RunId,
+    RunStatus, SessionConfig, SessionId, SessionPosition, SubmissionId, ToolBatchId, ToolCallId,
+    ToolInvocationBatchResult, TurnId,
     storage::{DynamicUncommittedSessionEvent, SessionRecord},
 };
 use serde::{Deserialize, Serialize};
@@ -48,7 +48,7 @@ pub fn split_workflow_id(workflow_id: &str) -> Option<(Uuid, SessionId)> {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentAdmission {
-    pub command: DynamicCommand,
+    pub command: CoreAgentCommand,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_key: Option<ContextEntryKey>,
 }
@@ -97,7 +97,6 @@ impl AgentAdmissionFailure {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentAdmissionFailureKind {
-    InvalidCommand,
     RejectedCommand,
     UnsupportedAudioMime,
     AudioBlobMissing,

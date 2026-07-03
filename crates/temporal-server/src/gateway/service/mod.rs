@@ -85,8 +85,8 @@ use api::{
     BlobHasManyParams, BlobHasManyResponse, BlobPutManyParams, BlobPutManyResponse, BlobPutParams,
     BlobPutResponse, ClientCapabilities, CompactionPolicyInput, ContextAppendParams,
     ContextAppendResponse, ContextAppendResult, ContextAppendStatus, ContextCompactParams,
-    ContextRemoveParams, ContextRemoveResponse, ContextRemoveResult, ContextRemoveStatus,
     ContextCompactResponse, ContextConfigInput as ApiContextConfigInput, ContextConfigPatchInput,
+    ContextRemoveParams, ContextRemoveResponse, ContextRemoveResult, ContextRemoveStatus,
     EnvironmentProviderCapabilitiesView, EnvironmentProviderHeartbeatParams,
     EnvironmentProviderHeartbeatResponse, EnvironmentProviderImplementationView,
     EnvironmentProviderKindView, EnvironmentProviderListParams, EnvironmentProviderListResponse,
@@ -163,7 +163,7 @@ use auth::{
     OAuthFlowService, OAuthMetadataClient, OAuthTokenClient, SecretStore, StartAuthFlow,
 };
 use engine::{
-    BlobRef, CommandCodec, CompactionPolicy, ContextConfigPatch, ContextEntry, ContextEntryInput,
+    BlobRef, CompactionPolicy, ContextConfigPatch, ContextEntry, ContextEntryInput,
     ContextEntryKey, ContextEntryKind, ContextMessageRole, CoreAgentCommand, CoreAgentStatus,
     FilesystemToolMode, ModelSelection, OptionalConfigPatch, ProviderApiKind, ProviderParams,
     RunConfig, RunConfigPatch, RunId, RunStatus, SKILL_ACTIVATION_PROVIDER_KIND_RUN,
@@ -270,9 +270,7 @@ fn existing_run_submission(
         .filter(|run| run.submission_id.as_ref() == Some(submission_id))
     {
         return Some(
-            if active.source.matches_request(source)
-                && &active.run_config == run_config
-            {
+            if active.source.matches_request(source) && &active.run_config == run_config {
                 ExistingRunSubmission::ReturnRun {
                     run_id: active.run_id,
                     status: active.status,
@@ -324,9 +322,7 @@ fn existing_admitted_run_submission(
         .filter(|run| run.submission_id.as_ref() == Some(submission_id))
     {
         return Some(
-            if active.source.matches_request(source)
-                && &active.run_config == run_config
-            {
+            if active.source.matches_request(source) && &active.run_config == run_config {
                 ExistingAdmittedRunSubmission::ReturnRun {
                     run_id: active.run_id,
                 }
@@ -342,9 +338,7 @@ fn existing_admitted_run_submission(
         .find(|run| run.submission_id.as_ref() == Some(submission_id))
     {
         return Some(
-            if queued.source.matches_request(source)
-                && &queued.run_config == run_config
-            {
+            if queued.source.matches_request(source) && &queued.run_config == run_config {
                 ExistingAdmittedRunSubmission::ReturnRun {
                     run_id: queued.run_id,
                 }
@@ -534,9 +528,7 @@ fn input_admission_failure_from_workflow(
         AgentAdmissionFailureKind::TranscriptionFailure => {
             InputAdmissionFailureKind::TranscriptionFailure
         }
-        AgentAdmissionFailureKind::InvalidCommand | AgentAdmissionFailureKind::RejectedCommand => {
-            InputAdmissionFailureKind::AdmissionRejected
-        }
+        AgentAdmissionFailureKind::RejectedCommand => InputAdmissionFailureKind::AdmissionRejected,
     };
     InputAdmissionFailureView {
         kind,
@@ -998,8 +990,11 @@ impl GatewayAgentApi {
             .start_workflow(
                 AgentSessionWorkflow::run,
                 self.workflow_args(session_id.clone(), session_config, close_on_terminal),
-                WorkflowStartOptions::new(self.task_queue.clone(), self.workflow_id_for(&session_id))
-                    .build(),
+                WorkflowStartOptions::new(
+                    self.task_queue.clone(),
+                    self.workflow_id_for(&session_id),
+                )
+                .build(),
             )
             .await
             .map_err(map_workflow_start_error);

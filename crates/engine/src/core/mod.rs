@@ -1,26 +1,24 @@
-//! Built-in Lightspeed CoreAgent domain.
+//! The Lightspeed CoreAgent domain.
 //!
-//! This module contains the closed agent composition that Lightspeed ships by
-//! default. The lower-level `session` module owns the extensible event-log
-//! primitives; CoreAgent is just one domain built on top of them.
+//! This module is the closed core FSM: the fixed command/event/state
+//! vocabulary, admission, replay, planning, and the substrate-neutral drive
+//! machine. The `session` module owns the log primitives these facts are
+//! stored in.
 
 pub mod admit;
 pub mod apply;
 pub mod codec;
 pub mod components;
-pub mod domain;
 pub mod drive;
 pub mod io;
 pub mod planning;
 pub mod session_graph;
 pub mod transition;
-pub mod workflow;
 
 pub use admit::*;
 pub use apply::*;
 pub use codec::*;
 pub use components::*;
-pub use domain::*;
 pub use drive::*;
 pub use io::*;
 pub use planning::*;

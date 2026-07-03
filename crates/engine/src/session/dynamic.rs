@@ -2,23 +2,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DynamicCommand {
-    pub kind: String,
-    pub version: u32,
-    pub payload: Value,
-}
-
-impl DynamicCommand {
-    pub fn new(kind: impl Into<String>, version: u32, payload: Value) -> Self {
-        Self {
-            kind: kind.into(),
-            version,
-            payload,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DynamicEvent {
     pub kind: String,
     pub version: u32,

@@ -1,11 +1,8 @@
-//! Pure transition contracts for the session state machine.
+//! Pure transition record for the session state machine.
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    CommandError, CoreAgentCommand, CoreAgentEntry, CoreAgentEvent, CoreAgentEventKind,
-    CoreAgentJoins, CoreAgentState, DomainError, PlanningError, UncommittedCoreAgentEvent,
-};
+use crate::{CoreAgentEvent, CoreAgentEventKind, CoreAgentJoins, UncommittedCoreAgentEvent};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -26,23 +23,4 @@ impl CoreAgentEventProposal {
             event: CoreAgentEvent { kind: self.kind },
         }
     }
-}
-
-pub trait AdmitCommand: Send + Sync {
-    fn admit(
-        &self,
-        state: &CoreAgentState,
-        command: CoreAgentCommand,
-    ) -> Result<Vec<CoreAgentEventProposal>, CommandError>;
-}
-
-pub trait ApplyEvent: Send + Sync {
-    fn apply(&self, state: &mut CoreAgentState, entry: &CoreAgentEntry) -> Result<(), DomainError>;
-}
-
-pub trait PlanNext: Send + Sync {
-    fn plan_next(
-        &self,
-        state: &CoreAgentState,
-    ) -> Result<Vec<CoreAgentEventProposal>, PlanningError>;
 }

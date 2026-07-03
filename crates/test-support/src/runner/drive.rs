@@ -1,13 +1,12 @@
 use std::sync::Arc;
 
 use engine::{
-    ApplyEvent, BlobRef, ContextCompactionRequest, ContextCompactionResult,
-    ContextCompactionStatus, CoreAgentAction, CoreAgentCommand, CoreAgentDrive,
-    CoreAgentDriveError, CoreAgentIoError, CoreAgentLlm, CoreAgentState, CoreAgentTools,
-    CoreApplyEvent, EventSeq, LlmFinish, LlmGenerationFacts, LlmGenerationRequest,
-    LlmGenerationResult, LlmGenerationStatus, SKILL_CATALOG_CONTEXT_KEY, SessionId,
-    ToolBatchOutcome, ToolCallStatus, ToolInvocationBatchRequest, ToolInvocationBatchResult,
-    ToolInvocationResult,
+    BlobRef, ContextCompactionRequest, ContextCompactionResult, ContextCompactionStatus,
+    CoreAgentAction, CoreAgentCommand, CoreAgentDrive, CoreAgentDriveError, CoreAgentIoError,
+    CoreAgentLlm, CoreAgentState, CoreAgentTools, EventSeq, LlmFinish, LlmGenerationFacts,
+    LlmGenerationRequest, LlmGenerationResult, LlmGenerationStatus, SKILL_CATALOG_CONTEXT_KEY,
+    SessionId, ToolBatchOutcome, ToolCallStatus, ToolInvocationBatchRequest,
+    ToolInvocationBatchResult, ToolInvocationResult,
     storage::{AppendSessionEvents, BlobStore, ReadSessionEvents},
 };
 use tools::{
@@ -34,7 +33,6 @@ pub struct SessionRunner {
     stores: RunnerStores,
     llm: Arc<dyn CoreAgentLlm>,
     tools: Option<Arc<dyn CoreAgentTools>>,
-    apply: CoreApplyEvent,
     read_page_size: usize,
 }
 
@@ -48,7 +46,6 @@ impl SessionRunner {
             stores,
             llm,
             tools: None,
-            apply: CoreApplyEvent,
             read_page_size: DEFAULT_READ_PAGE_SIZE,
         }
     }
@@ -410,7 +407,7 @@ impl SessionRunner {
                 .await?;
             for entry in page.entries.iter().map(|entry| codec.decode_entry(entry)) {
                 let entry = entry?;
-                self.apply.apply(&mut state, &entry)?;
+                engine::apply_event(&mut state, &entry)?;
             }
             if page.complete {
                 return Ok(state);

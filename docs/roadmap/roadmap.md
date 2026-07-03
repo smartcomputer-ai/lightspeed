@@ -1,8 +1,7 @@
 # Lightspeed Roadmap
 
 ## Core
-- [ ] cleanup of CoreAgent structures (which were designed to expand the event types because we wanted Lightspeed to be a library)
-- [ ] do we need to keep agent_id in session meta data (in tables)?
+- [ ] [P91](p91-core-agent-structure-cleanup.md) — cleanup of CoreAgent structures: delete the SDK-era open-kernel layer, commit to a closed event vocabulary and core FSM
 - [ ] optimize: we're rading all session events to get latest state, this will get expensve in the future
 
 ## Fleet (sub-agents)

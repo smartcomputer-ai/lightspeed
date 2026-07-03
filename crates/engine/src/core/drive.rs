@@ -12,15 +12,14 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    AdmitCommand, ApplyEvent, BlobRef, CodecError, CommandError, ContextCompactionRequest,
-    ContextCompactionResult, ContextEntryInput, ContextEntryKind, ContextEntrySource, ContextEvent,
-    ContextMessageRole, CoreAdmitCommand, CoreAgentCodec, CoreAgentEntry, CoreAgentEventKind,
-    CoreAgentEventProposal, CoreAgentJoins, CoreAgentState, CoreAgentStatus, CoreApplyEvent,
-    CorePlanner, DomainError, LlmFinish, LlmGenerationRequest, LlmGenerationResult,
-    LlmGenerationStatus, LlmRequest, PlanNext, PlanningError, SessionId, SessionPosition,
-    ToolBatchId, ToolBatchOutcome, ToolBatchResumeDirective, ToolCallResult, ToolCallStatus,
-    ToolEvent, ToolInvocationBatchRequest, ToolInvocationBatchResult, ToolInvocationRequest,
-    ToolInvocationResult, TurnEvent, TurnId, TurnOutcome,
+    BlobRef, CodecError, CommandError, ContextCompactionRequest, ContextCompactionResult,
+    ContextEntryInput, ContextEntryKind, ContextEntrySource, ContextEvent, ContextMessageRole,
+    CoreAgentCodec, CoreAgentEntry, CoreAgentEventKind, CoreAgentEventProposal, CoreAgentJoins,
+    CoreAgentState, CoreAgentStatus, DomainError, LlmFinish, LlmGenerationRequest,
+    LlmGenerationResult, LlmGenerationStatus, LlmRequest, PlanningError, SessionId,
+    SessionPosition, ToolBatchId, ToolBatchOutcome, ToolBatchResumeDirective, ToolCallResult,
+    ToolCallStatus, ToolEvent, ToolInvocationBatchRequest, ToolInvocationBatchResult,
+    ToolInvocationRequest, ToolInvocationResult, TurnEvent, TurnId, TurnOutcome,
     core::components::context::context_entries_from_inputs,
     session::{DynamicSessionEntry, DynamicUncommittedSessionEvent},
 };
@@ -50,10 +49,6 @@ pub struct CoreAgentDrive {
     session_id: SessionId,
     state: CoreAgentState,
     head: Option<SessionPosition>,
-    codec: CoreAgentCodec,
-    admit: CoreAdmitCommand,
-    apply: CoreApplyEvent,
-    planner: CorePlanner,
     steps_taken: usize,
 }
 
@@ -68,10 +63,6 @@ impl CoreAgentDrive {
             session_id,
             state,
             head,
-            codec: CoreAgentCodec,
-            admit: CoreAdmitCommand,
-            apply: CoreApplyEvent,
-            planner: CorePlanner::core(),
             steps_taken: 0,
         }
     }
@@ -81,7 +72,7 @@ impl CoreAgentDrive {
         command: crate::CoreAgentCommand,
         observed_at_ms: u64,
     ) -> Result<CoreAgentAction, CoreAgentDriveError> {
-        let proposals = self.admit.admit(&self.state, command)?;
+        let proposals = crate::core::admit::admit_command(&self.state, command)?;
         self.append_action(proposals, observed_at_ms)
     }
 
@@ -90,7 +81,7 @@ impl CoreAgentDrive {
         observed_at_ms: u64,
         max_steps: usize,
     ) -> Result<CoreAgentAction, CoreAgentDriveError> {
-        let proposals = self.planner.plan_next(&self.state)?;
+        let proposals = crate::core::planning::plan_next(&self.state)?;
         if !proposals.is_empty() {
             if !self.increment_steps(max_steps) {
                 return Ok(CoreAgentAction::StepLimitReached);
@@ -128,10 +119,10 @@ impl CoreAgentDrive {
     ) -> Result<Vec<CoreAgentEntry>, CoreAgentDriveError> {
         let decoded = entries
             .iter()
-            .map(|entry| self.codec.decode_entry(entry))
+            .map(|entry| CoreAgentCodec.decode_entry(entry))
             .collect::<Result<Vec<_>, _>>()?;
         for entry in &decoded {
-            self.apply.apply(&mut self.state, entry)?;
+            crate::core::apply::apply_event(&mut self.state, entry)?;
         }
         self.head = self.state.reduced_to.clone();
         Ok(decoded)
@@ -224,7 +215,7 @@ impl CoreAgentDrive {
         let events = proposals
             .into_iter()
             .map(|proposal| proposal.into_uncommitted(observed_at_ms))
-            .map(|event| self.codec.encode_uncommitted(&event))
+            .map(|event| CoreAgentCodec.encode_uncommitted(&event))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(CoreAgentAction::AppendEvents {
             expected_head: self.head.clone(),
@@ -301,7 +292,6 @@ pub fn rebuild_llm_request_for_planned_turn(
     target_turn_id: TurnId,
 ) -> Result<Option<LlmRequest>, DomainError> {
     let mut state = CoreAgentState::new();
-    let apply = CoreApplyEvent;
     for entry in entries {
         if let CoreAgentEventKind::Turn(TurnEvent::Planned {
             turn_id,
@@ -334,7 +324,7 @@ pub fn rebuild_llm_request_for_planned_turn(
             )
             .map(Some);
         }
-        apply.apply(&mut state, entry)?;
+        crate::core::apply::apply_event(&mut state, entry)?;
     }
     Ok(None)
 }
@@ -942,7 +932,7 @@ mod tests {
     ) -> Result<Vec<CoreAgentEntry>, CoreAgentDriveError> {
         let proposal = CoreAgentEventProposal::new(CoreAgentJoins::default(), kind);
         let uncommitted = proposal.into_uncommitted(observed_at_ms);
-        let event = drive.codec.encode_uncommitted(&uncommitted)?;
+        let event = CoreAgentCodec.encode_uncommitted(&uncommitted)?;
         let seq = drive.head().map_or(1, |position| position.seq.as_u64() + 1);
         let entry = DynamicSessionEntry {
             position: SessionPosition {

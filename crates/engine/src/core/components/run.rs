@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     ActiveToolBatch, BlobRef, CompletedToolBatch, ContextEntryId, ContextEntryInput,
     ContextEntryKey, CoreAgentEventKind, CoreAgentEventProposal, CoreAgentJoins, CoreAgentState,
-    CoreAgentStatus, DomainError, PlanNext, PlanningError, RunConfig, RunId, SteeringId,
-    SubmissionId, ToolBatchId, TurnId, TurnOutcome, TurnState, TurnStatus,
+    CoreAgentStatus, DomainError, PlanningError, RunConfig, RunId, SteeringId, SubmissionId,
+    ToolBatchId, TurnId, TurnOutcome, TurnState, TurnStatus,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -221,56 +221,48 @@ pub struct RunQueueState {
     pub completed: Vec<RunRecord>,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct CoreRunPlanner;
+pub fn plan_next(state: &CoreAgentState) -> Result<Vec<CoreAgentEventProposal>, PlanningError> {
+    if state.lifecycle.status != CoreAgentStatus::Open {
+        return Ok(Vec::new());
+    }
 
-impl PlanNext for CoreRunPlanner {
-    fn plan_next(
-        &self,
-        state: &CoreAgentState,
-    ) -> Result<Vec<CoreAgentEventProposal>, PlanningError> {
-        if state.lifecycle.status != CoreAgentStatus::Open {
-            return Ok(Vec::new());
-        }
-
-        if let Some(active_run) = state.runs.active.as_ref() {
-            if active_run.active_turn_id.is_none() && active_run.active_tool_batch_id.is_none() {
-                if active_run.status == RunStatus::Cancelling {
-                    let joins = CoreAgentJoins {
-                        run_id: Some(active_run.run_id),
-                        ..CoreAgentJoins::default()
-                    };
-                    return Ok(vec![CoreAgentEventProposal::new(
-                        joins,
-                        CoreAgentEventKind::Run(Event::Cancelled {
-                            run_id: active_run.run_id,
-                        }),
-                    )]);
-                }
-                if active_run.status == RunStatus::Active {
-                    if let Some(proposal) = terminal_run_proposal(active_run)? {
-                        return Ok(vec![proposal]);
-                    }
+    if let Some(active_run) = state.runs.active.as_ref() {
+        if active_run.active_turn_id.is_none() && active_run.active_tool_batch_id.is_none() {
+            if active_run.status == RunStatus::Cancelling {
+                let joins = CoreAgentJoins {
+                    run_id: Some(active_run.run_id),
+                    ..CoreAgentJoins::default()
+                };
+                return Ok(vec![CoreAgentEventProposal::new(
+                    joins,
+                    CoreAgentEventKind::Run(Event::Cancelled {
+                        run_id: active_run.run_id,
+                    }),
+                )]);
+            }
+            if active_run.status == RunStatus::Active {
+                if let Some(proposal) = terminal_run_proposal(active_run)? {
+                    return Ok(vec![proposal]);
                 }
             }
-            return Ok(Vec::new());
         }
-
-        let Some(queued) = state.runs.queued.first() else {
-            return Ok(Vec::new());
-        };
-
-        let joins = CoreAgentJoins {
-            run_id: Some(queued.run_id),
-            submission_id: queued.submission_id.clone(),
-            ..CoreAgentJoins::default()
-        };
-        let kind = CoreAgentEventKind::Run(Event::Started {
-            run_id: queued.run_id,
-        });
-
-        Ok(vec![CoreAgentEventProposal::new(joins, kind)])
+        return Ok(Vec::new());
     }
+
+    let Some(queued) = state.runs.queued.first() else {
+        return Ok(Vec::new());
+    };
+
+    let joins = CoreAgentJoins {
+        run_id: Some(queued.run_id),
+        submission_id: queued.submission_id.clone(),
+        ..CoreAgentJoins::default()
+    };
+    let kind = CoreAgentEventKind::Run(Event::Started {
+        run_id: queued.run_id,
+    });
+
+    Ok(vec![CoreAgentEventProposal::new(joins, kind)])
 }
 
 fn terminal_run_proposal(

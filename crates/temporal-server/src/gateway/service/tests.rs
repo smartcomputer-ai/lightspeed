@@ -6,11 +6,6 @@ use crate::gateway::service::prompts::{active_prompt_context_entries, prompt_rep
 #[test]
 fn admission_failure_mapping_uses_gateway_error_kinds() {
     assert_eq!(
-        map_admission_failure_to_api_error(&failure(AgentAdmissionFailureKind::InvalidCommand))
-            .kind,
-        AgentApiErrorKind::InvalidRequest
-    );
-    assert_eq!(
         map_admission_failure_to_api_error(&failure(AgentAdmissionFailureKind::RejectedCommand))
             .kind,
         AgentApiErrorKind::Rejected

@@ -16,18 +16,16 @@ use api::{
 use api_projection::model_to_api;
 use async_trait::async_trait;
 use engine::{
-    CommandCodec, ContextEntryInput, ContextEntryKind, ContextMessageRole, CoreAgentCodec,
-    CoreAgentCommand, CoreAgentIoError, CoreAgentLlm, CoreAgentTools, DynamicCommand, LlmFinish,
-    LlmGenerationFacts, LlmGenerationRequest, LlmGenerationResult, LlmGenerationStatus,
-    ModelSelection, ObservedToolCall, RunId, SessionId, ToolBatchId, ToolCallId, ToolCallStatus,
-    ToolInvocationRequest, ToolName, TurnId,
+    ContextEntryInput, ContextEntryKind, ContextMessageRole, CoreAgentCommand, CoreAgentIoError,
+    CoreAgentLlm, CoreAgentTools, LlmFinish, LlmGenerationFacts, LlmGenerationRequest,
+    LlmGenerationResult, LlmGenerationStatus, ModelSelection, ObservedToolCall, RunId, SessionId,
+    ToolBatchId, ToolCallId, ToolCallStatus, ToolInvocationRequest, ToolName, TurnId,
     storage::{BlobStore, ListSessionLinks, SessionLinkDirection, SessionStore},
 };
 use support::live::{
-    LIVE_TEST_LOCK, fake_worker_activities, final_assistant_text,
-    live_workflow_handle, openai_live_model, require_openai_live_env, require_storage_live_env,
-    run_with_live_worker, wait_for_admission_failure, wait_for_session_status,
-    wait_for_terminal_run,
+    LIVE_TEST_LOCK, fake_worker_activities, final_assistant_text, live_workflow_handle,
+    openai_live_model, require_openai_live_env, require_storage_live_env, run_with_live_worker,
+    wait_for_admission_failure, wait_for_session_status, wait_for_terminal_run,
 };
 use temporal_server::{
     DeploymentStores, UniverseRuntime, default_model_from_env,
@@ -864,8 +862,7 @@ async fn run_fleet_spawn_live_client(
     let output_text = final_assistant_text(&follow_up_run).expect("follow-up assistant output");
     assert!(output_text.contains("Fake agent completed run"));
 
-    let child_handle =
-        live_workflow_handle(&client, &child_session_id)?;
+    let child_handle = live_workflow_handle(&client, &child_session_id)?;
     let status = child_handle
         .query(
             AgentSessionWorkflow::status,
@@ -1286,8 +1283,7 @@ async fn run_fleet_wait_live_client(
     assert_eq!(parent_status.active_waits, 0);
     assert_eq!(parent_status.last_error, None);
 
-    let child_handle =
-        live_workflow_handle(&client, &child_session_id)?;
+    let child_handle = live_workflow_handle(&client, &child_session_id)?;
     let child_status = child_handle
         .query(
             AgentSessionWorkflow::status,
@@ -1917,7 +1913,9 @@ async fn run_admission_failure_live_client(
         .signal(
             AgentSessionWorkflow::submit_admissions,
             vec![AgentAdmission {
-                command: DynamicCommand::new("lightspeed.core.command", 999, serde_json::json!({})),
+                // No run is active, so admission rejects this command; the
+                // session must keep serving later admissions regardless.
+                command: CoreAgentCommand::RequestRunCancellation,
                 context_key: None,
             }],
             WorkflowSignalOptions::default(),
@@ -1926,7 +1924,7 @@ async fn run_admission_failure_live_client(
     wait_for_admission_failure(
         &client,
         &session_id,
-        AgentAdmissionFailureKind::InvalidCommand,
+        AgentAdmissionFailureKind::RejectedCommand,
     )
     .await?;
 
@@ -1946,12 +1944,11 @@ async fn run_admission_failure_live_client(
     let output = final_assistant_text(&run).expect("assistant output");
     assert!(output.contains("Fake agent completed run"));
 
-    let close_command = CoreAgentCodec.encode_command(&CoreAgentCommand::CloseSession)?;
     handle
         .signal(
             AgentSessionWorkflow::submit_admissions,
             vec![AgentAdmission {
-                command: close_command,
+                command: CoreAgentCommand::CloseSession,
                 context_key: None,
             }],
             WorkflowSignalOptions::default(),
@@ -2593,9 +2590,7 @@ async fn temporal_live_api_key_mode_scopes_requests() -> anyhow::Result<()> {
 
     let http = reqwest::Client::new();
     let session_id = format!("session_key_{}", uuid::Uuid::new_v4().simple());
-    let rpc = |method: &str, params: serde_json::Value| {
-        serde_json::json!({ "id": 1, "method": method, "params": params })
-    };
+    let rpc = |method: &str, params: serde_json::Value| serde_json::json!({ "id": 1, "method": method, "params": params });
     let call = |bearer: Option<String>, body: serde_json::Value| {
         let http = http.clone();
         let gateway_url = gateway_url.clone();
@@ -2615,22 +2610,32 @@ async fn temporal_live_api_key_mode_scopes_requests() -> anyhow::Result<()> {
         // Fail closed: no credential.
         let response = call(
             None,
-            rpc("session/read", serde_json::json!({ "sessionId": session_id })),
+            rpc(
+                "session/read",
+                serde_json::json!({ "sessionId": session_id }),
+            ),
         )
         .await?;
-        assert!(response["error"]["message"]
-            .as_str()
-            .expect("error message")
-            .contains("Authorization"));
+        assert!(
+            response["error"]["message"]
+                .as_str()
+                .expect("error message")
+                .contains("Authorization")
+        );
 
         // Fail closed: unknown key.
         let response = call(
             Some("lsk_bogus".to_owned()),
-            rpc("session/read", serde_json::json!({ "sessionId": session_id })),
+            rpc(
+                "session/read",
+                serde_json::json!({ "sessionId": session_id }),
+            ),
         )
         .await?;
         assert_eq!(
-            response["error"]["message"].as_str().expect("error message"),
+            response["error"]["message"]
+                .as_str()
+                .expect("error message"),
             "invalid api key"
         );
 
@@ -2647,15 +2652,20 @@ async fn temporal_live_api_key_mode_scopes_requests() -> anyhow::Result<()> {
             .await?
             .json()
             .await?;
-        assert!(response["error"]["message"]
-            .as_str()
-            .expect("error message")
-            .contains("x-lightspeed-universe"));
+        assert!(
+            response["error"]["message"]
+                .as_str()
+                .expect("error message")
+                .contains("x-lightspeed-universe")
+        );
 
         // Key A starts a session in universe A.
         let response = call(
             Some(secret_a.clone()),
-            rpc("session/start", serde_json::json!({ "sessionId": session_id })),
+            rpc(
+                "session/start",
+                serde_json::json!({ "sessionId": session_id }),
+            ),
         )
         .await?;
         assert!(
@@ -2666,7 +2676,10 @@ async fn temporal_live_api_key_mode_scopes_requests() -> anyhow::Result<()> {
         // Key A reads it; key B misses it (not-found, no existence leak).
         let response = call(
             Some(secret_a.clone()),
-            rpc("session/read", serde_json::json!({ "sessionId": session_id })),
+            rpc(
+                "session/read",
+                serde_json::json!({ "sessionId": session_id }),
+            ),
         )
         .await?;
         assert!(
@@ -2675,7 +2688,10 @@ async fn temporal_live_api_key_mode_scopes_requests() -> anyhow::Result<()> {
         );
         let response = call(
             Some(secret_b.clone()),
-            rpc("session/read", serde_json::json!({ "sessionId": session_id })),
+            rpc(
+                "session/read",
+                serde_json::json!({ "sessionId": session_id }),
+            ),
         )
         .await?;
         assert_eq!(
@@ -2726,11 +2742,16 @@ async fn temporal_live_api_key_mode_scopes_requests() -> anyhow::Result<()> {
         );
         let response = call(
             Some(secret_a.clone()),
-            rpc("session/read", serde_json::json!({ "sessionId": session_id })),
+            rpc(
+                "session/read",
+                serde_json::json!({ "sessionId": session_id }),
+            ),
         )
         .await?;
         assert_eq!(
-            response["error"]["message"].as_str().expect("error message"),
+            response["error"]["message"]
+                .as_str()
+                .expect("error message"),
             "invalid api key"
         );
 

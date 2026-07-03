@@ -42,9 +42,6 @@ impl GatewayAgentApi {
                 | CoreAgentCommand::RemoveContext { key } => Some(key.clone()),
                 _ => None,
             };
-            let command = engine::CoreAgentCodec
-                .encode_command(&command)
-                .map_err(|error| AgentApiError::internal(error.to_string()))?;
             admissions.push(AgentAdmission {
                 command,
                 context_key,
@@ -266,8 +263,13 @@ impl GatewayAgentApi {
         session_id: &SessionId,
         expected: &[ContextEntryKey],
         baseline_failures: usize,
-    ) -> Result<(u64, BTreeMap<ContextEntryKey, Option<AgentAdmissionFailure>>), AgentApiError>
-    {
+    ) -> Result<
+        (
+            u64,
+            BTreeMap<ContextEntryKey, Option<AgentAdmissionFailure>>,
+        ),
+        AgentApiError,
+    > {
         let expected_keys = expected.iter().cloned().collect::<BTreeSet<_>>();
         let started = Instant::now();
         let mut outcomes: BTreeMap<ContextEntryKey, Option<AgentAdmissionFailure>> =

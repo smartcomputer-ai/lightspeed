@@ -2,9 +2,9 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use engine::{
     AgentHandle, BlobRef, ContextEntryInput, ContextEntryKind, ContextMessageRole,
-    CoreAdmitCommand, CoreAgentCodec, CoreAgentCommand, FunctionToolSpec, ModelSelection,
-    ProviderApiKind, SessionId, SubmissionId, ToolChoice, ToolChoiceMode, ToolKind, ToolName,
-    ToolParallelism, ToolSpec, ToolTargetRequirement,
+    CoreAgentCommand, FunctionToolSpec, ModelSelection, ProviderApiKind, SessionId, SubmissionId,
+    ToolChoice, ToolChoiceMode, ToolKind, ToolName, ToolParallelism, ToolSpec,
+    ToolTargetRequirement,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
 };
 use temporal_server::worker::{
@@ -129,28 +129,6 @@ fn fake_tool_set(input_schema_ref: BlobRef) -> BTreeMap<ToolName, ToolSpec> {
             target_requirement: ToolTargetRequirement::None,
         },
     )])
-}
-
-#[test]
-fn core_command_admission_uses_core_agent_codec_shape() {
-    use engine::CommandCodec;
-
-    let codec = CoreAgentCodec;
-    let command = CoreAgentCommand::RequestRun(engine::RunRequestCommand {
-        submission_id: Some(SubmissionId::new("submit_test")),
-        source: engine::RunRequestSource::Input {
-            input: user_input(BlobRef::from_bytes(b"hello")),
-        },
-        run_config: default_run_config(),
-    });
-    let dynamic = codec.encode_command(&command).expect("encode command");
-    assert_eq!(dynamic.kind, "lightspeed.core.command");
-    assert_eq!(
-        codec.decode_command(&dynamic).expect("decode command"),
-        command
-    );
-
-    let _admitter = CoreAdmitCommand;
 }
 
 fn user_input(content_ref: BlobRef) -> Vec<ContextEntryInput> {

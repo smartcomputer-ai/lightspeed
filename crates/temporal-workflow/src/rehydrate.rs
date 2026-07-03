@@ -11,8 +11,8 @@
 use std::collections::BTreeMap;
 
 use engine::{
-    CoreAgentCodec, CoreAgentEntry, CoreAgentEventKind, CoreAgentState, CoreApplyEvent, RunEvent,
-    SubmissionId, storage::DynamicSessionEntry,
+    CoreAgentCodec, CoreAgentEntry, CoreAgentEventKind, CoreAgentState, RunEvent, SubmissionId,
+    storage::DynamicSessionEntry,
 };
 
 /// Outcome of reducing a session's persisted log.
@@ -51,33 +51,24 @@ impl std::error::Error for RehydrateError {}
 pub fn reduce_session_entries(
     entries: &[DynamicSessionEntry],
 ) -> Result<ReducedSession, RehydrateError> {
-    let codec = CoreAgentCodec;
-    let apply = CoreApplyEvent;
     let mut reduced = ReducedSession::default();
     for entry in entries {
-        let decoded = codec
+        let decoded = CoreAgentCodec
             .decode_entry(entry)
             .map_err(|error| RehydrateError::Decode(error.to_string()))?;
-        accumulate(&apply, &mut reduced, &decoded)?;
+        accumulate(&mut reduced, &decoded)?;
     }
     reduced.replayed_event_count = entries.len() as u64;
     Ok(reduced)
 }
 
-fn accumulate(
-    apply: &CoreApplyEvent,
-    reduced: &mut ReducedSession,
-    entry: &CoreAgentEntry,
-) -> Result<(), RehydrateError> {
-    use engine::ApplyEvent;
-
+fn accumulate(reduced: &mut ReducedSession, entry: &CoreAgentEntry) -> Result<(), RehydrateError> {
     if let CoreAgentEventKind::Run(RunEvent::Accepted(accepted)) = &entry.event.kind {
         reduced
             .run_submissions
             .insert(accepted.run_id.as_u64(), accepted.submission_id.clone());
     }
-    apply
-        .apply(&mut reduced.core_state, entry)
+    engine::apply_event(&mut reduced.core_state, entry)
         .map_err(|error| RehydrateError::Apply(error.to_string()))
 }
 
