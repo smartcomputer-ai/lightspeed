@@ -376,8 +376,10 @@ mod tests {
         ) -> Result<VfsWorkspaceRecord, VfsCatalogError> {
             Ok(VfsWorkspaceRecord {
                 workspace_id: record.workspace_id,
+                display_name: record.display_name,
                 base_snapshot_ref: record.base_snapshot_ref,
                 head_snapshot_ref: record.head_snapshot_ref,
+                head_totals: record.head_totals,
                 revision: 0,
                 created_at_ms: record.created_at_ms,
                 updated_at_ms: record.created_at_ms,
@@ -392,6 +394,10 @@ mod tests {
                 kind: "workspace",
                 id: workspace_id.to_string(),
             })
+        }
+
+        async fn list_workspaces(&self) -> Result<Vec<VfsWorkspaceRecord>, VfsCatalogError> {
+            Ok(Vec::new())
         }
 
         async fn compare_and_set_head(

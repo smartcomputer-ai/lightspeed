@@ -42,13 +42,14 @@ use mcp::{
 };
 use object_store::{ObjectStore, aws::AmazonS3Builder};
 use sqlx::{PgPool, Row, postgres::PgPoolOptions};
+use profiles::{ProfileError, ProfileStore};
 use store_pg::{PgStore, PgStoreConfig, SecretsMasterKey};
 use tokio::sync::OnceCell;
 use uuid::Uuid;
 use vfs::{
     CompareAndSetVfsWorkspaceHead, CreateVfsWorkspaceRecord, VfsCatalogError, VfsMountAccess,
     VfsMountRecord, VfsMountSource, VfsMountStore, VfsPath, VfsSnapshotRecord, VfsSnapshotSource,
-    VfsSnapshotStore, VfsWorkspaceId, VfsWorkspaceStore,
+    VfsSnapshotStore, VfsTotals, VfsWorkspaceId, VfsWorkspaceStore,
 };
 
 static MIGRATED: OnceCell<()> = OnceCell::const_new();
@@ -148,8 +149,10 @@ async fn pg_live_clone_copies_resources_and_links_sessions() {
     store
         .create_workspace(CreateVfsWorkspaceRecord {
             workspace_id: workspace_id.clone(),
+            display_name: None,
             base_snapshot_ref: Some(snapshot_ref.clone()),
             head_snapshot_ref: snapshot_ref.clone(),
+            head_totals: VfsTotals::default(),
             created_at_ms: 13,
         })
         .await
@@ -647,19 +650,25 @@ async fn pg_live_vfs_catalog_tracks_workspace_heads_and_mounts() {
     let workspace = store
         .create_workspace(CreateVfsWorkspaceRecord {
             workspace_id: workspace_id.clone(),
+            display_name: Some("Scratch".to_string()),
             base_snapshot_ref: Some(snapshot_ref.clone()),
             head_snapshot_ref: snapshot_ref.clone(),
+            head_totals: VfsTotals { files: 1, bytes: 8 },
             created_at_ms: 2,
         })
         .await
         .expect("create workspace");
     assert_eq!(workspace.revision, 0);
+    assert_eq!(workspace.display_name.as_deref(), Some("Scratch"));
+    assert_eq!(workspace.head_totals, VfsTotals { files: 1, bytes: 8 });
     assert!(matches!(
         store
             .create_workspace(CreateVfsWorkspaceRecord {
                 workspace_id: workspace_id.clone(),
+                display_name: None,
                 base_snapshot_ref: None,
                 head_snapshot_ref: snapshot_ref.clone(),
+                head_totals: VfsTotals::default(),
                 created_at_ms: 3,
             })
             .await,
@@ -670,18 +679,24 @@ async fn pg_live_vfs_catalog_tracks_workspace_heads_and_mounts() {
         .compare_and_set_head(CompareAndSetVfsWorkspaceHead {
             workspace_id: workspace_id.clone(),
             expected_revision: Some(0),
+            display_name: Some("Scratch v2".to_string()),
             new_head_snapshot_ref: next_ref,
+            new_head_totals: VfsTotals { files: 2, bytes: 16 },
             updated_at_ms: 4,
         })
         .await
         .expect("advance workspace head");
     assert_eq!(updated.revision, 1);
+    assert_eq!(updated.display_name.as_deref(), Some("Scratch v2"));
+    assert_eq!(updated.head_totals, VfsTotals { files: 2, bytes: 16 });
     assert!(matches!(
         store
             .compare_and_set_head(CompareAndSetVfsWorkspaceHead {
                 workspace_id: workspace_id.clone(),
                 expected_revision: Some(0),
+                display_name: None,
                 new_head_snapshot_ref: snapshot_ref.clone(),
+                new_head_totals: VfsTotals::default(),
                 updated_at_ms: 5,
             })
             .await,
@@ -690,6 +705,12 @@ async fn pg_live_vfs_catalog_tracks_workspace_heads_and_mounts() {
             ..
         })
     ));
+
+    let listed = store.list_workspaces().await.expect("list workspaces");
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].workspace_id, workspace_id);
+    assert_eq!(listed[0].display_name.as_deref(), Some("Scratch v2"));
+    assert_eq!(listed[0].head_totals, VfsTotals { files: 2, bytes: 16 });
 
     let session_id = SessionId::new("session-vfs");
     let workspace_mount = VfsMountRecord {
@@ -741,6 +762,72 @@ async fn pg_live_vfs_catalog_tracks_workspace_heads_and_mounts() {
         store.list_mounts(&session_id).await.expect("list mounts"),
         Vec::<VfsMountRecord>::new()
     );
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires local/up.sh or compatible Postgres + MinIO env"]
+async fn pg_live_profile_put_creates_and_replaces() {
+    use api::{AgentProfileInput, ProfileDocument, ProfileId, ProfileInstructions};
+
+    let store = live_store("profile-put", 1024).await;
+    let profile_id = ProfileId::new("support");
+    let input = |instructions: &str| AgentProfileInput {
+        profile_id: profile_id.clone(),
+        display_name: Some("Support".to_owned()),
+        description: None,
+        document: ProfileDocument {
+            instructions: Some(ProfileInstructions::Text {
+                text: instructions.to_owned(),
+            }),
+            ..ProfileDocument::default()
+        },
+    };
+
+    // Absent profile: put creates at revision 1 even with an expected revision.
+    let created = store
+        .put_agent_profile(input("v1"), Some(7), 10)
+        .await
+        .expect("put creates absent profile");
+    assert_eq!(created.revision, 1);
+    assert_eq!(created.created_at_ms, 10);
+
+    // Existing profile: put replaces the whole document and bumps the revision.
+    let replaced = store
+        .put_agent_profile(
+            AgentProfileInput {
+                display_name: Some("Support v2".to_owned()),
+                ..input("v2")
+            },
+            None,
+            20,
+        )
+        .await
+        .expect("put replaces existing profile");
+    assert_eq!(replaced.revision, 2);
+    assert_eq!(replaced.created_at_ms, 10);
+    assert_eq!(replaced.updated_at_ms, 20);
+    assert_eq!(replaced.display_name.as_deref(), Some("Support v2"));
+    assert!(matches!(
+        replaced.document.instructions,
+        Some(ProfileInstructions::Text { ref text }) if text == "v2"
+    ));
+
+    // Stale expected revision on an existing profile is a conflict.
+    assert!(matches!(
+        store.put_agent_profile(input("v3"), Some(1), 30).await,
+        Err(ProfileError::RevisionConflict {
+            expected: 1,
+            actual: 2,
+            ..
+        })
+    ));
+
+    // Matching expected revision replaces.
+    let third = store
+        .put_agent_profile(input("v3"), Some(2), 30)
+        .await
+        .expect("put with matching expected revision");
+    assert_eq!(third.revision, 3);
 }
 
 #[tokio::test(flavor = "current_thread")]

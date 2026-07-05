@@ -1576,6 +1576,18 @@ impl AgentApiService for TestService {
         }))
     }
 
+    async fn put_profile(
+        &self,
+        params: ProfilePutParams,
+    ) -> Result<AgentApiOutcome<ProfilePutResponse>, AgentApiError> {
+        let mut profile = test_profile(params.profile.profile_id);
+        profile.display_name = params.profile.display_name;
+        profile.description = params.profile.description;
+        profile.document = params.profile.document;
+        profile.revision = params.expected_revision.unwrap_or(profile.revision) + 1;
+        Ok(AgentApiOutcome::new(ProfilePutResponse { profile }))
+    }
+
     async fn update_profile(
         &self,
         params: ProfileUpdateParams,
@@ -2173,14 +2185,22 @@ impl AgentApiService for TestService {
         &self,
         params: VfsWorkspaceCreateParams,
     ) -> Result<AgentApiOutcome<VfsWorkspaceCreateResponse>, AgentApiError> {
+        let snapshot_ref = params
+            .snapshot_ref
+            .unwrap_or_else(|| format!("sha256:{}", "0".repeat(64)));
         Ok(AgentApiOutcome::new(VfsWorkspaceCreateResponse {
             workspace: VfsWorkspaceView {
                 workspace_id: params
                     .workspace_id
                     .unwrap_or_else(|| "workspace_test".to_owned()),
-                base_snapshot_ref: Some(params.snapshot_ref.clone()),
-                head_snapshot_ref: params.snapshot_ref,
+                display_name: params.display_name,
+                base_snapshot_ref: Some(snapshot_ref.clone()),
+                head_snapshot_ref: snapshot_ref,
+                files: 0,
+                bytes: 0,
                 revision: 0,
+                created_at_ms: 10,
+                updated_at_ms: 10,
             },
         }))
     }
@@ -2190,12 +2210,16 @@ impl AgentApiService for TestService {
         params: VfsWorkspaceReadParams,
     ) -> Result<AgentApiOutcome<VfsWorkspaceReadResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(VfsWorkspaceReadResponse {
-            workspace: VfsWorkspaceView {
-                workspace_id: params.workspace_id,
-                base_snapshot_ref: Some(format!("sha256:{}", "2".repeat(64))),
-                head_snapshot_ref: format!("sha256:{}", "3".repeat(64)),
-                revision: 4,
-            },
+            workspace: test_workspace(params.workspace_id, 4),
+        }))
+    }
+
+    async fn list_vfs_workspaces(
+        &self,
+        _params: VfsWorkspaceListParams,
+    ) -> Result<AgentApiOutcome<VfsWorkspaceListResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(VfsWorkspaceListResponse {
+            workspaces: vec![test_workspace("workspace_test".to_owned(), 4)],
         }))
     }
 
@@ -2203,13 +2227,14 @@ impl AgentApiService for TestService {
         &self,
         params: VfsWorkspaceUpdateParams,
     ) -> Result<AgentApiOutcome<VfsWorkspaceUpdateResponse>, AgentApiError> {
+        let mut workspace = test_workspace(
+            params.workspace_id,
+            params.expected_revision.unwrap_or(4) + 1,
+        );
+        workspace.head_snapshot_ref = params.snapshot_ref;
+        workspace.display_name = params.display_name;
         Ok(AgentApiOutcome::new(VfsWorkspaceUpdateResponse {
-            workspace: VfsWorkspaceView {
-                workspace_id: params.workspace_id,
-                base_snapshot_ref: Some(format!("sha256:{}", "2".repeat(64))),
-                head_snapshot_ref: params.snapshot_ref,
-                revision: params.expected_revision.unwrap_or(4) + 1,
-            },
+            workspace,
         }))
     }
 
@@ -2218,12 +2243,7 @@ impl AgentApiService for TestService {
         params: VfsWorkspaceDeleteParams,
     ) -> Result<AgentApiOutcome<VfsWorkspaceDeleteResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(VfsWorkspaceDeleteResponse {
-            workspace: VfsWorkspaceView {
-                workspace_id: params.workspace_id,
-                base_snapshot_ref: Some(format!("sha256:{}", "2".repeat(64))),
-                head_snapshot_ref: format!("sha256:{}", "3".repeat(64)),
-                revision: 4,
-            },
+            workspace: test_workspace(params.workspace_id, 4),
         }))
     }
 
@@ -2599,6 +2619,20 @@ fn test_profile(profile_id: ProfileId) -> AgentProfile {
         },
         created_at_ms: 1,
         updated_at_ms: 2,
+    }
+}
+
+fn test_workspace(workspace_id: String, revision: u64) -> VfsWorkspaceView {
+    VfsWorkspaceView {
+        workspace_id,
+        display_name: Some("Test workspace".to_owned()),
+        base_snapshot_ref: Some(format!("sha256:{}", "2".repeat(64))),
+        head_snapshot_ref: format!("sha256:{}", "3".repeat(64)),
+        files: 2,
+        bytes: 64,
+        revision,
+        created_at_ms: 10,
+        updated_at_ms: 20,
     }
 }
 

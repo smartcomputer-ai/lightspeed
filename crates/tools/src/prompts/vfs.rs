@@ -291,8 +291,10 @@ mod tests {
         workspace_store
             .create_workspace(CreateVfsWorkspaceRecord {
                 workspace_id: workspace_id.clone(),
+                display_name: None,
                 base_snapshot_ref: Some(snapshot.snapshot_ref.clone()),
                 head_snapshot_ref: snapshot.snapshot_ref.clone(),
+                head_totals: snapshot.manifest.totals.clone(),
                 created_at_ms: 1,
             })
             .await
@@ -408,8 +410,10 @@ mod tests {
         ) -> Result<VfsWorkspaceRecord, VfsCatalogError> {
             let workspace = VfsWorkspaceRecord {
                 workspace_id: record.workspace_id,
+                display_name: record.display_name,
                 base_snapshot_ref: record.base_snapshot_ref,
                 head_snapshot_ref: record.head_snapshot_ref,
+                head_totals: record.head_totals,
                 revision: 0,
                 created_at_ms: record.created_at_ms,
                 updated_at_ms: record.created_at_ms,
@@ -434,6 +438,16 @@ mod tests {
                     kind: "workspace",
                     id: workspace_id.as_str().to_owned(),
                 })
+        }
+
+        async fn list_workspaces(&self) -> Result<Vec<VfsWorkspaceRecord>, VfsCatalogError> {
+            Ok(self
+                .workspaces
+                .lock()
+                .expect("workspaces")
+                .values()
+                .cloned()
+                .collect())
         }
 
         async fn compare_and_set_head(

@@ -2336,6 +2336,21 @@ export interface AgentProfileSummary {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfProfilePutResponse".
+ */
+export interface AgentApiOutcomeOfProfilePutResponse {
+  notifications?: AgentNotification[];
+  result: ProfilePutResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ProfilePutResponse".
+ */
+export interface ProfilePutResponse {
+  profile: AgentProfile;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfProfileReadResponse".
  */
 export interface AgentApiOutcomeOfProfileReadResponse {
@@ -3140,8 +3155,19 @@ export interface VfsWorkspaceCreateResponse {
  */
 export interface VfsWorkspaceView {
   baseSnapshotRef?: string | null;
+  /**
+   * Total byte size of the head snapshot.
+   */
+  bytes: number;
+  createdAtMs: number;
+  displayName?: string | null;
+  /**
+   * File count of the head snapshot.
+   */
+  files: number;
   headSnapshotRef: string;
   revision: number;
+  updatedAtMs: number;
   workspaceId: string;
 }
 /**
@@ -3158,6 +3184,21 @@ export interface AgentApiOutcomeOfVfsWorkspaceDeleteResponse {
  */
 export interface VfsWorkspaceDeleteResponse {
   workspace: VfsWorkspaceView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfVfsWorkspaceListResponse".
+ */
+export interface AgentApiOutcomeOfVfsWorkspaceListResponse {
+  notifications?: AgentNotification[];
+  result: VfsWorkspaceListResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "VfsWorkspaceListResponse".
+ */
+export interface VfsWorkspaceListResponse {
+  workspaces?: VfsWorkspaceView[];
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -3663,6 +3704,18 @@ export interface ProfileDeleteParams {
 export interface ProfileListParams {}
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ProfilePutParams".
+ */
+export interface ProfilePutParams {
+  /**
+   * Checked only when the profile already exists; absent replaces (or
+   * creates) unconditionally.
+   */
+  expectedRevision?: number | null;
+  profile: AgentProfileInput;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ProfileReadParams".
  */
 export interface ProfileReadParams {
@@ -4082,7 +4135,11 @@ export interface VfsSnapshotReadParams {
  */
 export interface VfsWorkspaceCreateParams {
   displayName?: string | null;
-  snapshotRef: string;
+  /**
+   * Snapshot to seed the workspace from. Absent starts the workspace from
+   * the empty snapshot, committed server-side.
+   */
+  snapshotRef?: string | null;
   workspaceId?: string | null;
 }
 /**
@@ -4092,6 +4149,11 @@ export interface VfsWorkspaceCreateParams {
 export interface VfsWorkspaceDeleteParams {
   workspaceId: string;
 }
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "VfsWorkspaceListParams".
+ */
+export interface VfsWorkspaceListParams {}
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "VfsWorkspaceReadParams".

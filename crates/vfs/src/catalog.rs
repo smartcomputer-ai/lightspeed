@@ -4,6 +4,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
 use thiserror::Error;
 
+use crate::manifest::VfsTotals;
 use crate::path::VfsPath;
 
 macro_rules! vfs_string_id {
@@ -154,8 +155,13 @@ impl VfsSnapshotSource {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VfsWorkspaceRecord {
     pub workspace_id: VfsWorkspaceId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
     pub base_snapshot_ref: Option<BlobRef>,
     pub head_snapshot_ref: BlobRef,
+    /// Totals of the head snapshot's manifest, denormalized so reads and
+    /// listings never dereference the manifest blob.
+    pub head_totals: VfsTotals,
     pub revision: u64,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
@@ -164,8 +170,11 @@ pub struct VfsWorkspaceRecord {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreateVfsWorkspaceRecord {
     pub workspace_id: VfsWorkspaceId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
     pub base_snapshot_ref: Option<BlobRef>,
     pub head_snapshot_ref: BlobRef,
+    pub head_totals: VfsTotals,
     pub created_at_ms: i64,
 }
 
@@ -174,7 +183,11 @@ pub struct CompareAndSetVfsWorkspaceHead {
     pub workspace_id: VfsWorkspaceId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_revision: Option<u64>,
+    /// When present, replaces the workspace display name alongside the head.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
     pub new_head_snapshot_ref: BlobRef,
+    pub new_head_totals: VfsTotals,
     pub updated_at_ms: i64,
 }
 
@@ -233,6 +246,9 @@ pub trait VfsWorkspaceStore: Send + Sync {
         &self,
         workspace_id: &VfsWorkspaceId,
     ) -> Result<VfsWorkspaceRecord, VfsCatalogError>;
+
+    /// Enumerate every workspace in the store, most recently updated first.
+    async fn list_workspaces(&self) -> Result<Vec<VfsWorkspaceRecord>, VfsCatalogError>;
 
     async fn compare_and_set_head(
         &self,
@@ -298,8 +314,10 @@ mod tests {
 
         let workspace = VfsWorkspaceRecord {
             workspace_id: workspace_id.clone(),
+            display_name: Some("Scratch".to_string()),
             base_snapshot_ref: Some(snapshot_ref.clone()),
             head_snapshot_ref: BlobRef::from_bytes(b"head"),
+            head_totals: VfsTotals { files: 3, bytes: 42 },
             revision: 7,
             created_at_ms: 11,
             updated_at_ms: 12,

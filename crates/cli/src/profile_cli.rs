@@ -5,12 +5,11 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 use api::{
-    AgentApiErrorKind, AgentProfile, AgentProfileInput, AgentProfileUpdatePatch,
-    EnvironmentProviderListParams, EnvironmentProviderStatusView,
-    EnvironmentProviderTargetListParams, EnvironmentTargetStatusView, FieldPatch,
-    InlineAgentProfile, ProfileApplyParams, ProfileCreateParams, ProfileDeleteParams, ProfileId,
-    ProfileListParams, ProfileMount, ProfileReadParams, ProfileSource, ProfileUpdateParams,
-    VfsMountAccess, VfsMountSourceInput,
+    AgentApiErrorKind, AgentProfile, AgentProfileInput, EnvironmentProviderListParams,
+    EnvironmentProviderStatusView, EnvironmentProviderTargetListParams,
+    EnvironmentTargetStatusView, InlineAgentProfile, ProfileApplyParams, ProfileDeleteParams,
+    ProfileId, ProfileListParams, ProfileMount, ProfilePutParams, ProfileReadParams,
+    ProfileSource, VfsMountAccess, VfsMountSourceInput,
 };
 use clap::{Args, Subcommand};
 use serde::Deserialize;
@@ -338,7 +337,7 @@ async fn upsert_vfs_workspace(
         Err(error) if matches!(error.kind, AgentApiErrorKind::NotFound) => Ok(api
             .create_vfs_workspace(api::VfsWorkspaceCreateParams {
                 workspace_id: Some(workspace_id),
-                snapshot_ref,
+                snapshot_ref: Some(snapshot_ref),
                 display_name: None,
             })
             .await
@@ -362,10 +361,9 @@ async fn upsert_profile(api: &HttpAgentApi, profile: AgentProfileInput) -> Resul
                 return Ok(current);
             }
             Ok(api
-                .update_profile(ProfileUpdateParams {
-                    profile_id: profile.profile_id.clone(),
+                .put_profile(ProfilePutParams {
+                    profile,
                     expected_revision: Some(current.revision),
-                    patch: update_patch_from_input(profile),
                 })
                 .await
                 .map_err(api_error)?
@@ -373,7 +371,10 @@ async fn upsert_profile(api: &HttpAgentApi, profile: AgentProfileInput) -> Resul
                 .profile)
         }
         Err(error) if matches!(error.kind, AgentApiErrorKind::NotFound) => Ok(api
-            .create_profile(ProfileCreateParams { profile })
+            .put_profile(ProfilePutParams {
+                profile,
+                expected_revision: None,
+            })
             .await
             .map_err(api_error)?
             .result
@@ -738,25 +739,6 @@ fn profile_input_from_record(record: AgentProfile) -> AgentProfileInput {
         display_name: record.display_name,
         description: record.description,
         document: record.document,
-    }
-}
-
-fn update_patch_from_input(profile: AgentProfileInput) -> AgentProfileUpdatePatch {
-    AgentProfileUpdatePatch {
-        display_name: Some(option_patch(profile.display_name)),
-        description: Some(option_patch(profile.description)),
-        config: Some(option_patch(profile.document.config)),
-        instructions: Some(option_patch(profile.document.instructions)),
-        mounts: Some(profile.document.mounts),
-        mcp: Some(profile.document.mcp),
-        environments: Some(profile.document.environments),
-    }
-}
-
-fn option_patch<T>(value: Option<T>) -> FieldPatch<T> {
-    match value {
-        Some(value) => FieldPatch::Set(value),
-        None => FieldPatch::Clear,
     }
 }
 

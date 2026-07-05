@@ -104,8 +104,9 @@ use api::{
     OutboundStatusView, OutboxAckParams, OutboxAckResponse, OutboxReadParams, OutboxReadResponse,
     ProfileApplyParams, ProfileApplyResponse, ProfileApplySummary, ProfileCreateParams,
     ProfileCreateResponse, ProfileDeleteParams, ProfileDeleteResponse, ProfileDocument,
-    ProfileInstructions, ProfileListParams, ProfileListResponse, ProfileReadParams,
-    ProfileReadResponse, ProfileSource, ProfileUpdateParams, ProfileUpdateResponse,
+    ProfileInstructions, ProfileListParams, ProfileListResponse, ProfilePutParams,
+    ProfilePutResponse, ProfileReadParams, ProfileReadResponse, ProfileSource,
+    ProfileUpdateParams, ProfileUpdateResponse,
     PromptInstructionView, PromptsActiveParams, PromptsActiveResponse, ReasoningEffort,
     RunCancelParams, RunCancelResponse, RunDefaultsConfig, RunDefaultsPatch, RunLimitsConfig,
     RunStartConfig, RunStartParams, RunStartResponse, RunStartSource, RunView,
@@ -143,7 +144,8 @@ use api::{
     VfsMountPutParams, VfsMountPutResponse, VfsMountSourceInput, VfsMountSourceView, VfsMountView,
     VfsSnapshotCommitParams, VfsSnapshotCommitResponse, VfsSnapshotReadParams,
     VfsSnapshotReadResponse, VfsWorkspaceCreateParams, VfsWorkspaceCreateResponse,
-    VfsWorkspaceDeleteParams, VfsWorkspaceDeleteResponse, VfsWorkspaceReadParams,
+    VfsWorkspaceDeleteParams, VfsWorkspaceDeleteResponse, VfsWorkspaceListParams,
+    VfsWorkspaceListResponse, VfsWorkspaceReadParams,
     VfsWorkspaceReadResponse, VfsWorkspaceUpdateParams, VfsWorkspaceUpdateResponse,
     VfsWorkspaceView,
 };
@@ -1182,6 +1184,15 @@ impl AgentApiService for GatewayAgentApi {
         params: ProfileListParams,
     ) -> Result<AgentApiOutcome<ProfileListResponse>, AgentApiError> {
         self.list_profile_records(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn put_profile(
+        &self,
+        params: ProfilePutParams,
+    ) -> Result<AgentApiOutcome<ProfilePutResponse>, AgentApiError> {
+        self.put_profile_record(params)
             .await
             .map(AgentApiOutcome::new)
     }
@@ -2425,6 +2436,16 @@ impl AgentApiService for GatewayAgentApi {
         let workspace = self.read_vfs_workspace_record(params).await?;
         Ok(AgentApiOutcome::new(VfsWorkspaceReadResponse {
             workspace: vfs_workspace_view(workspace),
+        }))
+    }
+
+    async fn list_vfs_workspaces(
+        &self,
+        _params: VfsWorkspaceListParams,
+    ) -> Result<AgentApiOutcome<VfsWorkspaceListResponse>, AgentApiError> {
+        let workspaces = self.list_vfs_workspace_records().await?;
+        Ok(AgentApiOutcome::new(VfsWorkspaceListResponse {
+            workspaces: workspaces.into_iter().map(vfs_workspace_view).collect(),
         }))
     }
 

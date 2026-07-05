@@ -724,6 +724,23 @@
       ],
       "type": "object"
     },
+    "AgentApiOutcomeOfProfilePutResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/ProfilePutResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
     "AgentApiOutcomeOfProfileReadResponse": {
       "properties": {
         "notifications": {
@@ -1380,6 +1397,23 @@
         },
         "result": {
           "$ref": "#/definitions/VfsWorkspaceDeleteResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfVfsWorkspaceListResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/VfsWorkspaceListResponse"
         }
       },
       "required": [
@@ -5724,6 +5758,37 @@
         "mountPath",
         "source",
         "access"
+      ],
+      "type": "object"
+    },
+    "ProfilePutParams": {
+      "properties": {
+        "expectedRevision": {
+          "description": "Checked only when the profile already exists; absent replaces (or\ncreates) unconditionally.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "profile": {
+          "$ref": "#/definitions/AgentProfileInput"
+        }
+      },
+      "required": [
+        "profile"
+      ],
+      "type": "object"
+    },
+    "ProfilePutResponse": {
+      "properties": {
+        "profile": {
+          "$ref": "#/definitions/AgentProfile"
+        }
+      },
+      "required": [
+        "profile"
       ],
       "type": "object"
     },
@@ -10541,7 +10606,11 @@
           ]
         },
         "snapshotRef": {
-          "type": "string"
+          "description": "Snapshot to seed the workspace from. Absent starts the workspace from\nthe empty snapshot, committed server-side.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "workspaceId": {
           "type": [
@@ -10550,9 +10619,6 @@
           ]
         }
       },
-      "required": [
-        "snapshotRef"
-      ],
       "type": "object"
     },
     "VfsWorkspaceCreateResponse": {
@@ -10586,6 +10652,21 @@
       "required": [
         "workspace"
       ],
+      "type": "object"
+    },
+    "VfsWorkspaceListParams": {
+      "type": "object"
+    },
+    "VfsWorkspaceListResponse": {
+      "properties": {
+        "workspaces": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/VfsWorkspaceView"
+          },
+          "type": "array"
+        }
+      },
       "type": "object"
     },
     "VfsWorkspaceReadParams": {
@@ -10658,12 +10739,38 @@
             "null"
           ]
         },
+        "bytes": {
+          "description": "Total byte size of the head snapshot.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "createdAtMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "files": {
+          "description": "File count of the head snapshot.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "headSnapshotRef": {
           "type": "string"
         },
         "revision": {
           "format": "uint64",
           "minimum": 0,
+          "type": "integer"
+        },
+        "updatedAtMs": {
+          "format": "int64",
           "type": "integer"
         },
         "workspaceId": {
@@ -10673,7 +10780,11 @@
       "required": [
         "workspaceId",
         "headSnapshotRef",
-        "revision"
+        "files",
+        "bytes",
+        "revision",
+        "createdAtMs",
+        "updatedAtMs"
       ],
       "type": "object"
     }

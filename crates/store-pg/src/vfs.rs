@@ -7,8 +7,20 @@ use crate::{PgStore, shared::sha256_hex};
 use ::vfs::{
     CompareAndSetVfsWorkspaceHead, CreateVfsWorkspaceRecord, VfsCatalogError, VfsMountAccess,
     VfsMountRecord, VfsMountSource, VfsMountStore, VfsPath, VfsSnapshotRecord, VfsSnapshotSource,
-    VfsSnapshotStore, VfsWorkspaceId, VfsWorkspaceRecord, VfsWorkspaceStore,
+    VfsSnapshotStore, VfsTotals, VfsWorkspaceId, VfsWorkspaceRecord, VfsWorkspaceStore,
 };
+
+const WORKSPACE_COLUMNS: &str = r#"
+    workspace_id,
+    display_name,
+    base_snapshot_digest,
+    head_snapshot_digest,
+    head_files,
+    head_bytes,
+    revision,
+    created_at_ms,
+    updated_at_ms
+"#;
 
 #[async_trait]
 impl VfsSnapshotStore for PgStore {
@@ -89,32 +101,32 @@ impl VfsWorkspaceStore for PgStore {
             .as_ref()
             .map(catalog_digest)
             .transpose()?;
-        let row = sqlx::query(
+        let row = sqlx::query(&format!(
             r#"
             INSERT INTO vfs_workspaces (
                 universe_id,
                 workspace_id,
+                display_name,
                 base_snapshot_digest,
                 head_snapshot_digest,
+                head_files,
+                head_bytes,
                 revision,
                 created_at_ms,
                 updated_at_ms
             )
-            VALUES ($1, $2, $3, $4, 0, $5, $5)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $8, $8)
             ON CONFLICT (universe_id, workspace_id) DO NOTHING
-            RETURNING
-                workspace_id,
-                base_snapshot_digest,
-                head_snapshot_digest,
-                revision,
-                created_at_ms,
-                updated_at_ms
-            "#,
-        )
+            RETURNING {WORKSPACE_COLUMNS}
+            "#
+        ))
         .bind(self.config.universe_id)
         .bind(record.workspace_id.as_str())
+        .bind(record.display_name.as_deref())
         .bind(base_digest)
         .bind(catalog_digest(&record.head_snapshot_ref)?)
+        .bind(u64_to_i64(record.head_totals.files, "head_files")?)
+        .bind(u64_to_i64(record.head_totals.bytes, "head_bytes")?)
         .bind(nonnegative_i64(record.created_at_ms, "created_at_ms")?)
         .fetch_optional(&self.pool)
         .await
@@ -133,19 +145,13 @@ impl VfsWorkspaceStore for PgStore {
         &self,
         workspace_id: &VfsWorkspaceId,
     ) -> Result<VfsWorkspaceRecord, VfsCatalogError> {
-        let row = sqlx::query(
+        let row = sqlx::query(&format!(
             r#"
-            SELECT
-                workspace_id,
-                base_snapshot_digest,
-                head_snapshot_digest,
-                revision,
-                created_at_ms,
-                updated_at_ms
+            SELECT {WORKSPACE_COLUMNS}
             FROM vfs_workspaces
             WHERE universe_id = $1 AND workspace_id = $2
-            "#,
-        )
+            "#
+        ))
         .bind(self.config.universe_id)
         .bind(workspace_id.as_str())
         .fetch_optional(&self.pool)
@@ -161,6 +167,23 @@ impl VfsWorkspaceStore for PgStore {
         workspace_record_from_row(&row)
     }
 
+    async fn list_workspaces(&self) -> Result<Vec<VfsWorkspaceRecord>, VfsCatalogError> {
+        let rows = sqlx::query(&format!(
+            r#"
+            SELECT {WORKSPACE_COLUMNS}
+            FROM vfs_workspaces
+            WHERE universe_id = $1
+            ORDER BY updated_at_ms DESC, workspace_id
+            "#
+        ))
+        .bind(self.config.universe_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| catalog_sql_error("list vfs workspaces", error))?;
+
+        rows.iter().map(workspace_record_from_row).collect()
+    }
+
     async fn compare_and_set_head(
         &self,
         request: CompareAndSetVfsWorkspaceHead,
@@ -170,20 +193,14 @@ impl VfsWorkspaceStore for PgStore {
             .begin()
             .await
             .map_err(|error| catalog_sql_error("begin vfs workspace transaction", error))?;
-        let row = sqlx::query(
+        let row = sqlx::query(&format!(
             r#"
-            SELECT
-                workspace_id,
-                base_snapshot_digest,
-                head_snapshot_digest,
-                revision,
-                created_at_ms,
-                updated_at_ms
+            SELECT {WORKSPACE_COLUMNS}
             FROM vfs_workspaces
             WHERE universe_id = $1 AND workspace_id = $2
             FOR UPDATE
-            "#,
-        )
+            "#
+        ))
         .bind(self.config.universe_id)
         .bind(request.workspace_id.as_str())
         .fetch_optional(&mut *tx)
@@ -216,26 +233,26 @@ impl VfsWorkspaceStore for PgStore {
                         current.workspace_id
                     ),
                 })?;
-        let row = sqlx::query(
+        let row = sqlx::query(&format!(
             r#"
             UPDATE vfs_workspaces
             SET
-                head_snapshot_digest = $3,
-                revision = $4,
-                updated_at_ms = $5
+                display_name = COALESCE($3, display_name),
+                head_snapshot_digest = $4,
+                head_files = $5,
+                head_bytes = $6,
+                revision = $7,
+                updated_at_ms = $8
             WHERE universe_id = $1 AND workspace_id = $2
-            RETURNING
-                workspace_id,
-                base_snapshot_digest,
-                head_snapshot_digest,
-                revision,
-                created_at_ms,
-                updated_at_ms
-            "#,
-        )
+            RETURNING {WORKSPACE_COLUMNS}
+            "#
+        ))
         .bind(self.config.universe_id)
         .bind(current.workspace_id.as_str())
+        .bind(request.display_name.as_deref())
         .bind(catalog_digest(&request.new_head_snapshot_ref)?)
+        .bind(u64_to_i64(request.new_head_totals.files, "head_files")?)
+        .bind(u64_to_i64(request.new_head_totals.bytes, "head_bytes")?)
         .bind(u64_to_i64(next_revision, "revision")?)
         .bind(nonnegative_i64(request.updated_at_ms, "updated_at_ms")?)
         .fetch_one(&mut *tx)
@@ -254,19 +271,13 @@ impl VfsWorkspaceStore for PgStore {
         self.ensure_universe()
             .await
             .map_err(|error| catalog_store_error("ensure universe", error))?;
-        let row = sqlx::query(
+        let row = sqlx::query(&format!(
             r#"
             DELETE FROM vfs_workspaces
             WHERE universe_id = $1 AND workspace_id = $2
-            RETURNING
-                workspace_id,
-                base_snapshot_digest,
-                head_snapshot_digest,
-                revision,
-                created_at_ms,
-                updated_at_ms
-            "#,
-        )
+            RETURNING {WORKSPACE_COLUMNS}
+            "#
+        ))
         .bind(self.config.universe_id)
         .bind(workspace_id.as_str())
         .fetch_optional(&self.pool)
@@ -410,12 +421,21 @@ fn workspace_record_from_row(
     let workspace_id: String = row
         .try_get("workspace_id")
         .map_err(|error| catalog_sql_error("decode vfs workspace id", error))?;
+    let display_name: Option<String> = row
+        .try_get("display_name")
+        .map_err(|error| catalog_sql_error("decode vfs workspace display name", error))?;
     let base_snapshot_digest: Option<String> = row
         .try_get("base_snapshot_digest")
         .map_err(|error| catalog_sql_error("decode vfs workspace base digest", error))?;
     let head_snapshot_digest: String = row
         .try_get("head_snapshot_digest")
         .map_err(|error| catalog_sql_error("decode vfs workspace head digest", error))?;
+    let head_files: i64 = row
+        .try_get("head_files")
+        .map_err(|error| catalog_sql_error("decode vfs workspace head_files", error))?;
+    let head_bytes: i64 = row
+        .try_get("head_bytes")
+        .map_err(|error| catalog_sql_error("decode vfs workspace head_bytes", error))?;
     let revision: i64 = row
         .try_get("revision")
         .map_err(|error| catalog_sql_error("decode vfs workspace revision", error))?;
@@ -431,11 +451,16 @@ fn workspace_record_from_row(
                 message: format!("decode vfs workspace id: {error}"),
             }
         })?,
+        display_name,
         base_snapshot_ref: base_snapshot_digest
             .as_deref()
             .map(blob_ref_from_digest)
             .transpose()?,
         head_snapshot_ref: blob_ref_from_digest(&head_snapshot_digest)?,
+        head_totals: VfsTotals {
+            files: i64_to_u64(head_files, "head_files")?,
+            bytes: i64_to_u64(head_bytes, "head_bytes")?,
+        },
         revision: i64_to_u64(revision, "revision")?,
         created_at_ms,
         updated_at_ms,

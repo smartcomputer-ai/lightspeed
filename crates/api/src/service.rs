@@ -27,6 +27,11 @@ pub trait AgentApiService: Send + Sync {
         params: ProfileListParams,
     ) -> Result<AgentApiOutcome<ProfileListResponse>, AgentApiError>;
 
+    async fn put_profile(
+        &self,
+        params: ProfilePutParams,
+    ) -> Result<AgentApiOutcome<ProfilePutResponse>, AgentApiError>;
+
     async fn update_profile(
         &self,
         params: ProfileUpdateParams,
@@ -261,6 +266,11 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: VfsWorkspaceReadParams,
     ) -> Result<AgentApiOutcome<VfsWorkspaceReadResponse>, AgentApiError>;
+
+    async fn list_vfs_workspaces(
+        &self,
+        params: VfsWorkspaceListParams,
+    ) -> Result<AgentApiOutcome<VfsWorkspaceListResponse>, AgentApiError>;
 
     async fn update_vfs_workspace(
         &self,

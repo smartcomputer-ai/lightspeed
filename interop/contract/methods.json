@@ -76,6 +76,21 @@
       }
     },
     {
+      "method": "profiles/put",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/ProfilePutParams"
+        },
+        "type": "ProfilePutParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfProfilePutResponse"
+        },
+        "type": "AgentApiOutcome<ProfilePutResponse>"
+      }
+    },
+    {
       "method": "profiles/update",
       "params": {
         "schema": {
@@ -778,6 +793,21 @@
           "$ref": "#/definitions/AgentApiOutcomeOfVfsWorkspaceReadResponse"
         },
         "type": "AgentApiOutcome<VfsWorkspaceReadResponse>"
+      }
+    },
+    {
+      "method": "vfs/workspace/list",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/VfsWorkspaceListParams"
+        },
+        "type": "VfsWorkspaceListParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfVfsWorkspaceListResponse"
+        },
+        "type": "AgentApiOutcome<VfsWorkspaceListResponse>"
       }
     },
     {

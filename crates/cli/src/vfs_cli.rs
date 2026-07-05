@@ -87,6 +87,8 @@ enum WorkspaceCommand {
     Create(WorkspaceCreateArgs),
     /// Read the current head of a VFS workspace.
     Read(WorkspaceReadArgs),
+    /// List all VFS workspaces in the universe.
+    List(WorkspaceListArgs),
     /// Advance a VFS workspace head to a new snapshot ref.
     Update(WorkspaceUpdateArgs),
     /// Delete a VFS workspace.
@@ -107,8 +109,19 @@ struct WorkspaceCreateArgs {
     /// Optional display name for snapshot catalog metadata.
     #[arg(long = "display-name")]
     display_name: Option<String>,
-    /// Snapshot ref for the workspace base/head.
-    snapshot_ref: String,
+    /// Snapshot ref for the workspace base/head. Omitted starts the
+    /// workspace from the empty snapshot.
+    snapshot_ref: Option<String>,
+}
+
+#[derive(Args, Debug, Clone)]
+struct WorkspaceListArgs {
+    /// JSON-RPC agent API URL.
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    api_url: String,
+    /// Emit the workspace list as JSON.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -266,6 +279,7 @@ async fn workspace(args: WorkspaceArgs) -> Result<()> {
     match args.command {
         WorkspaceCommand::Create(args) => workspace_create(args).await,
         WorkspaceCommand::Read(args) => workspace_read(args).await,
+        WorkspaceCommand::List(args) => workspace_list(args).await,
         WorkspaceCommand::Update(args) => workspace_update(args).await,
         WorkspaceCommand::Delete(args) => workspace_delete(args).await,
     }
@@ -283,6 +297,31 @@ async fn workspace_create(args: WorkspaceCreateArgs) -> Result<()> {
         .map_err(crate::api_client::api_error)?
         .result;
     print_workspace(response.workspace, args.json)
+}
+
+async fn workspace_list(args: WorkspaceListArgs) -> Result<()> {
+    let api = HttpAgentApi::new(args.api_url);
+    let response = api
+        .list_vfs_workspaces(api::VfsWorkspaceListParams {})
+        .await
+        .map_err(crate::api_client::api_error)?
+        .result;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&response.workspaces)?);
+        return Ok(());
+    }
+    for workspace in response.workspaces {
+        let display_name = workspace.display_name.as_deref().unwrap_or("-");
+        println!(
+            "{} {} files {} bytes {} revision {}",
+            workspace.workspace_id,
+            display_name,
+            workspace.files,
+            workspace.bytes,
+            workspace.revision
+        );
+    }
+    Ok(())
 }
 
 async fn workspace_read(args: WorkspaceReadArgs) -> Result<()> {
@@ -334,10 +373,15 @@ fn print_workspace(workspace: api::VfsWorkspaceView, json: bool) -> Result<()> {
     }
 
     println!("workspaceId {}", workspace.workspace_id);
+    if let Some(display_name) = workspace.display_name {
+        println!("displayName {display_name}");
+    }
     println!("headSnapshotRef {}", workspace.head_snapshot_ref);
     if let Some(base) = workspace.base_snapshot_ref {
         println!("baseSnapshotRef {base}");
     }
+    println!("files {}", workspace.files);
+    println!("bytes {}", workspace.bytes);
     println!("revision {}", workspace.revision);
     Ok(())
 }
@@ -432,7 +476,7 @@ pub(crate) async fn create_workspace_from_snapshot(
     Ok(api
         .create_vfs_workspace(api::VfsWorkspaceCreateParams {
             workspace_id: None,
-            snapshot_ref,
+            snapshot_ref: Some(snapshot_ref),
             display_name: None,
         })
         .await

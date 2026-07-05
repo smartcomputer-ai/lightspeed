@@ -24,8 +24,8 @@ use api::{
     METHOD_BLOB_GET, METHOD_BLOB_HAS_MANY, METHOD_BLOB_PUT_MANY,
     METHOD_ENVIRONMENT_PROVIDER_TARGETS_LIST, METHOD_ENVIRONMENT_PROVIDERS_LIST,
     METHOD_MCP_SERVERS_CREATE, METHOD_MCP_SERVERS_DELETE, METHOD_MCP_SERVERS_LIST,
-    METHOD_MCP_SERVERS_READ, METHOD_PROFILES_APPLY, METHOD_PROFILES_CREATE, METHOD_PROFILES_DELETE,
-    METHOD_PROFILES_LIST, METHOD_PROFILES_READ, METHOD_PROFILES_UPDATE, METHOD_RUN_START,
+    METHOD_MCP_SERVERS_READ, METHOD_PROFILES_APPLY, METHOD_PROFILES_DELETE, METHOD_PROFILES_LIST,
+    METHOD_PROFILES_PUT, METHOD_PROFILES_READ, METHOD_RUN_START,
     METHOD_SESSION_ENVIRONMENT_CREDENTIALS_BIND, METHOD_SESSION_ENVIRONMENT_CREDENTIALS_LIST,
     METHOD_SESSION_ENVIRONMENT_CREDENTIALS_UNBIND, METHOD_SESSION_ENVIRONMENTS_ACTIVATE,
     METHOD_SESSION_ENVIRONMENTS_ATTACH, METHOD_SESSION_ENVIRONMENTS_CLOSE,
@@ -35,13 +35,14 @@ use api::{
     METHOD_SKILLS_ACTIVATE, METHOD_SKILLS_ACTIVE, METHOD_SKILLS_DEACTIVATE, METHOD_SKILLS_LIST,
     METHOD_VFS_MOUNT_DELETE, METHOD_VFS_MOUNT_LIST, METHOD_VFS_MOUNT_PUT,
     METHOD_VFS_SNAPSHOT_COMMIT, METHOD_VFS_SNAPSHOT_READ, METHOD_VFS_WORKSPACE_CREATE,
-    METHOD_VFS_WORKSPACE_DELETE, METHOD_VFS_WORKSPACE_READ, METHOD_VFS_WORKSPACE_UPDATE,
+    METHOD_VFS_WORKSPACE_DELETE, METHOD_VFS_WORKSPACE_LIST, METHOD_VFS_WORKSPACE_READ,
+    METHOD_VFS_WORKSPACE_UPDATE,
     McpServerCreateParams, McpServerCreateResponse, McpServerDeleteParams, McpServerDeleteResponse,
     McpServerListParams, McpServerListResponse, McpServerReadParams, McpServerReadResponse,
-    ProfileApplyParams, ProfileApplyResponse, ProfileCreateParams, ProfileCreateResponse,
-    ProfileDeleteParams, ProfileDeleteResponse, ProfileListParams, ProfileListResponse,
-    ProfileReadParams, ProfileReadResponse, ProfileUpdateParams, ProfileUpdateResponse, RequestId,
-    RunStartParams, RunStartResponse, SessionEnvironmentActivateParams,
+    ProfileApplyParams, ProfileApplyResponse, ProfileDeleteParams, ProfileDeleteResponse,
+    ProfileListParams, ProfileListResponse, ProfilePutParams, ProfilePutResponse,
+    ProfileReadParams, ProfileReadResponse, RequestId, RunStartParams, RunStartResponse,
+    SessionEnvironmentActivateParams,
     SessionEnvironmentActivateResponse, SessionEnvironmentAttachParams,
     SessionEnvironmentAttachResponse, SessionEnvironmentCloseParams,
     SessionEnvironmentCloseResponse, SessionEnvironmentCredentialBindParams,
@@ -59,8 +60,9 @@ use api::{
     VfsMountListResponse, VfsMountPutParams, VfsMountPutResponse, VfsSnapshotCommitParams,
     VfsSnapshotCommitResponse, VfsSnapshotReadParams, VfsSnapshotReadResponse,
     VfsWorkspaceCreateParams, VfsWorkspaceCreateResponse, VfsWorkspaceDeleteParams,
-    VfsWorkspaceDeleteResponse, VfsWorkspaceReadParams, VfsWorkspaceReadResponse,
-    VfsWorkspaceUpdateParams, VfsWorkspaceUpdateResponse,
+    VfsWorkspaceDeleteResponse, VfsWorkspaceListParams, VfsWorkspaceListResponse,
+    VfsWorkspaceReadParams, VfsWorkspaceReadResponse, VfsWorkspaceUpdateParams,
+    VfsWorkspaceUpdateResponse,
 };
 use serde::{Serialize, de::DeserializeOwned};
 
@@ -145,13 +147,6 @@ impl HttpAgentApi {
         self.request(METHOD_SESSION_START, params).await
     }
 
-    pub(crate) async fn create_profile(
-        &self,
-        params: ProfileCreateParams,
-    ) -> Result<AgentApiOutcome<ProfileCreateResponse>, AgentApiError> {
-        self.request(METHOD_PROFILES_CREATE, params).await
-    }
-
     pub(crate) async fn read_profile(
         &self,
         params: ProfileReadParams,
@@ -166,11 +161,11 @@ impl HttpAgentApi {
         self.request(METHOD_PROFILES_LIST, params).await
     }
 
-    pub(crate) async fn update_profile(
+    pub(crate) async fn put_profile(
         &self,
-        params: ProfileUpdateParams,
-    ) -> Result<AgentApiOutcome<ProfileUpdateResponse>, AgentApiError> {
-        self.request(METHOD_PROFILES_UPDATE, params).await
+        params: ProfilePutParams,
+    ) -> Result<AgentApiOutcome<ProfilePutResponse>, AgentApiError> {
+        self.request(METHOD_PROFILES_PUT, params).await
     }
 
     pub(crate) async fn delete_profile(
@@ -283,6 +278,13 @@ impl HttpAgentApi {
         params: VfsWorkspaceReadParams,
     ) -> Result<AgentApiOutcome<VfsWorkspaceReadResponse>, AgentApiError> {
         self.request(METHOD_VFS_WORKSPACE_READ, params).await
+    }
+
+    pub(crate) async fn list_vfs_workspaces(
+        &self,
+        params: VfsWorkspaceListParams,
+    ) -> Result<AgentApiOutcome<VfsWorkspaceListResponse>, AgentApiError> {
+        self.request(METHOD_VFS_WORKSPACE_LIST, params).await
     }
 
     pub(crate) async fn update_vfs_workspace(

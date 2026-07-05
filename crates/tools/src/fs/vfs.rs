@@ -124,7 +124,9 @@ impl VfsWorkspaceFileSystem {
             .compare_and_set_head(::vfs::CompareAndSetVfsWorkspaceHead {
                 workspace_id: current.workspace_id,
                 expected_revision: Some(current.revision),
+                display_name: None,
                 new_head_snapshot_ref: result.snapshot_ref,
+                new_head_totals: result.manifest.totals,
                 updated_at_ms: now_ms()?,
             })
             .await
@@ -931,8 +933,10 @@ mod tests {
             }
             let record = ::vfs::VfsWorkspaceRecord {
                 workspace_id: record.workspace_id,
+                display_name: record.display_name,
                 base_snapshot_ref: record.base_snapshot_ref,
                 head_snapshot_ref: record.head_snapshot_ref,
+                head_totals: record.head_totals,
                 revision: 0,
                 created_at_ms: record.created_at_ms,
                 updated_at_ms: record.created_at_ms,
@@ -956,6 +960,12 @@ mod tests {
                 })
         }
 
+        async fn list_workspaces(
+            &self,
+        ) -> Result<Vec<::vfs::VfsWorkspaceRecord>, ::vfs::VfsCatalogError> {
+            Ok(self.records.lock().await.values().cloned().collect())
+        }
+
         async fn compare_and_set_head(
             &self,
             request: ::vfs::CompareAndSetVfsWorkspaceHead,
@@ -977,7 +987,11 @@ mod tests {
                     actual_revision: record.revision + u64::from(self.force_revision_conflict),
                 });
             }
+            if let Some(display_name) = request.display_name {
+                record.display_name = Some(display_name);
+            }
             record.head_snapshot_ref = request.new_head_snapshot_ref;
+            record.head_totals = request.new_head_totals;
             record.revision += 1;
             record.updated_at_ms = request.updated_at_ms;
             Ok(record.clone())
@@ -1033,8 +1047,10 @@ mod tests {
         store
             .create_workspace(::vfs::CreateVfsWorkspaceRecord {
                 workspace_id: workspace_id.clone(),
+                display_name: None,
                 base_snapshot_ref: Some(snapshot.snapshot_ref.clone()),
                 head_snapshot_ref: snapshot.snapshot_ref.clone(),
+                head_totals: snapshot.manifest.totals.clone(),
                 created_at_ms: 1,
             })
             .await
@@ -1061,8 +1077,10 @@ mod tests {
         store
             .create_workspace(::vfs::CreateVfsWorkspaceRecord {
                 workspace_id: workspace_id.clone(),
+                display_name: None,
                 base_snapshot_ref: Some(snapshot_ref.clone()),
                 head_snapshot_ref: snapshot_ref,
+                head_totals: ::vfs::VfsTotals::default(),
                 created_at_ms: 1,
             })
             .await

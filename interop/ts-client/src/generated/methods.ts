@@ -10,6 +10,7 @@ export const METHODS = [
   "profiles/create",
   "profiles/read",
   "profiles/list",
+  "profiles/put",
   "profiles/update",
   "profiles/delete",
   "profiles/apply",
@@ -57,6 +58,7 @@ export const METHODS = [
   "vfs/snapshot/read",
   "vfs/workspace/create",
   "vfs/workspace/read",
+  "vfs/workspace/list",
   "vfs/workspace/update",
   "vfs/workspace/delete",
   "vfs/mount/put",
@@ -120,6 +122,10 @@ export interface MethodMap {
   "profiles/list": {
     params: Api.ProfileListParams;
     result: Api.AgentApiOutcomeOfProfileListResponse;
+  };
+  "profiles/put": {
+    params: Api.ProfilePutParams;
+    result: Api.AgentApiOutcomeOfProfilePutResponse;
   };
   "profiles/update": {
     params: Api.ProfileUpdateParams;
@@ -309,6 +315,10 @@ export interface MethodMap {
     params: Api.VfsWorkspaceReadParams;
     result: Api.AgentApiOutcomeOfVfsWorkspaceReadResponse;
   };
+  "vfs/workspace/list": {
+    params: Api.VfsWorkspaceListParams;
+    result: Api.AgentApiOutcomeOfVfsWorkspaceListResponse;
+  };
   "vfs/workspace/update": {
     params: Api.VfsWorkspaceUpdateParams;
     result: Api.AgentApiOutcomeOfVfsWorkspaceUpdateResponse;
@@ -445,6 +455,9 @@ export const rpc = {
   },
   profilesList(client: RpcCaller, params: Api.ProfileListParams): Promise<Api.AgentApiOutcomeOfProfileListResponse> {
     return client.call("profiles/list", params);
+  },
+  profilesPut(client: RpcCaller, params: Api.ProfilePutParams): Promise<Api.AgentApiOutcomeOfProfilePutResponse> {
+    return client.call("profiles/put", params);
   },
   profilesUpdate(client: RpcCaller, params: Api.ProfileUpdateParams): Promise<Api.AgentApiOutcomeOfProfileUpdateResponse> {
     return client.call("profiles/update", params);
@@ -586,6 +599,9 @@ export const rpc = {
   },
   vfsWorkspaceRead(client: RpcCaller, params: Api.VfsWorkspaceReadParams): Promise<Api.AgentApiOutcomeOfVfsWorkspaceReadResponse> {
     return client.call("vfs/workspace/read", params);
+  },
+  vfsWorkspaceList(client: RpcCaller, params: Api.VfsWorkspaceListParams): Promise<Api.AgentApiOutcomeOfVfsWorkspaceListResponse> {
+    return client.call("vfs/workspace/list", params);
   },
   vfsWorkspaceUpdate(client: RpcCaller, params: Api.VfsWorkspaceUpdateParams): Promise<Api.AgentApiOutcomeOfVfsWorkspaceUpdateResponse> {
     return client.call("vfs/workspace/update", params);

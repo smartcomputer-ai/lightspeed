@@ -33,8 +33,11 @@ CREATE TABLE IF NOT EXISTS vfs_workspaces (
     universe_id uuid NOT NULL
         REFERENCES universes (universe_id) ON DELETE CASCADE,
     workspace_id text NOT NULL,
+    display_name text,
     base_snapshot_digest text,
     head_snapshot_digest text NOT NULL,
+    head_files bigint NOT NULL,
+    head_bytes bigint NOT NULL,
     revision bigint NOT NULL,
     created_at_ms bigint NOT NULL,
     updated_at_ms bigint NOT NULL,
@@ -51,6 +54,10 @@ CREATE TABLE IF NOT EXISTS vfs_workspaces (
         CHECK (base_snapshot_digest IS NULL OR base_snapshot_digest ~ '^[0-9a-f]{64}$'),
     CONSTRAINT vfs_workspaces_head_digest_format
         CHECK (head_snapshot_digest ~ '^[0-9a-f]{64}$'),
+    CONSTRAINT vfs_workspaces_head_files_nonnegative
+        CHECK (head_files >= 0),
+    CONSTRAINT vfs_workspaces_head_bytes_nonnegative
+        CHECK (head_bytes >= 0),
     CONSTRAINT vfs_workspaces_revision_nonnegative
         CHECK (revision >= 0),
     CONSTRAINT vfs_workspaces_created_at_ms_nonnegative

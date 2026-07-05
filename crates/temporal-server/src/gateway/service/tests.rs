@@ -1609,6 +1609,10 @@ impl VfsWorkspaceStore for EmptyWorkspaceStore {
         Err(workspace_not_found(workspace_id.as_str()))
     }
 
+    async fn list_workspaces(&self) -> Result<Vec<vfs::VfsWorkspaceRecord>, vfs::VfsCatalogError> {
+        Ok(Vec::new())
+    }
+
     async fn compare_and_set_head(
         &self,
         _request: vfs::CompareAndSetVfsWorkspaceHead,

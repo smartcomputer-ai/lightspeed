@@ -154,8 +154,10 @@ impl VfsWorkspaceStore for LiveVfsCatalog {
     ) -> Result<VfsWorkspaceRecord, VfsCatalogError> {
         let workspace = VfsWorkspaceRecord {
             workspace_id: record.workspace_id,
+            display_name: record.display_name,
             base_snapshot_ref: record.base_snapshot_ref,
             head_snapshot_ref: record.head_snapshot_ref,
+            head_totals: record.head_totals,
             revision: 0,
             created_at_ms: record.created_at_ms,
             updated_at_ms: record.created_at_ms,
@@ -182,6 +184,16 @@ impl VfsWorkspaceStore for LiveVfsCatalog {
             })
     }
 
+    async fn list_workspaces(&self) -> Result<Vec<VfsWorkspaceRecord>, VfsCatalogError> {
+        Ok(self
+            .workspaces
+            .lock()
+            .expect("workspace lock")
+            .values()
+            .cloned()
+            .collect())
+    }
+
     async fn compare_and_set_head(
         &self,
         request: CompareAndSetVfsWorkspaceHead,
@@ -204,7 +216,11 @@ impl VfsWorkspaceStore for LiveVfsCatalog {
                 actual_revision: workspace.revision,
             });
         }
+        if let Some(display_name) = request.display_name {
+            workspace.display_name = Some(display_name);
+        }
         workspace.head_snapshot_ref = request.new_head_snapshot_ref;
+        workspace.head_totals = request.new_head_totals;
         workspace.revision += 1;
         workspace.updated_at_ms = request.updated_at_ms;
         Ok(workspace.clone())
