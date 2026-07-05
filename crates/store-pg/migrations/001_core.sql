@@ -14,10 +14,18 @@
 CREATE TABLE IF NOT EXISTS universes (
     universe_id uuid PRIMARY KEY,
     slug text UNIQUE,
+    -- Server-side default so every insert path stamps creation time without
+    -- threading a clock through `ensure_universe`.
+    created_at_ms bigint NOT NULL
+        DEFAULT ((extract(epoch FROM now()) * 1000)::bigint),
 
     CONSTRAINT universes_slug_format
         CHECK (slug IS NULL OR slug ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$')
 );
+
+ALTER TABLE universes
+    ADD COLUMN IF NOT EXISTS created_at_ms bigint NOT NULL
+        DEFAULT ((extract(epoch FROM now()) * 1000)::bigint);
 
 CREATE TABLE IF NOT EXISTS sessions (
     universe_id uuid NOT NULL

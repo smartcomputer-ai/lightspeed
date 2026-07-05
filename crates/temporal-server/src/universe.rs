@@ -166,6 +166,17 @@ impl UniverseRuntime {
         &self.stores
     }
 
+    pub fn client(&self) -> &Client {
+        &self.client
+    }
+
+    /// Drop the universe's cached runtime state (operator purge). In-flight
+    /// work holding an `Arc` finishes on the old state; nothing durable is
+    /// lost because states hold no durable data.
+    pub async fn evict(&self, universe_id: Uuid) {
+        self.states.lock().await.remove(&universe_id);
+    }
+
     pub async fn state_for(
         &self,
         universe_id: Uuid,

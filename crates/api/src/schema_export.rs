@@ -12,8 +12,19 @@ use schemars::generate::SchemaSettings;
 use serde_json::{Value, json};
 
 use crate::{
-    AgentNotification, JsonRpcError, NOTIFICATION_METHODS, PROTOCOL_VERSION, method_manifest,
+    AgentNotification, JsonRpcError, MethodSpec, NOTIFICATION_METHODS, PROTOCOL_VERSION,
+    method_manifest, operator_method_manifest,
 };
+
+/// Every dispatchable method across both scope classes: the universe-scoped
+/// manifest followed by the operator-scoped one. The wire contract is one
+/// document; `scope` on each entry tells clients which authorization class a
+/// method belongs to (operator methods never carry the universe header).
+pub fn full_method_manifest() -> Vec<MethodSpec> {
+    let mut methods = method_manifest();
+    methods.extend(operator_method_manifest());
+    methods
+}
 
 pub struct ExportedSchemas {
     /// Draft-07 JSON Schema bundle: every wire type under `definitions`.
@@ -30,12 +41,13 @@ pub fn export_schemas() -> ExportedSchemas {
 
     let mut methods = Vec::new();
     let mut openrpc_methods = Vec::new();
-    for spec in method_manifest() {
+    for spec in full_method_manifest() {
         let schemas = (spec.register_schemas)(&mut generator);
         let params_schema = serde_json::to_value(&schemas.params).expect("schema serializes");
         let result_schema = serde_json::to_value(&schemas.result).expect("schema serializes");
         methods.push(json!({
             "method": spec.method,
+            "scope": spec.scope.as_str(),
             "params": { "type": spec.params_type, "schema": params_schema },
             "result": { "type": spec.result_type, "schema": result_schema },
         }));
@@ -132,13 +144,32 @@ mod tests {
 
     #[test]
     fn method_manifest_methods_are_unique_and_complete() {
-        let manifest = method_manifest();
+        let manifest = full_method_manifest();
         let mut methods: Vec<&str> = manifest.iter().map(|spec| spec.method).collect();
         let total = methods.len();
         methods.sort_unstable();
         methods.dedup();
         assert_eq!(methods.len(), total, "duplicate method in manifest");
-        assert_eq!(total, 84);
+        assert_eq!(total, 88);
+        assert_eq!(
+            manifest
+                .iter()
+                .filter(|spec| spec.scope == crate::MethodScope::Operator)
+                .count(),
+            4
+        );
+    }
+
+    #[test]
+    fn method_names_carry_their_scope_prefix() {
+        for spec in full_method_manifest() {
+            assert_eq!(
+                crate::is_operator_method(spec.method),
+                spec.scope == crate::MethodScope::Operator,
+                "scope of {} must match its method-name prefix",
+                spec.method
+            );
+        }
     }
 
     #[test]

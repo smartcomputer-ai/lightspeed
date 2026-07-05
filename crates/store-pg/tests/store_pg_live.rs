@@ -568,6 +568,127 @@ async fn pg_live_fork_stitches_reads_and_clamps_parent_tail() {
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires local/up.sh or compatible Postgres + MinIO env"]
+async fn pg_live_operator_universe_lifecycle_stats_and_purge() {
+    // inline_threshold 8: the second blob lands in the object store, so the
+    // purge has real external bytes to sweep.
+    let store = live_store("operator-universe", 8).await;
+    let pool = store.pool().clone();
+    let universe_id = store.config().universe_id;
+
+    // create_universe is idempotent; the live_store already ensured the row.
+    assert!(
+        !store_pg::create_universe(&pool, universe_id)
+            .await
+            .expect("create existing universe"),
+        "existing universe must not report created"
+    );
+    let fresh_id = Uuid::new_v4();
+    assert!(
+        store_pg::create_universe(&pool, fresh_id)
+            .await
+            .expect("create fresh universe")
+    );
+    let fresh = store_pg::read_universe_stats(&pool, fresh_id)
+        .await
+        .expect("read fresh stats")
+        .expect("fresh universe exists");
+    assert!(fresh.created_at_ms > 0, "creation must be timestamped");
+    assert_eq!(
+        (fresh.sessions, fresh.workspaces, fresh.profiles),
+        (0, 0, 0)
+    );
+    assert_eq!(fresh.last_activity_at_ms, None);
+
+    // Populate the universe: a session with events, blobs (inline + object).
+    let session_id = SessionId::new("operator-session");
+    store
+        .create_session(CreateSession {
+            session_id: session_id.clone(),
+            display_name: None,
+            created_at_ms: 5,
+        })
+        .await
+        .expect("create session");
+    store
+        .append(AppendSessionEvents {
+            session_id: session_id.clone(),
+            expected_head: None,
+            events: vec![open_event(42)],
+        })
+        .await
+        .expect("append event");
+    store
+        .put_bytes(b"tiny".to_vec())
+        .await
+        .expect("put inline blob");
+    store
+        .put_bytes(b"external object payload".to_vec())
+        .await
+        .expect("put object blob");
+
+    let stats = store_pg::read_universe_stats(&pool, universe_id)
+        .await
+        .expect("read stats")
+        .expect("universe exists");
+    assert_eq!(stats.sessions, 1);
+    assert_eq!(stats.last_activity_at_ms, Some(42));
+    assert!(stats.blob_bytes >= 27, "both blobs count into blob_bytes");
+    let listed = store_pg::list_universe_stats(&pool)
+        .await
+        .expect("list stats");
+    assert!(listed.iter().any(|entry| entry.universe_id == universe_id));
+
+    let object_keys = store_pg::list_universe_object_keys(&pool, universe_id)
+        .await
+        .expect("list object keys");
+    assert_eq!(object_keys.len(), 1, "only the large blob is external");
+    let session_ids = store_pg::list_universe_session_ids(&pool, universe_id)
+        .await
+        .expect("list session ids");
+    assert_eq!(session_ids, vec!["operator-session".to_owned()]);
+
+    // Purge: sweep the external object, then delete the row (cascade).
+    let object_store = store.object_store().expect("live object store").clone();
+    for key in &object_keys {
+        use object_store::ObjectStoreExt as _;
+        object_store
+            .delete(&object_store::path::Path::from(key.as_str()))
+            .await
+            .expect("delete external object");
+    }
+    assert!(
+        store_pg::delete_universe(&pool, universe_id)
+            .await
+            .expect("delete universe")
+    );
+    assert!(
+        !store_pg::delete_universe(&pool, universe_id)
+            .await
+            .expect("re-delete universe"),
+        "delete is idempotent"
+    );
+    assert!(
+        store_pg::read_universe_stats(&pool, universe_id)
+            .await
+            .expect("read purged stats")
+            .is_none()
+    );
+    assert!(
+        store
+            .load_session(&session_id)
+            .await
+            .expect("load purged session")
+            .is_none(),
+        "sessions cascade with the universe row"
+    );
+
+    store_pg::delete_universe(&pool, fresh_id)
+        .await
+        .expect("clean up fresh universe");
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires local/up.sh or compatible Postgres + MinIO env"]
 async fn pg_live_blobs_use_inline_and_object_storage() {
     let store = live_store("blobs", 8).await;
 

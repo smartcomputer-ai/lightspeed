@@ -89,6 +89,10 @@ export const METHODS = [
   "auth/providers/delete",
   "auth/github/installations/list",
   "auth/github/installations/grant",
+  "operator/universes/create",
+  "operator/universes/list",
+  "operator/universes/read",
+  "operator/universes/delete",
 ] as const;
 
 export const NOTIFICATIONS = [
@@ -441,6 +445,22 @@ export interface MethodMap {
     params: Api.AuthGitHubInstallationGrantParams;
     result: Api.AgentApiOutcomeOfAuthGitHubInstallationGrantResponse;
   };
+  "operator/universes/create": {
+    params: Api.OperatorUniverseCreateParams;
+    result: Api.AgentApiOutcomeOfOperatorUniverseCreateResponse;
+  };
+  "operator/universes/list": {
+    params: Api.OperatorUniverseListParams;
+    result: Api.AgentApiOutcomeOfOperatorUniverseListResponse;
+  };
+  "operator/universes/read": {
+    params: Api.OperatorUniverseReadParams;
+    result: Api.AgentApiOutcomeOfOperatorUniverseReadResponse;
+  };
+  "operator/universes/delete": {
+    params: Api.OperatorUniverseDeleteParams;
+    result: Api.AgentApiOutcomeOfOperatorUniverseDeleteResponse;
+  };
 }
 
 export type MethodParams<M extends Method> = MethodMap[M]["params"];
@@ -702,5 +722,17 @@ export const rpc = {
   },
   authGithubInstallationsGrant(client: RpcCaller, params: Api.AuthGitHubInstallationGrantParams): Promise<Api.AgentApiOutcomeOfAuthGitHubInstallationGrantResponse> {
     return client.call("auth/github/installations/grant", params);
+  },
+  operatorUniversesCreate(client: RpcCaller, params: Api.OperatorUniverseCreateParams): Promise<Api.AgentApiOutcomeOfOperatorUniverseCreateResponse> {
+    return client.call("operator/universes/create", params);
+  },
+  operatorUniversesList(client: RpcCaller, params: Api.OperatorUniverseListParams): Promise<Api.AgentApiOutcomeOfOperatorUniverseListResponse> {
+    return client.call("operator/universes/list", params);
+  },
+  operatorUniversesRead(client: RpcCaller, params: Api.OperatorUniverseReadParams): Promise<Api.AgentApiOutcomeOfOperatorUniverseReadResponse> {
+    return client.call("operator/universes/read", params);
+  },
+  operatorUniversesDelete(client: RpcCaller, params: Api.OperatorUniverseDeleteParams): Promise<Api.AgentApiOutcomeOfOperatorUniverseDeleteResponse> {
+    return client.call("operator/universes/delete", params);
   },
 } as const;

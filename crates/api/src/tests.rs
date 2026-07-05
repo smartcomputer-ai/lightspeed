@@ -2917,3 +2917,133 @@ fn test_mcp_link(tool_id: String) -> SessionMcpLinkView {
         auth_ref: None,
     }
 }
+
+struct TestOperatorService;
+
+fn test_operator_universe(universe_id: &str) -> OperatorUniverseView {
+    OperatorUniverseView {
+        universe_id: universe_id.to_owned(),
+        slug: Some("acme".to_owned()),
+        created_at_ms: 10,
+        last_activity_at_ms: Some(20),
+        sessions: 3,
+        workspaces: 2,
+        profiles: 1,
+        blob_bytes: 4096,
+    }
+}
+
+#[async_trait]
+impl OperatorApiService for TestOperatorService {
+    async fn create_universe(
+        &self,
+        params: OperatorUniverseCreateParams,
+    ) -> Result<AgentApiOutcome<OperatorUniverseCreateResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(OperatorUniverseCreateResponse {
+            universe: test_operator_universe(&params.universe_id),
+            created: true,
+        }))
+    }
+
+    async fn list_universes(
+        &self,
+        _params: OperatorUniverseListParams,
+    ) -> Result<AgentApiOutcome<OperatorUniverseListResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(OperatorUniverseListResponse {
+            universes: vec![test_operator_universe("universe_test")],
+        }))
+    }
+
+    async fn read_universe(
+        &self,
+        params: OperatorUniverseReadParams,
+    ) -> Result<AgentApiOutcome<OperatorUniverseReadResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(OperatorUniverseReadResponse {
+            universe: test_operator_universe(&params.universe_id),
+        }))
+    }
+
+    async fn delete_universe(
+        &self,
+        params: OperatorUniverseDeleteParams,
+    ) -> Result<AgentApiOutcome<OperatorUniverseDeleteResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(OperatorUniverseDeleteResponse {
+            universe_id: params.universe_id,
+            workflows_terminated: 2,
+            blob_objects_deleted: 5,
+        }))
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn dispatch_operator_json_rpc_routes_universe_lifecycle() {
+    let create = dispatch_operator_json_rpc(
+        &TestOperatorService,
+        JsonRpcRequest {
+            id: RequestId::Number(1),
+            method: METHOD_OPERATOR_UNIVERSES_CREATE.to_owned(),
+            params: Some(json!({ "universeId": "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f" })),
+        },
+    )
+    .await;
+    assert!(create.error.is_none());
+    let result = create.result.expect("result");
+    assert_eq!(result["result"]["created"], json!(true));
+    assert_eq!(
+        result["result"]["universe"]["universeId"],
+        json!("6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f")
+    );
+
+    let list = dispatch_operator_json_rpc(
+        &TestOperatorService,
+        JsonRpcRequest {
+            id: RequestId::Number(2),
+            method: METHOD_OPERATOR_UNIVERSES_LIST.to_owned(),
+            params: Some(json!({})),
+        },
+    )
+    .await;
+    let result = list.result.expect("result");
+    assert_eq!(result["result"]["universes"][0]["sessions"], json!(3));
+    assert_eq!(result["result"]["universes"][0]["blobBytes"], json!(4096));
+
+    let delete = dispatch_operator_json_rpc(
+        &TestOperatorService,
+        JsonRpcRequest {
+            id: RequestId::Number(3),
+            method: METHOD_OPERATOR_UNIVERSES_DELETE.to_owned(),
+            params: Some(json!({ "universeId": "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f" })),
+        },
+    )
+    .await;
+    let result = delete.result.expect("result");
+    assert_eq!(result["result"]["workflowsTerminated"], json!(2));
+    assert_eq!(result["result"]["blobObjectsDeleted"], json!(5));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn operator_dispatch_rejects_universe_scoped_methods_and_vice_versa() {
+    // The operator dispatcher only knows operator methods…
+    let response = dispatch_operator_json_rpc(
+        &TestOperatorService,
+        JsonRpcRequest {
+            id: RequestId::Number(1),
+            method: METHOD_SESSION_LIST.to_owned(),
+            params: Some(json!({})),
+        },
+    )
+    .await;
+    assert_eq!(response.error.expect("error").code, -32601);
+
+    // …and the universe dispatcher does not know operator methods.
+    let response = dispatch_json_rpc(
+        &TestService,
+        JsonRpcRequest {
+            id: RequestId::Number(2),
+            method: METHOD_OPERATOR_UNIVERSES_LIST.to_owned(),
+            params: Some(json!({})),
+        },
+    )
+    .await;
+    assert_eq!(response.error.expect("error").code, -32601);
+}

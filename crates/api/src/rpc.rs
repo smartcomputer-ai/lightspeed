@@ -205,13 +205,31 @@ impl From<AgentApiError> for JsonRpcError {
     }
 }
 
-/// Wire contract of one JSON-RPC method: its name, the Rust types of its
-/// params and result, and a hook registering both schemas with a
+/// Authorization scope of a JSON-RPC method: universe-scoped methods act
+/// inside the request's resolved universe; operator-scoped methods address
+/// the deployment itself and never resolve one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MethodScope {
+    Universe,
+    Operator,
+}
+
+impl MethodScope {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Universe => "universe",
+            Self::Operator => "operator",
+        }
+    }
+}
+
+/// Wire contract of one JSON-RPC method: its name, scope, the Rust types of
+/// its params and result, and a hook registering both schemas with a
 /// [`schemars::SchemaGenerator`]. Produced by the same macro invocation that
-/// generates [`dispatch_json_rpc`], so the manifest cannot drift from the
-/// dispatcher.
+/// generates the method's dispatcher, so the manifest cannot drift from it.
 pub struct MethodSpec {
     pub method: &'static str,
+    pub scope: MethodScope,
     pub params_type: &'static str,
     pub result_type: &'static str,
     pub register_schemas: fn(&mut schemars::SchemaGenerator) -> MethodSchemas,
@@ -248,6 +266,7 @@ macro_rules! api_methods {
                 $(
                     MethodSpec {
                         method: $method_const,
+                        scope: MethodScope::Universe,
                         params_type: stringify!($params),
                         result_type: concat!("AgentApiOutcome<", stringify!($response), ">"),
                         register_schemas: |generator| MethodSchemas {
@@ -360,7 +379,7 @@ pub const NOTIFICATION_METHODS: &[&str] = &[
     NOTIFY_ERROR,
 ];
 
-fn json_rpc_params<T>(params: Option<Value>) -> Result<T, JsonRpcError>
+pub(crate) fn json_rpc_params<T>(params: Option<Value>) -> Result<T, JsonRpcError>
 where
     T: DeserializeOwned,
 {
@@ -368,7 +387,7 @@ where
         .map_err(|error| JsonRpcError::invalid_params(error.to_string()))
 }
 
-fn json_rpc_outcome<T>(
+pub(crate) fn json_rpc_outcome<T>(
     id: RequestId,
     outcome: Result<AgentApiOutcome<T>, AgentApiError>,
 ) -> JsonRpcResponse

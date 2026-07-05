@@ -2124,6 +2124,103 @@ export interface McpServerReadResponse {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfOperatorUniverseCreateResponse".
+ */
+export interface AgentApiOutcomeOfOperatorUniverseCreateResponse {
+  notifications?: AgentNotification[];
+  result: OperatorUniverseCreateResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorUniverseCreateResponse".
+ */
+export interface OperatorUniverseCreateResponse {
+  /**
+   * False when the universe already existed (create is idempotent).
+   */
+  created: boolean;
+  universe: OperatorUniverseView;
+}
+/**
+ * Per-universe stats view. Counts are cheap aggregates computed at read
+ * time, not maintained counters — approximate under concurrent writes.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorUniverseView".
+ */
+export interface OperatorUniverseView {
+  blobBytes: number;
+  createdAtMs: number;
+  /**
+   * Most recent session activity (`max(sessions.updated_at_ms)`); absent
+   * when the universe has no sessions.
+   */
+  lastActivityAtMs?: number | null;
+  profiles: number;
+  sessions: number;
+  slug?: string | null;
+  universeId: string;
+  workspaces: number;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfOperatorUniverseDeleteResponse".
+ */
+export interface AgentApiOutcomeOfOperatorUniverseDeleteResponse {
+  notifications?: AgentNotification[];
+  result: OperatorUniverseDeleteResponse;
+}
+/**
+ * Purge report. The purge is idempotent: rerunning after a partial failure
+ * resumes where it stopped, and the universe row is deleted last so a
+ * half-purged universe is still visible to `operator/universes/read`.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorUniverseDeleteResponse".
+ */
+export interface OperatorUniverseDeleteResponse {
+  /**
+   * External object-store blobs deleted during the purge.
+   */
+  blobObjectsDeleted: number;
+  universeId: string;
+  /**
+   * Live session workflows terminated during the purge.
+   */
+  workflowsTerminated: number;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfOperatorUniverseListResponse".
+ */
+export interface AgentApiOutcomeOfOperatorUniverseListResponse {
+  notifications?: AgentNotification[];
+  result: OperatorUniverseListResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorUniverseListResponse".
+ */
+export interface OperatorUniverseListResponse {
+  universes?: OperatorUniverseView[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfOperatorUniverseReadResponse".
+ */
+export interface AgentApiOutcomeOfOperatorUniverseReadResponse {
+  notifications?: AgentNotification[];
+  result: OperatorUniverseReadResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorUniverseReadResponse".
+ */
+export interface OperatorUniverseReadResponse {
+  universe: OperatorUniverseView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfOutboxAckResponse".
  */
 export interface AgentApiOutcomeOfOutboxAckResponse {
@@ -3693,6 +3790,32 @@ export interface McpServerListParams {
  */
 export interface McpServerReadParams {
   serverId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorUniverseCreateParams".
+ */
+export interface OperatorUniverseCreateParams {
+  universeId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorUniverseDeleteParams".
+ */
+export interface OperatorUniverseDeleteParams {
+  universeId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorUniverseListParams".
+ */
+export interface OperatorUniverseListParams {}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorUniverseReadParams".
+ */
+export interface OperatorUniverseReadParams {
+  universeId: string;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema

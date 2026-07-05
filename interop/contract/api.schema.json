@@ -622,6 +622,74 @@
       ],
       "type": "object"
     },
+    "AgentApiOutcomeOfOperatorUniverseCreateResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/OperatorUniverseCreateResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfOperatorUniverseDeleteResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/OperatorUniverseDeleteResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfOperatorUniverseListResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/OperatorUniverseListResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfOperatorUniverseReadResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/OperatorUniverseReadResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
     "AgentApiOutcomeOfOutboxAckResponse": {
       "properties": {
         "notifications": {
@@ -5224,6 +5292,164 @@
         "tokenEndpointAuthMethod",
         "createdAtMs",
         "updatedAtMs"
+      ],
+      "type": "object"
+    },
+    "OperatorUniverseCreateParams": {
+      "properties": {
+        "universeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "universeId"
+      ],
+      "type": "object"
+    },
+    "OperatorUniverseCreateResponse": {
+      "properties": {
+        "created": {
+          "description": "False when the universe already existed (create is idempotent).",
+          "type": "boolean"
+        },
+        "universe": {
+          "$ref": "#/definitions/OperatorUniverseView"
+        }
+      },
+      "required": [
+        "universe",
+        "created"
+      ],
+      "type": "object"
+    },
+    "OperatorUniverseDeleteParams": {
+      "properties": {
+        "universeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "universeId"
+      ],
+      "type": "object"
+    },
+    "OperatorUniverseDeleteResponse": {
+      "description": "Purge report. The purge is idempotent: rerunning after a partial failure\nresumes where it stopped, and the universe row is deleted last so a\nhalf-purged universe is still visible to `operator/universes/read`.",
+      "properties": {
+        "blobObjectsDeleted": {
+          "description": "External object-store blobs deleted during the purge.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "universeId": {
+          "type": "string"
+        },
+        "workflowsTerminated": {
+          "description": "Live session workflows terminated during the purge.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "universeId",
+        "workflowsTerminated",
+        "blobObjectsDeleted"
+      ],
+      "type": "object"
+    },
+    "OperatorUniverseListParams": {
+      "type": "object"
+    },
+    "OperatorUniverseListResponse": {
+      "properties": {
+        "universes": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/OperatorUniverseView"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "OperatorUniverseReadParams": {
+      "properties": {
+        "universeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "universeId"
+      ],
+      "type": "object"
+    },
+    "OperatorUniverseReadResponse": {
+      "properties": {
+        "universe": {
+          "$ref": "#/definitions/OperatorUniverseView"
+        }
+      },
+      "required": [
+        "universe"
+      ],
+      "type": "object"
+    },
+    "OperatorUniverseView": {
+      "description": "Per-universe stats view. Counts are cheap aggregates computed at read\ntime, not maintained counters — approximate under concurrent writes.",
+      "properties": {
+        "blobBytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "createdAtMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "lastActivityAtMs": {
+          "description": "Most recent session activity (`max(sessions.updated_at_ms)`); absent\nwhen the universe has no sessions.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "profiles": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sessions": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "slug": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "universeId": {
+          "type": "string"
+        },
+        "workspaces": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "universeId",
+        "createdAtMs",
+        "sessions",
+        "workspaces",
+        "profiles",
+        "blobBytes"
       ],
       "type": "object"
     },

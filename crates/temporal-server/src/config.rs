@@ -32,30 +32,31 @@ pub fn universe_id_from_env() -> anyhow::Result<Uuid> {
 /// configured universe (the pre-P90 behavior). `TrustedHeader` reads
 /// `x-lightspeed-universe` (and optionally `x-lightspeed-principal`) injected
 /// by an upstream gateway that owns authentication; requests without the
-/// header are rejected (fail closed). `ApiKey` resolves
-/// `Authorization: Bearer lsk_…` against the deployment-level api_keys table.
+/// header are rejected (fail closed), and unknown universes are never
+/// auto-created — universes exist only through explicit creation
+/// (`operator/universes/create` or `server universe create`). `ApiKey`
+/// resolves `Authorization: Bearer lsk_…` against the deployment-level
+/// api_keys table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GatewayAuthMode {
     Single { universe_id: Uuid },
-    TrustedHeader { auto_create: bool },
+    TrustedHeader,
     ApiKey,
 }
 
 pub fn gateway_auth_mode_from_env() -> anyhow::Result<GatewayAuthMode> {
+    if optional_env("LIGHTSPEED_UNIVERSE_AUTO_CREATE").is_some() {
+        anyhow::bail!(
+            "LIGHTSPEED_UNIVERSE_AUTO_CREATE is retired: universes are created explicitly \
+             via operator/universes/create (or `server universe create`); remove the variable"
+        );
+    }
     let mode = env::var("LIGHTSPEED_AUTH_MODE").unwrap_or_else(|_| "single".to_owned());
     match mode.as_str() {
         "single" | "" => Ok(GatewayAuthMode::Single {
             universe_id: universe_id_from_env()?,
         }),
-        "trusted-header" => {
-            let auto_create = match optional_env("LIGHTSPEED_UNIVERSE_AUTO_CREATE") {
-                Some(value) => value.parse::<bool>().map_err(|error| {
-                    anyhow::anyhow!("invalid LIGHTSPEED_UNIVERSE_AUTO_CREATE: {error}")
-                })?,
-                None => false,
-            };
-            Ok(GatewayAuthMode::TrustedHeader { auto_create })
-        }
+        "trusted-header" => Ok(GatewayAuthMode::TrustedHeader),
         "api-key" => Ok(GatewayAuthMode::ApiKey),
         other => anyhow::bail!(
             "invalid LIGHTSPEED_AUTH_MODE={other:?}; expected one of: single, trusted-header, api-key"
@@ -157,6 +158,10 @@ impl DeploymentStores {
 
     pub fn pool(&self) -> &PgPool {
         &self.pool
+    }
+
+    pub fn object_store(&self) -> Option<&Arc<dyn ObjectStore>> {
+        self.object_store.as_ref()
     }
 
     /// Build the universe-bound store. Does not create the universe row;

@@ -1,6 +1,7 @@
 //! HTTP/JSON-RPC gateway over the Temporal-backed agent workflow.
 
 pub mod http;
+pub mod operator;
 pub mod principal;
 pub(crate) mod service;
 
@@ -10,6 +11,7 @@ pub use http::{
     UNIVERSE_HEADER, gateway_router, prewarm_single_universe, public_base_url_or_default,
     serve_gateway, serve_gateway_with_client_store,
 };
+pub use operator::GatewayOperatorApi;
 pub use service::{
     DEFAULT_PUBLIC_BASE_URL, GatewayAgentApi, GatewayAgentApiBuilder, OAuthCallbackOutcome,
 };

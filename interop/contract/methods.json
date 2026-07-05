@@ -13,7 +13,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfInitializeResponse"
         },
         "type": "AgentApiOutcome<InitializeResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "session/start",
@@ -28,7 +29,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfSessionStartResponse"
         },
         "type": "AgentApiOutcome<SessionStartResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "profiles/create",
@@ -43,7 +45,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfProfileCreateResponse"
         },
         "type": "AgentApiOutcome<ProfileCreateResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "profiles/read",
@@ -58,7 +61,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfProfileReadResponse"
         },
         "type": "AgentApiOutcome<ProfileReadResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "profiles/list",
@@ -73,7 +77,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfProfileListResponse"
         },
         "type": "AgentApiOutcome<ProfileListResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "profiles/put",
@@ -88,7 +93,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfProfilePutResponse"
         },
         "type": "AgentApiOutcome<ProfilePutResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "profiles/update",
@@ -103,7 +109,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfProfileUpdateResponse"
         },
         "type": "AgentApiOutcome<ProfileUpdateResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "profiles/delete",
@@ -118,7 +125,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfProfileDeleteResponse"
         },
         "type": "AgentApiOutcome<ProfileDeleteResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "profiles/apply",
@@ -133,7 +141,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfProfileApplyResponse"
         },
         "type": "AgentApiOutcome<ProfileApplyResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "session/update",
@@ -148,7 +157,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfSessionUpdateResponse"
         },
         "type": "AgentApiOutcome<SessionUpdateResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "session/tools/update",
@@ -163,7 +173,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfSessionToolsUpdateResponse"
         },
         "type": "AgentApiOutcome<SessionToolsUpdateResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "session/read",
@@ -178,7 +189,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfSessionReadResponse"
         },
         "type": "AgentApiOutcome<SessionReadResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "session/list",
@@ -193,7 +205,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfSessionListResponse"
         },
         "type": "AgentApiOutcome<SessionListResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "session/rename",
@@ -208,7 +221,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfSessionRenameResponse"
         },
         "type": "AgentApiOutcome<SessionRenameResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "session/events/read",
@@ -223,7 +237,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfSessionEventsReadResponse"
         },
         "type": "AgentApiOutcome<SessionEventsReadResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "session/close",
@@ -238,7 +253,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfSessionCloseResponse"
         },
         "type": "AgentApiOutcome<SessionCloseResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "context/compact",
@@ -253,7 +269,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfContextCompactResponse"
         },
         "type": "AgentApiOutcome<ContextCompactResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "context/append",
@@ -268,7 +285,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfContextAppendResponse"
         },
         "type": "AgentApiOutcome<ContextAppendResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "context/remove",
@@ -283,7 +301,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfContextRemoveResponse"
         },
         "type": "AgentApiOutcome<ContextRemoveResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "outbox/read",
@@ -298,7 +317,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfOutboxReadResponse"
         },
         "type": "AgentApiOutcome<OutboxReadResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "outbox/ack",
@@ -313,7 +333,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfOutboxAckResponse"
         },
         "type": "AgentApiOutcome<OutboxAckResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "run/start",
@@ -328,7 +349,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfRunStartResponse"
         },
         "type": "AgentApiOutcome<RunStartResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "run/cancel",
@@ -343,7 +365,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfRunCancelResponse"
         },
         "type": "AgentApiOutcome<RunCancelResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "prompts/active",
@@ -358,7 +381,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfPromptsActiveResponse"
         },
         "type": "AgentApiOutcome<PromptsActiveResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "skills/list",
@@ -373,7 +397,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfSkillListResponse"
         },
         "type": "AgentApiOutcome<SkillListResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "skills/active",
@@ -388,7 +413,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfSkillActiveResponse"
         },
         "type": "AgentApiOutcome<SkillActiveResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "skills/activate",
@@ -403,7 +429,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfSkillActivateResponse"
         },
         "type": "AgentApiOutcome<SkillActivateResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "skills/deactivate",
@@ -418,7 +445,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfSkillDeactivateResponse"
         },
         "type": "AgentApiOutcome<SkillDeactivateResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "session/environments/list",
@@ -433,7 +461,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfSessionEnvironmentListResponse"
         },
         "type": "AgentApiOutcome<SessionEnvironmentListResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "session/environments/read",
@@ -448,7 +477,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfSessionEnvironmentReadResponse"
         },
         "type": "AgentApiOutcome<SessionEnvironmentReadResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "session/environments/create",
@@ -463,7 +493,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfSessionEnvironmentCreateResponse"
         },
         "type": "AgentApiOutcome<SessionEnvironmentCreateResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "session/environments/attach",
@@ -478,7 +509,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfSessionEnvironmentAttachResponse"
         },
         "type": "AgentApiOutcome<SessionEnvironmentAttachResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "session/environments/activate",
@@ -493,7 +525,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfSessionEnvironmentActivateResponse"
         },
         "type": "AgentApiOutcome<SessionEnvironmentActivateResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "session/environments/deactivate",
@@ -508,7 +541,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfSessionEnvironmentDeactivateResponse"
         },
         "type": "AgentApiOutcome<SessionEnvironmentDeactivateResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "session/environments/close",
@@ -523,7 +557,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfSessionEnvironmentCloseResponse"
         },
         "type": "AgentApiOutcome<SessionEnvironmentCloseResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "session/environments/credentials/bind",
@@ -538,7 +573,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfSessionEnvironmentCredentialBindResponse"
         },
         "type": "AgentApiOutcome<SessionEnvironmentCredentialBindResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "session/environments/credentials/list",
@@ -553,7 +589,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfSessionEnvironmentCredentialListResponse"
         },
         "type": "AgentApiOutcome<SessionEnvironmentCredentialListResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "session/environments/credentials/unbind",
@@ -568,7 +605,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfSessionEnvironmentCredentialUnbindResponse"
         },
         "type": "AgentApiOutcome<SessionEnvironmentCredentialUnbindResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "session/jobs/create",
@@ -583,7 +621,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfSessionJobCreateResponse"
         },
         "type": "AgentApiOutcome<SessionJobCreateResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "session/jobs/list",
@@ -598,7 +637,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfSessionJobListResponse"
         },
         "type": "AgentApiOutcome<SessionJobListResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "session/jobs/read",
@@ -613,7 +653,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfSessionJobReadResponse"
         },
         "type": "AgentApiOutcome<SessionJobReadResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "session/jobs/cancel",
@@ -628,7 +669,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfSessionJobCancelResponse"
         },
         "type": "AgentApiOutcome<SessionJobCancelResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "environmentProviders/register",
@@ -643,7 +685,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentProviderRegisterResponse"
         },
         "type": "AgentApiOutcome<EnvironmentProviderRegisterResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "environmentProviders/heartbeat",
@@ -658,7 +701,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentProviderHeartbeatResponse"
         },
         "type": "AgentApiOutcome<EnvironmentProviderHeartbeatResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "environmentProviders/unregister",
@@ -673,7 +717,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentProviderUnregisterResponse"
         },
         "type": "AgentApiOutcome<EnvironmentProviderUnregisterResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "environmentProviders/list",
@@ -688,7 +733,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentProviderListResponse"
         },
         "type": "AgentApiOutcome<EnvironmentProviderListResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "environmentProviders/targets/list",
@@ -703,7 +749,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentProviderTargetListResponse"
         },
         "type": "AgentApiOutcome<EnvironmentProviderTargetListResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "blob/put",
@@ -718,7 +765,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfBlobPutResponse"
         },
         "type": "AgentApiOutcome<BlobPutResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "blob/put_many",
@@ -733,7 +781,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfBlobPutManyResponse"
         },
         "type": "AgentApiOutcome<BlobPutManyResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "blob/get",
@@ -748,7 +797,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfBlobGetResponse"
         },
         "type": "AgentApiOutcome<BlobGetResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "blob/has_many",
@@ -763,7 +813,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfBlobHasManyResponse"
         },
         "type": "AgentApiOutcome<BlobHasManyResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "vfs/snapshot/commit",
@@ -778,7 +829,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfVfsSnapshotCommitResponse"
         },
         "type": "AgentApiOutcome<VfsSnapshotCommitResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "vfs/snapshot/read",
@@ -793,7 +845,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfVfsSnapshotReadResponse"
         },
         "type": "AgentApiOutcome<VfsSnapshotReadResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "vfs/workspace/create",
@@ -808,7 +861,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfVfsWorkspaceCreateResponse"
         },
         "type": "AgentApiOutcome<VfsWorkspaceCreateResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "vfs/workspace/read",
@@ -823,7 +877,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfVfsWorkspaceReadResponse"
         },
         "type": "AgentApiOutcome<VfsWorkspaceReadResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "vfs/workspace/list",
@@ -838,7 +893,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfVfsWorkspaceListResponse"
         },
         "type": "AgentApiOutcome<VfsWorkspaceListResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "vfs/workspace/update",
@@ -853,7 +909,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfVfsWorkspaceUpdateResponse"
         },
         "type": "AgentApiOutcome<VfsWorkspaceUpdateResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "vfs/workspace/delete",
@@ -868,7 +925,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfVfsWorkspaceDeleteResponse"
         },
         "type": "AgentApiOutcome<VfsWorkspaceDeleteResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "vfs/mount/put",
@@ -883,7 +941,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfVfsMountPutResponse"
         },
         "type": "AgentApiOutcome<VfsMountPutResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "vfs/mount/delete",
@@ -898,7 +957,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfVfsMountDeleteResponse"
         },
         "type": "AgentApiOutcome<VfsMountDeleteResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "vfs/mount/list",
@@ -913,7 +973,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfVfsMountListResponse"
         },
         "type": "AgentApiOutcome<VfsMountListResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "mcp/servers/create",
@@ -928,7 +989,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfMcpServerCreateResponse"
         },
         "type": "AgentApiOutcome<McpServerCreateResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "mcp/servers/list",
@@ -943,7 +1005,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfMcpServerListResponse"
         },
         "type": "AgentApiOutcome<McpServerListResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "mcp/servers/read",
@@ -958,7 +1021,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfMcpServerReadResponse"
         },
         "type": "AgentApiOutcome<McpServerReadResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "mcp/servers/delete",
@@ -973,7 +1037,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfMcpServerDeleteResponse"
         },
         "type": "AgentApiOutcome<McpServerDeleteResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "session/mcp/link",
@@ -988,7 +1053,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfSessionMcpLinkResponse"
         },
         "type": "AgentApiOutcome<SessionMcpLinkResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "session/mcp/unlink",
@@ -1003,7 +1069,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfSessionMcpUnlinkResponse"
         },
         "type": "AgentApiOutcome<SessionMcpUnlinkResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "session/mcp/list",
@@ -1018,7 +1085,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfSessionMcpListResponse"
         },
         "type": "AgentApiOutcome<SessionMcpListResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "auth/grants/import",
@@ -1033,7 +1101,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfAuthGrantImportResponse"
         },
         "type": "AgentApiOutcome<AuthGrantImportResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "auth/grants/list",
@@ -1048,7 +1117,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfAuthGrantListResponse"
         },
         "type": "AgentApiOutcome<AuthGrantListResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "auth/grants/read",
@@ -1063,7 +1133,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfAuthGrantReadResponse"
         },
         "type": "AgentApiOutcome<AuthGrantReadResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "auth/grants/revoke",
@@ -1078,7 +1149,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfAuthGrantRevokeResponse"
         },
         "type": "AgentApiOutcome<AuthGrantRevokeResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "auth/clients/create",
@@ -1093,7 +1165,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfAuthClientCreateResponse"
         },
         "type": "AgentApiOutcome<AuthClientCreateResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "auth/clients/list",
@@ -1108,7 +1181,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfAuthClientListResponse"
         },
         "type": "AgentApiOutcome<AuthClientListResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "auth/clients/read",
@@ -1123,7 +1197,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfAuthClientReadResponse"
         },
         "type": "AgentApiOutcome<AuthClientReadResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "auth/clients/delete",
@@ -1138,7 +1213,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfAuthClientDeleteResponse"
         },
         "type": "AgentApiOutcome<AuthClientDeleteResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "auth/flows/start",
@@ -1153,7 +1229,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfAuthFlowStartResponse"
         },
         "type": "AgentApiOutcome<AuthFlowStartResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "auth/flows/status",
@@ -1168,7 +1245,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfAuthFlowStatusResponse"
         },
         "type": "AgentApiOutcome<AuthFlowStatusResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "auth/providers/create",
@@ -1183,7 +1261,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfAuthProviderCreateResponse"
         },
         "type": "AgentApiOutcome<AuthProviderCreateResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "auth/providers/list",
@@ -1198,7 +1277,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfAuthProviderListResponse"
         },
         "type": "AgentApiOutcome<AuthProviderListResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "auth/providers/read",
@@ -1213,7 +1293,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfAuthProviderReadResponse"
         },
         "type": "AgentApiOutcome<AuthProviderReadResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "auth/providers/delete",
@@ -1228,7 +1309,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfAuthProviderDeleteResponse"
         },
         "type": "AgentApiOutcome<AuthProviderDeleteResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "auth/github/installations/list",
@@ -1243,7 +1325,8 @@
           "$ref": "#/definitions/AgentApiOutcomeOfAuthGitHubInstallationListResponse"
         },
         "type": "AgentApiOutcome<AuthGitHubInstallationListResponse>"
-      }
+      },
+      "scope": "universe"
     },
     {
       "method": "auth/github/installations/grant",
@@ -1258,7 +1341,72 @@
           "$ref": "#/definitions/AgentApiOutcomeOfAuthGitHubInstallationGrantResponse"
         },
         "type": "AgentApiOutcome<AuthGitHubInstallationGrantResponse>"
-      }
+      },
+      "scope": "universe"
+    },
+    {
+      "method": "operator/universes/create",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/OperatorUniverseCreateParams"
+        },
+        "type": "OperatorUniverseCreateParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfOperatorUniverseCreateResponse"
+        },
+        "type": "AgentApiOutcome<OperatorUniverseCreateResponse>"
+      },
+      "scope": "operator"
+    },
+    {
+      "method": "operator/universes/list",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/OperatorUniverseListParams"
+        },
+        "type": "OperatorUniverseListParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfOperatorUniverseListResponse"
+        },
+        "type": "AgentApiOutcome<OperatorUniverseListResponse>"
+      },
+      "scope": "operator"
+    },
+    {
+      "method": "operator/universes/read",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/OperatorUniverseReadParams"
+        },
+        "type": "OperatorUniverseReadParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfOperatorUniverseReadResponse"
+        },
+        "type": "AgentApiOutcome<OperatorUniverseReadResponse>"
+      },
+      "scope": "operator"
+    },
+    {
+      "method": "operator/universes/delete",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/OperatorUniverseDeleteParams"
+        },
+        "type": "OperatorUniverseDeleteParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfOperatorUniverseDeleteResponse"
+        },
+        "type": "AgentApiOutcome<OperatorUniverseDeleteResponse>"
+      },
+      "scope": "operator"
     }
   ],
   "notificationSchema": {
