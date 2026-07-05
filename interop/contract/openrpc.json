@@ -1098,6 +1098,23 @@
         ],
         "type": "object"
       },
+      "AgentApiOutcomeOfSessionListResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/SessionListResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
       "AgentApiOutcomeOfSessionMcpLinkResponse": {
         "properties": {
           "notifications": {
@@ -1159,6 +1176,23 @@
           },
           "result": {
             "$ref": "#/components/schemas/SessionReadResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfSessionRenameResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/SessionRenameResponse"
           }
         },
         "required": [
@@ -8971,6 +9005,45 @@
         ],
         "type": "object"
       },
+      "SessionListParams": {
+        "properties": {
+          "cursor": {
+            "description": "Opaque cursor from the previous page's `nextCursor`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "limit": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "SessionListResponse": {
+        "properties": {
+          "nextCursor": {
+            "description": "Present when more sessions exist past this page. Ordering is most\nrecently updated first; pages can drift under concurrent activity.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sessions": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SessionSummaryView"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
       "SessionMcpLinkParams": {
         "properties": {
           "allowedTools": {
@@ -9181,6 +9254,35 @@
         ],
         "type": "object"
       },
+      "SessionRenameParams": {
+        "properties": {
+          "displayName": {
+            "description": "New display name; absent clears it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sessionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId"
+        ],
+        "type": "object"
+      },
+      "SessionRenameResponse": {
+        "properties": {
+          "session": {
+            "$ref": "#/components/schemas/SessionSummaryView"
+          }
+        },
+        "required": [
+          "session"
+        ],
+        "type": "object"
+      },
       "SessionStartParams": {
         "properties": {
           "config": {
@@ -9193,7 +9295,7 @@
               }
             ]
           },
-          "cwd": {
+          "displayName": {
             "type": [
               "string",
               "null"
@@ -9238,6 +9340,35 @@
           "error"
         ],
         "type": "string"
+      },
+      "SessionSummaryView": {
+        "properties": {
+          "createdAtMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "displayName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "updatedAtMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "createdAtMs",
+          "updatedAtMs"
+        ],
+        "type": "object"
       },
       "SessionToolsUpdateInput": {
         "oneOf": [
@@ -9396,7 +9527,7 @@
             "minimum": 0,
             "type": "integer"
           },
-          "cwd": {
+          "displayName": {
             "type": [
               "string",
               "null"
@@ -11033,6 +11164,46 @@
         "name": "result",
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfSessionReadResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "session/list",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/SessionListParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfSessionListResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "session/rename",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/SessionRenameParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfSessionRenameResponse"
         }
       }
     },

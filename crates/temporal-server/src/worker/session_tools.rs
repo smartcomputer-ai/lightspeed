@@ -1834,7 +1834,7 @@ mod tests {
         api::SessionView {
             id: session_id.as_str().to_owned(),
             status,
-            cwd: None,
+            display_name: None,
             config_revision: 0,
             config: None,
             created_at_ms: 1,
@@ -2284,6 +2284,7 @@ mod tests {
         sessions
             .create_session(CreateSession {
                 session_id: parent.clone(),
+                display_name: None,
                 created_at_ms: 1,
             })
             .await

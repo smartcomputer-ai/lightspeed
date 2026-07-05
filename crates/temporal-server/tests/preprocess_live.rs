@@ -93,7 +93,7 @@ async fn run_audio_preprocess_live_client(
 
     api.start_session(SessionStartParams {
         session_id: Some(session_id.as_str().to_owned()),
-        cwd: None,
+        display_name: None,
         config: Some(SessionConfigInput {
             model: Some(model_to_api(&model)),
             ..SessionConfigInput::default()
@@ -183,7 +183,7 @@ async fn run_transcodable_audio_preprocess_live_client(
 
     api.start_session(SessionStartParams {
         session_id: Some(session_id.as_str().to_owned()),
-        cwd: None,
+        display_name: None,
         config: Some(SessionConfigInput {
             model: Some(model_to_api(&model)),
             ..SessionConfigInput::default()

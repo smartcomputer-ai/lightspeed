@@ -35,7 +35,11 @@ enum Command {
     Both(BothArgs),
     #[command(subcommand, about = "Manage universes (tenants) of this deployment")]
     Universe(UniverseCommand),
-    #[command(subcommand, name = "api-key", about = "Manage inbound gateway API keys")]
+    #[command(
+        subcommand,
+        name = "api-key",
+        about = "Manage inbound gateway API keys"
+    )]
     ApiKey(ApiKeyCommand),
 }
 
@@ -311,7 +315,9 @@ fn parse_principal_arg(value: Option<&str>) -> anyhow::Result<auth::PrincipalRef
     let kind = match kind {
         "user" => auth::PrincipalKind::User,
         "service_account" => auth::PrincipalKind::ServiceAccount,
-        other => anyhow::bail!("invalid principal kind {other:?}; expected user or service_account"),
+        other => {
+            anyhow::bail!("invalid principal kind {other:?}; expected user or service_account")
+        }
     };
     if id.is_empty() {
         anyhow::bail!("--principal id must not be empty");

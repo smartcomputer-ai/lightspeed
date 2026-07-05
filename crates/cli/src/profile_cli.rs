@@ -8,8 +8,8 @@ use api::{
     AgentApiErrorKind, AgentProfile, AgentProfileInput, EnvironmentProviderListParams,
     EnvironmentProviderStatusView, EnvironmentProviderTargetListParams,
     EnvironmentTargetStatusView, InlineAgentProfile, ProfileApplyParams, ProfileDeleteParams,
-    ProfileId, ProfileListParams, ProfileMount, ProfilePutParams, ProfileReadParams,
-    ProfileSource, VfsMountAccess, VfsMountSourceInput,
+    ProfileId, ProfileListParams, ProfileMount, ProfilePutParams, ProfileReadParams, ProfileSource,
+    VfsMountAccess, VfsMountSourceInput,
 };
 use clap::{Args, Subcommand};
 use serde::Deserialize;

@@ -23,7 +23,9 @@ use std::{
 };
 
 use auth::{GitHubApiClient, HttpGitHubApiClient, HttpOAuthTokenClient, OAuthTokenClient};
-use llm_clients::{anthropic::messages as am, openai::audio as oai_audio, openai::responses as oai};
+use llm_clients::{
+    anthropic::messages as am, openai::audio as oai_audio, openai::responses as oai,
+};
 use store_pg::PgStore;
 use temporalio_client::Client;
 use thiserror::Error;
@@ -232,11 +234,7 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-fn evict_universe_states(
-    states: &mut BTreeMap<Uuid, UniverseEntry>,
-    now_ms: u64,
-    just_used: Uuid,
-) {
+fn evict_universe_states(states: &mut BTreeMap<Uuid, UniverseEntry>, now_ms: u64, just_used: Uuid) {
     let last_used = states
         .iter()
         .map(|(universe_id, entry)| (*universe_id, entry.last_used_ms))

@@ -3,9 +3,10 @@ use engine::{
     session::{EventSeq, SessionId, SessionPosition, StoredSessionEntry, UncommittedStoredEvent},
     storage::{
         AppendSessionEvents, AppendSessionEventsResult, CreateClonedSession, CreateForkedSession,
-        CreateSession, ListSessionLinks, ReadSessionEvents, SessionLinkDirection,
-        SessionLinkRecord, SessionPage, SessionRecord, SessionStore, SessionStoreError,
-        UpsertSessionLink, largest_safe_fork_seq, validate_fork_point, validate_relationship,
+        CreateSession, ListSessionLinks, ListSessions, ReadSessionEvents, SessionLinkDirection,
+        SessionLinkRecord, SessionListCursor, SessionListPage, SessionPage, SessionRecord,
+        SessionStore, SessionStoreError, UpsertSessionLink, largest_safe_fork_seq,
+        validate_fork_point, validate_relationship,
     },
 };
 use sqlx::{Postgres, Row, Transaction};
@@ -21,6 +22,7 @@ use crate::{
 
 const SESSION_COLUMNS: &str = r#"
     session_id,
+    display_name,
     head_seq,
     source_session_id,
     source_seq,
@@ -387,10 +389,11 @@ impl SessionStore for PgStore {
             INSERT INTO sessions (
                 universe_id,
                 session_id,
+                display_name,
                 created_at_ms,
                 updated_at_ms
             )
-            VALUES ($1, $2, $3, $3)
+            VALUES ($1, $2, $3, $4, $4)
             ON CONFLICT (universe_id, session_id) DO NOTHING
             RETURNING {SESSION_COLUMNS}
             "#,
@@ -398,6 +401,7 @@ impl SessionStore for PgStore {
         let row = sqlx::query(&query)
             .bind(self.config.universe_id)
             .bind(request.session_id.as_str())
+            .bind(request.display_name.as_deref())
             .bind(created_at_ms)
             .fetch_optional(&self.pool)
             .await
@@ -430,6 +434,100 @@ impl SessionStore for PgStore {
             .map_err(|error| session_sql_error("load session", error))?;
 
         row.as_ref().map(session_record_from_row).transpose()
+    }
+
+    async fn list_sessions(
+        &self,
+        request: ListSessions,
+    ) -> Result<SessionListPage, SessionStoreError> {
+        if request.limit == 0 {
+            return Err(SessionStoreError::InvalidLimit { limit: 0 });
+        }
+        let fetch_limit = usize_to_session_i64(request.limit.saturating_add(1), "limit")?;
+        let rows = match &request.cursor {
+            Some(cursor) => {
+                let query = format!(
+                    r#"
+                    SELECT {SESSION_COLUMNS}
+                    FROM sessions
+                    WHERE universe_id = $1
+                      AND (updated_at_ms, session_id) < ($2, $3)
+                    ORDER BY updated_at_ms DESC, session_id DESC
+                    LIMIT $4
+                    "#,
+                );
+                sqlx::query(&query)
+                    .bind(self.config.universe_id)
+                    .bind(u64_to_i64(cursor.updated_at_ms, "cursor updated_at_ms")?)
+                    .bind(cursor.session_id.as_str())
+                    .bind(fetch_limit)
+                    .fetch_all(&self.pool)
+                    .await
+            }
+            None => {
+                let query = format!(
+                    r#"
+                    SELECT {SESSION_COLUMNS}
+                    FROM sessions
+                    WHERE universe_id = $1
+                    ORDER BY updated_at_ms DESC, session_id DESC
+                    LIMIT $2
+                    "#,
+                );
+                sqlx::query(&query)
+                    .bind(self.config.universe_id)
+                    .bind(fetch_limit)
+                    .fetch_all(&self.pool)
+                    .await
+            }
+        }
+        .map_err(|error| session_sql_error("list sessions", error))?;
+
+        let mut sessions = rows
+            .iter()
+            .map(session_record_from_row)
+            .collect::<Result<Vec<_>, _>>()?;
+        let next_cursor = (sessions.len() > request.limit).then(|| {
+            sessions.truncate(request.limit);
+            let last = sessions.last().expect("non-empty page");
+            SessionListCursor {
+                updated_at_ms: last.updated_at_ms,
+                session_id: last.session_id.clone(),
+            }
+        });
+        Ok(SessionListPage {
+            sessions,
+            next_cursor,
+        })
+    }
+
+    async fn set_session_display_name(
+        &self,
+        session_id: &SessionId,
+        display_name: Option<String>,
+    ) -> Result<SessionRecord, SessionStoreError> {
+        let query = format!(
+            r#"
+            UPDATE sessions
+            SET display_name = $3
+            WHERE universe_id = $1 AND session_id = $2
+            RETURNING {SESSION_COLUMNS}
+            "#,
+        );
+        let row = sqlx::query(&query)
+            .bind(self.config.universe_id)
+            .bind(session_id.as_str())
+            .bind(display_name.as_deref())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|error| session_sql_error("set session display name", error))?;
+
+        let Some(row) = row else {
+            return Err(SessionStoreError::SessionNotFound {
+                session_id: session_id.clone(),
+            });
+        };
+        session_record_from_row(&row)
     }
 
     async fn create_cloned_session(
@@ -778,6 +876,9 @@ fn session_record_from_row(
                 message: format!("decode session id: {error}"),
             })
         })?;
+    let display_name = row
+        .try_get::<Option<String>, _>("display_name")
+        .map_err(|error| session_sql_error("decode session display name", error))?;
     let head_seq = row
         .try_get::<Option<i64>, _>("head_seq")
         .map_err(|error| session_sql_error("decode session head", error))?;
@@ -811,6 +912,7 @@ fn session_record_from_row(
 
     Ok(SessionRecord {
         session_id,
+        display_name,
         head,
         source_session_id,
         source_seq,

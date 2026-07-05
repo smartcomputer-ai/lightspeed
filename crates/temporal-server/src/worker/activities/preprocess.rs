@@ -698,8 +698,7 @@ pub(super) fn default_openai_audio_transcriber(
     )))
 }
 
-pub fn default_audio_transcoder_from_env() -> anyhow::Result<Option<Arc<dyn AudioTranscoder>>>
-{
+pub fn default_audio_transcoder_from_env() -> anyhow::Result<Option<Arc<dyn AudioTranscoder>>> {
     let Some(kind) = env::var("LIGHTSPEED_AUDIO_TRANSCODER")
         .ok()
         .map(|value| value.trim().to_ascii_lowercase())

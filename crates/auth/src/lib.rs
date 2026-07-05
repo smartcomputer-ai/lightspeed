@@ -108,6 +108,10 @@ mod oauth;
 mod providers;
 mod secrets;
 
+pub use api_keys::{
+    API_KEY_DISPLAY_PREFIX_LEN, API_KEY_SECRET_PREFIX, ApiKeyError, ApiKeyRecord, ApiKeyStore,
+    CreateApiKey, MintedApiKey, api_key_display_prefix, api_key_hash, mint_api_key,
+};
 pub use broker::{
     AuthBrokerError, AuthTokenBroker, DEFAULT_REFRESH_EXPIRY_MARGIN_MS, GrantTokenSource,
     OAuthRefreshRuntime, RegistryTokenBroker, TokenAudience, audience_covers,
@@ -131,10 +135,6 @@ pub use mcp_oauth::{
     McpOAuthError, McpOAuthTarget, OAuthMetadataClient, ProtectedResourceMetadata,
     authorization_server_metadata_urls, mcp_oauth_client_id, protected_resource_metadata_urls,
     select_authorization_server,
-};
-pub use api_keys::{
-    API_KEY_DISPLAY_PREFIX_LEN, API_KEY_SECRET_PREFIX, ApiKeyError, ApiKeyRecord, ApiKeyStore,
-    CreateApiKey, MintedApiKey, api_key_display_prefix, api_key_hash, mint_api_key,
 };
 pub use memory::{
     InMemoryAuthFlowStore, InMemoryAuthGrantStore, InMemoryAuthProviderStore,

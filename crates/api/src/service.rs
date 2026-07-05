@@ -62,6 +62,16 @@ pub trait AgentApiService: Send + Sync {
         params: SessionReadParams,
     ) -> Result<AgentApiOutcome<SessionReadResponse>, AgentApiError>;
 
+    async fn list_sessions(
+        &self,
+        params: SessionListParams,
+    ) -> Result<AgentApiOutcome<SessionListResponse>, AgentApiError>;
+
+    async fn rename_session(
+        &self,
+        params: SessionRenameParams,
+    ) -> Result<AgentApiOutcome<SessionRenameResponse>, AgentApiError>;
+
     async fn read_session_events(
         &self,
         params: SessionEventsReadParams,

@@ -17,6 +17,8 @@ export const METHODS = [
   "session/update",
   "session/tools/update",
   "session/read",
+  "session/list",
+  "session/rename",
   "session/events/read",
   "session/close",
   "context/compact",
@@ -150,6 +152,14 @@ export interface MethodMap {
   "session/read": {
     params: Api.SessionReadParams;
     result: Api.AgentApiOutcomeOfSessionReadResponse;
+  };
+  "session/list": {
+    params: Api.SessionListParams;
+    result: Api.AgentApiOutcomeOfSessionListResponse;
+  };
+  "session/rename": {
+    params: Api.SessionRenameParams;
+    result: Api.AgentApiOutcomeOfSessionRenameResponse;
   };
   "session/events/read": {
     params: Api.SessionEventsReadParams;
@@ -476,6 +486,12 @@ export const rpc = {
   },
   sessionRead(client: RpcCaller, params: Api.SessionReadParams): Promise<Api.AgentApiOutcomeOfSessionReadResponse> {
     return client.call("session/read", params);
+  },
+  sessionList(client: RpcCaller, params: Api.SessionListParams): Promise<Api.AgentApiOutcomeOfSessionListResponse> {
+    return client.call("session/list", params);
+  },
+  sessionRename(client: RpcCaller, params: Api.SessionRenameParams): Promise<Api.AgentApiOutcomeOfSessionRenameResponse> {
+    return client.call("session/rename", params);
   },
   sessionEventsRead(client: RpcCaller, params: Api.SessionEventsReadParams): Promise<Api.AgentApiOutcomeOfSessionEventsReadResponse> {
     return client.call("session/events/read", params);

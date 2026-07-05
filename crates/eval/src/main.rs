@@ -370,7 +370,7 @@ async fn run_attempt(
     runtime.start_session(&session_id).await?;
     let run = runtime.start_run(&session_id, &case.prompt).await?;
 
-    let session = runtime.project_session(&session_id, &workdir).await?;
+    let session = runtime.project_session(&session_id).await?;
     let run_view = session
         .runs
         .iter()
@@ -454,6 +454,7 @@ impl EvalRuntime {
         self.sessions
             .create_session(CreateSession {
                 session_id: session_id.clone(),
+                display_name: None,
                 created_at_ms: 1,
             })
             .await
@@ -579,11 +580,7 @@ impl EvalRuntime {
         Ok(outcome)
     }
 
-    async fn project_session(
-        &self,
-        session_id: &SessionId,
-        workdir: &Path,
-    ) -> Result<api::SessionView> {
+    async fn project_session(&self, session_id: &SessionId) -> Result<api::SessionView> {
         let record = self
             .sessions
             .load_session(session_id)
@@ -608,7 +605,6 @@ impl EvalRuntime {
                 state: &state,
                 record: &record,
                 entries: &entries,
-                cwd: Some(workdir.to_string_lossy().into_owned()),
             })
             .await
             .map_err(api_error)

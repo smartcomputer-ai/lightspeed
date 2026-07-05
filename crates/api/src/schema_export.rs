@@ -138,7 +138,7 @@ mod tests {
         methods.sort_unstable();
         methods.dedup();
         assert_eq!(methods.len(), total, "duplicate method in manifest");
-        assert_eq!(total, 82);
+        assert_eq!(total, 84);
     }
 
     #[test]

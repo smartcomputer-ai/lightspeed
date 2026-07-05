@@ -317,7 +317,10 @@ mod tests {
             display_name: Some("Scratch".to_string()),
             base_snapshot_ref: Some(snapshot_ref.clone()),
             head_snapshot_ref: BlobRef::from_bytes(b"head"),
-            head_totals: VfsTotals { files: 3, bytes: 42 },
+            head_totals: VfsTotals {
+                files: 3,
+                bytes: 42,
+            },
             revision: 7,
             created_at_ms: 11,
             updated_at_ms: 12,

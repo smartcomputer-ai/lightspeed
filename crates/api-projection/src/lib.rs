@@ -45,7 +45,6 @@ pub struct ProjectSession<'a> {
     pub state: &'a CoreAgentState,
     pub record: &'a SessionRecord,
     pub entries: &'a [CoreAgentEntry],
-    pub cwd: Option<String>,
 }
 
 pub struct CoreAgentProjector<'a> {
@@ -83,8 +82,8 @@ impl<'a> CoreAgentProjector<'a> {
 
         Ok(SessionView {
             id: params.session_id.as_str().to_owned(),
+            display_name: params.record.display_name.clone(),
             status: session_status(params.state),
-            cwd: params.cwd,
             config_revision: params.state.lifecycle.config_revision,
             config,
             created_at_ms: params.record.created_at_ms,

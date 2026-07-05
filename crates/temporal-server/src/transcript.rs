@@ -22,7 +22,9 @@ pub(crate) fn transcript_content(name: &str, text: &str) -> String {
 pub(crate) fn transcript_activation_text(text: &str) -> &str {
     let text = text.trim();
     if let Some((first, rest)) = text.split_once('\n')
-        && first.trim_start().starts_with(AUDIO_TRANSCRIPT_HEADER_PREFIX)
+        && first
+            .trim_start()
+            .starts_with(AUDIO_TRANSCRIPT_HEADER_PREFIX)
     {
         return rest.trim();
     }

@@ -2573,6 +2573,7 @@ mod tests {
                 store
                     .create_session(CreateSession {
                         session_id: session_id.clone(),
+                        display_name: None,
                         created_at_ms: 1,
                     })
                     .await
@@ -2726,6 +2727,7 @@ mod tests {
         sessions
             .create_session(CreateSession {
                 session_id: source.clone(),
+                display_name: None,
                 created_at_ms: 1,
             })
             .await
@@ -2940,6 +2942,7 @@ mod tests {
         sessions
             .create_session(CreateSession {
                 session_id: source.clone(),
+                display_name: None,
                 created_at_ms: 1,
             })
             .await
@@ -2977,6 +2980,7 @@ mod tests {
         sessions
             .create_session(CreateSession {
                 session_id: source.clone(),
+                display_name: None,
                 created_at_ms: 1,
             })
             .await
@@ -4043,6 +4047,7 @@ mod tests {
         sessions
             .create_session(CreateSession {
                 session_id: source.clone(),
+                display_name: None,
                 created_at_ms: 1,
             })
             .await
@@ -4193,7 +4198,7 @@ mod tests {
         SessionView {
             id: session_id.as_str().to_owned(),
             status,
-            cwd: Some("/workspace".to_owned()),
+            display_name: None,
             config_revision: 1,
             config: Some(api::SessionConfigView {
                 model: api::ModelConfig {

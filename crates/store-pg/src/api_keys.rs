@@ -114,11 +114,10 @@ impl ApiKeyStore for PgApiKeyStore {
 
 fn api_key_record_from_row(row: PgRow) -> Result<ApiKeyRecord, ApiKeyError> {
     let principal_kind: String = row.try_get("principal_kind").map_err(map_sqlx_error)?;
-    let principal_kind = principal_kind_from_str(&principal_kind).map_err(|error| {
-        ApiKeyError::Store {
+    let principal_kind =
+        principal_kind_from_str(&principal_kind).map_err(|error| ApiKeyError::Store {
             message: error.to_string(),
-        }
-    })?;
+        })?;
     let universe_id: Uuid = row.try_get("universe_id").map_err(map_sqlx_error)?;
     Ok(ApiKeyRecord {
         key_prefix: row.try_get("key_prefix").map_err(map_sqlx_error)?,

@@ -295,7 +295,9 @@ fn registry_token_broker_with_clients(
         .with_oauth_refresh(OAuthRefreshRuntime::new(clients, token_client))
         .with_token_source(
             AuthProviderKind::GitHubApp,
-            Arc::new(GitHubAppRuntime::new(providers, github_api, grants, secrets)),
+            Arc::new(GitHubAppRuntime::new(
+                providers, github_api, grants, secrets,
+            )),
         );
     Arc::new(broker)
 }

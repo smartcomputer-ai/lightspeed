@@ -253,6 +253,7 @@ async fn openai_responses_live_selects_and_activates_the_matching_skill() {
     sessions
         .create_session(CreateSession {
             session_id: session_id.clone(),
+            display_name: None,
             created_at_ms: 1,
         })
         .await

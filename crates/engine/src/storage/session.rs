@@ -12,6 +12,10 @@ use thiserror::Error;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionRecord {
     pub session_id: SessionId,
+    /// Human-readable name. Store metadata only — never part of the event
+    /// log or deterministic replay.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
     pub head: Option<SessionPosition>,
     pub source_session_id: Option<SessionId>,
     pub source_seq: Option<EventSeq>,
@@ -22,6 +26,8 @@ pub struct SessionRecord {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreateSession {
     pub session_id: SessionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
     pub created_at_ms: u64,
 }
 
@@ -107,6 +113,29 @@ pub struct SessionPage {
     pub complete: bool,
 }
 
+/// Keyset cursor for [`SessionStore::list_sessions`]: the sort key of the
+/// last row of the previous page (most-recently-updated-first ordering).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionListCursor {
+    pub updated_at_ms: u64,
+    pub session_id: SessionId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ListSessions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<SessionListCursor>,
+    pub limit: usize,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionListPage {
+    pub sessions: Vec<SessionRecord>,
+    /// Present when more rows exist past this page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<SessionListCursor>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum SessionStoreError {
     #[error("session already exists: {session_id}")]
@@ -150,6 +179,33 @@ pub trait SessionStore: Send + Sync {
         &self,
         session_id: &SessionId,
     ) -> Result<Option<SessionRecord>, SessionStoreError>;
+
+    /// Page session records for this store's scope, most recently updated
+    /// first with session id as the tie-break, both descending.
+    async fn list_sessions(
+        &self,
+        request: ListSessions,
+    ) -> Result<SessionListPage, SessionStoreError> {
+        let _ = request;
+        Err(SessionStoreError::Store {
+            message: "list_sessions is not supported by this session store".to_owned(),
+        })
+    }
+
+    /// Replace the session's display name (`None` clears it). Metadata only:
+    /// does not touch the event log or `updated_at_ms`.
+    async fn set_session_display_name(
+        &self,
+        session_id: &SessionId,
+        display_name: Option<String>,
+    ) -> Result<SessionRecord, SessionStoreError> {
+        let _ = display_name;
+        Err(SessionStoreError::Store {
+            message: format!(
+                "set_session_display_name is not supported by this session store for {session_id}"
+            ),
+        })
+    }
 
     async fn create_cloned_session(
         &self,
@@ -257,6 +313,7 @@ impl SessionStore for InMemorySessionStore {
         }
         let record = SessionRecord {
             session_id: request.session_id,
+            display_name: request.display_name,
             head: None,
             source_session_id: None,
             source_seq: None,
@@ -280,6 +337,65 @@ impl SessionStore for InMemorySessionStore {
         Ok(inner.records.get(session_id).cloned())
     }
 
+    async fn list_sessions(
+        &self,
+        request: ListSessions,
+    ) -> Result<SessionListPage, SessionStoreError> {
+        if request.limit == 0 {
+            return Err(SessionStoreError::InvalidLimit { limit: 0 });
+        }
+        let inner = self.inner.read().map_err(|_| SessionStoreError::Store {
+            message: "session store read lock poisoned".into(),
+        })?;
+        let mut records: Vec<&SessionRecord> = inner.records.values().collect();
+        records.sort_by(|left, right| {
+            right
+                .updated_at_ms
+                .cmp(&left.updated_at_ms)
+                .then_with(|| right.session_id.cmp(&left.session_id))
+        });
+        let mut sessions: Vec<SessionRecord> = records
+            .into_iter()
+            .filter(|record| {
+                request.cursor.as_ref().is_none_or(|cursor| {
+                    (record.updated_at_ms, record.session_id.as_str())
+                        < (cursor.updated_at_ms, cursor.session_id.as_str())
+                })
+            })
+            .take(request.limit.saturating_add(1))
+            .cloned()
+            .collect();
+        let next_cursor = (sessions.len() > request.limit).then(|| {
+            sessions.truncate(request.limit);
+            let last = sessions.last().expect("non-empty page");
+            SessionListCursor {
+                updated_at_ms: last.updated_at_ms,
+                session_id: last.session_id.clone(),
+            }
+        });
+        Ok(SessionListPage {
+            sessions,
+            next_cursor,
+        })
+    }
+
+    async fn set_session_display_name(
+        &self,
+        session_id: &SessionId,
+        display_name: Option<String>,
+    ) -> Result<SessionRecord, SessionStoreError> {
+        let mut inner = self.inner.write().map_err(|_| SessionStoreError::Store {
+            message: "session store write lock poisoned".into(),
+        })?;
+        let record = inner.records.get_mut(session_id).ok_or_else(|| {
+            SessionStoreError::SessionNotFound {
+                session_id: session_id.clone(),
+            }
+        })?;
+        record.display_name = display_name;
+        Ok(record.clone())
+    }
+
     async fn create_cloned_session(
         &self,
         request: CreateClonedSession,
@@ -300,6 +416,7 @@ impl SessionStore for InMemorySessionStore {
 
         let mut record = SessionRecord {
             session_id: request.session_id,
+            display_name: None,
             head: None,
             source_session_id: Some(request.source_session_id),
             source_seq: None,
@@ -335,6 +452,7 @@ impl SessionStore for InMemorySessionStore {
         let head = position_from_nonzero_seq(request.source_seq);
         let record = SessionRecord {
             session_id: request.session_id,
+            display_name: None,
             head,
             source_session_id: Some(request.source_session_id),
             source_seq: Some(request.source_seq),
@@ -773,6 +891,7 @@ mod tests {
         store
             .create_session(CreateSession {
                 session_id: session_id.clone(),
+                display_name: None,
                 created_at_ms: 1,
             })
             .await
@@ -796,12 +915,110 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn in_memory_session_store_lists_newest_first_with_keyset_cursor() {
+        let store = InMemorySessionStore::new();
+        for (name, created_at_ms) in [("session-a", 10), ("session-b", 20), ("session-c", 20)] {
+            store
+                .create_session(CreateSession {
+                    session_id: SessionId::new(name),
+                    display_name: Some(format!("Session {name}")),
+                    created_at_ms,
+                })
+                .await
+                .expect("create session");
+        }
+
+        let first = store
+            .list_sessions(ListSessions {
+                cursor: None,
+                limit: 2,
+            })
+            .await
+            .expect("first page");
+        assert_eq!(
+            first
+                .sessions
+                .iter()
+                .map(|record| record.session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["session-c", "session-b"]
+        );
+        let cursor = first.next_cursor.expect("more rows remain");
+
+        let second = store
+            .list_sessions(ListSessions {
+                cursor: Some(cursor),
+                limit: 2,
+            })
+            .await
+            .expect("second page");
+        assert_eq!(
+            second
+                .sessions
+                .iter()
+                .map(|record| record.session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["session-a"]
+        );
+        assert_eq!(
+            second.sessions[0].display_name.as_deref(),
+            Some("Session session-a")
+        );
+        assert!(second.next_cursor.is_none());
+
+        assert!(matches!(
+            store
+                .list_sessions(ListSessions {
+                    cursor: None,
+                    limit: 0,
+                })
+                .await,
+            Err(SessionStoreError::InvalidLimit { limit: 0 })
+        ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn in_memory_session_store_sets_and_clears_display_name() {
+        let store = InMemorySessionStore::new();
+        let session_id = SessionId::new("session-a");
+        store
+            .create_session(CreateSession {
+                session_id: session_id.clone(),
+                display_name: None,
+                created_at_ms: 1,
+            })
+            .await
+            .expect("create session");
+
+        let named = store
+            .set_session_display_name(&session_id, Some("Family chat".to_owned()))
+            .await
+            .expect("set display name");
+        assert_eq!(named.display_name.as_deref(), Some("Family chat"));
+        assert_eq!(named.updated_at_ms, 1, "rename must not count as activity");
+
+        let cleared = store
+            .set_session_display_name(&session_id, None)
+            .await
+            .expect("clear display name");
+        assert_eq!(cleared.display_name, None);
+
+        assert!(matches!(
+            store
+                .set_session_display_name(&SessionId::new("missing"), None)
+                .await,
+            Err(SessionStoreError::SessionNotFound { .. })
+        ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn in_memory_session_store_rejects_expected_head_conflict() {
         let store = InMemorySessionStore::new();
         let session_id = SessionId::new("session-a");
         store
             .create_session(CreateSession {
                 session_id: session_id.clone(),
+                display_name: None,
                 created_at_ms: 1,
             })
             .await
@@ -841,6 +1058,7 @@ mod tests {
         store
             .create_session(CreateSession {
                 session_id: session_id.clone(),
+                display_name: None,
                 created_at_ms: 1,
             })
             .await
@@ -849,6 +1067,7 @@ mod tests {
         let duplicate = store
             .create_session(CreateSession {
                 session_id: session_id.clone(),
+                display_name: None,
                 created_at_ms: 2,
             })
             .await
@@ -891,6 +1110,7 @@ mod tests {
         store
             .create_session(CreateSession {
                 session_id: source_id.clone(),
+                display_name: None,
                 created_at_ms: 1,
             })
             .await
@@ -943,6 +1163,7 @@ mod tests {
             store
                 .create_session(CreateSession {
                     session_id: session_id.clone(),
+                    display_name: None,
                     created_at_ms: 1,
                 })
                 .await
@@ -991,6 +1212,7 @@ mod tests {
         store
             .create_session(CreateSession {
                 session_id: root.clone(),
+                display_name: None,
                 created_at_ms: 1,
             })
             .await
@@ -1093,6 +1315,7 @@ mod tests {
         store
             .create_session(CreateSession {
                 session_id: session_id.clone(),
+                display_name: None,
                 created_at_ms: 1,
             })
             .await

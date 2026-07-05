@@ -1139,7 +1139,7 @@ export interface SessionView {
   config?: SessionConfigView | null;
   configRevision: number;
   createdAtMs: number;
-  cwd?: string | null;
+  displayName?: string | null;
   id: string;
   runs?: RunView[];
   status: SessionStatus;
@@ -2843,6 +2843,36 @@ export interface SessionJobOutputChunkView {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfSessionListResponse".
+ */
+export interface AgentApiOutcomeOfSessionListResponse {
+  notifications?: AgentNotification[];
+  result: SessionListResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionListResponse".
+ */
+export interface SessionListResponse {
+  /**
+   * Present when more sessions exist past this page. Ordering is most
+   * recently updated first; pages can drift under concurrent activity.
+   */
+  nextCursor?: string | null;
+  sessions?: SessionSummaryView[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionSummaryView".
+ */
+export interface SessionSummaryView {
+  createdAtMs: number;
+  displayName?: string | null;
+  id: string;
+  updatedAtMs: number;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfSessionMcpLinkResponse".
  */
 export interface AgentApiOutcomeOfSessionMcpLinkResponse {
@@ -2917,6 +2947,21 @@ export interface AgentApiOutcomeOfSessionReadResponse {
  */
 export interface SessionReadResponse {
   session: SessionView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfSessionRenameResponse".
+ */
+export interface AgentApiOutcomeOfSessionRenameResponse {
+  notifications?: AgentNotification[];
+  result: SessionRenameResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionRenameResponse".
+ */
+export interface SessionRenameResponse {
+  session: SessionSummaryView;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -3997,6 +4042,17 @@ export interface SessionJobReadParams {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionListParams".
+ */
+export interface SessionListParams {
+  /**
+   * Opaque cursor from the previous page's `nextCursor`.
+   */
+  cursor?: string | null;
+  limit?: number | null;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionMcpLinkParams".
  */
 export interface SessionMcpLinkParams {
@@ -4033,11 +4089,22 @@ export interface SessionReadParams {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionRenameParams".
+ */
+export interface SessionRenameParams {
+  /**
+   * New display name; absent clears it.
+   */
+  displayName?: string | null;
+  sessionId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionStartParams".
  */
 export interface SessionStartParams {
   config?: SessionConfigInput | null;
-  cwd?: string | null;
+  displayName?: string | null;
   profile?: ProfileSource | null;
   sessionId?: string | null;
 }

@@ -64,7 +64,7 @@ use vfs_api::{commit_vfs_snapshot, now_ms, read_vfs_snapshot, vfs_workspace_view
 use std::{
     collections::{BTreeMap, BTreeSet},
     env,
-    sync::{Arc, RwLock},
+    sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -105,11 +105,10 @@ use api::{
     ProfileApplyParams, ProfileApplyResponse, ProfileApplySummary, ProfileCreateParams,
     ProfileCreateResponse, ProfileDeleteParams, ProfileDeleteResponse, ProfileDocument,
     ProfileInstructions, ProfileListParams, ProfileListResponse, ProfilePutParams,
-    ProfilePutResponse, ProfileReadParams, ProfileReadResponse, ProfileSource,
-    ProfileUpdateParams, ProfileUpdateResponse,
-    PromptInstructionView, PromptsActiveParams, PromptsActiveResponse, ReasoningEffort,
-    RunCancelParams, RunCancelResponse, RunDefaultsConfig, RunDefaultsPatch, RunLimitsConfig,
-    RunStartConfig, RunStartParams, RunStartResponse, RunStartSource, RunView,
+    ProfilePutResponse, ProfileReadParams, ProfileReadResponse, ProfileSource, ProfileUpdateParams,
+    ProfileUpdateResponse, PromptInstructionView, PromptsActiveParams, PromptsActiveResponse,
+    ReasoningEffort, RunCancelParams, RunCancelResponse, RunDefaultsConfig, RunDefaultsPatch,
+    RunLimitsConfig, RunStartConfig, RunStartParams, RunStartResponse, RunStartSource, RunView,
     SandboxTargetSpecView, ServerCapabilities, ServerInfo, SessionCloseParams,
     SessionCloseResponse, SessionConfigInput, SessionConfigPatchInput,
     SessionEnvironmentActivateParams, SessionEnvironmentActivateResponse,
@@ -131,11 +130,13 @@ use api::{
     SessionJobHandleView, SessionJobListParams, SessionJobListResponse, SessionJobOutputChunkView,
     SessionJobOutputStreamView, SessionJobReadEntryView, SessionJobReadParams,
     SessionJobReadResponse, SessionJobStartSpecInput, SessionJobStartedView, SessionJobStatusView,
-    SessionJobSummaryView, SessionMcpLinkParams, SessionMcpLinkResponse, SessionMcpListParams,
-    SessionMcpListResponse, SessionMcpUnlinkParams, SessionMcpUnlinkResponse, SessionReadParams,
-    SessionReadResponse, SessionStartParams, SessionStartResponse, SessionToolsUpdateParams,
-    SessionToolsUpdateResponse, SessionUpdateParams, SessionUpdateResponse, SessionView,
-    SkillActivateParams, SkillActivateResponse, SkillActivationScope as ApiSkillActivationScope,
+    SessionJobSummaryView, SessionListParams, SessionListResponse, SessionMcpLinkParams,
+    SessionMcpLinkResponse, SessionMcpListParams, SessionMcpListResponse, SessionMcpUnlinkParams,
+    SessionMcpUnlinkResponse, SessionReadParams, SessionReadResponse, SessionRenameParams,
+    SessionRenameResponse, SessionStartParams, SessionStartResponse, SessionSummaryView,
+    SessionToolsUpdateParams, SessionToolsUpdateResponse, SessionUpdateParams,
+    SessionUpdateResponse, SessionView, SkillActivateParams, SkillActivateResponse,
+    SkillActivationScope as ApiSkillActivationScope,
     SkillActivationSource as ApiSkillActivationSource, SkillActivationView, SkillActiveParams,
     SkillActiveResponse, SkillDeactivateParams, SkillDeactivateResponse, SkillListItem,
     SkillListParams, SkillListResponse, ToolChoiceConfig, ToolChoiceModeConfig, ToolConfigInput,
@@ -145,9 +146,8 @@ use api::{
     VfsSnapshotCommitParams, VfsSnapshotCommitResponse, VfsSnapshotReadParams,
     VfsSnapshotReadResponse, VfsWorkspaceCreateParams, VfsWorkspaceCreateResponse,
     VfsWorkspaceDeleteParams, VfsWorkspaceDeleteResponse, VfsWorkspaceListParams,
-    VfsWorkspaceListResponse, VfsWorkspaceReadParams,
-    VfsWorkspaceReadResponse, VfsWorkspaceUpdateParams, VfsWorkspaceUpdateResponse,
-    VfsWorkspaceView,
+    VfsWorkspaceListResponse, VfsWorkspaceReadParams, VfsWorkspaceReadResponse,
+    VfsWorkspaceUpdateParams, VfsWorkspaceUpdateResponse, VfsWorkspaceView,
 };
 use api_projection::{
     CoreAgentProjector, MAX_EVENT_PAGE_LIMIT, ProjectSession, api_kind_from_str, api_run_id,
@@ -217,10 +217,44 @@ const DEFAULT_EVENTS_WAIT_CAP: Duration = Duration::from_secs(30);
 /// context blob is authoritative; activation text only needs enough of the
 /// head for trigger matching.
 const ACTIVATION_TEXT_MAX_BYTES: usize = 4096;
+/// `session/list` page size when the request does not specify one.
+const DEFAULT_SESSION_LIST_LIMIT: usize = 50;
+/// Server-side cap for `session/list` page sizes; larger requests are clamped.
+const MAX_SESSION_LIST_LIMIT: usize = 200;
 
 /// Default public base URL for the gateway-hosted OAuth callback; matches
 /// `DEFAULT_GATEWAY_BIND`. Hosted deployments must set the real public URL.
 pub const DEFAULT_PUBLIC_BASE_URL: &str = "http://127.0.0.1:18080";
+
+fn session_summary_view(record: engine::storage::SessionRecord) -> SessionSummaryView {
+    SessionSummaryView {
+        id: record.session_id.as_str().to_owned(),
+        display_name: record.display_name,
+        created_at_ms: record.created_at_ms,
+        updated_at_ms: record.updated_at_ms,
+    }
+}
+
+/// Opaque `session/list` cursor: `{updated_at_ms}:{session_id}`. Session ids
+/// cannot contain `:` at the first position of the numeric prefix, so
+/// `split_once` is unambiguous.
+fn encode_session_list_cursor(cursor: &engine::storage::SessionListCursor) -> String {
+    format!("{}:{}", cursor.updated_at_ms, cursor.session_id)
+}
+
+fn decode_session_list_cursor(
+    cursor: &str,
+) -> Result<engine::storage::SessionListCursor, AgentApiError> {
+    let invalid =
+        || AgentApiError::invalid_request(format!("invalid session list cursor: {cursor}"));
+    let (updated_at_ms, session_id) = cursor.split_once(':').ok_or_else(invalid)?;
+    let updated_at_ms = updated_at_ms.parse::<u64>().map_err(|_| invalid())?;
+    let session_id = SessionId::try_new(session_id).map_err(|_| invalid())?;
+    Ok(engine::storage::SessionListCursor {
+        updated_at_ms,
+        session_id,
+    })
+}
 
 fn status_has_submission(
     status: Option<&AgentSessionStatus>,
@@ -686,19 +720,7 @@ impl GatewayAgentApiBuilder {
             github_api,
             environment_manager,
             host_controller_connector: self.host_controller_connector,
-            metadata: RwLock::new(BTreeMap::new()),
         }
-    }
-}
-
-#[derive(Clone, Debug, Default)]
-struct GatewaySessionMetadata {
-    cwd: Option<String>,
-}
-
-impl GatewaySessionMetadata {
-    fn is_empty(&self) -> bool {
-        self.cwd.is_none()
     }
 }
 
@@ -719,7 +741,6 @@ pub struct GatewayAgentApi {
     github_api: Arc<dyn GitHubApiClient>,
     environment_manager: SessionEnvironmentManager,
     host_controller_connector: Arc<dyn HostControllerConnector>,
-    metadata: RwLock<BTreeMap<SessionId, GatewaySessionMetadata>>,
 }
 
 impl GatewayAgentApi {
@@ -778,46 +799,6 @@ impl GatewayAgentApi {
         SubmissionId::new(format!("submit_{}", uuid::Uuid::new_v4().simple()))
     }
 
-    fn session_metadata(
-        &self,
-        session_id: &SessionId,
-    ) -> Result<GatewaySessionMetadata, AgentApiError> {
-        let metadata = self
-            .metadata
-            .read()
-            .map_err(|_| AgentApiError::internal("gateway metadata lock poisoned"))?;
-        Ok(metadata.get(session_id).cloned().unwrap_or_default())
-    }
-
-    /// The metadata map is bounded by session lifetime, not session count:
-    /// empty metadata never occupies an entry (most sessions carry no cwd)
-    /// and `close_session` removes the entry. Writing empty metadata is a
-    /// removal so an entry can also be cleared by overwriting.
-    fn write_session_metadata(
-        &self,
-        session_id: SessionId,
-        metadata: GatewaySessionMetadata,
-    ) -> Result<(), AgentApiError> {
-        let mut map = self
-            .metadata
-            .write()
-            .map_err(|_| AgentApiError::internal("gateway metadata lock poisoned"))?;
-        if metadata.is_empty() {
-            map.remove(&session_id);
-        } else {
-            map.insert(session_id, metadata);
-        }
-        Ok(())
-    }
-
-    fn remove_session_metadata(&self, session_id: &SessionId) -> Result<(), AgentApiError> {
-        self.metadata
-            .write()
-            .map_err(|_| AgentApiError::internal("gateway metadata lock poisoned"))?
-            .remove(session_id);
-        Ok(())
-    }
-
     fn session_toolset_config(
         &self,
         session_config: &SessionConfig,
@@ -857,12 +838,14 @@ impl GatewayAgentApi {
     fn workflow_args(
         &self,
         session_id: SessionId,
+        display_name: Option<String>,
         session_config: SessionConfig,
         close_on_terminal: bool,
     ) -> AgentSessionArgs {
         AgentSessionArgs {
             universe_id: self.universe_id(),
             session_id,
+            display_name,
             session_config,
             instructions_ref: self.instructions_ref.clone(),
             max_steps_per_input: self.max_steps_per_input,
@@ -880,7 +863,7 @@ impl GatewayAgentApi {
         self.start_session_internal(
             SessionStartParams {
                 session_id: Some(session_id.as_str().to_owned()),
-                cwd: None,
+                display_name: None,
                 config: None,
                 profile,
             },
@@ -946,7 +929,7 @@ impl GatewayAgentApi {
     ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError> {
         let SessionStartParams {
             session_id,
-            cwd,
+            display_name,
             config,
             profile,
         } = params;
@@ -979,18 +962,16 @@ impl GatewayAgentApi {
             config,
         );
         let session_config = self.session_config_for_start(start_config).await?;
-        self.write_session_metadata(
-            session_id.clone(),
-            GatewaySessionMetadata {
-                cwd,
-                ..self.session_metadata(&session_id)?
-            },
-        )?;
         let started = self
             .client
             .start_workflow(
                 AgentSessionWorkflow::run,
-                self.workflow_args(session_id.clone(), session_config, close_on_terminal),
+                self.workflow_args(
+                    session_id.clone(),
+                    display_name,
+                    session_config,
+                    close_on_terminal,
+                ),
                 WorkflowStartOptions::new(
                     self.task_queue.clone(),
                     self.workflow_id_for(&session_id),
@@ -1058,7 +1039,6 @@ impl GatewayAgentApi {
         session_id: &SessionId,
     ) -> Result<SessionView, AgentApiError> {
         let loaded = self.load_session_state(session_id).await?;
-        let metadata = self.session_metadata(session_id)?;
         let mut session = self
             .projector()
             .project_session(ProjectSession {
@@ -1066,7 +1046,6 @@ impl GatewayAgentApi {
                 state: &loaded.state,
                 record: &loaded.record,
                 entries: &loaded.entries,
-                cwd: metadata.cwd.clone(),
             })
             .await?;
         session.vfs_mounts = self.project_vfs_mounts(session_id).await?;
@@ -1353,6 +1332,54 @@ impl AgentApiService for GatewayAgentApi {
         Ok(AgentApiOutcome::new(SessionReadResponse { session }))
     }
 
+    async fn list_sessions(
+        &self,
+        params: SessionListParams,
+    ) -> Result<AgentApiOutcome<SessionListResponse>, AgentApiError> {
+        let limit = match params.limit {
+            Some(0) => {
+                return Err(AgentApiError::invalid_request("limit must be positive"));
+            }
+            Some(limit) => (limit as usize).min(MAX_SESSION_LIST_LIMIT),
+            None => DEFAULT_SESSION_LIST_LIMIT,
+        };
+        let cursor = params
+            .cursor
+            .as_deref()
+            .map(decode_session_list_cursor)
+            .transpose()?;
+        let page = self
+            .store
+            .list_sessions(engine::storage::ListSessions { cursor, limit })
+            .await
+            .map_err(map_session_store_error)?;
+        Ok(AgentApiOutcome::new(SessionListResponse {
+            sessions: page
+                .sessions
+                .into_iter()
+                .map(session_summary_view)
+                .collect(),
+            next_cursor: page.next_cursor.as_ref().map(encode_session_list_cursor),
+        }))
+    }
+
+    async fn rename_session(
+        &self,
+        params: SessionRenameParams,
+    ) -> Result<AgentApiOutcome<SessionRenameResponse>, AgentApiError> {
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let record = self
+            .store
+            .set_session_display_name(&session_id, params.display_name)
+            .await
+            .map_err(map_session_store_error)?;
+        Ok(AgentApiOutcome::new(SessionRenameResponse {
+            session: session_summary_view(record),
+        }))
+    }
+
     async fn read_session_events(
         &self,
         params: SessionEventsReadParams,
@@ -1423,7 +1450,6 @@ impl AgentApiService for GatewayAgentApi {
         })?;
         let loaded = self.load_session_state(&session_id).await?;
         if loaded.state.lifecycle.status == CoreAgentStatus::Closed {
-            self.remove_session_metadata(&session_id)?;
             return Ok(AgentApiOutcome::new(SessionCloseResponse {
                 session: self.project_session_by_id(&session_id).await?,
             }));
@@ -1436,7 +1462,6 @@ impl AgentApiService for GatewayAgentApi {
         self.submit_core_command(&session_id, CoreAgentCommand::CloseSession)
             .await?;
         let session = self.wait_for_closed_session(&session_id).await?;
-        self.remove_session_metadata(&session_id)?;
         Ok(AgentApiOutcome::new(SessionCloseResponse { session }))
     }
 

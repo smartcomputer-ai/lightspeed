@@ -242,14 +242,20 @@ impl VfsWorkspaceStore for FsVfsCatalogStore {
             Ok(read_dir) => read_dir,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
             Err(error) => {
-                return Err(catalog_io_error("read vfs workspaces directory", &dir, error));
+                return Err(catalog_io_error(
+                    "read vfs workspaces directory",
+                    &dir,
+                    error,
+                ));
             }
         };
 
         let mut workspaces = Vec::new();
-        while let Some(entry) = read_dir.next_entry().await.map_err(|error| {
-            catalog_io_error("read vfs workspaces directory entry", &dir, error)
-        })? {
+        while let Some(entry) = read_dir
+            .next_entry()
+            .await
+            .map_err(|error| catalog_io_error("read vfs workspaces directory entry", &dir, error))?
+        {
             let file_type = entry.file_type().await.map_err(|error| {
                 catalog_io_error("read vfs workspace entry type", &entry.path(), error)
             })?;
@@ -509,7 +515,10 @@ mod tests {
             .expect("create workspace");
         assert_eq!(workspace.revision, 0);
         assert_eq!(workspace.display_name.as_deref(), Some("Scratch"));
-        assert_eq!(workspace.head_totals, ::vfs::VfsTotals { files: 1, bytes: 8 });
+        assert_eq!(
+            workspace.head_totals,
+            ::vfs::VfsTotals { files: 1, bytes: 8 }
+        );
         assert!(matches!(
             store
                 .create_workspace(CreateVfsWorkspaceRecord {
@@ -531,7 +540,10 @@ mod tests {
                 expected_revision: Some(0),
                 display_name: Some("Scratch v2".to_string()),
                 new_head_snapshot_ref: next_ref.clone(),
-                new_head_totals: ::vfs::VfsTotals { files: 2, bytes: 16 },
+                new_head_totals: ::vfs::VfsTotals {
+                    files: 2,
+                    bytes: 16,
+                },
                 updated_at_ms: 4,
             })
             .await
@@ -539,7 +551,13 @@ mod tests {
         assert_eq!(updated.revision, 1);
         assert_eq!(updated.head_snapshot_ref, next_ref);
         assert_eq!(updated.display_name.as_deref(), Some("Scratch v2"));
-        assert_eq!(updated.head_totals, ::vfs::VfsTotals { files: 2, bytes: 16 });
+        assert_eq!(
+            updated.head_totals,
+            ::vfs::VfsTotals {
+                files: 2,
+                bytes: 16
+            }
+        );
         assert!(matches!(
             store
                 .compare_and_set_head(CompareAndSetVfsWorkspaceHead {

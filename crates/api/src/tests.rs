@@ -172,6 +172,51 @@ async fn dispatch_json_rpc_routes_session_close() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn dispatch_json_rpc_routes_session_list() {
+    let response = dispatch_json_rpc(
+        &TestService,
+        JsonRpcRequest {
+            id: RequestId::Number(1),
+            method: METHOD_SESSION_LIST.to_owned(),
+            params: Some(json!({ "cursor": "40:session_prev", "limit": 10 })),
+        },
+    )
+    .await;
+
+    assert!(response.error.is_none());
+    let result = response.result.expect("result");
+    assert_eq!(
+        result["result"]["sessions"][0]["displayName"],
+        json!("Test session")
+    );
+    assert_eq!(result["result"]["nextCursor"], json!("40:session_prev"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn dispatch_json_rpc_routes_session_rename() {
+    let response = dispatch_json_rpc(
+        &TestService,
+        JsonRpcRequest {
+            id: RequestId::Number(1),
+            method: METHOD_SESSION_RENAME.to_owned(),
+            params: Some(json!({
+                "sessionId": "session_1",
+                "displayName": "Family chat"
+            })),
+        },
+    )
+    .await;
+
+    assert!(response.error.is_none());
+    let result = response.result.expect("result");
+    assert_eq!(result["result"]["session"]["id"], json!("session_1"));
+    assert_eq!(
+        result["result"]["session"]["displayName"],
+        json!("Family chat")
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn dispatch_json_rpc_routes_session_update() {
     let response = dispatch_json_rpc(
         &TestService,
@@ -1641,6 +1686,35 @@ impl AgentApiService for TestService {
         Err(AgentApiError::internal("not implemented"))
     }
 
+    async fn list_sessions(
+        &self,
+        params: SessionListParams,
+    ) -> Result<AgentApiOutcome<SessionListResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(SessionListResponse {
+            sessions: vec![SessionSummaryView {
+                id: "session_test".to_owned(),
+                display_name: Some("Test session".to_owned()),
+                created_at_ms: 1,
+                updated_at_ms: 2,
+            }],
+            next_cursor: params.cursor,
+        }))
+    }
+
+    async fn rename_session(
+        &self,
+        params: SessionRenameParams,
+    ) -> Result<AgentApiOutcome<SessionRenameResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(SessionRenameResponse {
+            session: SessionSummaryView {
+                id: params.session_id,
+                display_name: params.display_name,
+                created_at_ms: 1,
+                updated_at_ms: 2,
+            },
+        }))
+    }
+
     async fn read_session_events(
         &self,
         _params: SessionEventsReadParams,
@@ -2639,8 +2713,8 @@ fn test_workspace(workspace_id: String, revision: u64) -> VfsWorkspaceView {
 fn test_session(id: SessionId, status: SessionStatus) -> SessionView {
     SessionView {
         id,
+        display_name: Some("Test session".to_owned()),
         status,
-        cwd: None,
         config_revision: 0,
         config: None,
         created_at_ms: 1,

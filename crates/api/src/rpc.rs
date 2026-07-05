@@ -274,6 +274,8 @@ api_methods! {
     METHOD_SESSION_UPDATE => update_session(SessionUpdateParams) -> SessionUpdateResponse,
     METHOD_SESSION_TOOLS_UPDATE => update_session_tools(SessionToolsUpdateParams) -> SessionToolsUpdateResponse,
     METHOD_SESSION_READ => read_session(SessionReadParams) -> SessionReadResponse,
+    METHOD_SESSION_LIST => list_sessions(SessionListParams) -> SessionListResponse,
+    METHOD_SESSION_RENAME => rename_session(SessionRenameParams) -> SessionRenameResponse,
     METHOD_SESSION_EVENTS_READ => read_session_events(SessionEventsReadParams) -> SessionEventsReadResponse,
     METHOD_SESSION_CLOSE => close_session(SessionCloseParams) -> SessionCloseResponse,
     METHOD_CONTEXT_COMPACT => compact_context(ContextCompactParams) -> ContextCompactResponse,

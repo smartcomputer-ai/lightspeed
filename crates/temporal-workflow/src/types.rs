@@ -16,6 +16,9 @@ pub struct AgentSessionArgs {
     /// bootstrap asserts equals `compose_workflow_id(universe_id, session_id)`.
     pub universe_id: Uuid,
     pub session_id: SessionId,
+    /// Human-readable session name persisted as store metadata at creation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
     pub session_config: SessionConfig,
     pub instructions_ref: Option<BlobRef>,
     pub max_steps_per_input: Option<u32>,
@@ -337,6 +340,9 @@ pub enum CheckEnvironmentJobWaitActivityResult {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreateOrLoadSessionRequest {
     pub session_id: SessionId,
+    /// Applied only when the session is created; ignored on load.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
     pub observed_at_ms: u64,
 }
 

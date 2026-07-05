@@ -4,7 +4,8 @@ use super::*;
 #[serde(rename_all = "camelCase")]
 pub struct SessionStartParams {
     pub session_id: Option<SessionId>,
-    pub cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config: Option<SessionConfigInput>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -565,6 +566,52 @@ pub enum OutboundStatusView {
 #[serde(rename_all = "camelCase")]
 pub struct SessionReadParams {
     pub session_id: SessionId,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionListParams {
+    /// Opaque cursor from the previous page's `nextCursor`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionListResponse {
+    #[serde(default)]
+    pub sessions: Vec<SessionSummaryView>,
+    /// Present when more sessions exist past this page. Ordering is most
+    /// recently updated first; pages can drift under concurrent activity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSummaryView {
+    pub id: SessionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    pub created_at_ms: u64,
+    pub updated_at_ms: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionRenameParams {
+    pub session_id: SessionId,
+    /// New display name; absent clears it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionRenameResponse {
+    pub session: SessionSummaryView,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

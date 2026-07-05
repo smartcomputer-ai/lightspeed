@@ -24,6 +24,7 @@ pub(super) async fn initialize(
             WorkflowActivities::create_or_load_session,
             CreateOrLoadSessionRequest {
                 session_id: args.session_id.clone(),
+                display_name: args.display_name.clone(),
                 observed_at_ms,
             },
             activity_options(),

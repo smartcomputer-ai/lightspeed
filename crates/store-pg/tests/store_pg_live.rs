@@ -41,8 +41,8 @@ use mcp::{
     McpServerAuthPolicy, McpServerId, McpServerStatus, RemoteMcpTransport,
 };
 use object_store::{ObjectStore, aws::AmazonS3Builder};
-use sqlx::{PgPool, Row, postgres::PgPoolOptions};
 use profiles::{ProfileError, ProfileStore};
+use sqlx::{PgPool, Row, postgres::PgPoolOptions};
 use store_pg::{PgStore, PgStoreConfig, SecretsMasterKey};
 use tokio::sync::OnceCell;
 use uuid::Uuid;
@@ -63,6 +63,7 @@ async fn pg_live_sessions_are_isolated_by_universe() {
 
     left.create_session(CreateSession {
         session_id: session_id.clone(),
+        display_name: None,
         created_at_ms: 1,
     })
     .await
@@ -92,6 +93,7 @@ async fn pg_live_sessions_are_isolated_by_universe() {
     right
         .create_session(CreateSession {
             session_id: session_id.clone(),
+            display_name: None,
             created_at_ms: 20,
         })
         .await
@@ -109,6 +111,103 @@ async fn pg_live_sessions_are_isolated_by_universe() {
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires local/up.sh or compatible Postgres + MinIO env"]
+async fn pg_live_session_list_pages_newest_first_and_rename_persists() {
+    use engine::storage::{ListSessions, SessionListCursor};
+
+    let store = live_store("session-list", 64).await;
+    let other = live_store("session-list-other", 64).await;
+    other
+        .create_session(CreateSession {
+            session_id: SessionId::new("other-universe"),
+            display_name: None,
+            created_at_ms: 999,
+        })
+        .await
+        .expect("create other-universe session");
+
+    for (name, created_at_ms) in [("list-a", 10), ("list-b", 20), ("list-c", 30)] {
+        store
+            .create_session(CreateSession {
+                session_id: SessionId::new(name),
+                display_name: Some(format!("Session {name}")),
+                created_at_ms,
+            })
+            .await
+            .expect("create session");
+    }
+    // Activity on the oldest session moves it to the top of the list.
+    store
+        .append(AppendSessionEvents {
+            session_id: SessionId::new("list-a"),
+            expected_head: None,
+            events: vec![open_event(40)],
+        })
+        .await
+        .expect("append to list-a");
+
+    let first = store
+        .list_sessions(ListSessions {
+            cursor: None,
+            limit: 2,
+        })
+        .await
+        .expect("first page");
+    assert_eq!(
+        first
+            .sessions
+            .iter()
+            .map(|record| record.session_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["list-a", "list-c"]
+    );
+    assert_eq!(
+        first.sessions[0].display_name.as_deref(),
+        Some("Session list-a")
+    );
+    let cursor: SessionListCursor = first.next_cursor.expect("more rows remain");
+
+    let second = store
+        .list_sessions(ListSessions {
+            cursor: Some(cursor),
+            limit: 2,
+        })
+        .await
+        .expect("second page");
+    assert_eq!(
+        second
+            .sessions
+            .iter()
+            .map(|record| record.session_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["list-b"],
+        "other universes must not leak into the page"
+    );
+    assert!(second.next_cursor.is_none());
+
+    let renamed = store
+        .set_session_display_name(&SessionId::new("list-b"), Some("Renamed".to_owned()))
+        .await
+        .expect("rename session");
+    assert_eq!(renamed.display_name.as_deref(), Some("Renamed"));
+    assert_eq!(
+        renamed.updated_at_ms, 20,
+        "rename must not count as session activity"
+    );
+    let cleared = store
+        .set_session_display_name(&SessionId::new("list-b"), None)
+        .await
+        .expect("clear display name");
+    assert_eq!(cleared.display_name, None);
+    assert!(matches!(
+        store
+            .set_session_display_name(&SessionId::new("missing"), None)
+            .await,
+        Err(engine::storage::SessionStoreError::SessionNotFound { .. })
+    ));
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires local/up.sh or compatible Postgres + MinIO env"]
 async fn pg_live_clone_copies_resources_and_links_sessions() {
     let store = live_store("session-graph-clone", 1024).await;
     let source_id = SessionId::new("source-session");
@@ -118,6 +217,7 @@ async fn pg_live_clone_copies_resources_and_links_sessions() {
         store
             .create_session(CreateSession {
                 session_id: session_id.clone(),
+                display_name: None,
                 created_at_ms: 1,
             })
             .await
@@ -361,6 +461,7 @@ async fn pg_live_fork_stitches_reads_and_clamps_parent_tail() {
     store
         .create_session(CreateSession {
             session_id: root.clone(),
+            display_name: None,
             created_at_ms: 1,
         })
         .await
@@ -530,6 +631,7 @@ async fn pg_live_records_session_roots_and_blob_edges() {
     store
         .create_session(CreateSession {
             session_id: session_id.clone(),
+            display_name: None,
             created_at_ms: 1,
         })
         .await
@@ -681,14 +783,23 @@ async fn pg_live_vfs_catalog_tracks_workspace_heads_and_mounts() {
             expected_revision: Some(0),
             display_name: Some("Scratch v2".to_string()),
             new_head_snapshot_ref: next_ref,
-            new_head_totals: VfsTotals { files: 2, bytes: 16 },
+            new_head_totals: VfsTotals {
+                files: 2,
+                bytes: 16,
+            },
             updated_at_ms: 4,
         })
         .await
         .expect("advance workspace head");
     assert_eq!(updated.revision, 1);
     assert_eq!(updated.display_name.as_deref(), Some("Scratch v2"));
-    assert_eq!(updated.head_totals, VfsTotals { files: 2, bytes: 16 });
+    assert_eq!(
+        updated.head_totals,
+        VfsTotals {
+            files: 2,
+            bytes: 16
+        }
+    );
     assert!(matches!(
         store
             .compare_and_set_head(CompareAndSetVfsWorkspaceHead {
@@ -710,7 +821,13 @@ async fn pg_live_vfs_catalog_tracks_workspace_heads_and_mounts() {
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].workspace_id, workspace_id);
     assert_eq!(listed[0].display_name.as_deref(), Some("Scratch v2"));
-    assert_eq!(listed[0].head_totals, VfsTotals { files: 2, bytes: 16 });
+    assert_eq!(
+        listed[0].head_totals,
+        VfsTotals {
+            files: 2,
+            bytes: 16
+        }
+    );
 
     let session_id = SessionId::new("session-vfs");
     let workspace_mount = VfsMountRecord {
@@ -975,6 +1092,7 @@ async fn pg_live_environments_crud_and_session_bindings() {
     store
         .create_session(CreateSession {
             session_id: session_id.clone(),
+            display_name: None,
             created_at_ms: 35,
         })
         .await

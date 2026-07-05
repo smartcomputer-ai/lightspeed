@@ -249,6 +249,7 @@ async fn openai_responses_live_uses_vfs_prompt_instructions() {
     sessions
         .create_session(CreateSession {
             session_id: session_id.clone(),
+            display_name: None,
             created_at_ms: 1,
         })
         .await

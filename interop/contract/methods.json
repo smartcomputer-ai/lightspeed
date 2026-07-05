@@ -181,6 +181,36 @@
       }
     },
     {
+      "method": "session/list",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/SessionListParams"
+        },
+        "type": "SessionListParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfSessionListResponse"
+        },
+        "type": "AgentApiOutcome<SessionListResponse>"
+      }
+    },
+    {
+      "method": "session/rename",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/SessionRenameParams"
+        },
+        "type": "SessionRenameParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfSessionRenameResponse"
+        },
+        "type": "AgentApiOutcome<SessionRenameResponse>"
+      }
+    },
+    {
       "method": "session/events/read",
       "params": {
         "schema": {

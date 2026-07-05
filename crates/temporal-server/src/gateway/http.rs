@@ -1,6 +1,7 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use api::{AgentApiError, JsonRpcRequest, JsonRpcResponse, dispatch_json_rpc};
+use auth::{ApiKeyStore, PrincipalKind, PrincipalRef, api_key_hash};
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, Query, State},
@@ -8,7 +9,6 @@ use axum::{
     response::Html,
     routing::{get, post},
 };
-use auth::{ApiKeyStore, PrincipalKind, PrincipalRef, api_key_hash};
 use serde::Deserialize;
 use store_pg::{PgApiKeyStore, PgStore};
 use temporalio_client::Client;
@@ -339,9 +339,7 @@ async fn rpc(
             return Json(JsonRpcResponse::failure(request.id, error.into()));
         }
     };
-    Json(
-        principal::with_request_principal(caller, dispatch_json_rpc(api.as_ref(), request)).await,
-    )
+    Json(principal::with_request_principal(caller, dispatch_json_rpc(api.as_ref(), request)).await)
 }
 
 /// Query parameters of the OAuth authorization callback (RFC 6749 §4.1.2).
@@ -474,7 +472,10 @@ mod tests {
     fn universe_header_resolves_a_valid_uuid() {
         let universe_id = Uuid::parse_str("6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f").expect("uuid");
         let headers = headers_with_universe(&universe_id.to_string());
-        assert_eq!(universe_from_header(&headers).expect("resolve"), universe_id);
+        assert_eq!(
+            universe_from_header(&headers).expect("resolve"),
+            universe_id
+        );
     }
 
     #[test]

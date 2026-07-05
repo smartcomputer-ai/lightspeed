@@ -4,8 +4,7 @@ use engine::{ModelSelection, ProviderApiKind};
 use object_store::ObjectStore;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use store_pg::{
-    BlobCache, PgStore, PgStoreConfig, S3ObjectStoreConfig, SecretsMasterKey,
-    build_s3_object_store,
+    BlobCache, PgStore, PgStoreConfig, S3ObjectStoreConfig, SecretsMasterKey, build_s3_object_store,
 };
 use temporal_workflow::{DEFAULT_MODEL, DEFAULT_TASK_QUEUE};
 use uuid::Uuid;
@@ -132,9 +131,11 @@ impl DeploymentStores {
             None => None,
         };
         let secrets_master_key = match optional_env("LIGHTSPEED_SECRETS_MASTER_KEY") {
-            Some(master_key) => Some(SecretsMasterKey::from_base64(&master_key).map_err(
-                |error| anyhow::anyhow!("invalid LIGHTSPEED_SECRETS_MASTER_KEY: {error}"),
-            )?),
+            Some(master_key) => {
+                Some(SecretsMasterKey::from_base64(&master_key).map_err(|error| {
+                    anyhow::anyhow!("invalid LIGHTSPEED_SECRETS_MASTER_KEY: {error}")
+                })?)
+            }
             None => None,
         };
         Ok(Self {

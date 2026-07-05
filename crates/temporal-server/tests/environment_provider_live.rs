@@ -251,7 +251,7 @@ async fn run_host_bridge_client(
 
     api.start_session(SessionStartParams {
         session_id: Some(session_id.as_str().to_owned()),
-        cwd: None,
+        display_name: None,
         config: Some(SessionConfigInput {
             model: Some(api_projection::model_to_api(&model)),
             ..SessionConfigInput::default()
@@ -385,7 +385,7 @@ async fn run_host_bridge_jobs_client(
 
     api.start_session(SessionStartParams {
         session_id: Some(session_id.as_str().to_owned()),
-        cwd: None,
+        display_name: None,
         config: Some(SessionConfigInput {
             model: Some(api_projection::model_to_api(&model)),
             ..SessionConfigInput::default()
@@ -656,7 +656,7 @@ async fn run_host_bridge_credential_client(
 
     api.start_session(SessionStartParams {
         session_id: Some(session_id.as_str().to_owned()),
-        cwd: None,
+        display_name: None,
         config: Some(SessionConfigInput {
             model: Some(api_projection::model_to_api(&model)),
             ..SessionConfigInput::default()
@@ -1191,7 +1191,7 @@ async fn run_fake_provider_client(
 
     api.start_session(SessionStartParams {
         session_id: Some(session_id.as_str().to_owned()),
-        cwd: None,
+        display_name: None,
         config: Some(SessionConfigInput {
             model: Some(api_projection::model_to_api(&model)),
             ..SessionConfigInput::default()
@@ -1386,7 +1386,7 @@ async fn run_profile_environment_client(
     let started = api
         .start_session(SessionStartParams {
             session_id: Some(session_id.as_str().to_owned()),
-            cwd: None,
+            display_name: None,
             config: None,
             profile: Some(ProfileSource::Named {
                 profile_id: profile_id.clone(),
