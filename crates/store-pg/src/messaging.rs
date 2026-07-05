@@ -189,7 +189,7 @@ impl OutboxStore for PgStore {
     }
 }
 
-fn outbound_message_from_row(
+pub(crate) fn outbound_message_from_row(
     row: &sqlx::postgres::PgRow,
 ) -> Result<OutboundMessage, MessagingError> {
     let decode = |what: &str, error: sqlx::Error| outbox_store_error(what, error);

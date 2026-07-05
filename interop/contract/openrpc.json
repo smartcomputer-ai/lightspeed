@@ -622,6 +622,23 @@
         ],
         "type": "object"
       },
+      "AgentApiOutcomeOfOperatorOutboxReadResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/OperatorOutboxReadResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
       "AgentApiOutcomeOfOperatorUniverseCreateResponse": {
         "properties": {
           "notifications": {
@@ -5292,6 +5309,110 @@
           "tokenEndpointAuthMethod",
           "createdAtMs",
           "updatedAtMs"
+        ],
+        "type": "object"
+      },
+      "OperatorOutboundMessageView": {
+        "description": "One pending outbox entry with its owning universe. Acknowledge through\nthe per-universe `outbox/ack` (with the entry's universe header); the\nglobal cursor only drives reading.",
+        "properties": {
+          "attempts": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "createdAtMs": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/OutboundOriginView"
+          },
+          "outboxId": {
+            "type": "string"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/OutboundPayloadView"
+          },
+          "runId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "seq": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "universeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "universeId",
+          "seq",
+          "outboxId",
+          "sessionId",
+          "origin",
+          "payload",
+          "attempts",
+          "createdAtMs"
+        ],
+        "type": "object"
+      },
+      "OperatorOutboxReadParams": {
+        "description": "Multiplexed outbox read: one long-poll serves every universe of the\ndeployment, replacing one `outbox/read` tailer per universe. `seq` is a\ndeployment-global cursor (the outbox sequence is one identity column\nacross universes), so a single `after` resumes the whole stream.",
+        "properties": {
+          "after": {
+            "description": "Return pending entries with `seq` greater than this cursor. Restart\nfrom 0 to re-read undelivered entries after a consumer restart.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "limit": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "waitMs": {
+            "description": "Long-poll wait in milliseconds when no entries are pending.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "OperatorOutboxReadResponse": {
+        "properties": {
+          "entries": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/OperatorOutboundMessageView"
+            },
+            "type": "array"
+          },
+          "nextAfter": {
+            "description": "Cursor to pass as `after` on the next read.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "nextAfter"
         ],
         "type": "object"
       },
@@ -12910,6 +13031,26 @@
         "name": "result",
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorUniverseDeleteResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "operator/outbox/read",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/OperatorOutboxReadParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorOutboxReadResponse"
         }
       }
     }

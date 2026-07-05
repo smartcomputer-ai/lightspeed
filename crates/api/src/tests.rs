@@ -2973,6 +2973,32 @@ impl OperatorApiService for TestOperatorService {
             blob_objects_deleted: 5,
         }))
     }
+
+    async fn read_outbox(
+        &self,
+        params: OperatorOutboxReadParams,
+    ) -> Result<AgentApiOutcome<OperatorOutboxReadResponse>, AgentApiError> {
+        let seq = params.after.unwrap_or(0) + 1;
+        Ok(AgentApiOutcome::new(OperatorOutboxReadResponse {
+            entries: vec![OperatorOutboundMessageView {
+                universe_id: "universe_test".to_owned(),
+                message: OutboundMessageView {
+                    seq,
+                    outbox_id: "outbox_test".to_owned(),
+                    session_id: "session_test".to_owned(),
+                    run_id: None,
+                    origin: OutboundOriginView::FinalText,
+                    payload: OutboundPayloadView::Send {
+                        text: "hello".to_owned(),
+                        reply_to: None,
+                    },
+                    attempts: 0,
+                    created_at_ms: 1,
+                },
+            }],
+            next_after: seq,
+        }))
+    }
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -3046,4 +3072,29 @@ async fn operator_dispatch_rejects_universe_scoped_methods_and_vice_versa() {
     )
     .await;
     assert_eq!(response.error.expect("error").code, -32601);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn dispatch_operator_json_rpc_routes_outbox_read_with_flattened_entries() {
+    let response = dispatch_operator_json_rpc(
+        &TestOperatorService,
+        JsonRpcRequest {
+            id: RequestId::Number(1),
+            method: METHOD_OPERATOR_OUTBOX_READ.to_owned(),
+            params: Some(json!({ "after": 7, "limit": 10, "waitMs": 0 })),
+        },
+    )
+    .await;
+
+    assert!(response.error.is_none());
+    let result = response.result.expect("result");
+    let entry = &result["result"]["entries"][0];
+    // The universe tag and the per-universe view fields share one level:
+    // bridges reuse their existing entry handling plus a universeId switch.
+    assert_eq!(entry["universeId"], json!("universe_test"));
+    assert_eq!(entry["seq"], json!(8));
+    assert_eq!(entry["outboxId"], json!("outbox_test"));
+    assert_eq!(entry["sessionId"], json!("session_test"));
+    assert_eq!(entry["payload"]["type"], json!("send"));
+    assert_eq!(result["result"]["nextAfter"], json!(8));
 }

@@ -1407,6 +1407,22 @@
         "type": "AgentApiOutcome<OperatorUniverseDeleteResponse>"
       },
       "scope": "operator"
+    },
+    {
+      "method": "operator/outbox/read",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/OperatorOutboxReadParams"
+        },
+        "type": "OperatorOutboxReadParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfOperatorOutboxReadResponse"
+        },
+        "type": "AgentApiOutcome<OperatorOutboxReadResponse>"
+      },
+      "scope": "operator"
     }
   ],
   "notificationSchema": {

@@ -304,8 +304,9 @@ impl PgStore {
 pub use api_keys::PgApiKeyStore;
 pub use blob_cache::BlobCache;
 pub use operator::{
-    UniverseStats, create_universe, delete_universe, list_universe_object_keys,
-    list_universe_session_ids, list_universe_stats, read_universe_stats,
+    UniverseOutboundMessage, UniverseStats, create_universe, delete_universe,
+    list_universe_object_keys, list_universe_session_ids, list_universe_stats,
+    read_pending_outbound_all_universes, read_universe_stats,
 };
 
 /// Deployment-level universe listing for admin surfaces.

@@ -18,7 +18,7 @@ Use these files as the index:
   management, CAS offloading, Temporal hosting), moved out of the README.
 - `docs/spec/01-agent-idea.md` — working design notes for the new agent direction.
 - `Cargo.toml` — workspace membership.
-- `interop/` — API contract artifacts, private clients, and bridge packages.
+- `interop/` — API contract artifacts and the private TypeScript client.
 - `local/` — local Docker stack, environment exports, and reset helpers.
 - `docs/roadmap/` — implementation plans and historical milestones.
 

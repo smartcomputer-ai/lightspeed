@@ -12,8 +12,11 @@
 
 use std::sync::Arc;
 
+use std::time::{Duration, Instant};
+
 use api::{
-    AgentApiError, AgentApiOutcome, OperatorApiService, OperatorUniverseCreateParams,
+    AgentApiError, AgentApiOutcome, OperatorApiService, OperatorOutboundMessageView,
+    OperatorOutboxReadParams, OperatorOutboxReadResponse, OperatorUniverseCreateParams,
     OperatorUniverseCreateResponse, OperatorUniverseDeleteParams, OperatorUniverseDeleteResponse,
     OperatorUniverseListParams, OperatorUniverseListResponse, OperatorUniverseReadParams,
     OperatorUniverseReadResponse, OperatorUniverseView,
@@ -27,6 +30,13 @@ use temporalio_client::{Client, WorkflowTerminateOptions, errors::WorkflowIntera
 use uuid::Uuid;
 
 use crate::universe::UniverseRuntime;
+
+use super::service::{map_messaging_error, outbound_message_view};
+
+/// Server-side cap for `operator/outbox/read` long-poll waits; requests
+/// above the cap are clamped, matching the per-universe `outbox/read`.
+const OUTBOX_WAIT_CAP: Duration = Duration::from_secs(30);
+const OUTBOX_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 pub struct GatewayOperatorApi {
     runtime: Arc<UniverseRuntime>,
@@ -205,6 +215,40 @@ impl OperatorApiService for GatewayOperatorApi {
             workflows_terminated,
             blob_objects_deleted,
         }))
+    }
+
+    async fn read_outbox(
+        &self,
+        params: OperatorOutboxReadParams,
+    ) -> Result<AgentApiOutcome<OperatorOutboxReadResponse>, AgentApiError> {
+        let after = params.after.unwrap_or(0);
+        let limit = params.limit.unwrap_or(64).clamp(1, 256) as usize;
+        let wait =
+            Duration::from_millis(u64::from(params.wait_ms.unwrap_or(0))).min(OUTBOX_WAIT_CAP);
+        let deadline = Instant::now() + wait;
+        loop {
+            let entries = store_pg::read_pending_outbound_all_universes(self.pool(), after, limit)
+                .await
+                .map_err(map_messaging_error)?;
+            if !entries.is_empty() || Instant::now() >= deadline {
+                let next_after = entries
+                    .last()
+                    .map(|entry| entry.message.seq)
+                    .unwrap_or(after);
+                let entries = entries
+                    .into_iter()
+                    .map(|entry| OperatorOutboundMessageView {
+                        universe_id: entry.universe_id.to_string(),
+                        message: outbound_message_view(entry.message),
+                    })
+                    .collect();
+                return Ok(AgentApiOutcome::new(OperatorOutboxReadResponse {
+                    entries,
+                    next_after,
+                }));
+            }
+            tokio::time::sleep(OUTBOX_POLL_INTERVAL).await;
+        }
     }
 }
 

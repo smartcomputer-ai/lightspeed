@@ -5,10 +5,12 @@
 //! of universes, so no per-universe store applies. Stats are cheap aggregates
 //! computed at read time, approximate under concurrent writes by design.
 
+use messaging::{MessagingError, OutboundMessage};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
 use crate::PgStoreError;
+use crate::messaging::outbound_message_from_row;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UniverseStats {
@@ -125,6 +127,67 @@ pub async fn delete_universe(pool: &PgPool, universe_id: Uuid) -> Result<bool, P
         .execute(pool)
         .await?;
     Ok(result.rows_affected() > 0)
+}
+
+/// One pending outbox entry with its owning universe.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UniverseOutboundMessage {
+    pub universe_id: Uuid,
+    pub message: OutboundMessage,
+}
+
+/// Deployment-wide pending-outbox tail. `seq` is one identity column across
+/// all universes, so a single global cursor pages the whole stream in commit
+/// order; entries stay visible until acked through the per-universe
+/// `OutboxStore::ack`.
+pub async fn read_pending_outbound_all_universes(
+    pool: &PgPool,
+    after_seq: u64,
+    limit: usize,
+) -> Result<Vec<UniverseOutboundMessage>, MessagingError> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            universe_id,
+            seq,
+            outbox_id,
+            session_id,
+            run_id,
+            origin,
+            payload_json,
+            status,
+            attempts,
+            channel_message_id,
+            error,
+            created_at_ms,
+            updated_at_ms
+        FROM messaging_outbox
+        WHERE status = 'pending'
+          AND seq > $1
+        ORDER BY seq ASC
+        LIMIT $2
+        "#,
+    )
+    .bind(after_seq as i64)
+    .bind(limit.min(256) as i64)
+    .fetch_all(pool)
+    .await
+    .map_err(|error| MessagingError::Store {
+        message: format!("read pending outbound messages across universes: {error}"),
+    })?;
+    rows.iter()
+        .map(|row| {
+            let universe_id: Uuid =
+                row.try_get("universe_id")
+                    .map_err(|error| MessagingError::Store {
+                        message: format!("decode outbox universe id: {error}"),
+                    })?;
+            Ok(UniverseOutboundMessage {
+                universe_id,
+                message: outbound_message_from_row(row)?,
+            })
+        })
+        .collect()
 }
 
 fn universe_stats_from_row(row: &sqlx::postgres::PgRow) -> Result<UniverseStats, PgStoreError> {

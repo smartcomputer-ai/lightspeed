@@ -40,6 +40,9 @@ use mcp::{
     CreateMcpServerRecord, ListMcpServers, McpApprovalPolicy, McpRegistryError, McpRegistryStore,
     McpServerAuthPolicy, McpServerId, McpServerStatus, RemoteMcpTransport,
 };
+use messaging::{
+    EnqueueOutboundMessage, OutboundAck, OutboundOrigin, OutboundPayload, OutboxStore,
+};
 use object_store::{ObjectStore, aws::AmazonS3Builder};
 use profiles::{ProfileError, ProfileStore};
 use sqlx::{PgPool, Row, postgres::PgPoolOptions};
@@ -685,6 +688,107 @@ async fn pg_live_operator_universe_lifecycle_stats_and_purge() {
     store_pg::delete_universe(&pool, fresh_id)
         .await
         .expect("clean up fresh universe");
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires local/up.sh or compatible Postgres + MinIO env"]
+async fn pg_live_operator_outbox_tails_all_universes_on_one_cursor() {
+    let left = live_store("operator-outbox-left", 1024).await;
+    let right = live_store("operator-outbox-right", 1024).await;
+    let pool = left.pool().clone();
+    let ours = [left.config().universe_id, right.config().universe_id];
+
+    for (store, session, text) in [
+        (&left, "outbox-session-left", "left one"),
+        (&right, "outbox-session-right", "right one"),
+        (&left, "outbox-session-left", "left two"),
+    ] {
+        store
+            .create_session(CreateSession {
+                session_id: SessionId::new(session),
+                display_name: None,
+                created_at_ms: 1,
+            })
+            .await
+            .ok(); // second enqueue reuses the session
+        store
+            .enqueue(EnqueueOutboundMessage {
+                session_id: SessionId::new(session),
+                run_id: None,
+                origin: OutboundOrigin::FinalText,
+                payload: OutboundPayload::Send {
+                    text: text.to_owned(),
+                    reply_to: None,
+                },
+                created_at_ms: 2,
+            })
+            .await
+            .expect("enqueue outbound");
+    }
+
+    // The deployment-wide tail sees every universe (including other tests'
+    // leftovers on a shared dev database); assertions filter to ours.
+    let read_ours = |after: u64| {
+        let pool = pool.clone();
+        async move {
+            let mut collected = Vec::new();
+            let mut cursor = after;
+            loop {
+                let page = store_pg::read_pending_outbound_all_universes(&pool, cursor, 256)
+                    .await
+                    .expect("read all universes");
+                let Some(last) = page.last() else {
+                    return collected;
+                };
+                cursor = last.message.seq;
+                collected.extend(
+                    page.into_iter()
+                        .filter(|entry| ours.contains(&entry.universe_id)),
+                );
+            }
+        }
+    };
+
+    let entries = read_ours(0).await;
+    assert_eq!(entries.len(), 3);
+    assert!(
+        entries
+            .windows(2)
+            .all(|pair| pair[0].message.seq < pair[1].message.seq),
+        "one global cursor orders entries across universes"
+    );
+    assert_eq!(entries[0].universe_id, ours[0]);
+    assert_eq!(entries[1].universe_id, ours[1]);
+    assert_eq!(entries[2].universe_id, ours[0]);
+
+    // Resuming from a mid-stream cursor skips everything at or before it.
+    let resumed = read_ours(entries[1].message.seq).await;
+    assert_eq!(resumed.len(), 1);
+    assert_eq!(resumed[0].message.outbox_id, entries[2].message.outbox_id);
+
+    // Acking through the per-universe store removes the entry from the tail.
+    right
+        .ack(
+            &entries[1].message.outbox_id,
+            OutboundAck::Delivered {
+                channel_message_id: Some("chan_1".to_owned()),
+            },
+        )
+        .await
+        .expect("ack right entry");
+    let after_ack = read_ours(0).await;
+    assert_eq!(after_ack.len(), 2);
+    assert!(
+        after_ack.iter().all(|entry| entry.universe_id == ours[0]),
+        "the acked right-universe entry no longer appears"
+    );
+
+    // Clean up so reruns of this suite do not accumulate pending entries.
+    for universe_id in ours {
+        store_pg::delete_universe(&pool, universe_id)
+            .await
+            .expect("clean up outbox universe");
+    }
 }
 
 #[tokio::test(flavor = "current_thread")]

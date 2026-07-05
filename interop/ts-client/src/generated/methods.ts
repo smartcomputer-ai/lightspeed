@@ -93,6 +93,7 @@ export const METHODS = [
   "operator/universes/list",
   "operator/universes/read",
   "operator/universes/delete",
+  "operator/outbox/read",
 ] as const;
 
 export const NOTIFICATIONS = [
@@ -461,6 +462,10 @@ export interface MethodMap {
     params: Api.OperatorUniverseDeleteParams;
     result: Api.AgentApiOutcomeOfOperatorUniverseDeleteResponse;
   };
+  "operator/outbox/read": {
+    params: Api.OperatorOutboxReadParams;
+    result: Api.AgentApiOutcomeOfOperatorOutboxReadResponse;
+  };
 }
 
 export type MethodParams<M extends Method> = MethodMap[M]["params"];
@@ -734,5 +739,8 @@ export const rpc = {
   },
   operatorUniversesDelete(client: RpcCaller, params: Api.OperatorUniverseDeleteParams): Promise<Api.AgentApiOutcomeOfOperatorUniverseDeleteResponse> {
     return client.call("operator/universes/delete", params);
+  },
+  operatorOutboxRead(client: RpcCaller, params: Api.OperatorOutboxReadParams): Promise<Api.AgentApiOutcomeOfOperatorOutboxReadResponse> {
+    return client.call("operator/outbox/read", params);
   },
 } as const;

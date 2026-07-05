@@ -3184,7 +3184,7 @@ pub(crate) fn cimd_document_for(public_base_url: &str) -> serde_json::Value {
     oauth_api::cimd_document(public_base_url)
 }
 
-fn outbound_message_view(message: messaging::OutboundMessage) -> OutboundMessageView {
+pub(crate) fn outbound_message_view(message: messaging::OutboundMessage) -> OutboundMessageView {
     OutboundMessageView {
         seq: message.seq,
         outbox_id: message.outbox_id,
@@ -3211,7 +3211,7 @@ fn outbound_message_view(message: messaging::OutboundMessage) -> OutboundMessage
     }
 }
 
-fn map_messaging_error(error: MessagingError) -> AgentApiError {
+pub(crate) fn map_messaging_error(error: MessagingError) -> AgentApiError {
     match error {
         MessagingError::NotFound { outbox_id } => {
             AgentApiError::not_found(format!("outbox message not found: {outbox_id}"))

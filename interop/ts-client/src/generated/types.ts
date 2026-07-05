@@ -745,11 +745,6 @@ export type McpServerStatus = "active" | "needsAuthConfig" | "unverified" | "dis
 export type RemoteMcpTransport = "streamableHttp" | "sse" | "auto";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OutboundStatusView".
- */
-export type OutboundStatusView = "pending" | "delivered" | "failed";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "OutboundOriginView".
  */
 export type OutboundOriginView = "toolCall" | "finalText" | "trigger";
@@ -773,6 +768,11 @@ export type OutboundPayloadView =
       text: string;
       type: "edit";
     };
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OutboundStatusView".
+ */
+export type OutboundStatusView = "pending" | "delivered" | "failed";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ProfileInstructions".
@@ -2121,6 +2121,44 @@ export interface AgentApiOutcomeOfMcpServerReadResponse {
  */
 export interface McpServerReadResponse {
   server: McpServerView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfOperatorOutboxReadResponse".
+ */
+export interface AgentApiOutcomeOfOperatorOutboxReadResponse {
+  notifications?: AgentNotification[];
+  result: OperatorOutboxReadResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorOutboxReadResponse".
+ */
+export interface OperatorOutboxReadResponse {
+  entries?: OperatorOutboundMessageView[];
+  /**
+   * Cursor to pass as `after` on the next read.
+   */
+  nextAfter: number;
+}
+/**
+ * One pending outbox entry with its owning universe. Acknowledge through
+ * the per-universe `outbox/ack` (with the entry's universe header); the
+ * global cursor only drives reading.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorOutboundMessageView".
+ */
+export interface OperatorOutboundMessageView {
+  attempts: number;
+  createdAtMs: number;
+  origin: OutboundOriginView;
+  outboxId: string;
+  payload: OutboundPayloadView;
+  runId?: string | null;
+  seq: number;
+  sessionId: string;
+  universeId: string;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -3790,6 +3828,27 @@ export interface McpServerListParams {
  */
 export interface McpServerReadParams {
   serverId: string;
+}
+/**
+ * Multiplexed outbox read: one long-poll serves every universe of the
+ * deployment, replacing one `outbox/read` tailer per universe. `seq` is a
+ * deployment-global cursor (the outbox sequence is one identity column
+ * across universes), so a single `after` resumes the whole stream.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorOutboxReadParams".
+ */
+export interface OperatorOutboxReadParams {
+  /**
+   * Return pending entries with `seq` greater than this cursor. Restart
+   * from 0 to re-read undelivered entries after a consumer restart.
+   */
+  after?: number | null;
+  limit?: number | null;
+  /**
+   * Long-poll wait in milliseconds when no entries are pending.
+   */
+  waitMs?: number | null;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
