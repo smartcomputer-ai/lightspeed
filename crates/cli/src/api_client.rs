@@ -11,37 +11,37 @@ use api::{
     AuthGrantReadResponse, AuthGrantRevokeParams, AuthGrantRevokeResponse,
     AuthProviderCreateParams, AuthProviderCreateResponse, AuthProviderDeleteParams,
     AuthProviderDeleteResponse, AuthProviderListParams, AuthProviderListResponse,
-    AuthProviderReadParams, AuthProviderReadResponse, BlobGetParams, BlobGetResponse,
-    BlobHasManyParams, BlobHasManyResponse, BlobPutManyParams, BlobPutManyResponse,
+    AuthProviderReadParams, AuthProviderReadResponse, BlobHasParams, BlobHasResponse,
+    BlobPutParams, BlobPutResponse, BlobReadParams, BlobReadResponse,
     EnvironmentProviderListParams, EnvironmentProviderListResponse,
     EnvironmentProviderTargetListParams, EnvironmentProviderTargetListResponse, JsonRpcRequest,
     JsonRpcResponse, METHOD_AUTH_CLIENTS_CREATE, METHOD_AUTH_CLIENTS_DELETE,
-    METHOD_AUTH_CLIENTS_LIST, METHOD_AUTH_CLIENTS_READ, METHOD_AUTH_FLOWS_START,
-    METHOD_AUTH_FLOWS_STATUS, METHOD_AUTH_GITHUB_INSTALLATIONS_GRANT,
+    METHOD_AUTH_CLIENTS_LIST, METHOD_AUTH_CLIENTS_READ, METHOD_AUTH_FLOWS_READ,
+    METHOD_AUTH_FLOWS_START, METHOD_AUTH_GITHUB_INSTALLATIONS_GRANT,
     METHOD_AUTH_GITHUB_INSTALLATIONS_LIST, METHOD_AUTH_GRANTS_IMPORT, METHOD_AUTH_GRANTS_LIST,
     METHOD_AUTH_GRANTS_READ, METHOD_AUTH_GRANTS_REVOKE, METHOD_AUTH_PROVIDERS_CREATE,
     METHOD_AUTH_PROVIDERS_DELETE, METHOD_AUTH_PROVIDERS_LIST, METHOD_AUTH_PROVIDERS_READ,
-    METHOD_BLOB_GET, METHOD_BLOB_HAS_MANY, METHOD_BLOB_PUT_MANY,
-    METHOD_ENVIRONMENT_PROVIDER_TARGETS_LIST, METHOD_ENVIRONMENT_PROVIDERS_LIST,
-    METHOD_MCP_SERVERS_CREATE, METHOD_MCP_SERVERS_DELETE, METHOD_MCP_SERVERS_LIST,
-    METHOD_MCP_SERVERS_READ, METHOD_PROFILES_APPLY, METHOD_PROFILES_DELETE, METHOD_PROFILES_LIST,
-    METHOD_PROFILES_PUT, METHOD_PROFILES_READ, METHOD_RUN_START,
-    METHOD_SESSION_ENVIRONMENT_CREDENTIALS_BIND, METHOD_SESSION_ENVIRONMENT_CREDENTIALS_LIST,
-    METHOD_SESSION_ENVIRONMENT_CREDENTIALS_UNBIND, METHOD_SESSION_ENVIRONMENTS_ACTIVATE,
-    METHOD_SESSION_ENVIRONMENTS_ATTACH, METHOD_SESSION_ENVIRONMENTS_CLOSE,
+    METHOD_BLOBS_HAS, METHOD_BLOBS_PUT, METHOD_BLOBS_READ, METHOD_ENVIRONMENTS_PROVIDERS_LIST,
+    METHOD_ENVIRONMENTS_PROVIDERS_TARGETS_LIST, METHOD_MCP_SERVERS_CREATE,
+    METHOD_MCP_SERVERS_DELETE, METHOD_MCP_SERVERS_LIST, METHOD_MCP_SERVERS_READ,
+    METHOD_PROFILES_DELETE, METHOD_PROFILES_LIST, METHOD_PROFILES_PUT, METHOD_PROFILES_READ,
+    METHOD_SESSION_ENVIRONMENTS_ACTIVATE, METHOD_SESSION_ENVIRONMENTS_ATTACH,
+    METHOD_SESSION_ENVIRONMENTS_CLOSE, METHOD_SESSION_ENVIRONMENTS_CREDENTIALS_BIND,
+    METHOD_SESSION_ENVIRONMENTS_CREDENTIALS_LIST, METHOD_SESSION_ENVIRONMENTS_CREDENTIALS_UNBIND,
     METHOD_SESSION_ENVIRONMENTS_DEACTIVATE, METHOD_SESSION_ENVIRONMENTS_LIST,
     METHOD_SESSION_ENVIRONMENTS_READ, METHOD_SESSION_EVENTS_READ, METHOD_SESSION_LIST,
     METHOD_SESSION_MCP_LINK, METHOD_SESSION_MCP_LIST, METHOD_SESSION_MCP_UNLINK,
-    METHOD_SESSION_READ, METHOD_SESSION_START, METHOD_SKILLS_ACTIVATE, METHOD_SKILLS_ACTIVE,
-    METHOD_SKILLS_DEACTIVATE, METHOD_SKILLS_LIST, METHOD_VFS_MOUNT_DELETE, METHOD_VFS_MOUNT_LIST,
-    METHOD_VFS_MOUNT_PUT, METHOD_VFS_SNAPSHOT_COMMIT, METHOD_VFS_SNAPSHOT_READ,
-    METHOD_VFS_WORKSPACE_CREATE, METHOD_VFS_WORKSPACE_DELETE, METHOD_VFS_WORKSPACE_LIST,
-    METHOD_VFS_WORKSPACE_READ, METHOD_VFS_WORKSPACE_UPDATE, McpServerCreateParams,
-    McpServerCreateResponse, McpServerDeleteParams, McpServerDeleteResponse, McpServerListParams,
-    McpServerListResponse, McpServerReadParams, McpServerReadResponse, ProfileApplyParams,
-    ProfileApplyResponse, ProfileDeleteParams, ProfileDeleteResponse, ProfileListParams,
-    ProfileListResponse, ProfilePutParams, ProfilePutResponse, ProfileReadParams,
-    ProfileReadResponse, RequestId, RunStartParams, RunStartResponse,
+    METHOD_SESSION_MOUNTS_DELETE, METHOD_SESSION_MOUNTS_LIST, METHOD_SESSION_MOUNTS_PUT,
+    METHOD_SESSION_PROFILES_APPLY, METHOD_SESSION_READ, METHOD_SESSION_RUNS_START,
+    METHOD_SESSION_SKILLS_ACTIVATE, METHOD_SESSION_SKILLS_ACTIVE, METHOD_SESSION_SKILLS_DEACTIVATE,
+    METHOD_SESSION_SKILLS_LIST, METHOD_SESSION_START, METHOD_VFS_SNAPSHOTS_COMMIT,
+    METHOD_VFS_SNAPSHOTS_READ, METHOD_VFS_WORKSPACES_CREATE, METHOD_VFS_WORKSPACES_DELETE,
+    METHOD_VFS_WORKSPACES_LIST, METHOD_VFS_WORKSPACES_READ, METHOD_VFS_WORKSPACES_UPDATE,
+    McpServerCreateParams, McpServerCreateResponse, McpServerDeleteParams, McpServerDeleteResponse,
+    McpServerListParams, McpServerListResponse, McpServerReadParams, McpServerReadResponse,
+    ProfileApplyParams, ProfileApplyResponse, ProfileDeleteParams, ProfileDeleteResponse,
+    ProfileListParams, ProfileListResponse, ProfilePutParams, ProfilePutResponse,
+    ProfileReadParams, ProfileReadResponse, RequestId, RunStartParams, RunStartResponse,
     SessionEnvironmentActivateParams, SessionEnvironmentActivateResponse,
     SessionEnvironmentAttachParams, SessionEnvironmentAttachResponse,
     SessionEnvironmentCloseParams, SessionEnvironmentCloseResponse,
@@ -178,7 +178,7 @@ impl HttpAgentApi {
         &self,
         params: ProfileApplyParams,
     ) -> Result<AgentApiOutcome<ProfileApplyResponse>, AgentApiError> {
-        self.request(METHOD_PROFILES_APPLY, params).await
+        self.request(METHOD_SESSION_PROFILES_APPLY, params).await
     }
 
     pub(crate) async fn read_session(
@@ -206,126 +206,126 @@ impl HttpAgentApi {
         &self,
         params: RunStartParams,
     ) -> Result<AgentApiOutcome<RunStartResponse>, AgentApiError> {
-        self.request(METHOD_RUN_START, params).await
+        self.request(METHOD_SESSION_RUNS_START, params).await
     }
 
     pub(crate) async fn list_skills(
         &self,
         params: SkillListParams,
     ) -> Result<AgentApiOutcome<SkillListResponse>, AgentApiError> {
-        self.request(METHOD_SKILLS_LIST, params).await
+        self.request(METHOD_SESSION_SKILLS_LIST, params).await
     }
 
     pub(crate) async fn active_skills(
         &self,
         params: SkillActiveParams,
     ) -> Result<AgentApiOutcome<SkillActiveResponse>, AgentApiError> {
-        self.request(METHOD_SKILLS_ACTIVE, params).await
+        self.request(METHOD_SESSION_SKILLS_ACTIVE, params).await
     }
 
     pub(crate) async fn activate_skill(
         &self,
         params: SkillActivateParams,
     ) -> Result<AgentApiOutcome<SkillActivateResponse>, AgentApiError> {
-        self.request(METHOD_SKILLS_ACTIVATE, params).await
+        self.request(METHOD_SESSION_SKILLS_ACTIVATE, params).await
     }
 
     pub(crate) async fn deactivate_skill(
         &self,
         params: SkillDeactivateParams,
     ) -> Result<AgentApiOutcome<SkillDeactivateResponse>, AgentApiError> {
-        self.request(METHOD_SKILLS_DEACTIVATE, params).await
+        self.request(METHOD_SESSION_SKILLS_DEACTIVATE, params).await
     }
 
     pub(crate) async fn put_blobs(
         &self,
-        params: BlobPutManyParams,
-    ) -> Result<AgentApiOutcome<BlobPutManyResponse>, AgentApiError> {
-        self.request(METHOD_BLOB_PUT_MANY, params).await
+        params: BlobPutParams,
+    ) -> Result<AgentApiOutcome<BlobPutResponse>, AgentApiError> {
+        self.request(METHOD_BLOBS_PUT, params).await
     }
 
     pub(crate) async fn has_blobs(
         &self,
-        params: BlobHasManyParams,
-    ) -> Result<AgentApiOutcome<BlobHasManyResponse>, AgentApiError> {
-        self.request(METHOD_BLOB_HAS_MANY, params).await
+        params: BlobHasParams,
+    ) -> Result<AgentApiOutcome<BlobHasResponse>, AgentApiError> {
+        self.request(METHOD_BLOBS_HAS, params).await
     }
 
-    pub(crate) async fn get_blob(
+    pub(crate) async fn read_blob(
         &self,
-        params: BlobGetParams,
-    ) -> Result<AgentApiOutcome<BlobGetResponse>, AgentApiError> {
-        self.request(METHOD_BLOB_GET, params).await
+        params: BlobReadParams,
+    ) -> Result<AgentApiOutcome<BlobReadResponse>, AgentApiError> {
+        self.request(METHOD_BLOBS_READ, params).await
     }
 
     pub(crate) async fn commit_vfs_snapshot(
         &self,
         params: VfsSnapshotCommitParams,
     ) -> Result<AgentApiOutcome<VfsSnapshotCommitResponse>, AgentApiError> {
-        self.request(METHOD_VFS_SNAPSHOT_COMMIT, params).await
+        self.request(METHOD_VFS_SNAPSHOTS_COMMIT, params).await
     }
 
     pub(crate) async fn read_vfs_snapshot(
         &self,
         params: VfsSnapshotReadParams,
     ) -> Result<AgentApiOutcome<VfsSnapshotReadResponse>, AgentApiError> {
-        self.request(METHOD_VFS_SNAPSHOT_READ, params).await
+        self.request(METHOD_VFS_SNAPSHOTS_READ, params).await
     }
 
     pub(crate) async fn create_vfs_workspace(
         &self,
         params: VfsWorkspaceCreateParams,
     ) -> Result<AgentApiOutcome<VfsWorkspaceCreateResponse>, AgentApiError> {
-        self.request(METHOD_VFS_WORKSPACE_CREATE, params).await
+        self.request(METHOD_VFS_WORKSPACES_CREATE, params).await
     }
 
     pub(crate) async fn read_vfs_workspace(
         &self,
         params: VfsWorkspaceReadParams,
     ) -> Result<AgentApiOutcome<VfsWorkspaceReadResponse>, AgentApiError> {
-        self.request(METHOD_VFS_WORKSPACE_READ, params).await
+        self.request(METHOD_VFS_WORKSPACES_READ, params).await
     }
 
     pub(crate) async fn list_vfs_workspaces(
         &self,
         params: VfsWorkspaceListParams,
     ) -> Result<AgentApiOutcome<VfsWorkspaceListResponse>, AgentApiError> {
-        self.request(METHOD_VFS_WORKSPACE_LIST, params).await
+        self.request(METHOD_VFS_WORKSPACES_LIST, params).await
     }
 
     pub(crate) async fn update_vfs_workspace(
         &self,
         params: VfsWorkspaceUpdateParams,
     ) -> Result<AgentApiOutcome<VfsWorkspaceUpdateResponse>, AgentApiError> {
-        self.request(METHOD_VFS_WORKSPACE_UPDATE, params).await
+        self.request(METHOD_VFS_WORKSPACES_UPDATE, params).await
     }
 
     pub(crate) async fn delete_vfs_workspace(
         &self,
         params: VfsWorkspaceDeleteParams,
     ) -> Result<AgentApiOutcome<VfsWorkspaceDeleteResponse>, AgentApiError> {
-        self.request(METHOD_VFS_WORKSPACE_DELETE, params).await
+        self.request(METHOD_VFS_WORKSPACES_DELETE, params).await
     }
 
     pub(crate) async fn put_vfs_mount(
         &self,
         params: VfsMountPutParams,
     ) -> Result<AgentApiOutcome<VfsMountPutResponse>, AgentApiError> {
-        self.request(METHOD_VFS_MOUNT_PUT, params).await
+        self.request(METHOD_SESSION_MOUNTS_PUT, params).await
     }
 
     pub(crate) async fn delete_vfs_mount(
         &self,
         params: VfsMountDeleteParams,
     ) -> Result<AgentApiOutcome<VfsMountDeleteResponse>, AgentApiError> {
-        self.request(METHOD_VFS_MOUNT_DELETE, params).await
+        self.request(METHOD_SESSION_MOUNTS_DELETE, params).await
     }
 
     pub(crate) async fn list_vfs_mounts(
         &self,
         params: VfsMountListParams,
     ) -> Result<AgentApiOutcome<VfsMountListResponse>, AgentApiError> {
-        self.request(METHOD_VFS_MOUNT_LIST, params).await
+        self.request(METHOD_SESSION_MOUNTS_LIST, params).await
     }
 
     pub(crate) async fn create_mcp_server(
@@ -423,7 +423,7 @@ impl HttpAgentApi {
         &self,
         params: AuthFlowStatusParams,
     ) -> Result<AgentApiOutcome<AuthFlowStatusResponse>, AgentApiError> {
-        self.request(METHOD_AUTH_FLOWS_STATUS, params).await
+        self.request(METHOD_AUTH_FLOWS_READ, params).await
     }
 
     pub(crate) async fn create_auth_provider(
@@ -541,7 +541,7 @@ impl HttpAgentApi {
         &self,
         params: SessionEnvironmentCredentialBindParams,
     ) -> Result<AgentApiOutcome<SessionEnvironmentCredentialBindResponse>, AgentApiError> {
-        self.request(METHOD_SESSION_ENVIRONMENT_CREDENTIALS_BIND, params)
+        self.request(METHOD_SESSION_ENVIRONMENTS_CREDENTIALS_BIND, params)
             .await
     }
 
@@ -549,7 +549,7 @@ impl HttpAgentApi {
         &self,
         params: SessionEnvironmentCredentialListParams,
     ) -> Result<AgentApiOutcome<SessionEnvironmentCredentialListResponse>, AgentApiError> {
-        self.request(METHOD_SESSION_ENVIRONMENT_CREDENTIALS_LIST, params)
+        self.request(METHOD_SESSION_ENVIRONMENTS_CREDENTIALS_LIST, params)
             .await
     }
 
@@ -557,7 +557,7 @@ impl HttpAgentApi {
         &self,
         params: SessionEnvironmentCredentialUnbindParams,
     ) -> Result<AgentApiOutcome<SessionEnvironmentCredentialUnbindResponse>, AgentApiError> {
-        self.request(METHOD_SESSION_ENVIRONMENT_CREDENTIALS_UNBIND, params)
+        self.request(METHOD_SESSION_ENVIRONMENTS_CREDENTIALS_UNBIND, params)
             .await
     }
 
@@ -565,7 +565,7 @@ impl HttpAgentApi {
         &self,
         params: EnvironmentProviderListParams,
     ) -> Result<AgentApiOutcome<EnvironmentProviderListResponse>, AgentApiError> {
-        self.request(METHOD_ENVIRONMENT_PROVIDERS_LIST, params)
+        self.request(METHOD_ENVIRONMENTS_PROVIDERS_LIST, params)
             .await
     }
 
@@ -573,7 +573,7 @@ impl HttpAgentApi {
         &self,
         params: EnvironmentProviderTargetListParams,
     ) -> Result<AgentApiOutcome<EnvironmentProviderTargetListResponse>, AgentApiError> {
-        self.request(METHOD_ENVIRONMENT_PROVIDER_TARGETS_LIST, params)
+        self.request(METHOD_ENVIRONMENTS_PROVIDERS_TARGETS_LIST, params)
             .await
     }
 

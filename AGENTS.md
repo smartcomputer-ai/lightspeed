@@ -144,7 +144,7 @@ cargo run -p cli -- chat --api-url http://127.0.0.1:18080/rpc --session session_
   `ModelSelection` or the session log.
 - Keep clients on `api`. CLIs, TUIs, editors, hosted gateways, and future
   Temporal frontends should not consume reducer internals directly.
-- Treat hosted `run/start` as an acceptance/start boundary, not a final-output
+- Treat hosted `session/runs/start` as an acceptance/start boundary, not a final-output
   boundary. Clients should follow `session/events/read` or refresh
   `session/read` for progress and completion.
 - Preserve Rust 2024 and the existing crate-local `thiserror` error style.

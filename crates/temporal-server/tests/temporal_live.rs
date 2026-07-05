@@ -642,7 +642,7 @@ async fn run_fake_live_client(
     let second_output = final_assistant_text(&second_run).expect("second assistant output");
     assert!(second_output.contains("Fake agent completed run"));
 
-    // Retried run/start with the same submission id and input returns the
+    // Retried session/runs/start with the same submission id and input returns the
     // original run instead of starting a second one.
     let retried = api
         .start_run(RunStartParams {
@@ -1592,7 +1592,7 @@ async fn run_missing_session_live_client(
             config: None,
         })
         .await
-        .expect_err("missing session run/start should fail");
+        .expect_err("missing session session/runs/start should fail");
     assert!(matches!(error.kind, AgentApiErrorKind::NotFound));
     Ok(())
 }
@@ -1968,7 +1968,7 @@ async fn run_admission_failure_live_client(
             config: None,
         })
         .await
-        .expect_err("closed session run/start should be rejected");
+        .expect_err("closed session session/runs/start should be rejected");
     assert!(matches!(error.kind, AgentApiErrorKind::Rejected));
     let session = api
         .read_session(SessionReadParams {

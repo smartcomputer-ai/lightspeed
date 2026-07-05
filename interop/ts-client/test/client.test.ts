@@ -91,7 +91,7 @@ describe("LightspeedClient", () => {
     });
 
     await expect(
-      client.call("run/start", {
+      client.call("session/runs/start", {
         sessionId: "session_1",
         source: {
           type: "input",

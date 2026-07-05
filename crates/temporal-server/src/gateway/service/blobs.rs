@@ -1,23 +1,9 @@
 use super::*;
 
-pub(super) async fn put_blob(
+pub(super) async fn put_blobs(
     store: &dyn BlobStore,
     params: BlobPutParams,
 ) -> Result<BlobPutResponse, AgentApiError> {
-    let bytes = decode_base64(&params.bytes_base64, "bytesBase64")?;
-    let byte_len = u64::try_from(bytes.len())
-        .map_err(|_| AgentApiError::invalid_request("blob byte length does not fit in u64"))?;
-    let blob_ref = store.put_bytes(bytes).await.map_err(map_blob_store_error)?;
-    Ok(BlobPutResponse {
-        blob_ref: blob_ref.as_str().to_owned(),
-        bytes: byte_len,
-    })
-}
-
-pub(super) async fn put_blobs(
-    store: &dyn BlobStore,
-    params: BlobPutManyParams,
-) -> Result<BlobPutManyResponse, AgentApiError> {
     let mut byte_lens = Vec::with_capacity(params.blobs.len());
     let mut blobs = Vec::with_capacity(params.blobs.len());
     for (index, blob) in params.blobs.into_iter().enumerate() {
@@ -30,11 +16,11 @@ pub(super) async fn put_blobs(
         blobs.push(bytes);
     }
     let blob_refs = store.put_many(blobs).await.map_err(map_blob_store_error)?;
-    Ok(BlobPutManyResponse {
+    Ok(BlobPutResponse {
         blobs: blob_refs
             .into_iter()
             .zip(byte_lens)
-            .map(|(blob_ref, bytes)| BlobPutResponse {
+            .map(|(blob_ref, bytes)| BlobPutResult {
                 blob_ref: blob_ref.as_str().to_owned(),
                 bytes,
             })
@@ -42,10 +28,10 @@ pub(super) async fn put_blobs(
     })
 }
 
-pub(super) async fn get_blob(
+pub(super) async fn read_blob(
     store: &dyn BlobStore,
-    params: BlobGetParams,
-) -> Result<BlobGetResponse, AgentApiError> {
+    params: BlobReadParams,
+) -> Result<BlobReadResponse, AgentApiError> {
     let blob_ref = parse_blob_ref(&params.blob_ref)?;
     let bytes = store
         .read_bytes(&blob_ref)
@@ -53,7 +39,7 @@ pub(super) async fn get_blob(
         .map_err(map_blob_read_error)?;
     let byte_len = u64::try_from(bytes.len())
         .map_err(|_| AgentApiError::internal("blob byte length does not fit in u64"))?;
-    Ok(BlobGetResponse {
+    Ok(BlobReadResponse {
         blob_ref: blob_ref.as_str().to_owned(),
         bytes_base64: BASE64.encode(bytes),
         bytes: byte_len,
@@ -62,8 +48,8 @@ pub(super) async fn get_blob(
 
 pub(super) async fn has_blobs(
     store: &dyn BlobStore,
-    params: BlobHasManyParams,
-) -> Result<BlobHasManyResponse, AgentApiError> {
+    params: BlobHasParams,
+) -> Result<BlobHasResponse, AgentApiError> {
     let mut blobs = Vec::with_capacity(params.blob_refs.len());
     for blob_ref in params.blob_refs {
         let blob_ref = parse_blob_ref(&blob_ref)?;
@@ -76,7 +62,7 @@ pub(super) async fn has_blobs(
             exists,
         });
     }
-    Ok(BlobHasManyResponse { blobs })
+    Ok(BlobHasResponse { blobs })
 }
 pub(super) fn decode_base64(value: &str, field: impl AsRef<str>) -> Result<Vec<u8>, AgentApiError> {
     BASE64.decode(value).map_err(|error| {

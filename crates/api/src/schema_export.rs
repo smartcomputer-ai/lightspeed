@@ -150,7 +150,7 @@ mod tests {
         methods.sort_unstable();
         methods.dedup();
         assert_eq!(methods.len(), total, "duplicate method in manifest");
-        assert_eq!(total, 89);
+        assert_eq!(total, 88);
         assert_eq!(
             manifest
                 .iter()
@@ -168,6 +168,37 @@ mod tests {
                 spec.scope == crate::MethodScope::Operator,
                 "scope of {} must match its method-name prefix",
                 spec.method
+            );
+        }
+    }
+
+    /// The `session/` prefix is the wire marker for session-scoped methods:
+    /// everything under it addresses one session through a `sessionId` param,
+    /// and nothing outside it may take one. `session/list` queries the
+    /// collection, so it is the single exemption.
+    #[test]
+    fn session_prefix_matches_session_id_in_params() {
+        let exported = export_schemas();
+        let definitions = exported.schema_bundle["definitions"]
+            .as_object()
+            .expect("bundle has definitions");
+        for entry in exported.methods["methods"].as_array().expect("methods") {
+            let method = entry["method"].as_str().expect("method name");
+            let params = match entry["params"]["schema"]["$ref"].as_str() {
+                Some(reference) => {
+                    let name = reference
+                        .strip_prefix("#/definitions/")
+                        .unwrap_or_else(|| panic!("unexpected ref shape: {reference}"));
+                    &definitions[name]
+                }
+                None => &entry["params"]["schema"],
+            };
+            let has_session_id = !params["properties"]["sessionId"].is_null();
+            let session_scoped =
+                method.starts_with("session/") && method != crate::METHOD_SESSION_LIST;
+            assert_eq!(
+                has_session_id, session_scoped,
+                "{method}: sessionId param presence must match its session/ prefix"
             );
         }
     }

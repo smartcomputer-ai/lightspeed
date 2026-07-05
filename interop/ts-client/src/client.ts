@@ -183,7 +183,7 @@ export class LightspeedClient implements RpcCaller {
     if ("config" in options) {
       params.config = options.config ?? null;
     }
-    return this.call("run/start", params, options);
+    return this.call("session/runs/start", params, options);
   }
 
   readEvents(

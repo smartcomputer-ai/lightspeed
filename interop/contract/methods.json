@@ -33,150 +33,6 @@
       "scope": "universe"
     },
     {
-      "method": "profiles/create",
-      "params": {
-        "schema": {
-          "$ref": "#/definitions/ProfileCreateParams"
-        },
-        "type": "ProfileCreateParams"
-      },
-      "result": {
-        "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfProfileCreateResponse"
-        },
-        "type": "AgentApiOutcome<ProfileCreateResponse>"
-      },
-      "scope": "universe"
-    },
-    {
-      "method": "profiles/read",
-      "params": {
-        "schema": {
-          "$ref": "#/definitions/ProfileReadParams"
-        },
-        "type": "ProfileReadParams"
-      },
-      "result": {
-        "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfProfileReadResponse"
-        },
-        "type": "AgentApiOutcome<ProfileReadResponse>"
-      },
-      "scope": "universe"
-    },
-    {
-      "method": "profiles/list",
-      "params": {
-        "schema": {
-          "$ref": "#/definitions/ProfileListParams"
-        },
-        "type": "ProfileListParams"
-      },
-      "result": {
-        "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfProfileListResponse"
-        },
-        "type": "AgentApiOutcome<ProfileListResponse>"
-      },
-      "scope": "universe"
-    },
-    {
-      "method": "profiles/put",
-      "params": {
-        "schema": {
-          "$ref": "#/definitions/ProfilePutParams"
-        },
-        "type": "ProfilePutParams"
-      },
-      "result": {
-        "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfProfilePutResponse"
-        },
-        "type": "AgentApiOutcome<ProfilePutResponse>"
-      },
-      "scope": "universe"
-    },
-    {
-      "method": "profiles/update",
-      "params": {
-        "schema": {
-          "$ref": "#/definitions/ProfileUpdateParams"
-        },
-        "type": "ProfileUpdateParams"
-      },
-      "result": {
-        "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfProfileUpdateResponse"
-        },
-        "type": "AgentApiOutcome<ProfileUpdateResponse>"
-      },
-      "scope": "universe"
-    },
-    {
-      "method": "profiles/delete",
-      "params": {
-        "schema": {
-          "$ref": "#/definitions/ProfileDeleteParams"
-        },
-        "type": "ProfileDeleteParams"
-      },
-      "result": {
-        "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfProfileDeleteResponse"
-        },
-        "type": "AgentApiOutcome<ProfileDeleteResponse>"
-      },
-      "scope": "universe"
-    },
-    {
-      "method": "profiles/apply",
-      "params": {
-        "schema": {
-          "$ref": "#/definitions/ProfileApplyParams"
-        },
-        "type": "ProfileApplyParams"
-      },
-      "result": {
-        "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfProfileApplyResponse"
-        },
-        "type": "AgentApiOutcome<ProfileApplyResponse>"
-      },
-      "scope": "universe"
-    },
-    {
-      "method": "session/update",
-      "params": {
-        "schema": {
-          "$ref": "#/definitions/SessionUpdateParams"
-        },
-        "type": "SessionUpdateParams"
-      },
-      "result": {
-        "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfSessionUpdateResponse"
-        },
-        "type": "AgentApiOutcome<SessionUpdateResponse>"
-      },
-      "scope": "universe"
-    },
-    {
-      "method": "session/tools/update",
-      "params": {
-        "schema": {
-          "$ref": "#/definitions/SessionToolsUpdateParams"
-        },
-        "type": "SessionToolsUpdateParams"
-      },
-      "result": {
-        "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfSessionToolsUpdateResponse"
-        },
-        "type": "AgentApiOutcome<SessionToolsUpdateResponse>"
-      },
-      "scope": "universe"
-    },
-    {
       "method": "session/read",
       "params": {
         "schema": {
@@ -209,6 +65,22 @@
       "scope": "universe"
     },
     {
+      "method": "session/update",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/SessionUpdateParams"
+        },
+        "type": "SessionUpdateParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfSessionUpdateResponse"
+        },
+        "type": "AgentApiOutcome<SessionUpdateResponse>"
+      },
+      "scope": "universe"
+    },
+    {
       "method": "session/rename",
       "params": {
         "schema": {
@@ -221,22 +93,6 @@
           "$ref": "#/definitions/AgentApiOutcomeOfSessionRenameResponse"
         },
         "type": "AgentApiOutcome<SessionRenameResponse>"
-      },
-      "scope": "universe"
-    },
-    {
-      "method": "session/events/read",
-      "params": {
-        "schema": {
-          "$ref": "#/definitions/SessionEventsReadParams"
-        },
-        "type": "SessionEventsReadParams"
-      },
-      "result": {
-        "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfSessionEventsReadResponse"
-        },
-        "type": "AgentApiOutcome<SessionEventsReadResponse>"
       },
       "scope": "universe"
     },
@@ -257,23 +113,39 @@
       "scope": "universe"
     },
     {
-      "method": "context/compact",
+      "method": "session/events/read",
       "params": {
         "schema": {
-          "$ref": "#/definitions/ContextCompactParams"
+          "$ref": "#/definitions/SessionEventsReadParams"
         },
-        "type": "ContextCompactParams"
+        "type": "SessionEventsReadParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfContextCompactResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfSessionEventsReadResponse"
         },
-        "type": "AgentApiOutcome<ContextCompactResponse>"
+        "type": "AgentApiOutcome<SessionEventsReadResponse>"
       },
       "scope": "universe"
     },
     {
-      "method": "context/append",
+      "method": "session/tools/update",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/SessionToolsUpdateParams"
+        },
+        "type": "SessionToolsUpdateParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfSessionToolsUpdateResponse"
+        },
+        "type": "AgentApiOutcome<SessionToolsUpdateResponse>"
+      },
+      "scope": "universe"
+    },
+    {
+      "method": "session/context/append",
       "params": {
         "schema": {
           "$ref": "#/definitions/ContextAppendParams"
@@ -289,7 +161,7 @@
       "scope": "universe"
     },
     {
-      "method": "context/remove",
+      "method": "session/context/remove",
       "params": {
         "schema": {
           "$ref": "#/definitions/ContextRemoveParams"
@@ -305,39 +177,23 @@
       "scope": "universe"
     },
     {
-      "method": "outbox/read",
+      "method": "session/context/compact",
       "params": {
         "schema": {
-          "$ref": "#/definitions/OutboxReadParams"
+          "$ref": "#/definitions/ContextCompactParams"
         },
-        "type": "OutboxReadParams"
+        "type": "ContextCompactParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfOutboxReadResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfContextCompactResponse"
         },
-        "type": "AgentApiOutcome<OutboxReadResponse>"
+        "type": "AgentApiOutcome<ContextCompactResponse>"
       },
       "scope": "universe"
     },
     {
-      "method": "outbox/ack",
-      "params": {
-        "schema": {
-          "$ref": "#/definitions/OutboxAckParams"
-        },
-        "type": "OutboxAckParams"
-      },
-      "result": {
-        "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfOutboxAckResponse"
-        },
-        "type": "AgentApiOutcome<OutboxAckResponse>"
-      },
-      "scope": "universe"
-    },
-    {
-      "method": "run/start",
+      "method": "session/runs/start",
       "params": {
         "schema": {
           "$ref": "#/definitions/RunStartParams"
@@ -353,7 +209,7 @@
       "scope": "universe"
     },
     {
-      "method": "run/cancel",
+      "method": "session/runs/cancel",
       "params": {
         "schema": {
           "$ref": "#/definitions/RunCancelParams"
@@ -369,7 +225,7 @@
       "scope": "universe"
     },
     {
-      "method": "prompts/active",
+      "method": "session/prompts/active",
       "params": {
         "schema": {
           "$ref": "#/definitions/PromptsActiveParams"
@@ -385,7 +241,7 @@
       "scope": "universe"
     },
     {
-      "method": "skills/list",
+      "method": "session/skills/list",
       "params": {
         "schema": {
           "$ref": "#/definitions/SkillListParams"
@@ -401,7 +257,7 @@
       "scope": "universe"
     },
     {
-      "method": "skills/active",
+      "method": "session/skills/active",
       "params": {
         "schema": {
           "$ref": "#/definitions/SkillActiveParams"
@@ -417,7 +273,7 @@
       "scope": "universe"
     },
     {
-      "method": "skills/activate",
+      "method": "session/skills/activate",
       "params": {
         "schema": {
           "$ref": "#/definitions/SkillActivateParams"
@@ -433,7 +289,7 @@
       "scope": "universe"
     },
     {
-      "method": "skills/deactivate",
+      "method": "session/skills/deactivate",
       "params": {
         "schema": {
           "$ref": "#/definitions/SkillDeactivateParams"
@@ -449,18 +305,130 @@
       "scope": "universe"
     },
     {
-      "method": "session/environments/list",
+      "method": "session/profiles/apply",
       "params": {
         "schema": {
-          "$ref": "#/definitions/SessionEnvironmentListParams"
+          "$ref": "#/definitions/ProfileApplyParams"
         },
-        "type": "SessionEnvironmentListParams"
+        "type": "ProfileApplyParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfSessionEnvironmentListResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfProfileApplyResponse"
         },
-        "type": "AgentApiOutcome<SessionEnvironmentListResponse>"
+        "type": "AgentApiOutcome<ProfileApplyResponse>"
+      },
+      "scope": "universe"
+    },
+    {
+      "method": "session/mounts/put",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/VfsMountPutParams"
+        },
+        "type": "VfsMountPutParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfVfsMountPutResponse"
+        },
+        "type": "AgentApiOutcome<VfsMountPutResponse>"
+      },
+      "scope": "universe"
+    },
+    {
+      "method": "session/mounts/list",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/VfsMountListParams"
+        },
+        "type": "VfsMountListParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfVfsMountListResponse"
+        },
+        "type": "AgentApiOutcome<VfsMountListResponse>"
+      },
+      "scope": "universe"
+    },
+    {
+      "method": "session/mounts/delete",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/VfsMountDeleteParams"
+        },
+        "type": "VfsMountDeleteParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfVfsMountDeleteResponse"
+        },
+        "type": "AgentApiOutcome<VfsMountDeleteResponse>"
+      },
+      "scope": "universe"
+    },
+    {
+      "method": "session/mcp/link",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/SessionMcpLinkParams"
+        },
+        "type": "SessionMcpLinkParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfSessionMcpLinkResponse"
+        },
+        "type": "AgentApiOutcome<SessionMcpLinkResponse>"
+      },
+      "scope": "universe"
+    },
+    {
+      "method": "session/mcp/unlink",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/SessionMcpUnlinkParams"
+        },
+        "type": "SessionMcpUnlinkParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfSessionMcpUnlinkResponse"
+        },
+        "type": "AgentApiOutcome<SessionMcpUnlinkResponse>"
+      },
+      "scope": "universe"
+    },
+    {
+      "method": "session/mcp/list",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/SessionMcpListParams"
+        },
+        "type": "SessionMcpListParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfSessionMcpListResponse"
+        },
+        "type": "AgentApiOutcome<SessionMcpListResponse>"
+      },
+      "scope": "universe"
+    },
+    {
+      "method": "session/environments/create",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/SessionEnvironmentCreateParams"
+        },
+        "type": "SessionEnvironmentCreateParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfSessionEnvironmentCreateResponse"
+        },
+        "type": "AgentApiOutcome<SessionEnvironmentCreateResponse>"
       },
       "scope": "universe"
     },
@@ -481,18 +449,18 @@
       "scope": "universe"
     },
     {
-      "method": "session/environments/create",
+      "method": "session/environments/list",
       "params": {
         "schema": {
-          "$ref": "#/definitions/SessionEnvironmentCreateParams"
+          "$ref": "#/definitions/SessionEnvironmentListParams"
         },
-        "type": "SessionEnvironmentCreateParams"
+        "type": "SessionEnvironmentListParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfSessionEnvironmentCreateResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfSessionEnvironmentListResponse"
         },
-        "type": "AgentApiOutcome<SessionEnvironmentCreateResponse>"
+        "type": "AgentApiOutcome<SessionEnvironmentListResponse>"
       },
       "scope": "universe"
     },
@@ -625,22 +593,6 @@
       "scope": "universe"
     },
     {
-      "method": "session/jobs/list",
-      "params": {
-        "schema": {
-          "$ref": "#/definitions/SessionJobListParams"
-        },
-        "type": "SessionJobListParams"
-      },
-      "result": {
-        "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfSessionJobListResponse"
-        },
-        "type": "AgentApiOutcome<SessionJobListResponse>"
-      },
-      "scope": "universe"
-    },
-    {
       "method": "session/jobs/read",
       "params": {
         "schema": {
@@ -653,6 +605,22 @@
           "$ref": "#/definitions/AgentApiOutcomeOfSessionJobReadResponse"
         },
         "type": "AgentApiOutcome<SessionJobReadResponse>"
+      },
+      "scope": "universe"
+    },
+    {
+      "method": "session/jobs/list",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/SessionJobListParams"
+        },
+        "type": "SessionJobListParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfSessionJobListResponse"
+        },
+        "type": "AgentApiOutcome<SessionJobListResponse>"
       },
       "scope": "universe"
     },
@@ -673,87 +641,103 @@
       "scope": "universe"
     },
     {
-      "method": "environmentProviders/register",
+      "method": "profiles/create",
       "params": {
         "schema": {
-          "$ref": "#/definitions/EnvironmentProviderRegisterParams"
+          "$ref": "#/definitions/ProfileCreateParams"
         },
-        "type": "EnvironmentProviderRegisterParams"
+        "type": "ProfileCreateParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentProviderRegisterResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfProfileCreateResponse"
         },
-        "type": "AgentApiOutcome<EnvironmentProviderRegisterResponse>"
+        "type": "AgentApiOutcome<ProfileCreateResponse>"
       },
       "scope": "universe"
     },
     {
-      "method": "environmentProviders/heartbeat",
+      "method": "profiles/read",
       "params": {
         "schema": {
-          "$ref": "#/definitions/EnvironmentProviderHeartbeatParams"
+          "$ref": "#/definitions/ProfileReadParams"
         },
-        "type": "EnvironmentProviderHeartbeatParams"
+        "type": "ProfileReadParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentProviderHeartbeatResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfProfileReadResponse"
         },
-        "type": "AgentApiOutcome<EnvironmentProviderHeartbeatResponse>"
+        "type": "AgentApiOutcome<ProfileReadResponse>"
       },
       "scope": "universe"
     },
     {
-      "method": "environmentProviders/unregister",
+      "method": "profiles/list",
       "params": {
         "schema": {
-          "$ref": "#/definitions/EnvironmentProviderUnregisterParams"
+          "$ref": "#/definitions/ProfileListParams"
         },
-        "type": "EnvironmentProviderUnregisterParams"
+        "type": "ProfileListParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentProviderUnregisterResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfProfileListResponse"
         },
-        "type": "AgentApiOutcome<EnvironmentProviderUnregisterResponse>"
+        "type": "AgentApiOutcome<ProfileListResponse>"
       },
       "scope": "universe"
     },
     {
-      "method": "environmentProviders/list",
+      "method": "profiles/put",
       "params": {
         "schema": {
-          "$ref": "#/definitions/EnvironmentProviderListParams"
+          "$ref": "#/definitions/ProfilePutParams"
         },
-        "type": "EnvironmentProviderListParams"
+        "type": "ProfilePutParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentProviderListResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfProfilePutResponse"
         },
-        "type": "AgentApiOutcome<EnvironmentProviderListResponse>"
+        "type": "AgentApiOutcome<ProfilePutResponse>"
       },
       "scope": "universe"
     },
     {
-      "method": "environmentProviders/targets/list",
+      "method": "profiles/update",
       "params": {
         "schema": {
-          "$ref": "#/definitions/EnvironmentProviderTargetListParams"
+          "$ref": "#/definitions/ProfileUpdateParams"
         },
-        "type": "EnvironmentProviderTargetListParams"
+        "type": "ProfileUpdateParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentProviderTargetListResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfProfileUpdateResponse"
         },
-        "type": "AgentApiOutcome<EnvironmentProviderTargetListResponse>"
+        "type": "AgentApiOutcome<ProfileUpdateResponse>"
       },
       "scope": "universe"
     },
     {
-      "method": "blob/put",
+      "method": "profiles/delete",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/ProfileDeleteParams"
+        },
+        "type": "ProfileDeleteParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfProfileDeleteResponse"
+        },
+        "type": "AgentApiOutcome<ProfileDeleteResponse>"
+      },
+      "scope": "universe"
+    },
+    {
+      "method": "blobs/put",
       "params": {
         "schema": {
           "$ref": "#/definitions/BlobPutParams"
@@ -769,55 +753,39 @@
       "scope": "universe"
     },
     {
-      "method": "blob/put_many",
+      "method": "blobs/read",
       "params": {
         "schema": {
-          "$ref": "#/definitions/BlobPutManyParams"
+          "$ref": "#/definitions/BlobReadParams"
         },
-        "type": "BlobPutManyParams"
+        "type": "BlobReadParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfBlobPutManyResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfBlobReadResponse"
         },
-        "type": "AgentApiOutcome<BlobPutManyResponse>"
+        "type": "AgentApiOutcome<BlobReadResponse>"
       },
       "scope": "universe"
     },
     {
-      "method": "blob/get",
+      "method": "blobs/has",
       "params": {
         "schema": {
-          "$ref": "#/definitions/BlobGetParams"
+          "$ref": "#/definitions/BlobHasParams"
         },
-        "type": "BlobGetParams"
+        "type": "BlobHasParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfBlobGetResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfBlobHasResponse"
         },
-        "type": "AgentApiOutcome<BlobGetResponse>"
+        "type": "AgentApiOutcome<BlobHasResponse>"
       },
       "scope": "universe"
     },
     {
-      "method": "blob/has_many",
-      "params": {
-        "schema": {
-          "$ref": "#/definitions/BlobHasManyParams"
-        },
-        "type": "BlobHasManyParams"
-      },
-      "result": {
-        "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfBlobHasManyResponse"
-        },
-        "type": "AgentApiOutcome<BlobHasManyResponse>"
-      },
-      "scope": "universe"
-    },
-    {
-      "method": "vfs/snapshot/commit",
+      "method": "vfs/snapshots/commit",
       "params": {
         "schema": {
           "$ref": "#/definitions/VfsSnapshotCommitParams"
@@ -833,7 +801,7 @@
       "scope": "universe"
     },
     {
-      "method": "vfs/snapshot/read",
+      "method": "vfs/snapshots/read",
       "params": {
         "schema": {
           "$ref": "#/definitions/VfsSnapshotReadParams"
@@ -849,7 +817,7 @@
       "scope": "universe"
     },
     {
-      "method": "vfs/workspace/create",
+      "method": "vfs/workspaces/create",
       "params": {
         "schema": {
           "$ref": "#/definitions/VfsWorkspaceCreateParams"
@@ -865,7 +833,7 @@
       "scope": "universe"
     },
     {
-      "method": "vfs/workspace/read",
+      "method": "vfs/workspaces/read",
       "params": {
         "schema": {
           "$ref": "#/definitions/VfsWorkspaceReadParams"
@@ -881,7 +849,7 @@
       "scope": "universe"
     },
     {
-      "method": "vfs/workspace/list",
+      "method": "vfs/workspaces/list",
       "params": {
         "schema": {
           "$ref": "#/definitions/VfsWorkspaceListParams"
@@ -897,7 +865,7 @@
       "scope": "universe"
     },
     {
-      "method": "vfs/workspace/update",
+      "method": "vfs/workspaces/update",
       "params": {
         "schema": {
           "$ref": "#/definitions/VfsWorkspaceUpdateParams"
@@ -913,7 +881,7 @@
       "scope": "universe"
     },
     {
-      "method": "vfs/workspace/delete",
+      "method": "vfs/workspaces/delete",
       "params": {
         "schema": {
           "$ref": "#/definitions/VfsWorkspaceDeleteParams"
@@ -925,54 +893,6 @@
           "$ref": "#/definitions/AgentApiOutcomeOfVfsWorkspaceDeleteResponse"
         },
         "type": "AgentApiOutcome<VfsWorkspaceDeleteResponse>"
-      },
-      "scope": "universe"
-    },
-    {
-      "method": "vfs/mount/put",
-      "params": {
-        "schema": {
-          "$ref": "#/definitions/VfsMountPutParams"
-        },
-        "type": "VfsMountPutParams"
-      },
-      "result": {
-        "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfVfsMountPutResponse"
-        },
-        "type": "AgentApiOutcome<VfsMountPutResponse>"
-      },
-      "scope": "universe"
-    },
-    {
-      "method": "vfs/mount/delete",
-      "params": {
-        "schema": {
-          "$ref": "#/definitions/VfsMountDeleteParams"
-        },
-        "type": "VfsMountDeleteParams"
-      },
-      "result": {
-        "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfVfsMountDeleteResponse"
-        },
-        "type": "AgentApiOutcome<VfsMountDeleteResponse>"
-      },
-      "scope": "universe"
-    },
-    {
-      "method": "vfs/mount/list",
-      "params": {
-        "schema": {
-          "$ref": "#/definitions/VfsMountListParams"
-        },
-        "type": "VfsMountListParams"
-      },
-      "result": {
-        "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfVfsMountListResponse"
-        },
-        "type": "AgentApiOutcome<VfsMountListResponse>"
       },
       "scope": "universe"
     },
@@ -993,22 +913,6 @@
       "scope": "universe"
     },
     {
-      "method": "mcp/servers/list",
-      "params": {
-        "schema": {
-          "$ref": "#/definitions/McpServerListParams"
-        },
-        "type": "McpServerListParams"
-      },
-      "result": {
-        "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfMcpServerListResponse"
-        },
-        "type": "AgentApiOutcome<McpServerListResponse>"
-      },
-      "scope": "universe"
-    },
-    {
       "method": "mcp/servers/read",
       "params": {
         "schema": {
@@ -1021,6 +925,22 @@
           "$ref": "#/definitions/AgentApiOutcomeOfMcpServerReadResponse"
         },
         "type": "AgentApiOutcome<McpServerReadResponse>"
+      },
+      "scope": "universe"
+    },
+    {
+      "method": "mcp/servers/list",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/McpServerListParams"
+        },
+        "type": "McpServerListParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfMcpServerListResponse"
+        },
+        "type": "AgentApiOutcome<McpServerListResponse>"
       },
       "scope": "universe"
     },
@@ -1041,50 +961,82 @@
       "scope": "universe"
     },
     {
-      "method": "session/mcp/link",
+      "method": "environments/providers/register",
       "params": {
         "schema": {
-          "$ref": "#/definitions/SessionMcpLinkParams"
+          "$ref": "#/definitions/EnvironmentProviderRegisterParams"
         },
-        "type": "SessionMcpLinkParams"
+        "type": "EnvironmentProviderRegisterParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfSessionMcpLinkResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentProviderRegisterResponse"
         },
-        "type": "AgentApiOutcome<SessionMcpLinkResponse>"
+        "type": "AgentApiOutcome<EnvironmentProviderRegisterResponse>"
       },
       "scope": "universe"
     },
     {
-      "method": "session/mcp/unlink",
+      "method": "environments/providers/heartbeat",
       "params": {
         "schema": {
-          "$ref": "#/definitions/SessionMcpUnlinkParams"
+          "$ref": "#/definitions/EnvironmentProviderHeartbeatParams"
         },
-        "type": "SessionMcpUnlinkParams"
+        "type": "EnvironmentProviderHeartbeatParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfSessionMcpUnlinkResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentProviderHeartbeatResponse"
         },
-        "type": "AgentApiOutcome<SessionMcpUnlinkResponse>"
+        "type": "AgentApiOutcome<EnvironmentProviderHeartbeatResponse>"
       },
       "scope": "universe"
     },
     {
-      "method": "session/mcp/list",
+      "method": "environments/providers/unregister",
       "params": {
         "schema": {
-          "$ref": "#/definitions/SessionMcpListParams"
+          "$ref": "#/definitions/EnvironmentProviderUnregisterParams"
         },
-        "type": "SessionMcpListParams"
+        "type": "EnvironmentProviderUnregisterParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfSessionMcpListResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentProviderUnregisterResponse"
         },
-        "type": "AgentApiOutcome<SessionMcpListResponse>"
+        "type": "AgentApiOutcome<EnvironmentProviderUnregisterResponse>"
+      },
+      "scope": "universe"
+    },
+    {
+      "method": "environments/providers/list",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/EnvironmentProviderListParams"
+        },
+        "type": "EnvironmentProviderListParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentProviderListResponse"
+        },
+        "type": "AgentApiOutcome<EnvironmentProviderListResponse>"
+      },
+      "scope": "universe"
+    },
+    {
+      "method": "environments/providers/targets/list",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/EnvironmentProviderTargetListParams"
+        },
+        "type": "EnvironmentProviderTargetListParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentProviderTargetListResponse"
+        },
+        "type": "AgentApiOutcome<EnvironmentProviderTargetListResponse>"
       },
       "scope": "universe"
     },
@@ -1105,22 +1057,6 @@
       "scope": "universe"
     },
     {
-      "method": "auth/grants/list",
-      "params": {
-        "schema": {
-          "$ref": "#/definitions/AuthGrantListParams"
-        },
-        "type": "AuthGrantListParams"
-      },
-      "result": {
-        "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfAuthGrantListResponse"
-        },
-        "type": "AgentApiOutcome<AuthGrantListResponse>"
-      },
-      "scope": "universe"
-    },
-    {
       "method": "auth/grants/read",
       "params": {
         "schema": {
@@ -1133,6 +1069,22 @@
           "$ref": "#/definitions/AgentApiOutcomeOfAuthGrantReadResponse"
         },
         "type": "AgentApiOutcome<AuthGrantReadResponse>"
+      },
+      "scope": "universe"
+    },
+    {
+      "method": "auth/grants/list",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/AuthGrantListParams"
+        },
+        "type": "AuthGrantListParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfAuthGrantListResponse"
+        },
+        "type": "AgentApiOutcome<AuthGrantListResponse>"
       },
       "scope": "universe"
     },
@@ -1169,22 +1121,6 @@
       "scope": "universe"
     },
     {
-      "method": "auth/clients/list",
-      "params": {
-        "schema": {
-          "$ref": "#/definitions/AuthClientListParams"
-        },
-        "type": "AuthClientListParams"
-      },
-      "result": {
-        "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfAuthClientListResponse"
-        },
-        "type": "AgentApiOutcome<AuthClientListResponse>"
-      },
-      "scope": "universe"
-    },
-    {
       "method": "auth/clients/read",
       "params": {
         "schema": {
@@ -1197,6 +1133,22 @@
           "$ref": "#/definitions/AgentApiOutcomeOfAuthClientReadResponse"
         },
         "type": "AgentApiOutcome<AuthClientReadResponse>"
+      },
+      "scope": "universe"
+    },
+    {
+      "method": "auth/clients/list",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/AuthClientListParams"
+        },
+        "type": "AuthClientListParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfAuthClientListResponse"
+        },
+        "type": "AgentApiOutcome<AuthClientListResponse>"
       },
       "scope": "universe"
     },
@@ -1233,7 +1185,7 @@
       "scope": "universe"
     },
     {
-      "method": "auth/flows/status",
+      "method": "auth/flows/read",
       "params": {
         "schema": {
           "$ref": "#/definitions/AuthFlowStatusParams"
@@ -1265,22 +1217,6 @@
       "scope": "universe"
     },
     {
-      "method": "auth/providers/list",
-      "params": {
-        "schema": {
-          "$ref": "#/definitions/AuthProviderListParams"
-        },
-        "type": "AuthProviderListParams"
-      },
-      "result": {
-        "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfAuthProviderListResponse"
-        },
-        "type": "AgentApiOutcome<AuthProviderListResponse>"
-      },
-      "scope": "universe"
-    },
-    {
       "method": "auth/providers/read",
       "params": {
         "schema": {
@@ -1293,6 +1229,22 @@
           "$ref": "#/definitions/AgentApiOutcomeOfAuthProviderReadResponse"
         },
         "type": "AgentApiOutcome<AuthProviderReadResponse>"
+      },
+      "scope": "universe"
+    },
+    {
+      "method": "auth/providers/list",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/AuthProviderListParams"
+        },
+        "type": "AuthProviderListParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfAuthProviderListResponse"
+        },
+        "type": "AgentApiOutcome<AuthProviderListResponse>"
       },
       "scope": "universe"
     },
@@ -1341,6 +1293,38 @@
           "$ref": "#/definitions/AgentApiOutcomeOfAuthGitHubInstallationGrantResponse"
         },
         "type": "AgentApiOutcome<AuthGitHubInstallationGrantResponse>"
+      },
+      "scope": "universe"
+    },
+    {
+      "method": "outbox/read",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/OutboxReadParams"
+        },
+        "type": "OutboxReadParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfOutboxReadResponse"
+        },
+        "type": "AgentApiOutcome<OutboxReadResponse>"
+      },
+      "scope": "universe"
+    },
+    {
+      "method": "outbox/ack",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/OutboxAckParams"
+        },
+        "type": "OutboxAckParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfOutboxAckResponse"
+        },
+        "type": "AgentApiOutcome<OutboxAckResponse>"
       },
       "scope": "universe"
     },
@@ -1432,9 +1416,9 @@
     "session/started",
     "session/status/changed",
     "session/event",
-    "run/started",
-    "run/completed",
-    "item/completed",
+    "session/runs/started",
+    "session/runs/completed",
+    "session/items/completed",
     "error"
   ],
   "protocolVersion": "lightspeed.agent.api.v1",

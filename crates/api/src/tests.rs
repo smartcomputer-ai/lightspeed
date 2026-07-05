@@ -25,7 +25,7 @@ fn notification_serializes_as_json_rpc_lite_shape() {
     assert_eq!(
         value,
         json!({
-            "method": "run/completed",
+            "method": "session/runs/completed",
             "params": {
                 "sessionId": "session_1",
                 "run": {
@@ -280,7 +280,7 @@ async fn dispatch_json_rpc_routes_context_compact() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_CONTEXT_COMPACT.to_owned(),
+            method: METHOD_SESSION_CONTEXT_COMPACT.to_owned(),
             params: Some(json!({ "sessionId": "session_1" })),
         },
     )
@@ -299,7 +299,7 @@ async fn dispatch_json_rpc_routes_context_remove() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_CONTEXT_REMOVE.to_owned(),
+            method: METHOD_SESSION_CONTEXT_REMOVE.to_owned(),
             params: Some(json!({
                 "sessionId": "session_1",
                 "keys": ["channel.room.batch-1"]
@@ -326,7 +326,7 @@ async fn dispatch_json_rpc_routes_context_append() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_CONTEXT_APPEND.to_owned(),
+            method: METHOD_SESSION_CONTEXT_APPEND.to_owned(),
             params: Some(json!({
                 "sessionId": "session_1",
                 "entries": [
@@ -396,7 +396,7 @@ async fn dispatch_json_rpc_routes_run_cancel() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_RUN_CANCEL.to_owned(),
+            method: METHOD_SESSION_RUNS_CANCEL.to_owned(),
             params: Some(json!({
                 "sessionId": "session_1",
                 "runId": "run_1"
@@ -418,7 +418,7 @@ async fn dispatch_json_rpc_routes_prompts_active() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_PROMPTS_ACTIVE.to_owned(),
+            method: METHOD_SESSION_PROMPTS_ACTIVE.to_owned(),
             params: Some(json!({ "sessionId": "session_1" })),
         },
     )
@@ -437,7 +437,7 @@ async fn dispatch_json_rpc_routes_skills_list() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_SKILLS_LIST.to_owned(),
+            method: METHOD_SESSION_SKILLS_LIST.to_owned(),
             params: Some(json!({ "sessionId": "session_1" })),
         },
     )
@@ -456,7 +456,7 @@ async fn dispatch_json_rpc_routes_skills_active() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_SKILLS_ACTIVE.to_owned(),
+            method: METHOD_SESSION_SKILLS_ACTIVE.to_owned(),
             params: Some(json!({ "sessionId": "session_1" })),
         },
     )
@@ -475,7 +475,7 @@ async fn dispatch_json_rpc_routes_skills_activate() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_SKILLS_ACTIVATE.to_owned(),
+            method: METHOD_SESSION_SKILLS_ACTIVATE.to_owned(),
             params: Some(json!({
                 "sessionId": "session_1",
                 "skillId": "skill:one",
@@ -498,7 +498,7 @@ async fn dispatch_json_rpc_routes_skills_deactivate() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_SKILLS_DEACTIVATE.to_owned(),
+            method: METHOD_SESSION_SKILLS_DEACTIVATE.to_owned(),
             params: Some(json!({
                 "sessionId": "session_1",
                 "skillId": "skill:one"
@@ -682,7 +682,7 @@ async fn dispatch_json_rpc_routes_session_environment_credentials_bind() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_SESSION_ENVIRONMENT_CREDENTIALS_BIND.to_owned(),
+            method: METHOD_SESSION_ENVIRONMENTS_CREDENTIALS_BIND.to_owned(),
             params: Some(json!({
                 "sessionId": "session_1",
                 "envId": "test",
@@ -714,7 +714,7 @@ async fn dispatch_json_rpc_routes_session_environment_credentials_list() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_SESSION_ENVIRONMENT_CREDENTIALS_LIST.to_owned(),
+            method: METHOD_SESSION_ENVIRONMENTS_CREDENTIALS_LIST.to_owned(),
             params: Some(json!({
                 "sessionId": "session_1",
                 "envId": "test"
@@ -741,7 +741,7 @@ async fn dispatch_json_rpc_routes_session_environment_credentials_unbind() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_SESSION_ENVIRONMENT_CREDENTIALS_UNBIND.to_owned(),
+            method: METHOD_SESSION_ENVIRONMENTS_CREDENTIALS_UNBIND.to_owned(),
             params: Some(json!({
                 "sessionId": "session_1",
                 "envId": "test",
@@ -865,7 +865,7 @@ async fn dispatch_json_rpc_routes_environment_provider_register() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_ENVIRONMENT_PROVIDERS_REGISTER.to_owned(),
+            method: METHOD_ENVIRONMENTS_PROVIDERS_REGISTER.to_owned(),
             params: Some(json!({
                 "providerId": "bridge-local",
                 "providerKind": "bridge",
@@ -901,7 +901,7 @@ async fn dispatch_json_rpc_routes_environment_provider_heartbeat() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_ENVIRONMENT_PROVIDERS_HEARTBEAT.to_owned(),
+            method: METHOD_ENVIRONMENTS_PROVIDERS_HEARTBEAT.to_owned(),
             params: Some(json!({
                 "providerId": "bridge-local",
                 "observedTargets": [{
@@ -934,7 +934,7 @@ async fn dispatch_json_rpc_routes_environment_provider_unregister() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_ENVIRONMENT_PROVIDERS_UNREGISTER.to_owned(),
+            method: METHOD_ENVIRONMENTS_PROVIDERS_UNREGISTER.to_owned(),
             params: Some(json!({ "providerId": "bridge-local" })),
         },
     )
@@ -1033,7 +1033,7 @@ async fn dispatch_json_rpc_routes_run_start_with_config() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_RUN_START.to_owned(),
+            method: METHOD_SESSION_RUNS_START.to_owned(),
             params: Some(json!({
                 "sessionId": "session_1",
                 "source": {
@@ -1069,7 +1069,7 @@ async fn dispatch_json_rpc_routes_blob_put_many() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_BLOB_PUT_MANY.to_owned(),
+            method: METHOD_BLOBS_PUT.to_owned(),
             params: Some(json!({
                 "blobs": [
                     { "bytesBase64": "aGVsbG8=" },
@@ -1093,7 +1093,7 @@ async fn dispatch_json_rpc_routes_vfs_snapshot_commit() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_VFS_SNAPSHOT_COMMIT.to_owned(),
+            method: METHOD_VFS_SNAPSHOTS_COMMIT.to_owned(),
             params: Some(json!({
                 "manifest": {
                     "schema_version": "lightspeed.vfs.snapshot.v1",
@@ -1119,7 +1119,7 @@ async fn dispatch_json_rpc_routes_vfs_workspace_create() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_VFS_WORKSPACE_CREATE.to_owned(),
+            method: METHOD_VFS_WORKSPACES_CREATE.to_owned(),
             params: Some(json!({
                 "workspaceId": "workspace_1",
                 "snapshotRef": snapshot_ref
@@ -1141,7 +1141,7 @@ async fn dispatch_json_rpc_routes_vfs_workspace_read() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_VFS_WORKSPACE_READ.to_owned(),
+            method: METHOD_VFS_WORKSPACES_READ.to_owned(),
             params: Some(json!({ "workspaceId": "workspace_1" })),
         },
     )
@@ -1161,7 +1161,7 @@ async fn dispatch_json_rpc_routes_vfs_workspace_update() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_VFS_WORKSPACE_UPDATE.to_owned(),
+            method: METHOD_VFS_WORKSPACES_UPDATE.to_owned(),
             params: Some(json!({
                 "workspaceId": "workspace_1",
                 "expectedRevision": 4,
@@ -1185,7 +1185,7 @@ async fn dispatch_json_rpc_routes_vfs_workspace_update_without_expected_revision
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_VFS_WORKSPACE_UPDATE.to_owned(),
+            method: METHOD_VFS_WORKSPACES_UPDATE.to_owned(),
             params: Some(json!({
                 "workspaceId": "workspace_1",
                 "snapshotRef": snapshot_ref
@@ -1207,7 +1207,7 @@ async fn dispatch_json_rpc_routes_vfs_workspace_delete() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_VFS_WORKSPACE_DELETE.to_owned(),
+            method: METHOD_VFS_WORKSPACES_DELETE.to_owned(),
             params: Some(json!({ "workspaceId": "workspace_1" })),
         },
     )
@@ -1226,7 +1226,7 @@ async fn dispatch_json_rpc_routes_vfs_mount_put() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_VFS_MOUNT_PUT.to_owned(),
+            method: METHOD_SESSION_MOUNTS_PUT.to_owned(),
             params: Some(json!({
                 "sessionId": "session_1",
                 "mountPath": "/workspace",
@@ -1250,7 +1250,7 @@ async fn dispatch_json_rpc_routes_vfs_mount_delete() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_VFS_MOUNT_DELETE.to_owned(),
+            method: METHOD_SESSION_MOUNTS_DELETE.to_owned(),
             params: Some(json!({
                 "sessionId": "session_1",
                 "mountPath": "/workspace"
@@ -2174,26 +2174,16 @@ impl AgentApiService for TestService {
         ))
     }
 
-    async fn put_blob(
+    async fn put_blobs(
         &self,
         params: BlobPutParams,
     ) -> Result<AgentApiOutcome<BlobPutResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(BlobPutResponse {
-            blob_ref: format!("sha256:{}", "1".repeat(64)),
-            bytes: params.bytes_base64.len() as u64,
-        }))
-    }
-
-    async fn put_blobs(
-        &self,
-        params: BlobPutManyParams,
-    ) -> Result<AgentApiOutcome<BlobPutManyResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(BlobPutManyResponse {
             blobs: params
                 .blobs
                 .into_iter()
                 .enumerate()
-                .map(|(index, blob)| BlobPutResponse {
+                .map(|(index, blob)| BlobPutResult {
                     blob_ref: format!("sha256:{index:064x}"),
                     bytes: blob.bytes_base64.len() as u64,
                 })
@@ -2201,11 +2191,11 @@ impl AgentApiService for TestService {
         }))
     }
 
-    async fn get_blob(
+    async fn read_blob(
         &self,
-        params: BlobGetParams,
-    ) -> Result<AgentApiOutcome<BlobGetResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(BlobGetResponse {
+        params: BlobReadParams,
+    ) -> Result<AgentApiOutcome<BlobReadResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(BlobReadResponse {
             blob_ref: params.blob_ref,
             bytes_base64: "aGVsbG8=".to_owned(),
             bytes: 5,
@@ -2214,9 +2204,9 @@ impl AgentApiService for TestService {
 
     async fn has_blobs(
         &self,
-        params: BlobHasManyParams,
-    ) -> Result<AgentApiOutcome<BlobHasManyResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(BlobHasManyResponse {
+        params: BlobHasParams,
+    ) -> Result<AgentApiOutcome<BlobHasResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(BlobHasResponse {
             blobs: params
                 .blob_refs
                 .into_iter()

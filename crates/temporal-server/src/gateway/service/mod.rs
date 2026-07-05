@@ -29,7 +29,7 @@ use auth_api::{
     api_auth_provider_kind, auth_grant_import_draft, auth_grant_view, map_auth_error,
     parse_auth_grant_id, registry_auth_grant_status_for_filter,
 };
-use blobs::{get_blob, has_blobs, put_blob, put_blobs};
+use blobs::{has_blobs, put_blobs, read_blob};
 use environment_lifecycle::{parse_core_session_id, parse_registry_environment_id};
 use environment_providers::{map_environments_error, parse_environment_provider_id};
 use environments::{
@@ -81,12 +81,12 @@ use api::{
     AuthGrantReadResponse, AuthGrantRevokeParams, AuthGrantRevokeResponse,
     AuthProviderCreateParams, AuthProviderCreateResponse, AuthProviderDeleteParams,
     AuthProviderDeleteResponse, AuthProviderListParams, AuthProviderListResponse,
-    AuthProviderReadParams, AuthProviderReadResponse, BlobGetParams, BlobGetResponse, BlobHasItem,
-    BlobHasManyParams, BlobHasManyResponse, BlobPutManyParams, BlobPutManyResponse, BlobPutParams,
-    BlobPutResponse, ClientCapabilities, CompactionPolicyInput, ContextAppendParams,
-    ContextAppendResponse, ContextAppendResult, ContextAppendStatus, ContextCompactParams,
-    ContextCompactResponse, ContextConfigInput as ApiContextConfigInput, ContextConfigPatchInput,
-    ContextRemoveParams, ContextRemoveResponse, ContextRemoveResult, ContextRemoveStatus,
+    AuthProviderReadParams, AuthProviderReadResponse, BlobHasItem, BlobHasParams, BlobHasResponse,
+    BlobPutParams, BlobPutResponse, BlobPutResult, BlobReadParams, BlobReadResponse,
+    ClientCapabilities, CompactionPolicyInput, ContextAppendParams, ContextAppendResponse,
+    ContextAppendResult, ContextAppendStatus, ContextCompactParams, ContextCompactResponse,
+    ContextConfigInput as ApiContextConfigInput, ContextConfigPatchInput, ContextRemoveParams,
+    ContextRemoveResponse, ContextRemoveResult, ContextRemoveStatus,
     EnvironmentProviderCapabilitiesView, EnvironmentProviderHeartbeatParams,
     EnvironmentProviderHeartbeatResponse, EnvironmentProviderImplementationView,
     EnvironmentProviderKindView, EnvironmentProviderListParams, EnvironmentProviderListResponse,
@@ -213,7 +213,7 @@ const DEFAULT_OPERATION_TIMEOUT: Duration = Duration::from_secs(90);
 /// the cap are clamped, not rejected. The gateway HTTP request timeout must
 /// stay above this cap.
 const DEFAULT_EVENTS_WAIT_CAP: Duration = Duration::from_secs(30);
-/// Cap on `activationText` returned per `context/append` entry. The committed
+/// Cap on `activationText` returned per `session/context/append` entry. The committed
 /// context blob is authoritative; activation text only needs enough of the
 /// head for trigger matching.
 const ACTIVATION_TEXT_MAX_BYTES: usize = 4096;
@@ -1131,7 +1131,7 @@ impl AgentApiService for GatewayAgentApi {
     /// Idempotent on a client-supplied session id: when the session already
     /// exists, the existing session view is returned (any `config` in the
     /// retried request is ignored; session config is applied only at
-    /// creation). This keeps a retried `session/start` + `run/start` pair
+    /// creation). This keeps a retried `session/start` + `session/runs/start` pair
     /// safe end to end.
     async fn start_session(
         &self,
@@ -1511,12 +1511,12 @@ impl AgentApiService for GatewayAgentApi {
         })?;
         if params.entries.is_empty() {
             return Err(AgentApiError::invalid_request(
-                "context/append requires at least one entry",
+                "session/context/append requires at least one entry",
             ));
         }
         if params.entries.len() > MAX_CONTEXT_APPEND_ENTRIES {
             return Err(AgentApiError::invalid_request(format!(
-                "context/append accepts at most {MAX_CONTEXT_APPEND_ENTRIES} entries per call"
+                "session/context/append accepts at most {MAX_CONTEXT_APPEND_ENTRIES} entries per call"
             )));
         }
 
@@ -1666,12 +1666,12 @@ impl AgentApiService for GatewayAgentApi {
         })?;
         if params.keys.is_empty() {
             return Err(AgentApiError::invalid_request(
-                "context/remove requires at least one key",
+                "session/context/remove requires at least one key",
             ));
         }
         if params.keys.len() > MAX_CONTEXT_REMOVE_KEYS {
             return Err(AgentApiError::invalid_request(format!(
-                "context/remove accepts at most {MAX_CONTEXT_REMOVE_KEYS} keys per call"
+                "session/context/remove accepts at most {MAX_CONTEXT_REMOVE_KEYS} keys per call"
             )));
         }
         let mut keys = Vec::with_capacity(params.keys.len());
@@ -1848,7 +1848,7 @@ impl AgentApiService for GatewayAgentApi {
             RunStartSource::Context { keys } => {
                 if keys.is_empty() {
                     return Err(AgentApiError::invalid_request(
-                        "run/start source=context requires at least one key",
+                        "session/runs/start source=context requires at least one key",
                     ));
                 }
                 let mut parsed = Vec::with_capacity(keys.len());
@@ -2384,37 +2384,28 @@ impl AgentApiService for GatewayAgentApi {
             .map(AgentApiOutcome::new)
     }
 
-    async fn put_blob(
+    async fn put_blobs(
         &self,
         params: BlobPutParams,
     ) -> Result<AgentApiOutcome<BlobPutResponse>, AgentApiError> {
-        put_blob(self.store.as_ref(), params)
-            .await
-            .map(AgentApiOutcome::new)
-    }
-
-    async fn put_blobs(
-        &self,
-        params: BlobPutManyParams,
-    ) -> Result<AgentApiOutcome<BlobPutManyResponse>, AgentApiError> {
         put_blobs(self.store.as_ref(), params)
             .await
             .map(AgentApiOutcome::new)
     }
 
-    async fn get_blob(
+    async fn read_blob(
         &self,
-        params: BlobGetParams,
-    ) -> Result<AgentApiOutcome<BlobGetResponse>, AgentApiError> {
-        get_blob(self.store.as_ref(), params)
+        params: BlobReadParams,
+    ) -> Result<AgentApiOutcome<BlobReadResponse>, AgentApiError> {
+        read_blob(self.store.as_ref(), params)
             .await
             .map(AgentApiOutcome::new)
     }
 
     async fn has_blobs(
         &self,
-        params: BlobHasManyParams,
-    ) -> Result<AgentApiOutcome<BlobHasManyResponse>, AgentApiError> {
+        params: BlobHasParams,
+    ) -> Result<AgentApiOutcome<BlobHasResponse>, AgentApiError> {
         has_blobs(self.store.as_ref(), params)
             .await
             .map(AgentApiOutcome::new)
@@ -2428,7 +2419,7 @@ impl AgentApiService for GatewayAgentApi {
         let snapshot_ref = parse_blob_ref(&response.snapshot_ref)?;
         self.record_vfs_snapshot(
             snapshot_ref,
-            VfsSnapshotSource::new("api_commit").with_subject("vfs/snapshot/commit"),
+            VfsSnapshotSource::new("api_commit").with_subject("vfs/snapshots/commit"),
             None,
         )
         .await?;

@@ -68,7 +68,7 @@ impl GatewayAgentApi {
         };
         self.record_vfs_snapshot_if_missing(
             snapshot_ref.clone(),
-            VfsSnapshotSource::new("api_snapshot").with_subject("vfs/workspace/create"),
+            VfsSnapshotSource::new("api_snapshot").with_subject("vfs/workspaces/create"),
             None,
         )
         .await?;
@@ -123,7 +123,7 @@ impl GatewayAgentApi {
             .map_err(map_vfs_read_error)?;
         self.record_vfs_snapshot_if_missing(
             snapshot_ref.clone(),
-            VfsSnapshotSource::new("api_workspace_update").with_subject("vfs/workspace/update"),
+            VfsSnapshotSource::new("api_workspace_update").with_subject("vfs/workspaces/update"),
             None,
         )
         .await?;
@@ -307,7 +307,7 @@ impl GatewayAgentApi {
                     .map_err(map_vfs_read_error)?;
                 self.record_vfs_snapshot_if_missing(
                     snapshot_ref.clone(),
-                    VfsSnapshotSource::new("api_mount").with_subject("vfs/mount/put"),
+                    VfsSnapshotSource::new("api_mount").with_subject("session/mounts/put"),
                     None,
                 )
                 .await?;

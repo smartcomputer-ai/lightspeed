@@ -213,7 +213,7 @@ pub(super) async fn context_entry_input_from_api(
 }
 
 fn empty_context_append_item_error() -> AgentApiError {
-    AgentApiError::invalid_request("context/append items must contain non-empty text")
+    AgentApiError::invalid_request("session/context/append items must contain non-empty text")
 }
 
 pub(super) fn user_message_input(content_ref: BlobRef) -> ContextEntryInput {
@@ -230,7 +230,9 @@ pub(super) fn user_message_input(content_ref: BlobRef) -> ContextEntryInput {
     }
 }
 pub(super) fn empty_run_input_error() -> AgentApiError {
-    AgentApiError::invalid_request("run/start input must contain at least one non-empty item")
+    AgentApiError::invalid_request(
+        "session/runs/start input must contain at least one non-empty item",
+    )
 }
 
 fn normalize_audio_mime(mime: &str) -> String {

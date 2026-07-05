@@ -108,21 +108,21 @@ export type AgentNotification =
       };
     }
   | {
-      method: "run/started";
+      method: "session/runs/started";
       params: {
         run: RunView;
         sessionId: string;
       };
     }
   | {
-      method: "run/completed";
+      method: "session/runs/completed";
       params: {
         run: RunView;
         sessionId: string;
       };
     }
   | {
-      method: "item/completed";
+      method: "session/items/completed";
       params: {
         item: SessionItemView;
         runId: string;
@@ -1702,34 +1702,17 @@ export interface AuthProviderReadResponse {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfBlobGetResponse".
+ * via the `definition` "AgentApiOutcomeOfBlobHasResponse".
  */
-export interface AgentApiOutcomeOfBlobGetResponse {
+export interface AgentApiOutcomeOfBlobHasResponse {
   notifications?: AgentNotification[];
-  result: BlobGetResponse;
+  result: BlobHasResponse;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BlobGetResponse".
+ * via the `definition` "BlobHasResponse".
  */
-export interface BlobGetResponse {
-  blobRef: string;
-  bytes: number;
-  bytesBase64: string;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfBlobHasManyResponse".
- */
-export interface AgentApiOutcomeOfBlobHasManyResponse {
-  notifications?: AgentNotification[];
-  result: BlobHasManyResponse;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BlobHasManyResponse".
- */
-export interface BlobHasManyResponse {
+export interface BlobHasResponse {
   blobs?: BlobHasItem[];
 }
 /**
@@ -1742,34 +1725,43 @@ export interface BlobHasItem {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfBlobPutManyResponse".
+ * via the `definition` "AgentApiOutcomeOfBlobPutResponse".
  */
-export interface AgentApiOutcomeOfBlobPutManyResponse {
+export interface AgentApiOutcomeOfBlobPutResponse {
   notifications?: AgentNotification[];
-  result: BlobPutManyResponse;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BlobPutManyResponse".
- */
-export interface BlobPutManyResponse {
-  blobs?: BlobPutResponse[];
+  result: BlobPutResponse;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "BlobPutResponse".
  */
 export interface BlobPutResponse {
+  blobs?: BlobPutResult[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "BlobPutResult".
+ */
+export interface BlobPutResult {
   blobRef: string;
   bytes: number;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfBlobPutResponse".
+ * via the `definition` "AgentApiOutcomeOfBlobReadResponse".
  */
-export interface AgentApiOutcomeOfBlobPutResponse {
+export interface AgentApiOutcomeOfBlobReadResponse {
   notifications?: AgentNotification[];
-  result: BlobPutResponse;
+  result: BlobReadResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "BlobReadResponse".
+ */
+export interface BlobReadResponse {
+  blobRef: string;
+  bytes: number;
+  bytesBase64: string;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -3600,31 +3592,34 @@ export interface AuthProviderReadParams {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BlobGetParams".
+ * via the `definition` "BlobHasParams".
  */
-export interface BlobGetParams {
-  blobRef: string;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BlobHasManyParams".
- */
-export interface BlobHasManyParams {
+export interface BlobHasParams {
   blobRefs?: string[];
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BlobPutManyParams".
+ * via the `definition` "BlobPutItem".
  */
-export interface BlobPutManyParams {
-  blobs?: BlobPutParams[];
+export interface BlobPutItem {
+  bytesBase64: string;
 }
 /**
+ * `blobs/put` is batch-native: pass one item to store a single blob. Results
+ * come back in request order.
+ *
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "BlobPutParams".
  */
 export interface BlobPutParams {
-  bytesBase64: string;
+  blobs?: BlobPutItem[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "BlobReadParams".
+ */
+export interface BlobReadParams {
+  blobRef: string;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -4007,7 +4002,7 @@ export interface RunStartParams {
   source: RunStartSource;
   /**
    * Client-supplied idempotency key, unique per session. Retrying
-   * `run/start` with the same submission id and the same source/config
+   * `session/runs/start` with the same submission id and the same source/config
    * returns the original run instead of starting a second one; reusing a
    * submission id with different source or config is rejected.
    */

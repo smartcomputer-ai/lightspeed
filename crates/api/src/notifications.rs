@@ -13,19 +13,19 @@ pub enum AgentNotification {
     },
     #[serde(rename = "session/event")]
     SessionEvent { event: SessionEventView },
-    #[serde(rename = "run/started")]
+    #[serde(rename = "session/runs/started")]
     RunStarted {
         #[serde(rename = "sessionId")]
         session_id: SessionId,
         run: RunView,
     },
-    #[serde(rename = "run/completed")]
+    #[serde(rename = "session/runs/completed")]
     RunCompleted {
         #[serde(rename = "sessionId")]
         session_id: SessionId,
         run: RunView,
     },
-    #[serde(rename = "item/completed")]
+    #[serde(rename = "session/items/completed")]
     ItemCompleted {
         #[serde(rename = "sessionId")]
         session_id: SessionId,
@@ -47,9 +47,9 @@ impl AgentNotification {
             Self::SessionStarted { .. } => NOTIFY_SESSION_STARTED,
             Self::SessionStatusChanged { .. } => NOTIFY_SESSION_STATUS_CHANGED,
             Self::SessionEvent { .. } => NOTIFY_SESSION_EVENT,
-            Self::RunStarted { .. } => NOTIFY_RUN_STARTED,
-            Self::RunCompleted { .. } => NOTIFY_RUN_COMPLETED,
-            Self::ItemCompleted { .. } => NOTIFY_ITEM_COMPLETED,
+            Self::RunStarted { .. } => NOTIFY_SESSION_RUNS_STARTED,
+            Self::RunCompleted { .. } => NOTIFY_SESSION_RUNS_COMPLETED,
+            Self::ItemCompleted { .. } => NOTIFY_SESSION_ITEMS_COMPLETED,
             Self::Error { .. } => NOTIFY_ERROR,
         }
     }

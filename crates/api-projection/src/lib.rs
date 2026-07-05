@@ -913,19 +913,19 @@ pub fn input_text(input: &[InputItem]) -> Result<String, AgentApiError> {
             }
             InputItem::TextRef { .. } => {
                 return Err(AgentApiError::invalid_request(
-                    "run/start textRef input requires blob store resolution",
+                    "session/runs/start textRef input requires blob store resolution",
                 ));
             }
             InputItem::Media { .. } => {
                 return Err(AgentApiError::invalid_request(
-                    "run/start media input requires blob store resolution",
+                    "session/runs/start media input requires blob store resolution",
                 ));
             }
         }
     }
     if parts.is_empty() {
         return Err(AgentApiError::invalid_request(
-            "run/start input must contain at least one non-empty text item",
+            "session/runs/start input must contain at least one non-empty text item",
         ));
     }
     Ok(parts.join("\n\n"))

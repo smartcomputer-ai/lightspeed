@@ -36,13 +36,13 @@ struct SnapshotArgs {
     /// Emit the snapshot summary as JSON.
     #[arg(long)]
     json: bool,
-    /// Max raw bytes per blob/put_many request.
+    /// Max raw bytes per blobs/put request.
     #[arg(long = "put-batch-bytes", default_value_t = DEFAULT_PUT_MANY_MAX_BATCH_BYTES)]
     put_batch_bytes: u64,
-    /// Max blobs per blob/put_many request.
+    /// Max blobs per blobs/put request.
     #[arg(long = "put-batch-files", default_value_t = DEFAULT_PUT_MANY_MAX_BATCH_FILES)]
     put_batch_files: usize,
-    /// Max refs per blob/has_many request.
+    /// Max refs per blobs/has request.
     #[arg(long = "has-batch-refs", default_value_t = DEFAULT_HAS_MANY_MAX_REFS)]
     has_batch_refs: usize,
     /// Max file count in the snapshot.

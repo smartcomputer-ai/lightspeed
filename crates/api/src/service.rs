@@ -237,25 +237,20 @@ pub trait AgentApiService: Send + Sync {
         params: EnvironmentProviderTargetListParams,
     ) -> Result<AgentApiOutcome<EnvironmentProviderTargetListResponse>, AgentApiError>;
 
-    async fn put_blob(
+    async fn put_blobs(
         &self,
         params: BlobPutParams,
     ) -> Result<AgentApiOutcome<BlobPutResponse>, AgentApiError>;
 
-    async fn put_blobs(
+    async fn read_blob(
         &self,
-        params: BlobPutManyParams,
-    ) -> Result<AgentApiOutcome<BlobPutManyResponse>, AgentApiError>;
-
-    async fn get_blob(
-        &self,
-        params: BlobGetParams,
-    ) -> Result<AgentApiOutcome<BlobGetResponse>, AgentApiError>;
+        params: BlobReadParams,
+    ) -> Result<AgentApiOutcome<BlobReadResponse>, AgentApiError>;
 
     async fn has_blobs(
         &self,
-        params: BlobHasManyParams,
-    ) -> Result<AgentApiOutcome<BlobHasManyResponse>, AgentApiError>;
+        params: BlobHasParams,
+    ) -> Result<AgentApiOutcome<BlobHasResponse>, AgentApiError>;
 
     async fn commit_vfs_snapshot(
         &self,

@@ -172,7 +172,7 @@ impl GatewayAgentApi {
 
     /// Waits for exact context entries to commit; any per-entry admission
     /// failure is escalated to a call-level typed error. Built on the same
-    /// wait loop as `context/append`.
+    /// wait loop as `session/context/append`.
     pub(super) async fn wait_for_context_entries_applied(
         &self,
         session_id: &SessionId,

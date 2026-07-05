@@ -3,8 +3,8 @@ mod support;
 use std::sync::{Arc, Mutex};
 
 use api::{
-    AgentApiService, BlobPutParams, InputItem, MediaKind, RunStartParams, RunStartSource,
-    RunStatus, SessionConfigInput, SessionItemView, SessionStartParams,
+    AgentApiService, BlobPutItem, BlobPutParams, InputItem, MediaKind, RunStartParams,
+    RunStartSource, RunStatus, SessionConfigInput, SessionItemView, SessionStartParams,
 };
 use api_projection::model_to_api;
 use async_trait::async_trait;
@@ -103,8 +103,10 @@ async fn run_audio_preprocess_live_client(
     .await?;
 
     let audio = api
-        .put_blob(BlobPutParams {
-            bytes_base64: BASE64.encode(AUDIO_BYTES),
+        .put_blobs(BlobPutParams {
+            blobs: vec![BlobPutItem {
+                bytes_base64: BASE64.encode(AUDIO_BYTES),
+            }],
         })
         .await?;
     let started = api
@@ -113,7 +115,7 @@ async fn run_audio_preprocess_live_client(
             session_id: session_id.as_str().to_owned(),
             source: RunStartSource::Input {
                 items: vec![InputItem::Media {
-                    blob_ref: audio.result.blob_ref,
+                    blob_ref: audio.result.blobs[0].blob_ref.clone(),
                     mime: "audio/ogg".to_owned(),
                     kind: MediaKind::Audio,
                     name: Some("voice-note.ogg".to_owned()),
@@ -193,8 +195,10 @@ async fn run_transcodable_audio_preprocess_live_client(
     .await?;
 
     let audio = api
-        .put_blob(BlobPutParams {
-            bytes_base64: BASE64.encode(TRANSCODABLE_AUDIO_BYTES),
+        .put_blobs(BlobPutParams {
+            blobs: vec![BlobPutItem {
+                bytes_base64: BASE64.encode(TRANSCODABLE_AUDIO_BYTES),
+            }],
         })
         .await?;
     let started = api
@@ -203,7 +207,7 @@ async fn run_transcodable_audio_preprocess_live_client(
             session_id: session_id.as_str().to_owned(),
             source: RunStartSource::Input {
                 items: vec![InputItem::Media {
-                    blob_ref: audio.result.blob_ref,
+                    blob_ref: audio.result.blobs[0].blob_ref.clone(),
                     mime: "audio/x-aac".to_owned(),
                     kind: MediaKind::Audio,
                     name: Some("voice-note.aac".to_owned()),
