@@ -15,7 +15,7 @@ pub(crate) fn new_session_id() -> String {
     format!("session_{millis}_{next}")
 }
 
-/// Fresh `run/start` idempotency key; a retried request reuses the same key.
+/// Fresh `session/runs/start` idempotency key; a retried request reuses the same key.
 pub(crate) fn new_submission_id() -> String {
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)

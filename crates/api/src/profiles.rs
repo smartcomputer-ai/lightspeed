@@ -320,6 +320,22 @@ pub struct ProfileListResponse {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+pub struct ProfilePutParams {
+    pub profile: AgentProfileInput,
+    /// Checked only when the profile already exists; absent replaces (or
+    /// creates) unconditionally.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_revision: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfilePutResponse {
+    pub profile: AgentProfile,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct ProfileUpdateParams {
     pub profile_id: ProfileId,
     #[serde(default, skip_serializing_if = "Option::is_none")]

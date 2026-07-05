@@ -7,32 +7,33 @@ import type * as Api from "./types.js";
 export const METHODS = [
   "initialize",
   "session/start",
-  "profiles/create",
-  "profiles/read",
-  "profiles/list",
-  "profiles/update",
-  "profiles/delete",
-  "profiles/apply",
-  "session/update",
-  "session/tools/update",
   "session/read",
-  "session/events/read",
+  "session/list",
+  "session/update",
+  "session/rename",
   "session/close",
-  "context/compact",
-  "context/append",
-  "context/remove",
-  "outbox/read",
-  "outbox/ack",
-  "run/start",
-  "run/cancel",
-  "prompts/active",
-  "skills/list",
-  "skills/active",
-  "skills/activate",
-  "skills/deactivate",
-  "session/environments/list",
-  "session/environments/read",
+  "session/events/read",
+  "session/tools/update",
+  "session/context/append",
+  "session/context/remove",
+  "session/context/compact",
+  "session/runs/start",
+  "session/runs/cancel",
+  "session/prompts/active",
+  "session/skills/list",
+  "session/skills/active",
+  "session/skills/activate",
+  "session/skills/deactivate",
+  "session/profiles/apply",
+  "session/mounts/put",
+  "session/mounts/list",
+  "session/mounts/delete",
+  "session/mcp/link",
+  "session/mcp/unlink",
+  "session/mcp/list",
   "session/environments/create",
+  "session/environments/read",
+  "session/environments/list",
   "session/environments/attach",
   "session/environments/activate",
   "session/environments/deactivate",
@@ -41,59 +42,66 @@ export const METHODS = [
   "session/environments/credentials/list",
   "session/environments/credentials/unbind",
   "session/jobs/create",
-  "session/jobs/list",
   "session/jobs/read",
+  "session/jobs/list",
   "session/jobs/cancel",
-  "environmentProviders/register",
-  "environmentProviders/heartbeat",
-  "environmentProviders/unregister",
-  "environmentProviders/list",
-  "environmentProviders/targets/list",
-  "blob/put",
-  "blob/put_many",
-  "blob/get",
-  "blob/has_many",
-  "vfs/snapshot/commit",
-  "vfs/snapshot/read",
-  "vfs/workspace/create",
-  "vfs/workspace/read",
-  "vfs/workspace/update",
-  "vfs/workspace/delete",
-  "vfs/mount/put",
-  "vfs/mount/delete",
-  "vfs/mount/list",
+  "profiles/create",
+  "profiles/read",
+  "profiles/list",
+  "profiles/put",
+  "profiles/update",
+  "profiles/delete",
+  "blobs/put",
+  "blobs/read",
+  "blobs/has",
+  "vfs/snapshots/commit",
+  "vfs/snapshots/read",
+  "vfs/workspaces/create",
+  "vfs/workspaces/read",
+  "vfs/workspaces/list",
+  "vfs/workspaces/update",
+  "vfs/workspaces/delete",
   "mcp/servers/create",
-  "mcp/servers/list",
   "mcp/servers/read",
+  "mcp/servers/list",
   "mcp/servers/delete",
-  "session/mcp/link",
-  "session/mcp/unlink",
-  "session/mcp/list",
+  "environments/providers/register",
+  "environments/providers/heartbeat",
+  "environments/providers/unregister",
+  "environments/providers/list",
+  "environments/providers/targets/list",
   "auth/grants/import",
-  "auth/grants/list",
   "auth/grants/read",
+  "auth/grants/list",
   "auth/grants/revoke",
   "auth/clients/create",
-  "auth/clients/list",
   "auth/clients/read",
+  "auth/clients/list",
   "auth/clients/delete",
   "auth/flows/start",
-  "auth/flows/status",
+  "auth/flows/read",
   "auth/providers/create",
-  "auth/providers/list",
   "auth/providers/read",
+  "auth/providers/list",
   "auth/providers/delete",
   "auth/github/installations/list",
   "auth/github/installations/grant",
+  "outbox/read",
+  "outbox/ack",
+  "operator/universes/create",
+  "operator/universes/list",
+  "operator/universes/read",
+  "operator/universes/delete",
+  "operator/outbox/read",
 ] as const;
 
 export const NOTIFICATIONS = [
   "session/started",
   "session/status/changed",
   "session/event",
-  "run/started",
-  "run/completed",
-  "item/completed",
+  "session/runs/started",
+  "session/runs/completed",
+  "session/items/completed",
   "error",
 ] as const;
 
@@ -109,109 +117,113 @@ export interface MethodMap {
     params: Api.SessionStartParams;
     result: Api.AgentApiOutcomeOfSessionStartResponse;
   };
-  "profiles/create": {
-    params: Api.ProfileCreateParams;
-    result: Api.AgentApiOutcomeOfProfileCreateResponse;
+  "session/read": {
+    params: Api.SessionReadParams;
+    result: Api.AgentApiOutcomeOfSessionReadResponse;
   };
-  "profiles/read": {
-    params: Api.ProfileReadParams;
-    result: Api.AgentApiOutcomeOfProfileReadResponse;
-  };
-  "profiles/list": {
-    params: Api.ProfileListParams;
-    result: Api.AgentApiOutcomeOfProfileListResponse;
-  };
-  "profiles/update": {
-    params: Api.ProfileUpdateParams;
-    result: Api.AgentApiOutcomeOfProfileUpdateResponse;
-  };
-  "profiles/delete": {
-    params: Api.ProfileDeleteParams;
-    result: Api.AgentApiOutcomeOfProfileDeleteResponse;
-  };
-  "profiles/apply": {
-    params: Api.ProfileApplyParams;
-    result: Api.AgentApiOutcomeOfProfileApplyResponse;
+  "session/list": {
+    params: Api.SessionListParams;
+    result: Api.AgentApiOutcomeOfSessionListResponse;
   };
   "session/update": {
     params: Api.SessionUpdateParams;
     result: Api.AgentApiOutcomeOfSessionUpdateResponse;
   };
-  "session/tools/update": {
-    params: Api.SessionToolsUpdateParams;
-    result: Api.AgentApiOutcomeOfSessionToolsUpdateResponse;
-  };
-  "session/read": {
-    params: Api.SessionReadParams;
-    result: Api.AgentApiOutcomeOfSessionReadResponse;
-  };
-  "session/events/read": {
-    params: Api.SessionEventsReadParams;
-    result: Api.AgentApiOutcomeOfSessionEventsReadResponse;
+  "session/rename": {
+    params: Api.SessionRenameParams;
+    result: Api.AgentApiOutcomeOfSessionRenameResponse;
   };
   "session/close": {
     params: Api.SessionCloseParams;
     result: Api.AgentApiOutcomeOfSessionCloseResponse;
   };
-  "context/compact": {
-    params: Api.ContextCompactParams;
-    result: Api.AgentApiOutcomeOfContextCompactResponse;
+  "session/events/read": {
+    params: Api.SessionEventsReadParams;
+    result: Api.AgentApiOutcomeOfSessionEventsReadResponse;
   };
-  "context/append": {
+  "session/tools/update": {
+    params: Api.SessionToolsUpdateParams;
+    result: Api.AgentApiOutcomeOfSessionToolsUpdateResponse;
+  };
+  "session/context/append": {
     params: Api.ContextAppendParams;
     result: Api.AgentApiOutcomeOfContextAppendResponse;
   };
-  "context/remove": {
+  "session/context/remove": {
     params: Api.ContextRemoveParams;
     result: Api.AgentApiOutcomeOfContextRemoveResponse;
   };
-  "outbox/read": {
-    params: Api.OutboxReadParams;
-    result: Api.AgentApiOutcomeOfOutboxReadResponse;
+  "session/context/compact": {
+    params: Api.ContextCompactParams;
+    result: Api.AgentApiOutcomeOfContextCompactResponse;
   };
-  "outbox/ack": {
-    params: Api.OutboxAckParams;
-    result: Api.AgentApiOutcomeOfOutboxAckResponse;
-  };
-  "run/start": {
+  "session/runs/start": {
     params: Api.RunStartParams;
     result: Api.AgentApiOutcomeOfRunStartResponse;
   };
-  "run/cancel": {
+  "session/runs/cancel": {
     params: Api.RunCancelParams;
     result: Api.AgentApiOutcomeOfRunCancelResponse;
   };
-  "prompts/active": {
+  "session/prompts/active": {
     params: Api.PromptsActiveParams;
     result: Api.AgentApiOutcomeOfPromptsActiveResponse;
   };
-  "skills/list": {
+  "session/skills/list": {
     params: Api.SkillListParams;
     result: Api.AgentApiOutcomeOfSkillListResponse;
   };
-  "skills/active": {
+  "session/skills/active": {
     params: Api.SkillActiveParams;
     result: Api.AgentApiOutcomeOfSkillActiveResponse;
   };
-  "skills/activate": {
+  "session/skills/activate": {
     params: Api.SkillActivateParams;
     result: Api.AgentApiOutcomeOfSkillActivateResponse;
   };
-  "skills/deactivate": {
+  "session/skills/deactivate": {
     params: Api.SkillDeactivateParams;
     result: Api.AgentApiOutcomeOfSkillDeactivateResponse;
   };
-  "session/environments/list": {
-    params: Api.SessionEnvironmentListParams;
-    result: Api.AgentApiOutcomeOfSessionEnvironmentListResponse;
+  "session/profiles/apply": {
+    params: Api.ProfileApplyParams;
+    result: Api.AgentApiOutcomeOfProfileApplyResponse;
+  };
+  "session/mounts/put": {
+    params: Api.VfsMountPutParams;
+    result: Api.AgentApiOutcomeOfVfsMountPutResponse;
+  };
+  "session/mounts/list": {
+    params: Api.VfsMountListParams;
+    result: Api.AgentApiOutcomeOfVfsMountListResponse;
+  };
+  "session/mounts/delete": {
+    params: Api.VfsMountDeleteParams;
+    result: Api.AgentApiOutcomeOfVfsMountDeleteResponse;
+  };
+  "session/mcp/link": {
+    params: Api.SessionMcpLinkParams;
+    result: Api.AgentApiOutcomeOfSessionMcpLinkResponse;
+  };
+  "session/mcp/unlink": {
+    params: Api.SessionMcpUnlinkParams;
+    result: Api.AgentApiOutcomeOfSessionMcpUnlinkResponse;
+  };
+  "session/mcp/list": {
+    params: Api.SessionMcpListParams;
+    result: Api.AgentApiOutcomeOfSessionMcpListResponse;
+  };
+  "session/environments/create": {
+    params: Api.SessionEnvironmentCreateParams;
+    result: Api.AgentApiOutcomeOfSessionEnvironmentCreateResponse;
   };
   "session/environments/read": {
     params: Api.SessionEnvironmentReadParams;
     result: Api.AgentApiOutcomeOfSessionEnvironmentReadResponse;
   };
-  "session/environments/create": {
-    params: Api.SessionEnvironmentCreateParams;
-    result: Api.AgentApiOutcomeOfSessionEnvironmentCreateResponse;
+  "session/environments/list": {
+    params: Api.SessionEnvironmentListParams;
+    result: Api.AgentApiOutcomeOfSessionEnvironmentListResponse;
   };
   "session/environments/attach": {
     params: Api.SessionEnvironmentAttachParams;
@@ -245,129 +257,129 @@ export interface MethodMap {
     params: Api.SessionJobCreateParams;
     result: Api.AgentApiOutcomeOfSessionJobCreateResponse;
   };
-  "session/jobs/list": {
-    params: Api.SessionJobListParams;
-    result: Api.AgentApiOutcomeOfSessionJobListResponse;
-  };
   "session/jobs/read": {
     params: Api.SessionJobReadParams;
     result: Api.AgentApiOutcomeOfSessionJobReadResponse;
+  };
+  "session/jobs/list": {
+    params: Api.SessionJobListParams;
+    result: Api.AgentApiOutcomeOfSessionJobListResponse;
   };
   "session/jobs/cancel": {
     params: Api.SessionJobCancelParams;
     result: Api.AgentApiOutcomeOfSessionJobCancelResponse;
   };
-  "environmentProviders/register": {
-    params: Api.EnvironmentProviderRegisterParams;
-    result: Api.AgentApiOutcomeOfEnvironmentProviderRegisterResponse;
+  "profiles/create": {
+    params: Api.ProfileCreateParams;
+    result: Api.AgentApiOutcomeOfProfileCreateResponse;
   };
-  "environmentProviders/heartbeat": {
-    params: Api.EnvironmentProviderHeartbeatParams;
-    result: Api.AgentApiOutcomeOfEnvironmentProviderHeartbeatResponse;
+  "profiles/read": {
+    params: Api.ProfileReadParams;
+    result: Api.AgentApiOutcomeOfProfileReadResponse;
   };
-  "environmentProviders/unregister": {
-    params: Api.EnvironmentProviderUnregisterParams;
-    result: Api.AgentApiOutcomeOfEnvironmentProviderUnregisterResponse;
+  "profiles/list": {
+    params: Api.ProfileListParams;
+    result: Api.AgentApiOutcomeOfProfileListResponse;
   };
-  "environmentProviders/list": {
-    params: Api.EnvironmentProviderListParams;
-    result: Api.AgentApiOutcomeOfEnvironmentProviderListResponse;
+  "profiles/put": {
+    params: Api.ProfilePutParams;
+    result: Api.AgentApiOutcomeOfProfilePutResponse;
   };
-  "environmentProviders/targets/list": {
-    params: Api.EnvironmentProviderTargetListParams;
-    result: Api.AgentApiOutcomeOfEnvironmentProviderTargetListResponse;
+  "profiles/update": {
+    params: Api.ProfileUpdateParams;
+    result: Api.AgentApiOutcomeOfProfileUpdateResponse;
   };
-  "blob/put": {
+  "profiles/delete": {
+    params: Api.ProfileDeleteParams;
+    result: Api.AgentApiOutcomeOfProfileDeleteResponse;
+  };
+  "blobs/put": {
     params: Api.BlobPutParams;
     result: Api.AgentApiOutcomeOfBlobPutResponse;
   };
-  "blob/put_many": {
-    params: Api.BlobPutManyParams;
-    result: Api.AgentApiOutcomeOfBlobPutManyResponse;
+  "blobs/read": {
+    params: Api.BlobReadParams;
+    result: Api.AgentApiOutcomeOfBlobReadResponse;
   };
-  "blob/get": {
-    params: Api.BlobGetParams;
-    result: Api.AgentApiOutcomeOfBlobGetResponse;
+  "blobs/has": {
+    params: Api.BlobHasParams;
+    result: Api.AgentApiOutcomeOfBlobHasResponse;
   };
-  "blob/has_many": {
-    params: Api.BlobHasManyParams;
-    result: Api.AgentApiOutcomeOfBlobHasManyResponse;
-  };
-  "vfs/snapshot/commit": {
+  "vfs/snapshots/commit": {
     params: Api.VfsSnapshotCommitParams;
     result: Api.AgentApiOutcomeOfVfsSnapshotCommitResponse;
   };
-  "vfs/snapshot/read": {
+  "vfs/snapshots/read": {
     params: Api.VfsSnapshotReadParams;
     result: Api.AgentApiOutcomeOfVfsSnapshotReadResponse;
   };
-  "vfs/workspace/create": {
+  "vfs/workspaces/create": {
     params: Api.VfsWorkspaceCreateParams;
     result: Api.AgentApiOutcomeOfVfsWorkspaceCreateResponse;
   };
-  "vfs/workspace/read": {
+  "vfs/workspaces/read": {
     params: Api.VfsWorkspaceReadParams;
     result: Api.AgentApiOutcomeOfVfsWorkspaceReadResponse;
   };
-  "vfs/workspace/update": {
+  "vfs/workspaces/list": {
+    params: Api.VfsWorkspaceListParams;
+    result: Api.AgentApiOutcomeOfVfsWorkspaceListResponse;
+  };
+  "vfs/workspaces/update": {
     params: Api.VfsWorkspaceUpdateParams;
     result: Api.AgentApiOutcomeOfVfsWorkspaceUpdateResponse;
   };
-  "vfs/workspace/delete": {
+  "vfs/workspaces/delete": {
     params: Api.VfsWorkspaceDeleteParams;
     result: Api.AgentApiOutcomeOfVfsWorkspaceDeleteResponse;
-  };
-  "vfs/mount/put": {
-    params: Api.VfsMountPutParams;
-    result: Api.AgentApiOutcomeOfVfsMountPutResponse;
-  };
-  "vfs/mount/delete": {
-    params: Api.VfsMountDeleteParams;
-    result: Api.AgentApiOutcomeOfVfsMountDeleteResponse;
-  };
-  "vfs/mount/list": {
-    params: Api.VfsMountListParams;
-    result: Api.AgentApiOutcomeOfVfsMountListResponse;
   };
   "mcp/servers/create": {
     params: Api.McpServerCreateParams;
     result: Api.AgentApiOutcomeOfMcpServerCreateResponse;
   };
-  "mcp/servers/list": {
-    params: Api.McpServerListParams;
-    result: Api.AgentApiOutcomeOfMcpServerListResponse;
-  };
   "mcp/servers/read": {
     params: Api.McpServerReadParams;
     result: Api.AgentApiOutcomeOfMcpServerReadResponse;
+  };
+  "mcp/servers/list": {
+    params: Api.McpServerListParams;
+    result: Api.AgentApiOutcomeOfMcpServerListResponse;
   };
   "mcp/servers/delete": {
     params: Api.McpServerDeleteParams;
     result: Api.AgentApiOutcomeOfMcpServerDeleteResponse;
   };
-  "session/mcp/link": {
-    params: Api.SessionMcpLinkParams;
-    result: Api.AgentApiOutcomeOfSessionMcpLinkResponse;
+  "environments/providers/register": {
+    params: Api.EnvironmentProviderRegisterParams;
+    result: Api.AgentApiOutcomeOfEnvironmentProviderRegisterResponse;
   };
-  "session/mcp/unlink": {
-    params: Api.SessionMcpUnlinkParams;
-    result: Api.AgentApiOutcomeOfSessionMcpUnlinkResponse;
+  "environments/providers/heartbeat": {
+    params: Api.EnvironmentProviderHeartbeatParams;
+    result: Api.AgentApiOutcomeOfEnvironmentProviderHeartbeatResponse;
   };
-  "session/mcp/list": {
-    params: Api.SessionMcpListParams;
-    result: Api.AgentApiOutcomeOfSessionMcpListResponse;
+  "environments/providers/unregister": {
+    params: Api.EnvironmentProviderUnregisterParams;
+    result: Api.AgentApiOutcomeOfEnvironmentProviderUnregisterResponse;
+  };
+  "environments/providers/list": {
+    params: Api.EnvironmentProviderListParams;
+    result: Api.AgentApiOutcomeOfEnvironmentProviderListResponse;
+  };
+  "environments/providers/targets/list": {
+    params: Api.EnvironmentProviderTargetListParams;
+    result: Api.AgentApiOutcomeOfEnvironmentProviderTargetListResponse;
   };
   "auth/grants/import": {
     params: Api.AuthGrantImportParams;
     result: Api.AgentApiOutcomeOfAuthGrantImportResponse;
   };
-  "auth/grants/list": {
-    params: Api.AuthGrantListParams;
-    result: Api.AgentApiOutcomeOfAuthGrantListResponse;
-  };
   "auth/grants/read": {
     params: Api.AuthGrantReadParams;
     result: Api.AgentApiOutcomeOfAuthGrantReadResponse;
+  };
+  "auth/grants/list": {
+    params: Api.AuthGrantListParams;
+    result: Api.AgentApiOutcomeOfAuthGrantListResponse;
   };
   "auth/grants/revoke": {
     params: Api.AuthGrantRevokeParams;
@@ -377,13 +389,13 @@ export interface MethodMap {
     params: Api.AuthClientCreateParams;
     result: Api.AgentApiOutcomeOfAuthClientCreateResponse;
   };
-  "auth/clients/list": {
-    params: Api.AuthClientListParams;
-    result: Api.AgentApiOutcomeOfAuthClientListResponse;
-  };
   "auth/clients/read": {
     params: Api.AuthClientReadParams;
     result: Api.AgentApiOutcomeOfAuthClientReadResponse;
+  };
+  "auth/clients/list": {
+    params: Api.AuthClientListParams;
+    result: Api.AgentApiOutcomeOfAuthClientListResponse;
   };
   "auth/clients/delete": {
     params: Api.AuthClientDeleteParams;
@@ -393,7 +405,7 @@ export interface MethodMap {
     params: Api.AuthFlowStartParams;
     result: Api.AgentApiOutcomeOfAuthFlowStartResponse;
   };
-  "auth/flows/status": {
+  "auth/flows/read": {
     params: Api.AuthFlowStatusParams;
     result: Api.AgentApiOutcomeOfAuthFlowStatusResponse;
   };
@@ -401,13 +413,13 @@ export interface MethodMap {
     params: Api.AuthProviderCreateParams;
     result: Api.AgentApiOutcomeOfAuthProviderCreateResponse;
   };
-  "auth/providers/list": {
-    params: Api.AuthProviderListParams;
-    result: Api.AgentApiOutcomeOfAuthProviderListResponse;
-  };
   "auth/providers/read": {
     params: Api.AuthProviderReadParams;
     result: Api.AgentApiOutcomeOfAuthProviderReadResponse;
+  };
+  "auth/providers/list": {
+    params: Api.AuthProviderListParams;
+    result: Api.AgentApiOutcomeOfAuthProviderListResponse;
   };
   "auth/providers/delete": {
     params: Api.AuthProviderDeleteParams;
@@ -420,6 +432,34 @@ export interface MethodMap {
   "auth/github/installations/grant": {
     params: Api.AuthGitHubInstallationGrantParams;
     result: Api.AgentApiOutcomeOfAuthGitHubInstallationGrantResponse;
+  };
+  "outbox/read": {
+    params: Api.OutboxReadParams;
+    result: Api.AgentApiOutcomeOfOutboxReadResponse;
+  };
+  "outbox/ack": {
+    params: Api.OutboxAckParams;
+    result: Api.AgentApiOutcomeOfOutboxAckResponse;
+  };
+  "operator/universes/create": {
+    params: Api.OperatorUniverseCreateParams;
+    result: Api.AgentApiOutcomeOfOperatorUniverseCreateResponse;
+  };
+  "operator/universes/list": {
+    params: Api.OperatorUniverseListParams;
+    result: Api.AgentApiOutcomeOfOperatorUniverseListResponse;
+  };
+  "operator/universes/read": {
+    params: Api.OperatorUniverseReadParams;
+    result: Api.AgentApiOutcomeOfOperatorUniverseReadResponse;
+  };
+  "operator/universes/delete": {
+    params: Api.OperatorUniverseDeleteParams;
+    result: Api.AgentApiOutcomeOfOperatorUniverseDeleteResponse;
+  };
+  "operator/outbox/read": {
+    params: Api.OperatorOutboxReadParams;
+    result: Api.AgentApiOutcomeOfOperatorOutboxReadResponse;
   };
 }
 
@@ -437,83 +477,86 @@ export const rpc = {
   sessionStart(client: RpcCaller, params: Api.SessionStartParams): Promise<Api.AgentApiOutcomeOfSessionStartResponse> {
     return client.call("session/start", params);
   },
-  profilesCreate(client: RpcCaller, params: Api.ProfileCreateParams): Promise<Api.AgentApiOutcomeOfProfileCreateResponse> {
-    return client.call("profiles/create", params);
+  sessionRead(client: RpcCaller, params: Api.SessionReadParams): Promise<Api.AgentApiOutcomeOfSessionReadResponse> {
+    return client.call("session/read", params);
   },
-  profilesRead(client: RpcCaller, params: Api.ProfileReadParams): Promise<Api.AgentApiOutcomeOfProfileReadResponse> {
-    return client.call("profiles/read", params);
-  },
-  profilesList(client: RpcCaller, params: Api.ProfileListParams): Promise<Api.AgentApiOutcomeOfProfileListResponse> {
-    return client.call("profiles/list", params);
-  },
-  profilesUpdate(client: RpcCaller, params: Api.ProfileUpdateParams): Promise<Api.AgentApiOutcomeOfProfileUpdateResponse> {
-    return client.call("profiles/update", params);
-  },
-  profilesDelete(client: RpcCaller, params: Api.ProfileDeleteParams): Promise<Api.AgentApiOutcomeOfProfileDeleteResponse> {
-    return client.call("profiles/delete", params);
-  },
-  profilesApply(client: RpcCaller, params: Api.ProfileApplyParams): Promise<Api.AgentApiOutcomeOfProfileApplyResponse> {
-    return client.call("profiles/apply", params);
+  sessionList(client: RpcCaller, params: Api.SessionListParams): Promise<Api.AgentApiOutcomeOfSessionListResponse> {
+    return client.call("session/list", params);
   },
   sessionUpdate(client: RpcCaller, params: Api.SessionUpdateParams): Promise<Api.AgentApiOutcomeOfSessionUpdateResponse> {
     return client.call("session/update", params);
   },
-  sessionToolsUpdate(client: RpcCaller, params: Api.SessionToolsUpdateParams): Promise<Api.AgentApiOutcomeOfSessionToolsUpdateResponse> {
-    return client.call("session/tools/update", params);
-  },
-  sessionRead(client: RpcCaller, params: Api.SessionReadParams): Promise<Api.AgentApiOutcomeOfSessionReadResponse> {
-    return client.call("session/read", params);
-  },
-  sessionEventsRead(client: RpcCaller, params: Api.SessionEventsReadParams): Promise<Api.AgentApiOutcomeOfSessionEventsReadResponse> {
-    return client.call("session/events/read", params);
+  sessionRename(client: RpcCaller, params: Api.SessionRenameParams): Promise<Api.AgentApiOutcomeOfSessionRenameResponse> {
+    return client.call("session/rename", params);
   },
   sessionClose(client: RpcCaller, params: Api.SessionCloseParams): Promise<Api.AgentApiOutcomeOfSessionCloseResponse> {
     return client.call("session/close", params);
   },
-  contextCompact(client: RpcCaller, params: Api.ContextCompactParams): Promise<Api.AgentApiOutcomeOfContextCompactResponse> {
-    return client.call("context/compact", params);
+  sessionEventsRead(client: RpcCaller, params: Api.SessionEventsReadParams): Promise<Api.AgentApiOutcomeOfSessionEventsReadResponse> {
+    return client.call("session/events/read", params);
   },
-  contextAppend(client: RpcCaller, params: Api.ContextAppendParams): Promise<Api.AgentApiOutcomeOfContextAppendResponse> {
-    return client.call("context/append", params);
+  sessionToolsUpdate(client: RpcCaller, params: Api.SessionToolsUpdateParams): Promise<Api.AgentApiOutcomeOfSessionToolsUpdateResponse> {
+    return client.call("session/tools/update", params);
   },
-  contextRemove(client: RpcCaller, params: Api.ContextRemoveParams): Promise<Api.AgentApiOutcomeOfContextRemoveResponse> {
-    return client.call("context/remove", params);
+  sessionContextAppend(client: RpcCaller, params: Api.ContextAppendParams): Promise<Api.AgentApiOutcomeOfContextAppendResponse> {
+    return client.call("session/context/append", params);
   },
-  outboxRead(client: RpcCaller, params: Api.OutboxReadParams): Promise<Api.AgentApiOutcomeOfOutboxReadResponse> {
-    return client.call("outbox/read", params);
+  sessionContextRemove(client: RpcCaller, params: Api.ContextRemoveParams): Promise<Api.AgentApiOutcomeOfContextRemoveResponse> {
+    return client.call("session/context/remove", params);
   },
-  outboxAck(client: RpcCaller, params: Api.OutboxAckParams): Promise<Api.AgentApiOutcomeOfOutboxAckResponse> {
-    return client.call("outbox/ack", params);
+  sessionContextCompact(client: RpcCaller, params: Api.ContextCompactParams): Promise<Api.AgentApiOutcomeOfContextCompactResponse> {
+    return client.call("session/context/compact", params);
   },
-  runStart(client: RpcCaller, params: Api.RunStartParams): Promise<Api.AgentApiOutcomeOfRunStartResponse> {
-    return client.call("run/start", params);
+  sessionRunsStart(client: RpcCaller, params: Api.RunStartParams): Promise<Api.AgentApiOutcomeOfRunStartResponse> {
+    return client.call("session/runs/start", params);
   },
-  runCancel(client: RpcCaller, params: Api.RunCancelParams): Promise<Api.AgentApiOutcomeOfRunCancelResponse> {
-    return client.call("run/cancel", params);
+  sessionRunsCancel(client: RpcCaller, params: Api.RunCancelParams): Promise<Api.AgentApiOutcomeOfRunCancelResponse> {
+    return client.call("session/runs/cancel", params);
   },
-  promptsActive(client: RpcCaller, params: Api.PromptsActiveParams): Promise<Api.AgentApiOutcomeOfPromptsActiveResponse> {
-    return client.call("prompts/active", params);
+  sessionPromptsActive(client: RpcCaller, params: Api.PromptsActiveParams): Promise<Api.AgentApiOutcomeOfPromptsActiveResponse> {
+    return client.call("session/prompts/active", params);
   },
-  skillsList(client: RpcCaller, params: Api.SkillListParams): Promise<Api.AgentApiOutcomeOfSkillListResponse> {
-    return client.call("skills/list", params);
+  sessionSkillsList(client: RpcCaller, params: Api.SkillListParams): Promise<Api.AgentApiOutcomeOfSkillListResponse> {
+    return client.call("session/skills/list", params);
   },
-  skillsActive(client: RpcCaller, params: Api.SkillActiveParams): Promise<Api.AgentApiOutcomeOfSkillActiveResponse> {
-    return client.call("skills/active", params);
+  sessionSkillsActive(client: RpcCaller, params: Api.SkillActiveParams): Promise<Api.AgentApiOutcomeOfSkillActiveResponse> {
+    return client.call("session/skills/active", params);
   },
-  skillsActivate(client: RpcCaller, params: Api.SkillActivateParams): Promise<Api.AgentApiOutcomeOfSkillActivateResponse> {
-    return client.call("skills/activate", params);
+  sessionSkillsActivate(client: RpcCaller, params: Api.SkillActivateParams): Promise<Api.AgentApiOutcomeOfSkillActivateResponse> {
+    return client.call("session/skills/activate", params);
   },
-  skillsDeactivate(client: RpcCaller, params: Api.SkillDeactivateParams): Promise<Api.AgentApiOutcomeOfSkillDeactivateResponse> {
-    return client.call("skills/deactivate", params);
+  sessionSkillsDeactivate(client: RpcCaller, params: Api.SkillDeactivateParams): Promise<Api.AgentApiOutcomeOfSkillDeactivateResponse> {
+    return client.call("session/skills/deactivate", params);
   },
-  sessionEnvironmentsList(client: RpcCaller, params: Api.SessionEnvironmentListParams): Promise<Api.AgentApiOutcomeOfSessionEnvironmentListResponse> {
-    return client.call("session/environments/list", params);
+  sessionProfilesApply(client: RpcCaller, params: Api.ProfileApplyParams): Promise<Api.AgentApiOutcomeOfProfileApplyResponse> {
+    return client.call("session/profiles/apply", params);
+  },
+  sessionMountsPut(client: RpcCaller, params: Api.VfsMountPutParams): Promise<Api.AgentApiOutcomeOfVfsMountPutResponse> {
+    return client.call("session/mounts/put", params);
+  },
+  sessionMountsList(client: RpcCaller, params: Api.VfsMountListParams): Promise<Api.AgentApiOutcomeOfVfsMountListResponse> {
+    return client.call("session/mounts/list", params);
+  },
+  sessionMountsDelete(client: RpcCaller, params: Api.VfsMountDeleteParams): Promise<Api.AgentApiOutcomeOfVfsMountDeleteResponse> {
+    return client.call("session/mounts/delete", params);
+  },
+  sessionMcpLink(client: RpcCaller, params: Api.SessionMcpLinkParams): Promise<Api.AgentApiOutcomeOfSessionMcpLinkResponse> {
+    return client.call("session/mcp/link", params);
+  },
+  sessionMcpUnlink(client: RpcCaller, params: Api.SessionMcpUnlinkParams): Promise<Api.AgentApiOutcomeOfSessionMcpUnlinkResponse> {
+    return client.call("session/mcp/unlink", params);
+  },
+  sessionMcpList(client: RpcCaller, params: Api.SessionMcpListParams): Promise<Api.AgentApiOutcomeOfSessionMcpListResponse> {
+    return client.call("session/mcp/list", params);
+  },
+  sessionEnvironmentsCreate(client: RpcCaller, params: Api.SessionEnvironmentCreateParams): Promise<Api.AgentApiOutcomeOfSessionEnvironmentCreateResponse> {
+    return client.call("session/environments/create", params);
   },
   sessionEnvironmentsRead(client: RpcCaller, params: Api.SessionEnvironmentReadParams): Promise<Api.AgentApiOutcomeOfSessionEnvironmentReadResponse> {
     return client.call("session/environments/read", params);
   },
-  sessionEnvironmentsCreate(client: RpcCaller, params: Api.SessionEnvironmentCreateParams): Promise<Api.AgentApiOutcomeOfSessionEnvironmentCreateResponse> {
-    return client.call("session/environments/create", params);
+  sessionEnvironmentsList(client: RpcCaller, params: Api.SessionEnvironmentListParams): Promise<Api.AgentApiOutcomeOfSessionEnvironmentListResponse> {
+    return client.call("session/environments/list", params);
   },
   sessionEnvironmentsAttach(client: RpcCaller, params: Api.SessionEnvironmentAttachParams): Promise<Api.AgentApiOutcomeOfSessionEnvironmentAttachResponse> {
     return client.call("session/environments/attach", params);
@@ -539,98 +582,98 @@ export const rpc = {
   sessionJobsCreate(client: RpcCaller, params: Api.SessionJobCreateParams): Promise<Api.AgentApiOutcomeOfSessionJobCreateResponse> {
     return client.call("session/jobs/create", params);
   },
-  sessionJobsList(client: RpcCaller, params: Api.SessionJobListParams): Promise<Api.AgentApiOutcomeOfSessionJobListResponse> {
-    return client.call("session/jobs/list", params);
-  },
   sessionJobsRead(client: RpcCaller, params: Api.SessionJobReadParams): Promise<Api.AgentApiOutcomeOfSessionJobReadResponse> {
     return client.call("session/jobs/read", params);
+  },
+  sessionJobsList(client: RpcCaller, params: Api.SessionJobListParams): Promise<Api.AgentApiOutcomeOfSessionJobListResponse> {
+    return client.call("session/jobs/list", params);
   },
   sessionJobsCancel(client: RpcCaller, params: Api.SessionJobCancelParams): Promise<Api.AgentApiOutcomeOfSessionJobCancelResponse> {
     return client.call("session/jobs/cancel", params);
   },
-  environmentProvidersRegister(client: RpcCaller, params: Api.EnvironmentProviderRegisterParams): Promise<Api.AgentApiOutcomeOfEnvironmentProviderRegisterResponse> {
-    return client.call("environmentProviders/register", params);
+  profilesCreate(client: RpcCaller, params: Api.ProfileCreateParams): Promise<Api.AgentApiOutcomeOfProfileCreateResponse> {
+    return client.call("profiles/create", params);
   },
-  environmentProvidersHeartbeat(client: RpcCaller, params: Api.EnvironmentProviderHeartbeatParams): Promise<Api.AgentApiOutcomeOfEnvironmentProviderHeartbeatResponse> {
-    return client.call("environmentProviders/heartbeat", params);
+  profilesRead(client: RpcCaller, params: Api.ProfileReadParams): Promise<Api.AgentApiOutcomeOfProfileReadResponse> {
+    return client.call("profiles/read", params);
   },
-  environmentProvidersUnregister(client: RpcCaller, params: Api.EnvironmentProviderUnregisterParams): Promise<Api.AgentApiOutcomeOfEnvironmentProviderUnregisterResponse> {
-    return client.call("environmentProviders/unregister", params);
+  profilesList(client: RpcCaller, params: Api.ProfileListParams): Promise<Api.AgentApiOutcomeOfProfileListResponse> {
+    return client.call("profiles/list", params);
   },
-  environmentProvidersList(client: RpcCaller, params: Api.EnvironmentProviderListParams): Promise<Api.AgentApiOutcomeOfEnvironmentProviderListResponse> {
-    return client.call("environmentProviders/list", params);
+  profilesPut(client: RpcCaller, params: Api.ProfilePutParams): Promise<Api.AgentApiOutcomeOfProfilePutResponse> {
+    return client.call("profiles/put", params);
   },
-  environmentProvidersTargetsList(client: RpcCaller, params: Api.EnvironmentProviderTargetListParams): Promise<Api.AgentApiOutcomeOfEnvironmentProviderTargetListResponse> {
-    return client.call("environmentProviders/targets/list", params);
+  profilesUpdate(client: RpcCaller, params: Api.ProfileUpdateParams): Promise<Api.AgentApiOutcomeOfProfileUpdateResponse> {
+    return client.call("profiles/update", params);
   },
-  blobPut(client: RpcCaller, params: Api.BlobPutParams): Promise<Api.AgentApiOutcomeOfBlobPutResponse> {
-    return client.call("blob/put", params);
+  profilesDelete(client: RpcCaller, params: Api.ProfileDeleteParams): Promise<Api.AgentApiOutcomeOfProfileDeleteResponse> {
+    return client.call("profiles/delete", params);
   },
-  blobPutMany(client: RpcCaller, params: Api.BlobPutManyParams): Promise<Api.AgentApiOutcomeOfBlobPutManyResponse> {
-    return client.call("blob/put_many", params);
+  blobsPut(client: RpcCaller, params: Api.BlobPutParams): Promise<Api.AgentApiOutcomeOfBlobPutResponse> {
+    return client.call("blobs/put", params);
   },
-  blobGet(client: RpcCaller, params: Api.BlobGetParams): Promise<Api.AgentApiOutcomeOfBlobGetResponse> {
-    return client.call("blob/get", params);
+  blobsRead(client: RpcCaller, params: Api.BlobReadParams): Promise<Api.AgentApiOutcomeOfBlobReadResponse> {
+    return client.call("blobs/read", params);
   },
-  blobHasMany(client: RpcCaller, params: Api.BlobHasManyParams): Promise<Api.AgentApiOutcomeOfBlobHasManyResponse> {
-    return client.call("blob/has_many", params);
+  blobsHas(client: RpcCaller, params: Api.BlobHasParams): Promise<Api.AgentApiOutcomeOfBlobHasResponse> {
+    return client.call("blobs/has", params);
   },
-  vfsSnapshotCommit(client: RpcCaller, params: Api.VfsSnapshotCommitParams): Promise<Api.AgentApiOutcomeOfVfsSnapshotCommitResponse> {
-    return client.call("vfs/snapshot/commit", params);
+  vfsSnapshotsCommit(client: RpcCaller, params: Api.VfsSnapshotCommitParams): Promise<Api.AgentApiOutcomeOfVfsSnapshotCommitResponse> {
+    return client.call("vfs/snapshots/commit", params);
   },
-  vfsSnapshotRead(client: RpcCaller, params: Api.VfsSnapshotReadParams): Promise<Api.AgentApiOutcomeOfVfsSnapshotReadResponse> {
-    return client.call("vfs/snapshot/read", params);
+  vfsSnapshotsRead(client: RpcCaller, params: Api.VfsSnapshotReadParams): Promise<Api.AgentApiOutcomeOfVfsSnapshotReadResponse> {
+    return client.call("vfs/snapshots/read", params);
   },
-  vfsWorkspaceCreate(client: RpcCaller, params: Api.VfsWorkspaceCreateParams): Promise<Api.AgentApiOutcomeOfVfsWorkspaceCreateResponse> {
-    return client.call("vfs/workspace/create", params);
+  vfsWorkspacesCreate(client: RpcCaller, params: Api.VfsWorkspaceCreateParams): Promise<Api.AgentApiOutcomeOfVfsWorkspaceCreateResponse> {
+    return client.call("vfs/workspaces/create", params);
   },
-  vfsWorkspaceRead(client: RpcCaller, params: Api.VfsWorkspaceReadParams): Promise<Api.AgentApiOutcomeOfVfsWorkspaceReadResponse> {
-    return client.call("vfs/workspace/read", params);
+  vfsWorkspacesRead(client: RpcCaller, params: Api.VfsWorkspaceReadParams): Promise<Api.AgentApiOutcomeOfVfsWorkspaceReadResponse> {
+    return client.call("vfs/workspaces/read", params);
   },
-  vfsWorkspaceUpdate(client: RpcCaller, params: Api.VfsWorkspaceUpdateParams): Promise<Api.AgentApiOutcomeOfVfsWorkspaceUpdateResponse> {
-    return client.call("vfs/workspace/update", params);
+  vfsWorkspacesList(client: RpcCaller, params: Api.VfsWorkspaceListParams): Promise<Api.AgentApiOutcomeOfVfsWorkspaceListResponse> {
+    return client.call("vfs/workspaces/list", params);
   },
-  vfsWorkspaceDelete(client: RpcCaller, params: Api.VfsWorkspaceDeleteParams): Promise<Api.AgentApiOutcomeOfVfsWorkspaceDeleteResponse> {
-    return client.call("vfs/workspace/delete", params);
+  vfsWorkspacesUpdate(client: RpcCaller, params: Api.VfsWorkspaceUpdateParams): Promise<Api.AgentApiOutcomeOfVfsWorkspaceUpdateResponse> {
+    return client.call("vfs/workspaces/update", params);
   },
-  vfsMountPut(client: RpcCaller, params: Api.VfsMountPutParams): Promise<Api.AgentApiOutcomeOfVfsMountPutResponse> {
-    return client.call("vfs/mount/put", params);
-  },
-  vfsMountDelete(client: RpcCaller, params: Api.VfsMountDeleteParams): Promise<Api.AgentApiOutcomeOfVfsMountDeleteResponse> {
-    return client.call("vfs/mount/delete", params);
-  },
-  vfsMountList(client: RpcCaller, params: Api.VfsMountListParams): Promise<Api.AgentApiOutcomeOfVfsMountListResponse> {
-    return client.call("vfs/mount/list", params);
+  vfsWorkspacesDelete(client: RpcCaller, params: Api.VfsWorkspaceDeleteParams): Promise<Api.AgentApiOutcomeOfVfsWorkspaceDeleteResponse> {
+    return client.call("vfs/workspaces/delete", params);
   },
   mcpServersCreate(client: RpcCaller, params: Api.McpServerCreateParams): Promise<Api.AgentApiOutcomeOfMcpServerCreateResponse> {
     return client.call("mcp/servers/create", params);
   },
-  mcpServersList(client: RpcCaller, params: Api.McpServerListParams): Promise<Api.AgentApiOutcomeOfMcpServerListResponse> {
-    return client.call("mcp/servers/list", params);
-  },
   mcpServersRead(client: RpcCaller, params: Api.McpServerReadParams): Promise<Api.AgentApiOutcomeOfMcpServerReadResponse> {
     return client.call("mcp/servers/read", params);
+  },
+  mcpServersList(client: RpcCaller, params: Api.McpServerListParams): Promise<Api.AgentApiOutcomeOfMcpServerListResponse> {
+    return client.call("mcp/servers/list", params);
   },
   mcpServersDelete(client: RpcCaller, params: Api.McpServerDeleteParams): Promise<Api.AgentApiOutcomeOfMcpServerDeleteResponse> {
     return client.call("mcp/servers/delete", params);
   },
-  sessionMcpLink(client: RpcCaller, params: Api.SessionMcpLinkParams): Promise<Api.AgentApiOutcomeOfSessionMcpLinkResponse> {
-    return client.call("session/mcp/link", params);
+  environmentsProvidersRegister(client: RpcCaller, params: Api.EnvironmentProviderRegisterParams): Promise<Api.AgentApiOutcomeOfEnvironmentProviderRegisterResponse> {
+    return client.call("environments/providers/register", params);
   },
-  sessionMcpUnlink(client: RpcCaller, params: Api.SessionMcpUnlinkParams): Promise<Api.AgentApiOutcomeOfSessionMcpUnlinkResponse> {
-    return client.call("session/mcp/unlink", params);
+  environmentsProvidersHeartbeat(client: RpcCaller, params: Api.EnvironmentProviderHeartbeatParams): Promise<Api.AgentApiOutcomeOfEnvironmentProviderHeartbeatResponse> {
+    return client.call("environments/providers/heartbeat", params);
   },
-  sessionMcpList(client: RpcCaller, params: Api.SessionMcpListParams): Promise<Api.AgentApiOutcomeOfSessionMcpListResponse> {
-    return client.call("session/mcp/list", params);
+  environmentsProvidersUnregister(client: RpcCaller, params: Api.EnvironmentProviderUnregisterParams): Promise<Api.AgentApiOutcomeOfEnvironmentProviderUnregisterResponse> {
+    return client.call("environments/providers/unregister", params);
+  },
+  environmentsProvidersList(client: RpcCaller, params: Api.EnvironmentProviderListParams): Promise<Api.AgentApiOutcomeOfEnvironmentProviderListResponse> {
+    return client.call("environments/providers/list", params);
+  },
+  environmentsProvidersTargetsList(client: RpcCaller, params: Api.EnvironmentProviderTargetListParams): Promise<Api.AgentApiOutcomeOfEnvironmentProviderTargetListResponse> {
+    return client.call("environments/providers/targets/list", params);
   },
   authGrantsImport(client: RpcCaller, params: Api.AuthGrantImportParams): Promise<Api.AgentApiOutcomeOfAuthGrantImportResponse> {
     return client.call("auth/grants/import", params);
   },
-  authGrantsList(client: RpcCaller, params: Api.AuthGrantListParams): Promise<Api.AgentApiOutcomeOfAuthGrantListResponse> {
-    return client.call("auth/grants/list", params);
-  },
   authGrantsRead(client: RpcCaller, params: Api.AuthGrantReadParams): Promise<Api.AgentApiOutcomeOfAuthGrantReadResponse> {
     return client.call("auth/grants/read", params);
+  },
+  authGrantsList(client: RpcCaller, params: Api.AuthGrantListParams): Promise<Api.AgentApiOutcomeOfAuthGrantListResponse> {
+    return client.call("auth/grants/list", params);
   },
   authGrantsRevoke(client: RpcCaller, params: Api.AuthGrantRevokeParams): Promise<Api.AgentApiOutcomeOfAuthGrantRevokeResponse> {
     return client.call("auth/grants/revoke", params);
@@ -638,11 +681,11 @@ export const rpc = {
   authClientsCreate(client: RpcCaller, params: Api.AuthClientCreateParams): Promise<Api.AgentApiOutcomeOfAuthClientCreateResponse> {
     return client.call("auth/clients/create", params);
   },
-  authClientsList(client: RpcCaller, params: Api.AuthClientListParams): Promise<Api.AgentApiOutcomeOfAuthClientListResponse> {
-    return client.call("auth/clients/list", params);
-  },
   authClientsRead(client: RpcCaller, params: Api.AuthClientReadParams): Promise<Api.AgentApiOutcomeOfAuthClientReadResponse> {
     return client.call("auth/clients/read", params);
+  },
+  authClientsList(client: RpcCaller, params: Api.AuthClientListParams): Promise<Api.AgentApiOutcomeOfAuthClientListResponse> {
+    return client.call("auth/clients/list", params);
   },
   authClientsDelete(client: RpcCaller, params: Api.AuthClientDeleteParams): Promise<Api.AgentApiOutcomeOfAuthClientDeleteResponse> {
     return client.call("auth/clients/delete", params);
@@ -650,17 +693,17 @@ export const rpc = {
   authFlowsStart(client: RpcCaller, params: Api.AuthFlowStartParams): Promise<Api.AgentApiOutcomeOfAuthFlowStartResponse> {
     return client.call("auth/flows/start", params);
   },
-  authFlowsStatus(client: RpcCaller, params: Api.AuthFlowStatusParams): Promise<Api.AgentApiOutcomeOfAuthFlowStatusResponse> {
-    return client.call("auth/flows/status", params);
+  authFlowsRead(client: RpcCaller, params: Api.AuthFlowStatusParams): Promise<Api.AgentApiOutcomeOfAuthFlowStatusResponse> {
+    return client.call("auth/flows/read", params);
   },
   authProvidersCreate(client: RpcCaller, params: Api.AuthProviderCreateParams): Promise<Api.AgentApiOutcomeOfAuthProviderCreateResponse> {
     return client.call("auth/providers/create", params);
   },
-  authProvidersList(client: RpcCaller, params: Api.AuthProviderListParams): Promise<Api.AgentApiOutcomeOfAuthProviderListResponse> {
-    return client.call("auth/providers/list", params);
-  },
   authProvidersRead(client: RpcCaller, params: Api.AuthProviderReadParams): Promise<Api.AgentApiOutcomeOfAuthProviderReadResponse> {
     return client.call("auth/providers/read", params);
+  },
+  authProvidersList(client: RpcCaller, params: Api.AuthProviderListParams): Promise<Api.AgentApiOutcomeOfAuthProviderListResponse> {
+    return client.call("auth/providers/list", params);
   },
   authProvidersDelete(client: RpcCaller, params: Api.AuthProviderDeleteParams): Promise<Api.AgentApiOutcomeOfAuthProviderDeleteResponse> {
     return client.call("auth/providers/delete", params);
@@ -670,5 +713,26 @@ export const rpc = {
   },
   authGithubInstallationsGrant(client: RpcCaller, params: Api.AuthGitHubInstallationGrantParams): Promise<Api.AgentApiOutcomeOfAuthGitHubInstallationGrantResponse> {
     return client.call("auth/github/installations/grant", params);
+  },
+  outboxRead(client: RpcCaller, params: Api.OutboxReadParams): Promise<Api.AgentApiOutcomeOfOutboxReadResponse> {
+    return client.call("outbox/read", params);
+  },
+  outboxAck(client: RpcCaller, params: Api.OutboxAckParams): Promise<Api.AgentApiOutcomeOfOutboxAckResponse> {
+    return client.call("outbox/ack", params);
+  },
+  operatorUniversesCreate(client: RpcCaller, params: Api.OperatorUniverseCreateParams): Promise<Api.AgentApiOutcomeOfOperatorUniverseCreateResponse> {
+    return client.call("operator/universes/create", params);
+  },
+  operatorUniversesList(client: RpcCaller, params: Api.OperatorUniverseListParams): Promise<Api.AgentApiOutcomeOfOperatorUniverseListResponse> {
+    return client.call("operator/universes/list", params);
+  },
+  operatorUniversesRead(client: RpcCaller, params: Api.OperatorUniverseReadParams): Promise<Api.AgentApiOutcomeOfOperatorUniverseReadResponse> {
+    return client.call("operator/universes/read", params);
+  },
+  operatorUniversesDelete(client: RpcCaller, params: Api.OperatorUniverseDeleteParams): Promise<Api.AgentApiOutcomeOfOperatorUniverseDeleteResponse> {
+    return client.call("operator/universes/delete", params);
+  },
+  operatorOutboxRead(client: RpcCaller, params: Api.OperatorOutboxReadParams): Promise<Api.AgentApiOutcomeOfOperatorOutboxReadResponse> {
+    return client.call("operator/outbox/read", params);
   },
 } as const;

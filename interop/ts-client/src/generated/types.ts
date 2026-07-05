@@ -108,21 +108,21 @@ export type AgentNotification =
       };
     }
   | {
-      method: "run/started";
+      method: "session/runs/started";
       params: {
         run: RunView;
         sessionId: string;
       };
     }
   | {
-      method: "run/completed";
+      method: "session/runs/completed";
       params: {
         run: RunView;
         sessionId: string;
       };
     }
   | {
-      method: "item/completed";
+      method: "session/items/completed";
       params: {
         item: SessionItemView;
         runId: string;
@@ -745,11 +745,6 @@ export type McpServerStatus = "active" | "needsAuthConfig" | "unverified" | "dis
 export type RemoteMcpTransport = "streamableHttp" | "sse" | "auto";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OutboundStatusView".
- */
-export type OutboundStatusView = "pending" | "delivered" | "failed";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "OutboundOriginView".
  */
 export type OutboundOriginView = "toolCall" | "finalText" | "trigger";
@@ -773,6 +768,11 @@ export type OutboundPayloadView =
       text: string;
       type: "edit";
     };
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OutboundStatusView".
+ */
+export type OutboundStatusView = "pending" | "delivered" | "failed";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ProfileInstructions".
@@ -1139,7 +1139,7 @@ export interface SessionView {
   config?: SessionConfigView | null;
   configRevision: number;
   createdAtMs: number;
-  cwd?: string | null;
+  displayName?: string | null;
   id: string;
   runs?: RunView[];
   status: SessionStatus;
@@ -1702,34 +1702,17 @@ export interface AuthProviderReadResponse {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfBlobGetResponse".
+ * via the `definition` "AgentApiOutcomeOfBlobHasResponse".
  */
-export interface AgentApiOutcomeOfBlobGetResponse {
+export interface AgentApiOutcomeOfBlobHasResponse {
   notifications?: AgentNotification[];
-  result: BlobGetResponse;
+  result: BlobHasResponse;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BlobGetResponse".
+ * via the `definition` "BlobHasResponse".
  */
-export interface BlobGetResponse {
-  blobRef: string;
-  bytes: number;
-  bytesBase64: string;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfBlobHasManyResponse".
- */
-export interface AgentApiOutcomeOfBlobHasManyResponse {
-  notifications?: AgentNotification[];
-  result: BlobHasManyResponse;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BlobHasManyResponse".
- */
-export interface BlobHasManyResponse {
+export interface BlobHasResponse {
   blobs?: BlobHasItem[];
 }
 /**
@@ -1742,34 +1725,43 @@ export interface BlobHasItem {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfBlobPutManyResponse".
+ * via the `definition` "AgentApiOutcomeOfBlobPutResponse".
  */
-export interface AgentApiOutcomeOfBlobPutManyResponse {
+export interface AgentApiOutcomeOfBlobPutResponse {
   notifications?: AgentNotification[];
-  result: BlobPutManyResponse;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BlobPutManyResponse".
- */
-export interface BlobPutManyResponse {
-  blobs?: BlobPutResponse[];
+  result: BlobPutResponse;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "BlobPutResponse".
  */
 export interface BlobPutResponse {
+  blobs?: BlobPutResult[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "BlobPutResult".
+ */
+export interface BlobPutResult {
   blobRef: string;
   bytes: number;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfBlobPutResponse".
+ * via the `definition` "AgentApiOutcomeOfBlobReadResponse".
  */
-export interface AgentApiOutcomeOfBlobPutResponse {
+export interface AgentApiOutcomeOfBlobReadResponse {
   notifications?: AgentNotification[];
-  result: BlobPutResponse;
+  result: BlobReadResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "BlobReadResponse".
+ */
+export interface BlobReadResponse {
+  blobRef: string;
+  bytes: number;
+  bytesBase64: string;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -2124,6 +2116,141 @@ export interface McpServerReadResponse {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfOperatorOutboxReadResponse".
+ */
+export interface AgentApiOutcomeOfOperatorOutboxReadResponse {
+  notifications?: AgentNotification[];
+  result: OperatorOutboxReadResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorOutboxReadResponse".
+ */
+export interface OperatorOutboxReadResponse {
+  entries?: OperatorOutboundMessageView[];
+  /**
+   * Cursor to pass as `after` on the next read.
+   */
+  nextAfter: number;
+}
+/**
+ * One pending outbox entry with its owning universe. Acknowledge through
+ * the per-universe `outbox/ack` (with the entry's universe header); the
+ * global cursor only drives reading.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorOutboundMessageView".
+ */
+export interface OperatorOutboundMessageView {
+  attempts: number;
+  createdAtMs: number;
+  origin: OutboundOriginView;
+  outboxId: string;
+  payload: OutboundPayloadView;
+  runId?: string | null;
+  seq: number;
+  sessionId: string;
+  universeId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfOperatorUniverseCreateResponse".
+ */
+export interface AgentApiOutcomeOfOperatorUniverseCreateResponse {
+  notifications?: AgentNotification[];
+  result: OperatorUniverseCreateResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorUniverseCreateResponse".
+ */
+export interface OperatorUniverseCreateResponse {
+  /**
+   * False when the universe already existed (create is idempotent).
+   */
+  created: boolean;
+  universe: OperatorUniverseView;
+}
+/**
+ * Per-universe stats view. Counts are cheap aggregates computed at read
+ * time, not maintained counters — approximate under concurrent writes.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorUniverseView".
+ */
+export interface OperatorUniverseView {
+  blobBytes: number;
+  createdAtMs: number;
+  /**
+   * Most recent session activity (`max(sessions.updated_at_ms)`); absent
+   * when the universe has no sessions.
+   */
+  lastActivityAtMs?: number | null;
+  profiles: number;
+  sessions: number;
+  slug?: string | null;
+  universeId: string;
+  workspaces: number;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfOperatorUniverseDeleteResponse".
+ */
+export interface AgentApiOutcomeOfOperatorUniverseDeleteResponse {
+  notifications?: AgentNotification[];
+  result: OperatorUniverseDeleteResponse;
+}
+/**
+ * Purge report. The purge is idempotent: rerunning after a partial failure
+ * resumes where it stopped, and the universe row is deleted last so a
+ * half-purged universe is still visible to `operator/universes/read`.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorUniverseDeleteResponse".
+ */
+export interface OperatorUniverseDeleteResponse {
+  /**
+   * External object-store blobs deleted during the purge.
+   */
+  blobObjectsDeleted: number;
+  universeId: string;
+  /**
+   * Live session workflows terminated during the purge.
+   */
+  workflowsTerminated: number;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfOperatorUniverseListResponse".
+ */
+export interface AgentApiOutcomeOfOperatorUniverseListResponse {
+  notifications?: AgentNotification[];
+  result: OperatorUniverseListResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorUniverseListResponse".
+ */
+export interface OperatorUniverseListResponse {
+  universes?: OperatorUniverseView[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfOperatorUniverseReadResponse".
+ */
+export interface AgentApiOutcomeOfOperatorUniverseReadResponse {
+  notifications?: AgentNotification[];
+  result: OperatorUniverseReadResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorUniverseReadResponse".
+ */
+export interface OperatorUniverseReadResponse {
+  universe: OperatorUniverseView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfOutboxAckResponse".
  */
 export interface AgentApiOutcomeOfOutboxAckResponse {
@@ -2333,6 +2460,21 @@ export interface AgentProfileSummary {
   profileId: ProfileId;
   revision: number;
   updatedAtMs: number;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfProfilePutResponse".
+ */
+export interface AgentApiOutcomeOfProfilePutResponse {
+  notifications?: AgentNotification[];
+  result: ProfilePutResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ProfilePutResponse".
+ */
+export interface ProfilePutResponse {
+  profile: AgentProfile;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -2828,6 +2970,36 @@ export interface SessionJobOutputChunkView {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfSessionListResponse".
+ */
+export interface AgentApiOutcomeOfSessionListResponse {
+  notifications?: AgentNotification[];
+  result: SessionListResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionListResponse".
+ */
+export interface SessionListResponse {
+  /**
+   * Present when more sessions exist past this page. Ordering is most
+   * recently updated first; pages can drift under concurrent activity.
+   */
+  nextCursor?: string | null;
+  sessions?: SessionSummaryView[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionSummaryView".
+ */
+export interface SessionSummaryView {
+  createdAtMs: number;
+  displayName?: string | null;
+  id: string;
+  updatedAtMs: number;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfSessionMcpLinkResponse".
  */
 export interface AgentApiOutcomeOfSessionMcpLinkResponse {
@@ -2902,6 +3074,21 @@ export interface AgentApiOutcomeOfSessionReadResponse {
  */
 export interface SessionReadResponse {
   session: SessionView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfSessionRenameResponse".
+ */
+export interface AgentApiOutcomeOfSessionRenameResponse {
+  notifications?: AgentNotification[];
+  result: SessionRenameResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionRenameResponse".
+ */
+export interface SessionRenameResponse {
+  session: SessionSummaryView;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -3140,8 +3327,19 @@ export interface VfsWorkspaceCreateResponse {
  */
 export interface VfsWorkspaceView {
   baseSnapshotRef?: string | null;
+  /**
+   * Total byte size of the head snapshot.
+   */
+  bytes: number;
+  createdAtMs: number;
+  displayName?: string | null;
+  /**
+   * File count of the head snapshot.
+   */
+  files: number;
   headSnapshotRef: string;
   revision: number;
+  updatedAtMs: number;
   workspaceId: string;
 }
 /**
@@ -3158,6 +3356,21 @@ export interface AgentApiOutcomeOfVfsWorkspaceDeleteResponse {
  */
 export interface VfsWorkspaceDeleteResponse {
   workspace: VfsWorkspaceView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfVfsWorkspaceListResponse".
+ */
+export interface AgentApiOutcomeOfVfsWorkspaceListResponse {
+  notifications?: AgentNotification[];
+  result: VfsWorkspaceListResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "VfsWorkspaceListResponse".
+ */
+export interface VfsWorkspaceListResponse {
+  workspaces?: VfsWorkspaceView[];
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -3379,31 +3592,34 @@ export interface AuthProviderReadParams {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BlobGetParams".
+ * via the `definition` "BlobHasParams".
  */
-export interface BlobGetParams {
-  blobRef: string;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BlobHasManyParams".
- */
-export interface BlobHasManyParams {
+export interface BlobHasParams {
   blobRefs?: string[];
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BlobPutManyParams".
+ * via the `definition` "BlobPutItem".
  */
-export interface BlobPutManyParams {
-  blobs?: BlobPutParams[];
+export interface BlobPutItem {
+  bytesBase64: string;
 }
 /**
+ * `blobs/put` is batch-native: pass one item to store a single blob. Results
+ * come back in request order.
+ *
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "BlobPutParams".
  */
 export interface BlobPutParams {
-  bytesBase64: string;
+  blobs?: BlobPutItem[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "BlobReadParams".
+ */
+export interface BlobReadParams {
+  blobRef: string;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -3609,6 +3825,53 @@ export interface McpServerReadParams {
   serverId: string;
 }
 /**
+ * Multiplexed outbox read: one long-poll serves every universe of the
+ * deployment, replacing one `outbox/read` tailer per universe. `seq` is a
+ * deployment-global cursor (the outbox sequence is one identity column
+ * across universes), so a single `after` resumes the whole stream.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorOutboxReadParams".
+ */
+export interface OperatorOutboxReadParams {
+  /**
+   * Return pending entries with `seq` greater than this cursor. Restart
+   * from 0 to re-read undelivered entries after a consumer restart.
+   */
+  after?: number | null;
+  limit?: number | null;
+  /**
+   * Long-poll wait in milliseconds when no entries are pending.
+   */
+  waitMs?: number | null;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorUniverseCreateParams".
+ */
+export interface OperatorUniverseCreateParams {
+  universeId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorUniverseDeleteParams".
+ */
+export interface OperatorUniverseDeleteParams {
+  universeId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorUniverseListParams".
+ */
+export interface OperatorUniverseListParams {}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorUniverseReadParams".
+ */
+export interface OperatorUniverseReadParams {
+  universeId: string;
+}
+/**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "OutboxAckParams".
  */
@@ -3661,6 +3924,18 @@ export interface ProfileDeleteParams {
  * via the `definition` "ProfileListParams".
  */
 export interface ProfileListParams {}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ProfilePutParams".
+ */
+export interface ProfilePutParams {
+  /**
+   * Checked only when the profile already exists; absent replaces (or
+   * creates) unconditionally.
+   */
+  expectedRevision?: number | null;
+  profile: AgentProfileInput;
+}
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ProfileReadParams".
@@ -3727,7 +4002,7 @@ export interface RunStartParams {
   source: RunStartSource;
   /**
    * Client-supplied idempotency key, unique per session. Retrying
-   * `run/start` with the same submission id and the same source/config
+   * `session/runs/start` with the same submission id and the same source/config
    * returns the original run instead of starting a second one; reusing a
    * submission id with different source or config is rejected.
    */
@@ -3944,6 +4219,17 @@ export interface SessionJobReadParams {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionListParams".
+ */
+export interface SessionListParams {
+  /**
+   * Opaque cursor from the previous page's `nextCursor`.
+   */
+  cursor?: string | null;
+  limit?: number | null;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionMcpLinkParams".
  */
 export interface SessionMcpLinkParams {
@@ -3980,11 +4266,22 @@ export interface SessionReadParams {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionRenameParams".
+ */
+export interface SessionRenameParams {
+  /**
+   * New display name; absent clears it.
+   */
+  displayName?: string | null;
+  sessionId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionStartParams".
  */
 export interface SessionStartParams {
   config?: SessionConfigInput | null;
-  cwd?: string | null;
+  displayName?: string | null;
   profile?: ProfileSource | null;
   sessionId?: string | null;
 }
@@ -4082,7 +4379,11 @@ export interface VfsSnapshotReadParams {
  */
 export interface VfsWorkspaceCreateParams {
   displayName?: string | null;
-  snapshotRef: string;
+  /**
+   * Snapshot to seed the workspace from. Absent starts the workspace from
+   * the empty snapshot, committed server-side.
+   */
+  snapshotRef?: string | null;
   workspaceId?: string | null;
 }
 /**
@@ -4092,6 +4393,11 @@ export interface VfsWorkspaceCreateParams {
 export interface VfsWorkspaceDeleteParams {
   workspaceId: string;
 }
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "VfsWorkspaceListParams".
+ */
+export interface VfsWorkspaceListParams {}
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "VfsWorkspaceReadParams".

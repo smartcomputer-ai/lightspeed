@@ -238,10 +238,16 @@ per request based on `LIGHTSPEED_AUTH_MODE`:
 - `trusted-header` — bring your own auth: an upstream gateway authenticates
   callers and injects `x-lightspeed-universe: <uuid>` (optionally
   `x-lightspeed-principal: user:<id>` or `service_account:<id>`). Requests
-  without the header are rejected; set
-  `LIGHTSPEED_UNIVERSE_AUTO_CREATE=true` to create universes on first use.
+  without the header are rejected, and unknown universes fail closed —
+  universes exist only through explicit creation.
 - `api-key` — built-in credentials for directly exposed deployments:
   `Authorization: Bearer lsk_…` resolves to a universe and principal.
+
+Deployment-level administration is exposed as operator-scoped JSON-RPC
+methods on the same `/rpc` endpoint (`operator/universes/create|list|read|
+delete`), callable in `trusted-header` and `single` modes only. Deleting a
+universe terminates its live session workflows, sweeps its externally stored
+blobs, and cascades every universe-scoped row.
 
 Manage universes and keys with the server binary (the key secret prints
 exactly once):

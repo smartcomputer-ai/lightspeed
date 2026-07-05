@@ -109,9 +109,9 @@ pub(super) fn map_fs_error(error: tools::fs::FsError) -> AgentApiError {
 
 pub(super) fn map_input_blob_store_error(error: BlobStoreError) -> AgentApiError {
     match error {
-        BlobStoreError::NotFound { blob_ref } => {
-            AgentApiError::invalid_request(format!("run/start input blob not found: {blob_ref}"))
-        }
+        BlobStoreError::NotFound { blob_ref } => AgentApiError::invalid_request(format!(
+            "session/runs/start input blob not found: {blob_ref}"
+        )),
         BlobStoreError::Store { message } => AgentApiError::invalid_request(message),
     }
 }

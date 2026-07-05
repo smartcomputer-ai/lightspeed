@@ -6,7 +6,7 @@ pub struct RunStartParams {
     pub session_id: SessionId,
     pub source: RunStartSource,
     /// Client-supplied idempotency key, unique per session. Retrying
-    /// `run/start` with the same submission id and the same source/config
+    /// `session/runs/start` with the same submission id and the same source/config
     /// returns the original run instead of starting a second one; reusing a
     /// submission id with different source or config is rejected.
     #[serde(default, skip_serializing_if = "Option::is_none")]

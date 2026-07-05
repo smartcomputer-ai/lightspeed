@@ -52,7 +52,6 @@ describe("LightspeedClient", () => {
 
     const result = await client.call("session/start", {
       sessionId: "session_1",
-      cwd: null,
       config: null,
     });
 
@@ -66,8 +65,7 @@ describe("LightspeedClient", () => {
       method: "session/start",
       params: {
         sessionId: "session_1",
-        cwd: null,
-        config: null,
+          config: null,
       },
     });
   });
@@ -93,7 +91,7 @@ describe("LightspeedClient", () => {
     });
 
     await expect(
-      client.call("run/start", {
+      client.call("session/runs/start", {
         sessionId: "session_1",
         source: {
           type: "input",

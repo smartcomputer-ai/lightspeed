@@ -892,8 +892,10 @@ impl FleetService {
             match workspace_store
                 .create_workspace(CreateVfsWorkspaceRecord {
                     workspace_id: child_workspace_id.clone(),
+                    display_name: None,
                     base_snapshot_ref: Some(source_workspace.head_snapshot_ref.clone()),
                     head_snapshot_ref: source_workspace.head_snapshot_ref,
+                    head_totals: source_workspace.head_totals,
                     created_at_ms,
                 })
                 .await
@@ -2571,6 +2573,7 @@ mod tests {
                 store
                     .create_session(CreateSession {
                         session_id: session_id.clone(),
+                        display_name: None,
                         created_at_ms: 1,
                     })
                     .await
@@ -2724,6 +2727,7 @@ mod tests {
         sessions
             .create_session(CreateSession {
                 session_id: source.clone(),
+                display_name: None,
                 created_at_ms: 1,
             })
             .await
@@ -2938,6 +2942,7 @@ mod tests {
         sessions
             .create_session(CreateSession {
                 session_id: source.clone(),
+                display_name: None,
                 created_at_ms: 1,
             })
             .await
@@ -2975,6 +2980,7 @@ mod tests {
         sessions
             .create_session(CreateSession {
                 session_id: source.clone(),
+                display_name: None,
                 created_at_ms: 1,
             })
             .await
@@ -3021,8 +3027,10 @@ mod tests {
         let head = BlobRef::from_bytes(b"snapshot-head");
         vfs.create_workspace(CreateVfsWorkspaceRecord {
             workspace_id: source_workspace.clone(),
+            display_name: None,
             base_snapshot_ref: None,
             head_snapshot_ref: head.clone(),
+            head_totals: ::vfs::VfsTotals::default(),
             created_at_ms: 1,
         })
         .await
@@ -4039,6 +4047,7 @@ mod tests {
         sessions
             .create_session(CreateSession {
                 session_id: source.clone(),
+                display_name: None,
                 created_at_ms: 1,
             })
             .await
@@ -4189,7 +4198,7 @@ mod tests {
         SessionView {
             id: session_id.as_str().to_owned(),
             status,
-            cwd: Some("/workspace".to_owned()),
+            display_name: None,
             config_revision: 1,
             config: Some(api::SessionConfigView {
                 model: api::ModelConfig {
@@ -4271,8 +4280,10 @@ mod tests {
             }
             let workspace = VfsWorkspaceRecord {
                 workspace_id: record.workspace_id,
+                display_name: record.display_name,
                 base_snapshot_ref: record.base_snapshot_ref,
                 head_snapshot_ref: record.head_snapshot_ref,
+                head_totals: record.head_totals,
                 revision: 0,
                 created_at_ms: record.created_at_ms,
                 updated_at_ms: record.created_at_ms,
@@ -4296,6 +4307,16 @@ mod tests {
                 })
         }
 
+        async fn list_workspaces(&self) -> Result<Vec<VfsWorkspaceRecord>, VfsCatalogError> {
+            Ok(self
+                .workspaces
+                .lock()
+                .expect("workspace lock")
+                .values()
+                .cloned()
+                .collect())
+        }
+
         async fn compare_and_set_head(
             &self,
             request: CompareAndSetVfsWorkspaceHead,
@@ -4307,7 +4328,11 @@ mod tests {
                     id: request.workspace_id.to_string(),
                 }
             })?;
+            if let Some(display_name) = request.display_name {
+                workspace.display_name = Some(display_name);
+            }
             workspace.head_snapshot_ref = request.new_head_snapshot_ref;
+            workspace.head_totals = request.new_head_totals;
             workspace.revision += 1;
             workspace.updated_at_ms = request.updated_at_ms;
             Ok(workspace.clone())

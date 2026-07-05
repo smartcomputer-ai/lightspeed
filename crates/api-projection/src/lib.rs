@@ -45,7 +45,6 @@ pub struct ProjectSession<'a> {
     pub state: &'a CoreAgentState,
     pub record: &'a SessionRecord,
     pub entries: &'a [CoreAgentEntry],
-    pub cwd: Option<String>,
 }
 
 pub struct CoreAgentProjector<'a> {
@@ -83,8 +82,8 @@ impl<'a> CoreAgentProjector<'a> {
 
         Ok(SessionView {
             id: params.session_id.as_str().to_owned(),
+            display_name: params.record.display_name.clone(),
             status: session_status(params.state),
-            cwd: params.cwd,
             config_revision: params.state.lifecycle.config_revision,
             config,
             created_at_ms: params.record.created_at_ms,
@@ -914,19 +913,19 @@ pub fn input_text(input: &[InputItem]) -> Result<String, AgentApiError> {
             }
             InputItem::TextRef { .. } => {
                 return Err(AgentApiError::invalid_request(
-                    "run/start textRef input requires blob store resolution",
+                    "session/runs/start textRef input requires blob store resolution",
                 ));
             }
             InputItem::Media { .. } => {
                 return Err(AgentApiError::invalid_request(
-                    "run/start media input requires blob store resolution",
+                    "session/runs/start media input requires blob store resolution",
                 ));
             }
         }
     }
     if parts.is_empty() {
         return Err(AgentApiError::invalid_request(
-            "run/start input must contain at least one non-empty text item",
+            "session/runs/start input must contain at least one non-empty text item",
         ));
     }
     Ok(parts.join("\n\n"))

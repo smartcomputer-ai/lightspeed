@@ -46,6 +46,18 @@ impl GatewayAgentApi {
         Ok(ProfileListResponse { profiles })
     }
 
+    pub(super) async fn put_profile_record(
+        &self,
+        params: ProfilePutParams,
+    ) -> Result<ProfilePutResponse, AgentApiError> {
+        let profile = self
+            .store
+            .put_agent_profile(params.profile, params.expected_revision, now_ms()?)
+            .await
+            .map_err(map_profile_error)?;
+        Ok(ProfilePutResponse { profile })
+    }
+
     pub(super) async fn update_profile_record(
         &self,
         params: ProfileUpdateParams,

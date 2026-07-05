@@ -1,41 +1,43 @@
 use super::*;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+/// `blobs/put` is batch-native: pass one item to store a single blob. Results
+/// come back in request order.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct BlobPutParams {
+    #[serde(default)]
+    pub blobs: Vec<BlobPutItem>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BlobPutItem {
     pub bytes_base64: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BlobPutResult {
+    pub blob_ref: String,
+    pub bytes: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct BlobPutResponse {
-    pub blob_ref: String,
-    pub bytes: u64,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct BlobPutManyParams {
     #[serde(default)]
-    pub blobs: Vec<BlobPutParams>,
+    pub blobs: Vec<BlobPutResult>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct BlobPutManyResponse {
-    #[serde(default)]
-    pub blobs: Vec<BlobPutResponse>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct BlobGetParams {
+pub struct BlobReadParams {
     pub blob_ref: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct BlobGetResponse {
+pub struct BlobReadResponse {
     pub blob_ref: String,
     pub bytes_base64: String,
     pub bytes: u64,
@@ -43,7 +45,7 @@ pub struct BlobGetResponse {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct BlobHasManyParams {
+pub struct BlobHasParams {
     #[serde(default)]
     pub blob_refs: Vec<String>,
 }
@@ -57,7 +59,7 @@ pub struct BlobHasItem {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct BlobHasManyResponse {
+pub struct BlobHasResponse {
     #[serde(default)]
     pub blobs: Vec<BlobHasItem>,
 }
@@ -91,12 +93,15 @@ pub struct VfsSnapshotReadResponse {
     pub bytes: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct VfsWorkspaceCreateParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_id: Option<String>,
-    pub snapshot_ref: String,
+    /// Snapshot to seed the workspace from. Absent starts the workspace from
+    /// the empty snapshot, committed server-side.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
 }
@@ -153,9 +158,28 @@ pub struct VfsWorkspaceDeleteResponse {
 pub struct VfsWorkspaceView {
     pub workspace_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_snapshot_ref: Option<String>,
     pub head_snapshot_ref: String,
+    /// File count of the head snapshot.
+    pub files: u64,
+    /// Total byte size of the head snapshot.
+    pub bytes: u64,
     pub revision: u64,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsWorkspaceListParams {}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct VfsWorkspaceListResponse {
+    #[serde(default)]
+    pub workspaces: Vec<VfsWorkspaceView>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

@@ -155,7 +155,7 @@ impl AgentSessionWorkflow {
     }
 
     /// Queues a batch of admissions atomically: entries in one signal are
-    /// processed contiguously, so a multi-entry `context/append` cannot
+    /// processed contiguously, so a multi-entry `session/context/append` cannot
     /// interleave with admissions from concurrent requests.
     #[signal(name = "submit_admissions")]
     pub fn submit_admissions(

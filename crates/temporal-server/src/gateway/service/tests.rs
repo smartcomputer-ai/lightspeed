@@ -1,5 +1,7 @@
 use async_trait::async_trait;
 
+use api::BlobPutItem;
+
 use super::*;
 use crate::gateway::service::prompts::{active_prompt_context_entries, prompt_report_ref};
 
@@ -1218,7 +1220,7 @@ async fn context_entry_input_from_api_accepts_media() {
         },
     )
     .await
-    .expect("context/append should accept supported media");
+    .expect("session/context/append should accept supported media");
 
     assert_eq!(
         entry.kind,
@@ -1292,12 +1294,12 @@ async fn blob_api_helpers_put_get_and_check_many() {
 
     let put = put_blobs(
         &store,
-        BlobPutManyParams {
+        BlobPutParams {
             blobs: vec![
-                BlobPutParams {
+                BlobPutItem {
                     bytes_base64: BASE64.encode(b"hello"),
                 },
-                BlobPutParams {
+                BlobPutItem {
                     bytes_base64: BASE64.encode(b"world"),
                 },
             ],
@@ -1310,7 +1312,7 @@ async fn blob_api_helpers_put_get_and_check_many() {
 
     let has = has_blobs(
         &store,
-        BlobHasManyParams {
+        BlobHasParams {
             blob_refs: vec![
                 put.blobs[0].blob_ref.clone(),
                 BlobRef::from_bytes(b"missing").as_str().to_owned(),
@@ -1324,14 +1326,14 @@ async fn blob_api_helpers_put_get_and_check_many() {
         vec![true, false]
     );
 
-    let read = get_blob(
+    let read = read_blob(
         &store,
-        BlobGetParams {
+        BlobReadParams {
             blob_ref: put.blobs[1].blob_ref.clone(),
         },
     )
     .await
-    .expect("get blob");
+    .expect("read blob");
     assert_eq!(read.bytes_base64, BASE64.encode(b"world"));
 }
 
@@ -1607,6 +1609,10 @@ impl VfsWorkspaceStore for EmptyWorkspaceStore {
         workspace_id: &VfsWorkspaceId,
     ) -> Result<vfs::VfsWorkspaceRecord, vfs::VfsCatalogError> {
         Err(workspace_not_found(workspace_id.as_str()))
+    }
+
+    async fn list_workspaces(&self) -> Result<Vec<vfs::VfsWorkspaceRecord>, vfs::VfsCatalogError> {
+        Ok(Vec::new())
     }
 
     async fn compare_and_set_head(

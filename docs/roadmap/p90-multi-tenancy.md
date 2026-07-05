@@ -2,6 +2,15 @@
 
 **Status**
 - Proposed 2026-07-03.
+- Update 2026-07-05: the operator-scoped deployment API shipped
+  (`operator/universes/create|list|read|delete` on `/rpc`, dispatched by the
+  `operator/` method prefix before universe resolution; trusted-header and
+  single modes only). `LIGHTSPEED_UNIVERSE_AUTO_CREATE` is retired — the
+  gateway now hard-errors if it is set, and `trusted-header` mode always
+  fails closed on unknown universes; universes are created explicitly via
+  the operator API or `server universe create`. Universe purge terminates
+  live session workflows, sweeps external blob objects, deletes the
+  `universes` row (cascade), and evicts the cached runtime state.
 - Phase 1 implemented 2026-07-03: composed workflow ids
   (`compose_workflow_id`/`split_workflow_id` in `temporal-workflow`,
   bootstrap assertion, `universe_id` on `AgentSessionArgs`), shared

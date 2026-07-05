@@ -4,8 +4,9 @@ use super::*;
 #[serde(rename_all = "camelCase")]
 pub struct SessionView {
     pub id: SessionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
     pub status: SessionStatus,
-    pub cwd: Option<String>,
     pub config_revision: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config: Option<SessionConfigView>,

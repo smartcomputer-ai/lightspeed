@@ -127,6 +127,59 @@ impl ProfileStore for PgStore {
             .collect()
     }
 
+    async fn put_agent_profile(
+        &self,
+        profile: AgentProfileInput,
+        expected_revision: Option<u64>,
+        now_ms: i64,
+    ) -> Result<AgentProfile, ProfileError> {
+        self.ensure_universe()
+            .await
+            .map_err(|error| profile_store_error("ensure universe", error))?;
+        // A concurrent writer between the read and the write loses exactly one
+        // retry; the recheck still enforces `expected_revision` against fresh
+        // state, so the retry never bypasses the caller's guard.
+        let mut attempt = 0;
+        loop {
+            attempt += 1;
+            let current = match self.read_agent_profile(&profile.profile_id).await {
+                Ok(current) => Some(current),
+                Err(ProfileError::NotFound { .. }) => None,
+                Err(error) => return Err(error),
+            };
+            let Some(current) = current else {
+                match self.create_agent_profile(profile.clone(), now_ms).await {
+                    Ok(created) => return Ok(created),
+                    Err(ProfileError::AlreadyExists { .. }) if attempt < 2 => continue,
+                    Err(error) => return Err(error),
+                }
+            };
+            if let Some(expected) = expected_revision
+                && current.revision != expected
+            {
+                return Err(ProfileError::RevisionConflict {
+                    profile_id: profile.profile_id,
+                    expected,
+                    actual: current.revision,
+                });
+            }
+            let guard_revision = current.revision;
+            let replaced = profile.clone().into_replacement(&current, now_ms)?;
+            match self.cas_write_profile(&replaced, guard_revision).await? {
+                Some(written) => return Ok(written),
+                None if attempt < 2 => continue,
+                None => {
+                    let actual = self.read_agent_profile(&profile.profile_id).await?.revision;
+                    return Err(ProfileError::RevisionConflict {
+                        profile_id: profile.profile_id,
+                        expected: guard_revision,
+                        actual,
+                    });
+                }
+            }
+        }
+    }
+
     async fn update_agent_profile(
         &self,
         update: UpdateAgentProfile,
@@ -147,43 +200,7 @@ impl ProfileStore for PgStore {
         let current_revision = current.revision;
         let profile_id = update.profile_id.clone();
         let updated = update.patch.apply_to(current, update.updated_at_ms)?;
-        let document_json =
-            serde_json::to_value(&updated.document).map_err(|error| ProfileError::Store {
-                message: format!("serialize profile document: {error}"),
-            })?;
-        let row = sqlx::query(
-            r#"
-            UPDATE agent_profiles
-            SET
-                display_name = $3,
-                description = $4,
-                revision = $5,
-                document_json = $6,
-                updated_at_ms = $7
-            WHERE universe_id = $1 AND profile_id = $2 AND revision = $8
-            RETURNING
-                profile_id,
-                display_name,
-                description,
-                revision,
-                document_json,
-                created_at_ms,
-                updated_at_ms
-            "#,
-        )
-        .bind(self.config.universe_id)
-        .bind(updated.profile_id.as_str())
-        .bind(updated.display_name.as_deref())
-        .bind(updated.description.as_deref())
-        .bind(u64_to_i64(updated.revision, "revision")?)
-        .bind(document_json)
-        .bind(updated.updated_at_ms)
-        .bind(u64_to_i64(current_revision, "revision")?)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|error| profile_sql_error("update profile", error))?;
-
-        let Some(row) = row else {
+        let Some(profile) = self.cas_write_profile(&updated, current_revision).await? else {
             let actual = self.read_agent_profile(&profile_id).await?.revision;
             return Err(ProfileError::RevisionConflict {
                 profile_id,
@@ -191,7 +208,7 @@ impl ProfileStore for PgStore {
                 actual,
             });
         };
-        profile_from_row(&row)
+        Ok(profile)
     }
 
     async fn delete_agent_profile(
@@ -227,6 +244,53 @@ impl ProfileStore for PgStore {
             });
         };
         profile_from_row(&row)
+    }
+}
+
+impl PgStore {
+    /// Write `updated` over the row currently at `guard_revision`. Returns
+    /// `None` when the guard no longer matches (a concurrent writer won).
+    async fn cas_write_profile(
+        &self,
+        updated: &AgentProfile,
+        guard_revision: u64,
+    ) -> Result<Option<AgentProfile>, ProfileError> {
+        let document_json =
+            serde_json::to_value(&updated.document).map_err(|error| ProfileError::Store {
+                message: format!("serialize profile document: {error}"),
+            })?;
+        let row = sqlx::query(
+            r#"
+            UPDATE agent_profiles
+            SET
+                display_name = $3,
+                description = $4,
+                revision = $5,
+                document_json = $6,
+                updated_at_ms = $7
+            WHERE universe_id = $1 AND profile_id = $2 AND revision = $8
+            RETURNING
+                profile_id,
+                display_name,
+                description,
+                revision,
+                document_json,
+                created_at_ms,
+                updated_at_ms
+            "#,
+        )
+        .bind(self.config.universe_id)
+        .bind(updated.profile_id.as_str())
+        .bind(updated.display_name.as_deref())
+        .bind(updated.description.as_deref())
+        .bind(u64_to_i64(updated.revision, "revision")?)
+        .bind(document_json)
+        .bind(updated.updated_at_ms)
+        .bind(u64_to_i64(guard_revision, "revision")?)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|error| profile_sql_error("write profile", error))?;
+        row.as_ref().map(profile_from_row).transpose()
     }
 }
 

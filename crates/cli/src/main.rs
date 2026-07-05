@@ -56,7 +56,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn chat_parse_accepts_model_and_workdir_options() {
+    fn chat_parse_accepts_model_options() {
         let cli = Cli::try_parse_from([
             "lightspeed",
             "chat",
@@ -67,8 +67,6 @@ mod tests {
             "gpt-5.5",
             "--effort",
             "medium",
-            "--workdir",
-            ".",
             "--api-url",
             "http://127.0.0.1:18080/rpc",
             "hello",

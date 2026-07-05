@@ -19,7 +19,7 @@ session/start
 session/read
 session/events/read
 session/close
-run/start
+session/runs/start
 run/cancel
 ```
 

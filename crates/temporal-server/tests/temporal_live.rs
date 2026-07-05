@@ -600,7 +600,7 @@ async fn run_fake_live_client(
     let started = api
         .start_session(SessionStartParams {
             session_id: Some(session_id.as_str().to_owned()),
-            cwd: None,
+            display_name: None,
             config: Some(SessionConfigInput {
                 model: Some(model_to_api(&model)),
                 ..SessionConfigInput::default()
@@ -642,7 +642,7 @@ async fn run_fake_live_client(
     let second_output = final_assistant_text(&second_run).expect("second assistant output");
     assert!(second_output.contains("Fake agent completed run"));
 
-    // Retried run/start with the same submission id and input returns the
+    // Retried session/runs/start with the same submission id and input returns the
     // original run instead of starting a second one.
     let retried = api
         .start_run(RunStartParams {
@@ -678,7 +678,7 @@ async fn run_fake_live_client(
     let restarted = api
         .start_session(SessionStartParams {
             session_id: Some(session_id.as_str().to_owned()),
-            cwd: None,
+            display_name: None,
             config: None,
             profile: None,
         })
@@ -746,7 +746,7 @@ async fn run_fleet_spawn_live_client(
 
     api.start_session(SessionStartParams {
         session_id: Some(session_id.as_str().to_owned()),
-        cwd: None,
+        display_name: None,
         config: Some(SessionConfigInput {
             model: Some(model_to_api(&model)),
             tools: Some(ToolConfigInput {
@@ -931,7 +931,7 @@ async fn run_fleet_profile_spawn_live_client(
 
     api.start_session(SessionStartParams {
         session_id: Some(session_id.as_str().to_owned()),
-        cwd: None,
+        display_name: None,
         config: Some(SessionConfigInput {
             model: Some(model_to_api(&model)),
             tools: Some(ToolConfigInput {
@@ -1187,7 +1187,7 @@ async fn run_fleet_wait_live_client(
 ) -> anyhow::Result<()> {
     api.start_session(SessionStartParams {
         session_id: Some(session_id.as_str().to_owned()),
-        cwd: None,
+        display_name: None,
         config: Some(SessionConfigInput {
             model: Some(model_to_api(&model)),
             tools: Some(ToolConfigInput {
@@ -1316,7 +1316,7 @@ async fn run_fleet_send_report_back_live_client(
 ) -> anyhow::Result<()> {
     api.start_session(SessionStartParams {
         session_id: Some(session_id.as_str().to_owned()),
-        cwd: None,
+        display_name: None,
         config: Some(SessionConfigInput {
             model: Some(model_to_api(&model)),
             tools: Some(ToolConfigInput {
@@ -1509,7 +1509,7 @@ async fn run_continue_as_new_live_client(
 
     api.start_session(SessionStartParams {
         session_id: Some(session_id.as_str().to_owned()),
-        cwd: None,
+        display_name: None,
         config: Some(SessionConfigInput {
             model: Some(model_to_api(&model)),
             ..SessionConfigInput::default()
@@ -1592,7 +1592,7 @@ async fn run_missing_session_live_client(
             config: None,
         })
         .await
-        .expect_err("missing session run/start should fail");
+        .expect_err("missing session session/runs/start should fail");
     assert!(matches!(error.kind, AgentApiErrorKind::NotFound));
     Ok(())
 }
@@ -1715,7 +1715,7 @@ async fn run_context_append_live_client(
 
     api.start_session(SessionStartParams {
         session_id: Some(session_id.as_str().to_owned()),
-        cwd: None,
+        display_name: None,
         config: Some(SessionConfigInput {
             model: Some(model_to_api(&model)),
             ..SessionConfigInput::default()
@@ -1899,7 +1899,7 @@ async fn run_admission_failure_live_client(
 
     api.start_session(SessionStartParams {
         session_id: Some(session_id.as_str().to_owned()),
-        cwd: None,
+        display_name: None,
         config: Some(SessionConfigInput {
             model: Some(model_to_api(&model)),
             ..SessionConfigInput::default()
@@ -1968,7 +1968,7 @@ async fn run_admission_failure_live_client(
             config: None,
         })
         .await
-        .expect_err("closed session run/start should be rejected");
+        .expect_err("closed session session/runs/start should be rejected");
     assert!(matches!(error.kind, AgentApiErrorKind::Rejected));
     let session = api
         .read_session(SessionReadParams {
@@ -2040,7 +2040,7 @@ async fn run_mcp_live_client(
 
     api.start_session(SessionStartParams {
         session_id: Some(session_id.as_str().to_owned()),
-        cwd: None,
+        display_name: None,
         config: Some(SessionConfigInput {
             model: Some(model_to_api(&model)),
             ..SessionConfigInput::default()
@@ -2200,7 +2200,7 @@ async fn run_profiles_live_client(
     let started = api
         .start_session(SessionStartParams {
             session_id: Some(session_id.as_str().to_owned()),
-            cwd: None,
+            display_name: None,
             config: Some(SessionConfigInput {
                 model: Some(model_to_api(&model)),
                 ..SessionConfigInput::default()
@@ -2298,7 +2298,7 @@ async fn run_openai_live_client(
 
     api.start_session(SessionStartParams {
         session_id: Some(session_id.as_str().to_owned()),
-        cwd: None,
+        display_name: None,
         config: Some(SessionConfigInput {
             model: Some(model_to_api(&model)),
             ..SessionConfigInput::default()
@@ -2392,7 +2392,7 @@ async fn temporal_live_two_universes_share_one_worker_with_isolation() -> anyhow
             let started = api
                 .start_session(SessionStartParams {
                     session_id: Some(session_id.as_str().to_owned()),
-                    cwd: None,
+                    display_name: None,
                     config: None,
                     profile: None,
                 })

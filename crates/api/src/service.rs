@@ -27,6 +27,11 @@ pub trait AgentApiService: Send + Sync {
         params: ProfileListParams,
     ) -> Result<AgentApiOutcome<ProfileListResponse>, AgentApiError>;
 
+    async fn put_profile(
+        &self,
+        params: ProfilePutParams,
+    ) -> Result<AgentApiOutcome<ProfilePutResponse>, AgentApiError>;
+
     async fn update_profile(
         &self,
         params: ProfileUpdateParams,
@@ -56,6 +61,16 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: SessionReadParams,
     ) -> Result<AgentApiOutcome<SessionReadResponse>, AgentApiError>;
+
+    async fn list_sessions(
+        &self,
+        params: SessionListParams,
+    ) -> Result<AgentApiOutcome<SessionListResponse>, AgentApiError>;
+
+    async fn rename_session(
+        &self,
+        params: SessionRenameParams,
+    ) -> Result<AgentApiOutcome<SessionRenameResponse>, AgentApiError>;
 
     async fn read_session_events(
         &self,
@@ -222,25 +237,20 @@ pub trait AgentApiService: Send + Sync {
         params: EnvironmentProviderTargetListParams,
     ) -> Result<AgentApiOutcome<EnvironmentProviderTargetListResponse>, AgentApiError>;
 
-    async fn put_blob(
+    async fn put_blobs(
         &self,
         params: BlobPutParams,
     ) -> Result<AgentApiOutcome<BlobPutResponse>, AgentApiError>;
 
-    async fn put_blobs(
+    async fn read_blob(
         &self,
-        params: BlobPutManyParams,
-    ) -> Result<AgentApiOutcome<BlobPutManyResponse>, AgentApiError>;
-
-    async fn get_blob(
-        &self,
-        params: BlobGetParams,
-    ) -> Result<AgentApiOutcome<BlobGetResponse>, AgentApiError>;
+        params: BlobReadParams,
+    ) -> Result<AgentApiOutcome<BlobReadResponse>, AgentApiError>;
 
     async fn has_blobs(
         &self,
-        params: BlobHasManyParams,
-    ) -> Result<AgentApiOutcome<BlobHasManyResponse>, AgentApiError>;
+        params: BlobHasParams,
+    ) -> Result<AgentApiOutcome<BlobHasResponse>, AgentApiError>;
 
     async fn commit_vfs_snapshot(
         &self,
@@ -261,6 +271,11 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: VfsWorkspaceReadParams,
     ) -> Result<AgentApiOutcome<VfsWorkspaceReadResponse>, AgentApiError>;
+
+    async fn list_vfs_workspaces(
+        &self,
+        params: VfsWorkspaceListParams,
+    ) -> Result<AgentApiOutcome<VfsWorkspaceListResponse>, AgentApiError>;
 
     async fn update_vfs_workspace(
         &self,

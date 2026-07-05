@@ -25,7 +25,7 @@ fn notification_serializes_as_json_rpc_lite_shape() {
     assert_eq!(
         value,
         json!({
-            "method": "run/completed",
+            "method": "session/runs/completed",
             "params": {
                 "sessionId": "session_1",
                 "run": {
@@ -172,6 +172,51 @@ async fn dispatch_json_rpc_routes_session_close() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn dispatch_json_rpc_routes_session_list() {
+    let response = dispatch_json_rpc(
+        &TestService,
+        JsonRpcRequest {
+            id: RequestId::Number(1),
+            method: METHOD_SESSION_LIST.to_owned(),
+            params: Some(json!({ "cursor": "40:session_prev", "limit": 10 })),
+        },
+    )
+    .await;
+
+    assert!(response.error.is_none());
+    let result = response.result.expect("result");
+    assert_eq!(
+        result["result"]["sessions"][0]["displayName"],
+        json!("Test session")
+    );
+    assert_eq!(result["result"]["nextCursor"], json!("40:session_prev"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn dispatch_json_rpc_routes_session_rename() {
+    let response = dispatch_json_rpc(
+        &TestService,
+        JsonRpcRequest {
+            id: RequestId::Number(1),
+            method: METHOD_SESSION_RENAME.to_owned(),
+            params: Some(json!({
+                "sessionId": "session_1",
+                "displayName": "Family chat"
+            })),
+        },
+    )
+    .await;
+
+    assert!(response.error.is_none());
+    let result = response.result.expect("result");
+    assert_eq!(result["result"]["session"]["id"], json!("session_1"));
+    assert_eq!(
+        result["result"]["session"]["displayName"],
+        json!("Family chat")
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn dispatch_json_rpc_routes_session_update() {
     let response = dispatch_json_rpc(
         &TestService,
@@ -235,7 +280,7 @@ async fn dispatch_json_rpc_routes_context_compact() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_CONTEXT_COMPACT.to_owned(),
+            method: METHOD_SESSION_CONTEXT_COMPACT.to_owned(),
             params: Some(json!({ "sessionId": "session_1" })),
         },
     )
@@ -254,7 +299,7 @@ async fn dispatch_json_rpc_routes_context_remove() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_CONTEXT_REMOVE.to_owned(),
+            method: METHOD_SESSION_CONTEXT_REMOVE.to_owned(),
             params: Some(json!({
                 "sessionId": "session_1",
                 "keys": ["channel.room.batch-1"]
@@ -281,7 +326,7 @@ async fn dispatch_json_rpc_routes_context_append() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_CONTEXT_APPEND.to_owned(),
+            method: METHOD_SESSION_CONTEXT_APPEND.to_owned(),
             params: Some(json!({
                 "sessionId": "session_1",
                 "entries": [
@@ -351,7 +396,7 @@ async fn dispatch_json_rpc_routes_run_cancel() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_RUN_CANCEL.to_owned(),
+            method: METHOD_SESSION_RUNS_CANCEL.to_owned(),
             params: Some(json!({
                 "sessionId": "session_1",
                 "runId": "run_1"
@@ -373,7 +418,7 @@ async fn dispatch_json_rpc_routes_prompts_active() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_PROMPTS_ACTIVE.to_owned(),
+            method: METHOD_SESSION_PROMPTS_ACTIVE.to_owned(),
             params: Some(json!({ "sessionId": "session_1" })),
         },
     )
@@ -392,7 +437,7 @@ async fn dispatch_json_rpc_routes_skills_list() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_SKILLS_LIST.to_owned(),
+            method: METHOD_SESSION_SKILLS_LIST.to_owned(),
             params: Some(json!({ "sessionId": "session_1" })),
         },
     )
@@ -411,7 +456,7 @@ async fn dispatch_json_rpc_routes_skills_active() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_SKILLS_ACTIVE.to_owned(),
+            method: METHOD_SESSION_SKILLS_ACTIVE.to_owned(),
             params: Some(json!({ "sessionId": "session_1" })),
         },
     )
@@ -430,7 +475,7 @@ async fn dispatch_json_rpc_routes_skills_activate() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_SKILLS_ACTIVATE.to_owned(),
+            method: METHOD_SESSION_SKILLS_ACTIVATE.to_owned(),
             params: Some(json!({
                 "sessionId": "session_1",
                 "skillId": "skill:one",
@@ -453,7 +498,7 @@ async fn dispatch_json_rpc_routes_skills_deactivate() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_SKILLS_DEACTIVATE.to_owned(),
+            method: METHOD_SESSION_SKILLS_DEACTIVATE.to_owned(),
             params: Some(json!({
                 "sessionId": "session_1",
                 "skillId": "skill:one"
@@ -637,7 +682,7 @@ async fn dispatch_json_rpc_routes_session_environment_credentials_bind() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_SESSION_ENVIRONMENT_CREDENTIALS_BIND.to_owned(),
+            method: METHOD_SESSION_ENVIRONMENTS_CREDENTIALS_BIND.to_owned(),
             params: Some(json!({
                 "sessionId": "session_1",
                 "envId": "test",
@@ -669,7 +714,7 @@ async fn dispatch_json_rpc_routes_session_environment_credentials_list() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_SESSION_ENVIRONMENT_CREDENTIALS_LIST.to_owned(),
+            method: METHOD_SESSION_ENVIRONMENTS_CREDENTIALS_LIST.to_owned(),
             params: Some(json!({
                 "sessionId": "session_1",
                 "envId": "test"
@@ -696,7 +741,7 @@ async fn dispatch_json_rpc_routes_session_environment_credentials_unbind() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_SESSION_ENVIRONMENT_CREDENTIALS_UNBIND.to_owned(),
+            method: METHOD_SESSION_ENVIRONMENTS_CREDENTIALS_UNBIND.to_owned(),
             params: Some(json!({
                 "sessionId": "session_1",
                 "envId": "test",
@@ -820,7 +865,7 @@ async fn dispatch_json_rpc_routes_environment_provider_register() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_ENVIRONMENT_PROVIDERS_REGISTER.to_owned(),
+            method: METHOD_ENVIRONMENTS_PROVIDERS_REGISTER.to_owned(),
             params: Some(json!({
                 "providerId": "bridge-local",
                 "providerKind": "bridge",
@@ -856,7 +901,7 @@ async fn dispatch_json_rpc_routes_environment_provider_heartbeat() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_ENVIRONMENT_PROVIDERS_HEARTBEAT.to_owned(),
+            method: METHOD_ENVIRONMENTS_PROVIDERS_HEARTBEAT.to_owned(),
             params: Some(json!({
                 "providerId": "bridge-local",
                 "observedTargets": [{
@@ -889,7 +934,7 @@ async fn dispatch_json_rpc_routes_environment_provider_unregister() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_ENVIRONMENT_PROVIDERS_UNREGISTER.to_owned(),
+            method: METHOD_ENVIRONMENTS_PROVIDERS_UNREGISTER.to_owned(),
             params: Some(json!({ "providerId": "bridge-local" })),
         },
     )
@@ -988,7 +1033,7 @@ async fn dispatch_json_rpc_routes_run_start_with_config() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_RUN_START.to_owned(),
+            method: METHOD_SESSION_RUNS_START.to_owned(),
             params: Some(json!({
                 "sessionId": "session_1",
                 "source": {
@@ -1024,7 +1069,7 @@ async fn dispatch_json_rpc_routes_blob_put_many() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_BLOB_PUT_MANY.to_owned(),
+            method: METHOD_BLOBS_PUT.to_owned(),
             params: Some(json!({
                 "blobs": [
                     { "bytesBase64": "aGVsbG8=" },
@@ -1048,7 +1093,7 @@ async fn dispatch_json_rpc_routes_vfs_snapshot_commit() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_VFS_SNAPSHOT_COMMIT.to_owned(),
+            method: METHOD_VFS_SNAPSHOTS_COMMIT.to_owned(),
             params: Some(json!({
                 "manifest": {
                     "schema_version": "lightspeed.vfs.snapshot.v1",
@@ -1074,7 +1119,7 @@ async fn dispatch_json_rpc_routes_vfs_workspace_create() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_VFS_WORKSPACE_CREATE.to_owned(),
+            method: METHOD_VFS_WORKSPACES_CREATE.to_owned(),
             params: Some(json!({
                 "workspaceId": "workspace_1",
                 "snapshotRef": snapshot_ref
@@ -1096,7 +1141,7 @@ async fn dispatch_json_rpc_routes_vfs_workspace_read() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_VFS_WORKSPACE_READ.to_owned(),
+            method: METHOD_VFS_WORKSPACES_READ.to_owned(),
             params: Some(json!({ "workspaceId": "workspace_1" })),
         },
     )
@@ -1116,7 +1161,7 @@ async fn dispatch_json_rpc_routes_vfs_workspace_update() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_VFS_WORKSPACE_UPDATE.to_owned(),
+            method: METHOD_VFS_WORKSPACES_UPDATE.to_owned(),
             params: Some(json!({
                 "workspaceId": "workspace_1",
                 "expectedRevision": 4,
@@ -1140,7 +1185,7 @@ async fn dispatch_json_rpc_routes_vfs_workspace_update_without_expected_revision
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_VFS_WORKSPACE_UPDATE.to_owned(),
+            method: METHOD_VFS_WORKSPACES_UPDATE.to_owned(),
             params: Some(json!({
                 "workspaceId": "workspace_1",
                 "snapshotRef": snapshot_ref
@@ -1162,7 +1207,7 @@ async fn dispatch_json_rpc_routes_vfs_workspace_delete() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_VFS_WORKSPACE_DELETE.to_owned(),
+            method: METHOD_VFS_WORKSPACES_DELETE.to_owned(),
             params: Some(json!({ "workspaceId": "workspace_1" })),
         },
     )
@@ -1181,7 +1226,7 @@ async fn dispatch_json_rpc_routes_vfs_mount_put() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_VFS_MOUNT_PUT.to_owned(),
+            method: METHOD_SESSION_MOUNTS_PUT.to_owned(),
             params: Some(json!({
                 "sessionId": "session_1",
                 "mountPath": "/workspace",
@@ -1205,7 +1250,7 @@ async fn dispatch_json_rpc_routes_vfs_mount_delete() {
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_VFS_MOUNT_DELETE.to_owned(),
+            method: METHOD_SESSION_MOUNTS_DELETE.to_owned(),
             params: Some(json!({
                 "sessionId": "session_1",
                 "mountPath": "/workspace"
@@ -1576,6 +1621,18 @@ impl AgentApiService for TestService {
         }))
     }
 
+    async fn put_profile(
+        &self,
+        params: ProfilePutParams,
+    ) -> Result<AgentApiOutcome<ProfilePutResponse>, AgentApiError> {
+        let mut profile = test_profile(params.profile.profile_id);
+        profile.display_name = params.profile.display_name;
+        profile.description = params.profile.description;
+        profile.document = params.profile.document;
+        profile.revision = params.expected_revision.unwrap_or(profile.revision) + 1;
+        Ok(AgentApiOutcome::new(ProfilePutResponse { profile }))
+    }
+
     async fn update_profile(
         &self,
         params: ProfileUpdateParams,
@@ -1627,6 +1684,35 @@ impl AgentApiService for TestService {
         _params: SessionReadParams,
     ) -> Result<AgentApiOutcome<SessionReadResponse>, AgentApiError> {
         Err(AgentApiError::internal("not implemented"))
+    }
+
+    async fn list_sessions(
+        &self,
+        params: SessionListParams,
+    ) -> Result<AgentApiOutcome<SessionListResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(SessionListResponse {
+            sessions: vec![SessionSummaryView {
+                id: "session_test".to_owned(),
+                display_name: Some("Test session".to_owned()),
+                created_at_ms: 1,
+                updated_at_ms: 2,
+            }],
+            next_cursor: params.cursor,
+        }))
+    }
+
+    async fn rename_session(
+        &self,
+        params: SessionRenameParams,
+    ) -> Result<AgentApiOutcome<SessionRenameResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(SessionRenameResponse {
+            session: SessionSummaryView {
+                id: params.session_id,
+                display_name: params.display_name,
+                created_at_ms: 1,
+                updated_at_ms: 2,
+            },
+        }))
     }
 
     async fn read_session_events(
@@ -2088,26 +2174,16 @@ impl AgentApiService for TestService {
         ))
     }
 
-    async fn put_blob(
+    async fn put_blobs(
         &self,
         params: BlobPutParams,
     ) -> Result<AgentApiOutcome<BlobPutResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(BlobPutResponse {
-            blob_ref: format!("sha256:{}", "1".repeat(64)),
-            bytes: params.bytes_base64.len() as u64,
-        }))
-    }
-
-    async fn put_blobs(
-        &self,
-        params: BlobPutManyParams,
-    ) -> Result<AgentApiOutcome<BlobPutManyResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(BlobPutManyResponse {
             blobs: params
                 .blobs
                 .into_iter()
                 .enumerate()
-                .map(|(index, blob)| BlobPutResponse {
+                .map(|(index, blob)| BlobPutResult {
                     blob_ref: format!("sha256:{index:064x}"),
                     bytes: blob.bytes_base64.len() as u64,
                 })
@@ -2115,11 +2191,11 @@ impl AgentApiService for TestService {
         }))
     }
 
-    async fn get_blob(
+    async fn read_blob(
         &self,
-        params: BlobGetParams,
-    ) -> Result<AgentApiOutcome<BlobGetResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(BlobGetResponse {
+        params: BlobReadParams,
+    ) -> Result<AgentApiOutcome<BlobReadResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(BlobReadResponse {
             blob_ref: params.blob_ref,
             bytes_base64: "aGVsbG8=".to_owned(),
             bytes: 5,
@@ -2128,9 +2204,9 @@ impl AgentApiService for TestService {
 
     async fn has_blobs(
         &self,
-        params: BlobHasManyParams,
-    ) -> Result<AgentApiOutcome<BlobHasManyResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(BlobHasManyResponse {
+        params: BlobHasParams,
+    ) -> Result<AgentApiOutcome<BlobHasResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(BlobHasResponse {
             blobs: params
                 .blob_refs
                 .into_iter()
@@ -2173,14 +2249,22 @@ impl AgentApiService for TestService {
         &self,
         params: VfsWorkspaceCreateParams,
     ) -> Result<AgentApiOutcome<VfsWorkspaceCreateResponse>, AgentApiError> {
+        let snapshot_ref = params
+            .snapshot_ref
+            .unwrap_or_else(|| format!("sha256:{}", "0".repeat(64)));
         Ok(AgentApiOutcome::new(VfsWorkspaceCreateResponse {
             workspace: VfsWorkspaceView {
                 workspace_id: params
                     .workspace_id
                     .unwrap_or_else(|| "workspace_test".to_owned()),
-                base_snapshot_ref: Some(params.snapshot_ref.clone()),
-                head_snapshot_ref: params.snapshot_ref,
+                display_name: params.display_name,
+                base_snapshot_ref: Some(snapshot_ref.clone()),
+                head_snapshot_ref: snapshot_ref,
+                files: 0,
+                bytes: 0,
                 revision: 0,
+                created_at_ms: 10,
+                updated_at_ms: 10,
             },
         }))
     }
@@ -2190,12 +2274,16 @@ impl AgentApiService for TestService {
         params: VfsWorkspaceReadParams,
     ) -> Result<AgentApiOutcome<VfsWorkspaceReadResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(VfsWorkspaceReadResponse {
-            workspace: VfsWorkspaceView {
-                workspace_id: params.workspace_id,
-                base_snapshot_ref: Some(format!("sha256:{}", "2".repeat(64))),
-                head_snapshot_ref: format!("sha256:{}", "3".repeat(64)),
-                revision: 4,
-            },
+            workspace: test_workspace(params.workspace_id, 4),
+        }))
+    }
+
+    async fn list_vfs_workspaces(
+        &self,
+        _params: VfsWorkspaceListParams,
+    ) -> Result<AgentApiOutcome<VfsWorkspaceListResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(VfsWorkspaceListResponse {
+            workspaces: vec![test_workspace("workspace_test".to_owned(), 4)],
         }))
     }
 
@@ -2203,13 +2291,14 @@ impl AgentApiService for TestService {
         &self,
         params: VfsWorkspaceUpdateParams,
     ) -> Result<AgentApiOutcome<VfsWorkspaceUpdateResponse>, AgentApiError> {
+        let mut workspace = test_workspace(
+            params.workspace_id,
+            params.expected_revision.unwrap_or(4) + 1,
+        );
+        workspace.head_snapshot_ref = params.snapshot_ref;
+        workspace.display_name = params.display_name;
         Ok(AgentApiOutcome::new(VfsWorkspaceUpdateResponse {
-            workspace: VfsWorkspaceView {
-                workspace_id: params.workspace_id,
-                base_snapshot_ref: Some(format!("sha256:{}", "2".repeat(64))),
-                head_snapshot_ref: params.snapshot_ref,
-                revision: params.expected_revision.unwrap_or(4) + 1,
-            },
+            workspace,
         }))
     }
 
@@ -2218,12 +2307,7 @@ impl AgentApiService for TestService {
         params: VfsWorkspaceDeleteParams,
     ) -> Result<AgentApiOutcome<VfsWorkspaceDeleteResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(VfsWorkspaceDeleteResponse {
-            workspace: VfsWorkspaceView {
-                workspace_id: params.workspace_id,
-                base_snapshot_ref: Some(format!("sha256:{}", "2".repeat(64))),
-                head_snapshot_ref: format!("sha256:{}", "3".repeat(64)),
-                revision: 4,
-            },
+            workspace: test_workspace(params.workspace_id, 4),
         }))
     }
 
@@ -2602,11 +2686,25 @@ fn test_profile(profile_id: ProfileId) -> AgentProfile {
     }
 }
 
+fn test_workspace(workspace_id: String, revision: u64) -> VfsWorkspaceView {
+    VfsWorkspaceView {
+        workspace_id,
+        display_name: Some("Test workspace".to_owned()),
+        base_snapshot_ref: Some(format!("sha256:{}", "2".repeat(64))),
+        head_snapshot_ref: format!("sha256:{}", "3".repeat(64)),
+        files: 2,
+        bytes: 64,
+        revision,
+        created_at_ms: 10,
+        updated_at_ms: 20,
+    }
+}
+
 fn test_session(id: SessionId, status: SessionStatus) -> SessionView {
     SessionView {
         id,
+        display_name: Some("Test session".to_owned()),
         status,
-        cwd: None,
         config_revision: 0,
         config: None,
         created_at_ms: 1,
@@ -2808,4 +2906,185 @@ fn test_mcp_link(tool_id: String) -> SessionMcpLinkView {
         defer_loading: None,
         auth_ref: None,
     }
+}
+
+struct TestOperatorService;
+
+fn test_operator_universe(universe_id: &str) -> OperatorUniverseView {
+    OperatorUniverseView {
+        universe_id: universe_id.to_owned(),
+        slug: Some("acme".to_owned()),
+        created_at_ms: 10,
+        last_activity_at_ms: Some(20),
+        sessions: 3,
+        workspaces: 2,
+        profiles: 1,
+        blob_bytes: 4096,
+    }
+}
+
+#[async_trait]
+impl OperatorApiService for TestOperatorService {
+    async fn create_universe(
+        &self,
+        params: OperatorUniverseCreateParams,
+    ) -> Result<AgentApiOutcome<OperatorUniverseCreateResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(OperatorUniverseCreateResponse {
+            universe: test_operator_universe(&params.universe_id),
+            created: true,
+        }))
+    }
+
+    async fn list_universes(
+        &self,
+        _params: OperatorUniverseListParams,
+    ) -> Result<AgentApiOutcome<OperatorUniverseListResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(OperatorUniverseListResponse {
+            universes: vec![test_operator_universe("universe_test")],
+        }))
+    }
+
+    async fn read_universe(
+        &self,
+        params: OperatorUniverseReadParams,
+    ) -> Result<AgentApiOutcome<OperatorUniverseReadResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(OperatorUniverseReadResponse {
+            universe: test_operator_universe(&params.universe_id),
+        }))
+    }
+
+    async fn delete_universe(
+        &self,
+        params: OperatorUniverseDeleteParams,
+    ) -> Result<AgentApiOutcome<OperatorUniverseDeleteResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(OperatorUniverseDeleteResponse {
+            universe_id: params.universe_id,
+            workflows_terminated: 2,
+            blob_objects_deleted: 5,
+        }))
+    }
+
+    async fn read_outbox(
+        &self,
+        params: OperatorOutboxReadParams,
+    ) -> Result<AgentApiOutcome<OperatorOutboxReadResponse>, AgentApiError> {
+        let seq = params.after.unwrap_or(0) + 1;
+        Ok(AgentApiOutcome::new(OperatorOutboxReadResponse {
+            entries: vec![OperatorOutboundMessageView {
+                universe_id: "universe_test".to_owned(),
+                message: OutboundMessageView {
+                    seq,
+                    outbox_id: "outbox_test".to_owned(),
+                    session_id: "session_test".to_owned(),
+                    run_id: None,
+                    origin: OutboundOriginView::FinalText,
+                    payload: OutboundPayloadView::Send {
+                        text: "hello".to_owned(),
+                        reply_to: None,
+                    },
+                    attempts: 0,
+                    created_at_ms: 1,
+                },
+            }],
+            next_after: seq,
+        }))
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn dispatch_operator_json_rpc_routes_universe_lifecycle() {
+    let create = dispatch_operator_json_rpc(
+        &TestOperatorService,
+        JsonRpcRequest {
+            id: RequestId::Number(1),
+            method: METHOD_OPERATOR_UNIVERSES_CREATE.to_owned(),
+            params: Some(json!({ "universeId": "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f" })),
+        },
+    )
+    .await;
+    assert!(create.error.is_none());
+    let result = create.result.expect("result");
+    assert_eq!(result["result"]["created"], json!(true));
+    assert_eq!(
+        result["result"]["universe"]["universeId"],
+        json!("6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f")
+    );
+
+    let list = dispatch_operator_json_rpc(
+        &TestOperatorService,
+        JsonRpcRequest {
+            id: RequestId::Number(2),
+            method: METHOD_OPERATOR_UNIVERSES_LIST.to_owned(),
+            params: Some(json!({})),
+        },
+    )
+    .await;
+    let result = list.result.expect("result");
+    assert_eq!(result["result"]["universes"][0]["sessions"], json!(3));
+    assert_eq!(result["result"]["universes"][0]["blobBytes"], json!(4096));
+
+    let delete = dispatch_operator_json_rpc(
+        &TestOperatorService,
+        JsonRpcRequest {
+            id: RequestId::Number(3),
+            method: METHOD_OPERATOR_UNIVERSES_DELETE.to_owned(),
+            params: Some(json!({ "universeId": "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f" })),
+        },
+    )
+    .await;
+    let result = delete.result.expect("result");
+    assert_eq!(result["result"]["workflowsTerminated"], json!(2));
+    assert_eq!(result["result"]["blobObjectsDeleted"], json!(5));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn operator_dispatch_rejects_universe_scoped_methods_and_vice_versa() {
+    // The operator dispatcher only knows operator methods…
+    let response = dispatch_operator_json_rpc(
+        &TestOperatorService,
+        JsonRpcRequest {
+            id: RequestId::Number(1),
+            method: METHOD_SESSION_LIST.to_owned(),
+            params: Some(json!({})),
+        },
+    )
+    .await;
+    assert_eq!(response.error.expect("error").code, -32601);
+
+    // …and the universe dispatcher does not know operator methods.
+    let response = dispatch_json_rpc(
+        &TestService,
+        JsonRpcRequest {
+            id: RequestId::Number(2),
+            method: METHOD_OPERATOR_UNIVERSES_LIST.to_owned(),
+            params: Some(json!({})),
+        },
+    )
+    .await;
+    assert_eq!(response.error.expect("error").code, -32601);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn dispatch_operator_json_rpc_routes_outbox_read_with_flattened_entries() {
+    let response = dispatch_operator_json_rpc(
+        &TestOperatorService,
+        JsonRpcRequest {
+            id: RequestId::Number(1),
+            method: METHOD_OPERATOR_OUTBOX_READ.to_owned(),
+            params: Some(json!({ "after": 7, "limit": 10, "waitMs": 0 })),
+        },
+    )
+    .await;
+
+    assert!(response.error.is_none());
+    let result = response.result.expect("result");
+    let entry = &result["result"]["entries"][0];
+    // The universe tag and the per-universe view fields share one level:
+    // bridges reuse their existing entry handling plus a universeId switch.
+    assert_eq!(entry["universeId"], json!("universe_test"));
+    assert_eq!(entry["seq"], json!(8));
+    assert_eq!(entry["outboxId"], json!("outbox_test"));
+    assert_eq!(entry["sessionId"], json!("session_test"));
+    assert_eq!(entry["payload"]["type"], json!("send"));
+    assert_eq!(result["result"]["nextAfter"], json!(8));
 }

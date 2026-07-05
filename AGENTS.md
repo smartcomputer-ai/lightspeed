@@ -18,7 +18,7 @@ Use these files as the index:
   management, CAS offloading, Temporal hosting), moved out of the README.
 - `docs/spec/01-agent-idea.md` — working design notes for the new agent direction.
 - `Cargo.toml` — workspace membership.
-- `interop/` — API contract artifacts, private clients, and bridge packages.
+- `interop/` — API contract artifacts and the private TypeScript client.
 - `local/` — local Docker stack, environment exports, and reset helpers.
 - `docs/roadmap/` — implementation plans and historical milestones.
 
@@ -144,7 +144,7 @@ cargo run -p cli -- chat --api-url http://127.0.0.1:18080/rpc --session session_
   `ModelSelection` or the session log.
 - Keep clients on `api`. CLIs, TUIs, editors, hosted gateways, and future
   Temporal frontends should not consume reducer internals directly.
-- Treat hosted `run/start` as an acceptance/start boundary, not a final-output
+- Treat hosted `session/runs/start` as an acceptance/start boundary, not a final-output
   boundary. Clients should follow `session/events/read` or refresh
   `session/read` for progress and completion.
 - Preserve Rust 2024 and the existing crate-local `thiserror` error style.
@@ -165,7 +165,6 @@ Local commands load a root `.env` file when present. The `.env` file usually exi
 | `LIGHTSPEED_SECRETS_MASTER_KEY` | Base64 32-byte AES key for the encrypted secret store |
 | `LIGHTSPEED_PUBLIC_BASE_URL` | Externally reachable gateway base URL for the OAuth callback (defaults to `http://{bind}`) |
 | `LIGHTSPEED_AUTH_MODE` | Gateway tenant resolution: `single` (default), `trusted-header`, `api-key` (P90) |
-| `LIGHTSPEED_UNIVERSE_AUTO_CREATE` | `trusted-header` mode: create unknown universes on first use (default false) |
 | `LIGHTSPEED_API_KEY` | Client-side (CLI/bridge): bearer key sent to an `api-key`-mode gateway |
 | `LIGHTSPEED_UNIVERSE` | Client-side (CLI/bridge): universe header sent to a `trusted-header`-mode gateway |
 | `LIGHTSPEED_BLOB_CACHE_BYTES` | CAS blob cache budget per process (`0` disables; default 256MiB) |

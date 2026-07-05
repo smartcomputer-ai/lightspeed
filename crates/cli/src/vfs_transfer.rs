@@ -4,9 +4,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use api::{
-    AgentApiError, BlobGetParams, BlobGetResponse, BlobHasItem, BlobHasManyParams,
-    BlobPutManyParams, BlobPutParams, BlobPutResponse, VfsSnapshotCommitParams,
-    VfsSnapshotCommitResponse, VfsSnapshotReadParams, VfsSnapshotReadResponse,
+    AgentApiError, BlobHasItem, BlobHasParams, BlobPutItem, BlobPutParams, BlobPutResult,
+    BlobReadParams, BlobReadResponse, VfsSnapshotCommitParams, VfsSnapshotCommitResponse,
+    VfsSnapshotReadParams, VfsSnapshotReadResponse,
 };
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
@@ -120,9 +120,9 @@ pub(crate) enum SnapshotEntrySource {
 pub(crate) trait CasVfsApi {
     async fn has_blobs(&self, blob_refs: Vec<String>) -> Result<Vec<BlobHasItem>, AgentApiError>;
 
-    async fn put_blobs(&self, blobs: Vec<Vec<u8>>) -> Result<Vec<BlobPutResponse>, AgentApiError>;
+    async fn put_blobs(&self, blobs: Vec<Vec<u8>>) -> Result<Vec<BlobPutResult>, AgentApiError>;
 
-    async fn get_blob(&self, blob_ref: String) -> Result<BlobGetResponse, AgentApiError>;
+    async fn get_blob(&self, blob_ref: String) -> Result<BlobReadResponse, AgentApiError>;
 
     async fn commit_vfs_snapshot(
         &self,
@@ -138,29 +138,27 @@ pub(crate) trait CasVfsApi {
 #[async_trait]
 impl CasVfsApi for HttpAgentApi {
     async fn has_blobs(&self, blob_refs: Vec<String>) -> Result<Vec<BlobHasItem>, AgentApiError> {
-        Ok(
-            HttpAgentApi::has_blobs(self, BlobHasManyParams { blob_refs })
-                .await?
-                .result
-                .blobs,
-        )
-    }
-
-    async fn put_blobs(&self, blobs: Vec<Vec<u8>>) -> Result<Vec<BlobPutResponse>, AgentApiError> {
-        let blobs = blobs
-            .into_iter()
-            .map(|bytes| BlobPutParams {
-                bytes_base64: BASE64.encode(bytes),
-            })
-            .collect();
-        Ok(HttpAgentApi::put_blobs(self, BlobPutManyParams { blobs })
+        Ok(HttpAgentApi::has_blobs(self, BlobHasParams { blob_refs })
             .await?
             .result
             .blobs)
     }
 
-    async fn get_blob(&self, blob_ref: String) -> Result<BlobGetResponse, AgentApiError> {
-        Ok(HttpAgentApi::get_blob(self, BlobGetParams { blob_ref })
+    async fn put_blobs(&self, blobs: Vec<Vec<u8>>) -> Result<Vec<BlobPutResult>, AgentApiError> {
+        let blobs = blobs
+            .into_iter()
+            .map(|bytes| BlobPutItem {
+                bytes_base64: BASE64.encode(bytes),
+            })
+            .collect();
+        Ok(HttpAgentApi::put_blobs(self, BlobPutParams { blobs })
+            .await?
+            .result
+            .blobs)
+    }
+
+    async fn get_blob(&self, blob_ref: String) -> Result<BlobReadResponse, AgentApiError> {
+        Ok(HttpAgentApi::read_blob(self, BlobReadParams { blob_ref })
             .await?
             .result)
     }
@@ -429,7 +427,7 @@ async fn upload_missing_blobs(
         }
         if bytes.len() as u64 > options.max_put_many_batch_bytes {
             bail!(
-                "blob {} is {} bytes, larger than put_many batch limit {}; raise --put-batch-bytes and the gateway request body limit or lower --max-file-bytes",
+                "blob {} is {} bytes, larger than blobs/put batch limit {}; raise --put-batch-bytes and the gateway request body limit or lower --max-file-bytes",
                 file.blob_ref,
                 bytes.len(),
                 options.max_put_many_batch_bytes
@@ -905,10 +903,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::sync::Mutex;
 
-    use api::{
-        BlobGetResponse, BlobHasItem, BlobPutResponse, VfsSnapshotCommitResponse,
-        VfsSnapshotReadResponse,
-    };
+    use api::{BlobHasItem, BlobReadResponse, VfsSnapshotCommitResponse, VfsSnapshotReadResponse};
     use tempfile::tempdir;
     use vfs::VfsEntry;
 
@@ -1170,7 +1165,7 @@ mod tests {
         async fn put_blobs(
             &self,
             blobs: Vec<Vec<u8>>,
-        ) -> Result<Vec<BlobPutResponse>, AgentApiError> {
+        ) -> Result<Vec<BlobPutResult>, AgentApiError> {
             self.put_batches.lock().unwrap().push(blobs.clone());
             let mut existing = self.existing.lock().unwrap();
             let mut stored_blobs = self.blobs.lock().unwrap();
@@ -1180,7 +1175,7 @@ mod tests {
                     let blob_ref = BlobRef::from_bytes(&bytes).as_str().to_owned();
                     existing.insert(blob_ref.clone());
                     stored_blobs.insert(blob_ref.clone(), bytes.clone());
-                    BlobPutResponse {
+                    BlobPutResult {
                         blob_ref,
                         bytes: bytes.len() as u64,
                     }
@@ -1188,12 +1183,12 @@ mod tests {
                 .collect())
         }
 
-        async fn get_blob(&self, blob_ref: String) -> Result<BlobGetResponse, AgentApiError> {
+        async fn get_blob(&self, blob_ref: String) -> Result<BlobReadResponse, AgentApiError> {
             let blobs = self.blobs.lock().unwrap();
             let bytes = blobs
                 .get(&blob_ref)
                 .ok_or_else(|| AgentApiError::not_found(format!("blob not found: {blob_ref}")))?;
-            Ok(BlobGetResponse {
+            Ok(BlobReadResponse {
                 blob_ref,
                 bytes_base64: BASE64.encode(bytes),
                 bytes: bytes.len() as u64,

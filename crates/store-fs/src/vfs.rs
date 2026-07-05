@@ -208,8 +208,10 @@ impl VfsWorkspaceStore for FsVfsCatalogStore {
 
         let workspace = VfsWorkspaceRecord {
             workspace_id: record.workspace_id,
+            display_name: record.display_name,
             base_snapshot_ref: record.base_snapshot_ref,
             head_snapshot_ref: record.head_snapshot_ref,
+            head_totals: record.head_totals,
             revision: 0,
             created_at_ms: record.created_at_ms,
             updated_at_ms: record.created_at_ms,
@@ -231,6 +233,60 @@ impl VfsWorkspaceStore for FsVfsCatalogStore {
             &path,
         )
         .await
+    }
+
+    async fn list_workspaces(&self) -> Result<Vec<VfsWorkspaceRecord>, VfsCatalogError> {
+        let _guard = self.lock.lock().await;
+        let dir = self.workspaces_root();
+        let mut read_dir = match fs::read_dir(&dir).await {
+            Ok(read_dir) => read_dir,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => {
+                return Err(catalog_io_error(
+                    "read vfs workspaces directory",
+                    &dir,
+                    error,
+                ));
+            }
+        };
+
+        let mut workspaces = Vec::new();
+        while let Some(entry) = read_dir
+            .next_entry()
+            .await
+            .map_err(|error| catalog_io_error("read vfs workspaces directory entry", &dir, error))?
+        {
+            let file_type = entry.file_type().await.map_err(|error| {
+                catalog_io_error("read vfs workspace entry type", &entry.path(), error)
+            })?;
+            if !file_type.is_file() {
+                continue;
+            }
+            if entry
+                .path()
+                .extension()
+                .and_then(|extension| extension.to_str())
+                != Some("json")
+            {
+                continue;
+            }
+            workspaces.push(
+                read_required_json::<VfsWorkspaceRecord>(
+                    "workspace",
+                    &entry.path().display().to_string(),
+                    "read vfs workspace record",
+                    &entry.path(),
+                )
+                .await?,
+            );
+        }
+        workspaces.sort_by(|left, right| {
+            right
+                .updated_at_ms
+                .cmp(&left.updated_at_ms)
+                .then_with(|| left.workspace_id.cmp(&right.workspace_id))
+        });
+        Ok(workspaces)
     }
 
     async fn compare_and_set_head(
@@ -256,7 +312,11 @@ impl VfsWorkspaceStore for FsVfsCatalogStore {
             });
         }
 
+        if let Some(display_name) = request.display_name {
+            workspace.display_name = Some(display_name);
+        }
         workspace.head_snapshot_ref = request.new_head_snapshot_ref;
+        workspace.head_totals = request.new_head_totals;
         workspace.revision =
             workspace
                 .revision
@@ -445,19 +505,28 @@ mod tests {
         let workspace = store
             .create_workspace(CreateVfsWorkspaceRecord {
                 workspace_id: workspace_id.clone(),
+                display_name: Some("Scratch".to_string()),
                 base_snapshot_ref: Some(snapshot_ref.clone()),
                 head_snapshot_ref: snapshot_ref.clone(),
+                head_totals: ::vfs::VfsTotals { files: 1, bytes: 8 },
                 created_at_ms: 2,
             })
             .await
             .expect("create workspace");
         assert_eq!(workspace.revision, 0);
+        assert_eq!(workspace.display_name.as_deref(), Some("Scratch"));
+        assert_eq!(
+            workspace.head_totals,
+            ::vfs::VfsTotals { files: 1, bytes: 8 }
+        );
         assert!(matches!(
             store
                 .create_workspace(CreateVfsWorkspaceRecord {
                     workspace_id: workspace_id.clone(),
+                    display_name: None,
                     base_snapshot_ref: None,
                     head_snapshot_ref: snapshot_ref.clone(),
+                    head_totals: ::vfs::VfsTotals::default(),
                     created_at_ms: 3,
                 })
                 .await,
@@ -469,19 +538,34 @@ mod tests {
             .compare_and_set_head(CompareAndSetVfsWorkspaceHead {
                 workspace_id: workspace_id.clone(),
                 expected_revision: Some(0),
+                display_name: Some("Scratch v2".to_string()),
                 new_head_snapshot_ref: next_ref.clone(),
+                new_head_totals: ::vfs::VfsTotals {
+                    files: 2,
+                    bytes: 16,
+                },
                 updated_at_ms: 4,
             })
             .await
             .expect("advance head");
         assert_eq!(updated.revision, 1);
         assert_eq!(updated.head_snapshot_ref, next_ref);
+        assert_eq!(updated.display_name.as_deref(), Some("Scratch v2"));
+        assert_eq!(
+            updated.head_totals,
+            ::vfs::VfsTotals {
+                files: 2,
+                bytes: 16
+            }
+        );
         assert!(matches!(
             store
                 .compare_and_set_head(CompareAndSetVfsWorkspaceHead {
                     workspace_id: workspace_id.clone(),
                     expected_revision: Some(0),
+                    display_name: None,
                     new_head_snapshot_ref: BlobRef::from_bytes(b"stale"),
+                    new_head_totals: ::vfs::VfsTotals::default(),
                     updated_at_ms: 5,
                 })
                 .await,
@@ -490,6 +574,10 @@ mod tests {
                 ..
             })
         ));
+        let listed = store.list_workspaces().await.expect("list workspaces");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].workspace_id, workspace_id);
+        assert_eq!(listed[0].display_name.as_deref(), Some("Scratch v2"));
 
         let session_id = SessionId::new("session-1");
         let skill_mount = VfsMountRecord {

@@ -14,15 +14,25 @@
 CREATE TABLE IF NOT EXISTS universes (
     universe_id uuid PRIMARY KEY,
     slug text UNIQUE,
+    -- Server-side default so every insert path stamps creation time without
+    -- threading a clock through `ensure_universe`.
+    created_at_ms bigint NOT NULL
+        DEFAULT ((extract(epoch FROM now()) * 1000)::bigint),
 
     CONSTRAINT universes_slug_format
         CHECK (slug IS NULL OR slug ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$')
 );
 
+ALTER TABLE universes
+    ADD COLUMN IF NOT EXISTS created_at_ms bigint NOT NULL
+        DEFAULT ((extract(epoch FROM now()) * 1000)::bigint);
+
 CREATE TABLE IF NOT EXISTS sessions (
     universe_id uuid NOT NULL
         REFERENCES universes (universe_id) ON DELETE CASCADE,
     session_id text NOT NULL,
+    -- Human-readable name; store metadata only, never event-log state.
+    display_name text,
     head_seq bigint,
     created_at_ms bigint NOT NULL,
     updated_at_ms bigint NOT NULL,
@@ -69,6 +79,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     CONSTRAINT sessions_updated_after_created
         CHECK (updated_at_ms >= created_at_ms)
 );
+
+ALTER TABLE sessions
+    ADD COLUMN IF NOT EXISTS display_name text;
 
 ALTER TABLE sessions
     ADD COLUMN IF NOT EXISTS source_session_id text;
@@ -125,6 +138,10 @@ $$;
 CREATE INDEX IF NOT EXISTS sessions_source_session_id_idx
     ON sessions (universe_id, source_session_id)
     WHERE source_session_id IS NOT NULL;
+
+-- Keyset paging for session listings: newest activity first.
+CREATE INDEX IF NOT EXISTS sessions_updated_at_idx
+    ON sessions (universe_id, updated_at_ms DESC, session_id DESC);
 
 ALTER TABLE sessions
     DROP CONSTRAINT IF EXISTS sessions_source_seq_positive;

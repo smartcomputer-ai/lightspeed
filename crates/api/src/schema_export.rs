@@ -12,8 +12,19 @@ use schemars::generate::SchemaSettings;
 use serde_json::{Value, json};
 
 use crate::{
-    AgentNotification, JsonRpcError, NOTIFICATION_METHODS, PROTOCOL_VERSION, method_manifest,
+    AgentNotification, JsonRpcError, MethodSpec, NOTIFICATION_METHODS, PROTOCOL_VERSION,
+    method_manifest, operator_method_manifest,
 };
+
+/// Every dispatchable method across both scope classes: the universe-scoped
+/// manifest followed by the operator-scoped one. The wire contract is one
+/// document; `scope` on each entry tells clients which authorization class a
+/// method belongs to (operator methods never carry the universe header).
+pub fn full_method_manifest() -> Vec<MethodSpec> {
+    let mut methods = method_manifest();
+    methods.extend(operator_method_manifest());
+    methods
+}
 
 pub struct ExportedSchemas {
     /// Draft-07 JSON Schema bundle: every wire type under `definitions`.
@@ -30,12 +41,13 @@ pub fn export_schemas() -> ExportedSchemas {
 
     let mut methods = Vec::new();
     let mut openrpc_methods = Vec::new();
-    for spec in method_manifest() {
+    for spec in full_method_manifest() {
         let schemas = (spec.register_schemas)(&mut generator);
         let params_schema = serde_json::to_value(&schemas.params).expect("schema serializes");
         let result_schema = serde_json::to_value(&schemas.result).expect("schema serializes");
         methods.push(json!({
             "method": spec.method,
+            "scope": spec.scope.as_str(),
             "params": { "type": spec.params_type, "schema": params_schema },
             "result": { "type": spec.result_type, "schema": result_schema },
         }));
@@ -132,13 +144,63 @@ mod tests {
 
     #[test]
     fn method_manifest_methods_are_unique_and_complete() {
-        let manifest = method_manifest();
+        let manifest = full_method_manifest();
         let mut methods: Vec<&str> = manifest.iter().map(|spec| spec.method).collect();
         let total = methods.len();
         methods.sort_unstable();
         methods.dedup();
         assert_eq!(methods.len(), total, "duplicate method in manifest");
-        assert_eq!(total, 80);
+        assert_eq!(total, 88);
+        assert_eq!(
+            manifest
+                .iter()
+                .filter(|spec| spec.scope == crate::MethodScope::Operator)
+                .count(),
+            5
+        );
+    }
+
+    #[test]
+    fn method_names_carry_their_scope_prefix() {
+        for spec in full_method_manifest() {
+            assert_eq!(
+                crate::is_operator_method(spec.method),
+                spec.scope == crate::MethodScope::Operator,
+                "scope of {} must match its method-name prefix",
+                spec.method
+            );
+        }
+    }
+
+    /// The `session/` prefix is the wire marker for session-scoped methods:
+    /// everything under it addresses one session through a `sessionId` param,
+    /// and nothing outside it may take one. `session/list` queries the
+    /// collection, so it is the single exemption.
+    #[test]
+    fn session_prefix_matches_session_id_in_params() {
+        let exported = export_schemas();
+        let definitions = exported.schema_bundle["definitions"]
+            .as_object()
+            .expect("bundle has definitions");
+        for entry in exported.methods["methods"].as_array().expect("methods") {
+            let method = entry["method"].as_str().expect("method name");
+            let params = match entry["params"]["schema"]["$ref"].as_str() {
+                Some(reference) => {
+                    let name = reference
+                        .strip_prefix("#/definitions/")
+                        .unwrap_or_else(|| panic!("unexpected ref shape: {reference}"));
+                    &definitions[name]
+                }
+                None => &entry["params"]["schema"],
+            };
+            let has_session_id = !params["properties"]["sessionId"].is_null();
+            let session_scoped =
+                method.starts_with("session/") && method != crate::METHOD_SESSION_LIST;
+            assert_eq!(
+                has_session_id, session_scoped,
+                "{method}: sessionId param presence must match its session/ prefix"
+            );
+        }
     }
 
     #[test]

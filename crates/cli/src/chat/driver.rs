@@ -77,9 +77,6 @@ pub(crate) struct ChatArgs {
     /// Start a new session from an inline agent profile JSON file or literal.
     #[arg(long = "profile-json")]
     profile_json: Option<String>,
-    /// Working directory for local file tools. Defaults to the current directory.
-    #[arg(long)]
-    workdir: Option<PathBuf>,
     /// Snapshot a local directory, create a VFS workspace, and mount it for this chat.
     #[arg(long)]
     mount: Option<PathBuf>,
@@ -102,18 +99,8 @@ pub(crate) struct ChatArgs {
 pub(crate) async fn handle(args: ChatArgs) -> Result<()> {
     let draft = draft_settings(&args)?;
     let profile = profile_source_from_args(args.profile.as_deref(), args.profile_json.as_deref())?;
-    if args.mount.is_some() && args.workdir.is_some() {
-        return Err(anyhow!(
-            "--workdir cannot be used with --mount; use --mount-path for the VFS cwd"
-        ));
-    }
     let mount = args.mount.clone();
     let mount_path = args.mount_path.clone();
-    let workdir = if mount.is_some() {
-        mount_path.clone()
-    } else {
-        resolve_chat_workdir(args.workdir)?
-    };
     let session_id = if args.new {
         new_session_id()
     } else if let Some(session_id) = args.session.as_ref() {
@@ -126,7 +113,6 @@ pub(crate) async fn handle(args: ChatArgs) -> Result<()> {
     let (mut driver, mut initial_events) = ChatSessionDriver::open(ChatSessionDriverOptions {
         session_id,
         draft_settings: draft,
-        workdir,
         api_url: args.api_url,
         profile,
     })
@@ -206,7 +192,6 @@ fn profile_source_from_args(
 pub(crate) struct ChatSessionDriverOptions {
     pub session_id: String,
     pub draft_settings: ChatDraftSettings,
-    pub workdir: String,
     pub api_url: String,
     pub profile: Option<ProfileSource>,
 }
@@ -219,7 +204,6 @@ pub(crate) struct ChatSessionDriver {
     turns: Vec<ChatTurn>,
     active_tool_chains: Vec<ChatToolChainView>,
     sessions: BTreeSet<String>,
-    workdir: String,
     pending_run: Option<PendingRunHandle>,
     notice_seq: u64,
 }
@@ -236,7 +220,7 @@ impl ChatSessionDriver {
         let started = api
             .open_or_start_session(SessionStartParams {
                 session_id: Some(session_id.clone()),
-                cwd: Some(options.workdir.clone()),
+                display_name: None,
                 config: Some(session_start_config(&options.draft_settings)),
                 profile: options.profile.clone(),
             })
@@ -251,7 +235,6 @@ impl ChatSessionDriver {
             turns: Vec::new(),
             active_tool_chains: Vec::new(),
             sessions: BTreeSet::from([session_id.clone()]),
-            workdir: options.workdir,
             pending_run: None,
             notice_seq: 0,
         };
@@ -307,12 +290,11 @@ impl ChatSessionDriver {
         crate::vfs_cli::mount_workspace(
             self.api.as_ref(),
             self.session_id.clone(),
-            mount_path.clone(),
+            mount_path,
             workspace.workspace_id,
         )
         .await
         .context("failed to mount chat workspace")?;
-        self.workdir = mount_path;
         self.refresh().await
     }
 
@@ -323,23 +305,33 @@ impl ChatSessionDriver {
             ChatCommand::SetDraftModel { model } => self.set_model(model).await,
             ChatCommand::SetDraftReasoningEffort { effort } => self.set_effort(effort).await,
             ChatCommand::SetDraftMaxTokens { max_tokens } => self.set_max_tokens(max_tokens).await,
-            ChatCommand::ListSessions => Ok(vec![ChatEvent::SessionsListed {
-                world_id: GATEWAY_WORLD_ID.into(),
-                sessions: self
-                    .sessions
-                    .iter()
-                    .map(|session_id| ChatSessionSummary {
-                        session_id: session_id.clone(),
-                        status: Some(api::SessionStatus::Idle),
-                        lifecycle: Some(crate::chat::protocol::ChatSessionLifecycle::Idle),
-                        updated_at_ns: None,
-                        run_count: 0,
-                        provider: Some(self.settings.provider.clone()),
-                        model: Some(self.settings.model.clone()),
-                        active_run: None,
-                    })
-                    .collect(),
-            }]),
+            ChatCommand::ListSessions => {
+                let listed = self
+                    .api
+                    .list_sessions(api::SessionListParams::default())
+                    .await
+                    .map_err(api_error)?;
+                Ok(vec![ChatEvent::SessionsListed {
+                    world_id: GATEWAY_WORLD_ID.into(),
+                    sessions: listed
+                        .result
+                        .sessions
+                        .iter()
+                        .map(|session| ChatSessionSummary {
+                            session_id: session.id.clone(),
+                            status: None,
+                            lifecycle: None,
+                            updated_at_ns: Some(
+                                session.updated_at_ms.saturating_mul(1_000_000),
+                            ),
+                            run_count: 0,
+                            provider: None,
+                            model: None,
+                            active_run: None,
+                        })
+                        .collect(),
+                }])
+            }
             ChatCommand::ListSkills => self.list_skills().await,
             ChatCommand::ListActiveSkills => self.list_active_skills().await,
             ChatCommand::PickSkill { scope } => self.pick_skill(scope).await,
@@ -879,7 +871,7 @@ impl ChatSessionDriver {
         self.api
             .start_session(SessionStartParams {
                 session_id: Some(session_id.clone()),
-                cwd: Some(self.workdir.clone()),
+                display_name: None,
                 config: Some(session_start_config(&self.settings)),
                 profile: None,
             })
@@ -1497,20 +1489,6 @@ fn api_reasoning_effort(settings: &ChatDraftSettings) -> Option<ApiReasoningEffo
     })
 }
 
-fn resolve_chat_workdir(workdir: Option<PathBuf>) -> Result<String> {
-    let path = match workdir {
-        Some(path) if path.is_absolute() => path,
-        Some(path) => std::env::current_dir()
-            .context("resolve current directory")?
-            .join(path),
-        None => std::env::current_dir().context("resolve current directory")?,
-    };
-    let path = path
-        .canonicalize()
-        .with_context(|| format!("resolve chat workdir '{}'", path.display()))?;
-    Ok(path.to_string_lossy().into_owned())
-}
-
 fn print_event(event: &ChatEvent) -> Result<()> {
     match event {
         ChatEvent::Connected(info) => {
@@ -1841,7 +1819,7 @@ mod tests {
         let session = SessionView {
             id: "session_1".into(),
             status: api::SessionStatus::Active,
-            cwd: None,
+            display_name: None,
             config_revision: 0,
             config: None,
             created_at_ms: 0,
@@ -1943,7 +1921,7 @@ mod tests {
         let session = SessionView {
             id: "session_1".into(),
             status: api::SessionStatus::Idle,
-            cwd: None,
+            display_name: None,
             config_revision: 0,
             config: None,
             created_at_ms: 0,
@@ -1995,7 +1973,7 @@ mod tests {
         let session = SessionView {
             id: "session_1".into(),
             status: api::SessionStatus::Idle,
-            cwd: None,
+            display_name: None,
             config_revision: 0,
             config: None,
             created_at_ms: 0,
@@ -2153,7 +2131,6 @@ mod tests {
             filesystem_tools: None,
             profile: None,
             profile_json: None,
-            workdir: None,
             mount: None,
             mount_path: "/workspace".into(),
             api_url: "http://127.0.0.1:18080/rpc".into(),

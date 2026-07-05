@@ -42,8 +42,7 @@ mod tests {
             kind: PrincipalKind::ServiceAccount,
             id: Some("bridge-1".to_owned()),
         };
-        let observed =
-            with_request_principal(scoped.clone(), async { request_principal() }).await;
+        let observed = with_request_principal(scoped.clone(), async { request_principal() }).await;
         assert_eq!(observed, scoped);
         assert_eq!(request_principal(), PrincipalRef::universe_default());
     }

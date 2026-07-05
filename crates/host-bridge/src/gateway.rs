@@ -11,8 +11,8 @@ use api::{
     EnvironmentProviderUnregisterParams, EnvironmentProviderUnregisterResponse,
     EnvironmentTargetStatusView, EnvironmentTargetSummaryView, HostCapabilitiesView,
     HostControllerConnectionView, HostScopeView, HostTransportView, JsonRpcRequest,
-    JsonRpcResponse, METHOD_ENVIRONMENT_PROVIDERS_HEARTBEAT, METHOD_ENVIRONMENT_PROVIDERS_REGISTER,
-    METHOD_ENVIRONMENT_PROVIDERS_UNREGISTER, RequestId,
+    JsonRpcResponse, METHOD_ENVIRONMENTS_PROVIDERS_HEARTBEAT,
+    METHOD_ENVIRONMENTS_PROVIDERS_REGISTER, METHOD_ENVIRONMENTS_PROVIDERS_UNREGISTER, RequestId,
 };
 use host_protocol::{
     control::targets::{HostTargetStatus, HostTargetSummary},
@@ -45,7 +45,7 @@ impl GatewayClient {
         runtime: &BridgeRuntime,
     ) -> Result<AgentApiOutcome<EnvironmentProviderRegisterResponse>, AgentApiError> {
         self.request(
-            METHOD_ENVIRONMENT_PROVIDERS_REGISTER,
+            METHOD_ENVIRONMENTS_PROVIDERS_REGISTER,
             EnvironmentProviderRegisterParams {
                 provider_id: config.provider_id.clone(),
                 provider_kind: EnvironmentProviderKindView::Bridge,
@@ -75,7 +75,7 @@ impl GatewayClient {
         target: HostTargetSummary,
     ) -> Result<AgentApiOutcome<EnvironmentProviderHeartbeatResponse>, AgentApiError> {
         self.request(
-            METHOD_ENVIRONMENT_PROVIDERS_HEARTBEAT,
+            METHOD_ENVIRONMENTS_PROVIDERS_HEARTBEAT,
             EnvironmentProviderHeartbeatParams {
                 provider_id: config.provider_id.clone(),
                 lease_ttl_ms: Some(config.lease_ttl_ms_i64()),
@@ -90,7 +90,7 @@ impl GatewayClient {
         config: &BridgeConfig,
     ) -> Result<AgentApiOutcome<EnvironmentProviderUnregisterResponse>, AgentApiError> {
         self.request(
-            METHOD_ENVIRONMENT_PROVIDERS_UNREGISTER,
+            METHOD_ENVIRONMENTS_PROVIDERS_UNREGISTER,
             EnvironmentProviderUnregisterParams {
                 provider_id: config.provider_id.clone(),
             },

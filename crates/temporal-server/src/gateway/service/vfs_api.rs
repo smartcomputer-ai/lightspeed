@@ -48,14 +48,28 @@ impl GatewayAgentApi {
         &self,
         params: VfsWorkspaceCreateParams,
     ) -> Result<VfsWorkspaceRecord, AgentApiError> {
-        let snapshot_ref = parse_blob_ref(&params.snapshot_ref)?;
-        let _manifest = vfs::read_snapshot_manifest(self.store.as_ref(), &snapshot_ref)
-            .await
-            .map_err(map_vfs_read_error)?;
+        let (snapshot_ref, head_totals) = match params.snapshot_ref {
+            Some(snapshot_ref) => {
+                let snapshot_ref = parse_blob_ref(&snapshot_ref)?;
+                let manifest = vfs::read_snapshot_manifest(self.store.as_ref(), &snapshot_ref)
+                    .await
+                    .map_err(map_vfs_read_error)?;
+                (snapshot_ref, manifest.totals)
+            }
+            None => {
+                let result = vfs::commit_snapshot_manifest(
+                    self.store.as_ref(),
+                    vfs::VfsSnapshotManifest::empty(),
+                )
+                .await
+                .map_err(map_vfs_commit_error)?;
+                (result.snapshot_ref, result.manifest.totals)
+            }
+        };
         self.record_vfs_snapshot_if_missing(
             snapshot_ref.clone(),
-            VfsSnapshotSource::new("api_snapshot").with_subject("vfs/workspace/create"),
-            params.display_name,
+            VfsSnapshotSource::new("api_snapshot").with_subject("vfs/workspaces/create"),
+            None,
         )
         .await?;
 
@@ -68,8 +82,10 @@ impl GatewayAgentApi {
         self.store
             .create_workspace(CreateVfsWorkspaceRecord {
                 workspace_id,
+                display_name: params.display_name,
                 base_snapshot_ref: Some(snapshot_ref.clone()),
                 head_snapshot_ref: snapshot_ref,
+                head_totals,
                 created_at_ms: now_ms()?,
             })
             .await
@@ -87,26 +103,37 @@ impl GatewayAgentApi {
             .map_err(map_vfs_catalog_error)
     }
 
+    pub(super) async fn list_vfs_workspace_records(
+        &self,
+    ) -> Result<Vec<VfsWorkspaceRecord>, AgentApiError> {
+        self.store
+            .list_workspaces()
+            .await
+            .map_err(map_vfs_catalog_error)
+    }
+
     pub(super) async fn update_vfs_workspace_record(
         &self,
         params: VfsWorkspaceUpdateParams,
     ) -> Result<VfsWorkspaceRecord, AgentApiError> {
         let workspace_id = parse_vfs_workspace_id(params.workspace_id)?;
         let snapshot_ref = parse_blob_ref(&params.snapshot_ref)?;
-        vfs::read_snapshot_manifest(self.store.as_ref(), &snapshot_ref)
+        let manifest = vfs::read_snapshot_manifest(self.store.as_ref(), &snapshot_ref)
             .await
             .map_err(map_vfs_read_error)?;
         self.record_vfs_snapshot_if_missing(
             snapshot_ref.clone(),
-            VfsSnapshotSource::new("api_workspace_update").with_subject("vfs/workspace/update"),
-            params.display_name,
+            VfsSnapshotSource::new("api_workspace_update").with_subject("vfs/workspaces/update"),
+            None,
         )
         .await?;
         self.store
             .compare_and_set_head(CompareAndSetVfsWorkspaceHead {
                 workspace_id,
                 expected_revision: params.expected_revision,
+                display_name: params.display_name,
                 new_head_snapshot_ref: snapshot_ref,
+                new_head_totals: manifest.totals,
                 updated_at_ms: now_ms()?,
             })
             .await
@@ -280,7 +307,7 @@ impl GatewayAgentApi {
                     .map_err(map_vfs_read_error)?;
                 self.record_vfs_snapshot_if_missing(
                     snapshot_ref.clone(),
-                    VfsSnapshotSource::new("api_mount").with_subject("vfs/mount/put"),
+                    VfsSnapshotSource::new("api_mount").with_subject("session/mounts/put"),
                     None,
                 )
                 .await?;
@@ -502,11 +529,16 @@ pub(super) async fn read_vfs_snapshot(
 pub(super) fn vfs_workspace_view(record: VfsWorkspaceRecord) -> VfsWorkspaceView {
     VfsWorkspaceView {
         workspace_id: record.workspace_id.as_str().to_owned(),
+        display_name: record.display_name,
         base_snapshot_ref: record
             .base_snapshot_ref
             .map(|blob_ref| blob_ref.as_str().to_owned()),
         head_snapshot_ref: record.head_snapshot_ref.as_str().to_owned(),
+        files: record.head_totals.files,
+        bytes: record.head_totals.bytes,
         revision: record.revision,
+        created_at_ms: record.created_at_ms,
+        updated_at_ms: record.updated_at_ms,
     }
 }
 

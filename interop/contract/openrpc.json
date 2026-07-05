@@ -333,7 +333,7 @@
         ],
         "type": "object"
       },
-      "AgentApiOutcomeOfBlobGetResponse": {
+      "AgentApiOutcomeOfBlobHasResponse": {
         "properties": {
           "notifications": {
             "items": {
@@ -342,41 +342,7 @@
             "type": "array"
           },
           "result": {
-            "$ref": "#/components/schemas/BlobGetResponse"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "type": "object"
-      },
-      "AgentApiOutcomeOfBlobHasManyResponse": {
-        "properties": {
-          "notifications": {
-            "items": {
-              "$ref": "#/components/schemas/AgentNotification"
-            },
-            "type": "array"
-          },
-          "result": {
-            "$ref": "#/components/schemas/BlobHasManyResponse"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "type": "object"
-      },
-      "AgentApiOutcomeOfBlobPutManyResponse": {
-        "properties": {
-          "notifications": {
-            "items": {
-              "$ref": "#/components/schemas/AgentNotification"
-            },
-            "type": "array"
-          },
-          "result": {
-            "$ref": "#/components/schemas/BlobPutManyResponse"
+            "$ref": "#/components/schemas/BlobHasResponse"
           }
         },
         "required": [
@@ -394,6 +360,23 @@
           },
           "result": {
             "$ref": "#/components/schemas/BlobPutResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfBlobReadResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/BlobReadResponse"
           }
         },
         "required": [
@@ -622,6 +605,91 @@
         ],
         "type": "object"
       },
+      "AgentApiOutcomeOfOperatorOutboxReadResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/OperatorOutboxReadResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfOperatorUniverseCreateResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/OperatorUniverseCreateResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfOperatorUniverseDeleteResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/OperatorUniverseDeleteResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfOperatorUniverseListResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/OperatorUniverseListResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfOperatorUniverseReadResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/OperatorUniverseReadResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
       "AgentApiOutcomeOfOutboxAckResponse": {
         "properties": {
           "notifications": {
@@ -717,6 +785,23 @@
           },
           "result": {
             "$ref": "#/components/schemas/ProfileListResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfProfilePutResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/ProfilePutResponse"
           }
         },
         "required": [
@@ -1081,6 +1166,23 @@
         ],
         "type": "object"
       },
+      "AgentApiOutcomeOfSessionListResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/SessionListResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
       "AgentApiOutcomeOfSessionMcpLinkResponse": {
         "properties": {
           "notifications": {
@@ -1142,6 +1244,23 @@
           },
           "result": {
             "$ref": "#/components/schemas/SessionReadResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfSessionRenameResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/SessionRenameResponse"
           }
         },
         "required": [
@@ -1387,6 +1506,23 @@
         ],
         "type": "object"
       },
+      "AgentApiOutcomeOfVfsWorkspaceListResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/VfsWorkspaceListResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
       "AgentApiOutcomeOfVfsWorkspaceReadResponse": {
         "properties": {
           "notifications": {
@@ -1502,7 +1638,7 @@
           {
             "properties": {
               "method": {
-                "const": "run/started",
+                "const": "session/runs/started",
                 "type": "string"
               },
               "params": {
@@ -1530,7 +1666,7 @@
           {
             "properties": {
               "method": {
-                "const": "run/completed",
+                "const": "session/runs/completed",
                 "type": "string"
               },
               "params": {
@@ -1558,7 +1694,7 @@
           {
             "properties": {
               "method": {
-                "const": "item/completed",
+                "const": "session/items/completed",
                 "type": "string"
               },
               "params": {
@@ -2735,7 +2871,99 @@
         ],
         "type": "object"
       },
-      "BlobGetParams": {
+      "BlobHasItem": {
+        "properties": {
+          "blobRef": {
+            "type": "string"
+          },
+          "exists": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "blobRef",
+          "exists"
+        ],
+        "type": "object"
+      },
+      "BlobHasParams": {
+        "properties": {
+          "blobRefs": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "BlobHasResponse": {
+        "properties": {
+          "blobs": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/BlobHasItem"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "BlobPutItem": {
+        "properties": {
+          "bytesBase64": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "bytesBase64"
+        ],
+        "type": "object"
+      },
+      "BlobPutParams": {
+        "description": "`blobs/put` is batch-native: pass one item to store a single blob. Results\ncome back in request order.",
+        "properties": {
+          "blobs": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/BlobPutItem"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "BlobPutResponse": {
+        "properties": {
+          "blobs": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/BlobPutResult"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "BlobPutResult": {
+        "properties": {
+          "blobRef": {
+            "type": "string"
+          },
+          "bytes": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "blobRef",
+          "bytes"
+        ],
+        "type": "object"
+      },
+      "BlobReadParams": {
         "properties": {
           "blobRef": {
             "type": "string"
@@ -2746,7 +2974,7 @@
         ],
         "type": "object"
       },
-      "BlobGetResponse": {
+      "BlobReadResponse": {
         "properties": {
           "blobRef": {
             "type": "string"
@@ -2763,97 +2991,6 @@
         "required": [
           "blobRef",
           "bytesBase64",
-          "bytes"
-        ],
-        "type": "object"
-      },
-      "BlobHasItem": {
-        "properties": {
-          "blobRef": {
-            "type": "string"
-          },
-          "exists": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "blobRef",
-          "exists"
-        ],
-        "type": "object"
-      },
-      "BlobHasManyParams": {
-        "properties": {
-          "blobRefs": {
-            "default": [],
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          }
-        },
-        "type": "object"
-      },
-      "BlobHasManyResponse": {
-        "properties": {
-          "blobs": {
-            "default": [],
-            "items": {
-              "$ref": "#/components/schemas/BlobHasItem"
-            },
-            "type": "array"
-          }
-        },
-        "type": "object"
-      },
-      "BlobPutManyParams": {
-        "properties": {
-          "blobs": {
-            "default": [],
-            "items": {
-              "$ref": "#/components/schemas/BlobPutParams"
-            },
-            "type": "array"
-          }
-        },
-        "type": "object"
-      },
-      "BlobPutManyResponse": {
-        "properties": {
-          "blobs": {
-            "default": [],
-            "items": {
-              "$ref": "#/components/schemas/BlobPutResponse"
-            },
-            "type": "array"
-          }
-        },
-        "type": "object"
-      },
-      "BlobPutParams": {
-        "properties": {
-          "bytesBase64": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "bytesBase64"
-        ],
-        "type": "object"
-      },
-      "BlobPutResponse": {
-        "properties": {
-          "blobRef": {
-            "type": "string"
-          },
-          "bytes": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "blobRef",
           "bytes"
         ],
         "type": "object"
@@ -5159,6 +5296,268 @@
         ],
         "type": "object"
       },
+      "OperatorOutboundMessageView": {
+        "description": "One pending outbox entry with its owning universe. Acknowledge through\nthe per-universe `outbox/ack` (with the entry's universe header); the\nglobal cursor only drives reading.",
+        "properties": {
+          "attempts": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "createdAtMs": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/OutboundOriginView"
+          },
+          "outboxId": {
+            "type": "string"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/OutboundPayloadView"
+          },
+          "runId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "seq": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "universeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "universeId",
+          "seq",
+          "outboxId",
+          "sessionId",
+          "origin",
+          "payload",
+          "attempts",
+          "createdAtMs"
+        ],
+        "type": "object"
+      },
+      "OperatorOutboxReadParams": {
+        "description": "Multiplexed outbox read: one long-poll serves every universe of the\ndeployment, replacing one `outbox/read` tailer per universe. `seq` is a\ndeployment-global cursor (the outbox sequence is one identity column\nacross universes), so a single `after` resumes the whole stream.",
+        "properties": {
+          "after": {
+            "description": "Return pending entries with `seq` greater than this cursor. Restart\nfrom 0 to re-read undelivered entries after a consumer restart.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "limit": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "waitMs": {
+            "description": "Long-poll wait in milliseconds when no entries are pending.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "OperatorOutboxReadResponse": {
+        "properties": {
+          "entries": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/OperatorOutboundMessageView"
+            },
+            "type": "array"
+          },
+          "nextAfter": {
+            "description": "Cursor to pass as `after` on the next read.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "nextAfter"
+        ],
+        "type": "object"
+      },
+      "OperatorUniverseCreateParams": {
+        "properties": {
+          "universeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "universeId"
+        ],
+        "type": "object"
+      },
+      "OperatorUniverseCreateResponse": {
+        "properties": {
+          "created": {
+            "description": "False when the universe already existed (create is idempotent).",
+            "type": "boolean"
+          },
+          "universe": {
+            "$ref": "#/components/schemas/OperatorUniverseView"
+          }
+        },
+        "required": [
+          "universe",
+          "created"
+        ],
+        "type": "object"
+      },
+      "OperatorUniverseDeleteParams": {
+        "properties": {
+          "universeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "universeId"
+        ],
+        "type": "object"
+      },
+      "OperatorUniverseDeleteResponse": {
+        "description": "Purge report. The purge is idempotent: rerunning after a partial failure\nresumes where it stopped, and the universe row is deleted last so a\nhalf-purged universe is still visible to `operator/universes/read`.",
+        "properties": {
+          "blobObjectsDeleted": {
+            "description": "External object-store blobs deleted during the purge.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "universeId": {
+            "type": "string"
+          },
+          "workflowsTerminated": {
+            "description": "Live session workflows terminated during the purge.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "universeId",
+          "workflowsTerminated",
+          "blobObjectsDeleted"
+        ],
+        "type": "object"
+      },
+      "OperatorUniverseListParams": {
+        "type": "object"
+      },
+      "OperatorUniverseListResponse": {
+        "properties": {
+          "universes": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/OperatorUniverseView"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "OperatorUniverseReadParams": {
+        "properties": {
+          "universeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "universeId"
+        ],
+        "type": "object"
+      },
+      "OperatorUniverseReadResponse": {
+        "properties": {
+          "universe": {
+            "$ref": "#/components/schemas/OperatorUniverseView"
+          }
+        },
+        "required": [
+          "universe"
+        ],
+        "type": "object"
+      },
+      "OperatorUniverseView": {
+        "description": "Per-universe stats view. Counts are cheap aggregates computed at read\ntime, not maintained counters — approximate under concurrent writes.",
+        "properties": {
+          "blobBytes": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "createdAtMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "lastActivityAtMs": {
+            "description": "Most recent session activity (`max(sessions.updated_at_ms)`); absent\nwhen the universe has no sessions.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "profiles": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sessions": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "slug": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "universeId": {
+            "type": "string"
+          },
+          "workspaces": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "universeId",
+          "createdAtMs",
+          "sessions",
+          "workspaces",
+          "profiles",
+          "blobBytes"
+        ],
+        "type": "object"
+      },
       "OutboundAckInput": {
         "oneOf": [
           {
@@ -5727,6 +6126,37 @@
         ],
         "type": "object"
       },
+      "ProfilePutParams": {
+        "properties": {
+          "expectedRevision": {
+            "description": "Checked only when the profile already exists; absent replaces (or\ncreates) unconditionally.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "profile": {
+            "$ref": "#/components/schemas/AgentProfileInput"
+          }
+        },
+        "required": [
+          "profile"
+        ],
+        "type": "object"
+      },
+      "ProfilePutResponse": {
+        "properties": {
+          "profile": {
+            "$ref": "#/components/schemas/AgentProfile"
+          }
+        },
+        "required": [
+          "profile"
+        ],
+        "type": "object"
+      },
       "ProfileReadParams": {
         "properties": {
           "profileId": {
@@ -6142,7 +6572,7 @@
             "$ref": "#/components/schemas/RunStartSource"
           },
           "submissionId": {
-            "description": "Client-supplied idempotency key, unique per session. Retrying\n`run/start` with the same submission id and the same source/config\nreturns the original run instead of starting a second one; reusing a\nsubmission id with different source or config is rejected.",
+            "description": "Client-supplied idempotency key, unique per session. Retrying\n`session/runs/start` with the same submission id and the same source/config\nreturns the original run instead of starting a second one; reusing a\nsubmission id with different source or config is rejected.",
             "type": [
               "string",
               "null"
@@ -8906,6 +9336,45 @@
         ],
         "type": "object"
       },
+      "SessionListParams": {
+        "properties": {
+          "cursor": {
+            "description": "Opaque cursor from the previous page's `nextCursor`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "limit": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "SessionListResponse": {
+        "properties": {
+          "nextCursor": {
+            "description": "Present when more sessions exist past this page. Ordering is most\nrecently updated first; pages can drift under concurrent activity.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sessions": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SessionSummaryView"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
       "SessionMcpLinkParams": {
         "properties": {
           "allowedTools": {
@@ -9116,6 +9585,35 @@
         ],
         "type": "object"
       },
+      "SessionRenameParams": {
+        "properties": {
+          "displayName": {
+            "description": "New display name; absent clears it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sessionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId"
+        ],
+        "type": "object"
+      },
+      "SessionRenameResponse": {
+        "properties": {
+          "session": {
+            "$ref": "#/components/schemas/SessionSummaryView"
+          }
+        },
+        "required": [
+          "session"
+        ],
+        "type": "object"
+      },
       "SessionStartParams": {
         "properties": {
           "config": {
@@ -9128,7 +9626,7 @@
               }
             ]
           },
-          "cwd": {
+          "displayName": {
             "type": [
               "string",
               "null"
@@ -9173,6 +9671,35 @@
           "error"
         ],
         "type": "string"
+      },
+      "SessionSummaryView": {
+        "properties": {
+          "createdAtMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "displayName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "updatedAtMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "createdAtMs",
+          "updatedAtMs"
+        ],
+        "type": "object"
       },
       "SessionToolsUpdateInput": {
         "oneOf": [
@@ -9331,7 +9858,7 @@
             "minimum": 0,
             "type": "integer"
           },
-          "cwd": {
+          "displayName": {
             "type": [
               "string",
               "null"
@@ -10541,7 +11068,11 @@
             ]
           },
           "snapshotRef": {
-            "type": "string"
+            "description": "Snapshot to seed the workspace from. Absent starts the workspace from\nthe empty snapshot, committed server-side.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "workspaceId": {
             "type": [
@@ -10550,9 +11081,6 @@
             ]
           }
         },
-        "required": [
-          "snapshotRef"
-        ],
         "type": "object"
       },
       "VfsWorkspaceCreateResponse": {
@@ -10586,6 +11114,21 @@
         "required": [
           "workspace"
         ],
+        "type": "object"
+      },
+      "VfsWorkspaceListParams": {
+        "type": "object"
+      },
+      "VfsWorkspaceListResponse": {
+        "properties": {
+          "workspaces": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/VfsWorkspaceView"
+            },
+            "type": "array"
+          }
+        },
         "type": "object"
       },
       "VfsWorkspaceReadParams": {
@@ -10658,12 +11201,38 @@
               "null"
             ]
           },
+          "bytes": {
+            "description": "Total byte size of the head snapshot.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "createdAtMs": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "displayName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "files": {
+            "description": "File count of the head snapshot.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
           "headSnapshotRef": {
             "type": "string"
           },
           "revision": {
             "format": "uint64",
             "minimum": 0,
+            "type": "integer"
+          },
+          "updatedAtMs": {
+            "format": "int64",
             "type": "integer"
           },
           "workspaceId": {
@@ -10673,7 +11242,11 @@
         "required": [
           "workspaceId",
           "headSnapshotRef",
-          "revision"
+          "files",
+          "bytes",
+          "revision",
+          "createdAtMs",
+          "updatedAtMs"
         ],
         "type": "object"
       }
@@ -10727,121 +11300,41 @@
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "profiles/create",
+      "name": "session/read",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/ProfileCreateParams"
+            "$ref": "#/components/schemas/SessionReadParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfProfileCreateResponse"
+          "$ref": "#/components/schemas/AgentApiOutcomeOfSessionReadResponse"
         }
       }
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "profiles/read",
+      "name": "session/list",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/ProfileReadParams"
+            "$ref": "#/components/schemas/SessionListParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfProfileReadResponse"
-        }
-      }
-    },
-    {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "profiles/list",
-      "paramStructure": "by-name",
-      "params": [
-        {
-          "name": "params",
-          "required": true,
-          "schema": {
-            "$ref": "#/components/schemas/ProfileListParams"
-          }
-        }
-      ],
-      "result": {
-        "name": "result",
-        "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfProfileListResponse"
-        }
-      }
-    },
-    {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "profiles/update",
-      "paramStructure": "by-name",
-      "params": [
-        {
-          "name": "params",
-          "required": true,
-          "schema": {
-            "$ref": "#/components/schemas/ProfileUpdateParams"
-          }
-        }
-      ],
-      "result": {
-        "name": "result",
-        "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfProfileUpdateResponse"
-        }
-      }
-    },
-    {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "profiles/delete",
-      "paramStructure": "by-name",
-      "params": [
-        {
-          "name": "params",
-          "required": true,
-          "schema": {
-            "$ref": "#/components/schemas/ProfileDeleteParams"
-          }
-        }
-      ],
-      "result": {
-        "name": "result",
-        "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfProfileDeleteResponse"
-        }
-      }
-    },
-    {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "profiles/apply",
-      "paramStructure": "by-name",
-      "params": [
-        {
-          "name": "params",
-          "required": true,
-          "schema": {
-            "$ref": "#/components/schemas/ProfileApplyParams"
-          }
-        }
-      ],
-      "result": {
-        "name": "result",
-        "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfProfileApplyResponse"
+          "$ref": "#/components/schemas/AgentApiOutcomeOfSessionListResponse"
         }
       }
     },
@@ -10867,61 +11360,21 @@
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "session/tools/update",
+      "name": "session/rename",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/SessionToolsUpdateParams"
+            "$ref": "#/components/schemas/SessionRenameParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfSessionToolsUpdateResponse"
-        }
-      }
-    },
-    {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "session/read",
-      "paramStructure": "by-name",
-      "params": [
-        {
-          "name": "params",
-          "required": true,
-          "schema": {
-            "$ref": "#/components/schemas/SessionReadParams"
-          }
-        }
-      ],
-      "result": {
-        "name": "result",
-        "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfSessionReadResponse"
-        }
-      }
-    },
-    {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "session/events/read",
-      "paramStructure": "by-name",
-      "params": [
-        {
-          "name": "params",
-          "required": true,
-          "schema": {
-            "$ref": "#/components/schemas/SessionEventsReadParams"
-          }
-        }
-      ],
-      "result": {
-        "name": "result",
-        "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfSessionEventsReadResponse"
+          "$ref": "#/components/schemas/AgentApiOutcomeOfSessionRenameResponse"
         }
       }
     },
@@ -10947,27 +11400,47 @@
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "context/compact",
+      "name": "session/events/read",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/ContextCompactParams"
+            "$ref": "#/components/schemas/SessionEventsReadParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfContextCompactResponse"
+          "$ref": "#/components/schemas/AgentApiOutcomeOfSessionEventsReadResponse"
         }
       }
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "context/append",
+      "name": "session/tools/update",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/SessionToolsUpdateParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfSessionToolsUpdateResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "session/context/append",
       "paramStructure": "by-name",
       "params": [
         {
@@ -10987,7 +11460,7 @@
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "context/remove",
+      "name": "session/context/remove",
       "paramStructure": "by-name",
       "params": [
         {
@@ -11007,47 +11480,27 @@
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "outbox/read",
+      "name": "session/context/compact",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/OutboxReadParams"
+            "$ref": "#/components/schemas/ContextCompactParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfOutboxReadResponse"
+          "$ref": "#/components/schemas/AgentApiOutcomeOfContextCompactResponse"
         }
       }
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "outbox/ack",
-      "paramStructure": "by-name",
-      "params": [
-        {
-          "name": "params",
-          "required": true,
-          "schema": {
-            "$ref": "#/components/schemas/OutboxAckParams"
-          }
-        }
-      ],
-      "result": {
-        "name": "result",
-        "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfOutboxAckResponse"
-        }
-      }
-    },
-    {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "run/start",
+      "name": "session/runs/start",
       "paramStructure": "by-name",
       "params": [
         {
@@ -11067,7 +11520,7 @@
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "run/cancel",
+      "name": "session/runs/cancel",
       "paramStructure": "by-name",
       "params": [
         {
@@ -11087,7 +11540,7 @@
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "prompts/active",
+      "name": "session/prompts/active",
       "paramStructure": "by-name",
       "params": [
         {
@@ -11107,7 +11560,7 @@
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "skills/list",
+      "name": "session/skills/list",
       "paramStructure": "by-name",
       "params": [
         {
@@ -11127,7 +11580,7 @@
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "skills/active",
+      "name": "session/skills/active",
       "paramStructure": "by-name",
       "params": [
         {
@@ -11147,7 +11600,7 @@
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "skills/activate",
+      "name": "session/skills/activate",
       "paramStructure": "by-name",
       "params": [
         {
@@ -11167,7 +11620,7 @@
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "skills/deactivate",
+      "name": "session/skills/deactivate",
       "paramStructure": "by-name",
       "params": [
         {
@@ -11187,21 +11640,161 @@
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "session/environments/list",
+      "name": "session/profiles/apply",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/SessionEnvironmentListParams"
+            "$ref": "#/components/schemas/ProfileApplyParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfSessionEnvironmentListResponse"
+          "$ref": "#/components/schemas/AgentApiOutcomeOfProfileApplyResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "session/mounts/put",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/VfsMountPutParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfVfsMountPutResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "session/mounts/list",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/VfsMountListParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfVfsMountListResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "session/mounts/delete",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/VfsMountDeleteParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfVfsMountDeleteResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "session/mcp/link",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/SessionMcpLinkParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfSessionMcpLinkResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "session/mcp/unlink",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/SessionMcpUnlinkParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfSessionMcpUnlinkResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "session/mcp/list",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/SessionMcpListParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfSessionMcpListResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "session/environments/create",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/SessionEnvironmentCreateParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfSessionEnvironmentCreateResponse"
         }
       }
     },
@@ -11227,21 +11820,21 @@
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "session/environments/create",
+      "name": "session/environments/list",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/SessionEnvironmentCreateParams"
+            "$ref": "#/components/schemas/SessionEnvironmentListParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfSessionEnvironmentCreateResponse"
+          "$ref": "#/components/schemas/AgentApiOutcomeOfSessionEnvironmentListResponse"
         }
       }
     },
@@ -11407,26 +12000,6 @@
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "session/jobs/list",
-      "paramStructure": "by-name",
-      "params": [
-        {
-          "name": "params",
-          "required": true,
-          "schema": {
-            "$ref": "#/components/schemas/SessionJobListParams"
-          }
-        }
-      ],
-      "result": {
-        "name": "result",
-        "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfSessionJobListResponse"
-        }
-      }
-    },
-    {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
       "name": "session/jobs/read",
       "paramStructure": "by-name",
       "params": [
@@ -11442,6 +12015,26 @@
         "name": "result",
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfSessionJobReadResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "session/jobs/list",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/SessionJobListParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfSessionJobListResponse"
         }
       }
     },
@@ -11467,107 +12060,127 @@
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "environmentProviders/register",
+      "name": "profiles/create",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/EnvironmentProviderRegisterParams"
+            "$ref": "#/components/schemas/ProfileCreateParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentProviderRegisterResponse"
+          "$ref": "#/components/schemas/AgentApiOutcomeOfProfileCreateResponse"
         }
       }
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "environmentProviders/heartbeat",
+      "name": "profiles/read",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/EnvironmentProviderHeartbeatParams"
+            "$ref": "#/components/schemas/ProfileReadParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentProviderHeartbeatResponse"
+          "$ref": "#/components/schemas/AgentApiOutcomeOfProfileReadResponse"
         }
       }
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "environmentProviders/unregister",
+      "name": "profiles/list",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/EnvironmentProviderUnregisterParams"
+            "$ref": "#/components/schemas/ProfileListParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentProviderUnregisterResponse"
+          "$ref": "#/components/schemas/AgentApiOutcomeOfProfileListResponse"
         }
       }
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "environmentProviders/list",
+      "name": "profiles/put",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/EnvironmentProviderListParams"
+            "$ref": "#/components/schemas/ProfilePutParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentProviderListResponse"
+          "$ref": "#/components/schemas/AgentApiOutcomeOfProfilePutResponse"
         }
       }
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "environmentProviders/targets/list",
+      "name": "profiles/update",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/EnvironmentProviderTargetListParams"
+            "$ref": "#/components/schemas/ProfileUpdateParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentProviderTargetListResponse"
+          "$ref": "#/components/schemas/AgentApiOutcomeOfProfileUpdateResponse"
         }
       }
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "blob/put",
+      "name": "profiles/delete",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/ProfileDeleteParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfProfileDeleteResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "blobs/put",
       "paramStructure": "by-name",
       "params": [
         {
@@ -11587,67 +12200,47 @@
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "blob/put_many",
+      "name": "blobs/read",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/BlobPutManyParams"
+            "$ref": "#/components/schemas/BlobReadParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfBlobPutManyResponse"
+          "$ref": "#/components/schemas/AgentApiOutcomeOfBlobReadResponse"
         }
       }
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "blob/get",
+      "name": "blobs/has",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/BlobGetParams"
+            "$ref": "#/components/schemas/BlobHasParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfBlobGetResponse"
+          "$ref": "#/components/schemas/AgentApiOutcomeOfBlobHasResponse"
         }
       }
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "blob/has_many",
-      "paramStructure": "by-name",
-      "params": [
-        {
-          "name": "params",
-          "required": true,
-          "schema": {
-            "$ref": "#/components/schemas/BlobHasManyParams"
-          }
-        }
-      ],
-      "result": {
-        "name": "result",
-        "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfBlobHasManyResponse"
-        }
-      }
-    },
-    {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "vfs/snapshot/commit",
+      "name": "vfs/snapshots/commit",
       "paramStructure": "by-name",
       "params": [
         {
@@ -11667,7 +12260,7 @@
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "vfs/snapshot/read",
+      "name": "vfs/snapshots/read",
       "paramStructure": "by-name",
       "params": [
         {
@@ -11687,7 +12280,7 @@
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "vfs/workspace/create",
+      "name": "vfs/workspaces/create",
       "paramStructure": "by-name",
       "params": [
         {
@@ -11707,7 +12300,7 @@
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "vfs/workspace/read",
+      "name": "vfs/workspaces/read",
       "paramStructure": "by-name",
       "params": [
         {
@@ -11727,7 +12320,27 @@
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "vfs/workspace/update",
+      "name": "vfs/workspaces/list",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/VfsWorkspaceListParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfVfsWorkspaceListResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "vfs/workspaces/update",
       "paramStructure": "by-name",
       "params": [
         {
@@ -11747,7 +12360,7 @@
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "vfs/workspace/delete",
+      "name": "vfs/workspaces/delete",
       "paramStructure": "by-name",
       "params": [
         {
@@ -11762,66 +12375,6 @@
         "name": "result",
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfVfsWorkspaceDeleteResponse"
-        }
-      }
-    },
-    {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "vfs/mount/put",
-      "paramStructure": "by-name",
-      "params": [
-        {
-          "name": "params",
-          "required": true,
-          "schema": {
-            "$ref": "#/components/schemas/VfsMountPutParams"
-          }
-        }
-      ],
-      "result": {
-        "name": "result",
-        "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfVfsMountPutResponse"
-        }
-      }
-    },
-    {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "vfs/mount/delete",
-      "paramStructure": "by-name",
-      "params": [
-        {
-          "name": "params",
-          "required": true,
-          "schema": {
-            "$ref": "#/components/schemas/VfsMountDeleteParams"
-          }
-        }
-      ],
-      "result": {
-        "name": "result",
-        "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfVfsMountDeleteResponse"
-        }
-      }
-    },
-    {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "vfs/mount/list",
-      "paramStructure": "by-name",
-      "params": [
-        {
-          "name": "params",
-          "required": true,
-          "schema": {
-            "$ref": "#/components/schemas/VfsMountListParams"
-          }
-        }
-      ],
-      "result": {
-        "name": "result",
-        "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfVfsMountListResponse"
         }
       }
     },
@@ -11847,26 +12400,6 @@
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "mcp/servers/list",
-      "paramStructure": "by-name",
-      "params": [
-        {
-          "name": "params",
-          "required": true,
-          "schema": {
-            "$ref": "#/components/schemas/McpServerListParams"
-          }
-        }
-      ],
-      "result": {
-        "name": "result",
-        "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfMcpServerListResponse"
-        }
-      }
-    },
-    {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
       "name": "mcp/servers/read",
       "paramStructure": "by-name",
       "params": [
@@ -11882,6 +12415,26 @@
         "name": "result",
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfMcpServerReadResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "mcp/servers/list",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/McpServerListParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfMcpServerListResponse"
         }
       }
     },
@@ -11907,61 +12460,101 @@
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "session/mcp/link",
+      "name": "environments/providers/register",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/SessionMcpLinkParams"
+            "$ref": "#/components/schemas/EnvironmentProviderRegisterParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfSessionMcpLinkResponse"
+          "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentProviderRegisterResponse"
         }
       }
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "session/mcp/unlink",
+      "name": "environments/providers/heartbeat",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/SessionMcpUnlinkParams"
+            "$ref": "#/components/schemas/EnvironmentProviderHeartbeatParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfSessionMcpUnlinkResponse"
+          "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentProviderHeartbeatResponse"
         }
       }
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "session/mcp/list",
+      "name": "environments/providers/unregister",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/SessionMcpListParams"
+            "$ref": "#/components/schemas/EnvironmentProviderUnregisterParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfSessionMcpListResponse"
+          "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentProviderUnregisterResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "environments/providers/list",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/EnvironmentProviderListParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentProviderListResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "environments/providers/targets/list",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/EnvironmentProviderTargetListParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentProviderTargetListResponse"
         }
       }
     },
@@ -11987,26 +12580,6 @@
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "auth/grants/list",
-      "paramStructure": "by-name",
-      "params": [
-        {
-          "name": "params",
-          "required": true,
-          "schema": {
-            "$ref": "#/components/schemas/AuthGrantListParams"
-          }
-        }
-      ],
-      "result": {
-        "name": "result",
-        "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfAuthGrantListResponse"
-        }
-      }
-    },
-    {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
       "name": "auth/grants/read",
       "paramStructure": "by-name",
       "params": [
@@ -12022,6 +12595,26 @@
         "name": "result",
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthGrantReadResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "auth/grants/list",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/AuthGrantListParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfAuthGrantListResponse"
         }
       }
     },
@@ -12067,26 +12660,6 @@
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "auth/clients/list",
-      "paramStructure": "by-name",
-      "params": [
-        {
-          "name": "params",
-          "required": true,
-          "schema": {
-            "$ref": "#/components/schemas/AuthClientListParams"
-          }
-        }
-      ],
-      "result": {
-        "name": "result",
-        "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfAuthClientListResponse"
-        }
-      }
-    },
-    {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
       "name": "auth/clients/read",
       "paramStructure": "by-name",
       "params": [
@@ -12102,6 +12675,26 @@
         "name": "result",
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthClientReadResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "auth/clients/list",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/AuthClientListParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfAuthClientListResponse"
         }
       }
     },
@@ -12147,7 +12740,7 @@
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "auth/flows/status",
+      "name": "auth/flows/read",
       "paramStructure": "by-name",
       "params": [
         {
@@ -12187,26 +12780,6 @@
     },
     {
       "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
-      "name": "auth/providers/list",
-      "paramStructure": "by-name",
-      "params": [
-        {
-          "name": "params",
-          "required": true,
-          "schema": {
-            "$ref": "#/components/schemas/AuthProviderListParams"
-          }
-        }
-      ],
-      "result": {
-        "name": "result",
-        "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfAuthProviderListResponse"
-        }
-      }
-    },
-    {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
       "name": "auth/providers/read",
       "paramStructure": "by-name",
       "params": [
@@ -12222,6 +12795,26 @@
         "name": "result",
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthProviderReadResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "auth/providers/list",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/AuthProviderListParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfAuthProviderListResponse"
         }
       }
     },
@@ -12282,6 +12875,146 @@
         "name": "result",
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthGitHubInstallationGrantResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "outbox/read",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/OutboxReadParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfOutboxReadResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "outbox/ack",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/OutboxAckParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfOutboxAckResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "operator/universes/create",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/OperatorUniverseCreateParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorUniverseCreateResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "operator/universes/list",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/OperatorUniverseListParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorUniverseListResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "operator/universes/read",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/OperatorUniverseReadParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorUniverseReadResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "operator/universes/delete",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/OperatorUniverseDeleteParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorUniverseDeleteResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "operator/outbox/read",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/OperatorOutboxReadParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorOutboxReadResponse"
         }
       }
     }

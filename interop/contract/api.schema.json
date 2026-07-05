@@ -333,7 +333,7 @@
       ],
       "type": "object"
     },
-    "AgentApiOutcomeOfBlobGetResponse": {
+    "AgentApiOutcomeOfBlobHasResponse": {
       "properties": {
         "notifications": {
           "items": {
@@ -342,41 +342,7 @@
           "type": "array"
         },
         "result": {
-          "$ref": "#/definitions/BlobGetResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfBlobHasManyResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/BlobHasManyResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfBlobPutManyResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/BlobPutManyResponse"
+          "$ref": "#/definitions/BlobHasResponse"
         }
       },
       "required": [
@@ -394,6 +360,23 @@
         },
         "result": {
           "$ref": "#/definitions/BlobPutResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfBlobReadResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/BlobReadResponse"
         }
       },
       "required": [
@@ -622,6 +605,91 @@
       ],
       "type": "object"
     },
+    "AgentApiOutcomeOfOperatorOutboxReadResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/OperatorOutboxReadResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfOperatorUniverseCreateResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/OperatorUniverseCreateResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfOperatorUniverseDeleteResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/OperatorUniverseDeleteResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfOperatorUniverseListResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/OperatorUniverseListResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfOperatorUniverseReadResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/OperatorUniverseReadResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
     "AgentApiOutcomeOfOutboxAckResponse": {
       "properties": {
         "notifications": {
@@ -717,6 +785,23 @@
         },
         "result": {
           "$ref": "#/definitions/ProfileListResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfProfilePutResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/ProfilePutResponse"
         }
       },
       "required": [
@@ -1081,6 +1166,23 @@
       ],
       "type": "object"
     },
+    "AgentApiOutcomeOfSessionListResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/SessionListResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
     "AgentApiOutcomeOfSessionMcpLinkResponse": {
       "properties": {
         "notifications": {
@@ -1142,6 +1244,23 @@
         },
         "result": {
           "$ref": "#/definitions/SessionReadResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfSessionRenameResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/SessionRenameResponse"
         }
       },
       "required": [
@@ -1387,6 +1506,23 @@
       ],
       "type": "object"
     },
+    "AgentApiOutcomeOfVfsWorkspaceListResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/VfsWorkspaceListResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
     "AgentApiOutcomeOfVfsWorkspaceReadResponse": {
       "properties": {
         "notifications": {
@@ -1502,7 +1638,7 @@
         {
           "properties": {
             "method": {
-              "const": "run/started",
+              "const": "session/runs/started",
               "type": "string"
             },
             "params": {
@@ -1530,7 +1666,7 @@
         {
           "properties": {
             "method": {
-              "const": "run/completed",
+              "const": "session/runs/completed",
               "type": "string"
             },
             "params": {
@@ -1558,7 +1694,7 @@
         {
           "properties": {
             "method": {
-              "const": "item/completed",
+              "const": "session/items/completed",
               "type": "string"
             },
             "params": {
@@ -2735,7 +2871,99 @@
       ],
       "type": "object"
     },
-    "BlobGetParams": {
+    "BlobHasItem": {
+      "properties": {
+        "blobRef": {
+          "type": "string"
+        },
+        "exists": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "blobRef",
+        "exists"
+      ],
+      "type": "object"
+    },
+    "BlobHasParams": {
+      "properties": {
+        "blobRefs": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "BlobHasResponse": {
+      "properties": {
+        "blobs": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/BlobHasItem"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "BlobPutItem": {
+      "properties": {
+        "bytesBase64": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "bytesBase64"
+      ],
+      "type": "object"
+    },
+    "BlobPutParams": {
+      "description": "`blobs/put` is batch-native: pass one item to store a single blob. Results\ncome back in request order.",
+      "properties": {
+        "blobs": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/BlobPutItem"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "BlobPutResponse": {
+      "properties": {
+        "blobs": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/BlobPutResult"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "BlobPutResult": {
+      "properties": {
+        "blobRef": {
+          "type": "string"
+        },
+        "bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "blobRef",
+        "bytes"
+      ],
+      "type": "object"
+    },
+    "BlobReadParams": {
       "properties": {
         "blobRef": {
           "type": "string"
@@ -2746,7 +2974,7 @@
       ],
       "type": "object"
     },
-    "BlobGetResponse": {
+    "BlobReadResponse": {
       "properties": {
         "blobRef": {
           "type": "string"
@@ -2763,97 +2991,6 @@
       "required": [
         "blobRef",
         "bytesBase64",
-        "bytes"
-      ],
-      "type": "object"
-    },
-    "BlobHasItem": {
-      "properties": {
-        "blobRef": {
-          "type": "string"
-        },
-        "exists": {
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "blobRef",
-        "exists"
-      ],
-      "type": "object"
-    },
-    "BlobHasManyParams": {
-      "properties": {
-        "blobRefs": {
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        }
-      },
-      "type": "object"
-    },
-    "BlobHasManyResponse": {
-      "properties": {
-        "blobs": {
-          "default": [],
-          "items": {
-            "$ref": "#/definitions/BlobHasItem"
-          },
-          "type": "array"
-        }
-      },
-      "type": "object"
-    },
-    "BlobPutManyParams": {
-      "properties": {
-        "blobs": {
-          "default": [],
-          "items": {
-            "$ref": "#/definitions/BlobPutParams"
-          },
-          "type": "array"
-        }
-      },
-      "type": "object"
-    },
-    "BlobPutManyResponse": {
-      "properties": {
-        "blobs": {
-          "default": [],
-          "items": {
-            "$ref": "#/definitions/BlobPutResponse"
-          },
-          "type": "array"
-        }
-      },
-      "type": "object"
-    },
-    "BlobPutParams": {
-      "properties": {
-        "bytesBase64": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "bytesBase64"
-      ],
-      "type": "object"
-    },
-    "BlobPutResponse": {
-      "properties": {
-        "blobRef": {
-          "type": "string"
-        },
-        "bytes": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "blobRef",
         "bytes"
       ],
       "type": "object"
@@ -5159,6 +5296,268 @@
       ],
       "type": "object"
     },
+    "OperatorOutboundMessageView": {
+      "description": "One pending outbox entry with its owning universe. Acknowledge through\nthe per-universe `outbox/ack` (with the entry's universe header); the\nglobal cursor only drives reading.",
+      "properties": {
+        "attempts": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "createdAtMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "origin": {
+          "$ref": "#/definitions/OutboundOriginView"
+        },
+        "outboxId": {
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/definitions/OutboundPayloadView"
+        },
+        "runId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "seq": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sessionId": {
+          "type": "string"
+        },
+        "universeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "universeId",
+        "seq",
+        "outboxId",
+        "sessionId",
+        "origin",
+        "payload",
+        "attempts",
+        "createdAtMs"
+      ],
+      "type": "object"
+    },
+    "OperatorOutboxReadParams": {
+      "description": "Multiplexed outbox read: one long-poll serves every universe of the\ndeployment, replacing one `outbox/read` tailer per universe. `seq` is a\ndeployment-global cursor (the outbox sequence is one identity column\nacross universes), so a single `after` resumes the whole stream.",
+      "properties": {
+        "after": {
+          "description": "Return pending entries with `seq` greater than this cursor. Restart\nfrom 0 to re-read undelivered entries after a consumer restart.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "limit": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "waitMs": {
+          "description": "Long-poll wait in milliseconds when no entries are pending.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "OperatorOutboxReadResponse": {
+      "properties": {
+        "entries": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/OperatorOutboundMessageView"
+          },
+          "type": "array"
+        },
+        "nextAfter": {
+          "description": "Cursor to pass as `after` on the next read.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "nextAfter"
+      ],
+      "type": "object"
+    },
+    "OperatorUniverseCreateParams": {
+      "properties": {
+        "universeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "universeId"
+      ],
+      "type": "object"
+    },
+    "OperatorUniverseCreateResponse": {
+      "properties": {
+        "created": {
+          "description": "False when the universe already existed (create is idempotent).",
+          "type": "boolean"
+        },
+        "universe": {
+          "$ref": "#/definitions/OperatorUniverseView"
+        }
+      },
+      "required": [
+        "universe",
+        "created"
+      ],
+      "type": "object"
+    },
+    "OperatorUniverseDeleteParams": {
+      "properties": {
+        "universeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "universeId"
+      ],
+      "type": "object"
+    },
+    "OperatorUniverseDeleteResponse": {
+      "description": "Purge report. The purge is idempotent: rerunning after a partial failure\nresumes where it stopped, and the universe row is deleted last so a\nhalf-purged universe is still visible to `operator/universes/read`.",
+      "properties": {
+        "blobObjectsDeleted": {
+          "description": "External object-store blobs deleted during the purge.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "universeId": {
+          "type": "string"
+        },
+        "workflowsTerminated": {
+          "description": "Live session workflows terminated during the purge.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "universeId",
+        "workflowsTerminated",
+        "blobObjectsDeleted"
+      ],
+      "type": "object"
+    },
+    "OperatorUniverseListParams": {
+      "type": "object"
+    },
+    "OperatorUniverseListResponse": {
+      "properties": {
+        "universes": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/OperatorUniverseView"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "OperatorUniverseReadParams": {
+      "properties": {
+        "universeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "universeId"
+      ],
+      "type": "object"
+    },
+    "OperatorUniverseReadResponse": {
+      "properties": {
+        "universe": {
+          "$ref": "#/definitions/OperatorUniverseView"
+        }
+      },
+      "required": [
+        "universe"
+      ],
+      "type": "object"
+    },
+    "OperatorUniverseView": {
+      "description": "Per-universe stats view. Counts are cheap aggregates computed at read\ntime, not maintained counters — approximate under concurrent writes.",
+      "properties": {
+        "blobBytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "createdAtMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "lastActivityAtMs": {
+          "description": "Most recent session activity (`max(sessions.updated_at_ms)`); absent\nwhen the universe has no sessions.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "profiles": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sessions": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "slug": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "universeId": {
+          "type": "string"
+        },
+        "workspaces": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "universeId",
+        "createdAtMs",
+        "sessions",
+        "workspaces",
+        "profiles",
+        "blobBytes"
+      ],
+      "type": "object"
+    },
     "OutboundAckInput": {
       "oneOf": [
         {
@@ -5727,6 +6126,37 @@
       ],
       "type": "object"
     },
+    "ProfilePutParams": {
+      "properties": {
+        "expectedRevision": {
+          "description": "Checked only when the profile already exists; absent replaces (or\ncreates) unconditionally.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "profile": {
+          "$ref": "#/definitions/AgentProfileInput"
+        }
+      },
+      "required": [
+        "profile"
+      ],
+      "type": "object"
+    },
+    "ProfilePutResponse": {
+      "properties": {
+        "profile": {
+          "$ref": "#/definitions/AgentProfile"
+        }
+      },
+      "required": [
+        "profile"
+      ],
+      "type": "object"
+    },
     "ProfileReadParams": {
       "properties": {
         "profileId": {
@@ -6142,7 +6572,7 @@
           "$ref": "#/definitions/RunStartSource"
         },
         "submissionId": {
-          "description": "Client-supplied idempotency key, unique per session. Retrying\n`run/start` with the same submission id and the same source/config\nreturns the original run instead of starting a second one; reusing a\nsubmission id with different source or config is rejected.",
+          "description": "Client-supplied idempotency key, unique per session. Retrying\n`session/runs/start` with the same submission id and the same source/config\nreturns the original run instead of starting a second one; reusing a\nsubmission id with different source or config is rejected.",
           "type": [
             "string",
             "null"
@@ -8906,6 +9336,45 @@
       ],
       "type": "object"
     },
+    "SessionListParams": {
+      "properties": {
+        "cursor": {
+          "description": "Opaque cursor from the previous page's `nextCursor`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "SessionListResponse": {
+      "properties": {
+        "nextCursor": {
+          "description": "Present when more sessions exist past this page. Ordering is most\nrecently updated first; pages can drift under concurrent activity.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sessions": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/SessionSummaryView"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
     "SessionMcpLinkParams": {
       "properties": {
         "allowedTools": {
@@ -9116,6 +9585,35 @@
       ],
       "type": "object"
     },
+    "SessionRenameParams": {
+      "properties": {
+        "displayName": {
+          "description": "New display name; absent clears it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "type": "object"
+    },
+    "SessionRenameResponse": {
+      "properties": {
+        "session": {
+          "$ref": "#/definitions/SessionSummaryView"
+        }
+      },
+      "required": [
+        "session"
+      ],
+      "type": "object"
+    },
     "SessionStartParams": {
       "properties": {
         "config": {
@@ -9128,7 +9626,7 @@
             }
           ]
         },
-        "cwd": {
+        "displayName": {
           "type": [
             "string",
             "null"
@@ -9173,6 +9671,35 @@
         "error"
       ],
       "type": "string"
+    },
+    "SessionSummaryView": {
+      "properties": {
+        "createdAtMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "updatedAtMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "createdAtMs",
+        "updatedAtMs"
+      ],
+      "type": "object"
     },
     "SessionToolsUpdateInput": {
       "oneOf": [
@@ -9331,7 +9858,7 @@
           "minimum": 0,
           "type": "integer"
         },
-        "cwd": {
+        "displayName": {
           "type": [
             "string",
             "null"
@@ -10541,7 +11068,11 @@
           ]
         },
         "snapshotRef": {
-          "type": "string"
+          "description": "Snapshot to seed the workspace from. Absent starts the workspace from\nthe empty snapshot, committed server-side.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "workspaceId": {
           "type": [
@@ -10550,9 +11081,6 @@
           ]
         }
       },
-      "required": [
-        "snapshotRef"
-      ],
       "type": "object"
     },
     "VfsWorkspaceCreateResponse": {
@@ -10586,6 +11114,21 @@
       "required": [
         "workspace"
       ],
+      "type": "object"
+    },
+    "VfsWorkspaceListParams": {
+      "type": "object"
+    },
+    "VfsWorkspaceListResponse": {
+      "properties": {
+        "workspaces": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/VfsWorkspaceView"
+          },
+          "type": "array"
+        }
+      },
       "type": "object"
     },
     "VfsWorkspaceReadParams": {
@@ -10658,12 +11201,38 @@
             "null"
           ]
         },
+        "bytes": {
+          "description": "Total byte size of the head snapshot.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "createdAtMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "files": {
+          "description": "File count of the head snapshot.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "headSnapshotRef": {
           "type": "string"
         },
         "revision": {
           "format": "uint64",
           "minimum": 0,
+          "type": "integer"
+        },
+        "updatedAtMs": {
+          "format": "int64",
           "type": "integer"
         },
         "workspaceId": {
@@ -10673,7 +11242,11 @@
       "required": [
         "workspaceId",
         "headSnapshotRef",
-        "revision"
+        "files",
+        "bytes",
+        "revision",
+        "createdAtMs",
+        "updatedAtMs"
       ],
       "type": "object"
     }

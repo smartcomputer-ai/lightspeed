@@ -100,6 +100,7 @@ async fn anthropic_messages_live_core_session_uses_no_auth_remote_mcp_echo() {
     sessions
         .create_session(CreateSession {
             session_id: session_id.clone(),
+            display_name: None,
             created_at_ms: 1,
         })
         .await

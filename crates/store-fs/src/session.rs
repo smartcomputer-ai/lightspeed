@@ -149,6 +149,7 @@ impl SessionStore for FsSessionStore {
 
         let record = SessionRecord {
             session_id: request.session_id.clone(),
+            display_name: request.display_name,
             head: None,
             source_session_id: None,
             source_seq: None,
@@ -392,6 +393,7 @@ mod tests {
         store
             .create_session(CreateSession {
                 session_id: session_id.clone(),
+                display_name: None,
                 created_at_ms: 1,
             })
             .await
@@ -443,6 +445,7 @@ mod tests {
         store
             .create_session(CreateSession {
                 session_id: session_id.clone(),
+                display_name: None,
                 created_at_ms: 1,
             })
             .await
@@ -450,6 +453,7 @@ mod tests {
         let duplicate = store
             .create_session(CreateSession {
                 session_id: session_id.clone(),
+                display_name: None,
                 created_at_ms: 2,
             })
             .await

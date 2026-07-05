@@ -51,6 +51,16 @@ pub trait ProfileStore: Send + Sync {
         created_at_ms: i64,
     ) -> Result<AgentProfile, ProfileError>;
 
+    /// Create the profile when absent, otherwise replace the whole document
+    /// and bump the revision. `expected_revision` is checked only when the
+    /// profile already exists; `None` replaces unconditionally.
+    async fn put_agent_profile(
+        &self,
+        profile: AgentProfileInput,
+        expected_revision: Option<u64>,
+        now_ms: i64,
+    ) -> Result<AgentProfile, ProfileError>;
+
     async fn read_agent_profile(
         &self,
         profile_id: &ProfileId,
@@ -71,6 +81,15 @@ pub trait ProfileStore: Send + Sync {
 
 pub trait AgentProfileInputExt {
     fn into_record(self, created_at_ms: i64) -> AgentProfile;
+
+    /// Whole-document replacement of `current`: identity and `created_at_ms`
+    /// are preserved, the revision bumps, and everything else comes from the
+    /// input.
+    fn into_replacement(
+        self,
+        current: &AgentProfile,
+        updated_at_ms: i64,
+    ) -> Result<AgentProfile, ProfileError>;
 }
 
 impl AgentProfileInputExt for AgentProfileInput {
@@ -84,6 +103,39 @@ impl AgentProfileInputExt for AgentProfileInput {
             created_at_ms,
             updated_at_ms: created_at_ms,
         }
+    }
+
+    fn into_replacement(
+        self,
+        current: &AgentProfile,
+        updated_at_ms: i64,
+    ) -> Result<AgentProfile, ProfileError> {
+        if self.profile_id != current.profile_id {
+            return Err(ProfileError::InvalidInput {
+                message: format!(
+                    "replacement profile id {} does not match current {}",
+                    self.profile_id, current.profile_id
+                ),
+            });
+        }
+        let revision =
+            current
+                .revision
+                .checked_add(1)
+                .ok_or_else(|| ProfileError::InvalidInput {
+                    message: "profile revision exhausted".to_owned(),
+                })?;
+        let profile = AgentProfile {
+            profile_id: self.profile_id,
+            display_name: self.display_name,
+            description: self.description,
+            revision,
+            document: self.document,
+            created_at_ms: current.created_at_ms,
+            updated_at_ms,
+        };
+        profile.validate()?;
+        Ok(profile)
     }
 }
 
@@ -384,6 +436,52 @@ mod tests {
             source.validate(),
             Err(ProfileError::InvalidInput { message })
                 if message.contains("instructions.text")
+        ));
+    }
+
+    #[test]
+    fn replacement_preserves_identity_and_bumps_revision() {
+        let current = AgentProfile {
+            profile_id: ProfileId::new("support"),
+            display_name: Some("Support".to_owned()),
+            description: Some("Old description".to_owned()),
+            revision: 7,
+            document: ProfileDocument {
+                instructions: Some(ProfileInstructions::Text {
+                    text: "Old instructions".to_owned(),
+                }),
+                ..ProfileDocument::default()
+            },
+            created_at_ms: 10,
+            updated_at_ms: 15,
+        };
+
+        let replaced = AgentProfileInput {
+            profile_id: ProfileId::new("support"),
+            display_name: Some("Support v2".to_owned()),
+            description: None,
+            document: ProfileDocument::default(),
+        }
+        .into_replacement(&current, 20)
+        .expect("replacement should apply");
+
+        assert_eq!(replaced.revision, 8);
+        assert_eq!(replaced.created_at_ms, 10);
+        assert_eq!(replaced.updated_at_ms, 20);
+        assert_eq!(replaced.display_name.as_deref(), Some("Support v2"));
+        assert_eq!(replaced.description, None);
+        assert_eq!(replaced.document, ProfileDocument::default());
+
+        let mismatched = AgentProfileInput {
+            profile_id: ProfileId::new("other"),
+            display_name: None,
+            description: None,
+            document: ProfileDocument::default(),
+        }
+        .into_replacement(&current, 20);
+        assert!(matches!(
+            mismatched,
+            Err(ProfileError::InvalidInput { message }) if message.contains("does not match")
         ));
     }
 

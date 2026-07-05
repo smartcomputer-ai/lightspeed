@@ -29,7 +29,7 @@ use auth_api::{
     api_auth_provider_kind, auth_grant_import_draft, auth_grant_view, map_auth_error,
     parse_auth_grant_id, registry_auth_grant_status_for_filter,
 };
-use blobs::{get_blob, has_blobs, put_blob, put_blobs};
+use blobs::{has_blobs, put_blobs, read_blob};
 use environment_lifecycle::{parse_core_session_id, parse_registry_environment_id};
 use environment_providers::{map_environments_error, parse_environment_provider_id};
 use environments::{
@@ -64,7 +64,7 @@ use vfs_api::{commit_vfs_snapshot, now_ms, read_vfs_snapshot, vfs_workspace_view
 use std::{
     collections::{BTreeMap, BTreeSet},
     env,
-    sync::{Arc, RwLock},
+    sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -81,12 +81,12 @@ use api::{
     AuthGrantReadResponse, AuthGrantRevokeParams, AuthGrantRevokeResponse,
     AuthProviderCreateParams, AuthProviderCreateResponse, AuthProviderDeleteParams,
     AuthProviderDeleteResponse, AuthProviderListParams, AuthProviderListResponse,
-    AuthProviderReadParams, AuthProviderReadResponse, BlobGetParams, BlobGetResponse, BlobHasItem,
-    BlobHasManyParams, BlobHasManyResponse, BlobPutManyParams, BlobPutManyResponse, BlobPutParams,
-    BlobPutResponse, ClientCapabilities, CompactionPolicyInput, ContextAppendParams,
-    ContextAppendResponse, ContextAppendResult, ContextAppendStatus, ContextCompactParams,
-    ContextCompactResponse, ContextConfigInput as ApiContextConfigInput, ContextConfigPatchInput,
-    ContextRemoveParams, ContextRemoveResponse, ContextRemoveResult, ContextRemoveStatus,
+    AuthProviderReadParams, AuthProviderReadResponse, BlobHasItem, BlobHasParams, BlobHasResponse,
+    BlobPutParams, BlobPutResponse, BlobPutResult, BlobReadParams, BlobReadResponse,
+    ClientCapabilities, CompactionPolicyInput, ContextAppendParams, ContextAppendResponse,
+    ContextAppendResult, ContextAppendStatus, ContextCompactParams, ContextCompactResponse,
+    ContextConfigInput as ApiContextConfigInput, ContextConfigPatchInput, ContextRemoveParams,
+    ContextRemoveResponse, ContextRemoveResult, ContextRemoveStatus,
     EnvironmentProviderCapabilitiesView, EnvironmentProviderHeartbeatParams,
     EnvironmentProviderHeartbeatResponse, EnvironmentProviderImplementationView,
     EnvironmentProviderKindView, EnvironmentProviderListParams, EnvironmentProviderListResponse,
@@ -104,11 +104,11 @@ use api::{
     OutboundStatusView, OutboxAckParams, OutboxAckResponse, OutboxReadParams, OutboxReadResponse,
     ProfileApplyParams, ProfileApplyResponse, ProfileApplySummary, ProfileCreateParams,
     ProfileCreateResponse, ProfileDeleteParams, ProfileDeleteResponse, ProfileDocument,
-    ProfileInstructions, ProfileListParams, ProfileListResponse, ProfileReadParams,
-    ProfileReadResponse, ProfileSource, ProfileUpdateParams, ProfileUpdateResponse,
-    PromptInstructionView, PromptsActiveParams, PromptsActiveResponse, ReasoningEffort,
-    RunCancelParams, RunCancelResponse, RunDefaultsConfig, RunDefaultsPatch, RunLimitsConfig,
-    RunStartConfig, RunStartParams, RunStartResponse, RunStartSource, RunView,
+    ProfileInstructions, ProfileListParams, ProfileListResponse, ProfilePutParams,
+    ProfilePutResponse, ProfileReadParams, ProfileReadResponse, ProfileSource, ProfileUpdateParams,
+    ProfileUpdateResponse, PromptInstructionView, PromptsActiveParams, PromptsActiveResponse,
+    ReasoningEffort, RunCancelParams, RunCancelResponse, RunDefaultsConfig, RunDefaultsPatch,
+    RunLimitsConfig, RunStartConfig, RunStartParams, RunStartResponse, RunStartSource, RunView,
     SandboxTargetSpecView, ServerCapabilities, ServerInfo, SessionCloseParams,
     SessionCloseResponse, SessionConfigInput, SessionConfigPatchInput,
     SessionEnvironmentActivateParams, SessionEnvironmentActivateResponse,
@@ -130,11 +130,13 @@ use api::{
     SessionJobHandleView, SessionJobListParams, SessionJobListResponse, SessionJobOutputChunkView,
     SessionJobOutputStreamView, SessionJobReadEntryView, SessionJobReadParams,
     SessionJobReadResponse, SessionJobStartSpecInput, SessionJobStartedView, SessionJobStatusView,
-    SessionJobSummaryView, SessionMcpLinkParams, SessionMcpLinkResponse, SessionMcpListParams,
-    SessionMcpListResponse, SessionMcpUnlinkParams, SessionMcpUnlinkResponse, SessionReadParams,
-    SessionReadResponse, SessionStartParams, SessionStartResponse, SessionToolsUpdateParams,
-    SessionToolsUpdateResponse, SessionUpdateParams, SessionUpdateResponse, SessionView,
-    SkillActivateParams, SkillActivateResponse, SkillActivationScope as ApiSkillActivationScope,
+    SessionJobSummaryView, SessionListParams, SessionListResponse, SessionMcpLinkParams,
+    SessionMcpLinkResponse, SessionMcpListParams, SessionMcpListResponse, SessionMcpUnlinkParams,
+    SessionMcpUnlinkResponse, SessionReadParams, SessionReadResponse, SessionRenameParams,
+    SessionRenameResponse, SessionStartParams, SessionStartResponse, SessionSummaryView,
+    SessionToolsUpdateParams, SessionToolsUpdateResponse, SessionUpdateParams,
+    SessionUpdateResponse, SessionView, SkillActivateParams, SkillActivateResponse,
+    SkillActivationScope as ApiSkillActivationScope,
     SkillActivationSource as ApiSkillActivationSource, SkillActivationView, SkillActiveParams,
     SkillActiveResponse, SkillDeactivateParams, SkillDeactivateResponse, SkillListItem,
     SkillListParams, SkillListResponse, ToolChoiceConfig, ToolChoiceModeConfig, ToolConfigInput,
@@ -143,9 +145,9 @@ use api::{
     VfsMountPutParams, VfsMountPutResponse, VfsMountSourceInput, VfsMountSourceView, VfsMountView,
     VfsSnapshotCommitParams, VfsSnapshotCommitResponse, VfsSnapshotReadParams,
     VfsSnapshotReadResponse, VfsWorkspaceCreateParams, VfsWorkspaceCreateResponse,
-    VfsWorkspaceDeleteParams, VfsWorkspaceDeleteResponse, VfsWorkspaceReadParams,
-    VfsWorkspaceReadResponse, VfsWorkspaceUpdateParams, VfsWorkspaceUpdateResponse,
-    VfsWorkspaceView,
+    VfsWorkspaceDeleteParams, VfsWorkspaceDeleteResponse, VfsWorkspaceListParams,
+    VfsWorkspaceListResponse, VfsWorkspaceReadParams, VfsWorkspaceReadResponse,
+    VfsWorkspaceUpdateParams, VfsWorkspaceUpdateResponse, VfsWorkspaceView,
 };
 use api_projection::{
     CoreAgentProjector, MAX_EVENT_PAGE_LIMIT, ProjectSession, api_kind_from_str, api_run_id,
@@ -211,14 +213,48 @@ const DEFAULT_OPERATION_TIMEOUT: Duration = Duration::from_secs(90);
 /// the cap are clamped, not rejected. The gateway HTTP request timeout must
 /// stay above this cap.
 const DEFAULT_EVENTS_WAIT_CAP: Duration = Duration::from_secs(30);
-/// Cap on `activationText` returned per `context/append` entry. The committed
+/// Cap on `activationText` returned per `session/context/append` entry. The committed
 /// context blob is authoritative; activation text only needs enough of the
 /// head for trigger matching.
 const ACTIVATION_TEXT_MAX_BYTES: usize = 4096;
+/// `session/list` page size when the request does not specify one.
+const DEFAULT_SESSION_LIST_LIMIT: usize = 50;
+/// Server-side cap for `session/list` page sizes; larger requests are clamped.
+const MAX_SESSION_LIST_LIMIT: usize = 200;
 
 /// Default public base URL for the gateway-hosted OAuth callback; matches
 /// `DEFAULT_GATEWAY_BIND`. Hosted deployments must set the real public URL.
 pub const DEFAULT_PUBLIC_BASE_URL: &str = "http://127.0.0.1:18080";
+
+fn session_summary_view(record: engine::storage::SessionRecord) -> SessionSummaryView {
+    SessionSummaryView {
+        id: record.session_id.as_str().to_owned(),
+        display_name: record.display_name,
+        created_at_ms: record.created_at_ms,
+        updated_at_ms: record.updated_at_ms,
+    }
+}
+
+/// Opaque `session/list` cursor: `{updated_at_ms}:{session_id}`. Session ids
+/// cannot contain `:` at the first position of the numeric prefix, so
+/// `split_once` is unambiguous.
+fn encode_session_list_cursor(cursor: &engine::storage::SessionListCursor) -> String {
+    format!("{}:{}", cursor.updated_at_ms, cursor.session_id)
+}
+
+fn decode_session_list_cursor(
+    cursor: &str,
+) -> Result<engine::storage::SessionListCursor, AgentApiError> {
+    let invalid =
+        || AgentApiError::invalid_request(format!("invalid session list cursor: {cursor}"));
+    let (updated_at_ms, session_id) = cursor.split_once(':').ok_or_else(invalid)?;
+    let updated_at_ms = updated_at_ms.parse::<u64>().map_err(|_| invalid())?;
+    let session_id = SessionId::try_new(session_id).map_err(|_| invalid())?;
+    Ok(engine::storage::SessionListCursor {
+        updated_at_ms,
+        session_id,
+    })
+}
 
 fn status_has_submission(
     status: Option<&AgentSessionStatus>,
@@ -684,19 +720,7 @@ impl GatewayAgentApiBuilder {
             github_api,
             environment_manager,
             host_controller_connector: self.host_controller_connector,
-            metadata: RwLock::new(BTreeMap::new()),
         }
-    }
-}
-
-#[derive(Clone, Debug, Default)]
-struct GatewaySessionMetadata {
-    cwd: Option<String>,
-}
-
-impl GatewaySessionMetadata {
-    fn is_empty(&self) -> bool {
-        self.cwd.is_none()
     }
 }
 
@@ -717,7 +741,6 @@ pub struct GatewayAgentApi {
     github_api: Arc<dyn GitHubApiClient>,
     environment_manager: SessionEnvironmentManager,
     host_controller_connector: Arc<dyn HostControllerConnector>,
-    metadata: RwLock<BTreeMap<SessionId, GatewaySessionMetadata>>,
 }
 
 impl GatewayAgentApi {
@@ -776,46 +799,6 @@ impl GatewayAgentApi {
         SubmissionId::new(format!("submit_{}", uuid::Uuid::new_v4().simple()))
     }
 
-    fn session_metadata(
-        &self,
-        session_id: &SessionId,
-    ) -> Result<GatewaySessionMetadata, AgentApiError> {
-        let metadata = self
-            .metadata
-            .read()
-            .map_err(|_| AgentApiError::internal("gateway metadata lock poisoned"))?;
-        Ok(metadata.get(session_id).cloned().unwrap_or_default())
-    }
-
-    /// The metadata map is bounded by session lifetime, not session count:
-    /// empty metadata never occupies an entry (most sessions carry no cwd)
-    /// and `close_session` removes the entry. Writing empty metadata is a
-    /// removal so an entry can also be cleared by overwriting.
-    fn write_session_metadata(
-        &self,
-        session_id: SessionId,
-        metadata: GatewaySessionMetadata,
-    ) -> Result<(), AgentApiError> {
-        let mut map = self
-            .metadata
-            .write()
-            .map_err(|_| AgentApiError::internal("gateway metadata lock poisoned"))?;
-        if metadata.is_empty() {
-            map.remove(&session_id);
-        } else {
-            map.insert(session_id, metadata);
-        }
-        Ok(())
-    }
-
-    fn remove_session_metadata(&self, session_id: &SessionId) -> Result<(), AgentApiError> {
-        self.metadata
-            .write()
-            .map_err(|_| AgentApiError::internal("gateway metadata lock poisoned"))?
-            .remove(session_id);
-        Ok(())
-    }
-
     fn session_toolset_config(
         &self,
         session_config: &SessionConfig,
@@ -855,12 +838,14 @@ impl GatewayAgentApi {
     fn workflow_args(
         &self,
         session_id: SessionId,
+        display_name: Option<String>,
         session_config: SessionConfig,
         close_on_terminal: bool,
     ) -> AgentSessionArgs {
         AgentSessionArgs {
             universe_id: self.universe_id(),
             session_id,
+            display_name,
             session_config,
             instructions_ref: self.instructions_ref.clone(),
             max_steps_per_input: self.max_steps_per_input,
@@ -878,7 +863,7 @@ impl GatewayAgentApi {
         self.start_session_internal(
             SessionStartParams {
                 session_id: Some(session_id.as_str().to_owned()),
-                cwd: None,
+                display_name: None,
                 config: None,
                 profile,
             },
@@ -944,7 +929,7 @@ impl GatewayAgentApi {
     ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError> {
         let SessionStartParams {
             session_id,
-            cwd,
+            display_name,
             config,
             profile,
         } = params;
@@ -977,18 +962,16 @@ impl GatewayAgentApi {
             config,
         );
         let session_config = self.session_config_for_start(start_config).await?;
-        self.write_session_metadata(
-            session_id.clone(),
-            GatewaySessionMetadata {
-                cwd,
-                ..self.session_metadata(&session_id)?
-            },
-        )?;
         let started = self
             .client
             .start_workflow(
                 AgentSessionWorkflow::run,
-                self.workflow_args(session_id.clone(), session_config, close_on_terminal),
+                self.workflow_args(
+                    session_id.clone(),
+                    display_name,
+                    session_config,
+                    close_on_terminal,
+                ),
                 WorkflowStartOptions::new(
                     self.task_queue.clone(),
                     self.workflow_id_for(&session_id),
@@ -1056,7 +1039,6 @@ impl GatewayAgentApi {
         session_id: &SessionId,
     ) -> Result<SessionView, AgentApiError> {
         let loaded = self.load_session_state(session_id).await?;
-        let metadata = self.session_metadata(session_id)?;
         let mut session = self
             .projector()
             .project_session(ProjectSession {
@@ -1064,7 +1046,6 @@ impl GatewayAgentApi {
                 state: &loaded.state,
                 record: &loaded.record,
                 entries: &loaded.entries,
-                cwd: metadata.cwd.clone(),
             })
             .await?;
         session.vfs_mounts = self.project_vfs_mounts(session_id).await?;
@@ -1150,7 +1131,7 @@ impl AgentApiService for GatewayAgentApi {
     /// Idempotent on a client-supplied session id: when the session already
     /// exists, the existing session view is returned (any `config` in the
     /// retried request is ignored; session config is applied only at
-    /// creation). This keeps a retried `session/start` + `run/start` pair
+    /// creation). This keeps a retried `session/start` + `session/runs/start` pair
     /// safe end to end.
     async fn start_session(
         &self,
@@ -1182,6 +1163,15 @@ impl AgentApiService for GatewayAgentApi {
         params: ProfileListParams,
     ) -> Result<AgentApiOutcome<ProfileListResponse>, AgentApiError> {
         self.list_profile_records(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn put_profile(
+        &self,
+        params: ProfilePutParams,
+    ) -> Result<AgentApiOutcome<ProfilePutResponse>, AgentApiError> {
+        self.put_profile_record(params)
             .await
             .map(AgentApiOutcome::new)
     }
@@ -1342,6 +1332,54 @@ impl AgentApiService for GatewayAgentApi {
         Ok(AgentApiOutcome::new(SessionReadResponse { session }))
     }
 
+    async fn list_sessions(
+        &self,
+        params: SessionListParams,
+    ) -> Result<AgentApiOutcome<SessionListResponse>, AgentApiError> {
+        let limit = match params.limit {
+            Some(0) => {
+                return Err(AgentApiError::invalid_request("limit must be positive"));
+            }
+            Some(limit) => (limit as usize).min(MAX_SESSION_LIST_LIMIT),
+            None => DEFAULT_SESSION_LIST_LIMIT,
+        };
+        let cursor = params
+            .cursor
+            .as_deref()
+            .map(decode_session_list_cursor)
+            .transpose()?;
+        let page = self
+            .store
+            .list_sessions(engine::storage::ListSessions { cursor, limit })
+            .await
+            .map_err(map_session_store_error)?;
+        Ok(AgentApiOutcome::new(SessionListResponse {
+            sessions: page
+                .sessions
+                .into_iter()
+                .map(session_summary_view)
+                .collect(),
+            next_cursor: page.next_cursor.as_ref().map(encode_session_list_cursor),
+        }))
+    }
+
+    async fn rename_session(
+        &self,
+        params: SessionRenameParams,
+    ) -> Result<AgentApiOutcome<SessionRenameResponse>, AgentApiError> {
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let record = self
+            .store
+            .set_session_display_name(&session_id, params.display_name)
+            .await
+            .map_err(map_session_store_error)?;
+        Ok(AgentApiOutcome::new(SessionRenameResponse {
+            session: session_summary_view(record),
+        }))
+    }
+
     async fn read_session_events(
         &self,
         params: SessionEventsReadParams,
@@ -1412,7 +1450,6 @@ impl AgentApiService for GatewayAgentApi {
         })?;
         let loaded = self.load_session_state(&session_id).await?;
         if loaded.state.lifecycle.status == CoreAgentStatus::Closed {
-            self.remove_session_metadata(&session_id)?;
             return Ok(AgentApiOutcome::new(SessionCloseResponse {
                 session: self.project_session_by_id(&session_id).await?,
             }));
@@ -1425,7 +1462,6 @@ impl AgentApiService for GatewayAgentApi {
         self.submit_core_command(&session_id, CoreAgentCommand::CloseSession)
             .await?;
         let session = self.wait_for_closed_session(&session_id).await?;
-        self.remove_session_metadata(&session_id)?;
         Ok(AgentApiOutcome::new(SessionCloseResponse { session }))
     }
 
@@ -1475,12 +1511,12 @@ impl AgentApiService for GatewayAgentApi {
         })?;
         if params.entries.is_empty() {
             return Err(AgentApiError::invalid_request(
-                "context/append requires at least one entry",
+                "session/context/append requires at least one entry",
             ));
         }
         if params.entries.len() > MAX_CONTEXT_APPEND_ENTRIES {
             return Err(AgentApiError::invalid_request(format!(
-                "context/append accepts at most {MAX_CONTEXT_APPEND_ENTRIES} entries per call"
+                "session/context/append accepts at most {MAX_CONTEXT_APPEND_ENTRIES} entries per call"
             )));
         }
 
@@ -1630,12 +1666,12 @@ impl AgentApiService for GatewayAgentApi {
         })?;
         if params.keys.is_empty() {
             return Err(AgentApiError::invalid_request(
-                "context/remove requires at least one key",
+                "session/context/remove requires at least one key",
             ));
         }
         if params.keys.len() > MAX_CONTEXT_REMOVE_KEYS {
             return Err(AgentApiError::invalid_request(format!(
-                "context/remove accepts at most {MAX_CONTEXT_REMOVE_KEYS} keys per call"
+                "session/context/remove accepts at most {MAX_CONTEXT_REMOVE_KEYS} keys per call"
             )));
         }
         let mut keys = Vec::with_capacity(params.keys.len());
@@ -1812,7 +1848,7 @@ impl AgentApiService for GatewayAgentApi {
             RunStartSource::Context { keys } => {
                 if keys.is_empty() {
                     return Err(AgentApiError::invalid_request(
-                        "run/start source=context requires at least one key",
+                        "session/runs/start source=context requires at least one key",
                     ));
                 }
                 let mut parsed = Vec::with_capacity(keys.len());
@@ -2348,37 +2384,28 @@ impl AgentApiService for GatewayAgentApi {
             .map(AgentApiOutcome::new)
     }
 
-    async fn put_blob(
+    async fn put_blobs(
         &self,
         params: BlobPutParams,
     ) -> Result<AgentApiOutcome<BlobPutResponse>, AgentApiError> {
-        put_blob(self.store.as_ref(), params)
-            .await
-            .map(AgentApiOutcome::new)
-    }
-
-    async fn put_blobs(
-        &self,
-        params: BlobPutManyParams,
-    ) -> Result<AgentApiOutcome<BlobPutManyResponse>, AgentApiError> {
         put_blobs(self.store.as_ref(), params)
             .await
             .map(AgentApiOutcome::new)
     }
 
-    async fn get_blob(
+    async fn read_blob(
         &self,
-        params: BlobGetParams,
-    ) -> Result<AgentApiOutcome<BlobGetResponse>, AgentApiError> {
-        get_blob(self.store.as_ref(), params)
+        params: BlobReadParams,
+    ) -> Result<AgentApiOutcome<BlobReadResponse>, AgentApiError> {
+        read_blob(self.store.as_ref(), params)
             .await
             .map(AgentApiOutcome::new)
     }
 
     async fn has_blobs(
         &self,
-        params: BlobHasManyParams,
-    ) -> Result<AgentApiOutcome<BlobHasManyResponse>, AgentApiError> {
+        params: BlobHasParams,
+    ) -> Result<AgentApiOutcome<BlobHasResponse>, AgentApiError> {
         has_blobs(self.store.as_ref(), params)
             .await
             .map(AgentApiOutcome::new)
@@ -2392,7 +2419,7 @@ impl AgentApiService for GatewayAgentApi {
         let snapshot_ref = parse_blob_ref(&response.snapshot_ref)?;
         self.record_vfs_snapshot(
             snapshot_ref,
-            VfsSnapshotSource::new("api_commit").with_subject("vfs/snapshot/commit"),
+            VfsSnapshotSource::new("api_commit").with_subject("vfs/snapshots/commit"),
             None,
         )
         .await?;
@@ -2425,6 +2452,16 @@ impl AgentApiService for GatewayAgentApi {
         let workspace = self.read_vfs_workspace_record(params).await?;
         Ok(AgentApiOutcome::new(VfsWorkspaceReadResponse {
             workspace: vfs_workspace_view(workspace),
+        }))
+    }
+
+    async fn list_vfs_workspaces(
+        &self,
+        _params: VfsWorkspaceListParams,
+    ) -> Result<AgentApiOutcome<VfsWorkspaceListResponse>, AgentApiError> {
+        let workspaces = self.list_vfs_workspace_records().await?;
+        Ok(AgentApiOutcome::new(VfsWorkspaceListResponse {
+            workspaces: workspaces.into_iter().map(vfs_workspace_view).collect(),
         }))
     }
 
@@ -3138,7 +3175,7 @@ pub(crate) fn cimd_document_for(public_base_url: &str) -> serde_json::Value {
     oauth_api::cimd_document(public_base_url)
 }
 
-fn outbound_message_view(message: messaging::OutboundMessage) -> OutboundMessageView {
+pub(crate) fn outbound_message_view(message: messaging::OutboundMessage) -> OutboundMessageView {
     OutboundMessageView {
         seq: message.seq,
         outbox_id: message.outbox_id,
@@ -3165,7 +3202,7 @@ fn outbound_message_view(message: messaging::OutboundMessage) -> OutboundMessage
     }
 }
 
-fn map_messaging_error(error: MessagingError) -> AgentApiError {
+pub(crate) fn map_messaging_error(error: MessagingError) -> AgentApiError {
     match error {
         MessagingError::NotFound { outbox_id } => {
             AgentApiError::not_found(format!("outbox message not found: {outbox_id}"))

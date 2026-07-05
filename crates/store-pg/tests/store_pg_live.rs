@@ -40,7 +40,11 @@ use mcp::{
     CreateMcpServerRecord, ListMcpServers, McpApprovalPolicy, McpRegistryError, McpRegistryStore,
     McpServerAuthPolicy, McpServerId, McpServerStatus, RemoteMcpTransport,
 };
+use messaging::{
+    EnqueueOutboundMessage, OutboundAck, OutboundOrigin, OutboundPayload, OutboxStore,
+};
 use object_store::{ObjectStore, aws::AmazonS3Builder};
+use profiles::{ProfileError, ProfileStore};
 use sqlx::{PgPool, Row, postgres::PgPoolOptions};
 use store_pg::{PgStore, PgStoreConfig, SecretsMasterKey};
 use tokio::sync::OnceCell;
@@ -48,7 +52,7 @@ use uuid::Uuid;
 use vfs::{
     CompareAndSetVfsWorkspaceHead, CreateVfsWorkspaceRecord, VfsCatalogError, VfsMountAccess,
     VfsMountRecord, VfsMountSource, VfsMountStore, VfsPath, VfsSnapshotRecord, VfsSnapshotSource,
-    VfsSnapshotStore, VfsWorkspaceId, VfsWorkspaceStore,
+    VfsSnapshotStore, VfsTotals, VfsWorkspaceId, VfsWorkspaceStore,
 };
 
 static MIGRATED: OnceCell<()> = OnceCell::const_new();
@@ -62,6 +66,7 @@ async fn pg_live_sessions_are_isolated_by_universe() {
 
     left.create_session(CreateSession {
         session_id: session_id.clone(),
+        display_name: None,
         created_at_ms: 1,
     })
     .await
@@ -91,6 +96,7 @@ async fn pg_live_sessions_are_isolated_by_universe() {
     right
         .create_session(CreateSession {
             session_id: session_id.clone(),
+            display_name: None,
             created_at_ms: 20,
         })
         .await
@@ -108,6 +114,103 @@ async fn pg_live_sessions_are_isolated_by_universe() {
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires local/up.sh or compatible Postgres + MinIO env"]
+async fn pg_live_session_list_pages_newest_first_and_rename_persists() {
+    use engine::storage::{ListSessions, SessionListCursor};
+
+    let store = live_store("session-list", 64).await;
+    let other = live_store("session-list-other", 64).await;
+    other
+        .create_session(CreateSession {
+            session_id: SessionId::new("other-universe"),
+            display_name: None,
+            created_at_ms: 999,
+        })
+        .await
+        .expect("create other-universe session");
+
+    for (name, created_at_ms) in [("list-a", 10), ("list-b", 20), ("list-c", 30)] {
+        store
+            .create_session(CreateSession {
+                session_id: SessionId::new(name),
+                display_name: Some(format!("Session {name}")),
+                created_at_ms,
+            })
+            .await
+            .expect("create session");
+    }
+    // Activity on the oldest session moves it to the top of the list.
+    store
+        .append(AppendSessionEvents {
+            session_id: SessionId::new("list-a"),
+            expected_head: None,
+            events: vec![open_event(40)],
+        })
+        .await
+        .expect("append to list-a");
+
+    let first = store
+        .list_sessions(ListSessions {
+            cursor: None,
+            limit: 2,
+        })
+        .await
+        .expect("first page");
+    assert_eq!(
+        first
+            .sessions
+            .iter()
+            .map(|record| record.session_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["list-a", "list-c"]
+    );
+    assert_eq!(
+        first.sessions[0].display_name.as_deref(),
+        Some("Session list-a")
+    );
+    let cursor: SessionListCursor = first.next_cursor.expect("more rows remain");
+
+    let second = store
+        .list_sessions(ListSessions {
+            cursor: Some(cursor),
+            limit: 2,
+        })
+        .await
+        .expect("second page");
+    assert_eq!(
+        second
+            .sessions
+            .iter()
+            .map(|record| record.session_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["list-b"],
+        "other universes must not leak into the page"
+    );
+    assert!(second.next_cursor.is_none());
+
+    let renamed = store
+        .set_session_display_name(&SessionId::new("list-b"), Some("Renamed".to_owned()))
+        .await
+        .expect("rename session");
+    assert_eq!(renamed.display_name.as_deref(), Some("Renamed"));
+    assert_eq!(
+        renamed.updated_at_ms, 20,
+        "rename must not count as session activity"
+    );
+    let cleared = store
+        .set_session_display_name(&SessionId::new("list-b"), None)
+        .await
+        .expect("clear display name");
+    assert_eq!(cleared.display_name, None);
+    assert!(matches!(
+        store
+            .set_session_display_name(&SessionId::new("missing"), None)
+            .await,
+        Err(engine::storage::SessionStoreError::SessionNotFound { .. })
+    ));
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires local/up.sh or compatible Postgres + MinIO env"]
 async fn pg_live_clone_copies_resources_and_links_sessions() {
     let store = live_store("session-graph-clone", 1024).await;
     let source_id = SessionId::new("source-session");
@@ -117,6 +220,7 @@ async fn pg_live_clone_copies_resources_and_links_sessions() {
         store
             .create_session(CreateSession {
                 session_id: session_id.clone(),
+                display_name: None,
                 created_at_ms: 1,
             })
             .await
@@ -148,8 +252,10 @@ async fn pg_live_clone_copies_resources_and_links_sessions() {
     store
         .create_workspace(CreateVfsWorkspaceRecord {
             workspace_id: workspace_id.clone(),
+            display_name: None,
             base_snapshot_ref: Some(snapshot_ref.clone()),
             head_snapshot_ref: snapshot_ref.clone(),
+            head_totals: VfsTotals::default(),
             created_at_ms: 13,
         })
         .await
@@ -358,6 +464,7 @@ async fn pg_live_fork_stitches_reads_and_clamps_parent_tail() {
     store
         .create_session(CreateSession {
             session_id: root.clone(),
+            display_name: None,
             created_at_ms: 1,
         })
         .await
@@ -464,6 +571,228 @@ async fn pg_live_fork_stitches_reads_and_clamps_parent_tail() {
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires local/up.sh or compatible Postgres + MinIO env"]
+async fn pg_live_operator_universe_lifecycle_stats_and_purge() {
+    // inline_threshold 8: the second blob lands in the object store, so the
+    // purge has real external bytes to sweep.
+    let store = live_store("operator-universe", 8).await;
+    let pool = store.pool().clone();
+    let universe_id = store.config().universe_id;
+
+    // create_universe is idempotent; the live_store already ensured the row.
+    assert!(
+        !store_pg::create_universe(&pool, universe_id)
+            .await
+            .expect("create existing universe"),
+        "existing universe must not report created"
+    );
+    let fresh_id = Uuid::new_v4();
+    assert!(
+        store_pg::create_universe(&pool, fresh_id)
+            .await
+            .expect("create fresh universe")
+    );
+    let fresh = store_pg::read_universe_stats(&pool, fresh_id)
+        .await
+        .expect("read fresh stats")
+        .expect("fresh universe exists");
+    assert!(fresh.created_at_ms > 0, "creation must be timestamped");
+    assert_eq!(
+        (fresh.sessions, fresh.workspaces, fresh.profiles),
+        (0, 0, 0)
+    );
+    assert_eq!(fresh.last_activity_at_ms, None);
+
+    // Populate the universe: a session with events, blobs (inline + object).
+    let session_id = SessionId::new("operator-session");
+    store
+        .create_session(CreateSession {
+            session_id: session_id.clone(),
+            display_name: None,
+            created_at_ms: 5,
+        })
+        .await
+        .expect("create session");
+    store
+        .append(AppendSessionEvents {
+            session_id: session_id.clone(),
+            expected_head: None,
+            events: vec![open_event(42)],
+        })
+        .await
+        .expect("append event");
+    store
+        .put_bytes(b"tiny".to_vec())
+        .await
+        .expect("put inline blob");
+    store
+        .put_bytes(b"external object payload".to_vec())
+        .await
+        .expect("put object blob");
+
+    let stats = store_pg::read_universe_stats(&pool, universe_id)
+        .await
+        .expect("read stats")
+        .expect("universe exists");
+    assert_eq!(stats.sessions, 1);
+    assert_eq!(stats.last_activity_at_ms, Some(42));
+    assert!(stats.blob_bytes >= 27, "both blobs count into blob_bytes");
+    let listed = store_pg::list_universe_stats(&pool)
+        .await
+        .expect("list stats");
+    assert!(listed.iter().any(|entry| entry.universe_id == universe_id));
+
+    let object_keys = store_pg::list_universe_object_keys(&pool, universe_id)
+        .await
+        .expect("list object keys");
+    assert_eq!(object_keys.len(), 1, "only the large blob is external");
+    let session_ids = store_pg::list_universe_session_ids(&pool, universe_id)
+        .await
+        .expect("list session ids");
+    assert_eq!(session_ids, vec!["operator-session".to_owned()]);
+
+    // Purge: sweep the external object, then delete the row (cascade).
+    let object_store = store.object_store().expect("live object store").clone();
+    for key in &object_keys {
+        use object_store::ObjectStoreExt as _;
+        object_store
+            .delete(&object_store::path::Path::from(key.as_str()))
+            .await
+            .expect("delete external object");
+    }
+    assert!(
+        store_pg::delete_universe(&pool, universe_id)
+            .await
+            .expect("delete universe")
+    );
+    assert!(
+        !store_pg::delete_universe(&pool, universe_id)
+            .await
+            .expect("re-delete universe"),
+        "delete is idempotent"
+    );
+    assert!(
+        store_pg::read_universe_stats(&pool, universe_id)
+            .await
+            .expect("read purged stats")
+            .is_none()
+    );
+    assert!(
+        store
+            .load_session(&session_id)
+            .await
+            .expect("load purged session")
+            .is_none(),
+        "sessions cascade with the universe row"
+    );
+
+    store_pg::delete_universe(&pool, fresh_id)
+        .await
+        .expect("clean up fresh universe");
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires local/up.sh or compatible Postgres + MinIO env"]
+async fn pg_live_operator_outbox_tails_all_universes_on_one_cursor() {
+    let left = live_store("operator-outbox-left", 1024).await;
+    let right = live_store("operator-outbox-right", 1024).await;
+    let pool = left.pool().clone();
+    let ours = [left.config().universe_id, right.config().universe_id];
+
+    for (store, session, text) in [
+        (&left, "outbox-session-left", "left one"),
+        (&right, "outbox-session-right", "right one"),
+        (&left, "outbox-session-left", "left two"),
+    ] {
+        store
+            .create_session(CreateSession {
+                session_id: SessionId::new(session),
+                display_name: None,
+                created_at_ms: 1,
+            })
+            .await
+            .ok(); // second enqueue reuses the session
+        store
+            .enqueue(EnqueueOutboundMessage {
+                session_id: SessionId::new(session),
+                run_id: None,
+                origin: OutboundOrigin::FinalText,
+                payload: OutboundPayload::Send {
+                    text: text.to_owned(),
+                    reply_to: None,
+                },
+                created_at_ms: 2,
+            })
+            .await
+            .expect("enqueue outbound");
+    }
+
+    // The deployment-wide tail sees every universe (including other tests'
+    // leftovers on a shared dev database); assertions filter to ours.
+    let read_ours = |after: u64| {
+        let pool = pool.clone();
+        async move {
+            let mut collected = Vec::new();
+            let mut cursor = after;
+            loop {
+                let page = store_pg::read_pending_outbound_all_universes(&pool, cursor, 256)
+                    .await
+                    .expect("read all universes");
+                let Some(last) = page.last() else {
+                    return collected;
+                };
+                cursor = last.message.seq;
+                collected.extend(
+                    page.into_iter()
+                        .filter(|entry| ours.contains(&entry.universe_id)),
+                );
+            }
+        }
+    };
+
+    let entries = read_ours(0).await;
+    assert_eq!(entries.len(), 3);
+    assert!(
+        entries
+            .windows(2)
+            .all(|pair| pair[0].message.seq < pair[1].message.seq),
+        "one global cursor orders entries across universes"
+    );
+    assert_eq!(entries[0].universe_id, ours[0]);
+    assert_eq!(entries[1].universe_id, ours[1]);
+    assert_eq!(entries[2].universe_id, ours[0]);
+
+    // Resuming from a mid-stream cursor skips everything at or before it.
+    let resumed = read_ours(entries[1].message.seq).await;
+    assert_eq!(resumed.len(), 1);
+    assert_eq!(resumed[0].message.outbox_id, entries[2].message.outbox_id);
+
+    // Acking through the per-universe store removes the entry from the tail.
+    right
+        .ack(
+            &entries[1].message.outbox_id,
+            OutboundAck::Delivered {
+                channel_message_id: Some("chan_1".to_owned()),
+            },
+        )
+        .await
+        .expect("ack right entry");
+    let after_ack = read_ours(0).await;
+    assert_eq!(after_ack.len(), 2);
+    assert!(
+        after_ack.iter().all(|entry| entry.universe_id == ours[0]),
+        "the acked right-universe entry no longer appears"
+    );
+
+    // Clean up so reruns of this suite do not accumulate pending entries.
+    for universe_id in ours {
+        store_pg::delete_universe(&pool, universe_id)
+            .await
+            .expect("clean up outbox universe");
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires local/up.sh or compatible Postgres + MinIO env"]
 async fn pg_live_blobs_use_inline_and_object_storage() {
     let store = live_store("blobs", 8).await;
 
@@ -527,6 +856,7 @@ async fn pg_live_records_session_roots_and_blob_edges() {
     store
         .create_session(CreateSession {
             session_id: session_id.clone(),
+            display_name: None,
             created_at_ms: 1,
         })
         .await
@@ -647,19 +977,25 @@ async fn pg_live_vfs_catalog_tracks_workspace_heads_and_mounts() {
     let workspace = store
         .create_workspace(CreateVfsWorkspaceRecord {
             workspace_id: workspace_id.clone(),
+            display_name: Some("Scratch".to_string()),
             base_snapshot_ref: Some(snapshot_ref.clone()),
             head_snapshot_ref: snapshot_ref.clone(),
+            head_totals: VfsTotals { files: 1, bytes: 8 },
             created_at_ms: 2,
         })
         .await
         .expect("create workspace");
     assert_eq!(workspace.revision, 0);
+    assert_eq!(workspace.display_name.as_deref(), Some("Scratch"));
+    assert_eq!(workspace.head_totals, VfsTotals { files: 1, bytes: 8 });
     assert!(matches!(
         store
             .create_workspace(CreateVfsWorkspaceRecord {
                 workspace_id: workspace_id.clone(),
+                display_name: None,
                 base_snapshot_ref: None,
                 head_snapshot_ref: snapshot_ref.clone(),
+                head_totals: VfsTotals::default(),
                 created_at_ms: 3,
             })
             .await,
@@ -670,18 +1006,33 @@ async fn pg_live_vfs_catalog_tracks_workspace_heads_and_mounts() {
         .compare_and_set_head(CompareAndSetVfsWorkspaceHead {
             workspace_id: workspace_id.clone(),
             expected_revision: Some(0),
+            display_name: Some("Scratch v2".to_string()),
             new_head_snapshot_ref: next_ref,
+            new_head_totals: VfsTotals {
+                files: 2,
+                bytes: 16,
+            },
             updated_at_ms: 4,
         })
         .await
         .expect("advance workspace head");
     assert_eq!(updated.revision, 1);
+    assert_eq!(updated.display_name.as_deref(), Some("Scratch v2"));
+    assert_eq!(
+        updated.head_totals,
+        VfsTotals {
+            files: 2,
+            bytes: 16
+        }
+    );
     assert!(matches!(
         store
             .compare_and_set_head(CompareAndSetVfsWorkspaceHead {
                 workspace_id: workspace_id.clone(),
                 expected_revision: Some(0),
+                display_name: None,
                 new_head_snapshot_ref: snapshot_ref.clone(),
+                new_head_totals: VfsTotals::default(),
                 updated_at_ms: 5,
             })
             .await,
@@ -690,6 +1041,18 @@ async fn pg_live_vfs_catalog_tracks_workspace_heads_and_mounts() {
             ..
         })
     ));
+
+    let listed = store.list_workspaces().await.expect("list workspaces");
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].workspace_id, workspace_id);
+    assert_eq!(listed[0].display_name.as_deref(), Some("Scratch v2"));
+    assert_eq!(
+        listed[0].head_totals,
+        VfsTotals {
+            files: 2,
+            bytes: 16
+        }
+    );
 
     let session_id = SessionId::new("session-vfs");
     let workspace_mount = VfsMountRecord {
@@ -741,6 +1104,72 @@ async fn pg_live_vfs_catalog_tracks_workspace_heads_and_mounts() {
         store.list_mounts(&session_id).await.expect("list mounts"),
         Vec::<VfsMountRecord>::new()
     );
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires local/up.sh or compatible Postgres + MinIO env"]
+async fn pg_live_profile_put_creates_and_replaces() {
+    use api::{AgentProfileInput, ProfileDocument, ProfileId, ProfileInstructions};
+
+    let store = live_store("profile-put", 1024).await;
+    let profile_id = ProfileId::new("support");
+    let input = |instructions: &str| AgentProfileInput {
+        profile_id: profile_id.clone(),
+        display_name: Some("Support".to_owned()),
+        description: None,
+        document: ProfileDocument {
+            instructions: Some(ProfileInstructions::Text {
+                text: instructions.to_owned(),
+            }),
+            ..ProfileDocument::default()
+        },
+    };
+
+    // Absent profile: put creates at revision 1 even with an expected revision.
+    let created = store
+        .put_agent_profile(input("v1"), Some(7), 10)
+        .await
+        .expect("put creates absent profile");
+    assert_eq!(created.revision, 1);
+    assert_eq!(created.created_at_ms, 10);
+
+    // Existing profile: put replaces the whole document and bumps the revision.
+    let replaced = store
+        .put_agent_profile(
+            AgentProfileInput {
+                display_name: Some("Support v2".to_owned()),
+                ..input("v2")
+            },
+            None,
+            20,
+        )
+        .await
+        .expect("put replaces existing profile");
+    assert_eq!(replaced.revision, 2);
+    assert_eq!(replaced.created_at_ms, 10);
+    assert_eq!(replaced.updated_at_ms, 20);
+    assert_eq!(replaced.display_name.as_deref(), Some("Support v2"));
+    assert!(matches!(
+        replaced.document.instructions,
+        Some(ProfileInstructions::Text { ref text }) if text == "v2"
+    ));
+
+    // Stale expected revision on an existing profile is a conflict.
+    assert!(matches!(
+        store.put_agent_profile(input("v3"), Some(1), 30).await,
+        Err(ProfileError::RevisionConflict {
+            expected: 1,
+            actual: 2,
+            ..
+        })
+    ));
+
+    // Matching expected revision replaces.
+    let third = store
+        .put_agent_profile(input("v3"), Some(2), 30)
+        .await
+        .expect("put with matching expected revision");
+    assert_eq!(third.revision, 3);
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -888,6 +1317,7 @@ async fn pg_live_environments_crud_and_session_bindings() {
     store
         .create_session(CreateSession {
             session_id: session_id.clone(),
+            display_name: None,
             created_at_ms: 35,
         })
         .await
