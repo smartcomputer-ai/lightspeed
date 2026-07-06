@@ -945,6 +945,22 @@
       "scope": "universe"
     },
     {
+      "method": "mcp/servers/update",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/McpServerUpdateParams"
+        },
+        "type": "McpServerUpdateParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfMcpServerUpdateResponse"
+        },
+        "type": "AgentApiOutcome<McpServerUpdateResponse>"
+      },
+      "scope": "universe"
+    },
+    {
       "method": "mcp/servers/delete",
       "params": {
         "schema": {

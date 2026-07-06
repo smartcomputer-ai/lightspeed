@@ -99,7 +99,8 @@ use api::{
     HostTargetCreateRequestView, HostTransportView, InitializeParams, InitializeResponse,
     InputAdmissionFailureKind, InputAdmissionFailureView, InputItem, McpServerCreateParams,
     McpServerCreateResponse, McpServerDeleteParams, McpServerDeleteResponse, McpServerListParams,
-    McpServerListResponse, McpServerReadParams, McpServerReadResponse, MediaKind, ModelConfig,
+    McpServerListResponse, McpServerReadParams, McpServerReadResponse, McpServerUpdateParams,
+    McpServerUpdatePatch, McpServerUpdateResponse, MediaKind, ModelConfig,
     OutboundAckInput, OutboundMessageView, OutboundOriginView, OutboundPayloadView,
     OutboundStatusView, OutboxAckParams, OutboxAckResponse, OutboxReadParams, OutboxReadResponse,
     ProfileApplyParams, ProfileApplyResponse, ProfileApplySummary, ProfileCreateParams,
@@ -2567,6 +2568,22 @@ impl AgentApiService for GatewayAgentApi {
             .await
             .map_err(map_mcp_error)?;
         Ok(AgentApiOutcome::new(McpServerReadResponse {
+            server: mcp_server_view(server),
+        }))
+    }
+
+    async fn update_mcp_server(
+        &self,
+        params: McpServerUpdateParams,
+    ) -> Result<AgentApiOutcome<McpServerUpdateResponse>, AgentApiError> {
+        let server_id = parse_mcp_server_id(params.server_id)?;
+        let update = mcp_api::update_mcp_server_record(params.patch, now_ms()?);
+        let server = self
+            .store
+            .update_server(&server_id, update)
+            .await
+            .map_err(map_mcp_error)?;
+        Ok(AgentApiOutcome::new(McpServerUpdateResponse {
             server: mcp_server_view(server),
         }))
     }

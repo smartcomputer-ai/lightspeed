@@ -340,6 +340,7 @@ api_methods! {
     METHOD_MCP_SERVERS_CREATE => create_mcp_server(McpServerCreateParams) -> McpServerCreateResponse,
     METHOD_MCP_SERVERS_READ => read_mcp_server(McpServerReadParams) -> McpServerReadResponse,
     METHOD_MCP_SERVERS_LIST => list_mcp_servers(McpServerListParams) -> McpServerListResponse,
+    METHOD_MCP_SERVERS_UPDATE => update_mcp_server(McpServerUpdateParams) -> McpServerUpdateResponse,
     METHOD_MCP_SERVERS_DELETE => delete_mcp_server(McpServerDeleteParams) -> McpServerDeleteResponse,
     METHOD_ENVIRONMENTS_PROVIDERS_REGISTER => register_environment_provider(EnvironmentProviderRegisterParams) -> EnvironmentProviderRegisterResponse,
     METHOD_ENVIRONMENTS_PROVIDERS_HEARTBEAT => heartbeat_environment_provider(EnvironmentProviderHeartbeatParams) -> EnvironmentProviderHeartbeatResponse,

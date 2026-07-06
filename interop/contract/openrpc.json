@@ -605,6 +605,23 @@
         ],
         "type": "object"
       },
+      "AgentApiOutcomeOfMcpServerUpdateResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/McpServerUpdateResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
       "AgentApiOutcomeOfOperatorOutboxReadResponse": {
         "properties": {
           "notifications": {
@@ -3996,6 +4013,41 @@
         },
         "type": "object"
       },
+      "FieldPatchOfArray_of_string": {
+        "oneOf": [
+          {
+            "properties": {
+              "op": {
+                "const": "set",
+                "type": "string"
+              },
+              "value": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "op",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "op": {
+                "const": "clear",
+                "type": "string"
+              }
+            },
+            "required": [
+              "op"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "FieldPatchOfCompactionPolicyInput": {
         "oneOf": [
           {
@@ -5129,6 +5181,134 @@
           "disabled"
         ],
         "type": "string"
+      },
+      "McpServerUpdateParams": {
+        "properties": {
+          "patch": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/McpServerUpdatePatch"
+              }
+            ],
+            "default": {}
+          },
+          "serverId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "serverId"
+        ],
+        "type": "object"
+      },
+      "McpServerUpdatePatch": {
+        "description": "Partial update; absent fields keep their value. Clearable optionals use\n`FieldPatch` (`{op:set,value}` / `{op:clear}`), matching profile updates.",
+        "properties": {
+          "allowedTools": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FieldPatchOfArray_of_string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "approvalDefault": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RemoteMcpApprovalPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "authPolicy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/McpServerAuthPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "defaultServerLabel": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "deferLoadingDefault": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FieldPatchOfboolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FieldPatchOfstring"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "displayName": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FieldPatchOfstring"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "serverUrl": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/McpServerStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "transport": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RemoteMcpTransport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "McpServerUpdateResponse": {
+        "properties": {
+          "server": {
+            "$ref": "#/components/schemas/McpServerView"
+          }
+        },
+        "required": [
+          "server"
+        ],
+        "type": "object"
       },
       "McpServerView": {
         "properties": {
@@ -12435,6 +12615,26 @@
         "name": "result",
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfMcpServerListResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "mcp/servers/update",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/McpServerUpdateParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfMcpServerUpdateResponse"
         }
       }
     },

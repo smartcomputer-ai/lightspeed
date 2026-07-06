@@ -35,6 +35,8 @@ enum McpServerCommand {
     List(McpServerListArgs),
     /// Read a remote MCP server record.
     Read(McpServerReadArgs),
+    /// Update fields of a remote MCP server record (absent flags keep values).
+    Update(McpServerUpdateArgs),
     /// Delete a remote MCP server record.
     Delete(McpServerDeleteArgs),
 }
@@ -195,6 +197,60 @@ struct McpServerReadArgs {
     json: bool,
     /// Server id to read.
     server_id: String,
+}
+
+/// Auth-policy changes are deliberately not patchable here — pass the full
+/// policy through the API (`mcp/servers/update`) or re-add the server.
+#[derive(Args, Debug, Clone)]
+struct McpServerUpdateArgs {
+    /// JSON-RPC agent API URL.
+    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
+    api_url: String,
+    /// Emit the updated server as JSON.
+    #[arg(long)]
+    json: bool,
+    /// Server id to update.
+    server_id: String,
+    /// New remote MCP endpoint URL.
+    #[arg(long = "url")]
+    server_url: Option<String>,
+    /// New default provider-facing MCP server label.
+    #[arg(long = "label")]
+    default_server_label: Option<String>,
+    /// New display name.
+    #[arg(long = "display-name", conflicts_with = "clear_display_name")]
+    display_name: Option<String>,
+    /// Clear the display name.
+    #[arg(long = "clear-display-name")]
+    clear_display_name: bool,
+    /// New description.
+    #[arg(long, conflicts_with = "clear_description")]
+    description: Option<String>,
+    /// Clear the description.
+    #[arg(long = "clear-description")]
+    clear_description: bool,
+    /// New remote MCP transport.
+    #[arg(long)]
+    transport: Option<RemoteMcpTransportArg>,
+    /// Replacement tool allowlist entry. Repeat for multiple; replaces the
+    /// whole list.
+    #[arg(long = "allowed-tool", conflicts_with = "clear_allowed_tools")]
+    allowed_tools: Vec<String>,
+    /// Clear the tool allowlist (allow everything).
+    #[arg(long = "clear-allowed-tools")]
+    clear_allowed_tools: bool,
+    /// New default remote MCP approval behavior.
+    #[arg(long)]
+    approval: Option<RemoteMcpApprovalArg>,
+    /// Enable provider-side deferred MCP tool loading by default.
+    #[arg(long = "defer-loading", conflicts_with = "no_defer_loading")]
+    defer_loading: bool,
+    /// Disable provider-side deferred MCP tool loading by default.
+    #[arg(long = "no-defer-loading", conflicts_with = "defer_loading")]
+    no_defer_loading: bool,
+    /// New server status.
+    #[arg(long)]
+    status: Option<McpServerStatusArg>,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -371,6 +427,7 @@ async fn server(args: McpServerArgs) -> Result<()> {
         McpServerCommand::Add(args) => server_add(args).await,
         McpServerCommand::List(args) => server_list(args).await,
         McpServerCommand::Read(args) => server_read(args).await,
+        McpServerCommand::Update(args) => server_update(args).await,
         McpServerCommand::Delete(args) => server_delete(args).await,
     }
 }
@@ -431,6 +488,51 @@ async fn server_read(args: McpServerReadArgs) -> Result<()> {
     let response = api
         .read_mcp_server(api::McpServerReadParams {
             server_id: args.server_id,
+        })
+        .await
+        .map_err(crate::api_client::api_error)?
+        .result;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&response)?);
+        return Ok(());
+    }
+    print_server(&response.server);
+    Ok(())
+}
+
+async fn server_update(args: McpServerUpdateArgs) -> Result<()> {
+    let api = HttpAgentApi::new(args.api_url);
+    let display_name = if args.clear_display_name {
+        Some(api::FieldPatch::Clear)
+    } else {
+        args.display_name.map(api::FieldPatch::Set)
+    };
+    let description = if args.clear_description {
+        Some(api::FieldPatch::Clear)
+    } else {
+        args.description.map(api::FieldPatch::Set)
+    };
+    let allowed_tools = if args.clear_allowed_tools {
+        Some(api::FieldPatch::Clear)
+    } else {
+        nonempty_vec(args.allowed_tools).map(api::FieldPatch::Set)
+    };
+    let response = api
+        .update_mcp_server(api::McpServerUpdateParams {
+            server_id: args.server_id,
+            patch: api::McpServerUpdatePatch {
+                display_name,
+                server_url: args.server_url,
+                transport: args.transport.map(Into::into),
+                default_server_label: args.default_server_label,
+                description,
+                allowed_tools,
+                approval_default: args.approval.map(Into::into),
+                defer_loading_default: defer_loading_arg(args.defer_loading, args.no_defer_loading)
+                    .map(api::FieldPatch::Set),
+                auth_policy: None,
+                status: args.status.map(Into::into),
+            },
         })
         .await
         .map_err(crate::api_client::api_error)?

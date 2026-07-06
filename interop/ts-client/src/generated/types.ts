@@ -938,6 +938,18 @@ export type FieldPatchOfCompactionPolicyInput =
     };
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "FieldPatchOfArray_of_string".
+ */
+export type FieldPatchOfArrayOfString =
+  | {
+      op: "set";
+      value: string[];
+    }
+  | {
+      op: "clear";
+    };
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "FieldPatchOfFilesystemToolMode".
  */
 export type FieldPatchOfFilesystemToolMode =
@@ -2112,6 +2124,21 @@ export interface AgentApiOutcomeOfMcpServerReadResponse {
  * via the `definition` "McpServerReadResponse".
  */
 export interface McpServerReadResponse {
+  server: McpServerView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfMcpServerUpdateResponse".
+ */
+export interface AgentApiOutcomeOfMcpServerUpdateResponse {
+  notifications?: AgentNotification[];
+  result: McpServerUpdateResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "McpServerUpdateResponse".
+ */
+export interface McpServerUpdateResponse {
   server: McpServerView;
 }
 /**
@@ -3823,6 +3850,33 @@ export interface McpServerListParams {
  */
 export interface McpServerReadParams {
   serverId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "McpServerUpdateParams".
+ */
+export interface McpServerUpdateParams {
+  patch?: McpServerUpdatePatch;
+  serverId: string;
+}
+/**
+ * Partial update; absent fields keep their value. Clearable optionals use
+ * `FieldPatch` (`{op:set,value}` / `{op:clear}`), matching profile updates.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "McpServerUpdatePatch".
+ */
+export interface McpServerUpdatePatch {
+  allowedTools?: FieldPatchOfArrayOfString | null;
+  approvalDefault?: RemoteMcpApprovalPolicy | null;
+  authPolicy?: McpServerAuthPolicy | null;
+  defaultServerLabel?: string | null;
+  deferLoadingDefault?: FieldPatchOfboolean | null;
+  description?: FieldPatchOfstring | null;
+  displayName?: FieldPatchOfstring | null;
+  serverUrl?: string | null;
+  status?: McpServerStatus | null;
+  transport?: RemoteMcpTransport | null;
 }
 /**
  * Multiplexed outbox read: one long-poll serves every universe of the

@@ -970,6 +970,45 @@ async fn dispatch_json_rpc_routes_mcp_server_create() {
     );
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn dispatch_json_rpc_routes_mcp_server_update() {
+    let response = dispatch_json_rpc(
+        &TestService,
+        JsonRpcRequest {
+            id: RequestId::Number(1),
+            method: METHOD_MCP_SERVERS_UPDATE.to_owned(),
+            params: Some(json!({
+                "serverId": "echo",
+                "patch": {
+                    "serverUrl": "https://echo2.example.com/mcp",
+                    "description": { "op": "clear" }
+                }
+            })),
+        },
+    )
+    .await;
+
+    assert!(response.error.is_none());
+    assert_eq!(
+        response.result.expect("result")["result"]["server"]["serverId"],
+        json!("echo")
+    );
+}
+
+#[test]
+fn mcp_server_update_patch_distinguishes_set_clear_and_absent() {
+    let patch: McpServerUpdatePatch = serde_json::from_value(json!({
+        "displayName": { "op": "set", "value": "Echo 2" },
+        "description": { "op": "clear" }
+    }))
+    .expect("patch");
+
+    assert_eq!(patch.display_name, Some(FieldPatch::Set("Echo 2".to_owned())));
+    assert_eq!(patch.description, Some(FieldPatch::Clear));
+    assert_eq!(patch.server_url, None);
+    assert_eq!(patch.status, None);
+}
+
 #[test]
 fn mcp_server_create_params_default_approval_is_never() {
     let params: McpServerCreateParams = serde_json::from_value(json!({
@@ -2388,6 +2427,15 @@ impl AgentApiService for TestService {
         params: McpServerReadParams,
     ) -> Result<AgentApiOutcome<McpServerReadResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(McpServerReadResponse {
+            server: test_mcp_server(params.server_id),
+        }))
+    }
+
+    async fn update_mcp_server(
+        &self,
+        params: McpServerUpdateParams,
+    ) -> Result<AgentApiOutcome<McpServerUpdateResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(McpServerUpdateResponse {
             server: test_mcp_server(params.server_id),
         }))
     }

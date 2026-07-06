@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { compileFromFile } from "json-schema-to-typescript";
@@ -118,3 +118,10 @@ const methodLines = [
 ];
 
 await writeFile(path.join(generatedDir, "methods.ts"), methodLines.join("\n"));
+
+// Ship the canonical contract schema inside the package (exported as
+// "@lightspeed/agent-client/schema/api.schema.json") so downstream tooling
+// can derive references/validators from the exact schema version it pins.
+const schemaOutDir = path.join(clientDir, "schema");
+await mkdir(schemaOutDir, { recursive: true });
+await copyFile(schemaPath, path.join(schemaOutDir, "api.schema.json"));

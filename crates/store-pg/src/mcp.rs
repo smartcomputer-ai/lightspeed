@@ -1,6 +1,7 @@
 use ::mcp::{
     CreateMcpServerRecord, ListMcpServers, McpApprovalPolicy, McpRegistryError, McpRegistryStore,
     McpServerAuthPolicy, McpServerId, McpServerRecord, McpServerStatus, RemoteMcpTransport,
+    UpdateMcpServerRecord,
 };
 use async_trait::async_trait;
 use sqlx::Row;
@@ -186,6 +187,77 @@ impl McpRegistryStore for PgStore {
         .map_err(|error| mcp_sql_error("list mcp servers", error))?;
 
         rows.iter().map(server_record_from_row).collect()
+    }
+
+    async fn update_server(
+        &self,
+        server_id: &McpServerId,
+        update: UpdateMcpServerRecord,
+    ) -> Result<McpServerRecord, McpRegistryError> {
+        // Read-modify-write: the patch applies and validates in Rust, then
+        // one UPDATE persists the whole mutable column set. The registry is
+        // unversioned config (last write wins), matching the in-memory store.
+        let mut record = self.read_server(server_id).await?;
+        update.apply_to(&mut record);
+        record.validate()?;
+        let (auth_policy, auth_metadata_json) = auth_policy_columns(&record.auth_policy)?;
+        let row = sqlx::query(
+            r#"
+            UPDATE mcp_servers SET
+                display_name = $3,
+                server_url = $4,
+                transport = $5,
+                default_server_label = $6,
+                description = $7,
+                allowed_tools = $8,
+                approval_default = $9,
+                defer_loading_default = $10,
+                auth_policy = $11,
+                auth_metadata_json = $12,
+                status = $13,
+                updated_at_ms = $14
+            WHERE universe_id = $1 AND server_id = $2
+            RETURNING
+                server_id,
+                display_name,
+                server_url,
+                transport,
+                default_server_label,
+                description,
+                allowed_tools,
+                approval_default,
+                defer_loading_default,
+                auth_policy,
+                auth_metadata_json,
+                status,
+                created_at_ms,
+                updated_at_ms
+            "#,
+        )
+        .bind(self.config.universe_id)
+        .bind(record.server_id.as_str())
+        .bind(record.display_name.as_deref())
+        .bind(&record.server_url)
+        .bind(transport_to_str(record.transport))
+        .bind(&record.default_server_label)
+        .bind(record.description.as_deref())
+        .bind(record.allowed_tools.as_deref())
+        .bind(approval_policy_to_str(record.approval_default))
+        .bind(record.defer_loading_default)
+        .bind(auth_policy)
+        .bind(auth_metadata_json)
+        .bind(status_to_str(record.status))
+        .bind(record.updated_at_ms)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|error| mcp_sql_error("update mcp server", error))?;
+
+        let Some(row) = row else {
+            return Err(McpRegistryError::NotFound {
+                server_id: server_id.clone(),
+            });
+        };
+        server_record_from_row(&row)
     }
 
     async fn delete_server(

@@ -10,13 +10,15 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
-    }
+    },
+    "./schema/api.schema.json": "./schema/api.schema.json"
   },
   "files": [
     "dist",
     "examples",
     "src",
-    "README.md"
+    "README.md",
+    "schema"
   ],
   "engines": {
     "node": ">=18"

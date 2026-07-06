@@ -38,7 +38,7 @@ use host_protocol::{
 };
 use mcp::{
     CreateMcpServerRecord, ListMcpServers, McpApprovalPolicy, McpRegistryError, McpRegistryStore,
-    McpServerAuthPolicy, McpServerId, McpServerStatus, RemoteMcpTransport,
+    McpServerAuthPolicy, McpServerId, McpServerStatus, RemoteMcpTransport, UpdateMcpServerRecord,
 };
 use messaging::{
     EnqueueOutboundMessage, OutboundAck, OutboundOrigin, OutboundPayload, OutboxStore,
@@ -1220,11 +1220,64 @@ async fn pg_live_mcp_crud_and_universe_isolation() {
         .expect("list active MCP servers");
     assert_eq!(active, vec![created.clone()]);
 
+    let updated = left
+        .update_server(
+            &server_id,
+            UpdateMcpServerRecord {
+                display_name: None,
+                server_url: Some("https://crm2.example.com/mcp".to_owned()),
+                transport: None,
+                default_server_label: None,
+                description: Some(None),
+                allowed_tools: None,
+                approval_default: Some(McpApprovalPolicy::Always),
+                defer_loading_default: None,
+                auth_policy: None,
+                status: Some(McpServerStatus::Disabled),
+                updated_at_ms: created.updated_at_ms + 5,
+            },
+        )
+        .await
+        .expect("update MCP server");
+    assert_eq!(updated.server_url, "https://crm2.example.com/mcp");
+    assert_eq!(updated.description, None);
+    assert_eq!(updated.approval_default, McpApprovalPolicy::Always);
+    assert_eq!(updated.status, McpServerStatus::Disabled);
+    assert_eq!(updated.display_name, created.display_name);
+    assert_eq!(updated.created_at_ms, created.created_at_ms);
+    assert_eq!(updated.updated_at_ms, created.updated_at_ms + 5);
+    assert_eq!(
+        left.read_server(&server_id).await.expect("re-read"),
+        updated
+    );
+    // Universe isolation: the sibling store cannot update it either.
+    assert!(matches!(
+        right
+            .update_server(
+                &server_id,
+                UpdateMcpServerRecord {
+                    display_name: None,
+                    server_url: None,
+                    transport: None,
+                    default_server_label: None,
+                    description: None,
+                    allowed_tools: None,
+                    approval_default: None,
+                    defer_loading_default: None,
+                    auth_policy: None,
+                    status: None,
+                    updated_at_ms: 99,
+                },
+            )
+            .await,
+        Err(McpRegistryError::NotFound { .. })
+    ));
+
     let deleted = left
         .delete_server(&server_id)
         .await
         .expect("delete MCP server");
-    assert_eq!(deleted, created);
+    assert_eq!(deleted, updated);
     assert!(matches!(
         left.read_server(&server_id).await,
         Err(McpRegistryError::NotFound { server_id }) if server_id.as_str() == "crm"
