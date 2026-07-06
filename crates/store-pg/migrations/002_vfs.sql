@@ -68,6 +68,32 @@ CREATE TABLE IF NOT EXISTS vfs_workspaces (
         CHECK (updated_at_ms >= created_at_ms)
 );
 
+ALTER TABLE vfs_workspaces
+    ADD COLUMN IF NOT EXISTS display_name text;
+
+-- Head stats backfill as 0 for pre-existing rows; the engine rewrites them
+-- from the manifest on the next workspace update. DROP DEFAULT keeps the
+-- upgraded schema identical to a fresh one (inserts must provide values).
+ALTER TABLE vfs_workspaces
+    ADD COLUMN IF NOT EXISTS head_files bigint NOT NULL DEFAULT 0;
+ALTER TABLE vfs_workspaces
+    ALTER COLUMN head_files DROP DEFAULT;
+ALTER TABLE vfs_workspaces
+    ADD COLUMN IF NOT EXISTS head_bytes bigint NOT NULL DEFAULT 0;
+ALTER TABLE vfs_workspaces
+    ALTER COLUMN head_bytes DROP DEFAULT;
+
+ALTER TABLE vfs_workspaces
+    DROP CONSTRAINT IF EXISTS vfs_workspaces_head_files_nonnegative;
+ALTER TABLE vfs_workspaces
+    ADD CONSTRAINT vfs_workspaces_head_files_nonnegative
+        CHECK (head_files >= 0);
+ALTER TABLE vfs_workspaces
+    DROP CONSTRAINT IF EXISTS vfs_workspaces_head_bytes_nonnegative;
+ALTER TABLE vfs_workspaces
+    ADD CONSTRAINT vfs_workspaces_head_bytes_nonnegative
+        CHECK (head_bytes >= 0);
+
 CREATE INDEX IF NOT EXISTS vfs_workspaces_head_digest_idx
     ON vfs_workspaces (universe_id, head_snapshot_digest);
 
