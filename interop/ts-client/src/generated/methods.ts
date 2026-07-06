@@ -64,6 +64,7 @@ export const METHODS = [
   "mcp/servers/create",
   "mcp/servers/read",
   "mcp/servers/list",
+  "mcp/servers/update",
   "mcp/servers/delete",
   "environments/providers/register",
   "environments/providers/heartbeat",
@@ -344,6 +345,10 @@ export interface MethodMap {
   "mcp/servers/list": {
     params: Api.McpServerListParams;
     result: Api.AgentApiOutcomeOfMcpServerListResponse;
+  };
+  "mcp/servers/update": {
+    params: Api.McpServerUpdateParams;
+    result: Api.AgentApiOutcomeOfMcpServerUpdateResponse;
   };
   "mcp/servers/delete": {
     params: Api.McpServerDeleteParams;
@@ -647,6 +652,9 @@ export const rpc = {
   },
   mcpServersList(client: RpcCaller, params: Api.McpServerListParams): Promise<Api.AgentApiOutcomeOfMcpServerListResponse> {
     return client.call("mcp/servers/list", params);
+  },
+  mcpServersUpdate(client: RpcCaller, params: Api.McpServerUpdateParams): Promise<Api.AgentApiOutcomeOfMcpServerUpdateResponse> {
+    return client.call("mcp/servers/update", params);
   },
   mcpServersDelete(client: RpcCaller, params: Api.McpServerDeleteParams): Promise<Api.AgentApiOutcomeOfMcpServerDeleteResponse> {
     return client.call("mcp/servers/delete", params);

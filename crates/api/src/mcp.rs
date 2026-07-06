@@ -133,6 +133,47 @@ pub struct McpServerReadResponse {
     pub server: McpServerView,
 }
 
+/// Partial update; absent fields keep their value. Clearable optionals use
+/// `FieldPatch` (`{op:set,value}` / `{op:clear}`), matching profile updates.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerUpdatePatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<FieldPatch<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transport: Option<RemoteMcpTransport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_server_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<FieldPatch<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_tools: Option<FieldPatch<Vec<String>>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_default: Option<RemoteMcpApprovalPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub defer_loading_default: Option<FieldPatch<bool>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_policy: Option<McpServerAuthPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<McpServerStatus>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerUpdateParams {
+    pub server_id: String,
+    #[serde(default)]
+    pub patch: McpServerUpdatePatch,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerUpdateResponse {
+    pub server: McpServerView,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct McpServerDeleteParams {

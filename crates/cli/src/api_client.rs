@@ -24,7 +24,8 @@ use api::{
     METHOD_BLOBS_HAS, METHOD_BLOBS_PUT, METHOD_BLOBS_READ, METHOD_ENVIRONMENTS_PROVIDERS_LIST,
     METHOD_ENVIRONMENTS_PROVIDERS_TARGETS_LIST, METHOD_MCP_SERVERS_CREATE,
     METHOD_MCP_SERVERS_DELETE, METHOD_MCP_SERVERS_LIST, METHOD_MCP_SERVERS_READ,
-    METHOD_PROFILES_DELETE, METHOD_PROFILES_LIST, METHOD_PROFILES_PUT, METHOD_PROFILES_READ,
+    METHOD_MCP_SERVERS_UPDATE, METHOD_PROFILES_DELETE, METHOD_PROFILES_LIST, METHOD_PROFILES_PUT,
+    METHOD_PROFILES_READ,
     METHOD_SESSION_ENVIRONMENTS_ACTIVATE, METHOD_SESSION_ENVIRONMENTS_ATTACH,
     METHOD_SESSION_ENVIRONMENTS_CLOSE, METHOD_SESSION_ENVIRONMENTS_CREDENTIALS_BIND,
     METHOD_SESSION_ENVIRONMENTS_CREDENTIALS_LIST, METHOD_SESSION_ENVIRONMENTS_CREDENTIALS_UNBIND,
@@ -39,6 +40,7 @@ use api::{
     METHOD_VFS_WORKSPACES_LIST, METHOD_VFS_WORKSPACES_READ, METHOD_VFS_WORKSPACES_UPDATE,
     McpServerCreateParams, McpServerCreateResponse, McpServerDeleteParams, McpServerDeleteResponse,
     McpServerListParams, McpServerListResponse, McpServerReadParams, McpServerReadResponse,
+    McpServerUpdateParams, McpServerUpdateResponse,
     ProfileApplyParams, ProfileApplyResponse, ProfileDeleteParams, ProfileDeleteResponse,
     ProfileListParams, ProfileListResponse, ProfilePutParams, ProfilePutResponse,
     ProfileReadParams, ProfileReadResponse, RequestId, RunStartParams, RunStartResponse,
@@ -347,6 +349,13 @@ impl HttpAgentApi {
         params: McpServerReadParams,
     ) -> Result<AgentApiOutcome<McpServerReadResponse>, AgentApiError> {
         self.request(METHOD_MCP_SERVERS_READ, params).await
+    }
+
+    pub(crate) async fn update_mcp_server(
+        &self,
+        params: McpServerUpdateParams,
+    ) -> Result<AgentApiOutcome<McpServerUpdateResponse>, AgentApiError> {
+        self.request(METHOD_MCP_SERVERS_UPDATE, params).await
     }
 
     pub(crate) async fn delete_mcp_server(

@@ -317,6 +317,11 @@ pub trait AgentApiService: Send + Sync {
         params: McpServerReadParams,
     ) -> Result<AgentApiOutcome<McpServerReadResponse>, AgentApiError>;
 
+    async fn update_mcp_server(
+        &self,
+        params: McpServerUpdateParams,
+    ) -> Result<AgentApiOutcome<McpServerUpdateResponse>, AgentApiError>;
+
     async fn delete_mcp_server(
         &self,
         params: McpServerDeleteParams,

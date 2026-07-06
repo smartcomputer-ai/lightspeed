@@ -63,6 +63,25 @@ pub(super) fn create_mcp_server_record(
     })
 }
 
+pub(super) fn update_mcp_server_record(
+    patch: McpServerUpdatePatch,
+    updated_at_ms: i64,
+) -> mcp::UpdateMcpServerRecord {
+    mcp::UpdateMcpServerRecord {
+        display_name: patch.display_name.map(FieldPatch::into_option),
+        server_url: patch.server_url,
+        transport: patch.transport.map(registry_transport),
+        default_server_label: patch.default_server_label,
+        description: patch.description.map(FieldPatch::into_option),
+        allowed_tools: patch.allowed_tools.map(FieldPatch::into_option),
+        approval_default: patch.approval_default.map(registry_approval),
+        defer_loading_default: patch.defer_loading_default.map(FieldPatch::into_option),
+        auth_policy: patch.auth_policy.map(registry_auth_policy),
+        status: patch.status.map(registry_status),
+        updated_at_ms,
+    }
+}
+
 pub(super) fn mcp_server_view(record: mcp::McpServerRecord) -> api::McpServerView {
     api::McpServerView {
         server_id: record.server_id.as_str().to_owned(),

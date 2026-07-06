@@ -97,6 +97,7 @@ pub const METHOD_VFS_WORKSPACES_DELETE: &str = "vfs/workspaces/delete";
 pub const METHOD_MCP_SERVERS_CREATE: &str = "mcp/servers/create";
 pub const METHOD_MCP_SERVERS_READ: &str = "mcp/servers/read";
 pub const METHOD_MCP_SERVERS_LIST: &str = "mcp/servers/list";
+pub const METHOD_MCP_SERVERS_UPDATE: &str = "mcp/servers/update";
 pub const METHOD_MCP_SERVERS_DELETE: &str = "mcp/servers/delete";
 
 // ── Universe: environment provider registry ─────────────────────────────────
