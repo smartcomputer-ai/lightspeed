@@ -80,6 +80,7 @@ use tokio::{
     task::JoinHandle,
 };
 use tokio_tungstenite::{accept_async, tungstenite::Message};
+use tools::concurrency::AWAIT_TOOL_NAME;
 
 const ATTACH_TARGET_ID: &str = "attach-target";
 const CREATED_TARGET_ID: &str = "created-target";
@@ -427,8 +428,8 @@ async fn run_host_bridge_jobs_client(
         "final answer did not include marker from job output: {text}"
     );
     assert!(
-        text.contains("job_wait outcome: Satisfied"),
-        "final answer did not include a satisfied job_wait result: {text}"
+        text.contains("await resolved"),
+        "final answer did not include a resolved await result: {text}"
     );
 
     let local_file = bridge_root.join(BRIDGE_JOB_FILE_NAME);
@@ -1638,7 +1639,7 @@ impl BridgeFileLlm {
             request,
             "read_file",
             json!({
-                "path": BRIDGE_FILE_NAME,
+                "path": format!("/{BRIDGE_FILE_NAME}"),
                 "offset": 1,
                 "limit": 20
             }),
@@ -1831,21 +1832,21 @@ impl BridgeJobsLlm {
         .await
     }
 
-    async fn wait_job_result(
+    async fn await_job_result(
         &self,
         request: &LlmGenerationRequest,
     ) -> Result<LlmGenerationResult, CoreAgentIoError> {
-        self.require_tool(request, "job_wait")?;
-        let handle = self.job_handle_from_results(request).await?;
+        self.require_tool(request, AWAIT_TOOL_NAME)?;
+        let promise_id = self.job_promise_from_results(request).await?;
         self.tool_call_result(
             request,
-            "job_wait",
+            AWAIT_TOOL_NAME,
             json!({
-                "jobs": [handle.json_arg()],
-                "timeout_ms": 15000,
-                "output_bytes": 4096
+                "promises": [promise_id],
+                "mode": "all",
+                "timeout_ms": 15000
             }),
-            "bridge_job_wait",
+            "bridge_job_await",
         )
         .await
     }
@@ -1950,6 +1951,23 @@ impl BridgeJobsLlm {
         Err(io_error("job_start result did not include a job handle"))
     }
 
+    async fn job_promise_from_results(
+        &self,
+        request: &LlmGenerationRequest,
+    ) -> Result<String, CoreAgentIoError> {
+        for entry in current_run_tool_results(request).into_iter().rev() {
+            let output = self
+                .blobs
+                .read_text(&entry.content_ref)
+                .await
+                .map_err(io_error)?;
+            if let Some(promise_id) = parse_job_promise(&output) {
+                return Ok(promise_id.to_owned());
+            }
+        }
+        Err(io_error("job_start result did not include a promise"))
+    }
+
     async fn final_result(
         &self,
         request: &LlmGenerationRequest,
@@ -2008,7 +2026,7 @@ impl CoreAgentLlm for BridgeJobsLlm {
         match current_run_tool_results(&request).len() {
             0 => self.start_job_result(&request).await,
             1 => self.list_jobs_result(&request).await,
-            2 => self.wait_job_result(&request).await,
+            2 => self.await_job_result(&request).await,
             3 => self.read_job_result(&request).await,
             _ => self.final_result(&request).await,
         }
@@ -2046,6 +2064,11 @@ impl BridgeJobHandle {
             "job_id": self.job_id
         })
     }
+}
+
+fn parse_job_promise(text: &str) -> Option<&str> {
+    let after = text.split_once("(promise ")?.1;
+    after.split_once(')')?.0.split_whitespace().next()
 }
 
 fn current_run_tool_result(request: &LlmGenerationRequest) -> Option<&engine::ContextEntry> {

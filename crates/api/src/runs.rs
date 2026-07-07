@@ -6,9 +6,10 @@ pub struct RunStartParams {
     pub session_id: SessionId,
     pub source: RunStartSource,
     /// Client-supplied idempotency key, unique per session. Retrying
-    /// `session/runs/start` with the same submission id and the same source/config
-    /// returns the original run instead of starting a second one; reusing a
-    /// submission id with different source or config is rejected.
+    /// `session/runs/start` with the same submission id and the same
+    /// source/config returns the original run instead of starting a second
+    /// one; reusing a submission id with different source or config is
+    /// rejected.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub submission_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -50,6 +51,26 @@ pub struct RunLimitsConfig {
 #[serde(rename_all = "camelCase")]
 pub struct RunStartResponse {
     pub run: RunView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageSubmitParams {
+    pub session_id: SessionId,
+    pub items: Vec<InputItem>,
+    /// Client-supplied idempotency key, unique per session. Retrying
+    /// `session/messages/submit` with the same submission id and same items is
+    /// accepted idempotently; reusing it for a different command or different
+    /// message input is rejected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub submission_id: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageSubmitResponse {
+    pub submission_id: String,
+    pub accepted: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

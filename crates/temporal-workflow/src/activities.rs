@@ -1,14 +1,17 @@
-use engine::{BlobRef, ContextCompactionResult, LlmGenerationResult, ToolBatchOutcome};
+use engine::{
+    BlobRef, ContextCompactionResult, LlmGenerationResult, PromiseSourceCancelRequest,
+    PromiseSourceCancelResult, PromiseSourceCheckRequest, PromiseSourceCheckResult,
+    ToolBatchOutcome,
+};
 use temporalio_macros::activities;
 use temporalio_sdk::activities::{ActivityContext, ActivityError};
 
 use crate::{
-    AppendEventsRequest, CheckEnvironmentJobWaitActivityRequest,
-    CheckEnvironmentJobWaitActivityResult, ContextCompactActivityRequest,
-    CreateOrLoadSessionRequest, CreateOrLoadSessionResult, LlmGenerateActivityRequest,
-    PreprocessRunInputActivityRequest, PreprocessRunInputActivityResult, PutBlobRequest,
-    ReadBlobRequest, ReadBlobResult, SkillCatalogRefreshActivityRequest,
-    SkillCatalogRefreshActivityResult, ToolInvokeBatchActivityRequest,
+    AppendEventsRequest, ContextCompactActivityRequest, CreateOrLoadSessionRequest,
+    CreateOrLoadSessionResult, LlmGenerateActivityRequest, PreprocessRunInputActivityRequest,
+    PreprocessRunInputActivityResult, PutBlobRequest, ReadBlobRequest, ReadBlobResult,
+    SkillCatalogRefreshActivityRequest, SkillCatalogRefreshActivityResult,
+    ToolInvokeBatchActivityRequest,
 };
 
 pub const ACTIVITY_CREATE_OR_LOAD_SESSION: &str = "WorkflowActivities::create_or_load_session";
@@ -20,8 +23,8 @@ pub const ACTIVITY_PREPROCESS_RUN_INPUT: &str = "WorkflowActivities::preprocess_
 pub const ACTIVITY_CONTEXT_COMPACT: &str = "WorkflowActivities::context_compact";
 pub const ACTIVITY_TOOL_INVOKE_BATCH: &str = "WorkflowActivities::tool_invoke_batch";
 pub const ACTIVITY_SKILL_CATALOG_REFRESH: &str = "WorkflowActivities::skill_catalog_refresh";
-pub const ACTIVITY_CHECK_ENVIRONMENT_JOB_WAIT: &str =
-    "WorkflowActivities::check_environment_job_wait";
+pub const ACTIVITY_CHECK_PROMISE_SOURCE: &str = "WorkflowActivities::check_promise_source";
+pub const ACTIVITY_CANCEL_PROMISE_SOURCE: &str = "WorkflowActivities::cancel_promise_source";
 
 pub struct WorkflowActivities;
 
@@ -99,11 +102,19 @@ impl WorkflowActivities {
         unimplemented!("workflow activity definition only")
     }
 
-    #[activity(name = ACTIVITY_CHECK_ENVIRONMENT_JOB_WAIT)]
-    pub async fn check_environment_job_wait(
+    #[activity(name = ACTIVITY_CHECK_PROMISE_SOURCE)]
+    pub async fn check_promise_source(
         _ctx: ActivityContext,
-        _request: CheckEnvironmentJobWaitActivityRequest,
-    ) -> Result<CheckEnvironmentJobWaitActivityResult, ActivityError> {
+        _request: PromiseSourceCheckRequest,
+    ) -> Result<PromiseSourceCheckResult, ActivityError> {
+        unimplemented!("workflow activity definition only")
+    }
+
+    #[activity(name = ACTIVITY_CANCEL_PROMISE_SOURCE)]
+    pub async fn cancel_promise_source(
+        _ctx: ActivityContext,
+        _request: PromiseSourceCancelRequest,
+    ) -> Result<PromiseSourceCancelResult, ActivityError> {
         unimplemented!("workflow activity definition only")
     }
 }

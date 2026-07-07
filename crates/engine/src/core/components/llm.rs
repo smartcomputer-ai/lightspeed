@@ -385,6 +385,7 @@ mod tests {
             },
             context: crate::ContextConfig { compaction: None },
             tools: Default::default(),
+            fleet: Default::default(),
         }
     }
 

@@ -504,7 +504,9 @@ pub enum SessionCommand {
     RequestRunSteering {
         input_ref: BlobRef,
     },
-    RequestRunCancellation,
+    CancelRun {
+        run_id: RunId,
+    },
     CloseSession,
     RecordEffectReceipt {
         receipt: AgentEffectReceipt,

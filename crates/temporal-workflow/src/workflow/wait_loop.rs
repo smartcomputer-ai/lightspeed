@@ -44,12 +44,10 @@ fn workflow_has_immediate_work(ctx: &WorkflowContext<AgentSessionWorkflow>, now:
 pub(super) fn workflow_state_has_immediate_work(state: &AgentSessionWorkflow) -> bool {
     !state.pending_admissions.is_empty()
         || !state.pending_tool_batch_resumes.is_empty()
-        || !state.pending_terminal_notifications.is_empty()
-        || state
-            .active_waits
-            .values()
-            .any(|wait| active_wait_nontimer_resolution(wait).is_some())
-        || job_waits::has_immediate_work(state)
+        || !state.pending_promise_notifications.is_empty()
+        || !state.pending_promise_cancellations.is_empty()
+        || awaits::has_satisfied_await(state)
+        || promise_sources::has_immediate_work(state)
 }
 
 fn nearest_workflow_wake_ms(ctx: &WorkflowContext<AgentSessionWorkflow>) -> Option<u64> {
@@ -57,17 +55,13 @@ fn nearest_workflow_wake_ms(ctx: &WorkflowContext<AgentSessionWorkflow>) -> Opti
 }
 
 fn nearest_workflow_wake_ms_for_state(state: &AgentSessionWorkflow) -> Option<u64> {
-    let fleet_deadline = state
-        .active_waits
-        .values()
-        .filter_map(|wait| wait.deadline_ms)
-        .min();
-    let job_deadline = job_waits::nearest_wake_ms(state);
-    match (fleet_deadline, job_deadline) {
-        (Some(left), Some(right)) => Some(left.min(right)),
-        (Some(value), None) | (None, Some(value)) => Some(value),
-        (None, None) => None,
-    }
+    let await_deadline = awaits::nearest_await_wake_ms(state);
+    let promise_source_deadline = promise_sources::nearest_wake_ms(state);
+    let watchdog_deadline = watchdog::cancelling_watchdog_wake_ms(state);
+    [await_deadline, promise_source_deadline, watchdog_deadline]
+        .into_iter()
+        .flatten()
+        .min()
 }
 
 pub(super) fn can_continue_as_new_at_idle(
@@ -83,13 +77,15 @@ pub(super) fn can_continue_as_new_at_idle(
         )
 }
 
+/// Continue-as-new needs quiescence of in-flight transport only: pending
+/// admissions, unresumed batches, and the outbound notify flush queue.
+/// Parked awaits and promise-source polls are log-derived and never block
+/// CAN.
 pub(super) fn workflow_state_allows_continue_as_new(state: &AgentSessionWorkflow) -> bool {
     state.pending_admissions.is_empty()
         && state.pending_tool_batch_resumes.is_empty()
-        && state.pending_terminal_notifications.is_empty()
-        && state.active_waits.is_empty()
-        && state.active_environment_job_waits.is_empty()
-        && state.run_subscriptions.is_empty()
+        && state.pending_promise_notifications.is_empty()
+        && state.pending_promise_cancellations.is_empty()
 }
 
 pub(super) fn workflow_state_should_complete(ctx: &WorkflowContext<AgentSessionWorkflow>) -> bool {
@@ -101,10 +97,8 @@ pub(super) fn workflow_state_is_closed_and_quiescent(state: &AgentSessionWorkflo
         && state.core_state.lifecycle.status == CoreAgentStatus::Closed
         && state.pending_admissions.is_empty()
         && state.pending_tool_batch_resumes.is_empty()
-        && state.pending_terminal_notifications.is_empty()
-        && state.active_waits.is_empty()
-        && state.active_environment_job_waits.is_empty()
-        && state.run_subscriptions.is_empty()
+        && state.pending_promise_notifications.is_empty()
+        && state.pending_promise_cancellations.is_empty()
         && state.core_state.runs.active.is_none()
         && state.core_state.runs.queued.is_empty()
 }

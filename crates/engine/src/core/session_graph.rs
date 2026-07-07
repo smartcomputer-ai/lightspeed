@@ -85,6 +85,7 @@ mod tests {
             },
             context: ContextConfig { compaction: None },
             tools: ToolConfig::default(),
+            fleet: Default::default(),
         }
     }
 

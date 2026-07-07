@@ -38,20 +38,3 @@ pub(super) async fn call_tool_invoke_batch(
     .await
     .map_err(|error| anyhow::anyhow!("{error}"))
 }
-
-pub(super) async fn check_environment_job_wait(
-    ctx: &mut WorkflowContext<AgentSessionWorkflow>,
-    wait: ActiveEnvironmentJobWait,
-    observed_at_ms: u64,
-) -> anyhow::Result<CheckEnvironmentJobWaitActivityResult> {
-    ctx.start_activity(
-        WorkflowActivities::check_environment_job_wait,
-        CheckEnvironmentJobWaitActivityRequest {
-            wait,
-            observed_at_ms,
-        },
-        activity_options(),
-    )
-    .await
-    .map_err(|error| anyhow::anyhow!("{error}"))
-}

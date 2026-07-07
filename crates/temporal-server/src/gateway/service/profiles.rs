@@ -224,6 +224,7 @@ impl GatewayAgentApi {
             context: explicit_config.context.or(profile_config.context),
             run_defaults: explicit_config.run_defaults.or(profile_config.run_defaults),
             tools: explicit_config.tools.or(profile_config.tools),
+            fleet: explicit_config.fleet.or(profile_config.fleet),
         })
     }
 
@@ -547,6 +548,11 @@ fn session_config_patch_from_input(input: SessionConfigInput) -> SessionConfigPa
             filesystem: tools.filesystem.map(FieldPatch::Set),
             messaging: tools.messaging.map(FieldPatch::Set),
             fleet: tools.fleet.map(FieldPatch::Set),
+            timer: tools.timer.map(FieldPatch::Set),
+        }),
+        fleet: input.fleet.map(|fleet| FleetConfigPatchInput {
+            profiles: fleet.profiles.map(FieldPatch::Set),
+            spawn: fleet.spawn.map(FieldPatch::Set),
         }),
     }
 }

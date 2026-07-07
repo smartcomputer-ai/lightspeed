@@ -193,6 +193,22 @@
       "scope": "universe"
     },
     {
+      "method": "session/messages/submit",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/MessageSubmitParams"
+        },
+        "type": "MessageSubmitParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfMessageSubmitResponse"
+        },
+        "type": "AgentApiOutcome<MessageSubmitResponse>"
+      },
+      "scope": "universe"
+    },
+    {
       "method": "session/runs/start",
       "params": {
         "schema": {

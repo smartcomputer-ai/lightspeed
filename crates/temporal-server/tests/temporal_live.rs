@@ -44,10 +44,12 @@ use temporal_workflow::{
 use temporalio_client::{
     Client, WorkflowQueryOptions, WorkflowSignalOptions, WorkflowTerminateOptions,
 };
-use tools::fleet::{
-    AGENT_SEND_TOOL_NAME, AGENT_SPAWN_TOOL_NAME, AGENT_WAIT_TOOL_NAME, AgentSendOutput,
-    AgentSpawnOutput, PROFILE_LIST_TOOL_NAME, PROFILE_READ_TOOL_NAME, ProfileListOutput,
-    ProfileReadOutput,
+use tools::{
+    concurrency::AWAIT_TOOL_NAME,
+    fleet::{
+        AGENT_SEND_TOOL_NAME, AGENT_SPAWN_TOOL_NAME, AgentSendOutput, AgentSpawnOutput,
+        PROFILE_LIST_TOOL_NAME, PROFILE_READ_TOOL_NAME, ProfileListOutput, ProfileReadOutput,
+    },
 };
 
 #[tokio::test(flavor = "current_thread")]
@@ -173,7 +175,7 @@ async fn temporal_live_fleet_executor_lists_and_reads_profiles() -> anyhow::Resu
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires local/up.sh or compatible Temporal + Postgres env"]
-async fn temporal_live_agent_wait_parks_until_child_run_completes() -> anyhow::Result<()> {
+async fn temporal_live_await_parks_until_child_run_completes() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().expect("live test lock");
     let _ = dotenvy::dotenv();
     require_storage_live_env()?;
@@ -231,28 +233,24 @@ impl FleetWaitScriptedLlm {
         Ok(None)
     }
 
-    async fn wait_tool_call_result(
+    async fn await_tool_call_result(
         &self,
         request: &LlmGenerationRequest,
-        target_session_id: &str,
-        run_id: &str,
+        promise_id: &str,
     ) -> Result<LlmGenerationResult, CoreAgentIoError> {
         if !request
             .request
             .tools
             .iter()
-            .any(|tool| tool.name.as_str() == AGENT_WAIT_TOOL_NAME)
+            .any(|tool| tool.name.as_str() == AWAIT_TOOL_NAME)
         {
             return Err(CoreAgentIoError::Failed {
-                message: "scripted wait test expected agent_wait to be available".to_owned(),
+                message: "scripted await test expected await to be available".to_owned(),
             });
         }
 
         let arguments = serde_json::json!({
-            "waits": [{
-                "target_session_id": target_session_id,
-                "run_id": run_id
-            }],
+            "promises": [promise_id],
             "mode": "all",
             "timeout_ms": 15_000
         });
@@ -261,8 +259,8 @@ impl FleetWaitScriptedLlm {
             .put_bytes(serde_json::to_vec(&arguments).map_err(io_error)?)
             .await
             .map_err(io_error)?;
-        let call_id = ToolCallId::new(format!("agent_wait_call_{}", request.turn_id.as_u64()));
-        let tool_name = ToolName::new(AGENT_WAIT_TOOL_NAME);
+        let call_id = ToolCallId::new(format!("await_call_{}", request.turn_id.as_u64()));
+        let tool_name = ToolName::new(AWAIT_TOOL_NAME);
         Ok(LlmGenerationResult {
             run_id: request.run_id,
             turn_id: request.turn_id,
@@ -282,6 +280,67 @@ impl FleetWaitScriptedLlm {
             }],
             facts: LlmGenerationFacts {
                 provider_response_id: Some(format!("fleet-wait-tool-{}", request.turn_id.as_u64())),
+                finish: LlmFinish::ToolCalls,
+                usage: None,
+                tool_calls: vec![ObservedToolCall {
+                    call_id,
+                    tool_name,
+                    provider_kind: Some("fleet-wait-script".to_owned()),
+                    arguments_ref,
+                    native_call_ref: None,
+                }],
+                context_token_estimate: None,
+            },
+        })
+    }
+
+    async fn spawn_slow_child_tool_call_result(
+        &self,
+        request: &LlmGenerationRequest,
+    ) -> Result<LlmGenerationResult, CoreAgentIoError> {
+        if !request
+            .request
+            .tools
+            .iter()
+            .any(|tool| tool.name.as_str() == AGENT_SPAWN_TOOL_NAME)
+        {
+            return Err(CoreAgentIoError::Failed {
+                message: "scripted await test expected agent_spawn to be available".to_owned(),
+            });
+        }
+
+        let arguments = serde_json::json!({
+            "input": "SLOW_CHILD wait target"
+        });
+        let arguments_ref = self
+            .blobs
+            .put_bytes(serde_json::to_vec(&arguments).map_err(io_error)?)
+            .await
+            .map_err(io_error)?;
+        let call_id = ToolCallId::new(format!("spawn_call_{}", request.turn_id.as_u64()));
+        let tool_name = ToolName::new(AGENT_SPAWN_TOOL_NAME);
+        Ok(LlmGenerationResult {
+            run_id: request.run_id,
+            turn_id: request.turn_id,
+            status: LlmGenerationStatus::Succeeded,
+            failure_ref: None,
+            context_entries: vec![ContextEntryInput {
+                kind: ContextEntryKind::ToolCall {
+                    call_id: call_id.clone(),
+                    name: tool_name.clone(),
+                },
+                content_ref: arguments_ref.clone(),
+                media_type: Some("application/json".to_owned()),
+                preview: Some(format!("{tool_name}({arguments})")),
+                provider_kind: Some("fleet-wait-script".to_owned()),
+                provider_item_id: Some(call_id.as_str().to_owned()),
+                token_estimate: None,
+            }],
+            facts: LlmGenerationFacts {
+                provider_response_id: Some(format!(
+                    "fleet-spawn-tool-{}",
+                    request.turn_id.as_u64()
+                )),
                 finish: LlmFinish::ToolCalls,
                 usage: None,
                 tool_calls: vec![ObservedToolCall {
@@ -409,7 +468,7 @@ impl CoreAgentLlm for FleetWaitScriptedLlm {
             })
             .await?
         {
-            if tool_result.contains("agent_wait resolved") {
+            if tool_result.contains("await resolved") {
                 let final_output = self
                     .latest_text_for_kind(&request, |kind| {
                         matches!(
@@ -425,10 +484,13 @@ impl CoreAgentLlm for FleetWaitScriptedLlm {
                     .final_result(
                         &request,
                         format!(
-                            "wait completed after agent_wait: {tool_result}\n\nagent final output: {final_output}"
+                            "wait completed after await: {tool_result}\n\nagent final output: {final_output}"
                         ),
                     )
                     .await;
+            }
+            if let Some(promise_id) = parse_spawn_promise(&tool_result) {
+                return self.await_tool_call_result(&request, promise_id).await;
             }
             if tool_result.contains("Delivered message") {
                 return self
@@ -456,10 +518,14 @@ impl CoreAgentLlm for FleetWaitScriptedLlm {
             .unwrap_or_default();
 
         if user_text.starts_with("SLOW_CHILD") {
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            tokio::time::sleep(Duration::from_secs(12)).await;
             return self
                 .final_result(&request, "slow child completed".to_owned())
                 .await;
+        }
+
+        if user_text.contains("SPAWN_AND_AWAIT_SLOW_CHILD") {
+            return self.spawn_slow_child_tool_call_result(&request).await;
         }
 
         if user_text.contains("REPORT_TO_PARENT") {
@@ -472,10 +538,8 @@ impl CoreAgentLlm for FleetWaitScriptedLlm {
                 .await;
         }
 
-        if let Some((target_session_id, run_id)) = parse_wait_script(&user_text) {
-            return self
-                .wait_tool_call_result(&request, target_session_id, run_id)
-                .await;
+        if let Some(promise_id) = parse_await_script(&user_text) {
+            return self.await_tool_call_result(&request, promise_id).await;
         }
 
         self.final_result(&request, "scripted run completed".to_owned())
@@ -483,14 +547,17 @@ impl CoreAgentLlm for FleetWaitScriptedLlm {
     }
 }
 
-fn parse_wait_script(text: &str) -> Option<(&str, &str)> {
+fn parse_spawn_promise(text: &str) -> Option<&str> {
+    let after = text.split_once("(promise ")?.1;
+    after.split_once(')')?.0.split_whitespace().next()
+}
+
+fn parse_await_script(text: &str) -> Option<&str> {
     let mut parts = text.split_whitespace();
-    if parts.next()? != "WAIT_FOR_CHILD" {
+    if parts.next()? != "AWAIT_PROMISE" {
         return None;
     }
-    let target_session_id = parts.next()?;
-    let run_id = parts.next()?;
-    Some((target_session_id, run_id))
+    parts.next()
 }
 
 async fn run_with_scripted_fleet_live_worker<F, Fut>(run_client: F) -> anyhow::Result<()>
@@ -855,7 +922,13 @@ async fn run_fleet_spawn_live_client(
         send_output.target_session_id.as_deref(),
         Some(child_session_id.as_str())
     );
-    let send_run_id = send_output.run_id.expect("send run id");
+    assert_eq!(send_output.run_id, None);
+    let send_submission_id = send_output
+        .submission_id
+        .as_deref()
+        .expect("send submission id");
+    let send_run_id =
+        wait_for_run_id_by_submission(&client, &child_session_id, send_submission_id).await?;
     assert_ne!(send_run_id, child_run_id);
     let follow_up_run =
         wait_for_terminal_run(api.as_ref(), &child_session_id, &send_run_id).await?;
@@ -1181,7 +1254,7 @@ async fn run_fleet_wait_live_client(
     client: Client,
     session_id: SessionId,
     api: Arc<GatewayAgentApi>,
-    blobs: Arc<dyn BlobStore>,
+    _blobs: Arc<dyn BlobStore>,
     sessions: Arc<dyn SessionStore>,
     model: ModelSelection,
 ) -> anyhow::Result<()> {
@@ -1200,50 +1273,13 @@ async fn run_fleet_wait_live_client(
     })
     .await?;
 
-    let fleet_runtime = Arc::new(AgentApiFleetRuntime::new(api.clone()));
-    let service = FleetService::new(sessions, fleet_runtime);
-    let executor = FleetToolExecutor::new(blobs.clone(), service);
-    let arguments_ref = blobs
-        .put_bytes(br#"{"input":"SLOW_CHILD wait target"}"#.to_vec())
-        .await?;
-    let observed_at_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)?
-        .as_millis() as u64;
-    let spawn_result = executor
-        .invoke(
-            FleetInvocationContext {
-                parent_session_id: session_id.clone(),
-                parent_run_id: RunId::new(1),
-                turn_id: TurnId::new(1),
-                batch_id: ToolBatchId::new(1),
-                call_id: ToolCallId::new("call_wait_spawn"),
-                observed_at_ms,
-            },
-            &ToolInvocationRequest {
-                call_id: ToolCallId::new("call_wait_spawn"),
-                tool_name: ToolName::new(AGENT_SPAWN_TOOL_NAME),
-                arguments_ref,
-                execution_target: None,
-            },
-        )
-        .await
-        .map_err(|error| anyhow::anyhow!("{error}"))?;
-    assert_eq!(spawn_result.status, ToolCallStatus::Succeeded);
-    let output_ref = spawn_result.output_ref.expect("spawn output ref");
-    let output: AgentSpawnOutput = serde_json::from_slice(&blobs.read_bytes(&output_ref).await?)?;
-    let child_run_id = output
-        .child_run_id
-        .as_deref()
-        .expect("spawn should start child run");
-    let child_session_id = SessionId::try_new(output.child_session_id.clone())?;
-
     let parent_run = api
         .start_run(RunStartParams {
             submission_id: None,
             session_id: session_id.as_str().to_owned(),
             source: RunStartSource::Input {
                 items: vec![InputItem::Text {
-                    text: format!("WAIT_FOR_CHILD {child_session_id} {child_run_id}"),
+                    text: "SPAWN_AND_AWAIT_SLOW_CHILD".to_owned(),
                 }],
             },
             config: None,
@@ -1252,7 +1288,19 @@ async fn run_fleet_wait_live_client(
 
     wait_for_active_waits(&client, &session_id, 1).await?;
 
-    let child_run = wait_for_terminal_run(api.as_ref(), &child_session_id, child_run_id).await?;
+    let links = sessions
+        .list_links(ListSessionLinks {
+            session_id: session_id.clone(),
+            direction: SessionLinkDirection::Outgoing,
+            relationship: Some(FLEET_CHILD_RELATIONSHIP.to_owned()),
+            limit: 10,
+        })
+        .await?;
+    assert_eq!(links.len(), 1, "expected exactly one spawned child link");
+    let child_session_id = links[0].to_session_id.clone();
+
+    let child_run_id = "run_1".to_owned();
+    let child_run = wait_for_terminal_run(api.as_ref(), &child_session_id, &child_run_id).await?;
     let child_output = final_assistant_text(&child_run).expect("child assistant output");
     assert_eq!(child_output, "slow child completed");
 
@@ -1260,8 +1308,8 @@ async fn run_fleet_wait_live_client(
         wait_for_terminal_run(api.as_ref(), &session_id, &parent_run.result.run.id).await?;
     let parent_output = final_assistant_text(&parent_run).expect("parent assistant output");
     assert!(
-        parent_output.contains("wait completed after agent_wait"),
-        "expected parent to observe agent_wait result, got: {parent_output}"
+        parent_output.contains("wait completed after await"),
+        "expected parent to observe await result, got: {parent_output}"
     );
     assert!(
         parent_output.contains("outcome terminal"),
@@ -1347,9 +1395,6 @@ async fn run_fleet_send_report_back_live_client(
         "input": "REPORT_TO_PARENT live task",
         "lifecycle": {
             "close_on_terminal": true
-        },
-        "report_back": {
-            "instructions": "Send exactly: mode i live result"
         }
     });
     let arguments_ref = blobs.put_bytes(serde_json::to_vec(&spawn_args)?).await?;
@@ -1458,6 +1503,51 @@ async fn wait_for_terminal_run_with_assistant_output(
             {
                 return Ok(run);
             }
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+async fn wait_for_run_id_by_submission(
+    client: &Client,
+    session_id: &SessionId,
+    submission_id: &str,
+) -> anyhow::Result<String> {
+    let started = std::time::Instant::now();
+    let handle = live_workflow_handle(client, session_id)?;
+    loop {
+        if started.elapsed() > Duration::from_secs(30) {
+            anyhow::bail!(
+                "timed out waiting for session {session_id} to admit submission {submission_id}"
+            );
+        }
+        let status = handle
+            .query(
+                AgentSessionWorkflow::status,
+                (),
+                WorkflowQueryOptions::default(),
+            )
+            .await?;
+        if let Some(run) = status.active_run.as_ref().filter(|run| {
+            run.submission_id
+                .as_ref()
+                .is_some_and(|id| id.as_str() == submission_id)
+        }) {
+            return Ok(format!("run_{}", run.run_id));
+        }
+        if let Some(run) = status.queued_runs.iter().find(|run| {
+            run.submission_id
+                .as_ref()
+                .is_some_and(|id| id.as_str() == submission_id)
+        }) {
+            return Ok(format!("run_{}", run.run_id));
+        }
+        if let Some(run) = status.completed_runs.iter().rev().find(|run| {
+            run.submission_id
+                .as_ref()
+                .is_some_and(|id| id.as_str() == submission_id)
+        }) {
+            return Ok(format!("run_{}", run.run_id));
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
@@ -1915,7 +2005,7 @@ async fn run_admission_failure_live_client(
             vec![AgentAdmission {
                 // No run is active, so admission rejects this command; the
                 // session must keep serving later admissions regardless.
-                command: CoreAgentCommand::RequestRunCancellation,
+                command: CoreAgentCommand::RequestRunSteering { input: Vec::new() },
                 context_key: None,
             }],
             WorkflowSignalOptions::default(),
@@ -1948,7 +2038,7 @@ async fn run_admission_failure_live_client(
         .signal(
             AgentSessionWorkflow::submit_admissions,
             vec![AgentAdmission {
-                command: CoreAgentCommand::CloseSession,
+                command: CoreAgentCommand::CloseSession { force: false },
                 context_key: None,
             }],
             WorkflowSignalOptions::default(),
@@ -2450,6 +2540,7 @@ async fn temporal_live_two_universes_share_one_worker_with_isolation() -> anyhow
         // Closing A's session leaves B's session open.
         api_a
             .close_session(api::SessionCloseParams {
+                force: false,
                 session_id: session_id.as_str().to_owned(),
             })
             .await?;

@@ -1057,6 +1057,7 @@ mod tests {
 
     fn request_run_command(content_ref: BlobRef) -> CoreAgentCommand {
         CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+            notify_on_terminal: Vec::new(),
             submission_id: None,
             source: engine::RunRequestSource::Input {
                 input: user_input(content_ref),
@@ -1080,6 +1081,7 @@ mod tests {
             },
             context: ContextConfig { compaction: None },
             tools: Default::default(),
+            fleet: Default::default(),
         }
     }
 

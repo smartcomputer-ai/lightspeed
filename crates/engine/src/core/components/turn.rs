@@ -54,10 +54,14 @@ pub fn plan_next(state: &CoreAgentState) -> Result<Vec<CoreAgentEventProposal>, 
     if let Some(turn_id) = active_run.active_turn_id {
         return decide_active_turn_progress(state, active_run, turn_id);
     }
-    if active_run.status != RunStatus::Active {
-        return Ok(Vec::new());
+    match active_run.status {
+        RunStatus::Active => {}
+        RunStatus::CancellingGrace if active_run.cancellation_grace_turn_id.is_none() => {}
+        _ => return Ok(Vec::new()),
     }
-    if crate::core::components::run::latest_turn_is_terminal_run_outcome(active_run)? {
+    if active_run.status == RunStatus::Active
+        && crate::core::components::run::latest_turn_is_terminal_run_outcome(active_run)?
+    {
         return Ok(Vec::new());
     }
 
@@ -95,7 +99,10 @@ fn decide_active_turn_progress(
 
     match turn.status {
         TurnStatus::Started => {
-            if active_run.status != RunStatus::Active {
+            if !matches!(
+                active_run.status,
+                RunStatus::Active | RunStatus::CancellingGrace
+            ) {
                 return Ok(Vec::new());
             }
             let request =
@@ -118,7 +125,10 @@ fn decide_active_turn_progress(
             )])
         }
         TurnStatus::Planned => {
-            if active_run.status != RunStatus::Active {
+            if !matches!(
+                active_run.status,
+                RunStatus::Active | RunStatus::CancellingGrace
+            ) {
                 return Ok(Vec::new());
             }
             if turn.planned_request.is_none() {
@@ -247,10 +257,21 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
             }
             {
                 let active_run = crate::core::components::run::active_run_mut(state, *run_id)?;
-                if active_run.status != RunStatus::Active {
+                if !matches!(
+                    active_run.status,
+                    RunStatus::Active | RunStatus::CancellingGrace
+                ) {
                     return Err(DomainError::InvariantViolation(
-                        "turns can only start for active runs".into(),
+                        "turns can only start for active or cancellation-grace runs".into(),
                     ));
+                }
+                if active_run.status == RunStatus::CancellingGrace {
+                    if active_run.cancellation_grace_turn_id.is_some() {
+                        return Err(DomainError::InvariantViolation(
+                            "cancellation grace can only start one turn".into(),
+                        ));
+                    }
+                    active_run.cancellation_grace_turn_id = Some(*turn_id);
                 }
                 if active_run.active_turn_id.is_some() {
                     return Err(DomainError::InvariantViolation(

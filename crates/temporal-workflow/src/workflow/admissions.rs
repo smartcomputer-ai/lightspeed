@@ -68,6 +68,7 @@ async fn preprocess_input_entries(
                 InputPreprocessRebuild::RequestRun {
                     submission_id: request.submission_id,
                     run_config: request.run_config,
+                    notify_on_terminal: request.notify_on_terminal,
                 },
             ),
             engine::RunRequestSource::Context { .. } => {
@@ -76,6 +77,13 @@ async fn preprocess_input_entries(
                 });
             }
         },
+        CoreAgentCommand::SubmitMessage(message) => (
+            message.submission_id.clone(),
+            message.input,
+            InputPreprocessRebuild::SubmitMessage {
+                submission_id: message.submission_id,
+            },
+        ),
         CoreAgentCommand::UpsertContext { key, entry } => (
             None,
             vec![entry],
@@ -107,6 +115,10 @@ enum InputPreprocessRebuild {
     RequestRun {
         submission_id: Option<SubmissionId>,
         run_config: RunConfig,
+        notify_on_terminal: Vec<engine::RunTerminalNotifyIntent>,
+    },
+    SubmitMessage {
+        submission_id: Option<SubmissionId>,
     },
     UpsertContext {
         key: ContextEntryKey,
@@ -119,11 +131,19 @@ impl InputPreprocessRebuild {
             Self::RequestRun {
                 submission_id,
                 run_config,
+                notify_on_terminal,
             } => Ok(CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+                notify_on_terminal,
                 submission_id,
                 source: engine::RunRequestSource::Input { input },
                 run_config,
             })),
+            Self::SubmitMessage { submission_id } => Ok(CoreAgentCommand::SubmitMessage(
+                engine::SubmitMessageCommand {
+                    submission_id,
+                    input,
+                },
+            )),
             Self::UpsertContext { key } => {
                 let mut input = input;
                 let Some(entry) = input.pop() else {

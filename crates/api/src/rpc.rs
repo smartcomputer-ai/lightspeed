@@ -293,6 +293,7 @@ api_methods! {
     METHOD_SESSION_CONTEXT_APPEND => append_context(ContextAppendParams) -> ContextAppendResponse,
     METHOD_SESSION_CONTEXT_REMOVE => remove_context(ContextRemoveParams) -> ContextRemoveResponse,
     METHOD_SESSION_CONTEXT_COMPACT => compact_context(ContextCompactParams) -> ContextCompactResponse,
+    METHOD_SESSION_MESSAGES_SUBMIT => submit_message(MessageSubmitParams) -> MessageSubmitResponse,
     METHOD_SESSION_RUNS_START => start_run(RunStartParams) -> RunStartResponse,
     METHOD_SESSION_RUNS_CANCEL => cancel_run(RunCancelParams) -> RunCancelResponse,
     METHOD_SESSION_PROMPTS_ACTIVE => active_prompts(PromptsActiveParams) -> PromptsActiveResponse,

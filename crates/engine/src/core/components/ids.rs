@@ -125,6 +125,7 @@ string_id!(ToolCallId, validate_general_string_id);
 string_id!(ToolName, validate_tool_name);
 
 numeric_id!(RunId);
+numeric_id!(MessageId);
 numeric_id!(SteeringId);
 numeric_id!(TurnId);
 numeric_id!(ToolBatchId);
@@ -133,6 +134,7 @@ numeric_id!(ContextItemId);
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IdCursors {
     pub last_run_id: u64,
+    pub last_message_id: u64,
     pub last_steering_id: u64,
     pub last_turn_id: u64,
     pub last_tool_batch_id: u64,

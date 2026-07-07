@@ -763,7 +763,10 @@ mod tests {
                 },
             )
             .await;
-        assert!(matches!(invalid, Err(McpRegistryError::InvalidInput { .. })));
+        assert!(matches!(
+            invalid,
+            Err(McpRegistryError::InvalidInput { .. })
+        ));
 
         // A failed update must not partially apply.
         let read = store

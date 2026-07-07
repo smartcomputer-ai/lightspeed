@@ -87,7 +87,13 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
                     "only open sessions can be closed".into(),
                 ));
             }
-            if state.runs.active.is_some() || !state.runs.queued.is_empty() {
+            if state.runs.active.is_some()
+                || !state.runs.queued.is_empty()
+                || state
+                    .promises
+                    .pending()
+                    .any(|promise| matches!(promise.scope, crate::PromiseScope::Session))
+            {
                 return Err(DomainError::InvariantViolation(
                     "session cannot close with active work".into(),
                 ));

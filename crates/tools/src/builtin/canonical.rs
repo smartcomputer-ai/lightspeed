@@ -5,12 +5,12 @@ use serde_json::{Value, json};
 use crate::{
     environment::{
         jobs::{
-            JOB_CANCEL_TOOL_NAME, JOB_LIST_TOOL_NAME, JOB_READ_TOOL_NAME, JOB_START_TOOL_NAME,
-            JOB_WAIT_TOOL_NAME, visible_job_list_output, visible_job_read_output,
+            JOB_LIST_TOOL_NAME, JOB_READ_TOOL_NAME, JOB_START_TOOL_NAME, visible_job_list_output,
+            visible_job_read_output,
         },
         tools::{
-            invoke_job_cancel, invoke_job_list, invoke_job_read, invoke_job_start, invoke_job_wait,
-            invoke_run_process, invoke_write_process_stdin,
+            invoke_job_list, invoke_job_read, invoke_job_start, invoke_run_process,
+            invoke_write_process_stdin,
         },
     },
     error::ToolResult,
@@ -63,10 +63,6 @@ pub(super) fn description(operation: BuiltinToolOperation, scoped_paths: bool) -
         BuiltinToolOperation::JobRead => {
             "Read durable environment job status and bounded output tails."
         }
-        BuiltinToolOperation::JobWait => {
-            "Join one or more durable environment jobs. Long waits may park the current tool batch."
-        }
-        BuiltinToolOperation::JobCancel => "Cancel durable environment jobs.",
     };
     format!("{text}{path_guidance}")
 }
@@ -209,8 +205,6 @@ pub(super) fn input_schema(operation: BuiltinToolOperation) -> Value {
         BuiltinToolOperation::JobStart => job_start_schema(),
         BuiltinToolOperation::JobList => job_list_schema(),
         BuiltinToolOperation::JobRead => job_read_schema(),
-        BuiltinToolOperation::JobWait => job_wait_schema(),
-        BuiltinToolOperation::JobCancel => job_cancel_schema(),
     }
 }
 
@@ -319,34 +313,6 @@ pub(super) async fn invoke_json(
             let visible = visible_job_read_output(&result.jobs);
             encode_output(&result, visible)
         }
-        BuiltinToolOperation::JobWait => {
-            let env_ctx = ctx.environment()?;
-            let result = invoke_job_wait(env_ctx, decode_args(arguments)?).await?;
-            let visible = format!(
-                "{} outcome: {:?}\n{}",
-                JOB_WAIT_TOOL_NAME,
-                result.outcome,
-                visible_job_read_output(&result.jobs)
-            );
-            encode_output(&result, visible)
-        }
-        BuiltinToolOperation::JobCancel => {
-            let env_ctx = ctx.environment()?;
-            let result = invoke_job_cancel(env_ctx, decode_args(arguments)?).await?;
-            let visible = result
-                .jobs
-                .iter()
-                .map(|job| {
-                    job.summary
-                        .as_ref()
-                        .map(|summary| format!("{}: {:?}", summary.job_id.as_str(), summary.status))
-                        .or_else(|| job.error.as_ref().map(|error| format!("error: {error}")))
-                        .unwrap_or_else(|| "job_cancel: no result".to_owned())
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            encode_output(&result, visible)
-        }
     }
 }
 
@@ -430,36 +396,5 @@ fn job_list_schema() -> Value {
         },
         "additionalProperties": false,
         "description": JOB_LIST_TOOL_NAME
-    })
-}
-
-fn job_wait_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "jobs": { "type": "array", "items": job_handle_schema() },
-            "mode": { "type": "string", "enum": ["all", "any"] },
-            "terminal_policy": { "type": "string", "enum": ["any_terminal", "all_succeeded"] },
-            "timeout_ms": { "type": ["integer", "null"], "minimum": 0 },
-            "output_bytes": { "type": ["integer", "null"], "minimum": 0 },
-            "include_artifacts": { "type": "boolean" }
-        },
-        "required": ["jobs"],
-        "additionalProperties": false,
-        "description": JOB_WAIT_TOOL_NAME
-    })
-}
-
-fn job_cancel_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "jobs": { "type": "array", "items": job_handle_schema() },
-            "scope": { "type": "string", "enum": ["job", "dependents", "deck"] },
-            "force": { "type": "boolean" }
-        },
-        "required": ["jobs"],
-        "additionalProperties": false,
-        "description": JOB_CANCEL_TOOL_NAME
     })
 }

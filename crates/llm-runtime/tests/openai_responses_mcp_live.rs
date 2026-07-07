@@ -162,6 +162,7 @@ async fn openai_responses_live_core_session_uses_no_auth_remote_mcp_echo() {
             session_id: session_id.clone(),
             observed_at_ms: 20,
             command: CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+                notify_on_terminal: Vec::new(),
                 submission_id: None,
                 source: engine::RunRequestSource::Input {
                     input: vec![ContextEntryInput {
@@ -246,6 +247,7 @@ fn session_config(model: ModelSelection) -> SessionConfig {
         },
         context: ContextConfig { compaction: None },
         tools: Default::default(),
+        fleet: Default::default(),
     }
 }
 

@@ -5,64 +5,86 @@ impl AgentSessionWorkflow {
         self.pending_admissions.push(admission);
     }
 
-    pub fn subscribe_to_run(&mut self, subscription: RunSubscription) {
-        if let Some(notification) =
-            terminal_notification_for_state(&self.core_state, subscription.run_id)
-        {
-            self.pending_terminal_notifications
-                .push(PendingRunTerminalNotification {
-                    notification: notification
-                        .with_correlation_token(subscription.correlation_token.clone()),
-                    subscription,
-                });
-            return;
-        }
-        self.run_subscriptions
-            .insert(subscription.subscription_id.clone(), subscription);
-    }
-
-    pub fn unsubscribe_from_run(&mut self, subscription_id: &str) {
-        self.run_subscriptions.remove(subscription_id);
-        self.pending_terminal_notifications
-            .retain(|pending| pending.subscription.subscription_id != subscription_id);
-    }
-
-    pub fn record_run_terminal(&mut self, notification: RunTerminalNotification) {
-        for wait in self.active_waits.values_mut() {
-            mark_wait_terminal_arrival(wait, &notification);
-        }
+    /// Inbound push delivery: a session we hold a promise on reports the
+    /// terminal state of the run behind it. Queued as a normal admission so
+    /// the resolution flows through `ResolvePromise` command admission —
+    /// the single funnel — where a promise that is already terminal makes
+    /// the delivery an idempotent no-op.
+    pub fn queue_promise_resolution(&mut self, signal: PromiseResolutionSignal) {
+        let resolution = match signal.status {
+            RunStatus::Completed => engine::PromiseResolution::Resolved {
+                payload_ref: signal.output_ref,
+            },
+            // A failed or externally-cancelled source is a failed promise
+            // for the holder; promise `cancelled` is reserved for the
+            // holder's own revocation.
+            _ => engine::PromiseResolution::Failed {
+                error_ref: signal.failure_message_ref,
+            },
+        };
+        self.pending_admissions.push(AgentAdmission {
+            command: CoreAgentCommand::ResolvePromise {
+                promise_id: engine::PromiseId::new(signal.token),
+                resolution,
+            },
+            context_key: None,
+        });
     }
 
     pub fn record_environment_job_changed(&mut self, changed: EnvironmentJobChanged) {
-        job_waits::record_changed(self, changed);
+        promise_sources::record_environment_job_changed(self, changed);
     }
 
-    pub(super) fn queue_terminal_notifications_for_entries(&mut self, entries: &[CoreAgentEntry]) {
+    /// Outbound push delivery: when a run carrying notify-intents reaches a
+    /// terminal state, queue one notification per intent. Intents live on
+    /// the run record in core state (the edge event is the subscription), so
+    /// this consults the just-applied record — no subscription table.
+    pub(super) fn queue_promise_notifications_for_entries(&mut self, entries: &[CoreAgentEntry]) {
         for entry in entries {
-            if let Some(notification) = terminal_notification_for_event(&entry.event) {
-                self.queue_terminal_notifications(notification);
+            let Some(run_id) = terminal_run_id_for_event(&entry.event) else {
+                continue;
+            };
+            let Some(record) = self
+                .core_state
+                .runs
+                .completed
+                .iter()
+                .find(|record| record.run_id == run_id)
+            else {
+                continue;
+            };
+            for intent in &record.notify_on_terminal {
+                self.pending_promise_notifications
+                    .push(PendingPromiseNotification {
+                        holder_workflow_id: intent.holder_workflow_id.clone(),
+                        signal: PromiseResolutionSignal {
+                            token: intent.token.clone(),
+                            status: record.status,
+                            output_ref: record.output_ref.clone(),
+                            failure_message_ref: record
+                                .failure
+                                .as_ref()
+                                .and_then(|failure| failure.message_ref.clone()),
+                        },
+                    });
             }
         }
     }
 
-    pub(super) fn queue_terminal_notifications(&mut self, notification: RunTerminalNotification) {
-        let subscription_ids = self
-            .run_subscriptions
-            .iter()
-            .filter_map(|(subscription_id, subscription)| {
-                (subscription.run_id == notification.run_id).then_some(subscription_id.clone())
-            })
-            .collect::<Vec<_>>();
-        for subscription_id in subscription_ids {
-            let Some(subscription) = self.run_subscriptions.remove(&subscription_id) else {
+    pub(super) fn queue_promise_cancellations_for_entries(&mut self, entries: &[CoreAgentEntry]) {
+        for entry in entries {
+            let CoreAgentEvent::Promise(engine::PromiseEvent::Cancelled { promise_id }) =
+                &entry.event
+            else {
                 continue;
             };
-            self.pending_terminal_notifications
-                .push(PendingRunTerminalNotification {
-                    notification: notification
-                        .clone()
-                        .with_correlation_token(subscription.correlation_token.clone()),
-                    subscription,
+            let Some(promise) = self.core_state.promises.promises.get(promise_id) else {
+                continue;
+            };
+            self.pending_promise_cancellations
+                .push(PendingPromiseCancellation {
+                    promise_id: promise_id.as_str().to_owned(),
+                    source: promise.source.clone(),
                 });
         }
     }
@@ -77,8 +99,9 @@ impl AgentSessionWorkflow {
             initialized: self.initialized,
             pending_admissions: self.pending_admissions.len(),
             pending_tool_batch_resumes: self.pending_tool_batch_resumes.len(),
-            active_waits: self.active_waits.len() + self.active_environment_job_waits.len(),
-            run_subscriptions: self.run_subscriptions.len(),
+            active_waits: usize::from(awaits::parked_await(&self.core_state).is_some())
+                + self.promise_source_polls.len(),
+            pending_promise_notifications: self.pending_promise_notifications.len(),
             active_run: self
                 .core_state
                 .runs
@@ -123,6 +146,21 @@ impl AgentSessionWorkflow {
                         .and_then(|failure| failure.message_ref.clone()),
                 })
                 .collect(),
+            consumed_message_submissions: self
+                .core_state
+                .runs
+                .messages
+                .iter()
+                .filter_map(|message| {
+                    if message.status != engine::MessageStatus::ConsumedByAwait {
+                        return None;
+                    }
+                    Some(AgentMessageSubmissionConsumptionSummary {
+                        submission_id: message.submission_id.clone()?,
+                        run_id: message.consumed_by_run_id?.as_u64(),
+                    })
+                })
+                .collect(),
             admission_failures: self.admission_failures.clone(),
             last_error: self.last_error.clone(),
             bootstrap_failed: self.bootstrap_failed,
@@ -130,73 +168,32 @@ impl AgentSessionWorkflow {
     }
 }
 
-impl RunTerminalNotification {
-    fn with_correlation_token(mut self, correlation_token: String) -> Self {
-        self.correlation_token = correlation_token;
-        self
-    }
-}
-
-fn terminal_notification_for_state(
-    state: &CoreAgentState,
-    run_id: engine::RunId,
-) -> Option<RunTerminalNotification> {
-    state
-        .runs
-        .completed
-        .iter()
-        .find(|record| record.run_id == run_id)
-        .map(|record| RunTerminalNotification {
-            correlation_token: String::new(),
-            run_id,
-            status: record.status,
-            output_ref: record.output_ref.clone(),
-            failure_message_ref: record
-                .failure
-                .as_ref()
-                .and_then(|failure| failure.message_ref.clone()),
-        })
-}
-
-fn terminal_notification_for_event(event: &CoreAgentEvent) -> Option<RunTerminalNotification> {
+fn terminal_run_id_for_event(event: &CoreAgentEvent) -> Option<engine::RunId> {
     match event {
-        CoreAgentEvent::Run(RunEvent::Completed { run_id, output_ref }) => {
-            Some(RunTerminalNotification {
-                correlation_token: String::new(),
-                run_id: *run_id,
-                status: RunStatus::Completed,
-                output_ref: output_ref.clone(),
-                failure_message_ref: None,
-            })
-        }
-        CoreAgentEvent::Run(RunEvent::Failed { run_id, failure }) => {
-            Some(RunTerminalNotification {
-                correlation_token: String::new(),
-                run_id: *run_id,
-                status: RunStatus::Failed,
-                output_ref: None,
-                failure_message_ref: failure.message_ref.clone(),
-            })
-        }
-        CoreAgentEvent::Run(RunEvent::Cancelled { run_id }) => Some(RunTerminalNotification {
-            correlation_token: String::new(),
-            run_id: *run_id,
-            status: RunStatus::Cancelled,
-            output_ref: None,
-            failure_message_ref: None,
-        }),
+        CoreAgentEvent::Run(
+            RunEvent::Completed { run_id, .. }
+            | RunEvent::Failed { run_id, .. }
+            | RunEvent::Cancelled { run_id }
+            | RunEvent::ForceCancelled { run_id }
+            | RunEvent::QueuedCancelled { run_id },
+        ) => Some(*run_id),
         _ => None,
     }
 }
 
-pub(super) async fn flush_pending_terminal_notifications(
+/// Deliver queued notifications by signalling each holder workflow's
+/// `resolve_promise` handler. Signals to an existing workflow id are durable;
+/// a missing target drops the entry (its holder is gone — the reaper's
+/// upward sweep covers that direction). The queue gates continue-as-new, so
+/// in-flight deliveries never need reconstruction.
+pub(super) async fn flush_pending_promise_notifications(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
 ) -> anyhow::Result<()> {
-    let pending = ctx.state_mut(|state| std::mem::take(&mut state.pending_terminal_notifications));
+    let pending = ctx.state_mut(|state| std::mem::take(&mut state.pending_promise_notifications));
     for pending in pending {
         let _ = ctx
-            .external_workflow(pending.subscription.subscriber_workflow_id, None)
-            .signal(AgentSessionWorkflow::run_terminal, pending.notification)
+            .external_workflow(pending.holder_workflow_id, None)
+            .signal(AgentSessionWorkflow::resolve_promise, pending.signal)
             .await;
     }
     Ok(())

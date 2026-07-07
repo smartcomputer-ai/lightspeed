@@ -198,6 +198,7 @@ async fn anthropic_messages_live_manual_standalone_compaction_preserves_marker()
             session_id,
             observed_at_ms: 40,
             command: CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+                notify_on_terminal: Vec::new(),
                 submission_id: None,
                 source: engine::RunRequestSource::Input {
                     input: vec![ContextEntryInput {
@@ -355,6 +356,7 @@ fn standalone_session_config(
             }),
         },
         tools: Default::default(),
+        fleet: Default::default(),
     }
 }
 

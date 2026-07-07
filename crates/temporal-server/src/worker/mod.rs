@@ -2,6 +2,7 @@
 
 mod activities;
 mod fake;
+mod reaper;
 mod secrets;
 mod session_tools;
 
@@ -22,20 +23,21 @@ pub use activities::{
     default_audio_transcoder_from_env,
 };
 pub use fake::{FakeLlm, FakeTools};
+pub use reaper::{PromiseReaper, ReaperStats};
 pub use secrets::{BrokerSecretResolver, StoredProviderKeyResolver};
 pub use session_tools::SessionTools;
 pub use temporal_workflow::{
-    ACTIVITY_APPEND_EVENTS, ACTIVITY_CHECK_ENVIRONMENT_JOB_WAIT, ACTIVITY_CONTEXT_COMPACT,
-    ACTIVITY_CREATE_OR_LOAD_SESSION, ACTIVITY_LLM_GENERATE, ACTIVITY_PREPROCESS_RUN_INPUT,
-    ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB, ACTIVITY_SKILL_CATALOG_REFRESH,
-    ACTIVITY_TOOL_INVOKE_BATCH, AgentSessionWorkflow, AppendEventsRequest,
-    CheckEnvironmentJobWaitActivityRequest, CheckEnvironmentJobWaitActivityResult,
-    ContextCompactActivityRequest, CreateOrLoadSessionRequest, CreateOrLoadSessionResult,
-    DEFAULT_TASK_QUEUE, DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET, FAKE_TOOL_NAME,
-    LlmGenerateActivityRequest, PreprocessRunInputActivityRequest,
-    PreprocessRunInputActivityResult, PutBlobRequest, ReadBlobRequest, ReadBlobResult,
-    SkillCatalogRefreshActivityRequest, SkillCatalogRefreshActivityResult,
-    ToolInvokeBatchActivityRequest, connect_temporal, default_run_config, default_session_config,
+    ACTIVITY_APPEND_EVENTS, ACTIVITY_CANCEL_PROMISE_SOURCE, ACTIVITY_CHECK_PROMISE_SOURCE,
+    ACTIVITY_CONTEXT_COMPACT, ACTIVITY_CREATE_OR_LOAD_SESSION, ACTIVITY_LLM_GENERATE,
+    ACTIVITY_PREPROCESS_RUN_INPUT, ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB,
+    ACTIVITY_SKILL_CATALOG_REFRESH, ACTIVITY_TOOL_INVOKE_BATCH, AgentSessionWorkflow,
+    AppendEventsRequest, ContextCompactActivityRequest, CreateOrLoadSessionRequest,
+    CreateOrLoadSessionResult, DEFAULT_TASK_QUEUE, DEFAULT_TEMPORAL_NAMESPACE,
+    DEFAULT_TEMPORAL_TARGET, FAKE_TOOL_NAME, LlmGenerateActivityRequest,
+    PreprocessRunInputActivityRequest, PreprocessRunInputActivityResult, PutBlobRequest,
+    ReadBlobRequest, ReadBlobResult, SkillCatalogRefreshActivityRequest,
+    SkillCatalogRefreshActivityResult, ToolInvokeBatchActivityRequest, connect_temporal,
+    default_run_config, default_session_config,
 };
 
 #[derive(Clone, Debug)]
@@ -74,6 +76,7 @@ pub async fn run_worker(config: WorkerServerConfig) -> anyhow::Result<()> {
     let stores = DeploymentStores::from_env()
         .await?
         .with_blob_cache(crate::config::blob_cache_from_env()?);
+    let reaper_stores = stores.clone();
     // The worker serves every universe of the deployment regardless of the
     // gateway's auth mode; per-universe state resolves lazily from the
     // universe-composed workflow id of each activity task.
@@ -84,8 +87,14 @@ pub async fn run_worker(config: WorkerServerConfig) -> anyhow::Result<()> {
         stores,
     )?);
     let activities = WorkerActivities::with_runtime(universes);
-    let mut worker =
-        worker_with_activities(&runtime, client, config.task_queue.clone(), activities)?;
+    let mut worker = worker_with_activities(
+        &runtime,
+        client.clone(),
+        config.task_queue.clone(),
+        activities,
+    )?;
+    let reaper = PromiseReaper::new(client.clone(), reaper_stores);
+    let reaper_task = tokio::spawn(reaper.run_forever());
     tracing::info!(
         target: "temporal_server",
         temporal_target = %config.temporal_target,
@@ -93,6 +102,8 @@ pub async fn run_worker(config: WorkerServerConfig) -> anyhow::Result<()> {
         task_queue = %config.task_queue,
         "temporal worker polling"
     );
-    worker.run().await?;
+    let result = worker.run().await;
+    reaper_task.abort();
+    result?;
     Ok(())
 }

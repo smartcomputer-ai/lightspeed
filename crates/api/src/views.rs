@@ -37,6 +37,7 @@ pub struct SessionConfigView {
     pub context: ContextConfigInput,
     pub run_defaults: RunDefaultsConfig,
     pub tools: ToolConfigView,
+    pub fleet: FleetConfigView,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -46,6 +47,31 @@ pub struct ToolConfigView {
     pub web_fetch: bool,
     pub filesystem: FilesystemToolMode,
     pub fleet: bool,
+    pub timer: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FleetConfigView {
+    pub profiles: FleetProfilesConfigView,
+    pub spawn: FleetSpawnConfigView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FleetProfilesConfigView {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow: Option<Vec<ProfileId>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deny: Vec<ProfileId>,
+    pub inline: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FleetSpawnConfigView {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bases: Option<Vec<FleetSpawnBaseConfig>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

@@ -3,8 +3,9 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ContextEntryInput, ContextEntryKey, RunRequestCommand, SessionConfig, SessionConfigPatch,
-    ToolBatchId, ToolExecutionTarget, ToolInvocationBatchResult, ToolName, ToolPatch, ToolSpec,
+    ContextEntryInput, ContextEntryKey, PromiseId, PromiseResolution, ResumeAwaitCommand, RunId,
+    RunRequestCommand, SessionConfig, SessionConfigPatch, SubmitMessageCommand,
+    ToolExecutionTarget, ToolName, ToolPatch, ToolSpec,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -44,13 +45,34 @@ pub enum CoreAgentCommand {
     },
     CompactContext,
     RequestRun(RunRequestCommand),
+    SubmitMessage(SubmitMessageCommand),
     RequestRunSteering {
         input: Vec<ContextEntryInput>,
     },
-    RequestRunCancellation,
-    ResumeToolBatch {
-        batch_id: ToolBatchId,
-        result: ToolInvocationBatchResult,
+    /// Cancel one run owned by this session. Queued runs are dequeued as
+    /// cancelled; the active run enters the normal cancellation funnel; a
+    /// terminal or unknown run is an idempotent no-op.
+    CancelRun {
+        run_id: RunId,
     },
-    CloseSession,
+    /// Force the matching active run to `cancelled` regardless of open turn
+    /// or tool-batch state. Watchdog/recovery surface: admission is an
+    /// idempotent no-op when the run is no longer active.
+    ForceCancelRun {
+        run_id: RunId,
+    },
+    ResumeAwait(ResumeAwaitCommand),
+    /// Deliver a promise resolution. All transports converge here; a promise
+    /// that is already terminal makes this an idempotent no-op
+    /// (first-writer-wins).
+    ResolvePromise {
+        promise_id: PromiseId,
+        resolution: PromiseResolution,
+    },
+    CloseSession {
+        /// Force-cancel the active run and drop queued runs before closing
+        /// instead of rejecting on active work.
+        #[serde(default)]
+        force: bool,
+    },
 }

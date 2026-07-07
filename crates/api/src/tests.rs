@@ -1003,7 +1003,10 @@ fn mcp_server_update_patch_distinguishes_set_clear_and_absent() {
     }))
     .expect("patch");
 
-    assert_eq!(patch.display_name, Some(FieldPatch::Set("Echo 2".to_owned())));
+    assert_eq!(
+        patch.display_name,
+        Some(FieldPatch::Set("Echo 2".to_owned()))
+    );
     assert_eq!(patch.description, Some(FieldPatch::Clear));
     assert_eq!(patch.server_url, None);
     assert_eq!(patch.status, None);
@@ -1099,6 +1102,32 @@ async fn dispatch_json_rpc_routes_run_start_with_config() {
     assert_eq!(
         response.result.expect("result")["result"]["run"]["status"],
         json!("running")
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn dispatch_json_rpc_routes_message_submit() {
+    let response = dispatch_json_rpc(
+        &TestService,
+        JsonRpcRequest {
+            id: RequestId::Number(1),
+            method: METHOD_SESSION_MESSAGES_SUBMIT.to_owned(),
+            params: Some(json!({
+                "sessionId": "session_1",
+                "items": [{ "type": "text", "text": "interrupt" }],
+                "submissionId": "message_1"
+            })),
+        },
+    )
+    .await;
+
+    assert!(response.error.is_none());
+    assert_eq!(
+        response.result.expect("result")["result"],
+        json!({
+            "submissionId": "message_1",
+            "accepted": true
+        })
     );
 }
 
@@ -1868,6 +1897,19 @@ impl AgentApiService for TestService {
         assert_eq!(config.model.expect("model").model, "gpt-5.5");
         Ok(AgentApiOutcome::new(RunStartResponse {
             run: test_run("run_1".to_owned(), RunStatus::Running),
+        }))
+    }
+
+    async fn submit_message(
+        &self,
+        params: MessageSubmitParams,
+    ) -> Result<AgentApiOutcome<MessageSubmitResponse>, AgentApiError> {
+        assert_eq!(params.session_id, "session_1");
+        Ok(AgentApiOutcome::new(MessageSubmitResponse {
+            submission_id: params
+                .submission_id
+                .unwrap_or_else(|| "message_1".to_owned()),
+            accepted: true,
         }))
     }
 

@@ -29,6 +29,7 @@ pub const METHOD_SESSION_TOOLS_UPDATE: &str = "session/tools/update";
 pub const METHOD_SESSION_CONTEXT_APPEND: &str = "session/context/append";
 pub const METHOD_SESSION_CONTEXT_REMOVE: &str = "session/context/remove";
 pub const METHOD_SESSION_CONTEXT_COMPACT: &str = "session/context/compact";
+pub const METHOD_SESSION_MESSAGES_SUBMIT: &str = "session/messages/submit";
 pub const METHOD_SESSION_RUNS_START: &str = "session/runs/start";
 pub const METHOD_SESSION_RUNS_CANCEL: &str = "session/runs/cancel";
 

@@ -4,18 +4,19 @@ use std::sync::Arc;
 
 use api::{
     AgentApiError, AgentApiService, AgentProfile, AgentProfileSummary, EventCursor, InputItem,
-    MediaKind, ProfileId, ProfileListParams, ProfileReadParams, ProfileSource, RunCancelParams,
-    RunStartParams, RunStartSource, RunStatus as ApiRunStatus, SessionCloseParams,
-    SessionEnvironmentListParams, SessionEnvironmentListResponse, SessionEventsReadParams,
-    SessionEventsReadResponse, SessionReadParams, SessionView,
+    MediaKind, ProfileId, ProfileListParams, ProfileReadParams, ProfileSource,
+    RunStatus as ApiRunStatus, SessionEnvironmentListParams, SessionEnvironmentListResponse,
+    SessionEventsReadParams, SessionEventsReadResponse, SessionReadParams, SessionView,
 };
 use api_projection::{MAX_EVENT_PAGE_LIMIT, read_all_session_entries, replay_core_agent_state};
 use async_trait::async_trait;
 use engine::{
     BlobRef, ContextEntryInput, ContextEntryKind, ContextMessageRole, CoreAgentIoError, EventSeq,
-    RunId, SessionId, SubmissionId, ToolBatchId, ToolBatchOutcome, ToolBatchResumeDirective,
-    ToolCallId, ToolCallStatus, ToolInvocationBatchResult, ToolInvocationRequest,
-    ToolInvocationResult, TurnId, core_agent_clone_opening_events,
+    PromiseId, PromiseScope, PromiseSource, PromiseStatus, RunId, RunTerminalNotifyIntent,
+    SessionId, SubmissionId, ToolBatchId, ToolBatchOutcome, ToolCallId, ToolCallStatus,
+    ToolInvocationBatchResult, ToolInvocationRequest, ToolInvocationResult, TurnId,
+    core_agent_clone_opening_events, promise_cancel_effect, promise_create_effect,
+    promise_detach_effect,
     storage::{
         BlobStore, BlobStoreError, CreateClonedSession, CreateForkedSession, ListSessionLinks,
         SessionLinkDirection, SessionRecord, SessionStore, SessionStoreError, UpsertSessionLink,
@@ -23,21 +24,22 @@ use engine::{
 };
 use serde::Serialize;
 use serde_json::{Value, json};
-use temporal_workflow::{
-    AgentWaitDirective, AgentWaitHandle, AgentWaitHandleResult, AgentWaitHandleStatus,
-    AgentWaitMode as WorkflowAgentWaitMode, AgentWaitOutcome, AgentWaitOutput, AgentWaitRunResult,
-    FLEET_AGENT_WAIT_DIRECTIVE_KIND,
-};
-use tools::fleet::{
-    AGENT_CANCEL_TOOL_NAME, AGENT_LIST_TOOL_NAME, AGENT_READ_TOOL_NAME, AGENT_SEND_TOOL_NAME,
-    AGENT_SPAWN_TOOL_NAME, AGENT_WAIT_TOOL_NAME, AgentCancelArgs, AgentCancelOutput,
-    AgentCancelScope, AgentLineageView, AgentLinkView, AgentListArgs, AgentListDirection,
-    AgentListItem, AgentListOutput, AgentReadArgs, AgentReadOutput, AgentReportBack, AgentSendArgs,
-    AgentSendInputItem, AgentSendMediaKind, AgentSendOutput, AgentSendStatus, AgentSendTarget,
-    AgentSpawnArgs, AgentSpawnBase, AgentSpawnFork, AgentSpawnOutput, AgentWaitArgs,
-    AgentWaitMode as ToolAgentWaitMode, EnvironmentPolicy, PROFILE_LIST_TOOL_NAME,
-    PROFILE_READ_TOOL_NAME, ProfileListArgs, ProfileListOutput, ProfileReadArgs, ProfileReadOutput,
-    VfsPolicy,
+use tools::{
+    concurrency::{
+        AWAIT_TOOL_NAME, AwaitArgs, AwaitModeArg, CANCEL_TOOL_NAME, CancelArgs, CancelOutput,
+        CancelPromiseOutput, DETACH_TOOL_NAME, DetachArgs, DetachOutput, DetachPromiseOutput,
+        cancel_promises_model_visible_text, detach_promises_model_visible_text,
+    },
+    fleet::{
+        AGENT_LIST_TOOL_NAME, AGENT_READ_TOOL_NAME, AGENT_REQUEST_TOOL_NAME, AGENT_SEND_TOOL_NAME,
+        AGENT_SPAWN_TOOL_NAME, AgentLineageView, AgentLinkView, AgentListArgs, AgentListDirection,
+        AgentListItem, AgentListOutput, AgentReadArgs, AgentReadOutput, AgentRequestArgs,
+        AgentRequestOutput, AgentRequestStatus, AgentSendArgs, AgentSendInputItem,
+        AgentSendMediaKind, AgentSendOutput, AgentSendStatus, AgentSendTarget, AgentSpawnArgs,
+        AgentSpawnBase, AgentSpawnFork, AgentSpawnOutput, EnvironmentPolicy,
+        PROFILE_LIST_TOOL_NAME, PROFILE_READ_TOOL_NAME, ProfileListArgs, ProfileListOutput,
+        ProfileReadArgs, ProfileReadOutput, VfsPolicy,
+    },
 };
 use vfs::{
     CreateVfsWorkspaceRecord, VfsCatalogError, VfsMountSource, VfsMountStore, VfsPath,
@@ -53,9 +55,9 @@ const DEFAULT_RECENT_EVENT_LIMIT: u32 = 20;
 const DEFAULT_RECENT_TRANSCRIPT_EVENT_LIMIT: u32 = 20;
 const MAX_RECENT_EVENT_LIMIT: u32 = 100;
 const MAX_DIRECT_LINKS: usize = 100;
-const MAX_AGENT_WAIT_HANDLES: usize = 32;
 const MAX_AGENT_READ_VISIBLE_CHARS: usize = 20_000;
 const MAX_AGENT_READ_VISIBLE_RUNS: usize = 2;
+const MAX_FLEET_MAILBOX_QUEUE: usize = 64;
 
 #[derive(Clone)]
 pub struct FleetService {
@@ -89,8 +91,12 @@ impl FleetService {
         &self,
         context: FleetInvocationContext,
         args: AgentSpawnArgs,
-    ) -> Result<AgentSpawnOutput, AgentApiError> {
+    ) -> Result<SpawnResult, AgentApiError> {
         validate_spawn_args(&args)?;
+        let fleet_config = self
+            .fleet_config_for_session(&context.parent_session_id)
+            .await?;
+        validate_spawn_policy(&fleet_config, &args)?;
         let child_id_was_derived = args.child_session_id.is_none();
         let child_session_id = match args.child_session_id.as_deref() {
             Some(session_id) => parse_session_id(session_id, "child_session_id")?,
@@ -172,6 +178,19 @@ impl FleetService {
             &args,
         )
         .await?;
+        // Mint the promise id from stable inputs available before the run
+        // starts, so a spawn retry is deterministic. The parent holds this
+        // promise; the child run carries a notify-intent back to the parent
+        // workflow, keyed by the same id.
+        let promise_id = spawn_promise_id(&context, &child_session_id);
+        let holder_workflow_id = self
+            .runtime
+            .holder_workflow_id(&context.parent_session_id)
+            .await?;
+        let notify_intents = vec![RunTerminalNotifyIntent {
+            holder_workflow_id,
+            token: promise_id.clone(),
+        }];
         let child_run_id = if args.lifecycle.run_immediately {
             Some(
                 self.runtime
@@ -181,6 +200,7 @@ impl FleetService {
                             text: spawn_run_text(&context, &args),
                         }],
                         child_run_submission_id,
+                        notify_intents,
                     )
                     .await?,
             )
@@ -188,33 +208,71 @@ impl FleetService {
             None
         };
 
-        Ok(AgentSpawnOutput {
-            child_session_id: child_session_id.as_str().to_owned(),
-            child_run_id,
-            status: if matches!(outcome, ChildCreateOutcome::Created) {
-                "created".to_owned()
-            } else {
-                "reused".to_owned()
+        // A promise is created only when a run actually started — its
+        // resolution is that run's terminal state.
+        let promise = child_run_id.as_ref().map(|run_id| {
+            let target_run_id = parse_api_run_id_u64(run_id);
+            let effect = promise_create_effect(
+                &PromiseId::new(&promise_id),
+                &PromiseSource::Run {
+                    target_session_id: child_session_id.as_str().to_owned(),
+                    target_run_id,
+                },
+                None,
+            );
+            (promise_id.clone(), effect)
+        });
+
+        Ok(SpawnResult {
+            output: AgentSpawnOutput {
+                child_session_id: child_session_id.as_str().to_owned(),
+                child_run_id,
+                status: if matches!(outcome, ChildCreateOutcome::Created) {
+                    "created".to_owned()
+                } else {
+                    "reused".to_owned()
+                },
+                promise: promise.as_ref().map(|(id, _)| id.clone()),
             },
+            promise_effect: promise.map(|(_, effect)| effect),
         })
     }
 
     pub async fn list_profiles(
         &self,
+        context: &FleetInvocationContext,
         _args: ProfileListArgs,
     ) -> Result<ProfileListOutput, AgentApiError> {
+        let fleet_config = self
+            .fleet_config_for_session(&context.parent_session_id)
+            .await?;
         Ok(ProfileListOutput {
-            profiles: self.runtime.list_profiles().await?,
+            profiles: self
+                .runtime
+                .list_profiles()
+                .await?
+                .into_iter()
+                .filter(|profile| {
+                    fleet_config
+                        .profiles
+                        .named_profile_allowed(profile.profile_id.as_str())
+                })
+                .collect(),
         })
     }
 
     pub async fn read_profile(
         &self,
+        context: &FleetInvocationContext,
         args: ProfileReadArgs,
     ) -> Result<ProfileReadOutput, AgentApiError> {
+        let fleet_config = self
+            .fleet_config_for_session(&context.parent_session_id)
+            .await?;
         let profile_id = ProfileId::try_new(args.profile_id).map_err(|error| {
             AgentApiError::invalid_request(format!("invalid profile_id: {error}"))
         })?;
+        validate_named_profile_allowed(&fleet_config, &profile_id)?;
         Ok(ProfileReadOutput {
             profile: self.runtime.read_profile(profile_id).await?,
         })
@@ -224,227 +282,286 @@ impl FleetService {
         &self,
         context: FleetInvocationContext,
         args: AgentSendArgs,
-    ) -> Result<AgentSendOutput, AgentApiError> {
+    ) -> Result<SendResult, AgentApiError> {
         validate_send_args(&args)?;
         let Some(target_session_id) = self.resolve_send_target(&context, &args.to).await? else {
-            return Ok(AgentSendOutput {
-                target_session_id: None,
-                run_id: None,
-                submission_id: None,
-                status: AgentSendStatus::NotReachable,
+            return Ok(SendResult {
+                output: AgentSendOutput {
+                    target_session_id: None,
+                    run_id: None,
+                    submission_id: None,
+                    status: AgentSendStatus::NotReachable,
+                },
             });
         };
         if !self
             .has_session_link_edge(&context.parent_session_id, &target_session_id)
             .await?
         {
-            return Ok(AgentSendOutput {
-                target_session_id: Some(target_session_id.as_str().to_owned()),
-                run_id: None,
-                submission_id: None,
-                status: AgentSendStatus::NotReachable,
+            return Ok(SendResult {
+                output: AgentSendOutput {
+                    target_session_id: Some(target_session_id.as_str().to_owned()),
+                    run_id: None,
+                    submission_id: None,
+                    status: AgentSendStatus::NotReachable,
+                },
             });
         }
         self.load_session_required(&target_session_id).await?;
+        let target_state = self.load_core_state(&target_session_id).await?;
+        if target_state.lifecycle.status != engine::CoreAgentStatus::Open {
+            return Ok(SendResult {
+                output: AgentSendOutput {
+                    target_session_id: Some(target_session_id.as_str().to_owned()),
+                    run_id: None,
+                    submission_id: None,
+                    status: AgentSendStatus::NotReachable,
+                },
+            });
+        }
+        if !target_has_mailbox_await(&target_state)
+            && target_state.runs.queued.len() >= MAX_FLEET_MAILBOX_QUEUE
+        {
+            return Ok(SendResult {
+                output: AgentSendOutput {
+                    target_session_id: Some(target_session_id.as_str().to_owned()),
+                    run_id: None,
+                    submission_id: None,
+                    status: AgentSendStatus::QueueFull,
+                },
+            });
+        }
         self.runtime
             .start_session(&target_session_id, false, None)
             .await?;
-        let input = send_run_input(&context, &args)?;
         let submission_id = send_submission_id(&context, &target_session_id);
-        let run_id = self
-            .runtime
-            .enqueue_run(&target_session_id, input, submission_id.clone())
+        let input = send_run_input(&context, &args)?;
+        self.runtime
+            .deliver_message(&target_session_id, input, submission_id.clone())
             .await?;
-        Ok(AgentSendOutput {
-            target_session_id: Some(target_session_id.as_str().to_owned()),
-            run_id: Some(run_id),
-            submission_id: Some(submission_id.as_str().to_owned()),
-            status: AgentSendStatus::Delivered,
+        Ok(SendResult {
+            output: AgentSendOutput {
+                target_session_id: Some(target_session_id.as_str().to_owned()),
+                run_id: None,
+                submission_id: Some(submission_id.as_str().to_owned()),
+                status: AgentSendStatus::Delivered,
+            },
         })
     }
 
-    pub async fn wait(
+    pub async fn request(
         &self,
         context: FleetInvocationContext,
-        call_id: ToolCallId,
-        args: AgentWaitArgs,
-    ) -> Result<FleetWaitPreflight, AgentApiError> {
-        let wait_args = validate_wait_args(args)?;
-        let mut handles = Vec::with_capacity(wait_args.handles.len());
-        let mut results = Vec::with_capacity(wait_args.handles.len());
-
-        for handle in wait_args.handles {
-            let target_session_id = handle.target_session_id;
-            let run_id = handle.run_id;
-            let run_id_text = api_run_id(run_id);
-            handles.push(AgentWaitHandle {
-                target_session_id: target_session_id.clone(),
-                run_id,
+        args: AgentRequestArgs,
+    ) -> Result<RequestResult, AgentApiError> {
+        validate_request_args(&args)?;
+        let Some(target_session_id) = self.resolve_send_target(&context, &args.to).await? else {
+            return Ok(RequestResult {
+                output: AgentRequestOutput {
+                    target_session_id: None,
+                    run_id: None,
+                    submission_id: None,
+                    promise: None,
+                    status: AgentRequestStatus::NotReachable,
+                },
+                promise_effect: None,
             });
-
-            if target_session_id == context.parent_session_id && run_id == context.parent_run_id {
-                results.push(wait_error_result(
-                    &target_session_id,
-                    run_id,
-                    "agent_wait cannot wait on the current run",
-                ));
-                continue;
-            }
-            if target_session_id != context.parent_session_id
-                && !self
-                    .has_session_link_edge(&context.parent_session_id, &target_session_id)
-                    .await?
-            {
-                results.push(wait_error_result(
-                    &target_session_id,
-                    run_id,
-                    "target session is not reachable",
-                ));
-                continue;
-            }
-            if let Err(error) = self.load_session_required(&target_session_id).await {
-                results.push(wait_error_result(
-                    &target_session_id,
-                    run_id,
-                    error.to_string(),
-                ));
-                continue;
-            }
-            if let Some(result) = self
-                .wait_result_from_store(&target_session_id, run_id)
-                .await?
-                && result.status == AgentWaitHandleStatus::Terminal
-            {
-                results.push(result);
-                continue;
-            }
-            if let Err(error) = self
+        };
+        if !self
+            .has_session_link_edge(&context.parent_session_id, &target_session_id)
+            .await?
+        {
+            return Ok(RequestResult {
+                output: AgentRequestOutput {
+                    target_session_id: Some(target_session_id.as_str().to_owned()),
+                    run_id: None,
+                    submission_id: None,
+                    promise: None,
+                    status: AgentRequestStatus::NotReachable,
+                },
+                promise_effect: None,
+            });
+        }
+        self.load_session_required(&target_session_id).await?;
+        let target_state = self.load_core_state(&target_session_id).await?;
+        if target_state.lifecycle.status != engine::CoreAgentStatus::Open {
+            return Ok(RequestResult {
+                output: AgentRequestOutput {
+                    target_session_id: Some(target_session_id.as_str().to_owned()),
+                    run_id: None,
+                    submission_id: None,
+                    promise: None,
+                    status: AgentRequestStatus::NotReachable,
+                },
+                promise_effect: None,
+            });
+        }
+        if target_state.runs.queued.len() >= MAX_FLEET_MAILBOX_QUEUE {
+            return Ok(RequestResult {
+                output: AgentRequestOutput {
+                    target_session_id: Some(target_session_id.as_str().to_owned()),
+                    run_id: None,
+                    submission_id: None,
+                    promise: None,
+                    status: AgentRequestStatus::QueueFull,
+                },
+                promise_effect: None,
+            });
+        }
+        self.runtime
+            .start_session(&target_session_id, false, None)
+            .await?;
+        let submission_id = request_submission_id(&context, &target_session_id);
+        let promise_id = request_promise_id(&context, &target_session_id);
+        let notify_intents = vec![RunTerminalNotifyIntent {
+            holder_workflow_id: self
                 .runtime
-                .start_session(&target_session_id, false, None)
-                .await
-            {
-                results.push(wait_error_result(
-                    &target_session_id,
-                    run_id,
-                    error.to_string(),
-                ));
-                continue;
-            }
-            if let Some(result) = self
-                .wait_result_from_store(&target_session_id, run_id)
-                .await?
-            {
-                results.push(result);
-                continue;
-            }
-            let session = match self.runtime.read_session(&target_session_id).await {
-                Ok(session) => session,
-                Err(error) => {
-                    results.push(wait_error_result(
-                        &target_session_id,
-                        run_id,
-                        error.to_string(),
-                    ));
-                    continue;
-                }
-            };
-            let Some(run) = session.runs.iter().find(|run| run.id == run_id_text) else {
-                results.push(wait_error_result(
-                    &target_session_id,
-                    run_id,
-                    "run not found in target session",
-                ));
-                continue;
-            };
-            if api_run_status_is_terminal(run.status)
-                || matches!(
-                    session.status,
-                    api::SessionStatus::Closed | api::SessionStatus::Error
-                )
-            {
-                results.push(wait_terminal_result(&target_session_id, run_id, run.status));
-            } else if target_session_id == context.parent_session_id {
-                results.push(wait_error_result(
-                    &target_session_id,
-                    run_id,
-                    "agent_wait cannot park on a non-terminal run in the calling session",
-                ));
-            } else {
-                results.push(wait_pending_result(&target_session_id, run_id));
-            }
-        }
-
-        if let Some(outcome) = wait_preflight_outcome(wait_args.mode, &results) {
-            return Ok(FleetWaitPreflight::Completed(AgentWaitOutput {
-                outcome,
-                results,
-            }));
-        }
-
-        Ok(FleetWaitPreflight::Deferred(AgentWaitDirective {
-            call_id,
-            mode: wait_args.mode,
-            timeout_ms: wait_args.timeout_ms,
-            handles,
-            results,
-        }))
+                .holder_workflow_id(&context.parent_session_id)
+                .await?,
+            token: promise_id.as_str().to_owned(),
+        }];
+        let run_id = self
+            .runtime
+            .enqueue_run(
+                &target_session_id,
+                request_run_input(&context, &args)?,
+                submission_id.clone(),
+                notify_intents,
+            )
+            .await?;
+        let target_run_id = parse_run_number(&run_id)?;
+        let promise_effect = promise_create_effect(
+            &promise_id,
+            &PromiseSource::Run {
+                target_session_id: target_session_id.as_str().to_owned(),
+                target_run_id,
+            },
+            None,
+        );
+        Ok(RequestResult {
+            output: AgentRequestOutput {
+                target_session_id: Some(target_session_id.as_str().to_owned()),
+                run_id: Some(run_id),
+                submission_id: Some(submission_id.as_str().to_owned()),
+                promise: Some(promise_id.as_str().to_owned()),
+                status: AgentRequestStatus::Delivered,
+            },
+            promise_effect: Some(promise_effect),
+        })
     }
 
-    async fn wait_result_from_store(
+    pub async fn await_promises(
         &self,
-        target_session_id: &SessionId,
-        run_id: RunId,
-    ) -> Result<Option<AgentWaitHandleResult>, AgentApiError> {
+        context: &FleetInvocationContext,
+        _call_id: ToolCallId,
+        args: AwaitArgs,
+    ) -> Result<engine::AwaitSpec, AgentApiError> {
+        await_spec_from_args(args, context.observed_at_ms)
+    }
+
+    pub async fn cancel_promises(
+        &self,
+        context: &FleetInvocationContext,
+        args: CancelArgs,
+    ) -> Result<CancelResult, AgentApiError> {
+        let promise_ids = args
+            .validated_promise_ids()
+            .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
         let entries = read_all_session_entries(
             self.sessions.as_ref(),
-            target_session_id,
+            &context.parent_session_id,
             MAX_EVENT_PAGE_LIMIT as usize,
         )
         .await?;
         let state = replay_core_agent_state(&entries)?;
-        if let Some(record) = state
-            .runs
-            .completed
-            .iter()
-            .find(|record| record.run_id == run_id)
-        {
-            return Ok(Some(wait_terminal_result_core(
-                target_session_id,
-                run_id,
-                record.status,
-                record.output_ref.clone(),
-                record
-                    .failure
-                    .as_ref()
-                    .and_then(|failure| failure.message_ref.clone()),
-            )));
+
+        let mut promises = Vec::with_capacity(promise_ids.len());
+        let mut effects = Vec::new();
+        for promise_id in promise_ids {
+            let key = PromiseId::new(promise_id.clone());
+            let Some(promise) = state.promises.promises.get(&key) else {
+                return Err(AgentApiError::rejected(format!(
+                    "unknown promise {promise_id}"
+                )));
+            };
+            if promise.status.is_terminal() {
+                promises.push(CancelPromiseOutput {
+                    promise_id,
+                    status: promise_status_name(promise.status).to_owned(),
+                });
+                continue;
+            }
+            effects.push(promise_cancel_effect(&key));
+            promises.push(CancelPromiseOutput {
+                promise_id,
+                status: "cancelled".to_owned(),
+            });
         }
-        if let Some(active) = state.runs.active.as_ref()
-            && active.run_id == run_id
-        {
-            if core_run_status_is_terminal(active.status) {
-                return Ok(Some(wait_terminal_result_core(
-                    target_session_id,
-                    run_id,
-                    active.status,
-                    active.output_ref.clone(),
-                    active
-                        .failure
-                        .as_ref()
-                        .and_then(|failure| failure.message_ref.clone()),
+
+        Ok(CancelResult {
+            output: CancelOutput { promises },
+            effects,
+        })
+    }
+
+    pub async fn detach_promises(
+        &self,
+        context: &FleetInvocationContext,
+        args: DetachArgs,
+    ) -> Result<DetachResult, AgentApiError> {
+        let promise_ids = args
+            .validated_promise_ids()
+            .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
+        let entries = read_all_session_entries(
+            self.sessions.as_ref(),
+            &context.parent_session_id,
+            MAX_EVENT_PAGE_LIMIT as usize,
+        )
+        .await?;
+        let state = replay_core_agent_state(&entries)?;
+
+        let mut promises = Vec::with_capacity(promise_ids.len());
+        let mut effects = Vec::new();
+        for promise_id in promise_ids {
+            let key = PromiseId::new(promise_id.clone());
+            let Some(promise) = state.promises.promises.get(&key) else {
+                return Err(AgentApiError::rejected(format!(
+                    "unknown promise {promise_id}"
+                )));
+            };
+            if promise.status.is_terminal() {
+                return Err(AgentApiError::rejected(format!(
+                    "promise {promise_id} is already {}",
+                    promise_status_name(promise.status)
                 )));
             }
-            return Ok(Some(wait_pending_result(target_session_id, run_id)));
+            match promise.scope {
+                PromiseScope::Session => {
+                    promises.push(DetachPromiseOutput {
+                        promise_id,
+                        status: "already_detached".to_owned(),
+                    });
+                }
+                PromiseScope::Run { run_id } if run_id == context.parent_run_id => {
+                    effects.push(promise_detach_effect(&key));
+                    promises.push(DetachPromiseOutput {
+                        promise_id,
+                        status: "detached".to_owned(),
+                    });
+                }
+                PromiseScope::Run { run_id } => {
+                    return Err(AgentApiError::rejected(format!(
+                        "promise {promise_id} is scoped to run {run_id}, not current run {}",
+                        context.parent_run_id
+                    )));
+                }
+            }
         }
-        if state
-            .runs
-            .queued
-            .iter()
-            .any(|queued| queued.run_id == run_id)
-        {
-            return Ok(Some(wait_pending_result(target_session_id, run_id)));
-        }
-        Ok(None)
+
+        Ok(DetachResult {
+            output: DetachOutput { promises },
+            effects,
+        })
     }
 
     pub async fn list(
@@ -537,41 +654,6 @@ impl FleetService {
                 args.recent_transcript.as_ref(),
             ))?,
         })
-    }
-
-    pub async fn cancel(&self, args: AgentCancelArgs) -> Result<AgentCancelOutput, AgentApiError> {
-        let target_session_id = parse_session_id(&args.target_session_id, "target_session_id")?;
-        self.load_session_required(&target_session_id).await?;
-
-        match args.scope {
-            AgentCancelScope::ActiveRun => {
-                let session = self.runtime.read_session(&target_session_id).await?;
-                let run_id = active_run_id(&session).ok_or_else(|| {
-                    AgentApiError::rejected(format!(
-                        "agent {} has no active run to cancel",
-                        target_session_id
-                    ))
-                })?;
-                let run = self.runtime.cancel_run(&target_session_id, &run_id).await?;
-                Ok(AgentCancelOutput {
-                    target_session_id: target_session_id.as_str().to_owned(),
-                    scope: args.scope,
-                    status: "cancelled".to_owned(),
-                    run: Some(to_json_value(run)?),
-                    session: None,
-                })
-            }
-            AgentCancelScope::Session => {
-                let session = self.runtime.close_session(&target_session_id).await?;
-                Ok(AgentCancelOutput {
-                    target_session_id: target_session_id.as_str().to_owned(),
-                    scope: args.scope,
-                    status: "closed".to_owned(),
-                    run: None,
-                    session: Some(to_json_value(session)?),
-                })
-            }
-        }
     }
 
     async fn direct_links(
@@ -699,6 +781,33 @@ impl FleetService {
             .await
             .map_err(map_session_store_error)?
             .ok_or_else(|| AgentApiError::not_found(format!("session not found: {session_id}")))
+    }
+
+    async fn load_core_state(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<engine::CoreAgentState, AgentApiError> {
+        let entries = read_all_session_entries(
+            self.sessions.as_ref(),
+            session_id,
+            MAX_EVENT_PAGE_LIMIT as usize,
+        )
+        .await?;
+        replay_core_agent_state(&entries).map_err(AgentApiError::from)
+    }
+
+    async fn fleet_config_for_session(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<engine::FleetConfig, AgentApiError> {
+        let state = self.load_core_state(session_id).await?;
+        state
+            .lifecycle
+            .config
+            .map(|config| config.fleet)
+            .ok_or_else(|| {
+                AgentApiError::invalid_request(format!("session is not open: {session_id}"))
+            })
     }
 
     async fn create_or_reuse_child(
@@ -938,17 +1047,36 @@ struct ExistingChildValidation {
     matching_spawn_link: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum FleetWaitPreflight {
-    Completed(AgentWaitOutput),
-    Deferred(AgentWaitDirective),
+/// Result of a spawn: the model-visible output plus, when a run started, the
+/// promise-creation effect to attach to the tool call result so the engine
+/// records a log-backed promise scoped to the calling run.
+#[derive(Clone, Debug)]
+pub struct SpawnResult {
+    pub output: AgentSpawnOutput,
+    pub promise_effect: Option<engine::ToolEffect>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct ValidatedWaitArgs {
-    handles: Vec<AgentWaitHandle>,
-    mode: WorkflowAgentWaitMode,
-    timeout_ms: Option<u64>,
+#[derive(Clone, Debug)]
+pub struct SendResult {
+    pub output: AgentSendOutput,
+}
+
+#[derive(Clone, Debug)]
+pub struct RequestResult {
+    pub output: AgentRequestOutput,
+    pub promise_effect: Option<engine::ToolEffect>,
+}
+
+#[derive(Clone, Debug)]
+pub struct CancelResult {
+    pub output: CancelOutput,
+    pub effects: Vec<engine::ToolEffect>,
+}
+
+#[derive(Clone, Debug)]
+pub struct DetachResult {
+    pub output: DetachOutput,
+    pub effects: Vec<engine::ToolEffect>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -979,6 +1107,7 @@ pub trait FleetChildRuntime: Send + Sync {
         session_id: &SessionId,
         input: Vec<InputItem>,
         submission_id: SubmissionId,
+        notify_on_terminal: Vec<RunTerminalNotifyIntent>,
     ) -> Result<String, AgentApiError>;
 
     async fn enqueue_run(
@@ -986,7 +1115,20 @@ pub trait FleetChildRuntime: Send + Sync {
         session_id: &SessionId,
         input: Vec<InputItem>,
         submission_id: SubmissionId,
+        notify_on_terminal: Vec<RunTerminalNotifyIntent>,
     ) -> Result<String, AgentApiError>;
+
+    async fn deliver_message(
+        &self,
+        session_id: &SessionId,
+        input: Vec<InputItem>,
+        submission_id: SubmissionId,
+    ) -> Result<(), AgentApiError>;
+
+    /// Composed Temporal workflow id of a session in this deployment. Used as
+    /// the holder address in a promise notify-intent so the observed child
+    /// signals the parent back on terminal.
+    async fn holder_workflow_id(&self, session_id: &SessionId) -> Result<String, AgentApiError>;
 
     async fn read_session(&self, session_id: &SessionId) -> Result<SessionView, AgentApiError>;
 
@@ -1001,14 +1143,6 @@ pub trait FleetChildRuntime: Send + Sync {
         &self,
         session_id: &SessionId,
     ) -> Result<SessionEnvironmentListResponse, AgentApiError>;
-
-    async fn cancel_run(
-        &self,
-        session_id: &SessionId,
-        run_id: &str,
-    ) -> Result<api::RunView, AgentApiError>;
-
-    async fn close_session(&self, session_id: &SessionId) -> Result<SessionView, AgentApiError>;
 }
 
 #[derive(Clone)]
@@ -1054,17 +1188,11 @@ impl FleetChildRuntime for AgentApiFleetRuntime {
         session_id: &SessionId,
         input: Vec<InputItem>,
         submission_id: SubmissionId,
+        notify_on_terminal: Vec<RunTerminalNotifyIntent>,
     ) -> Result<String, AgentApiError> {
-        let response = self
-            .api
-            .start_run(RunStartParams {
-                session_id: session_id.as_str().to_owned(),
-                source: RunStartSource::Input { items: input },
-                submission_id: Some(submission_id.as_str().to_owned()),
-                config: None,
-            })
-            .await?;
-        Ok(response.result.run.id)
+        self.api
+            .start_run_for_fleet(session_id, input, submission_id, notify_on_terminal)
+            .await
     }
 
     async fn enqueue_run(
@@ -1072,10 +1200,26 @@ impl FleetChildRuntime for AgentApiFleetRuntime {
         session_id: &SessionId,
         input: Vec<InputItem>,
         submission_id: SubmissionId,
+        notify_on_terminal: Vec<RunTerminalNotifyIntent>,
     ) -> Result<String, AgentApiError> {
         self.api
-            .enqueue_run_for_fleet(session_id, input, submission_id)
+            .enqueue_run_for_fleet(session_id, input, submission_id, notify_on_terminal)
             .await
+    }
+
+    async fn deliver_message(
+        &self,
+        session_id: &SessionId,
+        input: Vec<InputItem>,
+        submission_id: SubmissionId,
+    ) -> Result<(), AgentApiError> {
+        self.api
+            .deliver_message_for_fleet(session_id, input, submission_id)
+            .await
+    }
+
+    async fn holder_workflow_id(&self, session_id: &SessionId) -> Result<String, AgentApiError> {
+        Ok(self.api.workflow_id_for(session_id))
     }
 
     async fn read_session(&self, session_id: &SessionId) -> Result<SessionView, AgentApiError> {
@@ -1118,31 +1262,6 @@ impl FleetChildRuntime for AgentApiFleetRuntime {
             .await?;
         Ok(response.result)
     }
-
-    async fn cancel_run(
-        &self,
-        session_id: &SessionId,
-        run_id: &str,
-    ) -> Result<api::RunView, AgentApiError> {
-        let response = self
-            .api
-            .cancel_run(RunCancelParams {
-                session_id: session_id.as_str().to_owned(),
-                run_id: run_id.to_owned(),
-            })
-            .await?;
-        Ok(response.result.run)
-    }
-
-    async fn close_session(&self, session_id: &SessionId) -> Result<SessionView, AgentApiError> {
-        let response = self
-            .api
-            .close_session(SessionCloseParams {
-                session_id: session_id.as_str().to_owned(),
-            })
-            .await?;
-        Ok(response.result.session)
-    }
 }
 
 #[derive(Clone)]
@@ -1163,20 +1282,22 @@ impl FleetToolExecutor {
     ) -> Result<ToolInvocationResult, CoreAgentIoError> {
         match call.tool_name.as_str() {
             AGENT_SPAWN_TOOL_NAME => self.invoke_spawn(context, call).await,
+            AGENT_REQUEST_TOOL_NAME => self.invoke_request(context, call).await,
             AGENT_SEND_TOOL_NAME => self.invoke_send(context, call).await,
-            AGENT_WAIT_TOOL_NAME => {
+            CANCEL_TOOL_NAME => self.invoke_cancel_promises(context, call).await,
+            DETACH_TOOL_NAME => self.invoke_detach_promises(context, call).await,
+            AWAIT_TOOL_NAME => {
                 fleet_failed_result(
                     self.blobs.as_ref(),
                     call.call_id.clone(),
-                    "agent_wait must be the only call in its tool batch",
+                    "await must be the only call in its tool batch",
                 )
                 .await
             }
             AGENT_LIST_TOOL_NAME => self.invoke_list(context, call).await,
             AGENT_READ_TOOL_NAME => self.invoke_read(call).await,
-            AGENT_CANCEL_TOOL_NAME => self.invoke_cancel(call).await,
-            PROFILE_LIST_TOOL_NAME => self.invoke_profile_list(call).await,
-            PROFILE_READ_TOOL_NAME => self.invoke_profile_read(call).await,
+            PROFILE_LIST_TOOL_NAME => self.invoke_profile_list(context, call).await,
+            PROFILE_READ_TOOL_NAME => self.invoke_profile_read(context, call).await,
             other => {
                 fleet_failed_result(
                     self.blobs.as_ref(),
@@ -1188,54 +1309,23 @@ impl FleetToolExecutor {
         }
     }
 
-    pub async fn invoke_wait_batch(
+    pub async fn invoke_await_batch(
         &self,
         context: FleetInvocationContext,
         call: &ToolInvocationRequest,
     ) -> Result<ToolBatchOutcome, CoreAgentIoError> {
-        let args: AgentWaitArgs = self.decode_args(call).await?;
+        let args: AwaitArgs = self.decode_args(call).await?;
         match self
             .service
-            .wait(context.clone(), call.call_id.clone(), args)
+            .await_promises(&context, call.call_id.clone(), args)
             .await
         {
-            Ok(FleetWaitPreflight::Completed(output)) => {
-                let output_ref = self
-                    .blobs
-                    .put_bytes(serde_json::to_vec(&output).map_err(io_error)?)
-                    .await
-                    .map_err(map_blob_error)?;
-                let result = ToolInvocationResult {
-                    call_id: call.call_id.clone(),
-                    status: ToolCallStatus::Succeeded,
-                    output_ref: Some(output_ref),
-                    model_visible_context_entries: wait_model_visible_context_entries(
-                        self.blobs.as_ref(),
-                        &call.call_id,
-                        &output,
-                    )
-                    .await?,
-                    error_ref: None,
-                    effects: Vec::new(),
-                };
-                Ok(ToolBatchOutcome::completed(ToolInvocationBatchResult {
-                    run_id: context.parent_run_id,
-                    turn_id: context.turn_id,
-                    batch_id: context.batch_id,
-                    results: vec![result],
-                }))
-            }
-            Ok(FleetWaitPreflight::Deferred(directive)) => {
-                let body = serde_json::to_value(directive)
-                    .map_err(|error| io_error(format!("encode agent_wait directive: {error}")))?;
-                Ok(ToolBatchOutcome::Deferred {
-                    batch_id: context.batch_id,
-                    resume_directive: ToolBatchResumeDirective::new(
-                        FLEET_AGENT_WAIT_DIRECTIVE_KIND,
-                        body,
-                    ),
-                })
-            }
+            Ok(spec) => Ok(ToolBatchOutcome::Deferred {
+                batch_id: context.batch_id,
+                call_id: call.call_id.clone(),
+                completed_results: Vec::new(),
+                spec,
+            }),
             Err(error) => {
                 let result = fleet_failed_result(
                     self.blobs.as_ref(),
@@ -1260,13 +1350,18 @@ impl FleetToolExecutor {
     ) -> Result<ToolInvocationResult, CoreAgentIoError> {
         let args: AgentSpawnArgs = self.decode_args(call).await?;
         match self.service.spawn(context, args).await {
-            Ok(output) => {
-                self.succeeded(
-                    call.call_id.clone(),
-                    &output,
-                    spawn_model_visible_text(&output),
-                )
-                .await
+            Ok(SpawnResult {
+                output,
+                promise_effect,
+            }) => {
+                let visible = spawn_model_visible_text(&output);
+                let mut result = self
+                    .succeeded(call.call_id.clone(), &output, visible)
+                    .await?;
+                // The promise-creation effect becomes a `Promise(Created)`
+                // log event in the same append as this call's completion.
+                result.effects.extend(promise_effect);
+                Ok(result)
             }
             Err(error) => {
                 fleet_failed_result(self.blobs.as_ref(), call.call_id.clone(), error.to_string())
@@ -1282,9 +1377,78 @@ impl FleetToolExecutor {
     ) -> Result<ToolInvocationResult, CoreAgentIoError> {
         let args: AgentSendArgs = self.decode_args(call).await?;
         match self.service.send(context, args).await {
-            Ok(output) => {
+            Ok(SendResult { output }) => {
                 let visible = send_model_visible_text(&output);
                 self.succeeded(call.call_id.clone(), &output, visible).await
+            }
+            Err(error) => {
+                fleet_failed_result(self.blobs.as_ref(), call.call_id.clone(), error.to_string())
+                    .await
+            }
+        }
+    }
+
+    async fn invoke_request(
+        &self,
+        context: FleetInvocationContext,
+        call: &ToolInvocationRequest,
+    ) -> Result<ToolInvocationResult, CoreAgentIoError> {
+        let args: AgentRequestArgs = self.decode_args(call).await?;
+        match self.service.request(context, args).await {
+            Ok(RequestResult {
+                output,
+                promise_effect,
+            }) => {
+                let visible = request_model_visible_text(&output);
+                let mut result = self
+                    .succeeded(call.call_id.clone(), &output, visible)
+                    .await?;
+                result.effects.extend(promise_effect);
+                Ok(result)
+            }
+            Err(error) => {
+                fleet_failed_result(self.blobs.as_ref(), call.call_id.clone(), error.to_string())
+                    .await
+            }
+        }
+    }
+
+    async fn invoke_cancel_promises(
+        &self,
+        context: FleetInvocationContext,
+        call: &ToolInvocationRequest,
+    ) -> Result<ToolInvocationResult, CoreAgentIoError> {
+        let args: CancelArgs = self.decode_args(call).await?;
+        match self.service.cancel_promises(&context, args).await {
+            Ok(result) => {
+                let visible = cancel_promises_model_visible_text(&result.output);
+                let mut tool_result = self
+                    .succeeded(call.call_id.clone(), &result.output, visible)
+                    .await?;
+                tool_result.effects.extend(result.effects);
+                Ok(tool_result)
+            }
+            Err(error) => {
+                fleet_failed_result(self.blobs.as_ref(), call.call_id.clone(), error.to_string())
+                    .await
+            }
+        }
+    }
+
+    async fn invoke_detach_promises(
+        &self,
+        context: FleetInvocationContext,
+        call: &ToolInvocationRequest,
+    ) -> Result<ToolInvocationResult, CoreAgentIoError> {
+        let args: DetachArgs = self.decode_args(call).await?;
+        match self.service.detach_promises(&context, args).await {
+            Ok(result) => {
+                let visible = detach_promises_model_visible_text(&result.output);
+                let mut tool_result = self
+                    .succeeded(call.call_id.clone(), &result.output, visible)
+                    .await?;
+                tool_result.effects.extend(result.effects);
+                Ok(tool_result)
             }
             Err(error) => {
                 fleet_failed_result(self.blobs.as_ref(), call.call_id.clone(), error.to_string())
@@ -1331,29 +1495,13 @@ impl FleetToolExecutor {
         }
     }
 
-    async fn invoke_cancel(
-        &self,
-        call: &ToolInvocationRequest,
-    ) -> Result<ToolInvocationResult, CoreAgentIoError> {
-        let args: AgentCancelArgs = self.decode_args(call).await?;
-        match self.service.cancel(args).await {
-            Ok(output) => {
-                let visible = cancel_model_visible_text(&output);
-                self.succeeded(call.call_id.clone(), &output, visible).await
-            }
-            Err(error) => {
-                fleet_failed_result(self.blobs.as_ref(), call.call_id.clone(), error.to_string())
-                    .await
-            }
-        }
-    }
-
     async fn invoke_profile_list(
         &self,
+        context: FleetInvocationContext,
         call: &ToolInvocationRequest,
     ) -> Result<ToolInvocationResult, CoreAgentIoError> {
         let args: ProfileListArgs = self.decode_args(call).await?;
-        match self.service.list_profiles(args).await {
+        match self.service.list_profiles(&context, args).await {
             Ok(output) => {
                 let visible = profile_list_model_visible_text(&output);
                 self.succeeded(call.call_id.clone(), &output, visible).await
@@ -1367,10 +1515,11 @@ impl FleetToolExecutor {
 
     async fn invoke_profile_read(
         &self,
+        context: FleetInvocationContext,
         call: &ToolInvocationRequest,
     ) -> Result<ToolInvocationResult, CoreAgentIoError> {
         let args: ProfileReadArgs = self.decode_args(call).await?;
-        match self.service.read_profile(args).await {
+        match self.service.read_profile(&context, args).await {
             Ok(output) => {
                 let visible = profile_read_model_visible_text(&output);
                 self.succeeded(call.call_id.clone(), &output, visible).await
@@ -1478,6 +1627,66 @@ fn validate_spawn_args(args: &AgentSpawnArgs) -> Result<(), AgentApiError> {
     Ok(())
 }
 
+fn validate_spawn_policy(
+    fleet_config: &engine::FleetConfig,
+    args: &AgentSpawnArgs,
+) -> Result<(), AgentApiError> {
+    let base = match &args.base {
+        AgentSpawnBase::Self_ { .. } => engine::FleetSpawnBase::Self_,
+        AgentSpawnBase::Session { .. } => engine::FleetSpawnBase::Session,
+        AgentSpawnBase::Profile { .. } => engine::FleetSpawnBase::Profile,
+    };
+    if !fleet_config.spawn.base_allowed(base) {
+        return Err(AgentApiError::invalid_request(format!(
+            "agent_spawn base {} is not allowed by this profile",
+            fleet_spawn_base_name(base)
+        )));
+    }
+    if let AgentSpawnBase::Profile { profile } = &args.base {
+        validate_profile_source_allowed(fleet_config, profile)?;
+    }
+    Ok(())
+}
+
+fn validate_profile_source_allowed(
+    fleet_config: &engine::FleetConfig,
+    profile: &ProfileSource,
+) -> Result<(), AgentApiError> {
+    match profile {
+        ProfileSource::Named { profile_id } => {
+            validate_named_profile_allowed(fleet_config, profile_id)
+        }
+        ProfileSource::Inline { .. } if fleet_config.profiles.inline => Ok(()),
+        ProfileSource::Inline { .. } => Err(AgentApiError::invalid_request(
+            "inline profiles are not allowed by this profile",
+        )),
+    }
+}
+
+fn validate_named_profile_allowed(
+    fleet_config: &engine::FleetConfig,
+    profile_id: &ProfileId,
+) -> Result<(), AgentApiError> {
+    if fleet_config
+        .profiles
+        .named_profile_allowed(profile_id.as_str())
+    {
+        Ok(())
+    } else {
+        Err(AgentApiError::invalid_request(format!(
+            "profile {profile_id} is not allowed by this profile"
+        )))
+    }
+}
+
+fn fleet_spawn_base_name(base: engine::FleetSpawnBase) -> &'static str {
+    match base {
+        engine::FleetSpawnBase::Self_ => "self",
+        engine::FleetSpawnBase::Session => "session",
+        engine::FleetSpawnBase::Profile => "profile",
+    }
+}
+
 fn validate_send_args(args: &AgentSendArgs) -> Result<(), AgentApiError> {
     if args.text.trim().is_empty() {
         return Err(AgentApiError::invalid_request(
@@ -1487,141 +1696,53 @@ fn validate_send_args(args: &AgentSendArgs) -> Result<(), AgentApiError> {
     Ok(())
 }
 
-fn validate_wait_args(args: AgentWaitArgs) -> Result<ValidatedWaitArgs, AgentApiError> {
-    if args.waits.is_empty() {
+fn validate_request_args(args: &AgentRequestArgs) -> Result<(), AgentApiError> {
+    if args.text.trim().is_empty() {
         return Err(AgentApiError::invalid_request(
-            "agent_wait waits must contain at least one handle",
+            "agent_request text must not be empty",
         ));
     }
-    if args.waits.len() > MAX_AGENT_WAIT_HANDLES {
-        return Err(AgentApiError::invalid_request(format!(
-            "agent_wait waits must contain at most {MAX_AGENT_WAIT_HANDLES} handles"
-        )));
+    if matches!(args.to, AgentSendTarget::Parent) {
+        return Err(AgentApiError::invalid_request(
+            "agent_request cannot target parent; use agent_send for child-to-parent messages",
+        ));
     }
-    let mut seen = std::collections::BTreeSet::new();
-    let mut handles = Vec::with_capacity(args.waits.len());
-    for wait in args.waits {
-        let target_session_id = parse_session_id(&wait.target_session_id, "target_session_id")?;
-        let run_id = parse_api_run_id(&wait.run_id)?;
-        let key = (target_session_id.clone(), run_id);
-        if !seen.insert(key) {
-            return Err(AgentApiError::invalid_request(format!(
-                "duplicate agent_wait handle: target_session_id={} run_id={}",
-                wait.target_session_id, wait.run_id
-            )));
-        }
-        handles.push(AgentWaitHandle {
-            target_session_id,
-            run_id,
-        });
-    }
-    Ok(ValidatedWaitArgs {
-        handles,
+    Ok(())
+}
+
+pub(crate) fn await_spec_from_args(
+    args: AwaitArgs,
+    observed_at_ms: u64,
+) -> Result<engine::AwaitSpec, AgentApiError> {
+    let promise_ids = validate_await_args(&args)?;
+    Ok(engine::AwaitSpec {
+        promise_ids,
         mode: match args.mode {
-            ToolAgentWaitMode::All => WorkflowAgentWaitMode::All,
-            ToolAgentWaitMode::Any => WorkflowAgentWaitMode::Any,
+            AwaitModeArg::All => engine::AwaitMode::All,
+            AwaitModeArg::Any => engine::AwaitMode::Any,
         },
-        timeout_ms: args.timeout_ms,
+        mailbox: args.mailbox,
+        deadline_at_ms: args
+            .timeout_ms
+            .map(|timeout| observed_at_ms.saturating_add(timeout)),
     })
 }
 
-fn wait_preflight_outcome(
-    mode: WorkflowAgentWaitMode,
-    results: &[AgentWaitHandleResult],
-) -> Option<AgentWaitOutcome> {
-    match mode {
-        WorkflowAgentWaitMode::All => {
-            if results
-                .iter()
-                .any(|result| result.status == AgentWaitHandleStatus::Error)
-            {
-                Some(AgentWaitOutcome::Error)
-            } else if results
-                .iter()
-                .all(|result| result.status == AgentWaitHandleStatus::Terminal)
-            {
-                Some(AgentWaitOutcome::Terminal)
-            } else {
-                None
-            }
-        }
-        WorkflowAgentWaitMode::Any => {
-            if results
-                .iter()
-                .any(|result| result.status == AgentWaitHandleStatus::Terminal)
-            {
-                Some(AgentWaitOutcome::Terminal)
-            } else if results
-                .iter()
-                .all(|result| result.status == AgentWaitHandleStatus::Error)
-            {
-                Some(AgentWaitOutcome::Error)
-            } else {
-                None
-            }
-        }
-    }
+fn validate_await_args(args: &AwaitArgs) -> Result<Vec<PromiseId>, AgentApiError> {
+    Ok(args
+        .validated_promise_ids()
+        .map_err(|error| AgentApiError::invalid_request(error.to_string()))?
+        .iter()
+        .map(|promise_id| PromiseId::new(promise_id.clone()))
+        .collect())
 }
 
-fn wait_pending_result(target_session_id: &SessionId, run_id: RunId) -> AgentWaitHandleResult {
-    AgentWaitHandleResult {
-        target_session_id: target_session_id.as_str().to_owned(),
-        run_id: api_run_id(run_id),
-        status: AgentWaitHandleStatus::Pending,
-        run: None,
-        error: None,
-    }
-}
-
-fn wait_terminal_result(
-    target_session_id: &SessionId,
-    run_id: RunId,
-    status: ApiRunStatus,
-) -> AgentWaitHandleResult {
-    AgentWaitHandleResult {
-        target_session_id: target_session_id.as_str().to_owned(),
-        run_id: api_run_id(run_id),
-        status: AgentWaitHandleStatus::Terminal,
-        run: Some(AgentWaitRunResult {
-            status: api_status_name(&status),
-            output_ref: None,
-            failure_message_ref: None,
-        }),
-        error: None,
-    }
-}
-
-fn wait_terminal_result_core(
-    target_session_id: &SessionId,
-    run_id: RunId,
-    status: engine::RunStatus,
-    output_ref: Option<BlobRef>,
-    failure_message_ref: Option<BlobRef>,
-) -> AgentWaitHandleResult {
-    AgentWaitHandleResult {
-        target_session_id: target_session_id.as_str().to_owned(),
-        run_id: api_run_id(run_id),
-        status: AgentWaitHandleStatus::Terminal,
-        run: Some(AgentWaitRunResult {
-            status: core_run_status_name(status).to_owned(),
-            output_ref,
-            failure_message_ref,
-        }),
-        error: None,
-    }
-}
-
-fn wait_error_result(
-    target_session_id: &SessionId,
-    run_id: RunId,
-    error: impl Into<String>,
-) -> AgentWaitHandleResult {
-    AgentWaitHandleResult {
-        target_session_id: target_session_id.as_str().to_owned(),
-        run_id: api_run_id(run_id),
-        status: AgentWaitHandleStatus::Error,
-        run: None,
-        error: Some(error.into()),
+pub(crate) fn promise_status_name(status: PromiseStatus) -> &'static str {
+    match status {
+        PromiseStatus::Pending => "pending",
+        PromiseStatus::Resolved => "resolved",
+        PromiseStatus::Failed => "failed",
+        PromiseStatus::Cancelled => "cancelled",
     }
 }
 
@@ -1758,44 +1879,6 @@ fn parse_session_id(value: &str, field: &str) -> Result<SessionId, AgentApiError
         .map_err(|error| AgentApiError::invalid_request(format!("invalid {field}: {error}")))
 }
 
-fn parse_api_run_id(value: &str) -> Result<RunId, AgentApiError> {
-    let raw = value.strip_prefix("run_").unwrap_or(value);
-    let numeric = raw.parse::<u64>().map_err(|_| {
-        AgentApiError::invalid_request(format!(
-            "invalid run_id: expected run_<number>, got {value}"
-        ))
-    })?;
-    Ok(RunId::new(numeric))
-}
-
-fn api_run_id(run_id: RunId) -> String {
-    format!("run_{}", run_id.as_u64())
-}
-
-fn api_run_status_is_terminal(status: ApiRunStatus) -> bool {
-    matches!(
-        status,
-        ApiRunStatus::Completed | ApiRunStatus::Failed | ApiRunStatus::Cancelled
-    )
-}
-
-fn core_run_status_is_terminal(status: engine::RunStatus) -> bool {
-    matches!(
-        status,
-        engine::RunStatus::Completed | engine::RunStatus::Failed | engine::RunStatus::Cancelled
-    )
-}
-
-fn core_run_status_name(status: engine::RunStatus) -> &'static str {
-    match status {
-        engine::RunStatus::Active => "running",
-        engine::RunStatus::Cancelling => "cancelling",
-        engine::RunStatus::Completed => "completed",
-        engine::RunStatus::Failed => "failed",
-        engine::RunStatus::Cancelled => "cancelled",
-    }
-}
-
 fn derived_child_session_id(context: &FleetInvocationContext) -> SessionId {
     let digest = digest_suffix(&spawn_request_material(context));
     SessionId::new(format!("agent_{digest}"))
@@ -1806,6 +1889,65 @@ fn spawn_request_id(context: &FleetInvocationContext) -> String {
         "fleet_spawn_{}",
         digest_suffix(&spawn_request_material(context))
     )
+}
+
+fn spawn_promise_id(context: &FleetInvocationContext, child_session_id: &SessionId) -> String {
+    format!(
+        "promise_{}",
+        digest_suffix(&format!(
+            "{}:{}",
+            spawn_request_material(context),
+            child_session_id
+        ))
+    )
+}
+
+fn request_promise_id(
+    context: &FleetInvocationContext,
+    target_session_id: &SessionId,
+) -> PromiseId {
+    PromiseId::new(format!(
+        "promise_request_{}",
+        digest_suffix(&format!(
+            "{}:{}",
+            spawn_request_material(context),
+            target_session_id
+        ))
+    ))
+}
+
+fn parse_run_number(run_id: &str) -> Result<u64, AgentApiError> {
+    let Some(number) = run_id.strip_prefix("run_") else {
+        return Err(AgentApiError::internal(format!(
+            "fleet runtime returned malformed run id: {run_id}"
+        )));
+    };
+    number.parse::<u64>().map_err(|_| {
+        AgentApiError::internal(format!("fleet runtime returned malformed run id: {run_id}"))
+    })
+}
+
+fn target_has_mailbox_await(state: &engine::CoreAgentState) -> bool {
+    let Some(active_run) = state.runs.active.as_ref() else {
+        return false;
+    };
+    if active_run.status != engine::RunStatus::Parked {
+        return false;
+    }
+    active_run
+        .parked_await
+        .as_ref()
+        .is_some_and(|parked| parked.spec.mailbox)
+}
+
+/// Parse an api run id (`run_<n>`) into its numeric id. A malformed id would
+/// only arise from an internal invariant break; fall back to 0 rather than
+/// panic, since the promise is still correlated by its stable id.
+fn parse_api_run_id_u64(run_id: &str) -> u64 {
+    run_id
+        .strip_prefix("run_")
+        .and_then(|rest| rest.parse::<u64>().ok())
+        .unwrap_or(0)
 }
 
 fn child_run_submission_id(context: &FleetInvocationContext) -> SubmissionId {
@@ -1821,6 +1963,20 @@ fn send_submission_id(
 ) -> SubmissionId {
     SubmissionId::new(format!(
         "fleet_send_{}",
+        digest_suffix(&format!(
+            "{}:{}",
+            spawn_request_material(context),
+            target_session_id
+        ))
+    ))
+}
+
+fn request_submission_id(
+    context: &FleetInvocationContext,
+    target_session_id: &SessionId,
+) -> SubmissionId {
+    SubmissionId::new(format!(
+        "fleet_request_{}",
         digest_suffix(&format!(
             "{}:{}",
             spawn_request_material(context),
@@ -1856,22 +2012,31 @@ fn isolated_workspace_id(child_session_id: &SessionId, mount_path: &VfsPath) -> 
     VfsWorkspaceId::new(format!("workspace_{digest}"))
 }
 
-fn spawn_run_text(context: &FleetInvocationContext, args: &AgentSpawnArgs) -> String {
-    match args.report_back.as_ref() {
-        Some(report_back) => format!(
-            "{}\n\n{}",
-            args.input.trim(),
-            parent_report_back_instruction(&context.parent_session_id, report_back)
-        ),
-        None => args.input.clone(),
-    }
+fn spawn_run_text(_context: &FleetInvocationContext, args: &AgentSpawnArgs) -> String {
+    args.input.clone()
 }
 
 fn send_run_input(
     context: &FleetInvocationContext,
     args: &AgentSendArgs,
 ) -> Result<Vec<InputItem>, AgentApiError> {
-    let envelope = fleet_send_envelope_text(context, args)?;
+    let envelope = fleet_send_envelope_text(context, args.text.trim(), args.payload.clone())?;
+    let mut input = Vec::with_capacity(args.input.len() + 1);
+    input.push(InputItem::Text { text: envelope });
+    input.extend(
+        args.input
+            .iter()
+            .map(send_input_item_to_api)
+            .collect::<Vec<_>>(),
+    );
+    Ok(input)
+}
+
+fn request_run_input(
+    context: &FleetInvocationContext,
+    args: &AgentRequestArgs,
+) -> Result<Vec<InputItem>, AgentApiError> {
+    let envelope = fleet_request_envelope_text(context, args.text.trim(), args.payload.clone())?;
     let mut input = Vec::with_capacity(args.input.len() + 1);
     input.push(InputItem::Text { text: envelope });
     input.extend(
@@ -1913,61 +2078,46 @@ fn send_media_kind_to_api(kind: AgentSendMediaKind) -> MediaKind {
 
 fn fleet_send_envelope_text(
     context: &FleetInvocationContext,
-    args: &AgentSendArgs,
+    raw_text: &str,
+    payload: Option<Value>,
 ) -> Result<String, AgentApiError> {
-    let text = match args.report_back.as_ref() {
-        Some(report_back) => format!(
-            "{}\n\n{}",
-            args.text.trim(),
-            session_report_back_instruction(&context.parent_session_id, report_back)
-        ),
-        None => args.text.clone(),
-    };
     let mut fleet_send = serde_json::Map::new();
     fleet_send.insert(
         "from_session_id".to_owned(),
         Value::String(context.parent_session_id.as_str().to_owned()),
     );
-    if let Some(payload) = args.payload.clone() {
+    if let Some(payload) = payload {
         fleet_send.insert("payload".to_owned(), payload);
     }
     serde_json::to_string(&json!({
         "fleet_send": Value::Object(fleet_send),
-        "text": text,
+        "text": raw_text,
     }))
     .map_err(|error| {
         AgentApiError::internal(format!("failed to encode Fleet send envelope: {error}"))
     })
 }
 
-fn parent_report_back_instruction(
-    parent_session_id: &SessionId,
-    report_back: &AgentReportBack,
-) -> String {
-    format!(
-        "Report back to parent session {parent_session_id} with agent_send {{ \"to\": {{ \"kind\": \"parent\" }}, \"text\": \"<concise result>\" }} when you finish, and earlier if you have meaningful progress or hit a blocking question.{}",
-        extra_report_back_instructions(report_back)
-    )
-}
-
-fn session_report_back_instruction(
-    sender_session_id: &SessionId,
-    report_back: &AgentReportBack,
-) -> String {
-    format!(
-        "Report back to session {sender_session_id} with agent_send {{ \"to\": {{ \"kind\": \"session\", \"target_session_id\": \"{sender_session_id}\" }}, \"text\": \"<concise result>\" }} when you finish, and earlier if you have meaningful progress or hit a blocking question.{}",
-        extra_report_back_instructions(report_back)
-    )
-}
-
-fn extra_report_back_instructions(report_back: &AgentReportBack) -> String {
-    report_back
-        .instructions
-        .as_deref()
-        .map(str::trim)
-        .filter(|instructions| !instructions.is_empty())
-        .map(|instructions| format!(" Extra instructions: {instructions}"))
-        .unwrap_or_default()
+fn fleet_request_envelope_text(
+    context: &FleetInvocationContext,
+    raw_text: &str,
+    payload: Option<Value>,
+) -> Result<String, AgentApiError> {
+    let mut fleet_request = serde_json::Map::new();
+    fleet_request.insert(
+        "from_session_id".to_owned(),
+        Value::String(context.parent_session_id.as_str().to_owned()),
+    );
+    if let Some(payload) = payload {
+        fleet_request.insert("payload".to_owned(), payload);
+    }
+    serde_json::to_string(&json!({
+        "fleet_request": Value::Object(fleet_request),
+        "text": raw_text,
+    }))
+    .map_err(|error| {
+        AgentApiError::internal(format!("failed to encode Fleet request envelope: {error}"))
+    })
 }
 
 fn spawn_link_metadata(
@@ -2038,12 +2188,16 @@ fn nonnegative_i64(value: u64, name: &str) -> Result<i64, AgentApiError> {
 }
 
 fn spawn_model_visible_text(output: &AgentSpawnOutput) -> String {
-    match output.child_run_id.as_deref() {
-        Some(run_id) => format!(
+    match (output.child_run_id.as_deref(), output.promise.as_deref()) {
+        (Some(run_id), Some(promise)) => format!(
+            "Agent {} {} and started run {} (promise {}). Await it with the await tool.",
+            output.child_session_id, output.status, run_id, promise
+        ),
+        (Some(run_id), None) => format!(
             "Agent {} {} and started run {}.",
             output.child_session_id, output.status, run_id
         ),
-        None => format!(
+        (None, _) => format!(
             "Agent {} {} without starting a run.",
             output.child_session_id, output.status
         ),
@@ -2061,219 +2215,63 @@ fn send_model_visible_text(output: &AgentSendOutput) -> String {
                 Some(submission_id) => format!(
                     "Delivered message to session {target_session_id} as queued run {run_id} (submission {submission_id})."
                 ),
-                None => {
+                None => format!(
+                    "Delivered message to session {target_session_id} as queued run {run_id}."
+                ),
+            }
+        }
+        (AgentSendStatus::Delivered, Some(target_session_id), None) => {
+            match output.submission_id.as_deref() {
+                Some(submission_id) => {
                     format!(
-                        "Delivered message to session {target_session_id} as queued run {run_id}."
+                        "Delivered message to session {target_session_id} (submission {submission_id})."
                     )
                 }
+                None => format!("Delivered message to session {target_session_id}."),
             }
         }
         (AgentSendStatus::NotReachable, Some(target_session_id), _) => {
             format!("Session {target_session_id} is not reachable.")
         }
         (AgentSendStatus::NotReachable, None, _) => "No reachable target session found.".to_owned(),
+        (AgentSendStatus::QueueFull, Some(target_session_id), _) => {
+            format!("Session {target_session_id} mailbox queue is full; try again later.")
+        }
         _ => "Fleet send did not produce a run.".to_owned(),
     }
 }
 
-async fn wait_model_visible_context_entries(
-    blobs: &dyn BlobStore,
-    call_id: &ToolCallId,
-    output: &AgentWaitOutput,
-) -> Result<Vec<ContextEntryInput>, CoreAgentIoError> {
-    let summary_ref = blobs
-        .put_bytes(wait_model_visible_summary(output).into_bytes())
-        .await
-        .map_err(map_blob_error)?;
-    let mut entries = vec![ToolInvocationResult::tool_result_context_entry(
-        call_id,
-        ToolCallStatus::Succeeded,
-        summary_ref,
-    )];
-    for result in output
-        .results
-        .iter()
-        .filter(|result| result.status == AgentWaitHandleStatus::Terminal)
-    {
-        append_wait_terminal_visible_context_entries(blobs, &mut entries, result).await?;
-    }
-    Ok(entries)
-}
-
-fn wait_model_visible_summary(output: &AgentWaitOutput) -> String {
-    let terminal = output
-        .results
-        .iter()
-        .filter(|result| result.status == AgentWaitHandleStatus::Terminal)
-        .count();
-    let pending = output
-        .results
-        .iter()
-        .filter(|result| result.status == AgentWaitHandleStatus::Pending)
-        .count();
-    let errors = output
-        .results
-        .iter()
-        .filter(|result| result.status == AgentWaitHandleStatus::Error)
-        .count();
-    format!(
-        "agent_wait resolved with outcome {} (terminal: {terminal}, pending: {pending}, errors: {errors}).",
-        wait_outcome_name(output.outcome)
-    )
-}
-
-async fn append_wait_terminal_visible_context_entries(
-    blobs: &dyn BlobStore,
-    entries: &mut Vec<ContextEntryInput>,
-    result: &AgentWaitHandleResult,
-) -> Result<(), CoreAgentIoError> {
-    let Some(run) = result.run.as_ref() else {
-        let mut text = wait_result_header(result, "terminal", "none", 0);
-        text.push_str("\n\nNo run details were recorded.");
-        append_wait_text_message(
-            blobs,
-            entries,
-            text,
-            Some(wait_result_bundle_preview(result, "no run details")),
-        )
-        .await?;
-        return Ok(());
-    };
-
-    if let Some(output_ref) = run.output_ref.as_ref() {
-        append_wait_result_content(
-            blobs,
-            entries,
-            result,
-            run,
-            "final_output",
-            "Final output",
-            output_ref,
-        )
-        .await?;
-    } else if let Some(failure_ref) = run.failure_message_ref.as_ref() {
-        append_wait_result_content(
-            blobs,
-            entries,
-            result,
-            run,
-            "failure_message",
-            "Failure message",
-            failure_ref,
-        )
-        .await?;
-    } else {
-        let mut text = wait_result_header(result, &run.status, "none", 0);
-        text.push_str("\n\nNo final output was recorded.");
-        append_wait_text_message(
-            blobs,
-            entries,
-            text,
-            Some(wait_result_bundle_preview(result, "empty result")),
-        )
-        .await?;
-    }
-    Ok(())
-}
-
-async fn append_wait_result_content(
-    blobs: &dyn BlobStore,
-    entries: &mut Vec<ContextEntryInput>,
-    result: &AgentWaitHandleResult,
-    run: &AgentWaitRunResult,
-    item_kind: &str,
-    section_label: &str,
-    content_ref: &BlobRef,
-) -> Result<(), CoreAgentIoError> {
-    match blobs.read_text(content_ref).await {
-        Ok(content) => {
-            let mut text = wait_result_header(result, &run.status, item_kind, 1);
-            text.push_str("\n\n");
-            text.push_str(section_label);
-            text.push_str(":\n");
-            text.push_str(&content);
-            append_wait_text_message(
-                blobs,
-                entries,
-                text,
-                Some(wait_result_bundle_preview(result, item_kind)),
+fn request_model_visible_text(output: &AgentRequestOutput) -> String {
+    match (
+        output.status,
+        output.target_session_id.as_deref(),
+        output.run_id.as_deref(),
+        output.promise.as_deref(),
+    ) {
+        (AgentRequestStatus::Delivered, Some(target_session_id), Some(run_id), Some(promise)) => {
+            let submission = output
+                .submission_id
+                .as_deref()
+                .map(|submission_id| format!(" submission {submission_id},"))
+                .unwrap_or_default();
+            format!(
+                "Requested work from session {target_session_id} as run {run_id} ({submission} promise {promise}). Await it with the await tool."
             )
-            .await?;
         }
-        Err(_) => {
-            let mut text = wait_result_header(result, &run.status, item_kind, 1);
-            text.push_str("\n\nThe next context item belongs to this subagent result. ");
-            text.push_str(
-                "It is preserved as its original blob because it could not be copied into a text wrapper.",
-            );
-            append_wait_text_message(
-                blobs,
-                entries,
-                text,
-                Some(wait_result_bundle_preview(result, item_kind)),
-            )
-            .await?;
-            entries.push(wait_user_message(
-                content_ref.clone(),
-                Some(&wait_result_item_preview(result, item_kind, 1, 1)),
-            ));
+        (AgentRequestStatus::NotReachable, Some(target_session_id), _, _) => {
+            format!("Session {target_session_id} is not reachable.")
         }
+        (AgentRequestStatus::NotReachable, None, _, _) => {
+            "No reachable target session found.".to_owned()
+        }
+        (AgentRequestStatus::QueueFull, Some(target_session_id), _, _) => {
+            format!("Session {target_session_id} mailbox queue is full; try again later.")
+        }
+        _ => "Fleet request did not produce a run.".to_owned(),
     }
-    Ok(())
 }
 
-fn wait_result_header(
-    result: &AgentWaitHandleResult,
-    status: &str,
-    item_kind: &str,
-    item_count: usize,
-) -> String {
-    let mut text = format!(
-        "Subagent result\ntarget_session_id: {}\nrun_id: {}\nstatus: {}\nresult_item_count: {}",
-        result.target_session_id, result.run_id, status, item_count
-    );
-    if item_count > 0 {
-        text.push_str("\nresult_item_1_kind: ");
-        text.push_str(item_kind);
-    }
-    text
-}
-
-fn wait_result_bundle_preview(result: &AgentWaitHandleResult, item_kind: &str) -> String {
-    format!(
-        "Subagent result: {item_kind} from {} {}",
-        result.target_session_id, result.run_id
-    )
-}
-
-fn wait_result_item_preview(
-    result: &AgentWaitHandleResult,
-    item_kind: &str,
-    index: usize,
-    count: usize,
-) -> String {
-    format!(
-        "Subagent result item {index}/{count}: {item_kind} from {} {}",
-        result.target_session_id, result.run_id
-    )
-}
-
-async fn append_wait_text_message(
-    blobs: &dyn BlobStore,
-    entries: &mut Vec<ContextEntryInput>,
-    text: impl Into<String>,
-    preview: Option<String>,
-) -> Result<(), CoreAgentIoError> {
-    let text = text.into();
-    let content_ref = blobs
-        .put_bytes(text.into_bytes())
-        .await
-        .map_err(map_blob_error)?;
-    entries.push(wait_user_message(content_ref, preview.as_deref()));
-    Ok(())
-}
-
-fn wait_user_message(content_ref: BlobRef, preview: Option<&str>) -> ContextEntryInput {
+fn fleet_user_message(content_ref: BlobRef, preview: Option<&str>) -> ContextEntryInput {
     ContextEntryInput {
         kind: ContextEntryKind::Message {
             role: ContextMessageRole::User,
@@ -2287,12 +2285,18 @@ fn wait_user_message(content_ref: BlobRef, preview: Option<&str>) -> ContextEntr
     }
 }
 
-fn wait_outcome_name(outcome: AgentWaitOutcome) -> &'static str {
-    match outcome {
-        AgentWaitOutcome::Terminal => "terminal",
-        AgentWaitOutcome::Timeout => "timeout",
-        AgentWaitOutcome::Error => "error",
-    }
+async fn append_fleet_text_message(
+    blobs: &dyn BlobStore,
+    entries: &mut Vec<ContextEntryInput>,
+    text: impl Into<String>,
+    preview: Option<String>,
+) -> Result<(), CoreAgentIoError> {
+    let content_ref = blobs
+        .put_bytes(text.into().into_bytes())
+        .await
+        .map_err(map_blob_error)?;
+    entries.push(fleet_user_message(content_ref, preview.as_deref()));
+    Ok(())
 }
 
 fn list_model_visible_text(output: &AgentListOutput) -> String {
@@ -2337,7 +2341,7 @@ async fn read_model_visible_context_entries(
         summary_ref,
     )];
     if let Some(transcript) = agent_read_visible_run_transcripts(output) {
-        append_wait_text_message(
+        append_fleet_text_message(
             blobs,
             &mut entries,
             transcript,
@@ -2416,21 +2420,6 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
     let mut truncated = value.chars().take(keep).collect::<String>();
     truncated.push_str(TRUNCATED);
     truncated
-}
-
-fn cancel_model_visible_text(output: &AgentCancelOutput) -> String {
-    match output.scope {
-        AgentCancelScope::ActiveRun => format!(
-            "Agent {} active run cancellation status: {}.",
-            output.target_session_id, output.status
-        ),
-        AgentCancelScope::Session => {
-            format!(
-                "Agent {} session status: {}.",
-                output.target_session_id, output.status
-            )
-        }
-    }
 }
 
 fn profile_list_model_visible_text(output: &ProfileListOutput) -> String {
@@ -2523,8 +2512,9 @@ mod tests {
 
     use async_trait::async_trait;
     use engine::{
-        ContextConfig, ModelSelection, ProviderApiKind, RunConfig, SessionConfig, ToolBatchOutcome,
-        ToolCallId, ToolConfig, ToolInvocationRequest, ToolName, TurnConfig,
+        ContextConfig, FleetConfig, FleetProfilesConfig, FleetSpawnBase, FleetSpawnConfig,
+        ModelSelection, ProviderApiKind, RunConfig, SessionConfig, ToolBatchOutcome, ToolCallId,
+        ToolConfig, ToolInvocationRequest, ToolName, TurnConfig,
         storage::{CreateSession, InMemorySessionStore, SessionStore},
     };
     use vfs::{CompareAndSetVfsWorkspaceHead, VfsMountAccess, VfsMountRecord, VfsWorkspaceRecord};
@@ -2542,17 +2532,23 @@ mod tests {
             .expect("visible tool result")
     }
 
+    #[derive(Clone)]
+    struct StartedRun {
+        session_id: SessionId,
+        input: Vec<InputItem>,
+        submission_id: SubmissionId,
+        notify_on_terminal: Vec<RunTerminalNotifyIntent>,
+    }
+
     #[derive(Default)]
     struct FakeRuntime {
         session_store: Option<Arc<InMemorySessionStore>>,
         started_sessions: Mutex<Vec<(SessionId, bool, Option<ProfileSource>)>>,
-        started_runs: Mutex<Vec<(SessionId, Vec<InputItem>, SubmissionId)>>,
+        started_runs: Mutex<Vec<StartedRun>>,
         sessions: Mutex<BTreeMap<SessionId, SessionView>>,
         events: Mutex<BTreeMap<SessionId, Vec<api::SessionEventView>>>,
         environments: Mutex<BTreeMap<SessionId, SessionEnvironmentListResponse>>,
         profiles: Mutex<BTreeMap<ProfileId, AgentProfile>>,
-        cancelled_runs: Mutex<Vec<(SessionId, String)>>,
-        closed_sessions: Mutex<Vec<SessionId>>,
     }
 
     #[async_trait]
@@ -2613,12 +2609,14 @@ mod tests {
             session_id: &SessionId,
             input: Vec<InputItem>,
             submission_id: SubmissionId,
+            notify_on_terminal: Vec<RunTerminalNotifyIntent>,
         ) -> Result<String, AgentApiError> {
-            self.started_runs.lock().expect("lock").push((
-                session_id.clone(),
+            self.started_runs.lock().expect("lock").push(StartedRun {
+                session_id: session_id.clone(),
                 input,
                 submission_id,
-            ));
+                notify_on_terminal,
+            });
             Ok("run_1".to_owned())
         }
 
@@ -2627,13 +2625,37 @@ mod tests {
             session_id: &SessionId,
             input: Vec<InputItem>,
             submission_id: SubmissionId,
+            notify_on_terminal: Vec<RunTerminalNotifyIntent>,
         ) -> Result<String, AgentApiError> {
-            self.started_runs.lock().expect("lock").push((
-                session_id.clone(),
+            self.started_runs.lock().expect("lock").push(StartedRun {
+                session_id: session_id.clone(),
                 input,
                 submission_id,
-            ));
+                notify_on_terminal,
+            });
             Ok("run_1".to_owned())
+        }
+
+        async fn deliver_message(
+            &self,
+            session_id: &SessionId,
+            input: Vec<InputItem>,
+            submission_id: SubmissionId,
+        ) -> Result<(), AgentApiError> {
+            self.started_runs.lock().expect("lock").push(StartedRun {
+                session_id: session_id.clone(),
+                input,
+                submission_id,
+                notify_on_terminal: Vec::new(),
+            });
+            Ok(())
+        }
+
+        async fn holder_workflow_id(
+            &self,
+            session_id: &SessionId,
+        ) -> Result<String, AgentApiError> {
+            Ok(format!("test-universe/{session_id}"))
         }
 
         async fn read_session(&self, session_id: &SessionId) -> Result<SessionView, AgentApiError> {
@@ -2691,33 +2713,6 @@ mod tests {
                     environments: Vec::new(),
                 }))
         }
-
-        async fn cancel_run(
-            &self,
-            session_id: &SessionId,
-            run_id: &str,
-        ) -> Result<api::RunView, AgentApiError> {
-            self.cancelled_runs
-                .lock()
-                .expect("lock")
-                .push((session_id.clone(), run_id.to_owned()));
-            Ok(api_run_view(run_id, ApiRunStatus::Cancelled))
-        }
-
-        async fn close_session(
-            &self,
-            session_id: &SessionId,
-        ) -> Result<SessionView, AgentApiError> {
-            self.closed_sessions
-                .lock()
-                .expect("lock")
-                .push(session_id.clone());
-            Ok(api_session_view(
-                session_id,
-                api::SessionStatus::Closed,
-                Vec::new(),
-            ))
-        }
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -2748,7 +2743,8 @@ mod tests {
         let output = service
             .spawn(context(source.clone()), spawn_args("summarize"))
             .await
-            .expect("spawn");
+            .expect("spawn")
+            .output;
 
         let child = SessionId::new(output.child_session_id);
         let child_record = sessions
@@ -2780,6 +2776,40 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn spawn_returns_promise_effect_and_threads_notify_intent() {
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let source = open_source_session(&sessions).await;
+        let runtime = Arc::new(FakeRuntime::default());
+        let service = FleetService::new(sessions, runtime.clone());
+
+        let result = service
+            .spawn(context(source), spawn_args("summarize"))
+            .await
+            .expect("spawn");
+
+        // Output carries a promise id, and a promise-create effect is present
+        // for the started run, scoped to the child run.
+        let promise_id = result.output.promise.clone().expect("promise id");
+        let effect = result.promise_effect.expect("promise effect");
+        assert_eq!(effect.kind, engine::PROMISE_CREATE_EFFECT_KIND);
+        assert_eq!(effect.data.get("promise_id"), Some(&promise_id));
+        assert_eq!(effect.data.get("source"), Some(&"run".to_owned()));
+
+        // The child run carries a notify-intent back to the parent workflow,
+        // keyed by the same promise id.
+        let started_runs = runtime.started_runs.lock().expect("lock");
+        assert_eq!(started_runs.len(), 1);
+        let intents = &started_runs[0].notify_on_terminal;
+        assert_eq!(intents.len(), 1);
+        assert_eq!(intents[0].token, promise_id);
+        assert!(
+            intents[0].holder_workflow_id.ends_with("/parent"),
+            "holder should be the parent workflow id: {}",
+            intents[0].holder_workflow_id
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn spawn_close_on_terminal_is_passed_to_child_runtime() {
         let sessions = Arc::new(InMemorySessionStore::new());
         let source = open_source_session(&sessions).await;
@@ -2798,7 +2828,8 @@ mod tests {
                 .expect("spawn args"),
             )
             .await
-            .expect("spawn");
+            .expect("spawn")
+            .output;
 
         let started = runtime.started_sessions.lock().expect("lock");
         assert_eq!(started.len(), 1);
@@ -2829,7 +2860,8 @@ mod tests {
                 .expect("spawn args"),
             )
             .await
-            .expect("spawn");
+            .expect("spawn")
+            .output;
 
         let child = SessionId::new(output.child_session_id);
         let child_record = sessions
@@ -2870,7 +2902,8 @@ mod tests {
                 .expect("spawn args"),
             )
             .await
-            .expect("spawn");
+            .expect("spawn")
+            .output;
 
         let child = SessionId::new(output.child_session_id);
         let child_record = sessions
@@ -2963,11 +2996,13 @@ mod tests {
         let first = service
             .spawn(context(source.clone()), spawn_args("do work"))
             .await
-            .expect("first spawn");
+            .expect("first spawn")
+            .output;
         let second = service
             .spawn(context(source), spawn_args("do work"))
             .await
-            .expect("retry spawn");
+            .expect("retry spawn")
+            .output;
 
         assert_eq!(first.child_session_id, second.child_session_id);
         assert_eq!(second.status, "reused");
@@ -3158,10 +3193,11 @@ mod tests {
                 .expect("send args"),
             )
             .await
-            .expect("send");
+            .expect("send")
+            .output;
 
         assert_eq!(output.target_session_id.as_deref(), Some(child.as_str()));
-        assert_eq!(output.run_id.as_deref(), Some("run_1"));
+        assert_eq!(output.run_id, None);
         assert!(
             output
                 .submission_id
@@ -3175,24 +3211,93 @@ mod tests {
         );
         let started_runs = runtime.started_runs.lock().expect("lock");
         assert_eq!(started_runs.len(), 1);
-        assert_eq!(started_runs[0].0, child);
-        assert_eq!(started_runs[0].1.len(), 2);
-        let envelope = text_item_json(&started_runs[0].1[0]);
+        assert_eq!(started_runs[0].session_id, child);
+        assert_eq!(started_runs[0].input.len(), 2);
+        let envelope = text_item_json(&started_runs[0].input[0]);
         assert_eq!(envelope["fleet_send"]["from_session_id"], "parent");
         assert!(envelope["fleet_send"].get("kind").is_none());
         assert_eq!(envelope["fleet_send"]["payload"], json!({ "answer": 42 }));
         assert_eq!(envelope["text"], "do more work");
         assert_eq!(
-            started_runs[0].1[1],
+            started_runs[0].input[1],
             InputItem::Text {
                 text: "trailing context".to_owned()
             }
         );
         assert!(
-            started_runs[0].2.as_str().starts_with("fleet_send_"),
+            started_runs[0]
+                .submission_id
+                .as_str()
+                .starts_with("fleet_send_"),
             "submission id should be Fleet-derived, got {}",
-            started_runs[0].2
+            started_runs[0].submission_id
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn request_returns_promise_effect_and_notify_intent() {
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let parent = open_source_session(sessions.as_ref()).await;
+        let child = create_linked_child(sessions.as_ref(), &parent).await;
+        let runtime = Arc::new(FakeRuntime::default());
+        let service = FleetService::new(sessions, runtime.clone());
+
+        let result = service
+            .request(
+                context(parent.clone()),
+                serde_json::from_value(json!({
+                    "to": { "kind": "session", "target_session_id": child.as_str() },
+                    "text": "do more work"
+                }))
+                .expect("request args"),
+            )
+            .await
+            .expect("request");
+
+        let promise = result.output.promise.clone().expect("promise");
+        let effect = result.promise_effect.expect("promise effect");
+        assert_eq!(effect.kind, engine::PROMISE_CREATE_EFFECT_KIND);
+        assert_eq!(effect.data.get("source"), Some(&"run".to_owned()));
+        assert_eq!(effect.data.get("promise_id"), Some(&promise));
+
+        let started_runs = runtime.started_runs.lock().expect("lock");
+        assert_eq!(started_runs.len(), 1);
+        assert!(
+            started_runs[0]
+                .submission_id
+                .as_str()
+                .starts_with("fleet_request_")
+        );
+        assert_eq!(started_runs[0].notify_on_terminal.len(), 1);
+        let intent = &started_runs[0].notify_on_terminal[0];
+        assert_eq!(intent.token, promise);
+        let envelope = text_item_json(&started_runs[0].input[0]);
+        assert_eq!(envelope["fleet_request"]["from_session_id"], "parent");
+        assert_eq!(envelope["text"], "do more work");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn request_to_parent_is_rejected_and_points_to_send() {
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let child = open_source_session(sessions.as_ref()).await;
+        let runtime = Arc::new(FakeRuntime::default());
+        let service = FleetService::new(sessions, runtime);
+
+        let error = service
+            .request(
+                context(child),
+                serde_json::from_value(json!({
+                    "to": { "kind": "parent" },
+                    "text": "please do work"
+                }))
+                .expect("request args"),
+            )
+            .await
+            .expect_err("parent request should be rejected");
+
+        let message = error.to_string();
+        assert!(message.contains("agent_request cannot target parent"));
+        assert!(message.contains("use agent_send"));
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -3213,10 +3318,11 @@ mod tests {
                 .expect("send args"),
             )
             .await
-            .expect("send");
+            .expect("send")
+            .output;
 
         assert_eq!(output.target_session_id.as_deref(), Some(parent.as_str()));
-        assert_eq!(output.run_id.as_deref(), Some("run_1"));
+        assert_eq!(output.run_id, None);
         assert!(
             output
                 .submission_id
@@ -3224,10 +3330,45 @@ mod tests {
                 .is_some_and(|submission_id| submission_id.starts_with("fleet_send_"))
         );
         let started_runs = runtime.started_runs.lock().expect("lock");
-        assert_eq!(started_runs[0].0, parent);
-        let envelope = text_item_json(&started_runs[0].1[0]);
+        assert_eq!(started_runs[0].session_id, parent);
+        let envelope = text_item_json(&started_runs[0].input[0]);
         assert!(envelope["fleet_send"].get("kind").is_none());
         assert_eq!(envelope["text"], "done");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn detach_promises_returns_detach_effects() {
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let parent = open_source_session(sessions.as_ref()).await;
+        append_parent_with_promise(
+            sessions.as_ref(),
+            &parent,
+            "promise_request_1",
+            engine::PromiseStatus::Pending,
+        )
+        .await;
+        let runtime = Arc::new(FakeRuntime::default());
+        let service = FleetService::new(sessions, runtime);
+
+        let result = service
+            .detach_promises(
+                &context(parent),
+                serde_json::from_value(json!({
+                    "promises": ["promise_request_1"]
+                }))
+                .expect("detach args"),
+            )
+            .await
+            .expect("detach");
+
+        assert_eq!(result.output.promises.len(), 1);
+        assert_eq!(result.output.promises[0].status, "detached");
+        assert_eq!(result.effects.len(), 1);
+        assert_eq!(result.effects[0].kind, engine::PROMISE_DETACH_EFFECT_KIND);
+        assert_eq!(
+            result.effects[0].data.get("promise_id"),
+            Some(&"promise_request_1".to_owned())
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -3247,7 +3388,8 @@ mod tests {
                 .expect("send args"),
             )
             .await
-            .expect("send");
+            .expect("send")
+            .output;
 
         assert_eq!(output.target_session_id.as_deref(), Some("other"));
         assert_eq!(output.run_id, None);
@@ -3272,7 +3414,8 @@ mod tests {
                 .expect("send args"),
             )
             .await
-            .expect("send");
+            .expect("send")
+            .output;
 
         assert_eq!(output.target_session_id, None);
         assert_eq!(output.status, AgentSendStatus::NotReachable);
@@ -3280,7 +3423,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn spawn_report_back_injects_instruction_without_config_patch() {
+    async fn spawn_run_input_does_not_inject_report_back_instruction() {
         let sessions = Arc::new(InMemorySessionStore::new());
         let parent = open_source_session(sessions.as_ref()).await;
         let runtime = Arc::new(FakeRuntime::default());
@@ -3290,15 +3433,13 @@ mod tests {
             .spawn(
                 context(parent.clone()),
                 serde_json::from_value(json!({
-                    "input": "do work",
-                    "report_back": {
-                        "instructions": "Include the final count."
-                    }
+                    "input": "do work"
                 }))
                 .expect("spawn args"),
             )
             .await
-            .expect("spawn");
+            .expect("spawn")
+            .output;
 
         let child = SessionId::new(output.child_session_id);
         let child_record = sessions
@@ -3308,12 +3449,8 @@ mod tests {
             .expect("child");
         assert_eq!(child_record.source_session_id, Some(parent));
         let started_runs = runtime.started_runs.lock().expect("lock");
-        let text = text_item(&started_runs[0].1[0]);
-        assert!(text.contains("do work"));
-        assert!(text.contains("agent_send"));
-        assert!(text.contains("\"kind\": \"parent\""));
-        assert!(!text.contains("\"kind\": \"result\""));
-        assert!(text.contains("Include the final count."));
+        let text = text_item(&started_runs[0].input[0]);
+        assert_eq!(text, "do work");
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -3326,7 +3463,8 @@ mod tests {
                 source_session_id: parent.clone(),
                 session_id: child.clone(),
                 created_at_ms: 20,
-                opening_events: Vec::new(),
+                opening_events: core_agent_clone_opening_events(&open_state(), 20)
+                    .expect("opening events"),
             })
             .await
             .expect("child");
@@ -3386,14 +3524,15 @@ mod tests {
                 source_session_id: parent.clone(),
                 session_id: child.clone(),
                 created_at_ms: 20,
-                opening_events: Vec::new(),
+                opening_events: core_agent_clone_opening_events(&open_state(), 20)
+                    .expect("opening events"),
             })
             .await
             .expect("child");
         sessions
             .append(engine::storage::AppendSessionEvents {
                 session_id: child.clone(),
-                expected_head: None,
+                expected_head: sessions.head(&child).await.expect("child head"),
                 events: vec![
                     stored_test_event(30, "lightspeed.test.1"),
                     stored_test_event(31, "lightspeed.test.2"),
@@ -3441,7 +3580,7 @@ mod tests {
                     turns: Some(1),
                     events: None,
                 }),
-                recent_events: Some(tools::fleet::RecentEventsSelector { limit: 2 }),
+                recent_events: Some(tools::fleet::RecentEventsSelector { limit: 3 }),
             })
             .await
             .expect("read");
@@ -3458,186 +3597,155 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn cancel_active_run_uses_runtime_active_run() {
-        let sessions = Arc::new(InMemorySessionStore::new());
-        let child = open_source_session(sessions.as_ref()).await;
-        let runtime = Arc::new(FakeRuntime::default());
-        runtime.sessions.lock().expect("lock").insert(
-            child.clone(),
-            api_session_view(
-                &child,
-                api::SessionStatus::Active,
-                vec![api_run_view("run_3", ApiRunStatus::Running)],
-            ),
-        );
-        let service = FleetService::new(sessions, runtime.clone());
-
-        let output = service
-            .cancel(AgentCancelArgs {
-                target_session_id: child.as_str().to_owned(),
-                scope: AgentCancelScope::ActiveRun,
-                reason: Some("test".to_owned()),
-            })
-            .await
-            .expect("cancel");
-
-        assert_eq!(output.status, "cancelled");
-        assert_eq!(output.run.as_ref().expect("run")["id"], "run_3");
-        assert_eq!(
-            runtime.cancelled_runs.lock().expect("lock").as_slice(),
-            &[(child, "run_3".to_owned())]
-        );
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn cancel_session_uses_runtime_close() {
-        let sessions = Arc::new(InMemorySessionStore::new());
-        let child = open_source_session(sessions.as_ref()).await;
-        let runtime = Arc::new(FakeRuntime::default());
-        let service = FleetService::new(sessions, runtime.clone());
-
-        let output = service
-            .cancel(AgentCancelArgs {
-                target_session_id: child.as_str().to_owned(),
-                scope: AgentCancelScope::Session,
-                reason: None,
-            })
-            .await
-            .expect("close");
-
-        assert_eq!(output.status, "closed");
-        assert_eq!(
-            output.session.as_ref().expect("session")["status"],
-            "closed"
-        );
-        assert_eq!(
-            runtime.closed_sessions.lock().expect("lock").as_slice(),
-            &[child]
-        );
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn wait_preflight_completed_run_returns_inline_output() {
+    async fn await_parser_satisfied_promise_still_defers() {
         let sessions = Arc::new(InMemorySessionStore::new());
         let parent = open_source_session(sessions.as_ref()).await;
-        let child = create_linked_child(sessions.as_ref(), &parent).await;
+        append_parent_with_promise(
+            sessions.as_ref(),
+            &parent,
+            "promise_done",
+            engine::PromiseStatus::Resolved,
+        )
+        .await;
         let runtime = Arc::new(FakeRuntime::default());
-        runtime.sessions.lock().expect("lock").insert(
-            child.clone(),
-            api_session_view(
-                &child,
-                api::SessionStatus::Idle,
-                vec![api_run_view("run_2", ApiRunStatus::Completed)],
-            ),
-        );
         let service = FleetService::new(sessions, runtime);
 
-        let output = match service
-            .wait(
-                context(parent),
-                ToolCallId::new("call_wait"),
+        let spec = service
+            .await_promises(
+                &context(parent),
+                ToolCallId::new("call_await"),
                 serde_json::from_value(json!({
-                    "waits": [{ "target_session_id": child.as_str(), "run_id": "run_2" }],
+                    "promises": ["promise_done"],
                     "mode": "all"
                 }))
-                .expect("wait args"),
+                .expect("await args"),
             )
             .await
-            .expect("wait")
-        {
-            FleetWaitPreflight::Completed(output) => output,
-            FleetWaitPreflight::Deferred(_) => panic!("completed run should not defer"),
-        };
+            .expect("await");
 
-        assert_eq!(output.outcome, AgentWaitOutcome::Terminal);
-        assert_eq!(output.results.len(), 1);
-        assert_eq!(output.results[0].status, AgentWaitHandleStatus::Terminal);
-        assert_eq!(
-            output.results[0]
-                .run
-                .as_ref()
-                .map(|run| run.status.as_str()),
-            Some("completed")
-        );
+        assert_eq!(spec.mode, engine::AwaitMode::All);
+        assert_eq!(spec.promise_ids, vec![PromiseId::new("promise_done")]);
+        assert_eq!(spec.deadline_at_ms, None);
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn wait_preflight_running_run_returns_deferred_directive() {
+    async fn await_parser_sets_absolute_deadline() {
         let sessions = Arc::new(InMemorySessionStore::new());
         let parent = open_source_session(sessions.as_ref()).await;
-        let child = create_linked_child(sessions.as_ref(), &parent).await;
+        append_parent_with_promise(
+            sessions.as_ref(),
+            &parent,
+            "promise_pending",
+            engine::PromiseStatus::Pending,
+        )
+        .await;
         let runtime = Arc::new(FakeRuntime::default());
-        runtime.sessions.lock().expect("lock").insert(
-            child.clone(),
-            api_session_view(
-                &child,
-                api::SessionStatus::Active,
-                vec![api_run_view("run_2", ApiRunStatus::Running)],
-            ),
-        );
         let service = FleetService::new(sessions, runtime);
 
-        let directive = match service
-            .wait(
-                context(parent),
-                ToolCallId::new("call_wait"),
+        let mut ctx = context(parent);
+        ctx.observed_at_ms = 10_000;
+        let spec = service
+            .await_promises(
+                &ctx,
+                ToolCallId::new("call_await"),
                 serde_json::from_value(json!({
-                    "waits": [{ "target_session_id": child.as_str(), "run_id": "run_2" }],
+                    "promises": ["promise_pending"],
                     "mode": "all",
                     "timeout_ms": 5000
                 }))
-                .expect("wait args"),
+                .expect("await args"),
             )
             .await
-            .expect("wait")
-        {
-            FleetWaitPreflight::Completed(_) => panic!("running run should defer"),
-            FleetWaitPreflight::Deferred(directive) => directive,
-        };
+            .expect("await");
 
-        assert_eq!(directive.call_id, ToolCallId::new("call_wait"));
-        assert_eq!(directive.mode, WorkflowAgentWaitMode::All);
-        assert_eq!(directive.timeout_ms, Some(5000));
-        assert_eq!(directive.handles.len(), 1);
-        assert_eq!(directive.handles[0].target_session_id, child);
-        assert_eq!(directive.handles[0].run_id, RunId::new(2));
-        assert_eq!(directive.results[0].status, AgentWaitHandleStatus::Pending);
+        assert_eq!(spec.mode, engine::AwaitMode::All);
+        assert_eq!(spec.promise_ids, vec![PromiseId::new("promise_pending")]);
+        assert_eq!(spec.deadline_at_ms, Some(15_000));
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn fleet_executor_lone_wait_can_return_deferred_batch() {
+    async fn await_parser_zero_timeout_defers_with_immediate_deadline() {
         let sessions = Arc::new(InMemorySessionStore::new());
         let parent = open_source_session(sessions.as_ref()).await;
-        let child = create_linked_child(sessions.as_ref(), &parent).await;
+        append_parent_with_promise(
+            sessions.as_ref(),
+            &parent,
+            "promise_pending",
+            engine::PromiseStatus::Pending,
+        )
+        .await;
+        let runtime = Arc::new(FakeRuntime::default());
+        let service = FleetService::new(sessions, runtime);
+
+        let spec = service
+            .await_promises(
+                &context(parent),
+                ToolCallId::new("call_await"),
+                serde_json::from_value(json!({
+                    "promises": ["promise_pending"],
+                    "mode": "all",
+                    "timeout_ms": 0
+                }))
+                .expect("await args"),
+            )
+            .await
+            .expect("await");
+        assert_eq!(spec.promise_ids, vec![PromiseId::new("promise_pending")]);
+        assert_eq!(spec.deadline_at_ms, Some(10));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn await_parser_unknown_promise_defers_for_engine_validation() {
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let parent = open_source_session(sessions.as_ref()).await;
+        let runtime = Arc::new(FakeRuntime::default());
+        let service = FleetService::new(sessions, runtime);
+
+        let spec = service
+            .await_promises(
+                &context(parent),
+                ToolCallId::new("call_await"),
+                serde_json::from_value(json!({
+                    "promises": ["promise_missing"],
+                    "mode": "all"
+                }))
+                .expect("await args"),
+            )
+            .await
+            .expect("await");
+        assert_eq!(spec.promise_ids, vec![PromiseId::new("promise_missing")]);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn fleet_executor_lone_await_returns_deferred_batch() {
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let parent = open_source_session(sessions.as_ref()).await;
+        append_parent_with_promise(
+            sessions.as_ref(),
+            &parent,
+            "promise_pending",
+            engine::PromiseStatus::Pending,
+        )
+        .await;
         let blobs = Arc::new(engine::storage::InMemoryBlobStore::new());
         let runtime = Arc::new(FakeRuntime::default());
-        runtime.sessions.lock().expect("lock").insert(
-            child.clone(),
-            api_session_view(
-                &child,
-                api::SessionStatus::Active,
-                vec![api_run_view("run_2", ApiRunStatus::Running)],
-            ),
-        );
         let service = FleetService::new(sessions, runtime);
         let executor = FleetToolExecutor::new(blobs.clone(), service);
         let arguments_ref = blobs
             .put_bytes(
-                format!(
-                    r#"{{"waits":[{{"target_session_id":"{}","run_id":"run_2"}}]}}"#,
-                    child.as_str()
-                )
-                .into_bytes(),
+                r#"{"promises":["promise_pending"],"timeout_ms":5000}"#
+                    .as_bytes()
+                    .to_vec(),
             )
             .await
             .expect("args");
 
         let outcome = executor
-            .invoke_wait_batch(
+            .invoke_await_batch(
                 context(parent),
                 &ToolInvocationRequest {
-                    call_id: ToolCallId::new("call_wait"),
-                    tool_name: ToolName::new(AGENT_WAIT_TOOL_NAME),
+                    call_id: ToolCallId::new("call_await"),
+                    tool_name: ToolName::new(AWAIT_TOOL_NAME),
                     arguments_ref,
                     execution_target: None,
                 },
@@ -3647,175 +3755,16 @@ mod tests {
 
         let ToolBatchOutcome::Deferred {
             batch_id,
-            resume_directive,
+            call_id,
+            completed_results: _,
+            spec,
         } = outcome
         else {
-            panic!("wait should defer");
+            panic!("await should defer");
         };
         assert_eq!(batch_id, ToolBatchId::new(1));
-        assert_eq!(resume_directive.api_kind, FLEET_AGENT_WAIT_DIRECTIVE_KIND);
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn fleet_executor_lone_wait_includes_child_final_output() {
-        let sessions = Arc::new(InMemorySessionStore::new());
-        let parent = open_source_session(sessions.as_ref()).await;
-        let child = create_linked_child(sessions.as_ref(), &parent).await;
-        let blobs = Arc::new(engine::storage::InMemoryBlobStore::new());
-        append_completed_run_with_output(
-            sessions.as_ref(),
-            blobs.as_ref(),
-            &child,
-            RunId::new(1),
-            "full child answer\nwith every line",
-        )
-        .await;
-        let runtime = Arc::new(FakeRuntime::default());
-        let service = FleetService::new(sessions, runtime.clone());
-        let executor = FleetToolExecutor::new(blobs.clone(), service);
-        let arguments_ref = blobs
-            .put_bytes(
-                format!(
-                    r#"{{"waits":[{{"target_session_id":"{}","run_id":"run_1"}}]}}"#,
-                    child.as_str()
-                )
-                .into_bytes(),
-            )
-            .await
-            .expect("args");
-
-        let outcome = executor
-            .invoke_wait_batch(
-                context(parent),
-                &ToolInvocationRequest {
-                    call_id: ToolCallId::new("call_wait"),
-                    tool_name: ToolName::new(AGENT_WAIT_TOOL_NAME),
-                    arguments_ref,
-                    execution_target: None,
-                },
-            )
-            .await
-            .expect("invoke");
-
-        let ToolBatchOutcome::Completed { result } = outcome else {
-            panic!("wait should complete from stored terminal run");
-        };
-        if result.results[0].status != ToolCallStatus::Succeeded {
-            let error = match result.results[0].error_ref.as_ref() {
-                Some(error_ref) => Some(blobs.read_text(error_ref).await.expect("read error")),
-                None => None,
-            };
-            panic!("wait failed: {error:?}");
-        }
-        let output_ref = result.results[0].output_ref.as_ref().unwrap_or_else(|| {
-            panic!(
-                "missing output: error_ref={:?}",
-                result.results[0].error_ref.as_ref()
-            )
-        });
-        let output: AgentWaitOutput =
-            serde_json::from_slice(&blobs.read_bytes(output_ref).await.expect("read output"))
-                .expect("decode output");
-        if output.outcome != AgentWaitOutcome::Terminal {
-            panic!("unexpected wait output: {output:?}");
-        }
-        assert_eq!(
-            output.results[0]
-                .run
-                .as_ref()
-                .and_then(|run| run.output_ref.as_ref())
-                .map(BlobRef::as_str),
-            Some(BlobRef::from_bytes(b"full child answer\nwith every line").as_str())
-        );
-        let wait_result = &result.results[0];
-        let summary_ref = visible_tool_result_ref(wait_result);
-        let summary = blobs.read_text(&summary_ref).await.expect("read summary");
-        assert!(summary.contains("agent_wait resolved with outcome terminal"));
-        assert!(!summary.contains("full child answer"));
-        let visible_messages = wait_result
-            .model_visible_context_entries
-            .iter()
-            .filter(|entry| matches!(entry.kind, ContextEntryKind::Message { .. }))
-            .collect::<Vec<_>>();
-        assert_eq!(visible_messages.len(), 1);
-        let wrapped_output = visible_messages[0];
-        assert!(
-            wrapped_output
-                .preview
-                .as_deref()
-                .is_some_and(|text| text.contains("Subagent result: final_output from child run_1"))
-        );
-        let wrapped_output = blobs
-            .read_text(&wrapped_output.content_ref)
-            .await
-            .expect("read wrapped output");
-        assert!(wrapped_output.contains("Subagent result"));
-        assert!(wrapped_output.contains("target_session_id: child"));
-        assert!(wrapped_output.contains("run_id: run_1"));
-        assert!(wrapped_output.contains("status: completed"));
-        assert!(wrapped_output.contains("result_item_count: 1"));
-        assert!(wrapped_output.contains("result_item_1_kind: final_output"));
-        assert!(wrapped_output.contains("Final output:\nfull child answer\nwith every line"));
-        let child_output_ref = BlobRef::from_bytes(b"full child answer\nwith every line");
-        assert!(
-            !visible_messages
-                .iter()
-                .any(|entry| entry.content_ref == child_output_ref),
-            "text child output should be wrapped with subagent identity, not injected raw"
-        );
-        assert!(runtime.started_sessions.lock().expect("lock").is_empty());
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn wait_context_preserves_non_text_result_as_bundle_item() {
-        let blobs = Arc::new(engine::storage::InMemoryBlobStore::new());
-        let binary_ref = blobs
-            .put_bytes(vec![0xff, 0xfe, 0xfd])
-            .await
-            .expect("binary output");
-        let output = AgentWaitOutput {
-            outcome: AgentWaitOutcome::Terminal,
-            results: vec![AgentWaitHandleResult {
-                target_session_id: "child".to_owned(),
-                run_id: "run_1".to_owned(),
-                status: AgentWaitHandleStatus::Terminal,
-                run: Some(AgentWaitRunResult {
-                    status: "completed".to_owned(),
-                    output_ref: Some(binary_ref.clone()),
-                    failure_message_ref: None,
-                }),
-                error: None,
-            }],
-        };
-
-        let entries = wait_model_visible_context_entries(
-            blobs.as_ref(),
-            &ToolCallId::new("call_wait"),
-            &output,
-        )
-        .await
-        .expect("visible entries");
-        let visible_messages = entries
-            .iter()
-            .filter(|entry| matches!(entry.kind, ContextEntryKind::Message { .. }))
-            .collect::<Vec<_>>();
-
-        assert_eq!(visible_messages.len(), 2);
-        let header = blobs
-            .read_text(&visible_messages[0].content_ref)
-            .await
-            .expect("read header");
-        assert!(header.contains("Subagent result"));
-        assert!(header.contains("target_session_id: child"));
-        assert!(header.contains("run_id: run_1"));
-        assert!(header.contains("status: completed"));
-        assert!(header.contains("result_item_count: 1"));
-        assert!(header.contains("result_item_1_kind: final_output"));
-        assert!(header.contains("The next context item belongs to this subagent result."));
-        assert_eq!(visible_messages[1].content_ref, binary_ref);
-        assert!(visible_messages[1].preview.as_deref().is_some_and(|text| {
-            text.contains("Subagent result item 1/1: final_output from child run_1")
-        }));
+        assert_eq!(call_id, ToolCallId::new("call_await"));
+        assert_eq!(spec.promise_ids, vec![PromiseId::new("promise_pending")]);
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -3969,6 +3918,142 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn profile_tools_apply_fleet_profile_policy() {
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let parent = open_source_session_with_fleet_config(
+            sessions.as_ref(),
+            FleetConfig {
+                profiles: FleetProfilesConfig {
+                    allow: Some(vec!["support".to_owned(), "admin".to_owned()]),
+                    deny: vec!["admin".to_owned()],
+                    inline: true,
+                },
+                spawn: FleetSpawnConfig::default(),
+            },
+        )
+        .await;
+        let blobs = Arc::new(engine::storage::InMemoryBlobStore::new());
+        let support = test_profile("support");
+        let admin = test_profile("admin");
+        let hidden = test_profile("hidden");
+        let runtime = Arc::new(FakeRuntime::default());
+        {
+            let mut profiles = runtime.profiles.lock().expect("lock");
+            profiles.insert(support.profile_id.clone(), support.clone());
+            profiles.insert(admin.profile_id.clone(), admin);
+            profiles.insert(hidden.profile_id.clone(), hidden);
+        }
+        let service = FleetService::new(sessions, runtime);
+        let executor = FleetToolExecutor::new(blobs.clone(), service);
+
+        let list_result = executor
+            .invoke(
+                context(parent.clone()),
+                &ToolInvocationRequest {
+                    call_id: ToolCallId::new("call_profile_list"),
+                    tool_name: ToolName::new(PROFILE_LIST_TOOL_NAME),
+                    arguments_ref: blobs.put_bytes(br#"{}"#.to_vec()).await.expect("args"),
+                    execution_target: None,
+                },
+            )
+            .await
+            .expect("invoke list");
+        assert_eq!(list_result.status, ToolCallStatus::Succeeded);
+        let list_output: ProfileListOutput = serde_json::from_slice(
+            &blobs
+                .read_bytes(list_result.output_ref.as_ref().expect("list output"))
+                .await
+                .expect("read list output"),
+        )
+        .expect("decode list output");
+        assert_eq!(list_output.profiles, vec![support.summary()]);
+
+        let denied_read = executor
+            .invoke(
+                context(parent),
+                &ToolInvocationRequest {
+                    call_id: ToolCallId::new("call_profile_read"),
+                    tool_name: ToolName::new(PROFILE_READ_TOOL_NAME),
+                    arguments_ref: blobs
+                        .put_bytes(br#"{"profile_id":"admin"}"#.to_vec())
+                        .await
+                        .expect("args"),
+                    execution_target: None,
+                },
+            )
+            .await
+            .expect("invoke read");
+        assert_eq!(denied_read.status, ToolCallStatus::Failed);
+        let error = blobs
+            .read_text(denied_read.error_ref.as_ref().expect("error"))
+            .await
+            .expect("read error");
+        assert!(error.contains("profile admin is not allowed"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn spawn_rejects_disallowed_profile_sources_and_bases() {
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let parent = open_source_session_with_fleet_config(
+            sessions.as_ref(),
+            FleetConfig {
+                profiles: FleetProfilesConfig {
+                    allow: Some(vec!["worker".to_owned()]),
+                    deny: Vec::new(),
+                    inline: false,
+                },
+                spawn: FleetSpawnConfig {
+                    bases: Some(vec![FleetSpawnBase::Profile]),
+                },
+            },
+        )
+        .await;
+        let runtime = Arc::new(FakeRuntime::default());
+        let service = FleetService::new(sessions, runtime.clone());
+
+        let mut self_args = spawn_args("clone yourself");
+        self_args.base = AgentSpawnBase::Self_ { fork: None };
+        let self_error = service
+            .spawn(context(parent.clone()), self_args)
+            .await
+            .expect_err("self base should be rejected");
+        assert!(self_error.message.contains("base self is not allowed"));
+
+        let mut denied_named = spawn_args("spawn admin");
+        denied_named.base = AgentSpawnBase::Profile {
+            profile: ProfileSource::Named {
+                profile_id: ProfileId::new("admin"),
+            },
+        };
+        let named_error = service
+            .spawn(context(parent.clone()), denied_named)
+            .await
+            .expect_err("named profile should be rejected");
+        assert!(named_error.message.contains("profile admin is not allowed"));
+
+        let mut inline = spawn_args("spawn inline");
+        inline.base = AgentSpawnBase::Profile {
+            profile: ProfileSource::Inline {
+                profile: api::InlineAgentProfile {
+                    display_name: None,
+                    description: None,
+                    document: api::ProfileDocument::default(),
+                },
+            },
+        };
+        let inline_error = service
+            .spawn(context(parent), inline)
+            .await
+            .expect_err("inline profile should be rejected");
+        assert!(
+            inline_error
+                .message
+                .contains("inline profiles are not allowed")
+        );
+        assert!(runtime.started_sessions.lock().expect("lock").is_empty());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn fleet_executor_runs_send_and_writes_output_blobs() {
         let sessions = Arc::new(InMemorySessionStore::new());
         let parent = open_source_session(sessions.as_ref()).await;
@@ -4007,7 +4092,7 @@ mod tests {
             serde_json::from_slice(&blobs.read_bytes(output_ref).await.expect("read output"))
                 .expect("decode output");
         assert_eq!(output.target_session_id.as_deref(), Some(child.as_str()));
-        assert_eq!(output.run_id.as_deref(), Some("run_1"));
+        assert_eq!(output.run_id, None);
         let visible_ref = visible_tool_result_ref(&result);
         let visible = blobs.read_text(&visible_ref).await.expect("read visible");
         assert!(visible.contains("Delivered message"));
@@ -4043,6 +4128,13 @@ mod tests {
     }
 
     async fn open_source_session(sessions: &InMemorySessionStore) -> SessionId {
+        open_source_session_with_fleet_config(sessions, FleetConfig::default()).await
+    }
+
+    async fn open_source_session_with_fleet_config(
+        sessions: &InMemorySessionStore,
+        fleet: FleetConfig,
+    ) -> SessionId {
         let source = SessionId::new("parent");
         sessions
             .create_session(CreateSession {
@@ -4053,7 +4145,8 @@ mod tests {
             .await
             .expect("create source");
         let opening_events =
-            core_agent_clone_opening_events(&open_state(), 2).expect("opening events");
+            core_agent_clone_opening_events(&open_state_with_fleet_config(fleet), 2)
+                .expect("opening events");
         sessions
             .append(engine::storage::AppendSessionEvents {
                 session_id: source.clone(),
@@ -4072,7 +4165,8 @@ mod tests {
                 source_session_id: parent.clone(),
                 session_id: child.clone(),
                 created_at_ms: 20,
-                opening_events: Vec::new(),
+                opening_events: core_agent_clone_opening_events(&open_state(), 20)
+                    .expect("opening events"),
             })
             .await
             .expect("child");
@@ -4089,50 +4183,80 @@ mod tests {
         child
     }
 
-    async fn append_completed_run_with_output(
+    /// Append an active run (run 1, matching the test `context()`), then a
+    /// `Promise(Created)` in the given status scoped to that run. The parent
+    /// session must already be open (via `open_source_session`).
+    async fn append_parent_with_promise(
         sessions: &InMemorySessionStore,
-        blobs: &engine::storage::InMemoryBlobStore,
         session_id: &SessionId,
-        run_id: RunId,
-        output: &str,
+        promise_id: &str,
+        status: engine::PromiseStatus,
     ) {
-        let output_ref = blobs
-            .put_bytes(output.as_bytes().to_vec())
-            .await
-            .expect("put output");
-        let mut events =
-            core_agent_clone_opening_events(&open_state(), 22).expect("opening events");
-        events.extend([
+        let run_id = RunId::new(1);
+        let mut events = vec![
             core_uncommitted_event(
-                30,
+                40,
                 engine::CoreAgentEvent::Run(engine::RunEvent::Accepted(engine::AcceptedRunEvent {
+                    notify_on_terminal: Vec::new(),
                     run_id,
                     submission_id: None,
+                    origin: engine::RunOrigin::Requested,
                     source: engine::RunSource::Input { input: Vec::new() },
                     run_config: RunConfig::default(),
                     config_revision: 0,
                 })),
             ),
             core_uncommitted_event(
-                31,
+                41,
                 engine::CoreAgentEvent::Run(engine::RunEvent::Started { run_id }),
             ),
             core_uncommitted_event(
-                32,
-                engine::CoreAgentEvent::Run(engine::RunEvent::Completed {
-                    run_id,
-                    output_ref: Some(output_ref),
+                42,
+                engine::CoreAgentEvent::Promise(engine::PromiseEvent::Created {
+                    promise: engine::Promise {
+                        promise_id: engine::PromiseId::new(promise_id),
+                        source: engine::PromiseSource::Run {
+                            target_session_id: "child".to_owned(),
+                            target_run_id: 2,
+                        },
+                        scope: engine::PromiseScope::Run { run_id },
+                        status: engine::PromiseStatus::Pending,
+                        payload_ref: None,
+                        error_ref: None,
+                        deadline_ms: None,
+                    },
                 }),
             ),
-        ]);
+        ];
+        if status.is_terminal() {
+            let resolution_event = match status {
+                engine::PromiseStatus::Resolved => engine::PromiseEvent::Resolved {
+                    promise_id: engine::PromiseId::new(promise_id),
+                    payload_ref: None,
+                },
+                engine::PromiseStatus::Failed => engine::PromiseEvent::Failed {
+                    promise_id: engine::PromiseId::new(promise_id),
+                    error_ref: None,
+                },
+                engine::PromiseStatus::Cancelled => engine::PromiseEvent::Cancelled {
+                    promise_id: engine::PromiseId::new(promise_id),
+                },
+                engine::PromiseStatus::Pending => unreachable!(),
+            };
+            events.push(core_uncommitted_event(
+                43,
+                engine::CoreAgentEvent::Promise(resolution_event),
+            ));
+        }
+        let head = sessions.head(session_id).await.expect("head");
         sessions
             .append(engine::storage::AppendSessionEvents {
                 session_id: session_id.clone(),
-                expected_head: None,
+                expected_head: head,
                 events,
             })
             .await
-            .expect("append completed run");
+            .expect("append promise");
     }
 
     fn core_uncommitted_event(
@@ -4171,6 +4295,10 @@ mod tests {
     }
 
     fn open_state() -> engine::CoreAgentState {
+        open_state_with_fleet_config(FleetConfig::default())
+    }
+
+    fn open_state_with_fleet_config(fleet: FleetConfig) -> engine::CoreAgentState {
         let mut state = engine::CoreAgentState::new();
         state.lifecycle.config = Some(SessionConfig {
             model: ModelSelection {
@@ -4186,6 +4314,7 @@ mod tests {
             },
             context: ContextConfig { compaction: None },
             tools: ToolConfig::default(),
+            fleet,
         });
         state
     }
@@ -4214,6 +4343,15 @@ mod tests {
                     web_fetch: false,
                     filesystem: api::FilesystemToolMode::Edit,
                     fleet: true,
+                    timer: false,
+                },
+                fleet: api::FleetConfigView {
+                    profiles: api::FleetProfilesConfigView {
+                        allow: None,
+                        deny: Vec::new(),
+                        inline: true,
+                    },
+                    spawn: api::FleetSpawnConfigView { bases: None },
                 },
             }),
             created_at_ms: 1,

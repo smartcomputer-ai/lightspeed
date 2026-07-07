@@ -43,6 +43,7 @@ pub fn default_session_config(model: ModelSelection) -> SessionConfig {
         },
         context: ContextConfig { compaction: None },
         tools: engine::ToolConfig::default(),
+        fleet: engine::FleetConfig::default(),
     }
 }
 

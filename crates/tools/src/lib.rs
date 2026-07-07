@@ -5,6 +5,7 @@
 //! independent from this crate.
 
 pub mod builtin;
+pub mod concurrency;
 pub mod environment;
 pub mod error;
 pub mod fleet;

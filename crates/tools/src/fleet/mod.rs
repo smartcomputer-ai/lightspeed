@@ -13,11 +13,10 @@ use crate::{
 };
 
 pub const AGENT_SPAWN_TOOL_NAME: &str = "agent_spawn";
+pub const AGENT_REQUEST_TOOL_NAME: &str = "agent_request";
 pub const AGENT_SEND_TOOL_NAME: &str = "agent_send";
-pub const AGENT_WAIT_TOOL_NAME: &str = "agent_wait";
 pub const AGENT_LIST_TOOL_NAME: &str = "agent_list";
 pub const AGENT_READ_TOOL_NAME: &str = "agent_read";
-pub const AGENT_CANCEL_TOOL_NAME: &str = "agent_cancel";
 pub const PROFILE_LIST_TOOL_NAME: &str = "profile_list";
 pub const PROFILE_READ_TOOL_NAME: &str = "profile_read";
 
@@ -44,11 +43,10 @@ pub fn is_fleet_tool(tool_name: &ToolName) -> bool {
     matches!(
         tool_name.as_str(),
         AGENT_SPAWN_TOOL_NAME
+            | AGENT_REQUEST_TOOL_NAME
             | AGENT_SEND_TOOL_NAME
-            | AGENT_WAIT_TOOL_NAME
             | AGENT_LIST_TOOL_NAME
             | AGENT_READ_TOOL_NAME
-            | AGENT_CANCEL_TOOL_NAME
             | PROFILE_LIST_TOOL_NAME
             | PROFILE_READ_TOOL_NAME
     )
@@ -68,8 +66,6 @@ pub struct AgentSpawnArgs {
     pub environment: EnvironmentPolicy,
     #[serde(default)]
     pub lifecycle: AgentSpawnLifecycle,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub report_back: Option<AgentReportBack>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -166,13 +162,6 @@ fn is_false(value: &bool) -> bool {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
-pub struct AgentReportBack {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub instructions: Option<String>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct AgentSendArgs {
     pub to: AgentSendTarget,
     pub text: String,
@@ -180,8 +169,17 @@ pub struct AgentSendArgs {
     pub input: Vec<AgentSendInputItem>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload: Option<Value>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub struct AgentRequestArgs {
+    pub to: AgentSendTarget,
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub input: Vec<AgentSendInputItem>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub report_back: Option<AgentReportBack>,
+    pub payload: Option<Value>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -224,31 +222,6 @@ pub enum AgentSendMediaKind {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
-pub struct AgentWaitArgs {
-    pub waits: Vec<AgentWaitHandleArg>,
-    #[serde(default)]
-    pub mode: AgentWaitMode,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timeout_ms: Option<u64>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", deny_unknown_fields)]
-pub struct AgentWaitHandleArg {
-    pub target_session_id: String,
-    pub run_id: String,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentWaitMode {
-    #[default]
-    All,
-    Any,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct AgentReadArgs {
     pub target_session_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -276,15 +249,6 @@ pub enum AgentListDirection {
     Parents,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", deny_unknown_fields)]
-pub struct AgentCancelArgs {
-    pub target_session_id: String,
-    pub scope: AgentCancelScope,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-}
-
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct ProfileListArgs {}
@@ -293,13 +257,6 @@ pub struct ProfileListArgs {}
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct ProfileReadArgs {
     pub profile_id: String,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentCancelScope {
-    ActiveRun,
-    Session,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -324,6 +281,10 @@ pub struct AgentSpawnOutput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub child_run_id: Option<String>,
     pub status: String,
+    /// Promise settled by the started child run's terminal state; absent
+    /// when the spawn did not start a run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub promise: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -343,6 +304,29 @@ pub struct AgentSendOutput {
 pub enum AgentSendStatus {
     Delivered,
     NotReachable,
+    QueueFull,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRequestOutput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub submission_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub promise: Option<String>,
+    pub status: AgentRequestStatus,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRequestStatus {
+    Delivered,
+    NotReachable,
+    QueueFull,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -405,18 +389,6 @@ pub struct AgentReadOutput {
     pub recent_transcript: Vec<Value>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentCancelOutput {
-    pub target_session_id: String,
-    pub scope: AgentCancelScope,
-    pub status: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub run: Option<Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session: Option<Value>,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct ProfileListOutput {
@@ -434,21 +406,21 @@ pub fn fleet_tool_bundles(config: &FleetToolsetConfig) -> ToolResult<Vec<ToolSpe
     if !config.enabled {
         return Ok(Vec::new());
     }
-    Ok(vec![
+    let bundles = vec![
         function_bundle(
             AGENT_SPAWN_TOOL_NAME,
-            "Create a linked child agent session by cloning or forking a source session and optionally start its first run. Use report_back when the child should send updates or results.",
+            "Create a linked child agent session by cloning or forking a source session and optionally start its first run.",
             spawn_input_schema(),
         )?,
         function_bundle(
-            AGENT_SEND_TOOL_NAME,
-            "Deliver a message to a reachable session, queueing a run on the recipient and returning once admitted. Use to parent for callbacks or to session for linked children and peers.",
-            send_input_schema(),
+            AGENT_REQUEST_TOOL_NAME,
+            "Ask a reachable session to do work and return a promise resolved by the requested run's terminal output.",
+            request_input_schema(),
         )?,
         function_bundle(
-            AGENT_WAIT_TOOL_NAME,
-            "Wait for one or more target session runs to reach a terminal state, optionally with a timeout. Must be called alone in its tool batch.",
-            wait_input_schema(),
+            AGENT_SEND_TOOL_NAME,
+            "Deliver a fire-and-forget message to a reachable session. This never returns a promise.",
+            send_input_schema(),
         )?,
         function_bundle(
             AGENT_LIST_TOOL_NAME,
@@ -461,11 +433,6 @@ pub fn fleet_tool_bundles(config: &FleetToolsetConfig) -> ToolResult<Vec<ToolSpe
             read_input_schema(),
         )?,
         function_bundle(
-            AGENT_CANCEL_TOOL_NAME,
-            "Cancel a related agent's active run or close the child agent, subject to policy.",
-            cancel_input_schema(),
-        )?,
-        function_bundle(
             PROFILE_LIST_TOOL_NAME,
             "List named agent profiles available for profile-based agent_spawn. Use profile_read to inspect a full profile document.",
             profile_list_input_schema(),
@@ -475,31 +442,33 @@ pub fn fleet_tool_bundles(config: &FleetToolsetConfig) -> ToolResult<Vec<ToolSpe
             "Read one full named agent profile document by id before spawning or explaining profile setup.",
             profile_read_input_schema(),
         )?,
-    ])
+    ];
+    Ok(bundles)
 }
 
 pub fn fleet_tool_bindings(execution: ToolExecutionMode) -> Vec<ToolBinding> {
     [
         AGENT_SPAWN_TOOL_NAME,
+        AGENT_REQUEST_TOOL_NAME,
         AGENT_SEND_TOOL_NAME,
-        AGENT_WAIT_TOOL_NAME,
         AGENT_LIST_TOOL_NAME,
         AGENT_READ_TOOL_NAME,
-        AGENT_CANCEL_TOOL_NAME,
         PROFILE_LIST_TOOL_NAME,
         PROFILE_READ_TOOL_NAME,
     ]
     .into_iter()
-    .map(|tool_name| {
-        ToolBinding::new(
-            ToolName::new(tool_name),
-            format!("{FLEET_LOGICAL_ID_PREFIX}{tool_name}"),
-            FLEET_ACTIVITY_TYPE,
-            execution.clone(),
-            ToolParallelism::Exclusive,
-        )
-    })
+    .map(|tool_name| fleet_tool_binding(tool_name, execution.clone()))
     .collect()
+}
+
+fn fleet_tool_binding(tool_name: &str, execution: ToolExecutionMode) -> ToolBinding {
+    ToolBinding::new(
+        ToolName::new(tool_name),
+        format!("{FLEET_LOGICAL_ID_PREFIX}{tool_name}"),
+        FLEET_ACTIVITY_TYPE,
+        execution,
+        ToolParallelism::Exclusive,
+    )
 }
 
 fn function_bundle(
@@ -644,21 +613,6 @@ fn profile_source_schema() -> Value {
     })
 }
 
-fn report_back_schema() -> Value {
-    json!({
-        "type": ["object", "null"],
-        "description": "When present, injects an instruction asking the recipient to report back cooperatively with agent_send. This is not a runtime subscription or trigger.",
-        "properties": {
-            "instructions": {
-                "type": ["string", "null"],
-                "description": "Optional extra guidance to include in the report-back instruction, such as when to send progress or final results."
-            }
-        },
-        "required": [],
-        "additionalProperties": false
-    })
-}
-
 fn spawn_input_schema() -> Value {
     json!({
         "type": "object",
@@ -694,8 +648,7 @@ fn spawn_input_schema() -> Value {
                 },
                 "additionalProperties": false,
                 "default": { "run_immediately": true }
-            },
-            "report_back": report_back_schema()
+            }
         },
         "required": ["input"],
         "additionalProperties": false
@@ -817,50 +770,29 @@ fn send_input_schema() -> Value {
                 "description": "Optional additional run input items appended after the Fleet send envelope."
             },
             "payload": arbitrary_json_schema("Optional structured JSON payload included in the Fleet send envelope."),
-            "report_back": report_back_schema()
         },
         "required": ["to", "text"],
         "additionalProperties": false
     })
 }
 
-fn wait_input_schema() -> Value {
+fn request_input_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "waits": {
-                "type": "array",
-                "minItems": 1,
-                "maxItems": 32,
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "target_session_id": {
-                            "type": "string",
-                            "description": "Session containing the run to join."
-                        },
-                        "run_id": {
-                            "type": "string",
-                            "description": "Run id returned by agent_spawn or agent_send, such as run_1."
-                        }
-                    },
-                    "required": ["target_session_id", "run_id"],
-                    "additionalProperties": false
-                }
-            },
-            "mode": {
+            "to": send_target_schema(),
+            "text": {
                 "type": "string",
-                "enum": ["all", "any"],
-                "default": "all",
-                "description": "all waits for every handle; any resolves on the first terminal handle."
+                "description": "Request text placed inside the Fleet request envelope."
             },
-            "timeout_ms": {
-                "type": ["integer", "null"],
-                "minimum": 0,
-                "description": "Optional timeout in milliseconds. Omit for an indefinite wait."
-            }
+            "input": {
+                "type": "array",
+                "items": send_input_item_schema(),
+                "description": "Optional additional run input items appended after the Fleet request envelope."
+            },
+            "payload": arbitrary_json_schema("Optional structured JSON payload included in the Fleet request envelope."),
         },
-        "required": ["waits"],
+        "required": ["to", "text"],
         "additionalProperties": false
     })
 }
@@ -885,22 +817,6 @@ fn list_input_schema() -> Value {
             }
         },
         "required": [],
-        "additionalProperties": false
-    })
-}
-
-fn cancel_input_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "target_session_id": { "type": "string" },
-            "scope": {
-                "type": "string",
-                "enum": ["active_run", "session"]
-            },
-            "reason": { "type": ["string", "null"] }
-        },
-        "required": ["target_session_id", "scope"],
         "additionalProperties": false
     })
 }
@@ -1064,14 +980,12 @@ mod tests {
     }
 
     #[test]
-    fn spawn_accepts_instruction_only_report_back() {
-        let args: AgentSpawnArgs = serde_json::from_value(json!({
+    fn spawn_rejects_report_back() {
+        serde_json::from_value::<AgentSpawnArgs>(json!({
             "input": "do work",
             "report_back": {}
         }))
-        .expect("decode args");
-
-        assert_eq!(args.report_back.expect("report_back").instructions, None);
+        .expect_err("report_back is not part of agent_spawn");
     }
 
     #[test]
@@ -1116,6 +1030,33 @@ mod tests {
     }
 
     #[test]
+    fn send_rejects_expect_tracking() {
+        serde_json::from_value::<AgentSendArgs>(json!({
+            "to": { "kind": "parent" },
+            "text": "done",
+            "expect": "completion"
+        }))
+        .expect_err("agent_send is fire-and-forget");
+    }
+
+    #[test]
+    fn request_accepts_tagged_parent_and_payload() {
+        let args: AgentRequestArgs = serde_json::from_value(json!({
+            "to": { "kind": "parent" },
+            "text": "please do work",
+            "payload": { "ok": true },
+            "input": [
+                { "type": "text", "text": "details" }
+            ]
+        }))
+        .expect("decode request args");
+
+        assert_eq!(args.to, AgentSendTarget::Parent);
+        assert_eq!(args.payload, Some(json!({ "ok": true })));
+        assert_eq!(args.input.len(), 1);
+    }
+
+    #[test]
     fn send_rejects_kind_framing_field() {
         serde_json::from_value::<AgentSendArgs>(json!({
             "to": { "kind": "parent" },
@@ -1126,42 +1067,23 @@ mod tests {
     }
 
     #[test]
-    fn wait_accepts_run_handles_and_mode() {
-        let args: AgentWaitArgs = serde_json::from_value(json!({
-            "waits": [
-                { "target_session_id": "child", "run_id": "run_1" }
-            ],
-            "mode": "any",
-            "timeout_ms": 1000
+    fn send_rejects_report_back() {
+        serde_json::from_value::<AgentSendArgs>(json!({
+            "to": { "kind": "parent" },
+            "text": "done",
+            "report_back": {}
         }))
-        .expect("decode wait args");
-
-        assert_eq!(args.waits.len(), 1);
-        assert_eq!(args.waits[0].run_id, "run_1");
-        assert_eq!(args.mode, AgentWaitMode::Any);
-        assert_eq!(args.timeout_ms, Some(1000));
+        .expect_err("report_back is not part of agent_send");
     }
 
     #[test]
-    fn wait_rejects_unknown_fields() {
-        serde_json::from_value::<AgentWaitArgs>(json!({
-            "waits": [
-                { "target_session_id": "child", "run_id": "run_1" }
-            ],
-            "until": "activity"
+    fn request_rejects_report_back() {
+        serde_json::from_value::<AgentRequestArgs>(json!({
+            "to": { "kind": "session", "target_session_id": "child" },
+            "text": "do work",
+            "report_back": {}
         }))
-        .expect_err("unknown fields are denied");
-    }
-
-    #[test]
-    fn cancel_rejects_queued_runs_scope() {
-        let error = serde_json::from_value::<AgentCancelArgs>(json!({
-            "target_session_id": "child",
-            "scope": "queued_runs"
-        }))
-        .expect_err("queued run cancellation is not part of v1");
-
-        assert!(error.to_string().contains("unknown variant"));
+        .expect_err("report_back is not part of agent_request");
     }
 
     #[test]
@@ -1189,9 +1111,15 @@ mod tests {
             .iter()
             .map(|bundle| bundle.spec.name.clone())
             .collect();
+        let binding_names: Vec<_> = fleet_tool_bindings(ToolExecutionMode::Inline)
+            .into_iter()
+            .map(|binding| binding.tool_name)
+            .collect();
 
+        assert!(names.contains(&ToolName::new(AGENT_REQUEST_TOOL_NAME)));
         assert!(names.contains(&ToolName::new(PROFILE_LIST_TOOL_NAME)));
         assert!(names.contains(&ToolName::new(PROFILE_READ_TOOL_NAME)));
+        assert!(binding_names.contains(&ToolName::new(AGENT_REQUEST_TOOL_NAME)));
         for bundle in bundles {
             let ToolKind::Function(function) = bundle.spec.kind else {
                 panic!("fleet tools should be functions");

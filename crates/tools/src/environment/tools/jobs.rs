@@ -1,19 +1,16 @@
 //! Canonical durable-job operations.
 
 use host_protocol::data::jobs::{
-    CancelJobsParams, ListJobsParams, ListJobsResponse, ReadJobsParams, StartJobsParams,
-    StartJobsResponse,
+    ListJobsParams, ListJobsResponse, ReadJobsParams, StartJobsParams, StartJobsResponse,
 };
 
 use crate::{
     environment::{
         EnvironmentToolContext,
         jobs::{
-            JobCancelArgs, JobCancelResultEntry, JobCancelResultSet, JobError, JobListArgs,
-            JobListResultEntry, JobListResultSet, JobReadArgs, JobReadResultEntry,
-            JobReadResultSet, JobStartArgs, JobStartResult, JobStarted, JobWaitArgs,
-            JobWaitOutcome, JobWaitResult, visible_job_list_output, visible_job_read_output,
-            wait_satisfied,
+            JobError, JobListArgs, JobListResultEntry, JobListResultSet, JobReadArgs,
+            JobReadResultEntry, JobReadResultSet, JobStartArgs, JobStartResult, JobStarted,
+            visible_job_list_output, visible_job_read_output,
         },
     },
     error::ToolResult,
@@ -82,92 +79,12 @@ pub async fn invoke_job_read(
     })
 }
 
-pub async fn invoke_job_wait(
-    ctx: &EnvironmentToolContext,
-    args: JobWaitArgs,
-) -> ToolResult<JobWaitResult> {
-    if args.jobs.is_empty() {
-        return Err(invalid_request("job_wait requires at least one job"));
-    }
-    let jobs = ctx.jobs.as_ref().ok_or_else(unsupported_job_capability)?;
-    let response = jobs
-        .read_jobs(ReadJobsParams {
-            namespace: job_namespace(ctx, None)?,
-            jobs: args.jobs.into_iter().map(|handle| handle.job_id).collect(),
-            after_seq: None,
-            max_bytes: args.output_bytes,
-            include_artifacts: args.include_artifacts,
-            wait_ms: None,
-        })
-        .await?;
-    let entries = response
-        .jobs
-        .into_iter()
-        .map(|job| JobReadResultEntry {
-            handle: None,
-            summary: Some(job.summary),
-            output_chunks: job.output_chunks,
-            output_next_seq: job.output_next_seq,
-            artifacts: job.artifacts,
-            error: None,
-        })
-        .collect::<Vec<_>>();
-    let outcome = if wait_satisfied(&entries, args.mode, args.terminal_policy) {
-        JobWaitOutcome::Satisfied
-    } else {
-        JobWaitOutcome::Pending
-    };
-    Ok(JobWaitResult {
-        outcome,
-        jobs: entries,
-    })
-}
-
-pub async fn invoke_job_cancel(
-    ctx: &EnvironmentToolContext,
-    args: JobCancelArgs,
-) -> ToolResult<JobCancelResultSet> {
-    if args.jobs.is_empty() {
-        return Err(invalid_request("job_cancel requires at least one job"));
-    }
-    let jobs = ctx.jobs.as_ref().ok_or_else(unsupported_job_capability)?;
-    let response = jobs
-        .cancel_jobs(CancelJobsParams {
-            namespace: job_namespace(ctx, None)?,
-            jobs: args.jobs.into_iter().map(|handle| handle.job_id).collect(),
-            scope: args.scope,
-            force: args.force,
-        })
-        .await?;
-    Ok(JobCancelResultSet {
-        jobs: response
-            .jobs
-            .into_iter()
-            .map(|summary| JobCancelResultEntry {
-                handle: None,
-                summary: Some(summary),
-                error: None,
-            })
-            .collect(),
-    })
-}
-
 pub fn job_read_visible(result: &JobReadResultSet) -> String {
     visible_job_read_output(&result.jobs)
 }
 
 pub fn job_list_visible(result: &JobListResultSet) -> String {
     visible_job_list_output(&result.jobs)
-}
-
-pub fn job_wait_visible(result: &JobWaitResult) -> String {
-    let mut visible = format!("job_wait outcome: {:?}", result.outcome);
-    let jobs = visible_job_read_output(&result.jobs);
-    if !jobs.is_empty() {
-        visible.push('\n');
-        visible.push_str(&jobs);
-    }
-    visible
 }
 
 fn start_params_from_args(
@@ -218,6 +135,7 @@ fn start_result_from_response(response: StartJobsResponse) -> JobStartResult {
                 status: summary.status,
                 dependencies: summary.dependencies,
                 queue_key: summary.queue_key,
+                promise: None,
             })
             .collect(),
     }

@@ -342,6 +342,7 @@ async fn run_both(args: BothArgs) -> anyhow::Result<()> {
     let stores = DeploymentStores::from_env()
         .await?
         .with_blob_cache(temporal_server::config::blob_cache_from_env()?);
+    let reaper_stores = stores.clone();
     let public_base_url = args
         .public_base_url
         .clone()
@@ -361,6 +362,8 @@ async fn run_both(args: BothArgs) -> anyhow::Result<()> {
     let shutdown_worker = temporal_worker.shutdown_handle();
     let worker_future = temporal_worker.run();
     tokio::pin!(worker_future);
+    let reaper_task =
+        tokio::spawn(worker::PromiseReaper::new(client.clone(), reaper_stores).run_forever());
 
     tracing::info!(
         target: "temporal_server",
@@ -383,12 +386,14 @@ async fn run_both(args: BothArgs) -> anyhow::Result<()> {
 
     tokio::select! {
         worker_result = worker_future.as_mut() => {
+            reaper_task.abort();
             match worker_result {
                 Ok(()) => anyhow::bail!("Temporal worker stopped while gateway was still running"),
                 Err(error) => Err(error.context("Temporal worker failed")),
             }
         }
         gateway_result = gateway_future.as_mut() => {
+            reaper_task.abort();
             shutdown_worker();
             tokio::time::timeout(Duration::from_secs(10), worker_future.as_mut())
                 .await

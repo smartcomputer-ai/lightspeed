@@ -15,6 +15,8 @@ pub struct SessionConfig {
     pub context: ContextConfig,
     #[serde(default)]
     pub tools: ToolConfig,
+    #[serde(default)]
+    pub fleet: FleetConfig,
 }
 
 impl SessionConfig {
@@ -53,6 +55,8 @@ pub struct SessionConfigPatch {
     pub context: ContextConfigPatch,
     #[serde(default, skip_serializing_if = "ToolConfigPatch::is_empty")]
     pub tools: ToolConfigPatch,
+    #[serde(default, skip_serializing_if = "FleetConfigPatch::is_empty")]
+    pub fleet: FleetConfigPatch,
 }
 
 impl SessionConfigPatch {
@@ -65,6 +69,7 @@ impl SessionConfigPatch {
         self.turn.apply_to(&mut next.turn);
         self.context.apply_to(&mut next.context);
         self.tools.apply_to(&mut next.tools);
+        self.fleet.apply_to(&mut next.fleet);
         next
     }
 
@@ -74,6 +79,7 @@ impl SessionConfigPatch {
             && self.turn.is_empty()
             && self.context.is_empty()
             && self.tools.is_empty()
+            && self.fleet.is_empty()
     }
 }
 
@@ -181,6 +187,8 @@ pub struct ToolConfigPatch {
     pub messaging: Option<OptionalConfigPatch<bool>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fleet: Option<OptionalConfigPatch<bool>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timer: Option<OptionalConfigPatch<bool>>,
 }
 
 impl ToolConfigPatch {
@@ -190,6 +198,7 @@ impl ToolConfigPatch {
         apply_optional_config_patch(&mut config.filesystem, &self.filesystem);
         apply_optional_config_patch(&mut config.messaging, &self.messaging);
         apply_optional_config_patch(&mut config.fleet, &self.fleet);
+        apply_optional_config_patch(&mut config.timer, &self.timer);
     }
 
     pub fn is_empty(&self) -> bool {
@@ -198,6 +207,7 @@ impl ToolConfigPatch {
             && self.filesystem.is_none()
             && self.messaging.is_none()
             && self.fleet.is_none()
+            && self.timer.is_none()
     }
 }
 
@@ -207,6 +217,37 @@ fn apply_optional_config_patch<T: Clone>(
 ) {
     if let Some(patch) = patch {
         patch.apply_to(value);
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FleetConfigPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profiles: Option<OptionalConfigPatch<FleetProfilesConfig>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spawn: Option<OptionalConfigPatch<FleetSpawnConfig>>,
+}
+
+impl FleetConfigPatch {
+    pub fn apply_to(&self, config: &mut FleetConfig) {
+        apply_value_or_default_patch(&mut config.profiles, &self.profiles);
+        apply_value_or_default_patch(&mut config.spawn, &self.spawn);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.profiles.is_none() && self.spawn.is_none()
+    }
+}
+
+fn apply_value_or_default_patch<T: Clone + Default>(
+    value: &mut T,
+    patch: &Option<OptionalConfigPatch<T>>,
+) {
+    if let Some(patch) = patch {
+        match patch {
+            OptionalConfigPatch::Set(next) => *value = next.clone(),
+            OptionalConfigPatch::Clear => *value = T::default(),
+        }
     }
 }
 
@@ -308,6 +349,88 @@ pub struct ToolConfig {
     /// (agent_spawn/send/read/list/cancel and profile_list/read).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fleet: Option<bool>,
+    /// Enables timer promises through the sleep tool. Also exposes the base
+    /// concurrency tools (await/cancel/detach).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timer: Option<bool>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FleetConfig {
+    #[serde(default, skip_serializing_if = "FleetProfilesConfig::is_default")]
+    pub profiles: FleetProfilesConfig,
+    #[serde(default, skip_serializing_if = "FleetSpawnConfig::is_default")]
+    pub spawn: FleetSpawnConfig,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FleetProfilesConfig {
+    /// None means all named profiles are visible/spawnable; Some(empty) means none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deny: Vec<String>,
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub inline: bool,
+}
+
+impl Default for FleetProfilesConfig {
+    fn default() -> Self {
+        Self {
+            allow: None,
+            deny: Vec::new(),
+            inline: true,
+        }
+    }
+}
+
+impl FleetProfilesConfig {
+    pub fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+
+    pub fn named_profile_allowed(&self, profile_id: &str) -> bool {
+        let allowed = self
+            .allow
+            .as_ref()
+            .is_none_or(|allow| allow.iter().any(|allowed| allowed == profile_id));
+        let denied = self.deny.iter().any(|denied| denied == profile_id);
+        allowed && !denied
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FleetSpawnConfig {
+    /// None means all spawn bases are allowed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bases: Option<Vec<FleetSpawnBase>>,
+}
+
+impl Default for FleetSpawnConfig {
+    fn default() -> Self {
+        Self { bases: None }
+    }
+}
+
+impl FleetSpawnConfig {
+    pub fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+
+    pub fn base_allowed(&self, base: FleetSpawnBase) -> bool {
+        self.bases
+            .as_ref()
+            .is_none_or(|bases| bases.iter().any(|allowed| *allowed == base))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FleetSpawnBase {
+    #[serde(rename = "self")]
+    Self_,
+    Session,
+    Profile,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -316,6 +439,14 @@ pub enum FilesystemToolMode {
     None,
     ReadOnly,
     Edit,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -491,6 +622,7 @@ mod tests {
             },
             context: ContextConfig { compaction },
             tools: Default::default(),
+            fleet: Default::default(),
         }
     }
 

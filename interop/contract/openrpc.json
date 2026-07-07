@@ -622,6 +622,23 @@
         ],
         "type": "object"
       },
+      "AgentApiOutcomeOfMessageSubmitResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/MessageSubmitResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
       "AgentApiOutcomeOfOperatorOutboxReadResponse": {
         "properties": {
           "notifications": {
@@ -4112,6 +4129,70 @@
           }
         ]
       },
+      "FieldPatchOfFleetProfilesConfigInput": {
+        "oneOf": [
+          {
+            "properties": {
+              "op": {
+                "const": "set",
+                "type": "string"
+              },
+              "value": {
+                "$ref": "#/components/schemas/FleetProfilesConfigInput"
+              }
+            },
+            "required": [
+              "op",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "op": {
+                "const": "clear",
+                "type": "string"
+              }
+            },
+            "required": [
+              "op"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "FieldPatchOfFleetSpawnConfigInput": {
+        "oneOf": [
+          {
+            "properties": {
+              "op": {
+                "const": "set",
+                "type": "string"
+              },
+              "value": {
+                "$ref": "#/components/schemas/FleetSpawnConfigInput"
+              }
+            },
+            "required": [
+              "op",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "op": {
+                "const": "clear",
+                "type": "string"
+              }
+            },
+            "required": [
+              "op"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "FieldPatchOfProfileInstructions": {
         "oneOf": [
           {
@@ -4313,6 +4394,162 @@
           "edit"
         ],
         "type": "string"
+      },
+      "FleetConfigInput": {
+        "properties": {
+          "profiles": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FleetProfilesConfigInput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "spawn": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FleetSpawnConfigInput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "FleetConfigPatchInput": {
+        "properties": {
+          "profiles": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FieldPatchOfFleetProfilesConfigInput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "spawn": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FieldPatchOfFleetSpawnConfigInput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "FleetConfigView": {
+        "properties": {
+          "profiles": {
+            "$ref": "#/components/schemas/FleetProfilesConfigView"
+          },
+          "spawn": {
+            "$ref": "#/components/schemas/FleetSpawnConfigView"
+          }
+        },
+        "required": [
+          "profiles",
+          "spawn"
+        ],
+        "type": "object"
+      },
+      "FleetProfilesConfigInput": {
+        "properties": {
+          "allow": {
+            "description": "Absent means all named profiles are visible/readable/spawnable.",
+            "items": {
+              "$ref": "#/components/schemas/ProfileId"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "deny": {
+            "items": {
+              "$ref": "#/components/schemas/ProfileId"
+            },
+            "type": "array"
+          },
+          "inline": {
+            "description": "Defaults to true when omitted.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "FleetProfilesConfigView": {
+        "properties": {
+          "allow": {
+            "items": {
+              "$ref": "#/components/schemas/ProfileId"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "deny": {
+            "items": {
+              "$ref": "#/components/schemas/ProfileId"
+            },
+            "type": "array"
+          },
+          "inline": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "inline"
+        ],
+        "type": "object"
+      },
+      "FleetSpawnBaseConfig": {
+        "enum": [
+          "self",
+          "session",
+          "profile"
+        ],
+        "type": "string"
+      },
+      "FleetSpawnConfigInput": {
+        "properties": {
+          "bases": {
+            "description": "Absent means all bases are allowed.",
+            "items": {
+              "$ref": "#/components/schemas/FleetSpawnBaseConfig"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "FleetSpawnConfigView": {
+        "properties": {
+          "bases": {
+            "items": {
+              "$ref": "#/components/schemas/FleetSpawnBaseConfig"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
       },
       "GenerationConfig": {
         "properties": {
@@ -5389,6 +5626,46 @@
           "document"
         ],
         "type": "string"
+      },
+      "MessageSubmitParams": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/InputItem"
+            },
+            "type": "array"
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "submissionId": {
+            "description": "Client-supplied idempotency key, unique per session. Retrying\n`session/messages/submit` with the same submission id and same items is\naccepted idempotently; reusing it for a different command or different\nmessage input is rejected.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "sessionId",
+          "items"
+        ],
+        "type": "object"
+      },
+      "MessageSubmitResponse": {
+        "properties": {
+          "accepted": {
+            "type": "boolean"
+          },
+          "submissionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "submissionId",
+          "accepted"
+        ],
+        "type": "object"
       },
       "ModelConfig": {
         "properties": {
@@ -6752,7 +7029,7 @@
             "$ref": "#/components/schemas/RunStartSource"
           },
           "submissionId": {
-            "description": "Client-supplied idempotency key, unique per session. Retrying\n`session/runs/start` with the same submission id and the same source/config\nreturns the original run instead of starting a second one; reusing a\nsubmission id with different source or config is rejected.",
+            "description": "Client-supplied idempotency key, unique per session. Retrying\n`session/runs/start` with the same submission id and the same\nsource/config returns the original run instead of starting a second\none; reusing a submission id with different source or config is\nrejected.",
             "type": [
               "string",
               "null"
@@ -6994,6 +7271,11 @@
       },
       "SessionCloseParams": {
         "properties": {
+          "force": {
+            "default": false,
+            "description": "Cancel the active run and drop queued runs instead of rejecting on\nactive work. Recovers sessions whose workflow no longer exists (e.g.\nafter an operator terminate) by reconciling the session log directly.",
+            "type": "boolean"
+          },
           "sessionId": {
             "type": "string"
           }
@@ -7020,6 +7302,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/ContextConfigInput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "fleet": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FleetConfigInput"
               },
               {
                 "type": "null"
@@ -7081,6 +7373,16 @@
               }
             ]
           },
+          "fleet": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FleetConfigPatchInput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "generation": {
             "anyOf": [
               {
@@ -7129,6 +7431,9 @@
           "context": {
             "$ref": "#/components/schemas/ContextConfigInput"
           },
+          "fleet": {
+            "$ref": "#/components/schemas/FleetConfigView"
+          },
           "generation": {
             "$ref": "#/components/schemas/GenerationConfig"
           },
@@ -7147,7 +7452,8 @@
           "generation",
           "context",
           "runDefaults",
-          "tools"
+          "tools",
+          "fleet"
         ],
         "type": "object"
       },
@@ -7831,6 +8137,84 @@
           },
           {
             "properties": {
+              "messageId": {
+                "type": "string"
+              },
+              "submissionId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "type": {
+                "const": "messageBuffered",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "messageId"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "messageId": {
+                "type": "string"
+              },
+              "runId": {
+                "type": "string"
+              },
+              "type": {
+                "const": "messageConsumedByAwait",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "messageId",
+              "runId"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "messageId": {
+                "type": "string"
+              },
+              "runId": {
+                "type": "string"
+              },
+              "type": {
+                "const": "messagePromotedToRun",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "messageId",
+              "runId"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "messageId": {
+                "type": "string"
+              },
+              "type": {
+                "const": "messageCancelled",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "messageId"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
               "input": {
                 "items": {
                   "$ref": "#/components/schemas/ContextEntryInputView"
@@ -7927,6 +8311,102 @@
             "required": [
               "type",
               "runId"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "promiseId": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              },
+              "type": {
+                "const": "promiseCreated",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "promiseId",
+              "source"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "payloadRef": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "promiseId": {
+                "type": "string"
+              },
+              "type": {
+                "const": "promiseResolved",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "promiseId"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "errorRef": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "promiseId": {
+                "type": "string"
+              },
+              "type": {
+                "const": "promiseFailed",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "promiseId"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "promiseId": {
+                "type": "string"
+              },
+              "type": {
+                "const": "promiseCancelled",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "promiseId"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "promiseId": {
+                "type": "string"
+              },
+              "type": {
+                "const": "promiseDetached",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "promiseId"
             ],
             "type": "object"
           },
@@ -10612,6 +11092,13 @@
               "null"
             ]
           },
+          "timer": {
+            "description": "Enables timer promises through the sleep tool. Also exposes the base\nconcurrency tools (await/cancel/detach).",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "webFetch": {
             "type": [
               "boolean",
@@ -10659,6 +11146,16 @@
               }
             ]
           },
+          "timer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FieldPatchOfboolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "webFetch": {
             "anyOf": [
               {
@@ -10690,6 +11187,9 @@
           "fleet": {
             "type": "boolean"
           },
+          "timer": {
+            "type": "boolean"
+          },
           "webFetch": {
             "type": "boolean"
           },
@@ -10701,7 +11201,8 @@
           "webSearch",
           "webFetch",
           "filesystem",
-          "fleet"
+          "fleet",
+          "timer"
         ],
         "type": "object"
       },
@@ -11675,6 +12176,26 @@
         "name": "result",
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfContextCompactResponse"
+        }
+      }
+    },
+    {
+      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "name": "session/messages/submit",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/MessageSubmitParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfMessageSubmitResponse"
         }
       }
     },

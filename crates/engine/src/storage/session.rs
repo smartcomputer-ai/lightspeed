@@ -731,6 +731,8 @@ fn run_boundary(entry: &StoredSessionEntry) -> Option<RunBoundary> {
         "lightspeed.core.run.completed"
             | "lightspeed.core.run.failed"
             | "lightspeed.core.run.cancelled"
+            | "lightspeed.core.run.force_cancelled"
+            | "lightspeed.core.run.queued_cancelled"
     );
     let is_run = terminal
         || matches!(

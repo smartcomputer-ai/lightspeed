@@ -333,6 +333,7 @@ async fn anthropic_messages_live_uses_vfs_prompt_instructions() {
             session_id,
             observed_at_ms: 20,
             command: CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+                notify_on_terminal: Vec::new(),
                 submission_id: None,
                 source: engine::RunRequestSource::Input {
                     input: vec![ContextEntryInput {
@@ -389,6 +390,7 @@ fn session_config(model: ModelSelection) -> SessionConfig {
         },
         context: ContextConfig { compaction: None },
         tools: Default::default(),
+        fleet: Default::default(),
     }
 }
 

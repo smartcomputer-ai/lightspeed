@@ -1,15 +1,16 @@
 mod activity_calls;
 mod admissions;
+mod awaits;
 mod bootstrap;
 mod clock;
 mod drive;
 mod errors;
-mod fleet_waits;
-mod job_waits;
+mod promise_sources;
 mod session_state;
 #[cfg(test)]
 mod tests;
 mod wait_loop;
+mod watchdog;
 
 use std::time::Duration;
 use std::{collections::BTreeMap, time::UNIX_EPOCH};
@@ -20,8 +21,7 @@ use engine::{
     CoreAgentEntry, CoreAgentEvent, CoreAgentState, CoreAgentStatus,
     ENVIRONMENT_ACTIVE_CONTEXT_KEY, ENVIRONMENT_CATALOG_CONTEXT_KEY, LlmGenerationRequest,
     RunConfig, RunEvent, RunStatus, SKILL_CATALOG_CONTEXT_KEY, SessionId, SessionPosition,
-    SubmissionId, ToolCallStatus, ToolEvent, ToolInvocationBatchRequest, ToolInvocationBatchResult,
-    ToolInvocationResult, VFS_CATALOG_CONTEXT_KEY,
+    SubmissionId, ToolInvocationBatchRequest, VFS_CATALOG_CONTEXT_KEY,
 };
 use futures::{FutureExt, pin_mut, select};
 use temporalio_macros::{workflow, workflow_methods};
@@ -30,23 +30,19 @@ use temporalio_sdk::{
 };
 
 use crate::{
-    ActiveEnvironmentJobWait, ActiveWaitRecord, ActiveWaitSubscription, AgentActiveRunSummary,
-    AgentAdmission, AgentAdmissionFailure, AgentAdmissionFailureKind, AgentCompletedRunSummary,
-    AgentQueuedRunSummary, AgentSessionArgs, AgentSessionStatus, AgentWaitDirective,
-    AgentWaitHandleResult, AgentWaitHandleStatus, AgentWaitMode, AgentWaitOutcome, AgentWaitOutput,
-    AgentWaitRunResult, AppendEventsRequest, CheckEnvironmentJobWaitActivityRequest,
-    CheckEnvironmentJobWaitActivityResult, CreateOrLoadSessionRequest,
-    DEFAULT_CONTINUE_AS_NEW_HISTORY_THRESHOLD, EnvironmentJobChanged,
-    FLEET_AGENT_WAIT_DIRECTIVE_KIND, LlmGenerateActivityRequest, PendingRunTerminalNotification,
-    PendingToolBatchResume, PreprocessRunInputActivityRequest, PreprocessRunInputFailure,
-    PreprocessRunInputFailureKind, PreprocessRunInputOutcome, PutBlobRequest, RunSubscription,
-    RunTerminalNotification, SkillCatalogRefreshActivityRequest, ToolInvokeBatchActivityRequest,
-    WorkflowActivities, activity_options, compose_workflow_id, default_instructions,
+    AgentActiveRunSummary, AgentAdmission, AgentAdmissionFailure, AgentAdmissionFailureKind,
+    AgentCompletedRunSummary, AgentMessageSubmissionConsumptionSummary, AgentQueuedRunSummary,
+    AgentSessionArgs, AgentSessionStatus, AppendEventsRequest, AwaitOutcome, AwaitOutput,
+    AwaitPromiseResult, CancellingWatchdog, CreateOrLoadSessionRequest,
+    DEFAULT_CONTINUE_AS_NEW_HISTORY_THRESHOLD, EnvironmentJobChanged, LlmGenerateActivityRequest,
+    PendingPromiseCancellation, PendingPromiseNotification, PendingToolBatchResume,
+    PreprocessRunInputActivityRequest, PreprocessRunInputFailure, PreprocessRunInputFailureKind,
+    PreprocessRunInputOutcome, PromiseResolutionSignal, PromiseSourcePoll, PutBlobRequest,
+    SkillCatalogRefreshActivityRequest, ToolInvokeBatchActivityRequest, WorkflowActivities,
+    activity_options, compose_workflow_id, default_instructions, split_workflow_id,
 };
 
-use activity_calls::{
-    call_context_compact, call_llm_generate, call_tool_invoke_batch, check_environment_job_wait,
-};
+use activity_calls::{call_context_compact, call_llm_generate, call_tool_invoke_batch};
 use admissions::process_admissions;
 use bootstrap::initialize;
 use clock::workflow_time_ms;
@@ -55,14 +51,11 @@ use drive::{
     drive_until_idle, process_pending_tool_batch_resumes,
 };
 use errors::{record_admission_failure, record_bootstrap_error, record_error};
-use fleet_waits::{
-    active_wait_nontimer_resolution, install_deferred_wait, mark_wait_terminal_arrival,
-    process_satisfied_active_waits, wait_directive_for_event,
-};
-use session_state::flush_pending_terminal_notifications;
+use session_state::flush_pending_promise_notifications;
 use wait_loop::{
     can_continue_as_new_at_idle, wait_for_workflow_work, workflow_state_should_complete,
 };
+use watchdog::{process_cancelling_watchdog, reconcile_cancelling_watchdog};
 
 const DEFAULT_MAX_STEPS_PER_INPUT: usize = 256;
 
@@ -74,11 +67,11 @@ pub struct AgentSessionWorkflow {
     head: Option<SessionPosition>,
     pending_admissions: Vec<AgentAdmission>,
     pending_tool_batch_resumes: Vec<PendingToolBatchResume>,
-    pending_terminal_notifications: Vec<PendingRunTerminalNotification>,
-    active_waits: BTreeMap<u64, ActiveWaitRecord>,
-    active_environment_job_waits: BTreeMap<u64, ActiveEnvironmentJobWait>,
-    run_subscriptions: BTreeMap<String, RunSubscription>,
+    pending_promise_notifications: Vec<PendingPromiseNotification>,
+    pending_promise_cancellations: Vec<PendingPromiseCancellation>,
+    promise_source_polls: BTreeMap<String, PromiseSourcePoll>,
     run_submissions: BTreeMap<u64, Option<SubmissionId>>,
+    cancelling_watchdog: Option<CancellingWatchdog>,
     admission_failures: Vec<AgentAdmissionFailure>,
     last_error: Option<String>,
     bootstrap_failed: bool,
@@ -93,11 +86,11 @@ impl Default for AgentSessionWorkflow {
             head: None,
             pending_admissions: Vec::new(),
             pending_tool_batch_resumes: Vec::new(),
-            pending_terminal_notifications: Vec::new(),
-            active_waits: BTreeMap::new(),
-            active_environment_job_waits: BTreeMap::new(),
-            run_subscriptions: BTreeMap::new(),
+            pending_promise_notifications: Vec::new(),
+            pending_promise_cancellations: Vec::new(),
+            promise_source_polls: BTreeMap::new(),
             run_submissions: BTreeMap::new(),
+            cancelling_watchdog: None,
             admission_failures: Vec::new(),
             last_error: None,
             bootstrap_failed: false,
@@ -121,16 +114,26 @@ impl AgentSessionWorkflow {
             if workflow_state_should_complete(ctx) {
                 return Ok(());
             }
+            reconcile_cancelling_watchdog(ctx);
+            promise_sources::reconcile_polls(ctx);
             wait_for_workflow_work(ctx).await;
-            if let Err(error) = flush_pending_terminal_notifications(ctx).await {
+            if let Err(error) = flush_pending_promise_notifications(ctx).await {
                 record_error(ctx, &error);
                 return Err(anyhow::anyhow!("{error}").into());
             }
-            if let Err(error) = process_satisfied_active_waits(ctx).await {
+            if let Err(error) = promise_sources::flush_pending_promise_cancellations(ctx).await {
                 record_error(ctx, &error);
                 return Err(anyhow::anyhow!("{error}").into());
             }
-            if let Err(error) = job_waits::process_due(ctx).await {
+            if let Err(error) = process_cancelling_watchdog(ctx, &args).await {
+                record_error(ctx, &error);
+                return Err(anyhow::anyhow!("{error}").into());
+            }
+            if let Err(error) = awaits::process_satisfied_await(ctx).await {
+                record_error(ctx, &error);
+                return Err(anyhow::anyhow!("{error}").into());
+            }
+            if let Err(error) = promise_sources::process_due(ctx).await {
                 record_error(ctx, &error);
                 return Err(anyhow::anyhow!("{error}").into());
             }
@@ -168,31 +171,16 @@ impl AgentSessionWorkflow {
         }
     }
 
-    #[signal(name = "subscribe_run")]
-    pub fn subscribe_run(
+    /// Push delivery from a session this session holds a promise on: the
+    /// run behind the promise reached a terminal state. Queued as a
+    /// `ResolvePromise` admission (idempotent, first-writer-wins).
+    #[signal(name = "resolve_promise")]
+    pub fn resolve_promise(
         &mut self,
         _ctx: &mut SyncWorkflowContext<Self>,
-        subscription: RunSubscription,
+        signal: PromiseResolutionSignal,
     ) {
-        self.subscribe_to_run(subscription);
-    }
-
-    #[signal(name = "unsubscribe_run")]
-    pub fn unsubscribe_run(
-        &mut self,
-        _ctx: &mut SyncWorkflowContext<Self>,
-        subscription_id: String,
-    ) {
-        self.unsubscribe_from_run(&subscription_id);
-    }
-
-    #[signal(name = "run_terminal")]
-    pub fn run_terminal(
-        &mut self,
-        _ctx: &mut SyncWorkflowContext<Self>,
-        notification: RunTerminalNotification,
-    ) {
-        self.record_run_terminal(notification);
+        self.queue_promise_resolution(signal);
     }
 
     #[signal(name = "environment_job_changed")]
