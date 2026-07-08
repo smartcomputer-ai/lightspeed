@@ -13,6 +13,7 @@ export type {
   RequestId,
   RunTerminalState,
   StartRunOptions,
+  SubmitMessageOptions,
 } from "./client.js";
 export {
   METHODS,

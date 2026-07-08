@@ -1,8 +1,10 @@
 import type {
+  AgentApiOutcomeOfMessageSubmitResponse,
   AgentApiOutcomeOfRunStartResponse,
   AgentApiOutcomeOfSessionEventsReadResponse,
   EventCursor,
   InputItem,
+  MessageSubmitParams,
   RunStartConfig,
   RunStartParams,
   RunStartSource,
@@ -39,6 +41,10 @@ interface JsonRpcResponse {
 
 export interface StartRunOptions extends CallOptions {
   config?: RunStartConfig | null;
+  submissionId?: string | null;
+}
+
+export interface SubmitMessageOptions extends CallOptions {
   submissionId?: string | null;
 }
 
@@ -184,6 +190,20 @@ export class LightspeedClient implements RpcCaller {
       params.config = options.config ?? null;
     }
     return this.call("session/runs/start", params, options);
+  }
+
+  submitMessage(
+    sessionId: string,
+    items: InputItem[],
+    options: SubmitMessageOptions = {},
+  ): Promise<AgentApiOutcomeOfMessageSubmitResponse> {
+    const params: MessageSubmitParams = {
+      sessionId,
+      items,
+      submissionId:
+        options.submissionId === undefined ? generateSubmissionId() : options.submissionId,
+    };
+    return this.call("session/messages/submit", params, options);
   }
 
   readEvents(

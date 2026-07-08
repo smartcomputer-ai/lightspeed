@@ -217,6 +217,16 @@ export type CompactionPolicyInput =
     };
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ProfileId".
+ */
+export type ProfileId = string;
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "FleetSpawnBaseConfig".
+ */
+export type FleetSpawnBaseConfig = "self" | "session" | "profile";
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ReasoningEffort".
  */
 export type ReasoningEffort = "none" | "low" | "medium" | "high";
@@ -339,6 +349,25 @@ export type SessionEventKindView =
       type: "runStarted";
     }
   | {
+      messageId: string;
+      submissionId?: string | null;
+      type: "messageBuffered";
+    }
+  | {
+      messageId: string;
+      runId: string;
+      type: "messageConsumedByAwait";
+    }
+  | {
+      messageId: string;
+      runId: string;
+      type: "messagePromotedToRun";
+    }
+  | {
+      messageId: string;
+      type: "messageCancelled";
+    }
+  | {
       input: ContextEntryInputView[];
       runId: string;
       steeringId: string;
@@ -361,6 +390,29 @@ export type SessionEventKindView =
   | {
       runId: string;
       type: "runCancelled";
+    }
+  | {
+      promiseId: string;
+      source: string;
+      type: "promiseCreated";
+    }
+  | {
+      payloadRef?: string | null;
+      promiseId: string;
+      type: "promiseResolved";
+    }
+  | {
+      errorRef?: string | null;
+      promiseId: string;
+      type: "promiseFailed";
+    }
+  | {
+      promiseId: string;
+      type: "promiseCancelled";
+    }
+  | {
+      promiseId: string;
+      type: "promiseDetached";
     }
   | {
       runId: string;
@@ -801,11 +853,6 @@ export type VfsMountSourceInput =
     };
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ProfileId".
- */
-export type ProfileId = string;
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionEnvironmentKindView".
  */
 export type SessionEnvironmentKindView = "sandbox" | "attachedHost";
@@ -956,6 +1003,30 @@ export type FieldPatchOfFilesystemToolMode =
   | {
       op: "set";
       value: FilesystemToolMode;
+    }
+  | {
+      op: "clear";
+    };
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "FieldPatchOfFleetProfilesConfigInput".
+ */
+export type FieldPatchOfFleetProfilesConfigInput =
+  | {
+      op: "set";
+      value: FleetProfilesConfigInput;
+    }
+  | {
+      op: "clear";
+    };
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "FieldPatchOfFleetSpawnConfigInput".
+ */
+export type FieldPatchOfFleetSpawnConfigInput =
+  | {
+      op: "set";
+      value: FleetSpawnConfigInput;
     }
   | {
       op: "clear";
@@ -1203,6 +1274,7 @@ export interface TokenEstimateView {
  */
 export interface SessionConfigView {
   context: ContextConfigInput;
+  fleet: FleetConfigView;
   generation: GenerationConfig;
   model: ModelConfig;
   runDefaults: RunDefaultsConfig;
@@ -1214,6 +1286,30 @@ export interface SessionConfigView {
  */
 export interface ContextConfigInput {
   compaction?: CompactionPolicyInput | null;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "FleetConfigView".
+ */
+export interface FleetConfigView {
+  profiles: FleetProfilesConfigView;
+  spawn: FleetSpawnConfigView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "FleetProfilesConfigView".
+ */
+export interface FleetProfilesConfigView {
+  allow?: ProfileId[] | null;
+  deny?: ProfileId[];
+  inline: boolean;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "FleetSpawnConfigView".
+ */
+export interface FleetSpawnConfigView {
+  bases?: FleetSpawnBaseConfig[] | null;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -1256,6 +1352,7 @@ export interface RunDefaultsConfig {
 export interface ToolConfigView {
   filesystem: FilesystemToolMode;
   fleet: boolean;
+  timer: boolean;
   webFetch: boolean;
   webSearch: boolean;
 }
@@ -2143,6 +2240,22 @@ export interface McpServerUpdateResponse {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfMessageSubmitResponse".
+ */
+export interface AgentApiOutcomeOfMessageSubmitResponse {
+  notifications?: AgentNotification[];
+  result: MessageSubmitResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "MessageSubmitResponse".
+ */
+export interface MessageSubmitResponse {
+  accepted: boolean;
+  submissionId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfOperatorOutboxReadResponse".
  */
 export interface AgentApiOutcomeOfOperatorOutboxReadResponse {
@@ -2391,10 +2504,44 @@ export interface AgentProfile {
  */
 export interface SessionConfigInput {
   context?: ContextConfigInput | null;
+  fleet?: FleetConfigInput | null;
   generation?: GenerationConfig | null;
   model?: ModelConfig | null;
   runDefaults?: RunDefaultsConfig | null;
   tools?: ToolConfigInput | null;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "FleetConfigInput".
+ */
+export interface FleetConfigInput {
+  profiles?: FleetProfilesConfigInput | null;
+  spawn?: FleetSpawnConfigInput | null;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "FleetProfilesConfigInput".
+ */
+export interface FleetProfilesConfigInput {
+  /**
+   * Absent means all named profiles are visible/readable/spawnable.
+   */
+  allow?: ProfileId[] | null;
+  deny?: ProfileId[];
+  /**
+   * Defaults to true when omitted.
+   */
+  inline?: boolean | null;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "FleetSpawnConfigInput".
+ */
+export interface FleetSpawnConfigInput {
+  /**
+   * Absent means all bases are allowed.
+   */
+  bases?: FleetSpawnBaseConfig[] | null;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -2412,6 +2559,11 @@ export interface ToolConfigInput {
    * sessions bound to a chat channel.
    */
   messaging?: boolean | null;
+  /**
+   * Enables timer promises through the sleep tool. Also exposes the base
+   * concurrency tools (await/cancel/detach).
+   */
+  timer?: boolean | null;
   webFetch?: boolean | null;
   webSearch?: boolean | null;
 }
@@ -3760,6 +3912,14 @@ export interface EnvironmentProviderUnregisterParams {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "FleetConfigPatchInput".
+ */
+export interface FleetConfigPatchInput {
+  profiles?: FieldPatchOfFleetProfilesConfigInput | null;
+  spawn?: FieldPatchOfFleetSpawnConfigInput | null;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "GenerationConfigPatch".
  */
 export interface GenerationConfigPatch {
@@ -3877,6 +4037,21 @@ export interface McpServerUpdatePatch {
   serverUrl?: string | null;
   status?: McpServerStatus | null;
   transport?: RemoteMcpTransport | null;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "MessageSubmitParams".
+ */
+export interface MessageSubmitParams {
+  items: InputItem[];
+  sessionId: string;
+  /**
+   * Client-supplied idempotency key, unique per session. Retrying
+   * `session/messages/submit` with the same submission id and same items is
+   * accepted idempotently; reusing it for a different command or different
+   * message input is rejected.
+   */
+  submissionId?: string | null;
 }
 /**
  * Multiplexed outbox read: one long-poll serves every universe of the
@@ -4056,9 +4231,10 @@ export interface RunStartParams {
   source: RunStartSource;
   /**
    * Client-supplied idempotency key, unique per session. Retrying
-   * `session/runs/start` with the same submission id and the same source/config
-   * returns the original run instead of starting a second one; reusing a
-   * submission id with different source or config is rejected.
+   * `session/runs/start` with the same submission id and the same
+   * source/config returns the original run instead of starting a second
+   * one; reusing a submission id with different source or config is
+   * rejected.
    */
   submissionId?: string | null;
 }
@@ -4067,6 +4243,12 @@ export interface RunStartParams {
  * via the `definition` "SessionCloseParams".
  */
 export interface SessionCloseParams {
+  /**
+   * Cancel the active run and drop queued runs instead of rejecting on
+   * active work. Recovers sessions whose workflow no longer exists (e.g.
+   * after an operator terminate) by reconciling the session log directly.
+   */
+  force?: boolean;
   sessionId: string;
 }
 /**
@@ -4075,6 +4257,7 @@ export interface SessionCloseParams {
  */
 export interface SessionConfigPatchInput {
   context?: ContextConfigPatchInput | null;
+  fleet?: FleetConfigPatchInput | null;
   generation?: GenerationConfigPatch | null;
   model?: ModelConfig | null;
   runDefaults?: RunDefaultsPatch | null;
@@ -4088,6 +4271,7 @@ export interface ToolConfigPatchInput {
   filesystem?: FieldPatchOfFilesystemToolMode | null;
   fleet?: FieldPatchOfboolean | null;
   messaging?: FieldPatchOfboolean | null;
+  timer?: FieldPatchOfboolean | null;
   webFetch?: FieldPatchOfboolean | null;
   webSearch?: FieldPatchOfboolean | null;
 }

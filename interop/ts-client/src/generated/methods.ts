@@ -17,6 +17,7 @@ export const METHODS = [
   "session/context/append",
   "session/context/remove",
   "session/context/compact",
+  "session/messages/submit",
   "session/runs/start",
   "session/runs/cancel",
   "session/prompts/active",
@@ -157,6 +158,10 @@ export interface MethodMap {
   "session/context/compact": {
     params: Api.ContextCompactParams;
     result: Api.AgentApiOutcomeOfContextCompactResponse;
+  };
+  "session/messages/submit": {
+    params: Api.MessageSubmitParams;
+    result: Api.AgentApiOutcomeOfMessageSubmitResponse;
   };
   "session/runs/start": {
     params: Api.RunStartParams;
@@ -511,6 +516,9 @@ export const rpc = {
   },
   sessionContextCompact(client: RpcCaller, params: Api.ContextCompactParams): Promise<Api.AgentApiOutcomeOfContextCompactResponse> {
     return client.call("session/context/compact", params);
+  },
+  sessionMessagesSubmit(client: RpcCaller, params: Api.MessageSubmitParams): Promise<Api.AgentApiOutcomeOfMessageSubmitResponse> {
+    return client.call("session/messages/submit", params);
   },
   sessionRunsStart(client: RpcCaller, params: Api.RunStartParams): Promise<Api.AgentApiOutcomeOfRunStartResponse> {
     return client.call("session/runs/start", params);
