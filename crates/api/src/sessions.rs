@@ -25,6 +25,8 @@ pub struct SessionConfigInput {
     pub run_defaults: Option<RunDefaultsConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tools: Option<ToolConfigInput>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fleet: Option<FleetConfigInput>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -108,6 +110,49 @@ pub struct ToolConfigInput {
     /// (agent_spawn/send/read/list/cancel and profile_list/read).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fleet: Option<bool>,
+    /// Enables timer promises through the sleep tool. Also exposes the base
+    /// concurrency tools (await/cancel/detach).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timer: Option<bool>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FleetConfigInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profiles: Option<FleetProfilesConfigInput>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spawn: Option<FleetSpawnConfigInput>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FleetProfilesConfigInput {
+    /// Absent means all named profiles are visible/readable/spawnable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow: Option<Vec<ProfileId>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deny: Vec<ProfileId>,
+    /// Defaults to true when omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inline: Option<bool>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FleetSpawnConfigInput {
+    /// Absent means all bases are allowed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bases: Option<Vec<FleetSpawnBaseConfig>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum FleetSpawnBaseConfig {
+    #[serde(rename = "self")]
+    Self_,
+    Session,
+    Profile,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -147,6 +192,8 @@ pub struct SessionConfigPatchInput {
     pub run_defaults: Option<RunDefaultsPatch>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tools: Option<ToolConfigPatchInput>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fleet: Option<FleetConfigPatchInput>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -206,6 +253,17 @@ pub struct ToolConfigPatchInput {
     pub messaging: Option<FieldPatch<bool>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fleet: Option<FieldPatch<bool>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timer: Option<FieldPatch<bool>>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FleetConfigPatchInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profiles: Option<FieldPatch<FleetProfilesConfigInput>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spawn: Option<FieldPatch<FleetSpawnConfigInput>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -654,6 +712,11 @@ pub struct SessionEventsReadResponse {
 #[serde(rename_all = "camelCase")]
 pub struct SessionCloseParams {
     pub session_id: SessionId,
+    /// Cancel the active run and drop queued runs instead of rejecting on
+    /// active work. Recovers sessions whose workflow no longer exists (e.g.
+    /// after an operator terminate) by reconciling the session log directly.
+    #[serde(default)]
+    pub force: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -726,6 +789,21 @@ pub enum SessionEventKindView {
     RunStarted {
         run_id: RunId,
     },
+    MessageBuffered {
+        message_id: String,
+        submission_id: Option<String>,
+    },
+    MessageConsumedByAwait {
+        message_id: String,
+        run_id: RunId,
+    },
+    MessagePromotedToRun {
+        message_id: String,
+        run_id: RunId,
+    },
+    MessageCancelled {
+        message_id: String,
+    },
     RunSteeringAccepted {
         run_id: RunId,
         steering_id: String,
@@ -744,6 +822,24 @@ pub enum SessionEventKindView {
     },
     RunCancelled {
         run_id: RunId,
+    },
+    PromiseCreated {
+        promise_id: String,
+        source: String,
+    },
+    PromiseResolved {
+        promise_id: String,
+        payload_ref: Option<String>,
+    },
+    PromiseFailed {
+        promise_id: String,
+        error_ref: Option<String>,
+    },
+    PromiseCancelled {
+        promise_id: String,
+    },
+    PromiseDetached {
+        promise_id: String,
     },
     TurnStarted {
         run_id: RunId,

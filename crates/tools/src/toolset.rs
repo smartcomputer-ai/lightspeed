@@ -6,6 +6,7 @@ use engine::{ProviderApiKind, ToolName, ToolSpec};
 
 use crate::{
     builtin::{BuiltinTool, BuiltinToolOperation, BuiltinToolSurface},
+    concurrency::{ConcurrencyToolsetConfig, concurrency_tool_bindings, concurrency_tool_bundles},
     error::{ToolError, ToolResult},
     fleet::{FleetToolsetConfig, fleet_tool_bindings, fleet_tool_bundles},
     messaging::{MessagingToolsetConfig, messaging_tool_bindings, messaging_tool_bundles},
@@ -24,6 +25,7 @@ pub struct ToolsetConfig {
     pub web_fetch: WebFetchToolConfig,
     pub messaging: MessagingToolsetConfig,
     pub fleet: FleetToolsetConfig,
+    pub concurrency: ConcurrencyToolsetConfig,
 }
 
 impl ToolsetConfig {
@@ -34,6 +36,7 @@ impl ToolsetConfig {
             web_fetch: WebFetchToolConfig::default(),
             messaging: MessagingToolsetConfig::default(),
             fleet: FleetToolsetConfig::default(),
+            concurrency: ConcurrencyToolsetConfig::default(),
         }
     }
 
@@ -98,8 +101,6 @@ impl BuiltinToolsetConfig {
             BuiltinToolOperation::JobStart => self.process.job_start = true,
             BuiltinToolOperation::JobList => self.process.job_list = true,
             BuiltinToolOperation::JobRead => self.process.job_read = true,
-            BuiltinToolOperation::JobWait => self.process.job_wait = true,
-            BuiltinToolOperation::JobCancel => self.process.job_cancel = true,
         }
     }
 
@@ -218,8 +219,6 @@ pub struct EnvironmentToolsetConfig {
     pub job_start: bool,
     pub job_list: bool,
     pub job_read: bool,
-    pub job_wait: bool,
-    pub job_cancel: bool,
 }
 
 impl EnvironmentToolsetConfig {
@@ -240,8 +239,6 @@ impl EnvironmentToolsetConfig {
             job_start: true,
             job_list: true,
             job_read: true,
-            job_wait: true,
-            job_cancel: true,
             ..Self::disabled()
         }
     }
@@ -250,8 +247,6 @@ impl EnvironmentToolsetConfig {
         self.job_start = true;
         self.job_list = true;
         self.job_read = true;
-        self.job_wait = true;
-        self.job_cancel = true;
         self
     }
 
@@ -261,8 +256,10 @@ impl EnvironmentToolsetConfig {
             || self.job_start
             || self.job_list
             || self.job_read
-            || self.job_wait
-            || self.job_cancel
+    }
+
+    pub fn jobs_enabled(&self) -> bool {
+        self.job_start || self.job_list || self.job_read
     }
 
     fn operations(&self) -> Vec<BuiltinToolOperation> {
@@ -281,12 +278,6 @@ impl EnvironmentToolsetConfig {
         }
         if self.job_read {
             operations.push(BuiltinToolOperation::JobRead);
-        }
-        if self.job_wait {
-            operations.push(BuiltinToolOperation::JobWait);
-        }
-        if self.job_cancel {
-            operations.push(BuiltinToolOperation::JobCancel);
         }
         operations
     }
@@ -382,6 +373,14 @@ pub fn resolve_toolset(
         builder.add_messaging(messaging_tool_bundles(&config.messaging)?);
     }
 
+    let mut concurrency = config.concurrency.clone();
+    if config.fleet.enabled || config.builtin.process.jobs_enabled() {
+        concurrency.enabled = true;
+    }
+    if concurrency.enabled_or_timer() {
+        builder.add_concurrency(&concurrency)?;
+    }
+
     if config.fleet.enabled {
         builder.add_fleet(fleet_tool_bundles(&config.fleet)?);
     }
@@ -455,6 +454,16 @@ impl ToolsetBuilder {
         }
     }
 
+    fn add_concurrency(&mut self, config: &ConcurrencyToolsetConfig) -> ToolResult<()> {
+        for bundle in concurrency_tool_bundles(config)? {
+            self.add_bundle(bundle);
+        }
+        for binding in concurrency_tool_bindings(ToolExecutionMode::Inline, config) {
+            self.catalog.insert(binding);
+        }
+        Ok(())
+    }
+
     fn add_fleet(&mut self, bundles: Vec<ToolSpecBundle>) {
         for bundle in bundles {
             self.add_bundle(bundle);
@@ -496,6 +505,8 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
+    use crate::concurrency::{AWAIT_TOOL_NAME, CANCEL_TOOL_NAME, SLEEP_TOOL_NAME};
+    use crate::fleet::AGENT_SPAWN_TOOL_NAME;
     use crate::web::fetch::WEB_FETCH_TOOL_NAME;
     use crate::web::search::{WebSearchContextSize, WebSearchMode};
 
@@ -535,6 +546,52 @@ mod tests {
         );
         assert!(toolset.catalog.get(&ToolName::new("read_file")).is_some());
         assert!(toolset.provider_params_patch.is_empty());
+    }
+
+    #[test]
+    fn job_toolset_adds_suspension_tools_without_fleet_tools() {
+        let target = target(ProviderApiKind::OpenAiResponses);
+        let mut config = ToolsetConfig::empty();
+        config.builtin.process = EnvironmentToolsetConfig::jobs();
+
+        let toolset =
+            resolve_toolset(ToolsetEnvironment { target: &target }, &config).expect("toolset");
+        let names = visible_names(&toolset);
+
+        assert!(names.contains(&"job_start".to_owned()));
+        assert!(names.contains(&"job_list".to_owned()));
+        assert!(names.contains(&"job_read".to_owned()));
+        assert!(names.contains(&AWAIT_TOOL_NAME.to_owned()));
+        assert!(names.contains(&CANCEL_TOOL_NAME.to_owned()));
+        assert!(!names.contains(&AGENT_SPAWN_TOOL_NAME.to_owned()));
+        assert!(
+            toolset
+                .catalog
+                .get(&ToolName::new(AWAIT_TOOL_NAME))
+                .is_some()
+        );
+        assert!(
+            toolset
+                .catalog
+                .get(&ToolName::new(CANCEL_TOOL_NAME))
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn timer_toolset_adds_sleep_and_concurrency_tools() {
+        let target = target(ProviderApiKind::OpenAiResponses);
+        let mut config = ToolsetConfig::empty();
+        config.concurrency = ConcurrencyToolsetConfig::timer();
+
+        let toolset =
+            resolve_toolset(ToolsetEnvironment { target: &target }, &config).expect("toolset");
+        let names = visible_names(&toolset);
+
+        assert!(names.contains(&AWAIT_TOOL_NAME.to_owned()));
+        assert!(names.contains(&CANCEL_TOOL_NAME.to_owned()));
+        assert!(names.contains(&SLEEP_TOOL_NAME.to_owned()));
+        assert!(!names.contains(&AGENT_SPAWN_TOOL_NAME.to_owned()));
     }
 
     #[test]

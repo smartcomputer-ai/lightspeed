@@ -767,16 +767,21 @@ fn existing_run_submission_rejects_completed_duplicate_with_different_input() {
     };
     let mut state = engine::CoreAgentState::new();
     state.runs.completed.push(engine::RunRecord {
+        notify_on_terminal: Vec::new(),
         run_id: RunId::new(7),
         status: RunStatus::Completed,
         submission_id: Some(submission_id.clone()),
-        submission_digest: Some(engine::run_submission_digest(&original_source, &run_config)),
+        origin: engine::RunOrigin::Requested,
+        submission_digest: Some(engine::request_run_submission_digest(
+            &original_source,
+            &run_config,
+        )),
         output_ref: None,
         failure: None,
     });
 
     assert!(matches!(
-        existing_run_submission(&state, &submission_id, &changed_source, &run_config),
+        existing_run_submission(&state, &submission_id, &changed_source, &run_config,),
         Some(ExistingRunSubmission::Reject)
     ));
     let Some(ExistingRunSubmission::ReturnRun { run_id, status }) =
@@ -806,6 +811,7 @@ fn web_search_can_be_disabled_in_session_tools_config() {
             filesystem: None,
             messaging: None,
             fleet: None,
+            timer: None,
         }),
     );
 
@@ -826,6 +832,7 @@ fn web_fetch_defaults_on_and_can_be_disabled() {
             filesystem: None,
             messaging: None,
             fleet: None,
+            timer: None,
         }),
     );
 
@@ -847,6 +854,7 @@ fn web_search_rejects_explicit_enable_for_non_openai_responses() {
             filesystem: None,
             messaging: None,
             fleet: None,
+            timer: None,
         }),
     );
 
@@ -881,6 +889,7 @@ fn filesystem_tools_can_be_configured_read_only_or_none() {
             filesystem: Some(api::FilesystemToolMode::ReadOnly),
             messaging: None,
             fleet: None,
+            timer: None,
         }),
     );
 
@@ -897,6 +906,7 @@ fn filesystem_tools_can_be_configured_read_only_or_none() {
             filesystem: Some(api::FilesystemToolMode::None),
             messaging: None,
             fleet: None,
+            timer: None,
         }),
     );
 

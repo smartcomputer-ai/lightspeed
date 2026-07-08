@@ -12,6 +12,7 @@ pub mod ids;
 pub mod lifecycle;
 pub mod llm;
 pub mod log;
+pub mod promise;
 pub mod run;
 pub mod state;
 pub mod tooling;
@@ -41,20 +42,26 @@ pub use ids::*;
 pub use lifecycle::{CoreAgentLifecycleEvent, CoreAgentStatus, LifecycleState};
 pub use llm::*;
 pub use log::*;
+pub use promise::{
+    PROMISE_CANCEL_EFFECT_KIND, PROMISE_CREATE_EFFECT_KIND, PROMISE_DETACH_EFFECT_KIND, Promise,
+    PromiseComponentState, PromiseEvent, PromiseId, PromiseResolution, PromiseScope, PromiseSource,
+    PromiseStatus, promise_cancel_effect, promise_create_effect, promise_detach_effect,
+};
 pub use run::{
-    AcceptedRun, AcceptedRunEvent, ActiveRun, RunEvent, RunFailure, RunFailureKind, RunQueueState,
-    RunRecord, RunRequestCommand, RunRequestSource, RunSource, RunSourceContextTrigger, RunStatus,
-    SteeringBatch, run_submission_digest,
+    AcceptedRun, AcceptedRunEvent, ActiveRun, AwaitMode, AwaitOutputRefs, AwaitSpec,
+    BufferedMessage, MessageStatus, ParkedAwait, ResumeAwaitCommand, RunEvent, RunFailure,
+    RunFailureKind, RunOrigin, RunQueueState, RunRecord, RunRequestCommand, RunRequestSource,
+    RunSource, RunSourceContextTrigger, RunStatus, RunTerminalNotifyIntent, SteeringBatch,
+    SubmitMessageCommand, WakeReason, message_submission_digest, request_run_submission_digest,
 };
 pub use state::*;
 pub use tooling::{
     ActiveToolBatch, CompletedToolBatch, FunctionToolSpec, ObservedToolCall,
     ProviderNativeToolExecution, ProviderNativeToolSpec, RemoteMcpApprovalPolicy,
-    RemoteMcpToolSpec, SecretRef, ToolBatchResumeDirective, ToolCallExecutionPolicy,
-    ToolCallResult, ToolCallState, ToolCallStatus, ToolChoice, ToolChoiceMode, ToolConfigEvent,
-    ToolEvent, ToolExecutionTarget, ToolKind, ToolParallelism, ToolPatch, ToolRoutingState,
-    ToolSpec, ToolTargetRequirement, ToolingState, UNAVAILABLE_TOOL_RESULT_CONTENT,
-    unavailable_tool_result_ref, validate_tool_map,
+    RemoteMcpToolSpec, SecretRef, ToolCallExecutionPolicy, ToolCallResult, ToolCallState,
+    ToolCallStatus, ToolChoice, ToolChoiceMode, ToolConfigEvent, ToolEvent, ToolExecutionTarget,
+    ToolKind, ToolParallelism, ToolPatch, ToolRoutingState, ToolSpec, ToolTargetRequirement,
+    ToolingState, UNAVAILABLE_TOOL_RESULT_CONTENT, unavailable_tool_result_ref, validate_tool_map,
 };
 pub use turn::{
     LlmFinish, LlmGenerationFacts, LlmGenerationStatus, LlmUsage, PlannedRequestState, TurnEvent,

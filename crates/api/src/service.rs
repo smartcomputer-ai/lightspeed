@@ -107,6 +107,11 @@ pub trait AgentApiService: Send + Sync {
         params: OutboxAckParams,
     ) -> Result<AgentApiOutcome<OutboxAckResponse>, AgentApiError>;
 
+    async fn submit_message(
+        &self,
+        params: MessageSubmitParams,
+    ) -> Result<AgentApiOutcome<MessageSubmitResponse>, AgentApiError>;
+
     async fn start_run(
         &self,
         params: RunStartParams,

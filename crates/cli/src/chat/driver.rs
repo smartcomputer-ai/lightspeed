@@ -706,6 +706,10 @@ impl ChatSessionDriver {
                 )));
                 events.push(self.status_event("queued"));
             }
+            SessionEventKindView::MessageBuffered { .. }
+            | SessionEventKindView::MessageConsumedByAwait { .. }
+            | SessionEventKindView::MessagePromotedToRun { .. }
+            | SessionEventKindView::MessageCancelled { .. } => {}
             SessionEventKindView::RunStarted { run_id, .. } => {
                 events.push(ChatEvent::RunChanged(self.run_view_from_status(
                     run_id,
@@ -741,6 +745,11 @@ impl ChatSessionDriver {
                 )));
                 events.push(self.status_event("cancelled"));
             }
+            SessionEventKindView::PromiseCreated { .. }
+            | SessionEventKindView::PromiseResolved { .. }
+            | SessionEventKindView::PromiseFailed { .. }
+            | SessionEventKindView::PromiseCancelled { .. }
+            | SessionEventKindView::PromiseDetached { .. } => {}
             SessionEventKindView::TurnStarted { .. } => events.push(self.status_event("planning")),
             SessionEventKindView::TurnPlanned { .. } => events.push(self.status_event("thinking")),
             SessionEventKindView::TurnGenerationRequested { .. } => {
@@ -1448,6 +1457,7 @@ fn session_start_config(settings: &ChatDraftSettings) -> SessionConfigInput {
             filesystem: settings.filesystem_tools,
             messaging: None,
             fleet: None,
+            timer: None,
         })
     } else {
         None
@@ -1458,6 +1468,7 @@ fn session_start_config(settings: &ChatDraftSettings) -> SessionConfigInput {
         context: None,
         run_defaults: None,
         tools,
+        fleet: None,
     }
 }
 

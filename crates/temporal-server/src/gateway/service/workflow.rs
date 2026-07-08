@@ -7,7 +7,7 @@ impl GatewayAgentApi {
         self.store.config().universe_id
     }
 
-    pub(super) fn workflow_id_for(&self, session_id: &SessionId) -> String {
+    pub(crate) fn workflow_id_for(&self, session_id: &SessionId) -> String {
         temporal_workflow::compose_workflow_id(self.universe_id(), session_id)
     }
 
@@ -413,6 +413,76 @@ impl GatewayAgentApi {
         }
     }
 
+    pub(super) async fn wait_for_message_accepted(
+        &self,
+        session_id: &SessionId,
+        submission_id: &SubmissionId,
+        baseline_failures: usize,
+        wait_for_admission_drain: bool,
+    ) -> Result<(), AgentApiError> {
+        let started = Instant::now();
+        loop {
+            if started.elapsed() > self.operation_timeout {
+                return Err(AgentApiError::internal(format!(
+                    "timed out waiting for agent message admission: {submission_id}"
+                )));
+            }
+            let Some(status) = self.query_status_optional(session_id).await? else {
+                tokio::time::sleep(self.poll_interval).await;
+                continue;
+            };
+            if let Some(failure) = status
+                .admission_failures
+                .iter()
+                .skip(baseline_failures)
+                .rev()
+                .find(|failure| failure.submission_id.as_ref() == Some(submission_id))
+            {
+                return Err(map_admission_failure_to_api_error(failure));
+            }
+            let can_return = !wait_for_admission_drain || status.pending_admissions == 0;
+            if can_return
+                && status
+                    .consumed_message_submissions
+                    .iter()
+                    .any(|consumed| &consumed.submission_id == submission_id)
+            {
+                return Ok(());
+            }
+            if can_return
+                && status
+                    .active_run
+                    .as_ref()
+                    .is_some_and(|run| run.submission_id.as_ref() == Some(submission_id))
+            {
+                return Ok(());
+            }
+            if can_return
+                && status
+                    .queued_runs
+                    .iter()
+                    .any(|run| run.submission_id.as_ref() == Some(submission_id))
+            {
+                return Ok(());
+            }
+            if can_return
+                && status
+                    .completed_runs
+                    .iter()
+                    .rev()
+                    .any(|run| run.submission_id.as_ref() == Some(submission_id))
+            {
+                return Ok(());
+            }
+            if let Some(error) = status.last_error {
+                return Err(AgentApiError::internal(format!(
+                    "agent workflow reported error: {error}"
+                )));
+            }
+            tokio::time::sleep(self.poll_interval).await;
+        }
+    }
+
     pub(super) async fn wait_for_run_admitted(
         &self,
         session_id: &SessionId,
@@ -613,6 +683,77 @@ impl GatewayAgentApi {
         self.load_session_state(session_id)
             .await
             .map(|loaded| loaded.state.lifecycle.status == CoreAgentStatus::Closed)
+    }
+
+    /// True only when a workflow execution exists and is currently running.
+    /// Absent, completed, failed, and terminated executions all report false.
+    pub(super) async fn workflow_is_running(&self, session_id: &SessionId) -> bool {
+        match self
+            .workflow_handle(session_id)
+            .describe(WorkflowDescribeOptions::default())
+            .await
+        {
+            Ok(description) => {
+                matches!(description.status(), WorkflowExecutionStatus::Running)
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// Force-close recovery path for sessions with no running workflow:
+    /// admits `CloseSession { force: true }` against replayed state and
+    /// appends the resulting events (force-cancel active run, drop queued
+    /// runs, close) directly to the session store. Status is a projection of
+    /// the log, so this alone reconciles the session row; the expected-head
+    /// CAS makes a race with any concurrent writer fail here rather than
+    /// corrupt the log.
+    pub(super) async fn force_close_session_in_store(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<(), AgentApiError> {
+        let loaded = self.load_session_state(session_id).await?;
+        if loaded.state.lifecycle.status == CoreAgentStatus::Closed {
+            return Ok(());
+        }
+        let mut drive = engine::CoreAgentDrive::from_replayed(
+            session_id.clone(),
+            loaded.state,
+            loaded.record.head,
+        );
+        let action = drive
+            .admit_command(
+                CoreAgentCommand::CloseSession { force: true },
+                u64::try_from(
+                    now_ms().map_err(|error| AgentApiError::internal(error.to_string()))?,
+                )
+                .map_err(|error| AgentApiError::internal(error.to_string()))?,
+            )
+            .map_err(|error| match error {
+                engine::CoreAgentDriveError::Command(engine::CommandError::Rejected(rejection)) => {
+                    AgentApiError::rejected(rejection.to_string())
+                }
+                other => AgentApiError::internal(format!("force close admission failed: {other}")),
+            })?;
+        match action {
+            engine::CoreAgentAction::AppendEvents {
+                expected_head,
+                events,
+            } => {
+                self.store
+                    .append(engine::storage::AppendSessionEvents {
+                        session_id: session_id.clone(),
+                        expected_head,
+                        events,
+                    })
+                    .await
+                    .map_err(map_session_store_error)?;
+                Ok(())
+            }
+            engine::CoreAgentAction::Idle | engine::CoreAgentAction::Closed => Ok(()),
+            other => Err(AgentApiError::internal(format!(
+                "force close produced unexpected action: {other:?}"
+            ))),
+        }
     }
 }
 

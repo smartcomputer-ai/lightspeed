@@ -11,6 +11,8 @@
 - [x] [Appendix: Fleet one-off child lifecycle](appendix-fleet-one-off-lifecycle.md) — `agent_spawn.lifecycle.close_on_terminal` for ephemeral delegation sessions
 - [x] agent profiles
 - [x] start new sessions with profiles and ad-hoc profiles
+- [ ] [P92](p92-unified-suspension.md) — unified suspension: promises + one `await`, cancellation-as-resolution, watchdogs, force-close, mailbox unification; motivated by the 2026-07-06 stuck-`cancelling` incident
+- [ ] [P93](p93-fleet-safety.md) — fleet safety layer on P92: capability tiers (incl. send-only `worker`), attenuation, spawn budgets, topology limits, tree observability
 
 ## Provider Integrations
 - [ ] support and test completions api

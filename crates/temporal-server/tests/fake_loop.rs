@@ -88,6 +88,7 @@ async fn fake_llm_tool_loop_completes_a_run() {
             session_id: session_id.clone(),
             observed_at_ms: 13,
             command: CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+                notify_on_terminal: Vec::new(),
                 submission_id: Some(SubmissionId::new("submit_test")),
                 source: engine::RunRequestSource::Input {
                     input: user_input(input_ref),

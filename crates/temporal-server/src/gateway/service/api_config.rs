@@ -33,6 +33,7 @@ impl GatewayAgentApi {
         apply_context_config(&mut config.context, api_config.context);
         apply_run_defaults_config(&mut config.run, api_config.run_defaults);
         apply_tool_config(&mut config.tools, api_config.tools);
+        apply_fleet_config(&mut config.fleet, api_config.fleet);
         Ok(())
     }
 
@@ -49,6 +50,7 @@ impl GatewayAgentApi {
             turn,
             context: context_config_patch_from_api(patch.context),
             tools: tool_config_patch_from_api(patch.tools),
+            fleet: fleet_config_patch_from_api(patch.fleet),
         })
     }
 
@@ -135,6 +137,24 @@ pub(super) fn apply_tool_config(config: &mut engine::ToolConfig, tools: Option<T
     }
     if let Some(fleet) = tools.fleet {
         config.fleet = Some(fleet);
+    }
+    if let Some(timer) = tools.timer {
+        config.timer = Some(timer);
+    }
+}
+
+pub(super) fn apply_fleet_config(
+    config: &mut engine::FleetConfig,
+    fleet: Option<FleetConfigInput>,
+) {
+    let Some(fleet) = fleet else {
+        return;
+    };
+    if let Some(profiles) = fleet.profiles {
+        config.profiles = fleet_profiles_config_from_api(profiles);
+    }
+    if let Some(spawn) = fleet.spawn {
+        config.spawn = fleet_spawn_config_from_api(spawn);
     }
 }
 
@@ -252,6 +272,57 @@ pub(super) fn tool_config_patch_from_api(
             .map(|patch| optional_patch_from_api_map(patch, filesystem_tool_mode_from_api)),
         messaging: patch.messaging.map(optional_patch_from_api),
         fleet: patch.fleet.map(optional_patch_from_api),
+        timer: patch.timer.map(optional_patch_from_api),
+    }
+}
+
+pub(super) fn fleet_config_patch_from_api(
+    patch: Option<FleetConfigPatchInput>,
+) -> engine::FleetConfigPatch {
+    let Some(patch) = patch else {
+        return engine::FleetConfigPatch::default();
+    };
+    engine::FleetConfigPatch {
+        profiles: patch
+            .profiles
+            .map(|patch| optional_patch_from_api_map(patch, fleet_profiles_config_from_api)),
+        spawn: patch
+            .spawn
+            .map(|patch| optional_patch_from_api_map(patch, fleet_spawn_config_from_api)),
+    }
+}
+
+fn fleet_profiles_config_from_api(
+    profiles: FleetProfilesConfigInput,
+) -> engine::FleetProfilesConfig {
+    engine::FleetProfilesConfig {
+        allow: profiles.allow.map(|allow| {
+            allow
+                .into_iter()
+                .map(|profile_id| profile_id.as_str().to_owned())
+                .collect()
+        }),
+        deny: profiles
+            .deny
+            .into_iter()
+            .map(|profile_id| profile_id.as_str().to_owned())
+            .collect(),
+        inline: profiles.inline.unwrap_or(true),
+    }
+}
+
+fn fleet_spawn_config_from_api(spawn: FleetSpawnConfigInput) -> engine::FleetSpawnConfig {
+    engine::FleetSpawnConfig {
+        bases: spawn.bases.map(|bases| {
+            bases
+                .into_iter()
+                .map(|base| match base {
+                    FleetSpawnBaseConfig::Self_ => engine::FleetSpawnBase::Self_,
+                    FleetSpawnBaseConfig::Session => engine::FleetSpawnBase::Session,
+                    FleetSpawnBaseConfig::Profile => engine::FleetSpawnBase::Profile,
+                })
+                .collect()
+        }),
     }
 }
 

@@ -506,6 +506,7 @@ impl EvalRuntime {
             .drive(
                 session_id.clone(),
                 CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+                    notify_on_terminal: Vec::new(),
                     submission_id: None,
                     source: engine::RunRequestSource::Input {
                         input: user_input(input_ref),
@@ -740,6 +741,7 @@ fn session_config(case: &EvalCase, model: ModelSelection) -> SessionConfig {
         },
         context: ContextConfig { compaction: None },
         tools: Default::default(),
+        fleet: Default::default(),
     }
 }
 

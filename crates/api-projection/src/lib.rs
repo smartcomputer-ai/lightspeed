@@ -9,15 +9,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use api::{
     ActiveToolsView, AgentApiError, CompactionPolicyInput, ContextConfigInput,
     ContextEntryInputView, ContextEntryKindView, ContextMessageRoleView, ContextView, EventCursor,
-    EventJoinsView, FilesystemToolMode as ApiFilesystemToolMode, GenerationConfig, InputItem,
-    MediaKind, ModelConfig, ProviderContextDisplayView, ProviderNativeToolExecutionView,
-    ReasoningEffort, RunAcceptedSourceView, RunDefaultsConfig, RunStatus as ApiRunStatus, RunView,
-    RunViewSource, SessionConfigView, SessionEventKindView, SessionEventView, SessionItemView,
-    SessionStatus as ApiSessionStatus, SessionView, TokenEstimateQualityView, TokenEstimateView,
-    ToolBatchView, ToolCallDisplayGroup, ToolCallDisplayView, ToolCallEventView, ToolCallView,
-    ToolChoiceConfig, ToolChoiceModeConfig, ToolConfigView, ToolEffectView,
-    ToolExecutionTargetView, ToolItemStatus, ToolKindView, ToolParallelismView,
-    ToolTargetRequirementView, ToolView,
+    EventJoinsView, FilesystemToolMode as ApiFilesystemToolMode, FleetConfigView,
+    FleetProfilesConfigView, FleetSpawnBaseConfig, FleetSpawnConfigView, GenerationConfig,
+    InputItem, MediaKind, ModelConfig, ProfileId, ProviderContextDisplayView,
+    ProviderNativeToolExecutionView, ReasoningEffort, RunAcceptedSourceView, RunDefaultsConfig,
+    RunStatus as ApiRunStatus, RunView, RunViewSource, SessionConfigView, SessionEventKindView,
+    SessionEventView, SessionItemView, SessionStatus as ApiSessionStatus, SessionView,
+    TokenEstimateQualityView, TokenEstimateView, ToolBatchView, ToolCallDisplayGroup,
+    ToolCallDisplayView, ToolCallEventView, ToolCallView, ToolChoiceConfig, ToolChoiceModeConfig,
+    ToolConfigView, ToolEffectView, ToolExecutionTargetView, ToolItemStatus, ToolKindView,
+    ToolParallelismView, ToolTargetRequirementView, ToolView,
 };
 use engine::ToolExecutionTarget;
 use engine::{
@@ -312,7 +313,9 @@ impl<'a> CoreAgentProjector<'a> {
                 web_fetch: effective_web_fetch_enabled(config),
                 filesystem: filesystem_tool_mode_to_api(effective_filesystem_tool_mode(config)),
                 fleet: effective_fleet_enabled(config),
+                timer: effective_timer_enabled(config),
             },
+            fleet: fleet_config_to_api(&config.fleet)?,
         })
     }
 
@@ -371,6 +374,31 @@ impl<'a> CoreAgentProjector<'a> {
                 RunEvent::Started { run_id } => Ok(SessionEventKindView::RunStarted {
                     run_id: api_run_id(*run_id),
                 }),
+                RunEvent::MessageBuffered {
+                    message_id,
+                    submission_id,
+                    ..
+                } => Ok(SessionEventKindView::MessageBuffered {
+                    message_id: message_id.as_u64().to_string(),
+                    submission_id: submission_id.as_ref().map(|id| id.as_str().to_owned()),
+                }),
+                RunEvent::MessageConsumedByAwait { message_id, run_id } => {
+                    Ok(SessionEventKindView::MessageConsumedByAwait {
+                        message_id: message_id.as_u64().to_string(),
+                        run_id: api_run_id(*run_id),
+                    })
+                }
+                RunEvent::MessagePromotedToRun { message_id, run_id } => {
+                    Ok(SessionEventKindView::MessagePromotedToRun {
+                        message_id: message_id.as_u64().to_string(),
+                        run_id: api_run_id(*run_id),
+                    })
+                }
+                RunEvent::MessageCancelled { message_id } => {
+                    Ok(SessionEventKindView::MessageCancelled {
+                        message_id: message_id.as_u64().to_string(),
+                    })
+                }
                 RunEvent::SteeringAccepted {
                     run_id,
                     steering_id,
@@ -380,7 +408,8 @@ impl<'a> CoreAgentProjector<'a> {
                     steering_id: api_steering_id(*steering_id),
                     input: project_context_entry_inputs(input),
                 }),
-                RunEvent::CancellationRequested { run_id } => {
+                RunEvent::CancellationRequested { run_id }
+                | RunEvent::CancellationGraceStarted { run_id } => {
                     Ok(SessionEventKindView::RunCancellationRequested {
                         run_id: api_run_id(*run_id),
                     })
@@ -395,9 +424,43 @@ impl<'a> CoreAgentProjector<'a> {
                     run_id: api_run_id(*run_id),
                     message: self.run_failure_message(failure).await,
                 }),
-                RunEvent::Cancelled { run_id } => Ok(SessionEventKindView::RunCancelled {
+                RunEvent::Cancelled { run_id }
+                | RunEvent::ForceCancelled { run_id }
+                | RunEvent::QueuedCancelled { run_id } => Ok(SessionEventKindView::RunCancelled {
                     run_id: api_run_id(*run_id),
                 }),
+            },
+            CoreAgentEvent::Promise(event) => match event {
+                engine::PromiseEvent::Created { promise } => {
+                    Ok(SessionEventKindView::PromiseCreated {
+                        promise_id: promise.promise_id.as_str().to_owned(),
+                        source: promise_source_name(&promise.source).to_owned(),
+                    })
+                }
+                engine::PromiseEvent::Resolved {
+                    promise_id,
+                    payload_ref,
+                } => Ok(SessionEventKindView::PromiseResolved {
+                    promise_id: promise_id.as_str().to_owned(),
+                    payload_ref: payload_ref.as_ref().map(|ref_| ref_.as_str().to_owned()),
+                }),
+                engine::PromiseEvent::Failed {
+                    promise_id,
+                    error_ref,
+                } => Ok(SessionEventKindView::PromiseFailed {
+                    promise_id: promise_id.as_str().to_owned(),
+                    error_ref: error_ref.as_ref().map(|ref_| ref_.as_str().to_owned()),
+                }),
+                engine::PromiseEvent::Cancelled { promise_id } => {
+                    Ok(SessionEventKindView::PromiseCancelled {
+                        promise_id: promise_id.as_str().to_owned(),
+                    })
+                }
+                engine::PromiseEvent::Detached { promise_id } => {
+                    Ok(SessionEventKindView::PromiseDetached {
+                        promise_id: promise_id.as_str().to_owned(),
+                    })
+                }
             },
             CoreAgentEvent::Turn(event) => match event {
                 TurnEvent::Started { turn_id, run_id } => Ok(SessionEventKindView::TurnStarted {
@@ -957,6 +1020,14 @@ pub fn api_run_id(run_id: RunId) -> String {
     format!("run_{}", run_id.as_u64())
 }
 
+fn promise_source_name(source: &engine::PromiseSource) -> &'static str {
+    match source {
+        engine::PromiseSource::Run { .. } => "run",
+        engine::PromiseSource::EnvJob { .. } => "env_job",
+        engine::PromiseSource::Timer { .. } => "timer",
+    }
+}
+
 pub fn api_steering_id(steering_id: SteeringId) -> String {
     format!("steering_{}", steering_id.as_u64())
 }
@@ -1073,7 +1144,8 @@ pub fn session_status(state: &CoreAgentState) -> ApiSessionStatus {
 pub fn core_run_status_to_api_status(status: RunStatus) -> ApiRunStatus {
     match status {
         RunStatus::Active => ApiRunStatus::Running,
-        RunStatus::Cancelling => ApiRunStatus::Cancelling,
+        RunStatus::Parked => ApiRunStatus::Running,
+        RunStatus::Cancelling | RunStatus::CancellingGrace => ApiRunStatus::Cancelling,
         RunStatus::Completed => ApiRunStatus::Completed,
         RunStatus::Failed => ApiRunStatus::Failed,
         RunStatus::Cancelled => ApiRunStatus::Cancelled,
@@ -1149,6 +1221,50 @@ fn effective_filesystem_tool_mode(config: &SessionConfig) -> engine::FilesystemT
 
 fn effective_fleet_enabled(config: &SessionConfig) -> bool {
     config.tools.fleet.unwrap_or(false)
+}
+
+fn effective_timer_enabled(config: &SessionConfig) -> bool {
+    config.tools.timer.unwrap_or(false)
+}
+
+fn fleet_config_to_api(config: &engine::FleetConfig) -> Result<FleetConfigView, AgentApiError> {
+    Ok(FleetConfigView {
+        profiles: FleetProfilesConfigView {
+            allow: config
+                .profiles
+                .allow
+                .as_ref()
+                .map(|allow| profile_ids_to_api(allow))
+                .transpose()?,
+            deny: profile_ids_to_api(&config.profiles.deny)?,
+            inline: config.profiles.inline,
+        },
+        spawn: FleetSpawnConfigView {
+            bases: config.spawn.bases.as_ref().map(|bases| {
+                bases
+                    .iter()
+                    .map(|base| match base {
+                        engine::FleetSpawnBase::Self_ => FleetSpawnBaseConfig::Self_,
+                        engine::FleetSpawnBase::Session => FleetSpawnBaseConfig::Session,
+                        engine::FleetSpawnBase::Profile => FleetSpawnBaseConfig::Profile,
+                    })
+                    .collect()
+            }),
+        },
+    })
+}
+
+fn profile_ids_to_api(profile_ids: &[String]) -> Result<Vec<ProfileId>, AgentApiError> {
+    profile_ids
+        .iter()
+        .map(|profile_id| {
+            ProfileId::try_new(profile_id.clone()).map_err(|error| {
+                AgentApiError::internal(format!(
+                    "stored fleet profile policy contains invalid profile id {profile_id:?}: {error}"
+                ))
+            })
+        })
+        .collect()
 }
 
 fn filesystem_tool_mode_to_api(mode: engine::FilesystemToolMode) -> ApiFilesystemToolMode {
@@ -1620,6 +1736,15 @@ fn tool_call_display(tool_name: &str, arguments: &str) -> Option<ToolCallDisplay
                 .and_then(|json| first_string(json, &["process_id", "handle", "id"])),
             detail: None,
         },
+        "sleep" => ToolCallDisplayView {
+            group: ToolCallDisplayGroup::Other,
+            verb: "Sleep".to_owned(),
+            target: json
+                .as_ref()
+                .and_then(|json| first_string(json, &["ms"]))
+                .map(|ms| format!("{ms} ms")),
+            detail: None,
+        },
         _ => ToolCallDisplayView {
             group: ToolCallDisplayGroup::Other,
             verb: tool_name.to_owned(),
@@ -2009,8 +2134,10 @@ mod tests {
             observed_at_ms: seq,
             joins: CoreAgentJoins::default(),
             event: CoreAgentEvent::Run(engine::RunEvent::Accepted(engine::AcceptedRunEvent {
+                notify_on_terminal: Vec::new(),
                 run_id,
                 submission_id: None,
+                origin: engine::RunOrigin::Requested,
                 source: engine::RunSource::Context {
                     triggers: vec![engine::RunSourceContextTrigger { key, entry_id }],
                 },

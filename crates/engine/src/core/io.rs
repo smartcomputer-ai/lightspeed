@@ -18,10 +18,9 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    BlobRef, ContextCompactionRequest, ContextCompactionResult, ContextEntryInput,
-    ContextEntryKind, LlmGenerationFacts, LlmGenerationStatus, LlmRequest, RunId, SessionId,
-    ToolBatchId, ToolBatchResumeDirective, ToolCallId, ToolCallStatus, ToolExecutionTarget,
-    ToolName, TurnId,
+    AwaitSpec, BlobRef, ContextCompactionRequest, ContextCompactionResult, ContextEntryInput,
+    ContextEntryKind, LlmGenerationFacts, LlmGenerationStatus, LlmRequest, PromiseSource, RunId,
+    SessionId, ToolBatchId, ToolCallId, ToolCallStatus, ToolExecutionTarget, ToolName, TurnId,
 };
 
 #[async_trait]
@@ -48,6 +47,22 @@ pub trait CoreAgentTools: Send + Sync {
         &self,
         request: ToolInvocationBatchRequest,
     ) -> Result<ToolBatchOutcome, CoreAgentIoError>;
+
+    async fn check_promise_source(
+        &self,
+        request: PromiseSourceCheckRequest,
+    ) -> Result<PromiseSourceCheckResult, CoreAgentIoError> {
+        let _ = request;
+        Ok(PromiseSourceCheckResult::Pending)
+    }
+
+    async fn cancel_promise_source(
+        &self,
+        request: PromiseSourceCancelRequest,
+    ) -> Result<PromiseSourceCancelResult, CoreAgentIoError> {
+        let _ = request;
+        Ok(PromiseSourceCancelResult { cancelled: false })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,6 +82,29 @@ pub struct LlmGenerationResult {
     pub failure_ref: Option<BlobRef>,
     pub context_entries: Vec<ContextEntryInput>,
     pub facts: LlmGenerationFacts,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PromiseSourceCheckRequest {
+    pub source: PromiseSource,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "status")]
+pub enum PromiseSourceCheckResult {
+    Pending,
+    Resolved { payload_ref: Option<BlobRef> },
+    Failed { error_ref: Option<BlobRef> },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PromiseSourceCancelRequest {
+    pub source: PromiseSource,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PromiseSourceCancelResult {
+    pub cancelled: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -119,7 +157,10 @@ pub enum ToolBatchOutcome {
     },
     Deferred {
         batch_id: ToolBatchId,
-        resume_directive: ToolBatchResumeDirective,
+        call_id: ToolCallId,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        completed_results: Vec<ToolInvocationResult>,
+        spec: AwaitSpec,
     },
 }
 

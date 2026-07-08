@@ -1,6 +1,10 @@
 use std::sync::Arc;
 
-use engine::{BlobRef, ContextCompactionResult, LlmGenerationResult, ToolBatchOutcome};
+use engine::{
+    BlobRef, ContextCompactionResult, LlmGenerationResult, PromiseSourceCancelRequest,
+    PromiseSourceCancelResult, PromiseSourceCheckRequest, PromiseSourceCheckResult,
+    ToolBatchOutcome,
+};
 use store_pg::PgStore;
 use temporalio_common::error::ApplicationFailure;
 use temporalio_macros::activities;
@@ -9,15 +13,15 @@ use temporalio_sdk::activities::{ActivityContext, ActivityError};
 use crate::fleet::FleetChildRuntime;
 use crate::universe::{UniverseError, UniverseRuntime};
 use crate::worker::{
-    ACTIVITY_APPEND_EVENTS, ACTIVITY_CHECK_ENVIRONMENT_JOB_WAIT, ACTIVITY_CONTEXT_COMPACT,
-    ACTIVITY_CREATE_OR_LOAD_SESSION, ACTIVITY_LLM_GENERATE, ACTIVITY_PREPROCESS_RUN_INPUT,
-    ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB, ACTIVITY_SKILL_CATALOG_REFRESH,
-    ACTIVITY_TOOL_INVOKE_BATCH, AppendEventsRequest, CheckEnvironmentJobWaitActivityRequest,
-    CheckEnvironmentJobWaitActivityResult, ContextCompactActivityRequest,
-    CreateOrLoadSessionRequest, CreateOrLoadSessionResult, LlmGenerateActivityRequest,
-    PreprocessRunInputActivityRequest, PreprocessRunInputActivityResult, PutBlobRequest,
-    ReadBlobRequest, ReadBlobResult, SkillCatalogRefreshActivityRequest,
-    SkillCatalogRefreshActivityResult, ToolInvokeBatchActivityRequest,
+    ACTIVITY_APPEND_EVENTS, ACTIVITY_CANCEL_PROMISE_SOURCE, ACTIVITY_CHECK_PROMISE_SOURCE,
+    ACTIVITY_CONTEXT_COMPACT, ACTIVITY_CREATE_OR_LOAD_SESSION, ACTIVITY_LLM_GENERATE,
+    ACTIVITY_PREPROCESS_RUN_INPUT, ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB,
+    ACTIVITY_SKILL_CATALOG_REFRESH, ACTIVITY_TOOL_INVOKE_BATCH, AppendEventsRequest,
+    ContextCompactActivityRequest, CreateOrLoadSessionRequest, CreateOrLoadSessionResult,
+    LlmGenerateActivityRequest, PreprocessRunInputActivityRequest,
+    PreprocessRunInputActivityResult, PutBlobRequest, ReadBlobRequest, ReadBlobResult,
+    SkillCatalogRefreshActivityRequest, SkillCatalogRefreshActivityResult,
+    ToolInvokeBatchActivityRequest,
 };
 
 mod common;
@@ -211,8 +215,12 @@ mod tests {
             temporal_workflow::WorkflowActivities::skill_catalog_refresh.name()
         );
         assert_eq!(
-            WorkerActivities::check_environment_job_wait.name(),
-            temporal_workflow::WorkflowActivities::check_environment_job_wait.name()
+            WorkerActivities::check_promise_source.name(),
+            temporal_workflow::WorkflowActivities::check_promise_source.name()
+        );
+        assert_eq!(
+            WorkerActivities::cancel_promise_source.name(),
+            temporal_workflow::WorkflowActivities::cancel_promise_source.name()
         );
     }
 
@@ -400,13 +408,33 @@ impl WorkerActivities {
         skills::refresh_skill_catalog(state.skill_catalog(), request).await
     }
 
-    #[activity(name = ACTIVITY_CHECK_ENVIRONMENT_JOB_WAIT)]
-    pub async fn check_environment_job_wait(
+    #[activity(name = ACTIVITY_CHECK_PROMISE_SOURCE)]
+    pub async fn check_promise_source(
         self: Arc<Self>,
         ctx: ActivityContext,
-        request: CheckEnvironmentJobWaitActivityRequest,
-    ) -> Result<CheckEnvironmentJobWaitActivityResult, ActivityError> {
+        request: PromiseSourceCheckRequest,
+    ) -> Result<PromiseSourceCheckResult, ActivityError> {
         let state = self.state_for(&ctx).await?;
-        tools::check_environment_job_wait(state.tools(), request).await
+        state
+            .tools()
+            .tools
+            .check_promise_source(request)
+            .await
+            .map_err(tools::activity_error_for_core)
+    }
+
+    #[activity(name = ACTIVITY_CANCEL_PROMISE_SOURCE)]
+    pub async fn cancel_promise_source(
+        self: Arc<Self>,
+        ctx: ActivityContext,
+        request: PromiseSourceCancelRequest,
+    ) -> Result<PromiseSourceCancelResult, ActivityError> {
+        let state = self.state_for(&ctx).await?;
+        state
+            .tools()
+            .tools
+            .cancel_promise_source(request)
+            .await
+            .map_err(tools::activity_error_for_core)
     }
 }

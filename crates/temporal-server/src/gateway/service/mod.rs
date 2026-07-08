@@ -94,19 +94,21 @@ use api::{
     EnvironmentProviderStatusView, EnvironmentProviderTargetListParams,
     EnvironmentProviderTargetListResponse, EnvironmentProviderUnregisterParams,
     EnvironmentProviderUnregisterResponse, EnvironmentProviderView, EnvironmentTargetStatusView,
-    EnvironmentTargetSummaryView, FieldPatch, GenerationConfig, GenerationConfigPatch,
-    HostCapabilitiesView, HostControllerConnectionView, HostScopeView, HostTargetAttachRequestView,
-    HostTargetCreateRequestView, HostTransportView, InitializeParams, InitializeResponse,
-    InputAdmissionFailureKind, InputAdmissionFailureView, InputItem, McpServerCreateParams,
-    McpServerCreateResponse, McpServerDeleteParams, McpServerDeleteResponse, McpServerListParams,
-    McpServerListResponse, McpServerReadParams, McpServerReadResponse, McpServerUpdateParams,
-    McpServerUpdatePatch, McpServerUpdateResponse, MediaKind, ModelConfig,
-    OutboundAckInput, OutboundMessageView, OutboundOriginView, OutboundPayloadView,
-    OutboundStatusView, OutboxAckParams, OutboxAckResponse, OutboxReadParams, OutboxReadResponse,
-    ProfileApplyParams, ProfileApplyResponse, ProfileApplySummary, ProfileCreateParams,
-    ProfileCreateResponse, ProfileDeleteParams, ProfileDeleteResponse, ProfileDocument,
-    ProfileInstructions, ProfileListParams, ProfileListResponse, ProfilePutParams,
-    ProfilePutResponse, ProfileReadParams, ProfileReadResponse, ProfileSource, ProfileUpdateParams,
+    EnvironmentTargetSummaryView, FieldPatch, FleetConfigInput, FleetConfigPatchInput,
+    FleetProfilesConfigInput, FleetSpawnBaseConfig, FleetSpawnConfigInput, GenerationConfig,
+    GenerationConfigPatch, HostCapabilitiesView, HostControllerConnectionView, HostScopeView,
+    HostTargetAttachRequestView, HostTargetCreateRequestView, HostTransportView, InitializeParams,
+    InitializeResponse, InputAdmissionFailureKind, InputAdmissionFailureView, InputItem,
+    McpServerCreateParams, McpServerCreateResponse, McpServerDeleteParams, McpServerDeleteResponse,
+    McpServerListParams, McpServerListResponse, McpServerReadParams, McpServerReadResponse,
+    McpServerUpdateParams, McpServerUpdatePatch, McpServerUpdateResponse, MediaKind,
+    MessageSubmitParams, MessageSubmitResponse, ModelConfig, OutboundAckInput, OutboundMessageView,
+    OutboundOriginView, OutboundPayloadView, OutboundStatusView, OutboxAckParams,
+    OutboxAckResponse, OutboxReadParams, OutboxReadResponse, ProfileApplyParams,
+    ProfileApplyResponse, ProfileApplySummary, ProfileCreateParams, ProfileCreateResponse,
+    ProfileDeleteParams, ProfileDeleteResponse, ProfileDocument, ProfileInstructions,
+    ProfileListParams, ProfileListResponse, ProfilePutParams, ProfilePutResponse,
+    ProfileReadParams, ProfileReadResponse, ProfileSource, ProfileUpdateParams,
     ProfileUpdateResponse, PromptInstructionView, PromptsActiveParams, PromptsActiveResponse,
     ReasoningEffort, RunCancelParams, RunCancelResponse, RunDefaultsConfig, RunDefaultsPatch,
     RunLimitsConfig, RunStartConfig, RunStartParams, RunStartResponse, RunStartSource, RunView,
@@ -178,8 +180,8 @@ use mcp::McpRegistryStore;
 use store_pg::PgStore;
 use temporalio_client::{
     Client, WorkflowDescribeOptions, WorkflowHandle, WorkflowQueryOptions, WorkflowSignalOptions,
-    WorkflowStartOptions, errors::WorkflowInteractionError, errors::WorkflowQueryError,
-    errors::WorkflowStartError,
+    WorkflowStartOptions, WorkflowTerminateOptions, errors::WorkflowInteractionError,
+    errors::WorkflowQueryError, errors::WorkflowStartError,
 };
 use temporalio_common::protos::temporal::api::enums::v1::WorkflowExecutionStatus;
 use tools::{
@@ -276,6 +278,10 @@ fn status_has_submission(
             .completed_runs
             .iter()
             .any(|run| run.submission_id.as_ref() == Some(submission_id))
+        || status
+            .consumed_message_submissions
+            .iter()
+            .any(|consumed| &consumed.submission_id == submission_id)
 }
 
 enum ExistingRunSubmission {
@@ -306,7 +312,10 @@ fn existing_run_submission(
         .filter(|run| run.submission_id.as_ref() == Some(submission_id))
     {
         return Some(
-            if active.source.matches_request(source) && &active.run_config == run_config {
+            if active.origin == engine::RunOrigin::Requested
+                && active.source.matches_request(source)
+                && &active.run_config == run_config
+            {
                 ExistingRunSubmission::ReturnRun {
                     run_id: active.run_id,
                     status: active.status,
@@ -322,7 +331,10 @@ fn existing_run_submission(
         .iter()
         .find(|run| run.submission_id.as_ref() == Some(submission_id))
     {
-        if !queued.source.matches_request(source) || &queued.run_config != run_config {
+        if queued.origin != engine::RunOrigin::Requested
+            || !queued.source.matches_request(source)
+            || &queued.run_config != run_config
+        {
             return Some(ExistingRunSubmission::Reject);
         }
         return None;
@@ -333,13 +345,25 @@ fn existing_run_submission(
         .iter()
         .find(|run| run.submission_id.as_ref() == Some(submission_id))
     {
-        let digest = engine::run_submission_digest(source, run_config);
+        let digest = engine::request_run_submission_digest(source, run_config);
         return Some(match completed.submission_digest {
             Some(existing) if existing != digest => ExistingRunSubmission::Reject,
             _ => ExistingRunSubmission::ReturnRun {
                 run_id: completed.run_id,
                 status: completed.status,
             },
+        });
+    }
+    if let Some(message) = state
+        .runs
+        .messages
+        .iter()
+        .find(|message| message.submission_id.as_ref() == Some(submission_id))
+    {
+        let digest = engine::request_run_submission_digest(source, run_config);
+        return Some(match message.submission_digest {
+            existing if existing != digest => ExistingRunSubmission::Reject,
+            _ => ExistingRunSubmission::Reject,
         });
     }
     None
@@ -358,7 +382,10 @@ fn existing_admitted_run_submission(
         .filter(|run| run.submission_id.as_ref() == Some(submission_id))
     {
         return Some(
-            if active.source.matches_request(source) && &active.run_config == run_config {
+            if active.origin == engine::RunOrigin::Requested
+                && active.source.matches_request(source)
+                && &active.run_config == run_config
+            {
                 ExistingAdmittedRunSubmission::ReturnRun {
                     run_id: active.run_id,
                 }
@@ -374,7 +401,10 @@ fn existing_admitted_run_submission(
         .find(|run| run.submission_id.as_ref() == Some(submission_id))
     {
         return Some(
-            if queued.source.matches_request(source) && &queued.run_config == run_config {
+            if queued.origin == engine::RunOrigin::Requested
+                && queued.source.matches_request(source)
+                && &queued.run_config == run_config
+            {
                 ExistingAdmittedRunSubmission::ReturnRun {
                     run_id: queued.run_id,
                 }
@@ -389,7 +419,7 @@ fn existing_admitted_run_submission(
         .iter()
         .find(|run| run.submission_id.as_ref() == Some(submission_id))
     {
-        let digest = engine::run_submission_digest(source, run_config);
+        let digest = engine::request_run_submission_digest(source, run_config);
         return Some(match completed.submission_digest {
             Some(existing) if existing != digest => ExistingAdmittedRunSubmission::Reject,
             _ => ExistingAdmittedRunSubmission::ReturnRun {
@@ -397,12 +427,93 @@ fn existing_admitted_run_submission(
             },
         });
     }
+    if let Some(message) = state
+        .runs
+        .messages
+        .iter()
+        .find(|message| message.submission_id.as_ref() == Some(submission_id))
+    {
+        let digest = engine::request_run_submission_digest(source, run_config);
+        return Some(match message.submission_digest {
+            existing if existing != digest => ExistingAdmittedRunSubmission::Reject,
+            _ => ExistingAdmittedRunSubmission::Reject,
+        });
+    }
+    None
+}
+
+enum ExistingMessageSubmission {
+    Accepted,
+    Reject,
+}
+
+fn existing_message_submission(
+    state: &engine::CoreAgentState,
+    submission_id: &SubmissionId,
+    input: &[engine::ContextEntryInput],
+) -> Option<ExistingMessageSubmission> {
+    if let Some(active) = state
+        .runs
+        .active
+        .as_ref()
+        .filter(|run| run.submission_id.as_ref() == Some(submission_id))
+    {
+        return Some(
+            if active.origin == engine::RunOrigin::Message
+                && active.source.matches_message_input(input)
+            {
+                ExistingMessageSubmission::Accepted
+            } else {
+                ExistingMessageSubmission::Reject
+            },
+        );
+    }
+    if let Some(queued) = state
+        .runs
+        .queued
+        .iter()
+        .find(|run| run.submission_id.as_ref() == Some(submission_id))
+    {
+        return Some(
+            if queued.origin == engine::RunOrigin::Message
+                && queued.source.matches_message_input(input)
+            {
+                ExistingMessageSubmission::Accepted
+            } else {
+                ExistingMessageSubmission::Reject
+            },
+        );
+    }
+    if let Some(completed) = state
+        .runs
+        .completed
+        .iter()
+        .find(|run| run.submission_id.as_ref() == Some(submission_id))
+    {
+        let digest = engine::message_submission_digest(input);
+        return Some(match completed.submission_digest {
+            Some(existing) if existing != digest => ExistingMessageSubmission::Reject,
+            _ => ExistingMessageSubmission::Accepted,
+        });
+    }
+    if let Some(message) = state
+        .runs
+        .messages
+        .iter()
+        .find(|message| message.submission_id.as_ref() == Some(submission_id))
+    {
+        let digest = engine::message_submission_digest(input);
+        return Some(match message.submission_digest {
+            existing if existing != digest => ExistingMessageSubmission::Reject,
+            _ => ExistingMessageSubmission::Accepted,
+        });
+    }
     None
 }
 
 fn duplicate_submission_error(submission_id: &SubmissionId) -> AgentApiError {
     AgentApiError::rejected(format!(
-        "submission id {submission_id} was already used by a run with different input or run config"
+        "submission id {submission_id} was already used with a different command, input, or run config"
     ))
 }
 
@@ -827,6 +938,9 @@ impl GatewayAgentApi {
         if session_config.tools.fleet.unwrap_or(false) {
             config.fleet = tools::fleet::FleetToolsetConfig::enabled();
         }
+        if session_config.tools.timer.unwrap_or(false) {
+            config.concurrency = tools::concurrency::ConcurrencyToolsetConfig::timer();
+        }
         if include_process_tools {
             config.builtin.process = tools::toolset::EnvironmentToolsetConfig::basic();
         }
@@ -879,6 +993,7 @@ impl GatewayAgentApi {
         session_id: &SessionId,
         input: Vec<InputItem>,
         submission_id: SubmissionId,
+        notify_on_terminal: Vec<engine::RunTerminalNotifyIntent>,
     ) -> Result<String, AgentApiError> {
         let loaded = self
             .load_session_state_with_current_run_context(session_id)
@@ -911,6 +1026,7 @@ impl GatewayAgentApi {
         self.submit_core_command(
             session_id,
             CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+                notify_on_terminal,
                 submission_id: Some(submission_id.clone()),
                 source,
                 run_config,
@@ -921,6 +1037,154 @@ impl GatewayAgentApi {
             .wait_for_run_admitted(session_id, &submission_id, baseline_admission_failures)
             .await?;
         Ok(format!("run_{}", run_id.as_u64()))
+    }
+
+    pub(crate) async fn deliver_message_for_fleet(
+        &self,
+        session_id: &SessionId,
+        input: Vec<InputItem>,
+        submission_id: SubmissionId,
+    ) -> Result<(), AgentApiError> {
+        let loaded = self
+            .load_session_state_with_current_run_context(session_id)
+            .await?;
+        let input = run_input_from_api(self.store.as_ref(), &input).await?;
+        if let Some(existing) = existing_message_submission(&loaded.state, &submission_id, &input) {
+            return match existing {
+                ExistingMessageSubmission::Accepted => Ok(()),
+                ExistingMessageSubmission::Reject => {
+                    Err(duplicate_submission_error(&submission_id))
+                }
+            };
+        }
+        if loaded.state.lifecycle.status != CoreAgentStatus::Open {
+            return Err(AgentApiError::rejected(format!(
+                "session is not open: {session_id}"
+            )));
+        }
+        self.submit_core_command(
+            session_id,
+            CoreAgentCommand::SubmitMessage(engine::SubmitMessageCommand {
+                submission_id: Some(submission_id),
+                input,
+            }),
+        )
+        .await
+    }
+
+    /// Fleet-internal run start: identical to the public `session/runs/start`
+    /// boundary except that the admitted `RunRequestCommand` carries the
+    /// spawn's cross-session notify-intents. The public API stays intent-free.
+    pub(crate) async fn start_run_for_fleet(
+        &self,
+        session_id: &SessionId,
+        input: Vec<InputItem>,
+        submission_id: SubmissionId,
+        notify_on_terminal: Vec<engine::RunTerminalNotifyIntent>,
+    ) -> Result<String, AgentApiError> {
+        let response = self
+            .start_run_internal(
+                RunStartParams {
+                    session_id: session_id.as_str().to_owned(),
+                    source: RunStartSource::Input { items: input },
+                    submission_id: Some(submission_id.as_str().to_owned()),
+                    config: None,
+                },
+                notify_on_terminal,
+            )
+            .await?;
+        Ok(response.result.run.id)
+    }
+
+    async fn start_run_internal(
+        &self,
+        params: RunStartParams,
+        notify_on_terminal: Vec<engine::RunTerminalNotifyIntent>,
+    ) -> Result<AgentApiOutcome<RunStartResponse>, AgentApiError> {
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let loaded = self
+            .load_session_state_with_current_run_context(&session_id)
+            .await?;
+        let client_supplied_submission_id = params.submission_id.is_some();
+        let submission_id = match params.submission_id {
+            Some(submission_id) => SubmissionId::try_new(submission_id).map_err(|error| {
+                AgentApiError::invalid_request(format!("invalid submission id: {error}"))
+            })?,
+            None => self.allocate_submission_id(),
+        };
+        let run_config = self
+            .run_config_for_start(&session_id, params.config)
+            .await?;
+        let source = match params.source {
+            RunStartSource::Input { items } => engine::RunRequestSource::Input {
+                input: run_input_from_api(self.store.as_ref(), &items).await?,
+            },
+            RunStartSource::Context { keys } => {
+                if keys.is_empty() {
+                    return Err(AgentApiError::invalid_request(
+                        "session/runs/start source=context requires at least one key",
+                    ));
+                }
+                let mut parsed = Vec::with_capacity(keys.len());
+                let mut seen = BTreeSet::new();
+                for key in keys {
+                    let key = ContextEntryKey::try_new(key).map_err(|error| {
+                        AgentApiError::invalid_request(format!("invalid context key: {error}"))
+                    })?;
+                    if !seen.insert(key.clone()) {
+                        return Err(AgentApiError::invalid_request(format!(
+                            "duplicate trigger context key: {key}"
+                        )));
+                    }
+                    parsed.push(key);
+                }
+                engine::RunRequestSource::Context { keys: parsed }
+            }
+        };
+        if let Some(existing) =
+            existing_run_submission(&loaded.state, &submission_id, &source, &run_config)
+        {
+            return match existing {
+                ExistingRunSubmission::ReturnRun { run_id, status } => {
+                    let run = self.project_run_by_id(&session_id, run_id, status).await?;
+                    Ok(AgentApiOutcome::new(RunStartResponse { run }))
+                }
+                ExistingRunSubmission::Reject => Err(duplicate_submission_error(&submission_id)),
+            };
+        }
+        if loaded.state.lifecycle.status != CoreAgentStatus::Open {
+            return Err(AgentApiError::rejected(format!(
+                "session is not open: {session_id}"
+            )));
+        }
+        let status_before_signal = self.query_status_optional(&session_id).await?;
+        let baseline_admission_failures = status_before_signal
+            .as_ref()
+            .map(|status| status.admission_failures.len())
+            .unwrap_or(0);
+        let wait_for_admission_drain = client_supplied_submission_id
+            || status_has_submission(status_before_signal.as_ref(), &submission_id);
+        self.submit_core_command(
+            &session_id,
+            CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+                notify_on_terminal,
+                submission_id: Some(submission_id.clone()),
+                source,
+                run_config,
+            }),
+        )
+        .await?;
+        let run = self
+            .wait_for_run_accepted(
+                &session_id,
+                &submission_id,
+                baseline_admission_failures,
+                wait_for_admission_drain,
+            )
+            .await?;
+        Ok(AgentApiOutcome::new(RunStartResponse { run }))
     }
 
     async fn start_session_internal(
@@ -1455,14 +1719,44 @@ impl AgentApiService for GatewayAgentApi {
                 session: self.project_session_by_id(&session_id).await?,
             }));
         }
-        if loaded.state.runs.active.is_some() || !loaded.state.runs.queued.is_empty() {
-            return Err(AgentApiError::rejected(
-                "session cannot close with active work",
-            ));
+        if !params.force {
+            if loaded.state.runs.active.is_some() || !loaded.state.runs.queued.is_empty() {
+                return Err(AgentApiError::rejected(
+                    "session cannot close with active work",
+                ));
+            }
+            self.submit_core_command(&session_id, CoreAgentCommand::CloseSession { force: false })
+                .await?;
+            let session = self.wait_for_closed_session(&session_id).await?;
+            return Ok(AgentApiOutcome::new(SessionCloseResponse { session }));
         }
-        self.submit_core_command(&session_id, CoreAgentCommand::CloseSession)
-            .await?;
-        let session = self.wait_for_closed_session(&session_id).await?;
+
+        // Force path. Prefer the live workflow: it cancels active work,
+        // appends the close, observes closed+quiescent, and exits itself.
+        if self.workflow_is_running(&session_id).await {
+            let signalled = self
+                .submit_core_command(&session_id, CoreAgentCommand::CloseSession { force: true })
+                .await
+                .is_ok();
+            if signalled {
+                if let Ok(session) = self.wait_for_closed_session(&session_id).await {
+                    return Ok(AgentApiOutcome::new(SessionCloseResponse { session }));
+                }
+            }
+            // The workflow exists but never converged: it is wedged (e.g. a
+            // permanently failing workflow task). Terminate it so the direct
+            // append below is the only writer, then reconcile the log.
+            let _ = self
+                .workflow_handle(&session_id)
+                .terminate(WorkflowTerminateOptions::default())
+                .await;
+        }
+        // No running workflow (operator terminate, bootstrap failure, or the
+        // terminate above): reconcile the session log directly. Session and
+        // run status are projections of the log, so this alone recovers the
+        // row; the expected-head CAS protects against a concurrent writer.
+        self.force_close_session_in_store(&session_id).await?;
+        let session = self.project_session_by_id(&session_id).await?;
         Ok(AgentApiOutcome::new(SessionCloseResponse { session }))
     }
 
@@ -1826,9 +2120,21 @@ impl AgentApiService for GatewayAgentApi {
         &self,
         params: RunStartParams,
     ) -> Result<AgentApiOutcome<RunStartResponse>, AgentApiError> {
+        self.start_run_internal(params, Vec::new()).await
+    }
+
+    async fn submit_message(
+        &self,
+        params: MessageSubmitParams,
+    ) -> Result<AgentApiOutcome<MessageSubmitResponse>, AgentApiError> {
         let session_id = SessionId::try_new(params.session_id).map_err(|error| {
             AgentApiError::invalid_request(format!("invalid session id: {error}"))
         })?;
+        if params.items.is_empty() {
+            return Err(AgentApiError::invalid_request(
+                "session/messages/submit requires at least one item",
+            ));
+        }
         let loaded = self
             .load_session_state_with_current_run_context(&session_id)
             .await?;
@@ -1839,44 +2145,18 @@ impl AgentApiService for GatewayAgentApi {
             })?,
             None => self.allocate_submission_id(),
         };
-        let run_config = self
-            .run_config_for_start(&session_id, params.config)
-            .await?;
-        let source = match params.source {
-            RunStartSource::Input { items } => engine::RunRequestSource::Input {
-                input: run_input_from_api(self.store.as_ref(), &items).await?,
-            },
-            RunStartSource::Context { keys } => {
-                if keys.is_empty() {
-                    return Err(AgentApiError::invalid_request(
-                        "session/runs/start source=context requires at least one key",
-                    ));
-                }
-                let mut parsed = Vec::with_capacity(keys.len());
-                let mut seen = BTreeSet::new();
-                for key in keys {
-                    let key = ContextEntryKey::try_new(key).map_err(|error| {
-                        AgentApiError::invalid_request(format!("invalid context key: {error}"))
-                    })?;
-                    if !seen.insert(key.clone()) {
-                        return Err(AgentApiError::invalid_request(format!(
-                            "duplicate trigger context key: {key}"
-                        )));
-                    }
-                    parsed.push(key);
-                }
-                engine::RunRequestSource::Context { keys: parsed }
-            }
-        };
-        if let Some(existing) =
-            existing_run_submission(&loaded.state, &submission_id, &source, &run_config)
-        {
+        let input = run_input_from_api(self.store.as_ref(), &params.items).await?;
+        if let Some(existing) = existing_message_submission(&loaded.state, &submission_id, &input) {
             return match existing {
-                ExistingRunSubmission::ReturnRun { run_id, status } => {
-                    let run = self.project_run_by_id(&session_id, run_id, status).await?;
-                    Ok(AgentApiOutcome::new(RunStartResponse { run }))
+                ExistingMessageSubmission::Accepted => {
+                    Ok(AgentApiOutcome::new(MessageSubmitResponse {
+                        submission_id: submission_id.as_str().to_owned(),
+                        accepted: true,
+                    }))
                 }
-                ExistingRunSubmission::Reject => Err(duplicate_submission_error(&submission_id)),
+                ExistingMessageSubmission::Reject => {
+                    Err(duplicate_submission_error(&submission_id))
+                }
             };
         }
         if loaded.state.lifecycle.status != CoreAgentStatus::Open {
@@ -1893,22 +2173,23 @@ impl AgentApiService for GatewayAgentApi {
             || status_has_submission(status_before_signal.as_ref(), &submission_id);
         self.submit_core_command(
             &session_id,
-            CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+            CoreAgentCommand::SubmitMessage(engine::SubmitMessageCommand {
                 submission_id: Some(submission_id.clone()),
-                source,
-                run_config,
+                input,
             }),
         )
         .await?;
-        let run = self
-            .wait_for_run_accepted(
-                &session_id,
-                &submission_id,
-                baseline_admission_failures,
-                wait_for_admission_drain,
-            )
-            .await?;
-        Ok(AgentApiOutcome::new(RunStartResponse { run }))
+        self.wait_for_message_accepted(
+            &session_id,
+            &submission_id,
+            baseline_admission_failures,
+            wait_for_admission_drain,
+        )
+        .await?;
+        Ok(AgentApiOutcome::new(MessageSubmitResponse {
+            submission_id: submission_id.as_str().to_owned(),
+            accepted: true,
+        }))
     }
 
     async fn cancel_run(
@@ -1922,13 +2203,26 @@ impl AgentApiService for GatewayAgentApi {
         let loaded = self.load_session_state(&session_id).await?;
         match loaded.state.runs.active.as_ref() {
             Some(active)
-                if active.run_id == requested_run_id && active.status == RunStatus::Active => {}
+                if active.run_id == requested_run_id
+                    && matches!(
+                        active.status,
+                        RunStatus::Active
+                            | RunStatus::Parked
+                            | RunStatus::Cancelling
+                            | RunStatus::CancellingGrace
+                    ) => {}
             Some(active) if active.run_id == requested_run_id => {
                 return Err(AgentApiError::rejected(format!(
                     "run is not cancellable: {}",
                     params.run_id
                 )));
             }
+            _ if loaded
+                .state
+                .runs
+                .queued
+                .iter()
+                .any(|run| run.run_id == requested_run_id) => {}
             _ if loaded
                 .state
                 .runs
@@ -1948,8 +2242,13 @@ impl AgentApiService for GatewayAgentApi {
                 )));
             }
         }
-        self.submit_core_command(&session_id, CoreAgentCommand::RequestRunCancellation)
-            .await?;
+        self.submit_core_command(
+            &session_id,
+            CoreAgentCommand::CancelRun {
+                run_id: requested_run_id,
+            },
+        )
+        .await?;
         let run = self
             .wait_for_cancelled_run(&session_id, requested_run_id)
             .await?;

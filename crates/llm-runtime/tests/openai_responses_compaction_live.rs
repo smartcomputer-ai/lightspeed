@@ -142,6 +142,7 @@ async fn openai_responses_live_engine_prunes_and_reuses_provider_compaction() {
             session_id: session_id.clone(),
             observed_at_ms: 20,
             command: CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+                notify_on_terminal: Vec::new(),
                 submission_id: None,
                 source: engine::RunRequestSource::Input {
                     input: user_input(first_input_ref.clone()),
@@ -196,6 +197,7 @@ async fn openai_responses_live_engine_prunes_and_reuses_provider_compaction() {
             session_id,
             observed_at_ms: 30,
             command: CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+                notify_on_terminal: Vec::new(),
                 submission_id: None,
                 source: engine::RunRequestSource::Input {
                     input: user_input(second_input_ref),
@@ -425,6 +427,7 @@ fn session_config(model: ModelSelection) -> SessionConfig {
             }),
         },
         tools: Default::default(),
+        fleet: Default::default(),
     }
 }
 
@@ -453,6 +456,7 @@ fn standalone_session_config(
             }),
         },
         tools: Default::default(),
+        fleet: Default::default(),
     }
 }
 

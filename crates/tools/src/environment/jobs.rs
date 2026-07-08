@@ -19,8 +19,6 @@ use crate::fs::FsPath;
 pub const JOB_START_TOOL_NAME: &str = "job_start";
 pub const JOB_LIST_TOOL_NAME: &str = "job_list";
 pub const JOB_READ_TOOL_NAME: &str = "job_read";
-pub const JOB_WAIT_TOOL_NAME: &str = "job_wait";
-pub const JOB_CANCEL_TOOL_NAME: &str = "job_cancel";
 
 pub type JobExecResult<T> = Result<T, JobError>;
 
@@ -138,37 +136,6 @@ pub struct JobReadArgs {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct JobWaitArgs {
-    pub jobs: Vec<JobHandleArg>,
-    #[serde(default)]
-    pub mode: JobWaitMode,
-    #[serde(default)]
-    pub terminal_policy: JobWaitTerminalPolicy,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timeout_ms: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub output_bytes: Option<usize>,
-    #[serde(default)]
-    pub include_artifacts: bool,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum JobWaitMode {
-    #[default]
-    All,
-    Any,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum JobWaitTerminalPolicy {
-    #[default]
-    AnyTerminal,
-    AllSucceeded,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JobCancelArgs {
     pub jobs: Vec<JobHandleArg>,
     #[serde(default)]
@@ -193,6 +160,9 @@ pub struct JobStarted {
     pub dependencies: Vec<JobId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue_key: Option<String>,
+    /// Promise settled when this durable job reaches a terminal state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub promise: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -231,20 +201,6 @@ pub struct JobListResultEntry {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct JobWaitResult {
-    pub outcome: JobWaitOutcome,
-    pub jobs: Vec<JobReadResultEntry>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum JobWaitOutcome {
-    Satisfied,
-    Pending,
-    Timeout,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JobCancelResultSet {
     pub jobs: Vec<JobCancelResultEntry>,
 }
@@ -262,37 +218,8 @@ pub struct JobCancelResultEntry {
 pub fn is_environment_job_tool_name(name: &str) -> bool {
     matches!(
         name,
-        JOB_START_TOOL_NAME
-            | JOB_LIST_TOOL_NAME
-            | JOB_READ_TOOL_NAME
-            | JOB_WAIT_TOOL_NAME
-            | JOB_CANCEL_TOOL_NAME
+        JOB_START_TOOL_NAME | JOB_LIST_TOOL_NAME | JOB_READ_TOOL_NAME
     )
-}
-
-pub fn wait_satisfied(
-    jobs: &[JobReadResultEntry],
-    mode: JobWaitMode,
-    terminal_policy: JobWaitTerminalPolicy,
-) -> bool {
-    let mut statuses = jobs
-        .iter()
-        .filter_map(|job| job.summary.as_ref().map(|summary| summary.status));
-    match mode {
-        JobWaitMode::All => jobs.iter().all(|job| {
-            job.summary
-                .as_ref()
-                .is_some_and(|summary| status_satisfies(summary.status, terminal_policy))
-        }),
-        JobWaitMode::Any => statuses.any(|status| status_satisfies(status, terminal_policy)),
-    }
-}
-
-pub fn status_satisfies(status: JobStatus, terminal_policy: JobWaitTerminalPolicy) -> bool {
-    match terminal_policy {
-        JobWaitTerminalPolicy::AnyTerminal => status.is_terminal(),
-        JobWaitTerminalPolicy::AllSucceeded => status == JobStatus::Succeeded,
-    }
 }
 
 pub fn visible_job_read_output(jobs: &[JobReadResultEntry]) -> String {

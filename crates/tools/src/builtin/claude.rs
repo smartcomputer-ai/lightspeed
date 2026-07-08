@@ -45,9 +45,7 @@ pub(super) fn description(
         BuiltinToolOperation::RunProcess => "Executes a shell command.",
         BuiltinToolOperation::JobStart
         | BuiltinToolOperation::JobList
-        | BuiltinToolOperation::JobRead
-        | BuiltinToolOperation::JobWait
-        | BuiltinToolOperation::JobCancel => {
+        | BuiltinToolOperation::JobRead => {
             return Ok(canonical::description(operation, scoped_paths));
         }
         BuiltinToolOperation::ApplyPatch
@@ -211,9 +209,7 @@ pub(super) fn input_schema(operation: BuiltinToolOperation) -> ToolResult<Value>
         ),
         BuiltinToolOperation::JobStart
         | BuiltinToolOperation::JobList
-        | BuiltinToolOperation::JobRead
-        | BuiltinToolOperation::JobWait
-        | BuiltinToolOperation::JobCancel => return Ok(canonical::input_schema(operation)),
+        | BuiltinToolOperation::JobRead => return Ok(canonical::input_schema(operation)),
         BuiltinToolOperation::ApplyPatch
         | BuiltinToolOperation::ListDir
         | BuiltinToolOperation::WriteProcessStdin => return Err(unsupported(operation)),
@@ -300,11 +296,7 @@ pub(super) async fn invoke_json(
         }
         BuiltinToolOperation::JobStart
         | BuiltinToolOperation::JobList
-        | BuiltinToolOperation::JobRead
-        | BuiltinToolOperation::JobWait
-        | BuiltinToolOperation::JobCancel => {
-            canonical::invoke_json(operation, ctx, arguments).await
-        }
+        | BuiltinToolOperation::JobRead => canonical::invoke_json(operation, ctx, arguments).await,
         BuiltinToolOperation::ApplyPatch
         | BuiltinToolOperation::ListDir
         | BuiltinToolOperation::WriteProcessStdin => Err(unsupported(operation)),

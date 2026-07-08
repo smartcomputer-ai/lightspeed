@@ -3,8 +3,9 @@
 use crate::{
     CommandError, CommandRejection, CommandRejectionKind, ContextEntrySource, ContextEvent,
     CoreAgentCommand, CoreAgentEvent, CoreAgentEventProposal, CoreAgentJoins,
-    CoreAgentLifecycleEvent, CoreAgentState, CoreAgentStatus, DomainError, RunEvent,
-    RunRequestSource, RunSource, RunStatus, ToolConfigEvent,
+    CoreAgentLifecycleEvent, CoreAgentState, CoreAgentStatus, DomainError, MessageStatus,
+    PromiseEvent, PromiseResolution, RunEvent, RunRequestSource, RunSource, RunStatus,
+    ToolConfigEvent,
     core::components::{
         config::{validate_config_update_for_state, validate_run_config_for_state},
         tooling::{
@@ -16,6 +17,7 @@ use crate::{
 pub fn admit_command(
     state: &CoreAgentState,
     command: CoreAgentCommand,
+    observed_at_ms: u64,
 ) -> Result<Vec<CoreAgentEventProposal>, CommandError> {
     match command {
         CoreAgentCommand::OpenSession { config } => {
@@ -85,8 +87,10 @@ pub fn admit_command(
             // moved on (e.g. the original run completed or the session is
             // compacting).
             if let Some(submission_id) = request.submission_id.as_ref() {
-                use crate::core::components::run::{SubmissionMatch, match_existing_submission};
-                match match_existing_submission(
+                use crate::core::components::run::{
+                    SubmissionMatch, match_existing_run_submission,
+                };
+                match match_existing_run_submission(
                     state,
                     submission_id,
                     &request.source,
@@ -155,9 +159,111 @@ pub fn admit_command(
                 CoreAgentEvent::Run(RunEvent::Accepted(crate::AcceptedRunEvent {
                     run_id: next_run_id,
                     submission_id: request.submission_id,
+                    origin: crate::RunOrigin::Requested,
                     source,
                     run_config: request.run_config,
                     config_revision: state.lifecycle.config_revision,
+                    notify_on_terminal: request.notify_on_terminal,
+                })),
+            )])
+        }
+        CoreAgentCommand::SubmitMessage(message) => {
+            if let Some(submission_id) = message.submission_id.as_ref() {
+                use crate::core::components::run::{
+                    SubmissionMatch, match_existing_message_submission,
+                };
+                match match_existing_message_submission(state, submission_id, &message.input) {
+                    Some(SubmissionMatch::Identical) => return Ok(Vec::new()),
+                    Some(SubmissionMatch::Different) => {
+                        return reject(
+                            CommandRejectionKind::DuplicateSubmission,
+                            format!(
+                                "submission id {submission_id} was already used by a different \
+                                     command or message input"
+                            ),
+                        );
+                    }
+                    None => {}
+                }
+            }
+            require_open(state)?;
+            require_no_pending_compaction(
+                state,
+                "message cannot be delivered while context compaction is pending",
+            )?;
+            if message.input.is_empty() {
+                return reject(
+                    CommandRejectionKind::InvariantViolation,
+                    "message input must contain at least one entry",
+                );
+            }
+            crate::core::components::context::validate_run_input_entries(&message.input)
+                .map_err(command_rejection_from_domain)?;
+            let current_config = state.lifecycle.config.as_ref().ok_or_else(|| {
+                CommandError::Domain(DomainError::InvariantViolation(
+                    "open session is missing config".to_owned(),
+                ))
+            })?;
+            let run_config = current_config.run.clone();
+            validate_run_config_for_state(state, &run_config)
+                .map_err(command_rejection_from_domain)?;
+            if state.runs.active.as_ref().is_some_and(|run| {
+                run.status == RunStatus::Parked
+                    && run
+                        .parked_await
+                        .as_ref()
+                        .is_some_and(|parked| parked.spec.mailbox)
+            }) {
+                let next_message_id =
+                    state
+                        .id_cursors
+                        .last_message_id
+                        .checked_add(1)
+                        .ok_or_else(|| {
+                            CommandError::Domain(DomainError::InvariantViolation(
+                                "message id cursor exhausted".to_owned(),
+                            ))
+                        })?;
+                let joins = CoreAgentJoins {
+                    submission_id: message.submission_id.clone(),
+                    ..CoreAgentJoins::default()
+                };
+                let input = message.input;
+                return Ok(vec![CoreAgentEventProposal::new(
+                    joins,
+                    CoreAgentEvent::Run(RunEvent::MessageBuffered {
+                        message_id: crate::MessageId::new(next_message_id),
+                        submission_id: message.submission_id,
+                        submission_digest: crate::message_submission_digest(&input),
+                        input,
+                        run_config,
+                        config_revision: state.lifecycle.config_revision,
+                    }),
+                )]);
+            }
+            let next_run_id = state.id_cursors.last_run_id.checked_add(1).ok_or_else(|| {
+                CommandError::Domain(DomainError::InvariantViolation(
+                    "run id cursor exhausted".to_owned(),
+                ))
+            })?;
+            let next_run_id = crate::RunId::new(next_run_id);
+            let joins = CoreAgentJoins {
+                submission_id: message.submission_id.clone(),
+                run_id: Some(next_run_id),
+                ..CoreAgentJoins::default()
+            };
+            Ok(vec![CoreAgentEventProposal::new(
+                joins,
+                CoreAgentEvent::Run(RunEvent::Accepted(crate::AcceptedRunEvent {
+                    run_id: next_run_id,
+                    submission_id: message.submission_id,
+                    origin: crate::RunOrigin::Message,
+                    source: RunSource::Input {
+                        input: message.input,
+                    },
+                    run_config,
+                    config_revision: state.lifecycle.config_revision,
+                    notify_on_terminal: Vec::new(),
                 })),
             )])
         }
@@ -247,21 +353,90 @@ pub fn admit_command(
                 .map(|proposal| vec![proposal])
                 .map_err(command_rejection_from_domain)
         }
-        CoreAgentCommand::CloseSession => {
+        CoreAgentCommand::CloseSession { force } => {
+            if force && state.lifecycle.status == crate::CoreAgentStatus::Closed {
+                // Force-close is a recovery surface; retrying against an
+                // already-closed session is an idempotent no-op.
+                return Ok(Vec::new());
+            }
             require_open(state)?;
-            if state.runs.active.is_some()
-                || !state.runs.queued.is_empty()
-                || state.context.pending_compaction
+            if !force
+                && (state.runs.active.is_some()
+                    || !state.runs.queued.is_empty()
+                    || state
+                        .runs
+                        .messages
+                        .iter()
+                        .any(|message| message.status == MessageStatus::Buffered)
+                    || state.context.pending_compaction
+                    || state
+                        .promises
+                        .pending()
+                        .any(|promise| matches!(promise.scope, crate::PromiseScope::Session)))
             {
                 return reject(
                     CommandRejectionKind::ActiveWork,
                     "session cannot close with active work",
                 );
             }
-            Ok(vec![CoreAgentEventProposal::new(
+            let mut proposals = Vec::new();
+            if force {
+                if let Some(active_run) = state.runs.active.as_ref() {
+                    proposals.push(CoreAgentEventProposal::new(
+                        CoreAgentJoins {
+                            run_id: Some(active_run.run_id),
+                            ..CoreAgentJoins::default()
+                        },
+                        CoreAgentEvent::Run(RunEvent::ForceCancelled {
+                            run_id: active_run.run_id,
+                        }),
+                    ));
+                }
+                for queued in &state.runs.queued {
+                    proposals.push(CoreAgentEventProposal::new(
+                        CoreAgentJoins {
+                            run_id: Some(queued.run_id),
+                            ..CoreAgentJoins::default()
+                        },
+                        CoreAgentEvent::Run(RunEvent::QueuedCancelled {
+                            run_id: queued.run_id,
+                        }),
+                    ));
+                }
+                for message in state
+                    .runs
+                    .messages
+                    .iter()
+                    .filter(|message| message.status == MessageStatus::Buffered)
+                {
+                    proposals.push(CoreAgentEventProposal::new(
+                        CoreAgentJoins {
+                            submission_id: message.submission_id.clone(),
+                            ..CoreAgentJoins::default()
+                        },
+                        CoreAgentEvent::Run(RunEvent::MessageCancelled {
+                            message_id: message.message_id,
+                        }),
+                    ));
+                }
+                for promise in state
+                    .promises
+                    .pending()
+                    .filter(|promise| matches!(promise.scope, crate::PromiseScope::Session))
+                {
+                    proposals.push(CoreAgentEventProposal::new(
+                        CoreAgentJoins::default(),
+                        CoreAgentEvent::Promise(PromiseEvent::Cancelled {
+                            promise_id: promise.promise_id.clone(),
+                        }),
+                    ));
+                }
+            }
+            proposals.push(CoreAgentEventProposal::new(
                 CoreAgentJoins::default(),
                 CoreAgentEvent::Lifecycle(CoreAgentLifecycleEvent::Closed),
-            )])
+            ));
+            Ok(proposals)
         }
         CoreAgentCommand::RequestRunSteering { input } => {
             require_open(state)?;
@@ -290,23 +465,97 @@ pub fn admit_command(
                 }),
             )])
         }
-        CoreAgentCommand::RequestRunCancellation => {
+        CoreAgentCommand::CancelRun { run_id } => {
             require_open(state)?;
-            let active_run = active_run_for_command(state)?;
-            let joins = CoreAgentJoins {
-                run_id: Some(active_run.run_id),
-                ..CoreAgentJoins::default()
+            if let Some(active_run) = state.runs.active.as_ref() {
+                if active_run.run_id == run_id {
+                    if matches!(
+                        active_run.status,
+                        RunStatus::Cancelling | RunStatus::CancellingGrace
+                    ) {
+                        return Ok(Vec::new());
+                    }
+                    if matches!(active_run.status, RunStatus::Active | RunStatus::Parked) {
+                        return Ok(vec![CoreAgentEventProposal::new(
+                            CoreAgentJoins {
+                                run_id: Some(active_run.run_id),
+                                ..CoreAgentJoins::default()
+                            },
+                            CoreAgentEvent::Run(RunEvent::CancellationRequested {
+                                run_id: active_run.run_id,
+                            }),
+                        )]);
+                    }
+                    return Ok(Vec::new());
+                }
+            }
+            if state
+                .runs
+                .queued
+                .iter()
+                .any(|queued| queued.run_id == run_id)
+            {
+                return Ok(vec![CoreAgentEventProposal::new(
+                    CoreAgentJoins {
+                        run_id: Some(run_id),
+                        ..CoreAgentJoins::default()
+                    },
+                    CoreAgentEvent::Run(RunEvent::QueuedCancelled { run_id }),
+                )]);
+            }
+            Ok(Vec::new())
+        }
+        CoreAgentCommand::ResolvePromise {
+            promise_id,
+            resolution,
+        } => {
+            let Some(promise) = state.promises.promises.get(&promise_id) else {
+                return reject(
+                    CommandRejectionKind::UnknownReference,
+                    format!("unknown promise {promise_id}"),
+                );
+            };
+            if promise.status.is_terminal() {
+                // First writer won; later deliveries are idempotent no-ops.
+                return Ok(Vec::new());
+            }
+            let event = match resolution {
+                PromiseResolution::Resolved { payload_ref } => PromiseEvent::Resolved {
+                    promise_id,
+                    payload_ref,
+                },
+                PromiseResolution::Failed { error_ref } => PromiseEvent::Failed {
+                    promise_id,
+                    error_ref,
+                },
+                PromiseResolution::Cancelled => PromiseEvent::Cancelled { promise_id },
             };
             Ok(vec![CoreAgentEventProposal::new(
-                joins,
-                CoreAgentEvent::Run(RunEvent::CancellationRequested {
-                    run_id: active_run.run_id,
-                }),
+                CoreAgentJoins::default(),
+                CoreAgentEvent::Promise(event),
             )])
         }
-        CoreAgentCommand::ResumeToolBatch { batch_id, result } => {
+        CoreAgentCommand::ForceCancelRun { run_id } => {
             require_open(state)?;
-            crate::core::drive::resume_deferred_tool_batch_proposals(state, batch_id, result)
+            let Some(active_run) = state.runs.active.as_ref() else {
+                // The run already reached a terminal state (or never
+                // existed); the watchdog retry is an idempotent no-op.
+                return Ok(Vec::new());
+            };
+            if active_run.run_id != run_id {
+                return Ok(Vec::new());
+            }
+            Ok(vec![CoreAgentEventProposal::new(
+                CoreAgentJoins {
+                    run_id: Some(run_id),
+                    ..CoreAgentJoins::default()
+                },
+                CoreAgentEvent::Run(RunEvent::ForceCancelled { run_id }),
+            )])
+        }
+        CoreAgentCommand::ResumeAwait(command) => {
+            require_open(state)?;
+            crate::core::drive::resume_await_proposals(state, command, observed_at_ms)
                 .map_err(command_rejection_from_domain)
         }
         CoreAgentCommand::ReplaceTools {

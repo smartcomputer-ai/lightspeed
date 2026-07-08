@@ -1,7 +1,7 @@
 use crate::{
     CodecError, ContextEvent, CoreAgentEntry, CoreAgentEvent, CoreAgentJoins,
-    CoreAgentLifecycleEvent, CorrelationId, RunEvent, RunId, StoredEvent, SubmissionId,
-    ToolBatchId, ToolCallId, ToolConfigEvent, ToolEvent, TurnEvent, TurnId,
+    CoreAgentLifecycleEvent, CorrelationId, PromiseEvent, RunEvent, RunId, StoredEvent,
+    SubmissionId, ToolBatchId, ToolCallId, ToolConfigEvent, ToolEvent, TurnEvent, TurnId,
     UncommittedCoreAgentEvent,
     session::{StoredJoins, StoredSessionEntry, UncommittedStoredEvent},
 };
@@ -112,11 +112,22 @@ fn core_agent_event_envelope_kind(event: &CoreAgentEvent) -> &'static str {
         CoreAgentEvent::Run(event) => match event {
             RunEvent::Accepted(_) => "lightspeed.core.run.accepted",
             RunEvent::Started { .. } => "lightspeed.core.run.started",
+            RunEvent::MessageBuffered { .. } => "lightspeed.core.run.message_buffered",
+            RunEvent::MessageConsumedByAwait { .. } => {
+                "lightspeed.core.run.message_consumed_by_await"
+            }
+            RunEvent::MessagePromotedToRun { .. } => "lightspeed.core.run.message_promoted_to_run",
+            RunEvent::MessageCancelled { .. } => "lightspeed.core.run.message_cancelled",
             RunEvent::SteeringAccepted { .. } => "lightspeed.core.run.steering_accepted",
             RunEvent::CancellationRequested { .. } => "lightspeed.core.run.cancellation_requested",
+            RunEvent::CancellationGraceStarted { .. } => {
+                "lightspeed.core.run.cancellation_grace_started"
+            }
             RunEvent::Completed { .. } => "lightspeed.core.run.completed",
             RunEvent::Failed { .. } => "lightspeed.core.run.failed",
             RunEvent::Cancelled { .. } => "lightspeed.core.run.cancelled",
+            RunEvent::ForceCancelled { .. } => "lightspeed.core.run.force_cancelled",
+            RunEvent::QueuedCancelled { .. } => "lightspeed.core.run.queued_cancelled",
         },
         CoreAgentEvent::Turn(event) => match event {
             TurnEvent::Started { .. } => "lightspeed.core.turn.started",
@@ -155,6 +166,13 @@ fn core_agent_event_envelope_kind(event: &CoreAgentEvent) -> &'static str {
             ToolEvent::BatchDeferred { .. } => "lightspeed.core.tool.batch_deferred",
             ToolEvent::BatchResumed { .. } => "lightspeed.core.tool.batch_resumed",
             ToolEvent::BatchCompleted { .. } => "lightspeed.core.tool.batch_completed",
+        },
+        CoreAgentEvent::Promise(event) => match event {
+            PromiseEvent::Created { .. } => "lightspeed.core.promise.created",
+            PromiseEvent::Resolved { .. } => "lightspeed.core.promise.resolved",
+            PromiseEvent::Failed { .. } => "lightspeed.core.promise.failed",
+            PromiseEvent::Cancelled { .. } => "lightspeed.core.promise.cancelled",
+            PromiseEvent::Detached { .. } => "lightspeed.core.promise.detached",
         },
     }
 }
