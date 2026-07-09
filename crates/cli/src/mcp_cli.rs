@@ -29,26 +29,28 @@ struct McpServerArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 enum McpServerCommand {
-    /// Add a remote MCP server record.
-    Add(McpServerAddArgs),
+    /// Create or replace a remote MCP server record (full document).
+    Put(McpServerPutArgs),
     /// List remote MCP server records.
     List(McpServerListArgs),
     /// Read a remote MCP server record.
     Read(McpServerReadArgs),
-    /// Update fields of a remote MCP server record (absent flags keep values).
-    Update(McpServerUpdateArgs),
     /// Delete a remote MCP server record.
     Delete(McpServerDeleteArgs),
 }
 
 #[derive(Args, Debug, Clone)]
-struct McpServerAddArgs {
+struct McpServerPutArgs {
     /// JSON-RPC agent API URL.
     #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
     api_url: String,
-    /// Emit the created server as JSON.
+    /// Emit the stored server as JSON.
     #[arg(long)]
     json: bool,
+    /// Replace only when the current record is at this revision; absent
+    /// creates or replaces unconditionally.
+    #[arg(long = "expected-revision")]
+    expected_revision: Option<u64>,
     /// Stable universe-scoped server id.
     #[arg(long = "id")]
     server_id: String,
@@ -123,7 +125,7 @@ impl std::fmt::Display for McpAuthPolicyArg {
     }
 }
 
-fn auth_policy_from_args(args: &McpServerAddArgs) -> Result<api::McpServerAuthPolicy> {
+fn auth_policy_from_args(args: &McpServerPutArgs) -> Result<api::McpServerAuthPolicy> {
     let oauth_flags_used = args.oauth_resource.is_some()
         || !args.oauth_scopes.is_empty()
         || args.oauth_metadata_url.is_some()
@@ -199,60 +201,6 @@ struct McpServerReadArgs {
     server_id: String,
 }
 
-/// Auth-policy changes are deliberately not patchable here — pass the full
-/// policy through the API (`mcp/servers/update`) or re-add the server.
-#[derive(Args, Debug, Clone)]
-struct McpServerUpdateArgs {
-    /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL")]
-    api_url: String,
-    /// Emit the updated server as JSON.
-    #[arg(long)]
-    json: bool,
-    /// Server id to update.
-    server_id: String,
-    /// New remote MCP endpoint URL.
-    #[arg(long = "url")]
-    server_url: Option<String>,
-    /// New default provider-facing MCP server label.
-    #[arg(long = "label")]
-    default_server_label: Option<String>,
-    /// New display name.
-    #[arg(long = "display-name", conflicts_with = "clear_display_name")]
-    display_name: Option<String>,
-    /// Clear the display name.
-    #[arg(long = "clear-display-name")]
-    clear_display_name: bool,
-    /// New description.
-    #[arg(long, conflicts_with = "clear_description")]
-    description: Option<String>,
-    /// Clear the description.
-    #[arg(long = "clear-description")]
-    clear_description: bool,
-    /// New remote MCP transport.
-    #[arg(long)]
-    transport: Option<RemoteMcpTransportArg>,
-    /// Replacement tool allowlist entry. Repeat for multiple; replaces the
-    /// whole list.
-    #[arg(long = "allowed-tool", conflicts_with = "clear_allowed_tools")]
-    allowed_tools: Vec<String>,
-    /// Clear the tool allowlist (allow everything).
-    #[arg(long = "clear-allowed-tools")]
-    clear_allowed_tools: bool,
-    /// New default remote MCP approval behavior.
-    #[arg(long)]
-    approval: Option<RemoteMcpApprovalArg>,
-    /// Enable provider-side deferred MCP tool loading by default.
-    #[arg(long = "defer-loading", conflicts_with = "no_defer_loading")]
-    defer_loading: bool,
-    /// Disable provider-side deferred MCP tool loading by default.
-    #[arg(long = "no-defer-loading", conflicts_with = "defer_loading")]
-    no_defer_loading: bool,
-    /// New server status.
-    #[arg(long)]
-    status: Option<McpServerStatusArg>,
-}
-
 #[derive(Args, Debug, Clone)]
 struct McpServerDeleteArgs {
     /// JSON-RPC agent API URL.
@@ -312,8 +260,8 @@ struct McpUnlinkArgs {
     /// Session id to change.
     #[arg(long)]
     session: String,
-    /// Materialized MCP tool id to remove.
-    tool_id: String,
+    /// Declared MCP server id to remove from the session config.
+    server_id: String,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -424,30 +372,32 @@ pub(crate) async fn handle(args: McpArgs) -> Result<()> {
 
 async fn server(args: McpServerArgs) -> Result<()> {
     match args.command {
-        McpServerCommand::Add(args) => server_add(args).await,
+        McpServerCommand::Put(args) => server_put(args).await,
         McpServerCommand::List(args) => server_list(args).await,
         McpServerCommand::Read(args) => server_read(args).await,
-        McpServerCommand::Update(args) => server_update(args).await,
         McpServerCommand::Delete(args) => server_delete(args).await,
     }
 }
 
-async fn server_add(args: McpServerAddArgs) -> Result<()> {
+async fn server_put(args: McpServerPutArgs) -> Result<()> {
     let auth_policy = auth_policy_from_args(&args)?;
     let api = HttpAgentApi::new(args.api_url);
     let response = api
-        .create_mcp_server(api::McpServerCreateParams {
-            server_id: args.server_id,
-            display_name: args.display_name,
-            server_url: args.server_url,
-            transport: args.transport.into(),
-            default_server_label: args.default_server_label,
-            description: args.description,
-            allowed_tools: nonempty_vec(args.allowed_tools),
-            approval_default: args.approval.into(),
-            defer_loading_default: defer_loading_arg(args.defer_loading, args.no_defer_loading),
-            auth_policy,
-            status: args.status.into(),
+        .put_mcp_server(api::McpServerPutParams {
+            server: api::McpServerInput {
+                server_id: args.server_id,
+                display_name: args.display_name,
+                server_url: args.server_url,
+                transport: args.transport.into(),
+                default_server_label: args.default_server_label,
+                description: args.description,
+                allowed_tools: nonempty_vec(args.allowed_tools),
+                approval_default: args.approval.into(),
+                defer_loading_default: defer_loading_arg(args.defer_loading, args.no_defer_loading),
+                auth_policy,
+                status: args.status.into(),
+            },
+            expected_revision: args.expected_revision,
         })
         .await
         .map_err(crate::api_client::api_error)?
@@ -500,51 +450,6 @@ async fn server_read(args: McpServerReadArgs) -> Result<()> {
     Ok(())
 }
 
-async fn server_update(args: McpServerUpdateArgs) -> Result<()> {
-    let api = HttpAgentApi::new(args.api_url);
-    let display_name = if args.clear_display_name {
-        Some(api::FieldPatch::Clear)
-    } else {
-        args.display_name.map(api::FieldPatch::Set)
-    };
-    let description = if args.clear_description {
-        Some(api::FieldPatch::Clear)
-    } else {
-        args.description.map(api::FieldPatch::Set)
-    };
-    let allowed_tools = if args.clear_allowed_tools {
-        Some(api::FieldPatch::Clear)
-    } else {
-        nonempty_vec(args.allowed_tools).map(api::FieldPatch::Set)
-    };
-    let response = api
-        .update_mcp_server(api::McpServerUpdateParams {
-            server_id: args.server_id,
-            patch: api::McpServerUpdatePatch {
-                display_name,
-                server_url: args.server_url,
-                transport: args.transport.map(Into::into),
-                default_server_label: args.default_server_label,
-                description,
-                allowed_tools,
-                approval_default: args.approval.map(Into::into),
-                defer_loading_default: defer_loading_arg(args.defer_loading, args.no_defer_loading)
-                    .map(api::FieldPatch::Set),
-                auth_policy: None,
-                status: args.status.map(Into::into),
-            },
-        })
-        .await
-        .map_err(crate::api_client::api_error)?
-        .result;
-    if args.json {
-        println!("{}", serde_json::to_string_pretty(&response)?);
-        return Ok(());
-    }
-    print_server(&response.server);
-    Ok(())
-}
-
 async fn server_delete(args: McpServerDeleteArgs) -> Result<()> {
     let api = HttpAgentApi::new(args.api_url);
     let response = api
@@ -562,18 +467,39 @@ async fn server_delete(args: McpServerDeleteArgs) -> Result<()> {
     Ok(())
 }
 
+/// MCP links are declarative session config: link/unlink are sugar that
+/// read-modify-put the config document's `features.mcp` block.
 async fn link(args: McpLinkArgs) -> Result<()> {
     let api = HttpAgentApi::new(args.api_url);
+    let session = api
+        .read_session(api::SessionReadParams {
+            session_id: args.session.clone(),
+        })
+        .await
+        .map_err(crate::api_client::api_error)?
+        .result
+        .session;
+    let mut config = session.config.unwrap_or_default();
+    let mut features = config.features.take().unwrap_or_default();
+    let mut mcp = features.mcp.take().unwrap_or(api::McpFeature {
+        version: api::CURRENT_FEATURE_VERSION,
+        servers: Vec::new(),
+    });
+    mcp.servers.retain(|link| link.server_id != args.server_id);
+    mcp.servers.push(api::McpServerLink {
+        server_id: args.server_id.clone(),
+        allowed_tools: nonempty_vec(args.allowed_tools),
+        approval: args.approval.map(Into::into),
+        defer_loading: defer_loading_arg(args.defer_loading, args.no_defer_loading),
+        auth_grant_id: args.auth_grant_id,
+    });
+    features.mcp = Some(mcp);
+    config.features = Some(features);
     let response = api
-        .link_session_mcp(api::SessionMcpLinkParams {
-            session_id: args.session,
-            server_id: args.server_id,
-            tool_id: args.tool_id,
-            server_label: args.server_label,
-            allowed_tools: nonempty_vec(args.allowed_tools),
-            approval: args.approval.map(Into::into),
-            defer_loading: defer_loading_arg(args.defer_loading, args.no_defer_loading),
-            auth_grant_id: args.auth_grant_id,
+        .put_session_config(api::SessionConfigPutParams {
+            session_id: args.session.clone(),
+            expected_config_revision: Some(session.config_revision),
+            config,
         })
         .await
         .map_err(crate::api_client::api_error)?
@@ -582,18 +508,34 @@ async fn link(args: McpLinkArgs) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&response)?);
         return Ok(());
     }
-    println!("linked {}", response.link.tool_id);
-    print_link(&response.link);
-    println!("linkCount {}", response.links.len());
-    Ok(())
+    println!("linked {}", args.server_id);
+    print_session_links(&api, &args.session).await
 }
 
 async fn unlink(args: McpUnlinkArgs) -> Result<()> {
     let api = HttpAgentApi::new(args.api_url);
+    let session = api
+        .read_session(api::SessionReadParams {
+            session_id: args.session.clone(),
+        })
+        .await
+        .map_err(crate::api_client::api_error)?
+        .result
+        .session;
+    let mut config = session.config.unwrap_or_default();
+    let mut features = config.features.take().unwrap_or_default();
+    if let Some(mut mcp) = features.mcp.take() {
+        mcp.servers.retain(|link| link.server_id != args.server_id);
+        if !mcp.servers.is_empty() {
+            features.mcp = Some(mcp);
+        }
+    }
+    config.features = Some(features);
     let response = api
-        .unlink_session_mcp(api::SessionMcpUnlinkParams {
-            session_id: args.session,
-            tool_id: args.tool_id,
+        .put_session_config(api::SessionConfigPutParams {
+            session_id: args.session.clone(),
+            expected_config_revision: Some(session.config_revision),
+            config,
         })
         .await
         .map_err(crate::api_client::api_error)?
@@ -602,30 +544,51 @@ async fn unlink(args: McpUnlinkArgs) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&response)?);
         return Ok(());
     }
-    println!("unlinked {}", response.tool_id);
-    println!("linkCount {}", response.links.len());
+    println!("unlinked {}", args.server_id);
+    print_session_links(&api, &args.session).await
+}
+
+/// Materialized MCP links are the RemoteMcp entries of the session's
+/// derived toolset; the declaration lives in `config.features.mcp`.
+async fn session_mcp_tools(api: &HttpAgentApi, session_id: &str) -> Result<Vec<api::ToolView>> {
+    let session = api
+        .read_session(api::SessionReadParams {
+            session_id: session_id.to_owned(),
+        })
+        .await
+        .map_err(crate::api_client::api_error)?
+        .result
+        .session;
+    Ok(session
+        .active_tools
+        .tools
+        .into_iter()
+        .filter(|tool| matches!(tool.kind, api::ToolKindView::RemoteMcp { .. }))
+        .collect())
+}
+
+async fn print_session_links(api: &HttpAgentApi, session_id: &str) -> Result<()> {
+    let tools = session_mcp_tools(api, session_id).await?;
+    println!("linkCount {}", tools.len());
+    for tool in &tools {
+        print_link(tool);
+    }
     Ok(())
 }
 
 async fn list(args: McpListArgs) -> Result<()> {
     let api = HttpAgentApi::new(args.api_url);
-    let response = api
-        .list_session_mcp(api::SessionMcpListParams {
-            session_id: args.session,
-        })
-        .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+    let tools = session_mcp_tools(&api, &args.session).await?;
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&response)?);
+        println!("{}", serde_json::to_string_pretty(&tools)?);
         return Ok(());
     }
-    if response.links.is_empty() {
+    if tools.is_empty() {
         println!("links 0");
         return Ok(());
     }
-    for link in &response.links {
-        print_link(link);
+    for tool in &tools {
+        print_link(tool);
     }
     Ok(())
 }
@@ -666,6 +629,7 @@ fn print_server(server: &api::McpServerView) {
         approval_label(server.approval_default)
     );
     println!("status {}", status_label(server.status));
+    println!("revision {}", server.revision);
     print_auth_policy(&server.auth_policy);
     if let Some(display_name) = &server.display_name {
         println!("displayName {}", display_name);
@@ -718,16 +682,28 @@ fn print_auth_policy(policy: &api::McpServerAuthPolicy) {
     }
 }
 
-fn print_link(link: &api::SessionMcpLinkView) {
-    println!("{} {} {}", link.tool_id, link.server_label, link.server_url);
-    println!("  approval {}", approval_label(link.approval));
-    if let Some(allowed_tools) = &link.allowed_tools {
+fn print_link(tool: &api::ToolView) {
+    let api::ToolKindView::RemoteMcp {
+        server_label,
+        server_url,
+        allowed_tools,
+        approval,
+        defer_loading,
+        auth_ref,
+        ..
+    } = &tool.kind
+    else {
+        return;
+    };
+    println!("{} {} {}", tool.tool_id, server_label, server_url);
+    println!("  approval {}", approval_label(*approval));
+    if let Some(allowed_tools) = allowed_tools {
         println!("  allowedTools {}", allowed_tools.join(","));
     }
-    if let Some(defer_loading) = link.defer_loading {
+    if let Some(defer_loading) = defer_loading {
         println!("  deferLoading {}", defer_loading);
     }
-    if let Some(auth_ref) = &link.auth_ref {
+    if let Some(auth_ref) = auth_ref {
         println!("  authRef {}:{}", auth_ref.namespace, auth_ref.id);
     }
 }

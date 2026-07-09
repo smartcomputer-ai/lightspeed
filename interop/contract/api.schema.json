@@ -435,6 +435,125 @@
       ],
       "type": "object"
     },
+    "AgentApiOutcomeOfEnvironmentCloseResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/EnvironmentCloseResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfEnvironmentCreateResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/EnvironmentCreateResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfEnvironmentJobCancelResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/EnvironmentJobCancelResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfEnvironmentJobCreateResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/EnvironmentJobCreateResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfEnvironmentJobListResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/EnvironmentJobListResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfEnvironmentJobReadResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/EnvironmentJobReadResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfEnvironmentListResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/EnvironmentListResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
     "AgentApiOutcomeOfEnvironmentProviderHeartbeatResponse": {
       "properties": {
         "notifications": {
@@ -486,23 +605,6 @@
       ],
       "type": "object"
     },
-    "AgentApiOutcomeOfEnvironmentProviderTargetListResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/EnvironmentProviderTargetListResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
     "AgentApiOutcomeOfEnvironmentProviderUnregisterResponse": {
       "properties": {
         "notifications": {
@@ -520,6 +622,23 @@
       ],
       "type": "object"
     },
+    "AgentApiOutcomeOfEnvironmentReadResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/EnvironmentReadResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
     "AgentApiOutcomeOfInitializeResponse": {
       "properties": {
         "notifications": {
@@ -530,23 +649,6 @@
         },
         "result": {
           "$ref": "#/definitions/InitializeResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfMcpServerCreateResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/McpServerCreateResponse"
         }
       },
       "required": [
@@ -588,6 +690,23 @@
       ],
       "type": "object"
     },
+    "AgentApiOutcomeOfMcpServerPutResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/McpServerPutResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
     "AgentApiOutcomeOfMcpServerReadResponse": {
       "properties": {
         "notifications": {
@@ -598,40 +717,6 @@
         },
         "result": {
           "$ref": "#/definitions/McpServerReadResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfMcpServerUpdateResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/McpServerUpdateResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfMessageSubmitResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/MessageSubmitResponse"
         }
       },
       "required": [
@@ -860,40 +945,6 @@
       ],
       "type": "object"
     },
-    "AgentApiOutcomeOfProfileUpdateResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/ProfileUpdateResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfPromptsActiveResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/PromptsActiveResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
     "AgentApiOutcomeOfRunCancelResponse": {
       "properties": {
         "notifications": {
@@ -945,6 +996,23 @@
       ],
       "type": "object"
     },
+    "AgentApiOutcomeOfSessionConfigPutResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/SessionConfigPutResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
     "AgentApiOutcomeOfSessionEnvironmentActivateResponse": {
       "properties": {
         "notifications": {
@@ -972,40 +1040,6 @@
         },
         "result": {
           "$ref": "#/definitions/SessionEnvironmentAttachResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfSessionEnvironmentCloseResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/SessionEnvironmentCloseResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfSessionEnvironmentCreateResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/SessionEnvironmentCreateResponse"
         }
       },
       "required": [
@@ -1081,6 +1115,23 @@
       ],
       "type": "object"
     },
+    "AgentApiOutcomeOfSessionEnvironmentDetachResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/SessionEnvironmentDetachResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
     "AgentApiOutcomeOfSessionEnvironmentListResponse": {
       "properties": {
         "notifications": {
@@ -1132,74 +1183,6 @@
       ],
       "type": "object"
     },
-    "AgentApiOutcomeOfSessionJobCancelResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/SessionJobCancelResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfSessionJobCreateResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/SessionJobCreateResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfSessionJobListResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/SessionJobListResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfSessionJobReadResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/SessionJobReadResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
     "AgentApiOutcomeOfSessionListResponse": {
       "properties": {
         "notifications": {
@@ -1210,57 +1193,6 @@
         },
         "result": {
           "$ref": "#/definitions/SessionListResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfSessionMcpLinkResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/SessionMcpLinkResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfSessionMcpListResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/SessionMcpListResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfSessionMcpUnlinkResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/SessionMcpUnlinkResponse"
         }
       },
       "required": [
@@ -1312,40 +1244,6 @@
         },
         "result": {
           "$ref": "#/definitions/SessionStartResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfSessionToolsUpdateResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/SessionToolsUpdateResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfSessionUpdateResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/SessionUpdateResponse"
         }
       },
       "required": [
@@ -1728,38 +1626,6 @@
         {
           "properties": {
             "method": {
-              "const": "session/items/completed",
-              "type": "string"
-            },
-            "params": {
-              "properties": {
-                "item": {
-                  "$ref": "#/definitions/SessionItemView"
-                },
-                "runId": {
-                  "type": "string"
-                },
-                "sessionId": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "sessionId",
-                "runId",
-                "item"
-              ],
-              "type": "object"
-            }
-          },
-          "required": [
-            "method",
-            "params"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "method": {
               "const": "error",
               "type": "string"
             },
@@ -1794,7 +1660,7 @@
         "config": {
           "anyOf": [
             {
-              "$ref": "#/definitions/SessionConfigInput"
+              "$ref": "#/definitions/SessionConfig"
             },
             {
               "type": "null"
@@ -1833,12 +1699,6 @@
             }
           ]
         },
-        "mcp": {
-          "items": {
-            "$ref": "#/definitions/ProfileMcpLink"
-          },
-          "type": "array"
-        },
         "mounts": {
           "items": {
             "$ref": "#/definitions/ProfileMount"
@@ -1871,7 +1731,7 @@
         "config": {
           "anyOf": [
             {
-              "$ref": "#/definitions/SessionConfigInput"
+              "$ref": "#/definitions/SessionConfig"
             },
             {
               "type": "null"
@@ -1905,12 +1765,6 @@
               "type": "null"
             }
           ]
-        },
-        "mcp": {
-          "items": {
-            "$ref": "#/definitions/ProfileMcpLink"
-          },
-          "type": "array"
         },
         "mounts": {
           "items": {
@@ -1959,78 +1813,6 @@
         "revision",
         "updatedAtMs"
       ],
-      "type": "object"
-    },
-    "AgentProfileUpdatePatch": {
-      "properties": {
-        "config": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/FieldPatchOfSessionConfigInput"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "description": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/FieldPatchOfstring"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "displayName": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/FieldPatchOfstring"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "environments": {
-          "items": {
-            "$ref": "#/definitions/ProfileEnvironment"
-          },
-          "type": [
-            "array",
-            "null"
-          ]
-        },
-        "instructions": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/FieldPatchOfProfileInstructions"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "mcp": {
-          "items": {
-            "$ref": "#/definitions/ProfileMcpLink"
-          },
-          "type": [
-            "array",
-            "null"
-          ]
-        },
-        "mounts": {
-          "items": {
-            "$ref": "#/definitions/ProfileMount"
-          },
-          "type": [
-            "array",
-            "null"
-          ]
-        }
-      },
       "type": "object"
     },
     "AttachedHostSpecView": {
@@ -3055,7 +2837,7 @@
       ],
       "type": "object"
     },
-    "CompactionPolicyInput": {
+    "CompactionPolicy": {
       "oneOf": [
         {
           "properties": {
@@ -3248,27 +3030,13 @@
       ],
       "type": "object"
     },
-    "ContextConfigInput": {
+    "ContextConfig": {
+      "additionalProperties": false,
       "properties": {
         "compaction": {
           "anyOf": [
             {
-              "$ref": "#/definitions/CompactionPolicyInput"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "type": "object"
-    },
-    "ContextConfigPatchInput": {
-      "properties": {
-        "compaction": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/FieldPatchOfCompactionPolicyInput"
+              "$ref": "#/definitions/CompactionPolicy"
             },
             {
               "type": "null"
@@ -3487,6 +3255,82 @@
         }
       ]
     },
+    "ContextEntryView": {
+      "description": "A session context entry, faithful to the stored engine entry: keyed,\nkind-tagged, ref-backed. Keys are a stable extension point — clients\nreconstruct derived surfaces (e.g. the prompted instruction set via the\n`prompt_instructions/` key prefix) by filtering on `key` and fetching\nbodies through `blobs/read`. `text` inlines blob content only for\nmessage and tool entries; every other kind is ref + preview.",
+      "properties": {
+        "contentRef": {
+          "type": "string"
+        },
+        "display": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ProviderContextDisplayView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "key": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/definitions/ContextEntryKindView"
+        },
+        "mediaType": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "preview": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "providerItemId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "providerKind": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tokenEstimate": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TokenEstimateView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "contentRef"
+      ],
+      "type": "object"
+    },
     "ContextMessageRoleView": {
       "enum": [
         "user",
@@ -3568,10 +3412,10 @@
     },
     "ContextView": {
       "properties": {
-        "items": {
+        "entries": {
           "default": [],
           "items": {
-            "$ref": "#/definitions/SessionItemView"
+            "$ref": "#/definitions/ContextEntryView"
           },
           "type": "array"
         },
@@ -3586,12 +3430,327 @@
       ],
       "type": "object"
     },
-    "EnvironmentProviderCapabilitiesView": {
+    "EnvironmentCloseParams": {
       "properties": {
-        "attachTarget": {
+        "instanceId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "instanceId"
+      ],
+      "type": "object"
+    },
+    "EnvironmentCloseResponse": {
+      "properties": {
+        "environment": {
+          "$ref": "#/definitions/EnvironmentInstanceView"
+        }
+      },
+      "required": [
+        "environment"
+      ],
+      "type": "object"
+    },
+    "EnvironmentCreateParams": {
+      "properties": {
+        "providerId": {
+          "type": "string"
+        },
+        "request": {
+          "$ref": "#/definitions/HostTargetCreateRequestView"
+        }
+      },
+      "required": [
+        "providerId",
+        "request"
+      ],
+      "type": "object"
+    },
+    "EnvironmentCreateResponse": {
+      "properties": {
+        "environment": {
+          "$ref": "#/definitions/EnvironmentInstanceView"
+        }
+      },
+      "required": [
+        "environment"
+      ],
+      "type": "object"
+    },
+    "EnvironmentInstanceOriginView": {
+      "enum": [
+        "provided",
+        "provisioned"
+      ],
+      "type": "string"
+    },
+    "EnvironmentInstanceView": {
+      "properties": {
+        "capabilities": {
+          "$ref": "#/definitions/HostCapabilitiesView"
+        },
+        "connection": {
+          "$ref": "#/definitions/HostConnectionView"
+        },
+        "createdAtMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "defaultCwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "instanceId": {
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "observedAtMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "origin": {
+          "$ref": "#/definitions/EnvironmentInstanceOriginView"
+        },
+        "providerId": {
+          "type": "string"
+        },
+        "providerTargetId": {
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/definitions/HostScopeView"
+        },
+        "status": {
+          "$ref": "#/definitions/EnvironmentTargetStatusView"
+        },
+        "updatedAtMs": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "instanceId",
+        "providerId",
+        "providerTargetId",
+        "origin",
+        "status",
+        "scope",
+        "capabilities",
+        "connection",
+        "observedAtMs",
+        "createdAtMs",
+        "updatedAtMs"
+      ],
+      "type": "object"
+    },
+    "EnvironmentJobCancelParams": {
+      "properties": {
+        "force": {
           "default": false,
           "type": "boolean"
         },
+        "jobs": {
+          "items": {
+            "$ref": "#/definitions/SessionJobHandleInput"
+          },
+          "type": "array"
+        },
+        "scope": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SessionJobCancelScopeView"
+            }
+          ],
+          "default": "job"
+        }
+      },
+      "required": [
+        "jobs"
+      ],
+      "type": "object"
+    },
+    "EnvironmentJobCancelResponse": {
+      "properties": {
+        "jobs": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/SessionJobCancelEntryView"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "EnvironmentJobCreateParams": {
+      "properties": {
+        "instanceId": {
+          "type": "string"
+        },
+        "jobs": {
+          "items": {
+            "$ref": "#/definitions/SessionJobStartSpecInput"
+          },
+          "type": "array"
+        },
+        "requestId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "instanceId",
+        "requestId",
+        "jobs"
+      ],
+      "type": "object"
+    },
+    "EnvironmentJobCreateResponse": {
+      "properties": {
+        "instanceId": {
+          "type": "string"
+        },
+        "jobGroupId": {
+          "type": "string"
+        },
+        "jobs": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/SessionJobStartedView"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "instanceId",
+        "jobGroupId"
+      ],
+      "type": "object"
+    },
+    "EnvironmentJobListParams": {
+      "properties": {
+        "instanceId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "jobGroupId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "EnvironmentJobListResponse": {
+      "properties": {
+        "jobs": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/SessionJobHandleRecordView"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "EnvironmentJobReadParams": {
+      "properties": {
+        "afterSeq": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "includeArtifacts": {
+          "default": false,
+          "type": "boolean"
+        },
+        "jobs": {
+          "items": {
+            "$ref": "#/definitions/SessionJobHandleInput"
+          },
+          "type": "array"
+        },
+        "outputBytes": {
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "jobs"
+      ],
+      "type": "object"
+    },
+    "EnvironmentJobReadResponse": {
+      "properties": {
+        "jobs": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/SessionJobReadEntryView"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "EnvironmentListParams": {
+      "properties": {
+        "providerId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/EnvironmentTargetStatusView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "EnvironmentListResponse": {
+      "properties": {
+        "environments": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/EnvironmentInstanceView"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "EnvironmentProviderCapabilitiesView": {
+      "properties": {
         "closeTarget": {
           "default": false,
           "type": "boolean"
@@ -3601,7 +3760,6 @@
           "type": "boolean"
         },
         "getTarget": {
-          "default": false,
           "type": "boolean"
         },
         "listTargets": {
@@ -3609,6 +3767,9 @@
           "type": "boolean"
         }
       },
+      "required": [
+        "getTarget"
+      ],
       "type": "object"
     },
     "EnvironmentProviderHeartbeatParams": {
@@ -3622,7 +3783,7 @@
         },
         "observedTargets": {
           "items": {
-            "$ref": "#/definitions/EnvironmentTargetSummaryView"
+            "$ref": "#/definitions/EnvironmentTargetDescriptorView"
           },
           "type": "array"
         },
@@ -3637,14 +3798,14 @@
     },
     "EnvironmentProviderHeartbeatResponse": {
       "properties": {
-        "provider": {
-          "$ref": "#/definitions/EnvironmentProviderView"
-        },
-        "targets": {
+        "environments": {
           "items": {
-            "$ref": "#/definitions/EnvironmentTargetSummaryView"
+            "$ref": "#/definitions/EnvironmentInstanceView"
           },
           "type": "array"
+        },
+        "provider": {
+          "$ref": "#/definitions/EnvironmentProviderView"
         }
       },
       "required": [
@@ -3771,46 +3932,11 @@
     },
     "EnvironmentProviderStatusView": {
       "enum": [
-        "registering",
         "online",
         "stale",
-        "offline",
-        "disabled"
+        "offline"
       ],
       "type": "string"
-    },
-    "EnvironmentProviderTargetListParams": {
-      "properties": {
-        "providerId": {
-          "type": "string"
-        },
-        "status": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/EnvironmentTargetStatusView"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "required": [
-        "providerId"
-      ],
-      "type": "object"
-    },
-    "EnvironmentProviderTargetListResponse": {
-      "properties": {
-        "targets": {
-          "default": [],
-          "items": {
-            "$ref": "#/definitions/EnvironmentTargetSummaryView"
-          },
-          "type": "array"
-        }
-      },
-      "type": "object"
     },
     "EnvironmentProviderUnregisterParams": {
       "properties": {
@@ -3887,6 +4013,43 @@
       ],
       "type": "object"
     },
+    "EnvironmentReadParams": {
+      "properties": {
+        "instanceId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "instanceId"
+      ],
+      "type": "object"
+    },
+    "EnvironmentReadResponse": {
+      "properties": {
+        "environment": {
+          "$ref": "#/definitions/EnvironmentInstanceView"
+        }
+      },
+      "required": [
+        "environment"
+      ],
+      "type": "object"
+    },
+    "EnvironmentTargetDescriptorView": {
+      "properties": {
+        "connection": {
+          "$ref": "#/definitions/HostConnectionView"
+        },
+        "target": {
+          "$ref": "#/definitions/EnvironmentTargetSummaryView"
+        }
+      },
+      "required": [
+        "target",
+        "connection"
+      ],
+      "type": "object"
+    },
     "EnvironmentTargetStatusView": {
       "enum": [
         "creating",
@@ -3939,6 +4102,29 @@
         "scope",
         "capabilities"
       ],
+      "type": "object"
+    },
+    "EnvironmentsFeature": {
+      "additionalProperties": false,
+      "description": "Grants attaching/activating session environments and their process/job\ntool surface.",
+      "properties": {
+        "providers": {
+          "description": "Absent means every registered provider is allowed.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "version": {
+          "default": 1,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
       "type": "object"
     },
     "EventCursor": {
@@ -4030,387 +4216,74 @@
       },
       "type": "object"
     },
-    "FieldPatchOfArray_of_string": {
-      "oneOf": [
-        {
-          "properties": {
-            "op": {
-              "const": "set",
-              "type": "string"
-            },
-            "value": {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            }
-          },
-          "required": [
-            "op",
-            "value"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "op": {
-              "const": "clear",
-              "type": "string"
-            }
-          },
-          "required": [
-            "op"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "FieldPatchOfCompactionPolicyInput": {
-      "oneOf": [
-        {
-          "properties": {
-            "op": {
-              "const": "set",
-              "type": "string"
-            },
-            "value": {
-              "$ref": "#/definitions/CompactionPolicyInput"
-            }
-          },
-          "required": [
-            "op",
-            "value"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "op": {
-              "const": "clear",
-              "type": "string"
-            }
-          },
-          "required": [
-            "op"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "FieldPatchOfFilesystemToolMode": {
-      "oneOf": [
-        {
-          "properties": {
-            "op": {
-              "const": "set",
-              "type": "string"
-            },
-            "value": {
-              "$ref": "#/definitions/FilesystemToolMode"
-            }
-          },
-          "required": [
-            "op",
-            "value"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "op": {
-              "const": "clear",
-              "type": "string"
-            }
-          },
-          "required": [
-            "op"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "FieldPatchOfFleetProfilesConfigInput": {
-      "oneOf": [
-        {
-          "properties": {
-            "op": {
-              "const": "set",
-              "type": "string"
-            },
-            "value": {
-              "$ref": "#/definitions/FleetProfilesConfigInput"
-            }
-          },
-          "required": [
-            "op",
-            "value"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "op": {
-              "const": "clear",
-              "type": "string"
-            }
-          },
-          "required": [
-            "op"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "FieldPatchOfFleetSpawnConfigInput": {
-      "oneOf": [
-        {
-          "properties": {
-            "op": {
-              "const": "set",
-              "type": "string"
-            },
-            "value": {
-              "$ref": "#/definitions/FleetSpawnConfigInput"
-            }
-          },
-          "required": [
-            "op",
-            "value"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "op": {
-              "const": "clear",
-              "type": "string"
-            }
-          },
-          "required": [
-            "op"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "FieldPatchOfProfileInstructions": {
-      "oneOf": [
-        {
-          "properties": {
-            "op": {
-              "const": "set",
-              "type": "string"
-            },
-            "value": {
-              "$ref": "#/definitions/ProfileInstructions"
-            }
-          },
-          "required": [
-            "op",
-            "value"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "op": {
-              "const": "clear",
-              "type": "string"
-            }
-          },
-          "required": [
-            "op"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "FieldPatchOfSessionConfigInput": {
-      "oneOf": [
-        {
-          "properties": {
-            "op": {
-              "const": "set",
-              "type": "string"
-            },
-            "value": {
-              "$ref": "#/definitions/SessionConfigInput"
-            }
-          },
-          "required": [
-            "op",
-            "value"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "op": {
-              "const": "clear",
-              "type": "string"
-            }
-          },
-          "required": [
-            "op"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "FieldPatchOfToolChoiceConfig": {
-      "oneOf": [
-        {
-          "properties": {
-            "op": {
-              "const": "set",
-              "type": "string"
-            },
-            "value": {
-              "$ref": "#/definitions/ToolChoiceConfig"
-            }
-          },
-          "required": [
-            "op",
-            "value"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "op": {
-              "const": "clear",
-              "type": "string"
-            }
-          },
-          "required": [
-            "op"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "FieldPatchOfboolean": {
-      "oneOf": [
-        {
-          "properties": {
-            "op": {
-              "const": "set",
-              "type": "string"
-            },
-            "value": {
-              "type": "boolean"
-            }
-          },
-          "required": [
-            "op",
-            "value"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "op": {
-              "const": "clear",
-              "type": "string"
-            }
-          },
-          "required": [
-            "op"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "FieldPatchOfstring": {
-      "oneOf": [
-        {
-          "properties": {
-            "op": {
-              "const": "set",
-              "type": "string"
-            },
-            "value": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "op",
-            "value"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "op": {
-              "const": "clear",
-              "type": "string"
-            }
-          },
-          "required": [
-            "op"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "FieldPatchOfuint32": {
-      "oneOf": [
-        {
-          "properties": {
-            "op": {
-              "const": "set",
-              "type": "string"
-            },
-            "value": {
-              "format": "uint32",
-              "minimum": 0,
-              "type": "integer"
-            }
-          },
-          "required": [
-            "op",
-            "value"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "op": {
-              "const": "clear",
-              "type": "string"
-            }
-          },
-          "required": [
-            "op"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "FilesystemToolMode": {
-      "enum": [
-        "none",
-        "readOnly",
-        "edit"
-      ],
-      "type": "string"
-    },
-    "FleetConfigInput": {
+    "FeaturesConfig": {
+      "additionalProperties": false,
+      "description": "Capability grants. An absent feature is not granted; `{}` grants it with\ndefaults. Every block carries a behavior `version` that pins semantics.",
       "properties": {
-        "profiles": {
+        "environments": {
           "anyOf": [
             {
-              "$ref": "#/definitions/FleetProfilesConfigInput"
+              "$ref": "#/definitions/EnvironmentsFeature"
             },
             {
               "type": "null"
             }
           ]
         },
-        "spawn": {
+        "fleet": {
           "anyOf": [
             {
-              "$ref": "#/definitions/FleetSpawnConfigInput"
+              "$ref": "#/definitions/FleetFeature"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mcp": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/McpFeature"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "messaging": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/MessagingFeature"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "timers": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TimersFeature"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "vfs": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/VfsFeature"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "web": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/WebFeature"
             },
             {
               "type": "null"
@@ -4420,12 +4293,14 @@
       },
       "type": "object"
     },
-    "FleetConfigPatchInput": {
+    "FleetFeature": {
+      "additionalProperties": false,
+      "description": "Grants the Fleet subagent control plane\n(agent_spawn/send/read/list/cancel and profile_list/read).",
       "properties": {
         "profiles": {
           "anyOf": [
             {
-              "$ref": "#/definitions/FieldPatchOfFleetProfilesConfigInput"
+              "$ref": "#/definitions/FleetProfilesConfig"
             },
             {
               "type": "null"
@@ -4435,32 +4310,24 @@
         "spawn": {
           "anyOf": [
             {
-              "$ref": "#/definitions/FieldPatchOfFleetSpawnConfigInput"
+              "$ref": "#/definitions/FleetSpawnConfig"
             },
             {
               "type": "null"
             }
           ]
-        }
-      },
-      "type": "object"
-    },
-    "FleetConfigView": {
-      "properties": {
-        "profiles": {
-          "$ref": "#/definitions/FleetProfilesConfigView"
         },
-        "spawn": {
-          "$ref": "#/definitions/FleetSpawnConfigView"
+        "version": {
+          "default": 1,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
         }
       },
-      "required": [
-        "profiles",
-        "spawn"
-      ],
       "type": "object"
     },
-    "FleetProfilesConfigInput": {
+    "FleetProfilesConfig": {
+      "additionalProperties": false,
       "properties": {
         "allow": {
           "description": "Absent means all named profiles are visible/readable/spawnable.",
@@ -4488,33 +4355,7 @@
       },
       "type": "object"
     },
-    "FleetProfilesConfigView": {
-      "properties": {
-        "allow": {
-          "items": {
-            "$ref": "#/definitions/ProfileId"
-          },
-          "type": [
-            "array",
-            "null"
-          ]
-        },
-        "deny": {
-          "items": {
-            "$ref": "#/definitions/ProfileId"
-          },
-          "type": "array"
-        },
-        "inline": {
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "inline"
-      ],
-      "type": "object"
-    },
-    "FleetSpawnBaseConfig": {
+    "FleetSpawnBase": {
       "enum": [
         "self",
         "session",
@@ -4522,26 +4363,13 @@
       ],
       "type": "string"
     },
-    "FleetSpawnConfigInput": {
+    "FleetSpawnConfig": {
+      "additionalProperties": false,
       "properties": {
         "bases": {
           "description": "Absent means all bases are allowed.",
           "items": {
-            "$ref": "#/definitions/FleetSpawnBaseConfig"
-          },
-          "type": [
-            "array",
-            "null"
-          ]
-        }
-      },
-      "type": "object"
-    },
-    "FleetSpawnConfigView": {
-      "properties": {
-        "bases": {
-          "items": {
-            "$ref": "#/definitions/FleetSpawnBaseConfig"
+            "$ref": "#/definitions/FleetSpawnBase"
           },
           "type": [
             "array",
@@ -4552,6 +4380,8 @@
       "type": "object"
     },
     "GenerationConfig": {
+      "additionalProperties": false,
+      "description": "Turn-shaping defaults applied to every LLM generation. Per-run overrides\nride `session/runs/start`.",
       "properties": {
         "maxOutputTokens": {
           "format": "uint32",
@@ -4561,55 +4391,24 @@
             "null"
           ]
         },
+        "parallelToolUse": {
+          "description": "Whether the model may call several tools in one turn; absent leaves\nthe provider default.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "reasoningEffort": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/ReasoningEffort"
-            },
-            {
-              "type": "null"
-            }
+          "description": "Reasoning effort tier as a provider-native string (e.g. \"none\",\n\"high\", \"xhigh\", \"ultra\"); validated against the session's provider.",
+          "type": [
+            "string",
+            "null"
           ]
         },
         "toolChoice": {
           "anyOf": [
             {
-              "$ref": "#/definitions/ToolChoiceConfig"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "type": "object"
-    },
-    "GenerationConfigPatch": {
-      "properties": {
-        "maxOutputTokens": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/FieldPatchOfuint32"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "reasoningEffort": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/ReasoningEffort"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "toolChoice": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/FieldPatchOfToolChoiceConfig"
+              "$ref": "#/definitions/ToolChoice"
             },
             {
               "type": "null"
@@ -4684,6 +4483,10 @@
           "default": false,
           "type": "boolean"
         },
+        "network": {
+          "default": false,
+          "type": "boolean"
+        },
         "processOutputNotifications": {
           "default": false,
           "type": "boolean"
@@ -4709,6 +4512,39 @@
           "type": "boolean"
         }
       },
+      "type": "object"
+    },
+    "HostConnectionView": {
+      "properties": {
+        "capabilities": {
+          "$ref": "#/definitions/HostCapabilitiesView"
+        },
+        "defaultCwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "endpoint": {
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/definitions/HostScopeView"
+        },
+        "targetId": {
+          "type": "string"
+        },
+        "transport": {
+          "$ref": "#/definitions/HostTransportView"
+        }
+      },
+      "required": [
+        "targetId",
+        "endpoint",
+        "transport",
+        "scope",
+        "capabilities"
+      ],
       "type": "object"
     },
     "HostControllerConnectionView": {
@@ -4753,44 +4589,6 @@
           "required": [
             "type",
             "sessionId"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "HostTargetAttachRequestView": {
-      "oneOf": [
-        {
-          "properties": {
-            "targetId": {
-              "type": "string"
-            },
-            "type": {
-              "const": "target",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type",
-            "targetId"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "providerType": {
-              "type": "string"
-            },
-            "spec": true,
-            "type": {
-              "const": "provider",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type",
-            "providerType",
-            "spec"
           ],
           "type": "object"
         }
@@ -4967,7 +4765,7 @@
         "config": {
           "anyOf": [
             {
-              "$ref": "#/definitions/SessionConfigInput"
+              "$ref": "#/definitions/SessionConfig"
             },
             {
               "type": "null"
@@ -5001,12 +4799,6 @@
               "type": "null"
             }
           ]
-        },
-        "mcp": {
-          "items": {
-            "$ref": "#/definitions/ProfileMcpLink"
-          },
-          "type": "array"
         },
         "mounts": {
           "items": {
@@ -5138,6 +4930,48 @@
       ],
       "type": "object"
     },
+    "LimitsConfig": {
+      "additionalProperties": false,
+      "description": "Run budget defaults enforced by the engine drive loop.",
+      "properties": {
+        "maxToolRounds": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "maxTurns": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "McpFeature": {
+      "additionalProperties": false,
+      "description": "Grants remote MCP tools by declaring linked servers from the universe MCP\ncatalog; must link at least one server, with unique server ids.",
+      "properties": {
+        "servers": {
+          "items": {
+            "$ref": "#/definitions/McpServerLink"
+          },
+          "type": "array"
+        },
+        "version": {
+          "default": 1,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "McpServerAuthPolicy": {
       "oneOf": [
         {
@@ -5248,7 +5082,30 @@
         }
       ]
     },
-    "McpServerCreateParams": {
+    "McpServerDeleteParams": {
+      "properties": {
+        "serverId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "serverId"
+      ],
+      "type": "object"
+    },
+    "McpServerDeleteResponse": {
+      "properties": {
+        "server": {
+          "$ref": "#/definitions/McpServerView"
+        }
+      },
+      "required": [
+        "server"
+      ],
+      "type": "object"
+    },
+    "McpServerInput": {
+      "description": "Full MCP server document as submitted by clients.",
       "properties": {
         "allowedTools": {
           "items": {
@@ -5328,36 +5185,48 @@
       ],
       "type": "object"
     },
-    "McpServerCreateResponse": {
+    "McpServerLink": {
+      "additionalProperties": false,
+      "description": "A linked catalog server with optional per-session overrides; absent\nfields defer to the catalog record's defaults.",
       "properties": {
-        "server": {
-          "$ref": "#/definitions/McpServerView"
-        }
-      },
-      "required": [
-        "server"
-      ],
-      "type": "object"
-    },
-    "McpServerDeleteParams": {
-      "properties": {
+        "allowedTools": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "approval": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RemoteMcpApprovalPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "authGrantId": {
+          "description": "Universe-scoped auth grant used to authenticate against the server;\ncompatibility with the server's auth policy is validated at put time.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "deferLoading": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "serverId": {
           "type": "string"
         }
       },
       "required": [
         "serverId"
-      ],
-      "type": "object"
-    },
-    "McpServerDeleteResponse": {
-      "properties": {
-        "server": {
-          "$ref": "#/definitions/McpServerView"
-        }
-      },
-      "required": [
-        "server"
       ],
       "type": "object"
     },
@@ -5386,6 +5255,37 @@
           "type": "array"
         }
       },
+      "type": "object"
+    },
+    "McpServerPutParams": {
+      "properties": {
+        "expectedRevision": {
+          "description": "Checked only when the server already exists; absent replaces (or\ncreates) unconditionally.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "server": {
+          "$ref": "#/definitions/McpServerInput"
+        }
+      },
+      "required": [
+        "server"
+      ],
+      "type": "object"
+    },
+    "McpServerPutResponse": {
+      "properties": {
+        "server": {
+          "$ref": "#/definitions/McpServerView"
+        }
+      },
+      "required": [
+        "server"
+      ],
       "type": "object"
     },
     "McpServerReadParams": {
@@ -5418,134 +5318,6 @@
         "disabled"
       ],
       "type": "string"
-    },
-    "McpServerUpdateParams": {
-      "properties": {
-        "patch": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/McpServerUpdatePatch"
-            }
-          ],
-          "default": {}
-        },
-        "serverId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "serverId"
-      ],
-      "type": "object"
-    },
-    "McpServerUpdatePatch": {
-      "description": "Partial update; absent fields keep their value. Clearable optionals use\n`FieldPatch` (`{op:set,value}` / `{op:clear}`), matching profile updates.",
-      "properties": {
-        "allowedTools": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/FieldPatchOfArray_of_string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "approvalDefault": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/RemoteMcpApprovalPolicy"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "authPolicy": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/McpServerAuthPolicy"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "defaultServerLabel": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "deferLoadingDefault": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/FieldPatchOfboolean"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "description": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/FieldPatchOfstring"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "displayName": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/FieldPatchOfstring"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "serverUrl": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "status": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/McpServerStatus"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "transport": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/RemoteMcpTransport"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "type": "object"
-    },
-    "McpServerUpdateResponse": {
-      "properties": {
-        "server": {
-          "$ref": "#/definitions/McpServerView"
-        }
-      },
-      "required": [
-        "server"
-      ],
-      "type": "object"
     },
     "McpServerView": {
       "properties": {
@@ -5589,6 +5361,11 @@
             "null"
           ]
         },
+        "revision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "serverId": {
           "type": "string"
         },
@@ -5614,6 +5391,7 @@
         "approvalDefault",
         "authPolicy",
         "status",
+        "revision",
         "createdAtMs",
         "updatedAtMs"
       ],
@@ -5627,44 +5405,17 @@
       ],
       "type": "string"
     },
-    "MessageSubmitParams": {
+    "MessagingFeature": {
+      "additionalProperties": false,
+      "description": "Grants the messaging toolset (message_send/react/edit/noop) for sessions\nbound to a chat channel.",
       "properties": {
-        "items": {
-          "items": {
-            "$ref": "#/definitions/InputItem"
-          },
-          "type": "array"
-        },
-        "sessionId": {
-          "type": "string"
-        },
-        "submissionId": {
-          "description": "Client-supplied idempotency key, unique per session. Retrying\n`session/messages/submit` with the same submission id and same items is\naccepted idempotently; reusing it for a different command or different\nmessage input is rejected.",
-          "type": [
-            "string",
-            "null"
-          ]
+        "version": {
+          "default": 1,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
         }
       },
-      "required": [
-        "sessionId",
-        "items"
-      ],
-      "type": "object"
-    },
-    "MessageSubmitResponse": {
-      "properties": {
-        "accepted": {
-          "type": "boolean"
-        },
-        "submissionId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "submissionId",
-        "accepted"
-      ],
       "type": "object"
     },
     "ModelConfig": {
@@ -6343,7 +6094,6 @@
             "configChanged": false,
             "environmentsChanged": 0,
             "instructionsChanged": false,
-            "mcpChanged": 0,
             "mountsChanged": 0
           }
         },
@@ -6369,11 +6119,6 @@
         "instructionsChanged": {
           "type": "boolean"
         },
-        "mcpChanged": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
         "mountsChanged": {
           "format": "uint32",
           "minimum": 0,
@@ -6384,7 +6129,6 @@
         "configChanged",
         "instructionsChanged",
         "mountsChanged",
-        "mcpChanged",
         "environmentsChanged"
       ],
       "type": "object"
@@ -6442,19 +6186,55 @@
         "envId": {
           "type": "string"
         },
-        "providerId": {
-          "type": "string"
-        },
-        "targetId": {
-          "type": "string"
+        "environment": {
+          "$ref": "#/definitions/ProfileEnvironmentSource"
         }
       },
       "required": [
         "envId",
-        "providerId",
-        "targetId"
+        "environment"
       ],
       "type": "object"
+    },
+    "ProfileEnvironmentSource": {
+      "oneOf": [
+        {
+          "properties": {
+            "instanceId": {
+              "type": "string"
+            },
+            "type": {
+              "const": "existing",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "instanceId"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "providerId": {
+              "type": "string"
+            },
+            "request": {
+              "$ref": "#/definitions/HostTargetCreateRequestView"
+            },
+            "type": {
+              "const": "provision",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "providerId",
+            "request"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "ProfileId": {
       "type": "string"
@@ -6508,60 +6288,6 @@
           "type": "array"
         }
       },
-      "type": "object"
-    },
-    "ProfileMcpLink": {
-      "properties": {
-        "allowedTools": {
-          "items": {
-            "type": "string"
-          },
-          "type": [
-            "array",
-            "null"
-          ]
-        },
-        "approval": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/RemoteMcpApprovalPolicy"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "authGrantId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "deferLoading": {
-          "type": [
-            "boolean",
-            "null"
-          ]
-        },
-        "serverId": {
-          "type": "string"
-        },
-        "serverLabel": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "toolId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "serverId"
-      ],
       "type": "object"
     },
     "ProfileMount": {
@@ -6672,101 +6398,6 @@
         }
       ]
     },
-    "ProfileUpdateParams": {
-      "properties": {
-        "expectedRevision": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "patch": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/AgentProfileUpdatePatch"
-            }
-          ],
-          "default": {}
-        },
-        "profileId": {
-          "$ref": "#/definitions/ProfileId"
-        }
-      },
-      "required": [
-        "profileId"
-      ],
-      "type": "object"
-    },
-    "ProfileUpdateResponse": {
-      "properties": {
-        "profile": {
-          "$ref": "#/definitions/AgentProfile"
-        }
-      },
-      "required": [
-        "profile"
-      ],
-      "type": "object"
-    },
-    "PromptInstructionView": {
-      "properties": {
-        "instructionsRef": {
-          "type": "string"
-        },
-        "key": {
-          "type": "string"
-        },
-        "mediaType": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "preview": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "key",
-        "instructionsRef"
-      ],
-      "type": "object"
-    },
-    "PromptsActiveParams": {
-      "properties": {
-        "sessionId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "sessionId"
-      ],
-      "type": "object"
-    },
-    "PromptsActiveResponse": {
-      "properties": {
-        "instructions": {
-          "default": [],
-          "items": {
-            "$ref": "#/definitions/PromptInstructionView"
-          },
-          "type": "array"
-        },
-        "report": true,
-        "reportRef": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "type": "object"
-    },
     "ProviderContextDisplayView": {
       "properties": {
         "arguments": {
@@ -6812,15 +6443,6 @@
       "enum": [
         "providerHosted",
         "clientEffect"
-      ],
-      "type": "string"
-    },
-    "ReasoningEffort": {
-      "enum": [
-        "none",
-        "low",
-        "medium",
-        "high"
       ],
       "type": "string"
     },
@@ -6906,52 +6528,6 @@
       "required": [
         "run"
       ],
-      "type": "object"
-    },
-    "RunDefaultsConfig": {
-      "properties": {
-        "maxToolRounds": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "maxTurns": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        }
-      },
-      "type": "object"
-    },
-    "RunDefaultsPatch": {
-      "properties": {
-        "maxToolRounds": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/FieldPatchOfuint32"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "maxTurns": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/FieldPatchOfuint32"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
       "type": "object"
     },
     "RunLimitsConfig": {
@@ -7108,15 +6684,15 @@
     },
     "RunView": {
       "properties": {
-        "id": {
-          "type": "string"
-        },
-        "items": {
+        "entries": {
           "default": [],
           "items": {
-            "$ref": "#/definitions/SessionItemView"
+            "$ref": "#/definitions/ContextEntryView"
           },
           "type": "array"
+        },
+        "id": {
+          "type": "string"
         },
         "source": {
           "$ref": "#/definitions/RunViewSource"
@@ -7296,22 +6872,24 @@
       ],
       "type": "object"
     },
-    "SessionConfigInput": {
+    "SessionConfig": {
+      "additionalProperties": false,
+      "description": "Declared session configuration document.\n\nSparse and capability-oriented: an omitted section means defaults, an\nabsent feature is not granted (no tools, no access). The document is\nreplaced whole via `session/config/put`; reads return exactly the stored\ndocument, so read-modify-write round-trips.",
       "properties": {
         "context": {
           "anyOf": [
             {
-              "$ref": "#/definitions/ContextConfigInput"
+              "$ref": "#/definitions/ContextConfig"
             },
             {
               "type": "null"
             }
           ]
         },
-        "fleet": {
+        "features": {
           "anyOf": [
             {
-              "$ref": "#/definitions/FleetConfigInput"
+              "$ref": "#/definitions/FeaturesConfig"
             },
             {
               "type": "null"
@@ -7328,65 +6906,10 @@
             }
           ]
         },
-        "model": {
+        "limits": {
           "anyOf": [
             {
-              "$ref": "#/definitions/ModelConfig"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "runDefaults": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/RunDefaultsConfig"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "tools": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/ToolConfigInput"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "type": "object"
-    },
-    "SessionConfigPatchInput": {
-      "properties": {
-        "context": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/ContextConfigPatchInput"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "fleet": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/FleetConfigPatchInput"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "generation": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/GenerationConfigPatch"
+              "$ref": "#/definitions/LimitsConfig"
             },
             {
               "type": "null"
@@ -7401,59 +6924,45 @@
             {
               "type": "null"
             }
-          ]
-        },
-        "runDefaults": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/RunDefaultsPatch"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "tools": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/ToolConfigPatchInput"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          ],
+          "description": "Absent on input means the deployment default model. Documents read\nback from a session always carry the model; the provider api kind is\npinned for the session's lifetime."
         }
       },
       "type": "object"
     },
-    "SessionConfigView": {
+    "SessionConfigPutParams": {
+      "description": "Replace the session config with a complete document. Anything omitted\nfrom the document reverts to defaults; an absent feature is revoked.\nRequires an idle session; putting an identical document is a no-op that\nleaves the revision untouched.",
       "properties": {
-        "context": {
-          "$ref": "#/definitions/ContextConfigInput"
+        "config": {
+          "$ref": "#/definitions/SessionConfig"
         },
-        "fleet": {
-          "$ref": "#/definitions/FleetConfigView"
+        "expectedConfigRevision": {
+          "description": "Checked against the session's current config revision when present;\nabsent replaces unconditionally.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         },
-        "generation": {
-          "$ref": "#/definitions/GenerationConfig"
-        },
-        "model": {
-          "$ref": "#/definitions/ModelConfig"
-        },
-        "runDefaults": {
-          "$ref": "#/definitions/RunDefaultsConfig"
-        },
-        "tools": {
-          "$ref": "#/definitions/ToolConfigView"
+        "sessionId": {
+          "type": "string"
         }
       },
       "required": [
-        "model",
-        "generation",
-        "context",
-        "runDefaults",
-        "tools",
-        "fleet"
+        "sessionId",
+        "config"
+      ],
+      "type": "object"
+    },
+    "SessionConfigPutResponse": {
+      "properties": {
+        "session": {
+          "$ref": "#/definitions/SessionView"
+        }
+      },
+      "required": [
+        "session"
       ],
       "type": "object"
     },
@@ -7502,17 +7011,26 @@
           "default": false,
           "type": "boolean"
         },
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "envId": {
           "type": [
             "string",
             "null"
           ]
         },
-        "providerId": {
-          "type": "string"
+        "fsRoutes": {
+          "items": {
+            "$ref": "#/definitions/SessionEnvironmentFsRouteView"
+          },
+          "type": "array"
         },
-        "request": {
-          "$ref": "#/definitions/HostTargetAttachRequestView"
+        "instanceId": {
+          "type": "string"
         },
         "sessionId": {
           "type": "string"
@@ -7520,8 +7038,7 @@
       },
       "required": [
         "sessionId",
-        "providerId",
-        "request"
+        "instanceId"
       ],
       "type": "object"
     },
@@ -7588,9 +7105,6 @@
         "network": {
           "type": "boolean"
         },
-        "persistent": {
-          "type": "boolean"
-        },
         "processExec": {
           "type": "boolean"
         },
@@ -7603,110 +7117,7 @@
         "fsWrite",
         "processExec",
         "processStdin",
-        "network",
-        "persistent"
-      ],
-      "type": "object"
-    },
-    "SessionEnvironmentCloseParams": {
-      "properties": {
-        "closeTarget": {
-          "type": [
-            "boolean",
-            "null"
-          ]
-        },
-        "envId": {
-          "type": "string"
-        },
-        "force": {
-          "default": false,
-          "type": "boolean"
-        },
-        "sessionId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "sessionId",
-        "envId"
-      ],
-      "type": "object"
-    },
-    "SessionEnvironmentCloseResponse": {
-      "properties": {
-        "activeEnvId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "environment": {
-          "$ref": "#/definitions/SessionEnvironmentView"
-        },
-        "environments": {
-          "default": [],
-          "items": {
-            "$ref": "#/definitions/SessionEnvironmentView"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "environment"
-      ],
-      "type": "object"
-    },
-    "SessionEnvironmentCreateParams": {
-      "properties": {
-        "activate": {
-          "default": false,
-          "type": "boolean"
-        },
-        "envId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "providerId": {
-          "type": "string"
-        },
-        "request": {
-          "$ref": "#/definitions/HostTargetCreateRequestView"
-        },
-        "sessionId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "sessionId",
-        "providerId",
-        "request"
-      ],
-      "type": "object"
-    },
-    "SessionEnvironmentCreateResponse": {
-      "properties": {
-        "activeEnvId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "environment": {
-          "$ref": "#/definitions/SessionEnvironmentView"
-        },
-        "environments": {
-          "default": [],
-          "items": {
-            "$ref": "#/definitions/SessionEnvironmentView"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "environment"
+        "network"
       ],
       "type": "object"
     },
@@ -7915,12 +7326,76 @@
       },
       "type": "object"
     },
-    "SessionEnvironmentKindView": {
+    "SessionEnvironmentDetachParams": {
+      "properties": {
+        "envId": {
+          "type": "string"
+        },
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "envId"
+      ],
+      "type": "object"
+    },
+    "SessionEnvironmentDetachResponse": {
+      "properties": {
+        "activeEnvId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "environment": {
+          "$ref": "#/definitions/SessionEnvironmentView"
+        },
+        "environments": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/SessionEnvironmentView"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "environment"
+      ],
+      "type": "object"
+    },
+    "SessionEnvironmentFsAccessView": {
       "enum": [
-        "sandbox",
-        "attachedHost"
+        "readOnly",
+        "readWrite"
       ],
       "type": "string"
+    },
+    "SessionEnvironmentFsRouteView": {
+      "properties": {
+        "access": {
+          "$ref": "#/definitions/SessionEnvironmentFsAccessView"
+        },
+        "path": {
+          "type": "string"
+        },
+        "sameStateAsActiveEnv": {
+          "default": false,
+          "type": "boolean"
+        },
+        "sourcePath": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "path",
+        "access"
+      ],
+      "type": "object"
     },
     "SessionEnvironmentListParams": {
       "properties": {
@@ -7977,11 +7452,9 @@
       ],
       "type": "object"
     },
-    "SessionEnvironmentStatusView": {
+    "SessionEnvironmentStateView": {
       "enum": [
-        "attaching",
-        "ready",
-        "degraded",
+        "attached",
         "detached"
       ],
       "type": "string"
@@ -8013,17 +7486,23 @@
             }
           ]
         },
-        "kind": {
-          "$ref": "#/definitions/SessionEnvironmentKindView"
+        "fsRoutes": {
+          "items": {
+            "$ref": "#/definitions/SessionEnvironmentFsRouteView"
+          },
+          "type": "array"
         },
-        "status": {
-          "$ref": "#/definitions/SessionEnvironmentStatusView"
+        "instanceId": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/definitions/SessionEnvironmentStateView"
         }
       },
       "required": [
         "envId",
-        "kind",
-        "status",
+        "instanceId",
+        "state",
         "capabilities",
         "active"
       ],
@@ -8517,9 +7996,9 @@
               "minimum": 0,
               "type": "integer"
             },
-            "items": {
+            "entries": {
               "items": {
-                "$ref": "#/definitions/SessionItemView"
+                "$ref": "#/definitions/ContextEntryView"
               },
               "type": "array"
             },
@@ -8537,7 +8016,7 @@
             "type",
             "baseRevision",
             "revision",
-            "items"
+            "entries"
           ],
           "type": "object"
         },
@@ -8548,7 +8027,7 @@
               "minimum": 0,
               "type": "integer"
             },
-            "itemIds": {
+            "entryIds": {
               "items": {
                 "type": "string"
               },
@@ -8571,7 +8050,7 @@
             "type",
             "baseRevision",
             "revision",
-            "itemIds",
+            "entryIds",
             "reason"
           ],
           "type": "object"
@@ -8614,9 +8093,9 @@
               "minimum": 0,
               "type": "integer"
             },
-            "items": {
+            "entries": {
               "items": {
-                "$ref": "#/definitions/SessionItemView"
+                "$ref": "#/definitions/ContextEntryView"
               },
               "type": "array"
             },
@@ -8638,7 +8117,7 @@
             "baseRevision",
             "revision",
             "keyPrefix",
-            "items"
+            "entries"
           ],
           "type": "object"
         },
@@ -8649,9 +8128,9 @@
               "minimum": 0,
               "type": "integer"
             },
-            "items": {
+            "entries": {
               "items": {
-                "$ref": "#/definitions/SessionItemView"
+                "$ref": "#/definitions/ContextEntryView"
               },
               "type": "array"
             },
@@ -8672,7 +8151,7 @@
             "type",
             "baseRevision",
             "revision",
-            "items",
+            "entries",
             "reason"
           ],
           "type": "object"
@@ -9150,202 +8629,6 @@
       ],
       "type": "object"
     },
-    "SessionItemView": {
-      "oneOf": [
-        {
-          "properties": {
-            "id": {
-              "type": "string"
-            },
-            "text": {
-              "type": "string"
-            },
-            "type": {
-              "const": "userMessage",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type",
-            "id",
-            "text"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "id": {
-              "type": "string"
-            },
-            "text": {
-              "type": "string"
-            },
-            "type": {
-              "const": "assistantMessage",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type",
-            "id",
-            "text"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "arguments": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "callId": {
-              "type": "string"
-            },
-            "id": {
-              "type": "string"
-            },
-            "status": {
-              "$ref": "#/definitions/ToolItemStatus"
-            },
-            "toolName": {
-              "type": "string"
-            },
-            "type": {
-              "const": "toolCall",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type",
-            "id",
-            "callId",
-            "toolName",
-            "status"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "callId": {
-              "type": "string"
-            },
-            "id": {
-              "type": "string"
-            },
-            "isError": {
-              "type": "boolean"
-            },
-            "output": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "status": {
-              "$ref": "#/definitions/ToolItemStatus"
-            },
-            "type": {
-              "const": "toolResult",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type",
-            "id",
-            "callId",
-            "isError",
-            "status"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "id": {
-              "type": "string"
-            },
-            "text": {
-              "type": "string"
-            },
-            "type": {
-              "const": "systemEvent",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type",
-            "id",
-            "text"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "contentRef": {
-              "type": "string"
-            },
-            "display": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/ProviderContextDisplayView"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "id": {
-              "type": "string"
-            },
-            "mediaType": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "preview": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "providerItemId": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "providerKind": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "tokenEstimate": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/TokenEstimateView"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "type": {
-              "const": "providerContext",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type",
-            "id",
-            "contentRef"
-          ],
-          "type": "object"
-        }
-      ]
-    },
     "SessionJobArtifactView": {
       "properties": {
         "kind": {
@@ -9400,100 +8683,12 @@
       },
       "type": "object"
     },
-    "SessionJobCancelParams": {
-      "properties": {
-        "force": {
-          "default": false,
-          "type": "boolean"
-        },
-        "jobs": {
-          "items": {
-            "$ref": "#/definitions/SessionJobHandleInput"
-          },
-          "type": "array"
-        },
-        "scope": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/SessionJobCancelScopeView"
-            }
-          ],
-          "default": "job"
-        },
-        "sessionId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "sessionId",
-        "jobs"
-      ],
-      "type": "object"
-    },
-    "SessionJobCancelResponse": {
-      "properties": {
-        "jobs": {
-          "default": [],
-          "items": {
-            "$ref": "#/definitions/SessionJobCancelEntryView"
-          },
-          "type": "array"
-        }
-      },
-      "type": "object"
-    },
     "SessionJobCancelScopeView": {
       "enum": [
         "job",
         "dependents"
       ],
       "type": "string"
-    },
-    "SessionJobCreateParams": {
-      "properties": {
-        "envId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "jobs": {
-          "items": {
-            "$ref": "#/definitions/SessionJobStartSpecInput"
-          },
-          "type": "array"
-        },
-        "requestId": {
-          "type": "string"
-        },
-        "sessionId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "sessionId",
-        "requestId",
-        "jobs"
-      ],
-      "type": "object"
-    },
-    "SessionJobCreateResponse": {
-      "properties": {
-        "envId": {
-          "type": "string"
-        },
-        "jobs": {
-          "default": [],
-          "items": {
-            "$ref": "#/definitions/SessionJobStartedView"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "envId"
-      ],
-      "type": "object"
     },
     "SessionJobDependencyInput": {
       "properties": {
@@ -9521,23 +8716,15 @@
     },
     "SessionJobHandleInput": {
       "properties": {
-        "envId": {
-          "type": [
-            "string",
-            "null"
-          ]
+        "instanceId": {
+          "type": "string"
         },
         "jobId": {
           "type": "string"
-        },
-        "sessionId": {
-          "type": [
-            "string",
-            "null"
-          ]
         }
       },
       "required": [
+        "instanceId",
         "jobId"
       ],
       "type": "object"
@@ -9549,6 +8736,12 @@
           "type": "integer"
         },
         "createdByRunId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "createdBySessionId": {
           "type": [
             "string",
             "null"
@@ -9571,17 +8764,14 @@
         "handle": {
           "$ref": "#/definitions/SessionJobHandleView"
         },
+        "jobGroupId": {
+          "type": "string"
+        },
         "name": {
           "type": [
             "string",
             "null"
           ]
-        },
-        "namespace": {
-          "type": "string"
-        },
-        "providerId": {
-          "type": "string"
         },
         "queueKey": {
           "type": [
@@ -9591,16 +8781,11 @@
         },
         "startRequestHash": {
           "type": "string"
-        },
-        "targetId": {
-          "type": "string"
         }
       },
       "required": [
         "handle",
-        "providerId",
-        "targetId",
-        "namespace",
+        "jobGroupId",
         "createdAtMs",
         "startRequestHash"
       ],
@@ -9608,58 +8793,17 @@
     },
     "SessionJobHandleView": {
       "properties": {
-        "envId": {
+        "instanceId": {
           "type": "string"
         },
         "jobId": {
           "type": "string"
-        },
-        "sessionId": {
-          "type": "string"
         }
       },
       "required": [
-        "sessionId",
-        "envId",
+        "instanceId",
         "jobId"
       ],
-      "type": "object"
-    },
-    "SessionJobListParams": {
-      "properties": {
-        "envId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "limit": {
-          "format": "uint",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "sessionId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "sessionId"
-      ],
-      "type": "object"
-    },
-    "SessionJobListResponse": {
-      "properties": {
-        "jobs": {
-          "default": [],
-          "items": {
-            "$ref": "#/definitions/SessionJobHandleRecordView"
-          },
-          "type": "array"
-        }
-      },
       "type": "object"
     },
     "SessionJobOutputChunkView": {
@@ -9739,56 +8883,6 @@
       "required": [
         "outputNextSeq"
       ],
-      "type": "object"
-    },
-    "SessionJobReadParams": {
-      "properties": {
-        "afterSeq": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "includeArtifacts": {
-          "default": false,
-          "type": "boolean"
-        },
-        "jobs": {
-          "items": {
-            "$ref": "#/definitions/SessionJobHandleInput"
-          },
-          "type": "array"
-        },
-        "outputBytes": {
-          "format": "uint",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "sessionId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "sessionId",
-        "jobs"
-      ],
-      "type": "object"
-    },
-    "SessionJobReadResponse": {
-      "properties": {
-        "jobs": {
-          "default": [],
-          "items": {
-            "$ref": "#/definitions/SessionJobReadEntryView"
-          },
-          "type": "array"
-        }
-      },
       "type": "object"
     },
     "SessionJobStartSpecInput": {
@@ -9878,6 +8972,12 @@
           "type": "string"
         },
         "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "promiseId": {
           "type": [
             "string",
             "null"
@@ -10035,194 +9135,6 @@
       },
       "type": "object"
     },
-    "SessionMcpLinkParams": {
-      "properties": {
-        "allowedTools": {
-          "items": {
-            "type": "string"
-          },
-          "type": [
-            "array",
-            "null"
-          ]
-        },
-        "approval": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/RemoteMcpApprovalPolicy"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "authGrantId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "deferLoading": {
-          "type": [
-            "boolean",
-            "null"
-          ]
-        },
-        "serverId": {
-          "type": "string"
-        },
-        "serverLabel": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "sessionId": {
-          "type": "string"
-        },
-        "toolId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "sessionId",
-        "serverId"
-      ],
-      "type": "object"
-    },
-    "SessionMcpLinkResponse": {
-      "properties": {
-        "link": {
-          "$ref": "#/definitions/SessionMcpLinkView"
-        },
-        "links": {
-          "default": [],
-          "items": {
-            "$ref": "#/definitions/SessionMcpLinkView"
-          },
-          "type": "array"
-        },
-        "session": {
-          "$ref": "#/definitions/SessionView"
-        }
-      },
-      "required": [
-        "link",
-        "session"
-      ],
-      "type": "object"
-    },
-    "SessionMcpLinkView": {
-      "properties": {
-        "allowedTools": {
-          "items": {
-            "type": "string"
-          },
-          "type": [
-            "array",
-            "null"
-          ]
-        },
-        "approval": {
-          "$ref": "#/definitions/RemoteMcpApprovalPolicy"
-        },
-        "authRef": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/SecretRefView"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "deferLoading": {
-          "type": [
-            "boolean",
-            "null"
-          ]
-        },
-        "serverLabel": {
-          "type": "string"
-        },
-        "serverUrl": {
-          "type": "string"
-        },
-        "toolId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "toolId",
-        "serverLabel",
-        "serverUrl",
-        "approval"
-      ],
-      "type": "object"
-    },
-    "SessionMcpListParams": {
-      "properties": {
-        "sessionId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "sessionId"
-      ],
-      "type": "object"
-    },
-    "SessionMcpListResponse": {
-      "properties": {
-        "links": {
-          "default": [],
-          "items": {
-            "$ref": "#/definitions/SessionMcpLinkView"
-          },
-          "type": "array"
-        }
-      },
-      "type": "object"
-    },
-    "SessionMcpUnlinkParams": {
-      "properties": {
-        "sessionId": {
-          "type": "string"
-        },
-        "toolId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "sessionId",
-        "toolId"
-      ],
-      "type": "object"
-    },
-    "SessionMcpUnlinkResponse": {
-      "properties": {
-        "links": {
-          "default": [],
-          "items": {
-            "$ref": "#/definitions/SessionMcpLinkView"
-          },
-          "type": "array"
-        },
-        "session": {
-          "$ref": "#/definitions/SessionView"
-        },
-        "toolId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "toolId",
-        "session"
-      ],
-      "type": "object"
-    },
     "SessionReadParams": {
       "properties": {
         "sessionId": {
@@ -10279,7 +9191,7 @@
         "config": {
           "anyOf": [
             {
-              "$ref": "#/definitions/SessionConfigInput"
+              "$ref": "#/definitions/SessionConfig"
             },
             {
               "type": "null"
@@ -10361,127 +9273,6 @@
       ],
       "type": "object"
     },
-    "SessionToolsUpdateInput": {
-      "oneOf": [
-        {
-          "properties": {
-            "tools": {
-              "default": [],
-              "items": {
-                "$ref": "#/definitions/ToolView"
-              },
-              "type": "array"
-            },
-            "type": {
-              "const": "replace",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "remove": {
-              "default": [],
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            "type": {
-              "const": "patch",
-              "type": "string"
-            },
-            "upsert": {
-              "default": [],
-              "items": {
-                "$ref": "#/definitions/ToolView"
-              },
-              "type": "array"
-            }
-          },
-          "required": [
-            "type"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "SessionToolsUpdateParams": {
-      "properties": {
-        "expectedToolsRevision": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "sessionId": {
-          "type": "string"
-        },
-        "update": {
-          "$ref": "#/definitions/SessionToolsUpdateInput"
-        }
-      },
-      "required": [
-        "sessionId",
-        "update"
-      ],
-      "type": "object"
-    },
-    "SessionToolsUpdateResponse": {
-      "properties": {
-        "session": {
-          "$ref": "#/definitions/SessionView"
-        }
-      },
-      "required": [
-        "session"
-      ],
-      "type": "object"
-    },
-    "SessionUpdateParams": {
-      "properties": {
-        "expectedConfigRevision": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "patch": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/SessionConfigPatchInput"
-            }
-          ],
-          "default": {}
-        },
-        "sessionId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "sessionId"
-      ],
-      "type": "object"
-    },
-    "SessionUpdateResponse": {
-      "properties": {
-        "session": {
-          "$ref": "#/definitions/SessionView"
-        }
-      },
-      "required": [
-        "session"
-      ],
-      "type": "object"
-    },
     "SessionView": {
       "properties": {
         "activeContext": {
@@ -10501,12 +9292,13 @@
         "config": {
           "anyOf": [
             {
-              "$ref": "#/definitions/SessionConfigView"
+              "$ref": "#/definitions/SessionConfig"
             },
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "The stored sparse config document, exactly as last put (model and\nfeature versions materialized at admission). Effective tool reality\nis visible via `active_tools`."
         },
         "configRevision": {
           "format": "uint64",
@@ -10808,6 +9600,19 @@
       },
       "type": "object"
     },
+    "TimersFeature": {
+      "additionalProperties": false,
+      "description": "Grants timer promises through the sleep tool plus the base concurrency\ntools (await/cancel/detach).",
+      "properties": {
+        "version": {
+          "default": 1,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "TokenEndpointAuthMethod": {
       "enum": [
         "clientSecretBasic",
@@ -10993,24 +9798,7 @@
       ],
       "type": "object"
     },
-    "ToolChoiceConfig": {
-      "properties": {
-        "disableParallelToolUse": {
-          "type": [
-            "boolean",
-            "null"
-          ]
-        },
-        "mode": {
-          "$ref": "#/definitions/ToolChoiceModeConfig"
-        }
-      },
-      "required": [
-        "mode"
-      ],
-      "type": "object"
-    },
-    "ToolChoiceModeConfig": {
+    "ToolChoice": {
       "oneOf": [
         {
           "properties": {
@@ -11065,146 +9853,6 @@
           "type": "object"
         }
       ]
-    },
-    "ToolConfigInput": {
-      "properties": {
-        "filesystem": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/FilesystemToolMode"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "fleet": {
-          "description": "Enables the Fleet subagent control-plane tools\n(agent_spawn/send/read/list/cancel and profile_list/read).",
-          "type": [
-            "boolean",
-            "null"
-          ]
-        },
-        "messaging": {
-          "description": "Enables the messaging toolset (message_send/react/edit/noop) for\nsessions bound to a chat channel.",
-          "type": [
-            "boolean",
-            "null"
-          ]
-        },
-        "timer": {
-          "description": "Enables timer promises through the sleep tool. Also exposes the base\nconcurrency tools (await/cancel/detach).",
-          "type": [
-            "boolean",
-            "null"
-          ]
-        },
-        "webFetch": {
-          "type": [
-            "boolean",
-            "null"
-          ]
-        },
-        "webSearch": {
-          "type": [
-            "boolean",
-            "null"
-          ]
-        }
-      },
-      "type": "object"
-    },
-    "ToolConfigPatchInput": {
-      "properties": {
-        "filesystem": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/FieldPatchOfFilesystemToolMode"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "fleet": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/FieldPatchOfboolean"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "messaging": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/FieldPatchOfboolean"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "timer": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/FieldPatchOfboolean"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "webFetch": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/FieldPatchOfboolean"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "webSearch": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/FieldPatchOfboolean"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "type": "object"
-    },
-    "ToolConfigView": {
-      "properties": {
-        "filesystem": {
-          "$ref": "#/definitions/FilesystemToolMode"
-        },
-        "fleet": {
-          "type": "boolean"
-        },
-        "timer": {
-          "type": "boolean"
-        },
-        "webFetch": {
-          "type": "boolean"
-        },
-        "webSearch": {
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "webSearch",
-        "webFetch",
-        "filesystem",
-        "fleet",
-        "timer"
-      ],
-      "type": "object"
     },
     "ToolEffectView": {
       "properties": {
@@ -11469,6 +10117,52 @@
       ],
       "type": "object"
     },
+    "VfsFeature": {
+      "additionalProperties": false,
+      "description": "Grants the session virtual filesystem: mounts may be attached and the VFS\ncatalog is surfaced. Sub-grants are independent; `{}` grants a VFS with\nno tools and no sourcing.",
+      "properties": {
+        "prompts": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/VfsPromptsConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Prompt-instruction sourcing from the VFS."
+        },
+        "skills": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/VfsSkillsConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Skill discovery sourcing from the VFS."
+        },
+        "tools": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/VfsToolSurface"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Agent-facing filesystem tool surface; absent = no fs tools. Per-path\nwritability is defined by each mount's own access."
+        },
+        "version": {
+          "default": 1,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "VfsMountAccess": {
       "enum": [
         "readOnly",
@@ -11672,6 +10366,38 @@
       ],
       "type": "object"
     },
+    "VfsPromptsConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "roots": {
+          "description": "Absent means the conventional roots; an explicit list must be\nnon-empty.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "VfsSkillsConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "roots": {
+          "description": "Absent means the conventional roots; an explicit list must be\nnon-empty.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "VfsSnapshotCommitParams": {
       "properties": {
         "manifest": true
@@ -11739,6 +10465,13 @@
         "bytes"
       ],
       "type": "object"
+    },
+    "VfsToolSurface": {
+      "enum": [
+        "readOnly",
+        "edit"
+      ],
+      "type": "string"
     },
     "VfsWorkspaceCreateParams": {
       "properties": {
@@ -11929,6 +10662,65 @@
         "createdAtMs",
         "updatedAtMs"
       ],
+      "type": "object"
+    },
+    "WebFeature": {
+      "additionalProperties": false,
+      "description": "Grants network access through the web toolset; `fetch` and `search` are\nindependently granted, and a web block granting neither is rejected.",
+      "properties": {
+        "fetch": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/WebFetchFeature"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "search": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/WebSearchFeature"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "version": {
+          "default": 1,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "WebFetchFeature": {
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "WebSearchFeature": {
+      "additionalProperties": false,
+      "properties": {
+        "allowedDomains": {
+          "description": "Absent means all domains; an explicit list must be non-empty.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "blockedDomains": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
       "type": "object"
     }
   },

@@ -14,21 +14,24 @@ use crate::fleet::FleetChildRuntime;
 use crate::universe::{UniverseError, UniverseRuntime};
 use crate::worker::{
     ACTIVITY_APPEND_EVENTS, ACTIVITY_CANCEL_PROMISE_SOURCE, ACTIVITY_CHECK_PROMISE_SOURCE,
-    ACTIVITY_CONTEXT_COMPACT, ACTIVITY_CREATE_OR_LOAD_SESSION, ACTIVITY_LLM_GENERATE,
-    ACTIVITY_PREPROCESS_RUN_INPUT, ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB,
-    ACTIVITY_SKILL_CATALOG_REFRESH, ACTIVITY_TOOL_INVOKE_BATCH, AppendEventsRequest,
-    ContextCompactActivityRequest, CreateOrLoadSessionRequest, CreateOrLoadSessionResult,
+    ACTIVITY_CONTEXT_COMPACT, ACTIVITY_CREATE_OR_LOAD_SESSION, ACTIVITY_ENVIRONMENT_JOB_CANCEL,
+    ACTIVITY_ENVIRONMENT_JOB_POLL, ACTIVITY_LLM_GENERATE, ACTIVITY_PREPROCESS_RUN_INPUT,
+    ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB, ACTIVITY_RUNTIME_PROJECTION_REFRESH,
+    ACTIVITY_TOOL_INVOKE_BATCH, AppendEventsRequest, ContextCompactActivityRequest,
+    CreateOrLoadSessionRequest, CreateOrLoadSessionResult, EnvironmentJobCancelActivityRequest,
+    EnvironmentJobPollActivityRequest, EnvironmentJobPollActivityResult,
     LlmGenerateActivityRequest, PreprocessRunInputActivityRequest,
     PreprocessRunInputActivityResult, PutBlobRequest, ReadBlobRequest, ReadBlobResult,
-    SkillCatalogRefreshActivityRequest, SkillCatalogRefreshActivityResult,
+    RuntimeProjectionRefreshActivityRequest, RuntimeProjectionRefreshActivityResult,
     ToolInvokeBatchActivityRequest,
 };
 
 mod common;
 mod compaction;
+mod environment_jobs;
 mod llm;
 mod preprocess;
-mod skills;
+mod runtime_projection;
 mod state;
 mod storage;
 mod tools;
@@ -39,7 +42,7 @@ pub use preprocess::{
     FfmpegAudioTranscoder, default_audio_transcoder_from_env,
 };
 pub use state::{
-    ActivityState, LlmActivityDeps, PreprocessActivityDeps, SkillCatalogActivityDeps,
+    ActivityState, LlmActivityDeps, PreprocessActivityDeps, RuntimeProjectionActivityDeps,
     StorageActivityDeps, ToolActivityDeps,
 };
 
@@ -211,8 +214,8 @@ mod tests {
             temporal_workflow::WorkflowActivities::tool_invoke_batch.name()
         );
         assert_eq!(
-            WorkerActivities::skill_catalog_refresh.name(),
-            temporal_workflow::WorkflowActivities::skill_catalog_refresh.name()
+            WorkerActivities::runtime_projection_refresh.name(),
+            temporal_workflow::WorkflowActivities::runtime_projection_refresh.name()
         );
         assert_eq!(
             WorkerActivities::check_promise_source.name(),
@@ -307,6 +310,8 @@ mod tests {
                     target_requirement: engine::ToolTargetRequirement::None,
                 }],
                 tool_choice: None,
+                reasoning_effort: None,
+                parallel_tool_use: None,
                 output_limit: None,
                 provider_response_id: None,
                 compaction: None,
@@ -398,14 +403,14 @@ impl WorkerActivities {
         tools::invoke_batch(state.tools(), request).await
     }
 
-    #[activity(name = ACTIVITY_SKILL_CATALOG_REFRESH)]
-    pub async fn skill_catalog_refresh(
+    #[activity(name = ACTIVITY_RUNTIME_PROJECTION_REFRESH)]
+    pub async fn runtime_projection_refresh(
         self: Arc<Self>,
         ctx: ActivityContext,
-        request: SkillCatalogRefreshActivityRequest,
-    ) -> Result<SkillCatalogRefreshActivityResult, ActivityError> {
+        request: RuntimeProjectionRefreshActivityRequest,
+    ) -> Result<RuntimeProjectionRefreshActivityResult, ActivityError> {
         let state = self.state_for(&ctx).await?;
-        skills::refresh_skill_catalog(state.skill_catalog(), request).await
+        runtime_projection::refresh_runtime_projection(state.runtime_projection(), request).await
     }
 
     #[activity(name = ACTIVITY_CHECK_PROMISE_SOURCE)]
@@ -436,5 +441,25 @@ impl WorkerActivities {
             .cancel_promise_source(request)
             .await
             .map_err(tools::activity_error_for_core)
+    }
+
+    #[activity(name = ACTIVITY_ENVIRONMENT_JOB_POLL)]
+    pub async fn environment_job_poll(
+        self: Arc<Self>,
+        ctx: ActivityContext,
+        request: EnvironmentJobPollActivityRequest,
+    ) -> Result<EnvironmentJobPollActivityResult, ActivityError> {
+        let state = self.state_for(&ctx).await?;
+        environment_jobs::poll(state.environment_jobs().map(Arc::as_ref), request).await
+    }
+
+    #[activity(name = ACTIVITY_ENVIRONMENT_JOB_CANCEL)]
+    pub async fn environment_job_cancel(
+        self: Arc<Self>,
+        ctx: ActivityContext,
+        request: EnvironmentJobCancelActivityRequest,
+    ) -> Result<Vec<host_protocol::data::jobs::JobSummary>, ActivityError> {
+        let state = self.state_for(&ctx).await?;
+        environment_jobs::cancel(state.environment_jobs().map(Arc::as_ref), request).await
     }
 }

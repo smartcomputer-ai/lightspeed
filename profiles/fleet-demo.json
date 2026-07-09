@@ -12,10 +12,14 @@
       "generation": {
         "reasoningEffort": "medium"
       },
-      "tools": {
-        "fleet": true,
-        "filesystem": "readOnly",
-        "webFetch": true
+      "features": {
+        "fleet": {},
+        "vfs": {
+          "tools": "readOnly"
+        },
+        "web": {
+          "fetch": {}
+        }
       }
     },
     "instructions": {
@@ -36,10 +40,14 @@
       "generation": {
         "reasoningEffort": "high"
       },
-      "tools": {
-        "filesystem": "readOnly",
-        "webFetch": true,
-        "webSearch": true
+      "features": {
+        "vfs": {
+          "tools": "readOnly"
+        },
+        "web": {
+          "fetch": {},
+          "search": {}
+        }
       }
     },
     "instructions": {
@@ -60,9 +68,13 @@
       "generation": {
         "reasoningEffort": "medium"
       },
-      "tools": {
-        "filesystem": "readOnly",
-        "webFetch": true
+      "features": {
+        "vfs": {
+          "tools": "readOnly"
+        },
+        "web": {
+          "fetch": {}
+        }
       }
     },
     "instructions": {
@@ -83,9 +95,13 @@
       "generation": {
         "reasoningEffort": "low"
       },
-      "tools": {
-        "filesystem": "edit",
-        "webFetch": true
+      "features": {
+        "vfs": {
+          "tools": "edit"
+        },
+        "web": {
+          "fetch": {}
+        }
       }
     },
     "instructions": {

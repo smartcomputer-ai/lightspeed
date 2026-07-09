@@ -22,6 +22,9 @@ use engine::{
         SessionLinkDirection, SessionRecord, SessionStore, SessionStoreError, UpsertSessionLink,
     },
 };
+use environments::{
+    PutSessionEnvironmentBinding, SessionEnvironmentBindingState, SessionEnvironmentBindingStore,
+};
 use serde::Serialize;
 use serde_json::{Value, json};
 use tools::{
@@ -65,6 +68,7 @@ pub struct FleetService {
     runtime: Arc<dyn FleetChildRuntime>,
     workspace_store: Option<Arc<dyn VfsWorkspaceStore>>,
     mount_store: Option<Arc<dyn VfsMountStore>>,
+    environment_bindings: Option<Arc<dyn SessionEnvironmentBindingStore>>,
 }
 
 impl FleetService {
@@ -74,6 +78,7 @@ impl FleetService {
             runtime,
             workspace_store: None,
             mount_store: None,
+            environment_bindings: None,
         }
     }
 
@@ -84,6 +89,14 @@ impl FleetService {
     ) -> Self {
         self.workspace_store = Some(workspace_store);
         self.mount_store = Some(mount_store);
+        self
+    }
+
+    pub fn with_environment_bindings(
+        mut self,
+        bindings: Arc<dyn SessionEnvironmentBindingStore>,
+    ) -> Self {
+        self.environment_bindings = Some(bindings);
         self
     }
 
@@ -160,8 +173,15 @@ impl FleetService {
         };
         let skip_pre_run_setup = outcome.has_matching_spawn_link();
         if args.base.profile().is_none() && !skip_pre_run_setup {
-            self.apply_resource_policies(&child_session_id, context.observed_at_ms, &args)
-                .await?;
+            self.apply_resource_policies(
+                source_session_id
+                    .as_ref()
+                    .expect("non-profile spawn has a source session"),
+                &child_session_id,
+                context.observed_at_ms,
+                &args,
+            )
+            .await?;
         }
 
         if args.base.profile().is_none() {
@@ -799,15 +819,16 @@ impl FleetService {
     async fn fleet_config_for_session(
         &self,
         session_id: &SessionId,
-    ) -> Result<engine::FleetConfig, AgentApiError> {
+    ) -> Result<engine::FleetFeature, AgentApiError> {
         let state = self.load_core_state(session_id).await?;
-        state
-            .lifecycle
-            .config
-            .map(|config| config.fleet)
-            .ok_or_else(|| {
-                AgentApiError::invalid_request(format!("session is not open: {session_id}"))
-            })
+        let config = state.lifecycle.config.ok_or_else(|| {
+            AgentApiError::invalid_request(format!("session is not open: {session_id}"))
+        })?;
+        config.features.fleet.ok_or_else(|| {
+            AgentApiError::invalid_request(format!(
+                "fleet feature is not granted for session: {session_id}"
+            ))
+        })
     }
 
     async fn create_or_reuse_child(
@@ -952,6 +973,7 @@ impl FleetService {
 
     async fn apply_resource_policies(
         &self,
+        source_session_id: &SessionId,
         child_session_id: &SessionId,
         observed_at_ms: u64,
         args: &AgentSpawnArgs,
@@ -961,6 +983,8 @@ impl FleetService {
                 "agent_spawn environment policy must be share",
             ));
         }
+        self.share_environment_bindings(source_session_id, child_session_id, observed_at_ms)
+            .await?;
         match args.vfs {
             VfsPolicy::Share => Ok(()),
             VfsPolicy::Isolate => {
@@ -968,6 +992,39 @@ impl FleetService {
                     .await
             }
         }
+    }
+
+    async fn share_environment_bindings(
+        &self,
+        source_session_id: &SessionId,
+        child_session_id: &SessionId,
+        observed_at_ms: u64,
+    ) -> Result<(), AgentApiError> {
+        let Some(store) = self.environment_bindings.as_ref() else {
+            return Ok(());
+        };
+        let updated_at_ms = nonnegative_i64(observed_at_ms, "observed_at_ms")?;
+        let bindings = store
+            .list_bindings_for_session(source_session_id)
+            .await
+            .map_err(|error| AgentApiError::internal(error.to_string()))?;
+        for binding in bindings {
+            if binding.state != SessionEnvironmentBindingState::Attached {
+                continue;
+            }
+            store
+                .put_binding(PutSessionEnvironmentBinding {
+                    session_id: child_session_id.clone(),
+                    env_id: binding.env_id,
+                    instance_id: binding.instance_id,
+                    cwd: binding.cwd,
+                    fs_routes: binding.fs_routes,
+                    updated_at_ms,
+                })
+                .await
+                .map_err(|error| AgentApiError::internal(error.to_string()))?;
+        }
+        Ok(())
     }
 
     async fn isolate_vfs_mounts(
@@ -1628,7 +1685,7 @@ fn validate_spawn_args(args: &AgentSpawnArgs) -> Result<(), AgentApiError> {
 }
 
 fn validate_spawn_policy(
-    fleet_config: &engine::FleetConfig,
+    fleet_config: &engine::FleetFeature,
     args: &AgentSpawnArgs,
 ) -> Result<(), AgentApiError> {
     let base = match &args.base {
@@ -1649,7 +1706,7 @@ fn validate_spawn_policy(
 }
 
 fn validate_profile_source_allowed(
-    fleet_config: &engine::FleetConfig,
+    fleet_config: &engine::FleetFeature,
     profile: &ProfileSource,
 ) -> Result<(), AgentApiError> {
     match profile {
@@ -1664,7 +1721,7 @@ fn validate_profile_source_allowed(
 }
 
 fn validate_named_profile_allowed(
-    fleet_config: &engine::FleetConfig,
+    fleet_config: &engine::FleetFeature,
     profile_id: &ProfileId,
 ) -> Result<(), AgentApiError> {
     if fleet_config
@@ -2376,19 +2433,29 @@ fn agent_read_visible_run_section(session_id: &str, run: &Value) -> Option<Strin
         .get("status")
         .and_then(Value::as_str)
         .unwrap_or("unknown");
-    let items = run.get("items").and_then(Value::as_array)?;
+    let entries = run.get("entries").and_then(Value::as_array)?;
     let mut lines = Vec::new();
-    for item in items {
-        match item.get("type").and_then(Value::as_str) {
-            Some("assistantMessage") => {
-                if let Some(text) = item.get("text").and_then(Value::as_str)
+    for entry in entries {
+        let kind = entry.get("kind");
+        let text = entry.get("text").and_then(Value::as_str);
+        match kind
+            .and_then(|kind| kind.get("type"))
+            .and_then(Value::as_str)
+        {
+            Some("message")
+                if kind
+                    .and_then(|kind| kind.get("role"))
+                    .and_then(Value::as_str)
+                    == Some("assistant") =>
+            {
+                if let Some(text) = text
                     && !text.trim().is_empty()
                 {
                     lines.push(format!("Assistant message:\n{}", text.trim()));
                 }
             }
             Some("toolResult") => {
-                if let Some(output) = item.get("output").and_then(Value::as_str)
+                if let Some(output) = text
                     && !output.trim().is_empty()
                 {
                     lines.push(format!("Tool result:\n{}", output.trim()));
@@ -2457,13 +2524,12 @@ fn profile_list_model_visible_text(output: &ProfileListOutput) -> String {
 fn profile_read_model_visible_text(output: &ProfileReadOutput) -> String {
     let profile = &output.profile;
     format!(
-        "Read profile {} revision {}: config {}, instructions {}, {} mount(s), {} MCP link(s), {} environment(s).",
+        "Read profile {} revision {}: config {}, instructions {}, {} mount(s), {} environment(s).",
         profile.profile_id,
         profile.revision,
         yes_no(profile.document.config.is_some()),
         yes_no(profile.document.instructions.is_some()),
         profile.document.mounts.len(),
-        profile.document.mcp.len(),
         profile.document.environments.len()
     )
 }
@@ -2512,9 +2578,9 @@ mod tests {
 
     use async_trait::async_trait;
     use engine::{
-        ContextConfig, FleetConfig, FleetProfilesConfig, FleetSpawnBase, FleetSpawnConfig,
-        ModelSelection, ProviderApiKind, RunConfig, SessionConfig, ToolBatchOutcome, ToolCallId,
-        ToolConfig, ToolInvocationRequest, ToolName, TurnConfig,
+        ContextConfig, FeaturesConfig, FleetFeature, FleetProfilesConfig, FleetSpawnBase,
+        FleetSpawnConfig, GenerationConfig, LimitsConfig, ModelSelection, ProviderApiKind,
+        RunConfig, SessionConfig, ToolBatchOutcome, ToolCallId, ToolInvocationRequest, ToolName,
         storage::{CreateSession, InMemorySessionStore, SessionStore},
     };
     use vfs::{CompareAndSetVfsWorkspaceHead, VfsMountAccess, VfsMountRecord, VfsWorkspaceRecord};
@@ -3096,9 +3162,13 @@ mod tests {
             Arc::new(InMemorySessionStore::new()),
             Arc::new(FakeRuntime::default()),
         )
-        .with_vfs_stores(vfs.clone(), vfs.clone());
+        .with_vfs_stores(vfs.clone(), vfs.clone())
+        .with_environment_bindings(Arc::new(
+            environments::InMemoryEnvironmentRegistryStore::new(),
+        ));
         service
             .apply_resource_policies(
+                &child,
                 &child,
                 10,
                 &serde_json::from_value(json!({
@@ -3587,7 +3657,10 @@ mod tests {
 
         assert_eq!(output.session_id, "child");
         assert_eq!(output.session["id"], "child");
-        assert_eq!(output.session["config"]["tools"]["fleet"], true);
+        assert_eq!(
+            output.session["config"]["features"]["fleet"]["version"],
+            api::CURRENT_FEATURE_VERSION
+        );
         assert_eq!(output.lineage.source_session_id.as_deref(), Some("parent"));
         assert_eq!(output.links.len(), 1);
         assert_eq!(output.environments["activeEnvId"], "env_1");
@@ -3774,16 +3847,36 @@ mod tests {
         let blobs = Arc::new(engine::storage::InMemoryBlobStore::new());
         let runtime = Arc::new(FakeRuntime::default());
         let mut run = api_run_view("run_1", ApiRunStatus::Completed);
-        run.items.push(api::SessionItemView::ToolResult {
+        run.entries.push(api::ContextEntryView {
             id: "item_1".to_owned(),
-            call_id: "call_shell".to_owned(),
-            output: Some("/opt\n## main...origin/main".to_owned()),
-            is_error: false,
-            status: api::ToolItemStatus::Succeeded,
+            key: None,
+            kind: api::ContextEntryKindView::ToolResult {
+                call_id: "call_shell".to_owned(),
+                is_error: false,
+            },
+            content_ref: "sha256:tool".to_owned(),
+            media_type: None,
+            preview: None,
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+            text: Some("/opt\n## main...origin/main".to_owned()),
+            display: None,
         });
-        run.items.push(api::SessionItemView::AssistantMessage {
+        run.entries.push(api::ContextEntryView {
             id: "item_2".to_owned(),
-            text: "Command completed.".to_owned(),
+            key: None,
+            kind: api::ContextEntryKindView::Message {
+                role: api::ContextMessageRoleView::Assistant,
+            },
+            content_ref: "sha256:assistant".to_owned(),
+            media_type: None,
+            preview: None,
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+            text: Some("Command completed.".to_owned()),
+            display: None,
         });
         runtime.sessions.lock().expect("lock").insert(
             child.clone(),
@@ -3922,13 +4015,14 @@ mod tests {
         let sessions = Arc::new(InMemorySessionStore::new());
         let parent = open_source_session_with_fleet_config(
             sessions.as_ref(),
-            FleetConfig {
+            FleetFeature {
                 profiles: FleetProfilesConfig {
                     allow: Some(vec!["support".to_owned(), "admin".to_owned()]),
                     deny: vec!["admin".to_owned()],
                     inline: true,
                 },
                 spawn: FleetSpawnConfig::default(),
+                ..FleetFeature::default()
             },
         )
         .await;
@@ -3996,7 +4090,7 @@ mod tests {
         let sessions = Arc::new(InMemorySessionStore::new());
         let parent = open_source_session_with_fleet_config(
             sessions.as_ref(),
-            FleetConfig {
+            FleetFeature {
                 profiles: FleetProfilesConfig {
                     allow: Some(vec!["worker".to_owned()]),
                     deny: Vec::new(),
@@ -4005,6 +4099,7 @@ mod tests {
                 spawn: FleetSpawnConfig {
                     bases: Some(vec![FleetSpawnBase::Profile]),
                 },
+                ..FleetFeature::default()
             },
         )
         .await;
@@ -4128,12 +4223,12 @@ mod tests {
     }
 
     async fn open_source_session(sessions: &InMemorySessionStore) -> SessionId {
-        open_source_session_with_fleet_config(sessions, FleetConfig::default()).await
+        open_source_session_with_fleet_config(sessions, FleetFeature::default()).await
     }
 
     async fn open_source_session_with_fleet_config(
         sessions: &InMemorySessionStore,
-        fleet: FleetConfig,
+        fleet: FleetFeature,
     ) -> SessionId {
         let source = SessionId::new("parent");
         sessions
@@ -4295,10 +4390,10 @@ mod tests {
     }
 
     fn open_state() -> engine::CoreAgentState {
-        open_state_with_fleet_config(FleetConfig::default())
+        open_state_with_fleet_config(FleetFeature::default())
     }
 
-    fn open_state_with_fleet_config(fleet: FleetConfig) -> engine::CoreAgentState {
+    fn open_state_with_fleet_config(fleet: FleetFeature) -> engine::CoreAgentState {
         let mut state = engine::CoreAgentState::new();
         state.lifecycle.config = Some(SessionConfig {
             model: ModelSelection {
@@ -4306,15 +4401,13 @@ mod tests {
                 provider_id: "test".to_owned(),
                 model: "test-model".to_owned(),
             },
-            run: RunConfig::default(),
-            turn: TurnConfig {
-                max_output_tokens: None,
-                tool_choice: None,
-                provider_params: None,
-            },
+            generation: GenerationConfig::default(),
+            limits: LimitsConfig::default(),
             context: ContextConfig { compaction: None },
-            tools: ToolConfig::default(),
-            fleet,
+            features: FeaturesConfig {
+                fleet: Some(fleet),
+                ..FeaturesConfig::default()
+            },
         });
         state
     }
@@ -4329,30 +4422,29 @@ mod tests {
             status,
             display_name: None,
             config_revision: 1,
-            config: Some(api::SessionConfigView {
-                model: api::ModelConfig {
+            config: Some(api::SessionConfig {
+                model: Some(api::ModelConfig {
                     provider_id: "test".to_owned(),
                     api_kind: "openaiResponses".to_owned(),
                     model: "test-model".to_owned(),
-                },
-                generation: api::GenerationConfig::default(),
-                context: api::ContextConfigInput::default(),
-                run_defaults: api::RunDefaultsConfig::default(),
-                tools: api::ToolConfigView {
-                    web_search: false,
-                    web_fetch: false,
-                    filesystem: api::FilesystemToolMode::Edit,
-                    fleet: true,
-                    timer: false,
-                },
-                fleet: api::FleetConfigView {
-                    profiles: api::FleetProfilesConfigView {
-                        allow: None,
-                        deny: Vec::new(),
-                        inline: true,
-                    },
-                    spawn: api::FleetSpawnConfigView { bases: None },
-                },
+                }),
+                generation: None,
+                limits: None,
+                context: None,
+                features: Some(api::FeaturesConfig {
+                    vfs: Some(api::VfsFeature {
+                        version: api::CURRENT_FEATURE_VERSION,
+                        tools: Some(api::VfsToolSurface::Edit),
+                        prompts: None,
+                        skills: None,
+                    }),
+                    fleet: Some(api::FleetFeature {
+                        version: api::CURRENT_FEATURE_VERSION,
+                        profiles: None,
+                        spawn: None,
+                    }),
+                    ..api::FeaturesConfig::default()
+                }),
             }),
             created_at_ms: 1,
             updated_at_ms: 2,
@@ -4368,7 +4460,7 @@ mod tests {
             id: run_id.to_owned(),
             status,
             source: api::RunViewSource::Input { items: Vec::new() },
-            items: Vec::new(),
+            entries: Vec::new(),
             tool_batches: Vec::new(),
         }
     }

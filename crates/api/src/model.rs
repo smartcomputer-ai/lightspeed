@@ -7,12 +7,3 @@ pub struct ModelConfig {
     pub api_kind: String,
     pub model: String,
 }
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub enum ReasoningEffort {
-    None,
-    Low,
-    Medium,
-    High,
-}

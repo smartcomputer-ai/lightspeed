@@ -56,7 +56,17 @@ async fn main() -> anyhow::Result<()> {
                     continue;
                 }
             };
-            if let Err(error) = heartbeat_gateway.heartbeat(&heartbeat_config, target).await {
+            let connection = match heartbeat_runtime.connection_spec() {
+                Ok(connection) => connection,
+                Err(error) => {
+                    eprintln!("host-bridge failed to build target connection: {error}");
+                    continue;
+                }
+            };
+            if let Err(error) = heartbeat_gateway
+                .heartbeat(&heartbeat_config, target, connection)
+                .await
+            {
                 eprintln!("host-bridge heartbeat failed: {error}");
             }
         }

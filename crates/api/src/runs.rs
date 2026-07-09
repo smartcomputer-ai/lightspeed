@@ -55,26 +55,6 @@ pub struct RunStartResponse {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct MessageSubmitParams {
-    pub session_id: SessionId,
-    pub items: Vec<InputItem>,
-    /// Client-supplied idempotency key, unique per session. Retrying
-    /// `session/messages/submit` with the same submission id and same items is
-    /// accepted idempotently; reusing it for a different command or different
-    /// message input is rejected.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub submission_id: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct MessageSubmitResponse {
-    pub submission_id: String,
-    pub accepted: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct RunCancelParams {
     pub session_id: SessionId,
     pub run_id: RunId,

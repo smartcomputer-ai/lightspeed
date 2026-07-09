@@ -1,31 +1,43 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    CoreAgentState, DomainError, ModelSelection, ProviderApiKind, ProviderParams, ToolChoice,
-    ToolChoiceMode,
+    CoreAgentState, DomainError, ModelSelection, ProviderApiKind, ProviderParams,
+    RemoteMcpApprovalPolicy, ToolChoice,
 };
 
 const MIN_OPENAI_RESPONSES_COMPACT_THRESHOLD: u32 = 1000;
 
+/// Current version of every feature block. Bumps per feature once a breaking
+/// behavior revision ships; `validate_feature_version` then becomes a
+/// per-feature match over the supported set.
+pub const CURRENT_FEATURE_VERSION: u32 = 1;
+
+/// Declared session configuration.
+///
+/// The document is sparse: everything except `model` is optional, and an
+/// omitted section means "defaults". Features follow capability semantics —
+/// an absent feature is not granted (no tools, no access); a present feature
+/// is granted with the defaults documented on its struct. The stored document
+/// is this declaration itself; effective behavior is materialized outside the
+/// engine.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionConfig {
     pub model: ModelSelection,
-    pub run: RunConfig,
-    pub turn: TurnConfig,
+    #[serde(default, skip_serializing_if = "GenerationConfig::is_default")]
+    pub generation: GenerationConfig,
+    #[serde(default, skip_serializing_if = "LimitsConfig::is_default")]
+    pub limits: LimitsConfig,
+    #[serde(default, skip_serializing_if = "ContextConfig::is_default")]
     pub context: ContextConfig,
-    #[serde(default)]
-    pub tools: ToolConfig,
-    #[serde(default)]
-    pub fleet: FleetConfig,
+    #[serde(default, skip_serializing_if = "FeaturesConfig::is_default")]
+    pub features: FeaturesConfig,
 }
 
 impl SessionConfig {
-    pub fn validate_provider_compatibility(&self) -> Result<(), DomainError> {
-        validate_provider_params(self.turn.provider_params.as_ref(), &self.model.api_kind)?;
+    pub fn validate(&self) -> Result<(), DomainError> {
+        validate_generation(&self.generation, &self.model.api_kind)?;
         validate_context_config(&self.context, &self.model.api_kind)?;
-        validate_tool_config(&self.tools, &self.model.api_kind)?;
-        self.run
-            .validate_provider_compatibility(&self.model.api_kind)
+        validate_features(&self.features, &self.model.api_kind)
     }
 }
 
@@ -35,334 +47,312 @@ pub(crate) fn validate_config_update_for_state(
 ) -> Result<(), DomainError> {
     let current = current_config(state)?;
     validate_session_is_idle_for_config_update(state)?;
-    config.validate_provider_compatibility()?;
+    config.validate()?;
     validate_session_api_kind_is_pinned(&current.model.api_kind, &config.model.api_kind)?;
     validate_active_context_api_kind(state, &config.model.api_kind)?;
-    validate_tool_choice_for_active_tools(state, config.turn.tool_choice.as_ref())?;
-    validate_tool_choice_for_active_tools(state, config.run.tool_choice.as_ref())?;
+    validate_tool_choice_for_active_tools(state, config.generation.tool_choice.as_ref())?;
     Ok(())
 }
 
+/// Turn-shaping defaults applied to every LLM generation. Per-run overrides
+/// ride [`RunConfig`] on run requests.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SessionConfigPatch {
+pub struct GenerationConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model: Option<ModelSelection>,
-    #[serde(default, skip_serializing_if = "RunConfigPatch::is_empty")]
-    pub run: RunConfigPatch,
-    #[serde(default, skip_serializing_if = "TurnConfigPatch::is_empty")]
-    pub turn: TurnConfigPatch,
-    #[serde(default, skip_serializing_if = "ContextConfigPatch::is_empty")]
-    pub context: ContextConfigPatch,
-    #[serde(default, skip_serializing_if = "ToolConfigPatch::is_empty")]
-    pub tools: ToolConfigPatch,
-    #[serde(default, skip_serializing_if = "FleetConfigPatch::is_empty")]
-    pub fleet: FleetConfigPatch,
+    pub max_output_tokens: Option<u32>,
+    /// Reasoning effort tier as a provider-native string (e.g. "none",
+    /// "high", "xhigh", "ultra"). The engine carries it opaquely; the LLM
+    /// runtime validates it against the provider and materializes the
+    /// request params. Never stored as provider JSON.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoice>,
+    /// Whether the model may call several tools in one turn. `None` leaves
+    /// the provider default; materialized provider-natively by the LLM
+    /// runtime (OpenAI `parallel_tool_calls`, Anthropic
+    /// `disable_parallel_tool_use`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parallel_tool_use: Option<bool>,
 }
 
-impl SessionConfigPatch {
-    pub fn apply_to(&self, config: &SessionConfig) -> SessionConfig {
-        let mut next = config.clone();
-        if let Some(model) = self.model.clone() {
-            next.model = model;
-        }
-        self.run.apply_to(&mut next.run);
-        self.turn.apply_to(&mut next.turn);
-        self.context.apply_to(&mut next.context);
-        self.tools.apply_to(&mut next.tools);
-        self.fleet.apply_to(&mut next.fleet);
-        next
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.model.is_none()
-            && self.run.is_empty()
-            && self.turn.is_empty()
-            && self.context.is_empty()
-            && self.tools.is_empty()
-            && self.fleet.is_empty()
+impl GenerationConfig {
+    pub fn is_default(&self) -> bool {
+        self == &Self::default()
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", tag = "op", content = "value")]
-pub enum OptionalConfigPatch<T> {
-    Set(T),
-    Clear,
-}
-
-impl<T: Clone> OptionalConfigPatch<T> {
-    pub fn apply_to(&self, value: &mut Option<T>) {
-        match self {
-            Self::Set(next) => *value = Some(next.clone()),
-            Self::Clear => *value = None,
-        }
-    }
-}
-
+/// Run budget defaults. Per-run overrides ride [`RunConfig`].
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RunConfigPatch {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_turns: Option<OptionalConfigPatch<u32>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_tool_rounds: Option<OptionalConfigPatch<u32>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model_override: Option<OptionalConfigPatch<ModelSelection>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_output_tokens: Option<OptionalConfigPatch<u32>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider_params: Option<OptionalConfigPatch<ProviderParams>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool_choice: Option<OptionalConfigPatch<ToolChoice>>,
-}
-
-impl RunConfigPatch {
-    pub fn apply_to(&self, config: &mut RunConfig) {
-        apply_optional_config_patch(&mut config.max_turns, &self.max_turns);
-        apply_optional_config_patch(&mut config.max_tool_rounds, &self.max_tool_rounds);
-        apply_optional_config_patch(&mut config.model_override, &self.model_override);
-        apply_optional_config_patch(&mut config.max_output_tokens, &self.max_output_tokens);
-        apply_optional_config_patch(&mut config.provider_params, &self.provider_params);
-        apply_optional_config_patch(&mut config.tool_choice, &self.tool_choice);
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.max_turns.is_none()
-            && self.max_tool_rounds.is_none()
-            && self.model_override.is_none()
-            && self.max_output_tokens.is_none()
-            && self.provider_params.is_none()
-            && self.tool_choice.is_none()
-    }
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TurnConfigPatch {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_output_tokens: Option<OptionalConfigPatch<u32>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider_params: Option<OptionalConfigPatch<ProviderParams>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool_choice: Option<OptionalConfigPatch<ToolChoice>>,
-}
-
-impl TurnConfigPatch {
-    pub fn apply_to(&self, config: &mut TurnConfig) {
-        apply_optional_config_patch(&mut config.max_output_tokens, &self.max_output_tokens);
-        apply_optional_config_patch(&mut config.provider_params, &self.provider_params);
-        apply_optional_config_patch(&mut config.tool_choice, &self.tool_choice);
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.max_output_tokens.is_none()
-            && self.provider_params.is_none()
-            && self.tool_choice.is_none()
-    }
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ContextConfigPatch {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub compaction: Option<OptionalConfigPatch<CompactionPolicy>>,
-}
-
-impl ContextConfigPatch {
-    pub fn apply_to(&self, config: &mut ContextConfig) {
-        apply_optional_config_patch(&mut config.compaction, &self.compaction);
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.compaction.is_none()
-    }
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ToolConfigPatch {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub web_search: Option<OptionalConfigPatch<bool>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub web_fetch: Option<OptionalConfigPatch<bool>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub filesystem: Option<OptionalConfigPatch<FilesystemToolMode>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub messaging: Option<OptionalConfigPatch<bool>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fleet: Option<OptionalConfigPatch<bool>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timer: Option<OptionalConfigPatch<bool>>,
-}
-
-impl ToolConfigPatch {
-    pub fn apply_to(&self, config: &mut ToolConfig) {
-        apply_optional_config_patch(&mut config.web_search, &self.web_search);
-        apply_optional_config_patch(&mut config.web_fetch, &self.web_fetch);
-        apply_optional_config_patch(&mut config.filesystem, &self.filesystem);
-        apply_optional_config_patch(&mut config.messaging, &self.messaging);
-        apply_optional_config_patch(&mut config.fleet, &self.fleet);
-        apply_optional_config_patch(&mut config.timer, &self.timer);
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.web_search.is_none()
-            && self.web_fetch.is_none()
-            && self.filesystem.is_none()
-            && self.messaging.is_none()
-            && self.fleet.is_none()
-            && self.timer.is_none()
-    }
-}
-
-fn apply_optional_config_patch<T: Clone>(
-    value: &mut Option<T>,
-    patch: &Option<OptionalConfigPatch<T>>,
-) {
-    if let Some(patch) = patch {
-        patch.apply_to(value);
-    }
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FleetConfigPatch {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub profiles: Option<OptionalConfigPatch<FleetProfilesConfig>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub spawn: Option<OptionalConfigPatch<FleetSpawnConfig>>,
-}
-
-impl FleetConfigPatch {
-    pub fn apply_to(&self, config: &mut FleetConfig) {
-        apply_value_or_default_patch(&mut config.profiles, &self.profiles);
-        apply_value_or_default_patch(&mut config.spawn, &self.spawn);
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.profiles.is_none() && self.spawn.is_none()
-    }
-}
-
-fn apply_value_or_default_patch<T: Clone + Default>(
-    value: &mut T,
-    patch: &Option<OptionalConfigPatch<T>>,
-) {
-    if let Some(patch) = patch {
-        match patch {
-            OptionalConfigPatch::Set(next) => *value = next.clone(),
-            OptionalConfigPatch::Clear => *value = T::default(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RunConfig {
+pub struct LimitsConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_turns: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_tool_rounds: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model_override: Option<ModelSelection>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_output_tokens: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider_params: Option<ProviderParams>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool_choice: Option<ToolChoice>,
 }
 
-impl RunConfig {
-    pub fn validate_provider_compatibility(
-        &self,
-        session_api_kind: &ProviderApiKind,
-    ) -> Result<(), DomainError> {
-        let api_kind = if let Some(model) = self.model_override.as_ref() {
-            if &model.api_kind != session_api_kind {
-                return Err(DomainError::ProviderCompatibility(format!(
-                    "run model override api kind {:?} does not match session api kind {:?}",
-                    model.api_kind, session_api_kind
-                )));
-            }
-            &model.api_kind
-        } else {
-            session_api_kind
-        };
-        validate_provider_params(self.provider_params.as_ref(), api_kind)?;
-        Ok(())
+impl LimitsConfig {
+    pub fn is_default(&self) -> bool {
+        self == &Self::default()
     }
 }
 
-pub(crate) fn validate_run_config_for_state(
-    state: &CoreAgentState,
-    run_config: &RunConfig,
-) -> Result<(), DomainError> {
-    let config = current_config(state)?;
-    run_config.validate_provider_compatibility(&config.model.api_kind)?;
-    validate_active_context_api_kind(state, &config.model.api_kind)?;
-    validate_tool_choice_for_active_tools(state, run_config.tool_choice.as_ref())?;
-    Ok(())
-}
-
-fn validate_tool_choice_for_active_tools(
-    state: &CoreAgentState,
-    tool_choice: Option<&ToolChoice>,
-) -> Result<(), DomainError> {
-    let Some(ToolChoice {
-        mode: ToolChoiceMode::Specific { tool_name },
-        ..
-    }) = tool_choice
-    else {
-        return Ok(());
-    };
-    if state.tooling.tools.contains_key(tool_name) {
-        Ok(())
-    } else {
-        Err(DomainError::InvariantViolation(format!(
-            "tool_choice references missing active tool {}",
-            tool_name
-        )))
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TurnConfig {
-    pub max_output_tokens: Option<u32>,
-    pub tool_choice: Option<ToolChoice>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider_params: Option<ProviderParams>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compaction: Option<CompactionPolicy>,
 }
 
+impl ContextConfig {
+    pub fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Features
+//
+// Capability grants: an absent feature is not granted; `{}` grants it with
+// defaults. Every block carries a behavior `version`. Omitted input decodes
+// to the current default and the field always serializes, so stored documents
+// pin the version they were admitted with even when the default later moves.
+// ---------------------------------------------------------------------------
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ToolConfig {
+pub struct FeaturesConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub web_search: Option<bool>,
+    pub vfs: Option<VfsFeature>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub web_fetch: Option<bool>,
+    pub web: Option<WebFeature>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub filesystem: Option<FilesystemToolMode>,
-    /// Enables the messaging toolset (message_send/react/edit/noop) for
-    /// sessions bound to a chat channel.
+    pub messaging: Option<MessagingFeature>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub messaging: Option<bool>,
-    /// Enables the Fleet subagent control-plane tools
-    /// (agent_spawn/send/read/list/cancel and profile_list/read).
+    pub fleet: Option<FleetFeature>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fleet: Option<bool>,
-    /// Enables timer promises through the sleep tool. Also exposes the base
-    /// concurrency tools (await/cancel/detach).
+    pub timers: Option<TimersFeature>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timer: Option<bool>,
+    pub environments: Option<EnvironmentsFeature>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp: Option<McpFeature>,
+}
+
+impl FeaturesConfig {
+    pub fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+}
+
+/// Grants the session virtual filesystem: mounts may be attached and the VFS
+/// catalog is surfaced to the session. The sub-blocks grant the agent tool
+/// surface and prompt/skill sourcing independently — `{}` grants a VFS with
+/// no tools and no sourcing. Sourcing from mounted environments is a later,
+/// environment-specific concern and does not live here.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VfsFeature {
+    #[serde(default = "default_feature_version")]
+    pub version: u32,
+    /// Agent-facing filesystem tool surface: absent = no fs tools (a
+    /// sourcing-only VFS is valid); `read_only` installs the read surface;
+    /// `edit` adds the write tools. Per-path writability is defined and
+    /// enforced by each mount's own access — this field shapes which tools
+    /// exist, not path permissions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools: Option<VfsToolSurface>,
+    /// Prompt-instruction sourcing from the VFS; absent = prompts are not
+    /// sourced from the VFS.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompts: Option<VfsPromptsConfig>,
+    /// Skill discovery sourcing from the VFS; absent = skills are not
+    /// sourced from the VFS.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skills: Option<VfsSkillsConfig>,
+}
+
+impl Default for VfsFeature {
+    fn default() -> Self {
+        Self {
+            version: CURRENT_FEATURE_VERSION,
+            tools: None,
+            prompts: None,
+            skills: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VfsToolSurface {
+    ReadOnly,
+    Edit,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FleetConfig {
+pub struct VfsPromptsConfig {
+    /// VFS roots to source prompts from. `None` means the conventional
+    /// roots; an explicit list must be non-empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roots: Option<Vec<String>>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VfsSkillsConfig {
+    /// VFS roots to source skills from. `None` means the conventional
+    /// roots; an explicit list must be non-empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roots: Option<Vec<String>>,
+}
+
+/// Grants network access through the web toolset. `fetch` and `search` are
+/// independently granted sub-capabilities; a web block granting neither is
+/// rejected.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WebFeature {
+    #[serde(default = "default_feature_version")]
+    pub version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fetch: Option<WebFetchFeature>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search: Option<WebSearchFeature>,
+}
+
+impl Default for WebFeature {
+    fn default() -> Self {
+        Self {
+            version: CURRENT_FEATURE_VERSION,
+            fetch: None,
+            search: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WebFetchFeature {}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WebSearchFeature {
+    /// `None` means all domains are searchable; an explicit list must be
+    /// non-empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_domains: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blocked_domains: Vec<String>,
+}
+
+/// Grants the messaging toolset (message_send/react/edit/noop) for sessions
+/// bound to a chat channel.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MessagingFeature {
+    #[serde(default = "default_feature_version")]
+    pub version: u32,
+}
+
+impl Default for MessagingFeature {
+    fn default() -> Self {
+        Self {
+            version: CURRENT_FEATURE_VERSION,
+        }
+    }
+}
+
+/// Grants the Fleet subagent control plane
+/// (agent_spawn/send/read/list/cancel and profile_list/read).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FleetFeature {
+    #[serde(default = "default_feature_version")]
+    pub version: u32,
     #[serde(default, skip_serializing_if = "FleetProfilesConfig::is_default")]
     pub profiles: FleetProfilesConfig,
     #[serde(default, skip_serializing_if = "FleetSpawnConfig::is_default")]
     pub spawn: FleetSpawnConfig,
 }
 
+impl Default for FleetFeature {
+    fn default() -> Self {
+        Self {
+            version: CURRENT_FEATURE_VERSION,
+            profiles: FleetProfilesConfig::default(),
+            spawn: FleetSpawnConfig::default(),
+        }
+    }
+}
+
+/// Grants timer promises through the sleep tool plus the base concurrency
+/// tools (await/cancel/detach).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TimersFeature {
+    #[serde(default = "default_feature_version")]
+    pub version: u32,
+}
+
+impl Default for TimersFeature {
+    fn default() -> Self {
+        Self {
+            version: CURRENT_FEATURE_VERSION,
+        }
+    }
+}
+
+/// Grants attaching/activating session environments and their process/job
+/// tool surface.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvironmentsFeature {
+    #[serde(default = "default_feature_version")]
+    pub version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub providers: Option<Vec<String>>,
+}
+
+impl Default for EnvironmentsFeature {
+    fn default() -> Self {
+        Self {
+            version: CURRENT_FEATURE_VERSION,
+            providers: None,
+        }
+    }
+}
+
+/// Grants remote MCP tools by declaring linked servers from the universe MCP
+/// catalog. Reconciliation into tool specs happens in the runtime
+/// materialization layer, not in the engine.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct McpFeature {
+    #[serde(default = "default_feature_version")]
+    pub version: u32,
+    /// Must be non-empty with unique server ids; omit the feature instead of
+    /// linking zero servers.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub servers: Vec<McpServerLink>,
+}
+
+impl Default for McpFeature {
+    fn default() -> Self {
+        Self {
+            version: CURRENT_FEATURE_VERSION,
+            servers: Vec::new(),
+        }
+    }
+}
+
+/// A linked catalog server with optional per-session overrides; `None`
+/// fields defer to the catalog record's defaults.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct McpServerLink {
+    pub server_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_tools: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval: Option<RemoteMcpApprovalPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub defer_loading: Option<bool>,
+    /// Universe-scoped auth grant to authenticate against the server. The
+    /// engine carries the reference opaquely; compatibility with the
+    /// server's auth policy is validated at the admission boundary against
+    /// the catalog, and the token broker resolves it at request time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_grant_id: Option<String>,
+}
+
+/// Fleet profile visibility policy for spawn/list/read.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FleetProfilesConfig {
     /// None means all named profiles are visible/spawnable; Some(empty) means none.
@@ -399,17 +389,11 @@ impl FleetProfilesConfig {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FleetSpawnConfig {
     /// None means all spawn bases are allowed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bases: Option<Vec<FleetSpawnBase>>,
-}
-
-impl Default for FleetSpawnConfig {
-    fn default() -> Self {
-        Self { bases: None }
-    }
 }
 
 impl FleetSpawnConfig {
@@ -420,7 +404,7 @@ impl FleetSpawnConfig {
     pub fn base_allowed(&self, base: FleetSpawnBase) -> bool {
         self.bases
             .as_ref()
-            .is_none_or(|bases| bases.iter().any(|allowed| *allowed == base))
+            .is_none_or(|bases| bases.contains(&base))
     }
 }
 
@@ -433,12 +417,8 @@ pub enum FleetSpawnBase {
     Profile,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FilesystemToolMode {
-    None,
-    ReadOnly,
-    Edit,
+fn default_feature_version() -> u32 {
+    CURRENT_FEATURE_VERSION
 }
 
 fn default_true() -> bool {
@@ -463,6 +443,241 @@ pub enum CompactionPolicy {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         target_tokens: Option<u32>,
     },
+}
+
+// ---------------------------------------------------------------------------
+// Per-run overrides
+// ---------------------------------------------------------------------------
+
+/// Per-run overrides carried on run requests. Not part of [`SessionConfig`]:
+/// session-level defaults live in [`GenerationConfig`] and [`LimitsConfig`];
+/// this is the runs/start escape hatch, including raw provider params.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_turns: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tool_rounds: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_override: Option<ModelSelection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_params: Option<ProviderParams>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoice>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parallel_tool_use: Option<bool>,
+}
+
+impl RunConfig {
+    pub fn validate_provider_compatibility(
+        &self,
+        session_api_kind: &ProviderApiKind,
+    ) -> Result<(), DomainError> {
+        let api_kind = if let Some(model) = self.model_override.as_ref() {
+            if &model.api_kind != session_api_kind {
+                return Err(DomainError::ProviderCompatibility(format!(
+                    "run model override api kind {:?} does not match session api kind {:?}",
+                    model.api_kind, session_api_kind
+                )));
+            }
+            &model.api_kind
+        } else {
+            session_api_kind
+        };
+        validate_provider_params(self.provider_params.as_ref(), api_kind)?;
+        Ok(())
+    }
+}
+
+pub(crate) fn validate_run_config_for_state(
+    state: &CoreAgentState,
+    run_config: &RunConfig,
+) -> Result<(), DomainError> {
+    let config = current_config(state)?;
+    run_config.validate_provider_compatibility(&config.model.api_kind)?;
+    validate_active_context_api_kind(state, &config.model.api_kind)?;
+    validate_tool_choice_for_active_tools(state, run_config.tool_choice.as_ref())?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Validation
+// ---------------------------------------------------------------------------
+
+fn validate_generation(
+    generation: &GenerationConfig,
+    api_kind: &ProviderApiKind,
+) -> Result<(), DomainError> {
+    let _ = api_kind;
+    if generation
+        .reasoning_effort
+        .as_ref()
+        .is_some_and(|effort| effort.trim().is_empty())
+    {
+        return Err(DomainError::InvariantViolation(
+            "reasoning_effort must be a non-empty string when set".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_features(
+    features: &FeaturesConfig,
+    api_kind: &ProviderApiKind,
+) -> Result<(), DomainError> {
+    if let Some(vfs) = &features.vfs {
+        validate_feature_version("vfs", vfs.version)?;
+        if let Some(prompts) = &vfs.prompts {
+            validate_source_roots("vfs prompts", prompts.roots.as_deref())?;
+        }
+        if let Some(skills) = &vfs.skills {
+            validate_source_roots("vfs skills", skills.roots.as_deref())?;
+        }
+    }
+    if let Some(web) = &features.web {
+        validate_feature_version("web", web.version)?;
+        validate_web_feature(web, api_kind)?;
+    }
+    if let Some(messaging) = &features.messaging {
+        validate_feature_version("messaging", messaging.version)?;
+    }
+    if let Some(fleet) = &features.fleet {
+        validate_feature_version("fleet", fleet.version)?;
+    }
+    if let Some(timers) = &features.timers {
+        validate_feature_version("timers", timers.version)?;
+    }
+    if let Some(environments) = &features.environments {
+        validate_feature_version("environments", environments.version)?;
+    }
+    if let Some(mcp) = &features.mcp {
+        validate_feature_version("mcp", mcp.version)?;
+        validate_mcp_feature(mcp)?;
+    }
+    Ok(())
+}
+
+fn validate_feature_version(feature: &str, version: u32) -> Result<(), DomainError> {
+    if version == CURRENT_FEATURE_VERSION {
+        Ok(())
+    } else {
+        Err(DomainError::InvariantViolation(format!(
+            "unsupported {} feature version {}; supported: {}",
+            feature, version, CURRENT_FEATURE_VERSION
+        )))
+    }
+}
+
+fn validate_source_roots(feature: &str, roots: Option<&[String]>) -> Result<(), DomainError> {
+    let Some(roots) = roots else {
+        return Ok(());
+    };
+    if roots.is_empty() {
+        return Err(DomainError::InvariantViolation(format!(
+            "explicit {} roots must be non-empty; omit roots for the conventional defaults",
+            feature
+        )));
+    }
+    if roots.iter().any(|root| root.trim().is_empty()) {
+        return Err(DomainError::InvariantViolation(format!(
+            "{} roots must not contain empty paths",
+            feature
+        )));
+    }
+    Ok(())
+}
+
+fn validate_web_feature(web: &WebFeature, api_kind: &ProviderApiKind) -> Result<(), DomainError> {
+    if web.fetch.is_none() && web.search.is_none() {
+        return Err(DomainError::InvariantViolation(
+            "web feature grants neither fetch nor search; omit the feature instead".to_owned(),
+        ));
+    }
+    if let Some(search) = &web.search {
+        if api_kind != &ProviderApiKind::OpenAiResponses {
+            return Err(DomainError::ProviderCompatibility(format!(
+                "web search requires OpenAI Responses api kind, got {:?}",
+                api_kind
+            )));
+        }
+        if let Some(allowed) = &search.allowed_domains {
+            if allowed.is_empty() {
+                return Err(DomainError::InvariantViolation(
+                    "explicit web search allowed_domains must be non-empty; omit for all domains"
+                        .to_owned(),
+                ));
+            }
+            if allowed.iter().any(|domain| domain.trim().is_empty()) {
+                return Err(DomainError::InvariantViolation(
+                    "web search allowed_domains must not contain empty entries".to_owned(),
+                ));
+            }
+        }
+        if search
+            .blocked_domains
+            .iter()
+            .any(|domain| domain.trim().is_empty())
+        {
+            return Err(DomainError::InvariantViolation(
+                "web search blocked_domains must not contain empty entries".to_owned(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_mcp_feature(mcp: &McpFeature) -> Result<(), DomainError> {
+    if mcp.servers.is_empty() {
+        return Err(DomainError::InvariantViolation(
+            "mcp feature links zero servers; omit the feature instead".to_owned(),
+        ));
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for link in &mcp.servers {
+        if link.server_id.trim().is_empty() {
+            return Err(DomainError::InvariantViolation(
+                "mcp server link requires a non-empty server_id".to_owned(),
+            ));
+        }
+        if !seen.insert(link.server_id.as_str()) {
+            return Err(DomainError::InvariantViolation(format!(
+                "mcp server {} is linked more than once",
+                link.server_id
+            )));
+        }
+        if link
+            .auth_grant_id
+            .as_ref()
+            .is_some_and(|grant_id| grant_id.trim().is_empty())
+        {
+            return Err(DomainError::InvariantViolation(format!(
+                "mcp server {} auth_grant_id must be non-empty when set",
+                link.server_id
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_tool_choice_for_active_tools(
+    state: &CoreAgentState,
+    tool_choice: Option<&ToolChoice>,
+) -> Result<(), DomainError> {
+    let Some(ToolChoice::Specific { tool_name }) = tool_choice else {
+        return Ok(());
+    };
+    if state.tooling.tools.contains_key(tool_name) {
+        Ok(())
+    } else {
+        Err(DomainError::InvariantViolation(format!(
+            "tool_choice references missing active tool {}",
+            tool_name
+        )))
+    }
 }
 
 fn validate_provider_params(
@@ -518,16 +733,6 @@ fn validate_context_config(
             )))
         }
     }
-}
-
-fn validate_tool_config(tools: &ToolConfig, api_kind: &ProviderApiKind) -> Result<(), DomainError> {
-    if tools.web_search == Some(true) && api_kind != &ProviderApiKind::OpenAiResponses {
-        return Err(DomainError::ProviderCompatibility(format!(
-            "web search requires OpenAI Responses api kind, got {:?}",
-            api_kind
-        )));
-    }
-    Ok(())
 }
 
 fn validate_openai_responses_compact_threshold(
@@ -614,15 +819,10 @@ mod tests {
                 provider_id: "provider".to_owned(),
                 model: "model".to_owned(),
             },
-            run: RunConfig::default(),
-            turn: TurnConfig {
-                max_output_tokens: None,
-                tool_choice: None,
-                provider_params: None,
-            },
+            generation: GenerationConfig::default(),
+            limits: LimitsConfig::default(),
             context: ContextConfig { compaction },
-            tools: Default::default(),
-            fleet: Default::default(),
+            features: FeaturesConfig::default(),
         }
     }
 
@@ -636,7 +836,7 @@ mod tests {
         );
 
         let error = config
-            .validate_provider_compatibility()
+            .validate()
             .expect_err("threshold below provider minimum must fail");
 
         assert!(matches!(error, DomainError::ProviderCompatibility(_)));
@@ -653,7 +853,7 @@ mod tests {
             );
 
             config
-                .validate_provider_compatibility()
+                .validate()
                 .expect("valid OpenAI provider-triggered compaction");
         }
     }
@@ -668,7 +868,7 @@ mod tests {
         );
 
         let error = config
-            .validate_provider_compatibility()
+            .validate()
             .expect_err("provider-triggered compaction is OpenAI Responses only");
 
         assert!(matches!(error, DomainError::ProviderCompatibility(_)));
@@ -689,30 +889,10 @@ mod tests {
             let config = config(ProviderApiKind::OpenAiResponses, Some(compaction));
 
             let error = config
-                .validate_provider_compatibility()
+                .validate()
                 .expect_err("zero standalone compaction values must fail");
 
             assert!(matches!(error, DomainError::ProviderCompatibility(_)));
-        }
-    }
-
-    #[test]
-    fn provider_standalone_compaction_accepts_optional_or_positive_values() {
-        for compaction in [
-            CompactionPolicy::ProviderStandalone {
-                compact_threshold_tokens: None,
-                target_tokens: None,
-            },
-            CompactionPolicy::ProviderStandalone {
-                compact_threshold_tokens: Some(1),
-                target_tokens: Some(1),
-            },
-        ] {
-            let config = config(ProviderApiKind::OpenAiResponses, Some(compaction));
-
-            config
-                .validate_provider_compatibility()
-                .expect("valid OpenAI provider-standalone compaction");
         }
     }
 
@@ -727,7 +907,7 @@ mod tests {
         );
 
         config
-            .validate_provider_compatibility()
+            .validate()
             .expect("provider-standalone compaction supports Anthropic Messages");
     }
 
@@ -742,21 +922,159 @@ mod tests {
         );
 
         let error = config
-            .validate_provider_compatibility()
+            .validate()
             .expect_err("provider-standalone compaction has no OpenAI Completions adapter");
 
         assert!(matches!(error, DomainError::ProviderCompatibility(_)));
     }
 
     #[test]
-    fn web_search_enable_requires_openai_responses() {
+    fn web_search_requires_openai_responses() {
         let mut config = config(ProviderApiKind::AnthropicMessages, None);
-        config.tools.web_search = Some(true);
+        config.features.web = Some(WebFeature {
+            search: Some(WebSearchFeature::default()),
+            ..WebFeature::default()
+        });
 
         let error = config
-            .validate_provider_compatibility()
+            .validate()
             .expect_err("web search should reject Anthropic");
 
         assert!(matches!(error, DomainError::ProviderCompatibility(_)));
+    }
+
+    #[test]
+    fn web_feature_granting_nothing_is_rejected() {
+        let mut config = config(ProviderApiKind::OpenAiResponses, None);
+        config.features.web = Some(WebFeature::default());
+
+        let error = config
+            .validate()
+            .expect_err("empty web grant must fail validation");
+
+        assert!(matches!(error, DomainError::InvariantViolation(_)));
+    }
+
+    #[test]
+    fn unsupported_feature_version_is_rejected() {
+        let mut config = config(ProviderApiKind::OpenAiResponses, None);
+        config.features.vfs = Some(VfsFeature {
+            version: CURRENT_FEATURE_VERSION + 1,
+            ..VfsFeature::default()
+        });
+
+        let error = config
+            .validate()
+            .expect_err("unknown feature version must fail validation");
+
+        assert!(matches!(error, DomainError::InvariantViolation(_)));
+    }
+
+    #[test]
+    fn explicit_empty_source_roots_are_rejected() {
+        let mut config = config(ProviderApiKind::OpenAiResponses, None);
+        config.features.vfs = Some(VfsFeature {
+            skills: Some(VfsSkillsConfig {
+                roots: Some(Vec::new()),
+            }),
+            ..VfsFeature::default()
+        });
+
+        let error = config
+            .validate()
+            .expect_err("explicit empty roots must fail validation");
+
+        assert!(matches!(error, DomainError::InvariantViolation(_)));
+    }
+
+    #[test]
+    fn empty_reasoning_effort_is_rejected() {
+        let mut config = config(ProviderApiKind::OpenAiResponses, None);
+        config.generation.reasoning_effort = Some("  ".to_owned());
+
+        let error = config
+            .validate()
+            .expect_err("blank reasoning effort must fail validation");
+
+        assert!(matches!(error, DomainError::InvariantViolation(_)));
+    }
+
+    #[test]
+    fn mcp_feature_requires_unique_nonempty_servers() {
+        let mut config = config(ProviderApiKind::OpenAiResponses, None);
+        config.features.mcp = Some(McpFeature::default());
+        let error = config
+            .validate()
+            .expect_err("zero linked servers must fail");
+        assert!(matches!(error, DomainError::InvariantViolation(_)));
+
+        let link = McpServerLink {
+            server_id: "linear".to_owned(),
+            allowed_tools: None,
+            approval: None,
+            defer_loading: None,
+            auth_grant_id: None,
+        };
+        let mut duplicated = config;
+        duplicated.features.mcp = Some(McpFeature {
+            servers: vec![link.clone(), link],
+            ..McpFeature::default()
+        });
+        let error = duplicated
+            .validate()
+            .expect_err("duplicate server links must fail");
+        assert!(matches!(error, DomainError::InvariantViolation(_)));
+    }
+
+    #[test]
+    fn minimal_config_serializes_to_model_only() {
+        let config = config(ProviderApiKind::OpenAiResponses, None);
+
+        let value = serde_json::to_value(&config).expect("serialize");
+
+        let object = value.as_object().expect("config must serialize as object");
+        assert_eq!(object.keys().collect::<Vec<_>>(), vec!["model"]);
+    }
+
+    #[test]
+    fn omitted_feature_version_decodes_and_reserializes_pinned() {
+        let feature: VfsFeature = serde_json::from_value(serde_json::json!({}))
+            .expect("empty vfs grant decodes with defaults");
+        assert_eq!(feature.version, CURRENT_FEATURE_VERSION);
+        assert_eq!(feature.tools, None);
+
+        let value = serde_json::to_value(&feature).expect("serialize");
+        assert_eq!(
+            value,
+            serde_json::json!({ "version": CURRENT_FEATURE_VERSION })
+        );
+    }
+
+    #[test]
+    fn vfs_tool_surface_grant_decodes() {
+        let feature: VfsFeature = serde_json::from_value(serde_json::json!({ "tools": "edit" }))
+            .expect("vfs tool surface grant decodes");
+
+        assert_eq!(feature.tools, Some(VfsToolSurface::Edit));
+    }
+
+    #[test]
+    fn sparse_config_round_trips() {
+        let mut config = config(ProviderApiKind::OpenAiResponses, None);
+        config.generation.reasoning_effort = Some("high".to_owned());
+        config.features.vfs = Some(VfsFeature {
+            tools: Some(VfsToolSurface::Edit),
+            prompts: Some(VfsPromptsConfig::default()),
+            ..VfsFeature::default()
+        });
+        config.features.web = Some(WebFeature {
+            fetch: Some(WebFetchFeature::default()),
+            ..WebFeature::default()
+        });
+
+        let value = serde_json::to_value(&config).expect("serialize");
+        let decoded: SessionConfig = serde_json::from_value(value).expect("deserialize");
+
+        assert_eq!(decoded, config);
     }
 }

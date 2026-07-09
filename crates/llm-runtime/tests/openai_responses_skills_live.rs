@@ -445,30 +445,32 @@ async fn openai_responses_live_selects_and_activates_the_matching_skill() {
 fn session_config(model: ModelSelection) -> SessionConfig {
     SessionConfig {
         model,
-        run: run_config(),
-        turn: engine::TurnConfig {
+        generation: engine::GenerationConfig {
             max_output_tokens: Some(1024),
+            reasoning_effort: None,
             tool_choice: None,
-            provider_params: Some(support::openai_params(
-                &llm_runtime::OpenAiResponsesParams {
-                    store: Some(false),
-                    ..llm_runtime::OpenAiResponsesParams::default()
-                },
-            )),
+            parallel_tool_use: None,
         },
+        limits: Default::default(),
         context: ContextConfig { compaction: None },
-        tools: Default::default(),
-        fleet: Default::default(),
+        features: Default::default(),
     }
 }
 
 fn run_config() -> RunConfig {
     RunConfig {
         max_turns: Some(6),
+        reasoning_effort: None,
+        parallel_tool_use: None,
         max_tool_rounds: Some(3),
         model_override: None,
         max_output_tokens: None,
-        provider_params: None,
+        provider_params: Some(support::openai_params(
+            &llm_runtime::OpenAiResponsesParams {
+                store: Some(false),
+                ..llm_runtime::OpenAiResponsesParams::default()
+            },
+        )),
         tool_choice: None,
     }
 }

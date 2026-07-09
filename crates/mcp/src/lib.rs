@@ -102,6 +102,15 @@ pub enum McpRegistryError {
     #[error("mcp registry server not found: {server_id}")]
     NotFound { server_id: McpServerId },
 
+    #[error(
+        "mcp registry server revision conflict for {server_id}: expected {expected}, got {actual}"
+    )]
+    RevisionConflict {
+        server_id: McpServerId,
+        expected: u64,
+        actual: u64,
+    },
+
     #[error("invalid mcp registry request: {message}")]
     InvalidInput { message: String },
 
@@ -122,12 +131,18 @@ pub struct McpServerRecord {
     pub defer_loading_default: Option<bool>,
     pub auth_policy: McpServerAuthPolicy,
     pub status: McpServerStatus,
+    pub revision: u64,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
 }
 
 impl McpServerRecord {
     pub fn validate(&self) -> Result<(), McpRegistryError> {
+        if self.revision == 0 {
+            return Err(McpRegistryError::InvalidInput {
+                message: "revision must be >= 1".to_owned(),
+            });
+        }
         validate_nonempty_optional("display_name", self.display_name.as_deref())?;
         validate_remote_mcp_server_url(&self.server_url)?;
         validate_remote_mcp_server_label(&self.default_server_label)?;
@@ -148,8 +163,11 @@ impl McpServerRecord {
     }
 }
 
+/// Full-document put payload. `now_ms` becomes both `created_at_ms` and
+/// `updated_at_ms` on create; on replace it stamps `updated_at_ms` while the
+/// existing `created_at_ms` is preserved.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CreateMcpServerRecord {
+pub struct PutMcpServerRecord {
     pub server_id: McpServerId,
     pub display_name: Option<String>,
     pub server_url: String,
@@ -161,10 +179,11 @@ pub struct CreateMcpServerRecord {
     pub defer_loading_default: Option<bool>,
     pub auth_policy: McpServerAuthPolicy,
     pub status: McpServerStatus,
-    pub created_at_ms: i64,
+    pub now_ms: i64,
 }
 
-impl CreateMcpServerRecord {
+impl PutMcpServerRecord {
+    /// Materializes a fresh record at revision 1.
     pub fn into_record(self) -> McpServerRecord {
         McpServerRecord {
             server_id: self.server_id,
@@ -178,65 +197,50 @@ impl CreateMcpServerRecord {
             defer_loading_default: self.defer_loading_default,
             auth_policy: self.auth_policy,
             status: self.status,
-            created_at_ms: self.created_at_ms,
-            updated_at_ms: self.created_at_ms,
+            revision: 1,
+            created_at_ms: self.now_ms,
+            updated_at_ms: self.now_ms,
         }
     }
-}
 
-/// Partial update applied to an existing record. Outer `None` = keep the
-/// field; for clearable optionals the inner `Option` distinguishes set from
-/// clear. `updated_at_ms` is stamped by the caller.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UpdateMcpServerRecord {
-    pub display_name: Option<Option<String>>,
-    pub server_url: Option<String>,
-    pub transport: Option<RemoteMcpTransport>,
-    pub default_server_label: Option<String>,
-    pub description: Option<Option<String>>,
-    pub allowed_tools: Option<Option<Vec<String>>>,
-    pub approval_default: Option<McpApprovalPolicy>,
-    pub defer_loading_default: Option<Option<bool>>,
-    pub auth_policy: Option<McpServerAuthPolicy>,
-    pub status: Option<McpServerStatus>,
-    pub updated_at_ms: i64,
-}
-
-impl UpdateMcpServerRecord {
-    /// Applies the patch; the result must still pass
-    /// [`McpServerRecord::validate`] (stores validate before persisting).
-    pub fn apply_to(&self, record: &mut McpServerRecord) {
-        if let Some(display_name) = &self.display_name {
-            record.display_name = display_name.clone();
+    /// Whole-document replacement of `current`: identity and `created_at_ms`
+    /// are preserved, the revision bumps, and everything else comes from the
+    /// payload.
+    pub fn into_replacement(
+        self,
+        current: &McpServerRecord,
+    ) -> Result<McpServerRecord, McpRegistryError> {
+        if self.server_id != current.server_id {
+            return Err(McpRegistryError::InvalidInput {
+                message: format!(
+                    "replacement server id {} does not match current {}",
+                    self.server_id, current.server_id
+                ),
+            });
         }
-        if let Some(server_url) = &self.server_url {
-            record.server_url = server_url.clone();
-        }
-        if let Some(transport) = self.transport {
-            record.transport = transport;
-        }
-        if let Some(default_server_label) = &self.default_server_label {
-            record.default_server_label = default_server_label.clone();
-        }
-        if let Some(description) = &self.description {
-            record.description = description.clone();
-        }
-        if let Some(allowed_tools) = &self.allowed_tools {
-            record.allowed_tools = allowed_tools.clone();
-        }
-        if let Some(approval_default) = self.approval_default {
-            record.approval_default = approval_default;
-        }
-        if let Some(defer_loading_default) = self.defer_loading_default {
-            record.defer_loading_default = defer_loading_default;
-        }
-        if let Some(auth_policy) = &self.auth_policy {
-            record.auth_policy = auth_policy.clone();
-        }
-        if let Some(status) = self.status {
-            record.status = status;
-        }
-        record.updated_at_ms = self.updated_at_ms;
+        let revision =
+            current
+                .revision
+                .checked_add(1)
+                .ok_or_else(|| McpRegistryError::InvalidInput {
+                    message: "mcp server revision exhausted".to_owned(),
+                })?;
+        Ok(McpServerRecord {
+            server_id: self.server_id,
+            display_name: self.display_name,
+            server_url: self.server_url,
+            transport: self.transport,
+            default_server_label: self.default_server_label,
+            description: self.description,
+            allowed_tools: self.allowed_tools,
+            approval_default: self.approval_default,
+            defer_loading_default: self.defer_loading_default,
+            auth_policy: self.auth_policy,
+            status: self.status,
+            revision,
+            created_at_ms: current.created_at_ms,
+            updated_at_ms: self.now_ms,
+        })
     }
 }
 
@@ -326,9 +330,13 @@ pub enum McpServerStatus {
 
 #[async_trait]
 pub trait McpRegistryStore: Send + Sync {
-    async fn create_server(
+    /// Create the server when absent (revision 1), otherwise replace the
+    /// whole document and bump the revision. `expected_revision` is checked
+    /// only when the record already exists; `None` replaces unconditionally.
+    async fn put_server(
         &self,
-        record: CreateMcpServerRecord,
+        record: PutMcpServerRecord,
+        expected_revision: Option<u64>,
     ) -> Result<McpServerRecord, McpRegistryError>;
 
     async fn read_server(
@@ -340,12 +348,6 @@ pub trait McpRegistryStore: Send + Sync {
         &self,
         request: ListMcpServers,
     ) -> Result<Vec<McpServerRecord>, McpRegistryError>;
-
-    async fn update_server(
-        &self,
-        server_id: &McpServerId,
-        update: UpdateMcpServerRecord,
-    ) -> Result<McpServerRecord, McpRegistryError>;
 
     async fn delete_server(
         &self,
@@ -366,20 +368,30 @@ impl InMemoryMcpRegistryStore {
 
 #[async_trait]
 impl McpRegistryStore for InMemoryMcpRegistryStore {
-    async fn create_server(
+    async fn put_server(
         &self,
-        record: CreateMcpServerRecord,
+        record: PutMcpServerRecord,
+        expected_revision: Option<u64>,
     ) -> Result<McpServerRecord, McpRegistryError> {
-        let record = record.into_record();
-        record.validate()?;
         let mut inner = self.inner.write().map_err(|_| McpRegistryError::Store {
             message: "mcp registry write lock poisoned".to_owned(),
         })?;
-        if inner.contains_key(&record.server_id) {
-            return Err(McpRegistryError::AlreadyExists {
-                server_id: record.server_id,
-            });
-        }
+        let record = match inner.get(&record.server_id) {
+            Some(current) => {
+                if let Some(expected) = expected_revision
+                    && current.revision != expected
+                {
+                    return Err(McpRegistryError::RevisionConflict {
+                        server_id: record.server_id,
+                        expected,
+                        actual: current.revision,
+                    });
+                }
+                record.into_replacement(current)?
+            }
+            None => record.into_record(),
+        };
+        record.validate()?;
         inner.insert(record.server_id.clone(), record.clone());
         Ok(record)
     }
@@ -411,26 +423,6 @@ impl McpRegistryStore for InMemoryMcpRegistryStore {
             .filter(|record| request.status.is_none_or(|status| record.status == status))
             .cloned()
             .collect())
-    }
-
-    async fn update_server(
-        &self,
-        server_id: &McpServerId,
-        update: UpdateMcpServerRecord,
-    ) -> Result<McpServerRecord, McpRegistryError> {
-        let mut inner = self.inner.write().map_err(|_| McpRegistryError::Store {
-            message: "mcp registry write lock poisoned".to_owned(),
-        })?;
-        let existing = inner
-            .get(server_id)
-            .ok_or_else(|| McpRegistryError::NotFound {
-                server_id: server_id.clone(),
-            })?;
-        let mut record = existing.clone();
-        update.apply_to(&mut record);
-        record.validate()?;
-        inner.insert(server_id.clone(), record.clone());
-        Ok(record)
     }
 
     async fn delete_server(
@@ -644,8 +636,8 @@ fn validate_mcp_component(
 mod tests {
     use super::*;
 
-    fn create_request(server_id: &str, status: McpServerStatus) -> CreateMcpServerRecord {
-        CreateMcpServerRecord {
+    fn put_request(server_id: &str, status: McpServerStatus) -> PutMcpServerRecord {
+        PutMcpServerRecord {
             server_id: McpServerId::new(server_id),
             display_name: Some("Echo".to_owned()),
             server_url: "https://echo.example.com/mcp".to_owned(),
@@ -657,20 +649,20 @@ mod tests {
             defer_loading_default: Some(true),
             auth_policy: McpServerAuthPolicy::None,
             status,
-            created_at_ms: 10,
+            now_ms: 10,
         }
     }
 
     #[test]
     fn records_validate_remote_mcp_shape() {
-        let record = create_request("echo", McpServerStatus::Active).into_record();
+        let record = put_request("echo", McpServerStatus::Active).into_record();
 
         record.validate().expect("valid MCP server record");
     }
 
     #[test]
     fn records_reject_credentials_in_urls() {
-        let mut record = create_request("echo", McpServerStatus::Active).into_record();
+        let mut record = put_request("echo", McpServerStatus::Active).into_record();
         record.server_url = "https://user:secret@echo.example.com/mcp".to_owned();
 
         let error = record
@@ -682,7 +674,7 @@ mod tests {
 
     #[test]
     fn oauth_auth_policy_allows_empty_scope_defaults() {
-        let mut record = create_request("echo", McpServerStatus::Active).into_record();
+        let mut record = put_request("echo", McpServerStatus::Active).into_record();
         record.auth_policy = McpServerAuthPolicy::RequiredOAuth {
             resource: "https://echo.example.com".to_owned(),
             scopes_default: Vec::new(),
@@ -693,92 +685,92 @@ mod tests {
         record.validate().expect("empty OAuth scopes are valid");
     }
 
-    fn empty_update(updated_at_ms: i64) -> UpdateMcpServerRecord {
-        UpdateMcpServerRecord {
-            display_name: None,
-            server_url: None,
-            transport: None,
-            default_server_label: None,
-            description: None,
-            allowed_tools: None,
-            approval_default: None,
-            defer_loading_default: None,
-            auth_policy: None,
-            status: None,
-            updated_at_ms,
-        }
-    }
-
     #[tokio::test]
-    async fn in_memory_store_updates_servers_with_set_clear_and_keep() {
+    async fn in_memory_store_put_replaces_whole_document_and_bumps_revision() {
         let store = InMemoryMcpRegistryStore::new();
         let created = store
-            .create_server(create_request("echo", McpServerStatus::Active))
+            .put_server(put_request("echo", McpServerStatus::Active), None)
             .await
             .expect("create server");
+        assert_eq!(created.revision, 1);
+        assert_eq!(created.created_at_ms, 10);
+        assert_eq!(created.updated_at_ms, 10);
 
-        let updated = store
-            .update_server(
-                &McpServerId::new("echo"),
-                UpdateMcpServerRecord {
-                    server_url: Some("https://echo2.example.com/mcp".to_owned()),
-                    description: Some(None),
-                    status: Some(McpServerStatus::Disabled),
-                    ..empty_update(20)
-                },
-            )
+        let mut replacement = put_request("echo", McpServerStatus::Disabled);
+        replacement.server_url = "https://echo2.example.com/mcp".to_owned();
+        replacement.description = None;
+        replacement.now_ms = 20;
+        let replaced = store
+            .put_server(replacement, Some(1))
             .await
-            .expect("update server");
+            .expect("replace server");
 
-        assert_eq!(updated.server_url, "https://echo2.example.com/mcp");
-        assert_eq!(updated.description, None);
-        assert_eq!(updated.status, McpServerStatus::Disabled);
-        // Untouched fields keep their values.
-        assert_eq!(updated.display_name, created.display_name);
-        assert_eq!(updated.allowed_tools, created.allowed_tools);
-        assert_eq!(updated.created_at_ms, created.created_at_ms);
-        assert_eq!(updated.updated_at_ms, 20);
+        assert_eq!(replaced.revision, 2);
+        assert_eq!(replaced.server_url, "https://echo2.example.com/mcp");
+        assert_eq!(replaced.description, None);
+        assert_eq!(replaced.status, McpServerStatus::Disabled);
+        // Identity and creation time are preserved; updated_at is stamped.
+        assert_eq!(replaced.created_at_ms, created.created_at_ms);
+        assert_eq!(replaced.updated_at_ms, 20);
 
         let read = store
             .read_server(&McpServerId::new("echo"))
             .await
             .expect("read server");
-        assert_eq!(read, updated);
+        assert_eq!(read, replaced);
     }
 
     #[tokio::test]
-    async fn in_memory_store_update_validates_and_reports_missing_servers() {
+    async fn in_memory_store_put_checks_expected_revision_only_when_present() {
+        let store = InMemoryMcpRegistryStore::new();
+        // expected_revision on an absent record still creates.
+        let created = store
+            .put_server(put_request("echo", McpServerStatus::Active), Some(7))
+            .await
+            .expect("create server despite expected revision");
+        assert_eq!(created.revision, 1);
+
+        let conflict = store
+            .put_server(put_request("echo", McpServerStatus::Active), Some(7))
+            .await;
+        assert!(matches!(
+            conflict,
+            Err(McpRegistryError::RevisionConflict {
+                expected: 7,
+                actual: 1,
+                ..
+            })
+        ));
+
+        // No expected revision replaces unconditionally.
+        let replaced = store
+            .put_server(put_request("echo", McpServerStatus::Active), None)
+            .await
+            .expect("unconditional replace");
+        assert_eq!(replaced.revision, 2);
+    }
+
+    #[tokio::test]
+    async fn in_memory_store_put_validates_and_does_not_partially_apply() {
         let store = InMemoryMcpRegistryStore::new();
         store
-            .create_server(create_request("echo", McpServerStatus::Active))
+            .put_server(put_request("echo", McpServerStatus::Active), None)
             .await
             .expect("create server");
 
-        let invalid = store
-            .update_server(
-                &McpServerId::new("echo"),
-                UpdateMcpServerRecord {
-                    server_url: Some("not a url".to_owned()),
-                    ..empty_update(20)
-                },
-            )
-            .await;
-        assert!(matches!(
-            invalid,
-            Err(McpRegistryError::InvalidInput { .. })
-        ));
+        let mut invalid = put_request("echo", McpServerStatus::Active);
+        invalid.server_url = "not a url".to_owned();
+        invalid.now_ms = 20;
+        let result = store.put_server(invalid, None).await;
+        assert!(matches!(result, Err(McpRegistryError::InvalidInput { .. })));
 
-        // A failed update must not partially apply.
+        // A failed put must not partially apply.
         let read = store
             .read_server(&McpServerId::new("echo"))
             .await
             .expect("read server");
         assert_eq!(read.server_url, "https://echo.example.com/mcp");
-
-        let missing = store
-            .update_server(&McpServerId::new("ghost"), empty_update(20))
-            .await;
-        assert!(matches!(missing, Err(McpRegistryError::NotFound { .. })));
+        assert_eq!(read.revision, 1);
     }
 
     #[tokio::test]
@@ -786,7 +778,7 @@ mod tests {
         let store = InMemoryMcpRegistryStore::new();
 
         let created = store
-            .create_server(create_request("echo", McpServerStatus::Active))
+            .put_server(put_request("echo", McpServerStatus::Active), None)
             .await
             .expect("create server");
         assert_eq!(created.server_id.as_str(), "echo");

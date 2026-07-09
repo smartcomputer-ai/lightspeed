@@ -1,7 +1,6 @@
 use ::mcp::{
-    CreateMcpServerRecord, ListMcpServers, McpApprovalPolicy, McpRegistryError, McpRegistryStore,
-    McpServerAuthPolicy, McpServerId, McpServerRecord, McpServerStatus, RemoteMcpTransport,
-    UpdateMcpServerRecord,
+    ListMcpServers, McpApprovalPolicy, McpRegistryError, McpRegistryStore, McpServerAuthPolicy,
+    McpServerId, McpServerRecord, McpServerStatus, PutMcpServerRecord, RemoteMcpTransport,
 };
 use async_trait::async_trait;
 use sqlx::Row;
@@ -10,78 +9,57 @@ use crate::PgStore;
 
 #[async_trait]
 impl McpRegistryStore for PgStore {
-    async fn create_server(
+    async fn put_server(
         &self,
-        record: CreateMcpServerRecord,
+        record: PutMcpServerRecord,
+        expected_revision: Option<u64>,
     ) -> Result<McpServerRecord, McpRegistryError> {
         self.ensure_universe()
             .await
             .map_err(|error| mcp_store_error("ensure universe", error))?;
-        let record = record.into_record();
-        record.validate()?;
-        let (auth_policy, auth_metadata_json) = auth_policy_columns(&record.auth_policy)?;
-        let row = sqlx::query(
-            r#"
-            INSERT INTO mcp_servers (
-                universe_id,
-                server_id,
-                display_name,
-                server_url,
-                transport,
-                default_server_label,
-                description,
-                allowed_tools,
-                approval_default,
-                defer_loading_default,
-                auth_policy,
-                auth_metadata_json,
-                status,
-                created_at_ms,
-                updated_at_ms
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14)
-            ON CONFLICT (universe_id, server_id) DO NOTHING
-            RETURNING
-                server_id,
-                display_name,
-                server_url,
-                transport,
-                default_server_label,
-                description,
-                allowed_tools,
-                approval_default,
-                defer_loading_default,
-                auth_policy,
-                auth_metadata_json,
-                status,
-                created_at_ms,
-                updated_at_ms
-            "#,
-        )
-        .bind(self.config.universe_id)
-        .bind(record.server_id.as_str())
-        .bind(record.display_name.as_deref())
-        .bind(&record.server_url)
-        .bind(transport_to_str(record.transport))
-        .bind(&record.default_server_label)
-        .bind(record.description.as_deref())
-        .bind(record.allowed_tools.as_deref())
-        .bind(approval_policy_to_str(record.approval_default))
-        .bind(record.defer_loading_default)
-        .bind(auth_policy)
-        .bind(auth_metadata_json)
-        .bind(status_to_str(record.status))
-        .bind(record.created_at_ms)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|error| mcp_sql_error("create mcp server", error))?;
-
-        let Some(row) = row else {
-            return Err(McpRegistryError::AlreadyExists {
-                server_id: record.server_id,
-            });
-        };
-        server_record_from_row(&row)
+        // A concurrent writer between the read and the write loses exactly one
+        // retry; the recheck still enforces `expected_revision` against fresh
+        // state, so the retry never bypasses the caller's guard.
+        let mut attempt = 0;
+        loop {
+            attempt += 1;
+            let current = match self.read_server(&record.server_id).await {
+                Ok(current) => Some(current),
+                Err(McpRegistryError::NotFound { .. }) => None,
+                Err(error) => return Err(error),
+            };
+            let Some(current) = current else {
+                match self.insert_server(record.clone()).await {
+                    Ok(created) => return Ok(created),
+                    Err(McpRegistryError::AlreadyExists { .. }) if attempt < 2 => continue,
+                    Err(error) => return Err(error),
+                }
+            };
+            if let Some(expected) = expected_revision
+                && current.revision != expected
+            {
+                return Err(McpRegistryError::RevisionConflict {
+                    server_id: record.server_id,
+                    expected,
+                    actual: current.revision,
+                });
+            }
+            let guard_revision = current.revision;
+            let replaced = record.clone().into_replacement(&current)?;
+            replaced.validate()?;
+            match self.cas_write_server(&replaced, guard_revision).await? {
+                Some(written) => return Ok(written),
+                None if attempt < 2 => continue,
+                None => {
+                    let actual = self.read_server(&record.server_id).await?.revision;
+                    return Err(McpRegistryError::RevisionConflict {
+                        server_id: record.server_id,
+                        expected: guard_revision,
+                        actual,
+                    });
+                }
+            }
+        }
     }
 
     async fn read_server(
@@ -103,6 +81,7 @@ impl McpRegistryStore for PgStore {
                 auth_policy,
                 auth_metadata_json,
                 status,
+                revision,
                 created_at_ms,
                 updated_at_ms
             FROM mcp_servers
@@ -144,6 +123,7 @@ impl McpRegistryStore for PgStore {
                         auth_policy,
                         auth_metadata_json,
                         status,
+                        revision,
                         created_at_ms,
                         updated_at_ms
                     FROM mcp_servers
@@ -172,6 +152,7 @@ impl McpRegistryStore for PgStore {
                         auth_policy,
                         auth_metadata_json,
                         status,
+                        revision,
                         created_at_ms,
                         updated_at_ms
                     FROM mcp_servers
@@ -187,77 +168,6 @@ impl McpRegistryStore for PgStore {
         .map_err(|error| mcp_sql_error("list mcp servers", error))?;
 
         rows.iter().map(server_record_from_row).collect()
-    }
-
-    async fn update_server(
-        &self,
-        server_id: &McpServerId,
-        update: UpdateMcpServerRecord,
-    ) -> Result<McpServerRecord, McpRegistryError> {
-        // Read-modify-write: the patch applies and validates in Rust, then
-        // one UPDATE persists the whole mutable column set. The registry is
-        // unversioned config (last write wins), matching the in-memory store.
-        let mut record = self.read_server(server_id).await?;
-        update.apply_to(&mut record);
-        record.validate()?;
-        let (auth_policy, auth_metadata_json) = auth_policy_columns(&record.auth_policy)?;
-        let row = sqlx::query(
-            r#"
-            UPDATE mcp_servers SET
-                display_name = $3,
-                server_url = $4,
-                transport = $5,
-                default_server_label = $6,
-                description = $7,
-                allowed_tools = $8,
-                approval_default = $9,
-                defer_loading_default = $10,
-                auth_policy = $11,
-                auth_metadata_json = $12,
-                status = $13,
-                updated_at_ms = $14
-            WHERE universe_id = $1 AND server_id = $2
-            RETURNING
-                server_id,
-                display_name,
-                server_url,
-                transport,
-                default_server_label,
-                description,
-                allowed_tools,
-                approval_default,
-                defer_loading_default,
-                auth_policy,
-                auth_metadata_json,
-                status,
-                created_at_ms,
-                updated_at_ms
-            "#,
-        )
-        .bind(self.config.universe_id)
-        .bind(record.server_id.as_str())
-        .bind(record.display_name.as_deref())
-        .bind(&record.server_url)
-        .bind(transport_to_str(record.transport))
-        .bind(&record.default_server_label)
-        .bind(record.description.as_deref())
-        .bind(record.allowed_tools.as_deref())
-        .bind(approval_policy_to_str(record.approval_default))
-        .bind(record.defer_loading_default)
-        .bind(auth_policy)
-        .bind(auth_metadata_json)
-        .bind(status_to_str(record.status))
-        .bind(record.updated_at_ms)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|error| mcp_sql_error("update mcp server", error))?;
-
-        let Some(row) = row else {
-            return Err(McpRegistryError::NotFound {
-                server_id: server_id.clone(),
-            });
-        };
-        server_record_from_row(&row)
     }
 
     async fn delete_server(
@@ -284,6 +194,7 @@ impl McpRegistryStore for PgStore {
                 auth_policy,
                 auth_metadata_json,
                 status,
+                revision,
                 created_at_ms,
                 updated_at_ms
             "#,
@@ -300,6 +211,150 @@ impl McpRegistryStore for PgStore {
             });
         };
         server_record_from_row(&row)
+    }
+}
+
+impl PgStore {
+    /// Insert a fresh record at revision 1; `AlreadyExists` when the id is
+    /// taken.
+    async fn insert_server(
+        &self,
+        record: PutMcpServerRecord,
+    ) -> Result<McpServerRecord, McpRegistryError> {
+        let record = record.into_record();
+        record.validate()?;
+        let (auth_policy, auth_metadata_json) = auth_policy_columns(&record.auth_policy)?;
+        let row = sqlx::query(
+            r#"
+            INSERT INTO mcp_servers (
+                universe_id,
+                server_id,
+                display_name,
+                server_url,
+                transport,
+                default_server_label,
+                description,
+                allowed_tools,
+                approval_default,
+                defer_loading_default,
+                auth_policy,
+                auth_metadata_json,
+                status,
+                revision,
+                created_at_ms,
+                updated_at_ms
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+            ON CONFLICT (universe_id, server_id) DO NOTHING
+            RETURNING
+                server_id,
+                display_name,
+                server_url,
+                transport,
+                default_server_label,
+                description,
+                allowed_tools,
+                approval_default,
+                defer_loading_default,
+                auth_policy,
+                auth_metadata_json,
+                status,
+                revision,
+                created_at_ms,
+                updated_at_ms
+            "#,
+        )
+        .bind(self.config.universe_id)
+        .bind(record.server_id.as_str())
+        .bind(record.display_name.as_deref())
+        .bind(&record.server_url)
+        .bind(transport_to_str(record.transport))
+        .bind(&record.default_server_label)
+        .bind(record.description.as_deref())
+        .bind(record.allowed_tools.as_deref())
+        .bind(approval_policy_to_str(record.approval_default))
+        .bind(record.defer_loading_default)
+        .bind(auth_policy)
+        .bind(auth_metadata_json)
+        .bind(status_to_str(record.status))
+        .bind(u64_to_i64(record.revision, "revision")?)
+        .bind(record.created_at_ms)
+        .bind(record.updated_at_ms)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|error| mcp_sql_error("insert mcp server", error))?;
+
+        let Some(row) = row else {
+            return Err(McpRegistryError::AlreadyExists {
+                server_id: record.server_id,
+            });
+        };
+        server_record_from_row(&row)
+    }
+
+    /// Write `replaced` over the row currently at `guard_revision`. Returns
+    /// `None` when the guard no longer matches (a concurrent writer won).
+    async fn cas_write_server(
+        &self,
+        replaced: &McpServerRecord,
+        guard_revision: u64,
+    ) -> Result<Option<McpServerRecord>, McpRegistryError> {
+        let (auth_policy, auth_metadata_json) = auth_policy_columns(&replaced.auth_policy)?;
+        let row = sqlx::query(
+            r#"
+            UPDATE mcp_servers SET
+                display_name = $3,
+                server_url = $4,
+                transport = $5,
+                default_server_label = $6,
+                description = $7,
+                allowed_tools = $8,
+                approval_default = $9,
+                defer_loading_default = $10,
+                auth_policy = $11,
+                auth_metadata_json = $12,
+                status = $13,
+                revision = $14,
+                updated_at_ms = $15
+            WHERE universe_id = $1 AND server_id = $2 AND revision = $16
+            RETURNING
+                server_id,
+                display_name,
+                server_url,
+                transport,
+                default_server_label,
+                description,
+                allowed_tools,
+                approval_default,
+                defer_loading_default,
+                auth_policy,
+                auth_metadata_json,
+                status,
+                revision,
+                created_at_ms,
+                updated_at_ms
+            "#,
+        )
+        .bind(self.config.universe_id)
+        .bind(replaced.server_id.as_str())
+        .bind(replaced.display_name.as_deref())
+        .bind(&replaced.server_url)
+        .bind(transport_to_str(replaced.transport))
+        .bind(&replaced.default_server_label)
+        .bind(replaced.description.as_deref())
+        .bind(replaced.allowed_tools.as_deref())
+        .bind(approval_policy_to_str(replaced.approval_default))
+        .bind(replaced.defer_loading_default)
+        .bind(auth_policy)
+        .bind(auth_metadata_json)
+        .bind(status_to_str(replaced.status))
+        .bind(u64_to_i64(replaced.revision, "revision")?)
+        .bind(replaced.updated_at_ms)
+        .bind(u64_to_i64(guard_revision, "revision")?)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|error| mcp_sql_error("write mcp server", error))?;
+        row.as_ref().map(server_record_from_row).transpose()
     }
 }
 
@@ -324,6 +379,9 @@ fn server_record_from_row(
     let status: String = row
         .try_get("status")
         .map_err(|error| mcp_sql_error("decode mcp status", error))?;
+    let revision: i64 = row
+        .try_get("revision")
+        .map_err(|error| mcp_sql_error("decode mcp revision", error))?;
 
     let record = McpServerRecord {
         server_id: McpServerId::try_new(server_id).map_err(|error| McpRegistryError::Store {
@@ -351,6 +409,7 @@ fn server_record_from_row(
             .map_err(|error| mcp_sql_error("decode mcp defer loading default", error))?,
         auth_policy: auth_policy_from_columns(&auth_policy, auth_metadata_json)?,
         status: status_from_str(&status)?,
+        revision: i64_to_u64(revision, "revision")?,
         created_at_ms: row
             .try_get("created_at_ms")
             .map_err(|error| mcp_sql_error("decode mcp created_at_ms", error))?,
@@ -512,6 +571,18 @@ fn status_from_str(value: &str) -> Result<McpServerStatus, McpRegistryError> {
             message: format!("unsupported MCP server status '{other}'"),
         }),
     }
+}
+
+fn u64_to_i64(value: u64, name: &'static str) -> Result<i64, McpRegistryError> {
+    i64::try_from(value).map_err(|_| McpRegistryError::InvalidInput {
+        message: format!("{name} exceeds i64::MAX"),
+    })
+}
+
+fn i64_to_u64(value: i64, name: &'static str) -> Result<u64, McpRegistryError> {
+    u64::try_from(value).map_err(|_| McpRegistryError::Store {
+        message: format!("{name} is negative"),
+    })
 }
 
 fn mcp_store_error(action: &str, error: crate::PgStoreError) -> McpRegistryError {

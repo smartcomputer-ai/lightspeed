@@ -3,19 +3,24 @@
   "displayName": "Example MCP Echo",
   "description": "Links the public MCP playground echo server for smoke testing remote MCP wiring.",
   "config": {
-    "tools": {
-      "filesystem": "readOnly",
-      "webFetch": true
+    "features": {
+      "vfs": {
+        "tools": "readOnly"
+      },
+      "web": {
+        "fetch": {}
+      },
+      "mcp": {
+        "servers": [
+          {
+            "serverId": "echo-playground"
+          }
+        ]
+      }
     }
   },
   "instructions": {
     "type": "text",
     "text": "Use the echo MCP server only for MCP connectivity smoke tests and simple tool-call verification."
-  },
-  "mcp": [
-    {
-      "serverId": "echo-playground",
-      "serverLabel": "echo"
-    }
-  ]
+  }
 }

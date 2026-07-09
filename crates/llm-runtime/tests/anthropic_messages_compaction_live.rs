@@ -12,7 +12,7 @@ use engine::{
     ContextCompactionStatus, ContextCompactionTrigger, ContextConfig, ContextEntryInput,
     ContextEntryKey, ContextEntryKind, ContextMessageRole, ContextRemovalReason, CoreAgentCommand,
     CoreAgentEvent, ModelSelection, ProviderApiKind, RunConfig, RunStatus, SessionConfig,
-    SessionId, TokenEstimate, TokenEstimateQuality, TurnConfig,
+    SessionId, TokenEstimate, TokenEstimateQuality,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
 };
 use llm_clients::anthropic::messages::{Client, Config};
@@ -343,26 +343,28 @@ fn standalone_session_config(
 ) -> SessionConfig {
     SessionConfig {
         model,
-        run: run_config(),
-        turn: TurnConfig {
+        generation: engine::GenerationConfig {
             max_output_tokens: Some(256),
+            reasoning_effort: None,
             tool_choice: None,
-            provider_params: None,
+            parallel_tool_use: None,
         },
+        limits: Default::default(),
         context: ContextConfig {
             compaction: Some(CompactionPolicy::ProviderStandalone {
                 compact_threshold_tokens,
                 target_tokens: Some(256),
             }),
         },
-        tools: Default::default(),
-        fleet: Default::default(),
+        features: Default::default(),
     }
 }
 
 fn run_config() -> RunConfig {
     RunConfig {
         max_turns: Some(4),
+        reasoning_effort: None,
+        parallel_tool_use: None,
         max_tool_rounds: Some(0),
         model_override: None,
         max_output_tokens: None,

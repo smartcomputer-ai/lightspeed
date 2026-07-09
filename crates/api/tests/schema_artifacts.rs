@@ -6,9 +6,8 @@
 use std::{fs, path::PathBuf};
 
 use api::{
-    AgentApiOutcome, AgentNotification, EventCursor, InputItem, MessageSubmitParams,
-    MessageSubmitResponse, RunStartParams, RunStartResponse, RunStartSource, RunStatus, RunView,
-    RunViewSource, SessionEventsReadParams,
+    AgentApiOutcome, AgentNotification, EventCursor, InputItem, RunStartParams, RunStartResponse,
+    RunStartSource, RunStatus, RunView, RunViewSource, SessionEventsReadParams,
 };
 use serde_json::{Value, json};
 
@@ -61,23 +60,6 @@ fn serialized_fixtures_validate_against_exported_schemas() {
     let value = serde_json::to_value(&params).expect("serialize");
     assert_validates(&bundle, "RunStartParams", &value);
 
-    let params = MessageSubmitParams {
-        session_id: "session_1".to_owned(),
-        items: vec![InputItem::Text {
-            text: "interrupt".to_owned(),
-        }],
-        submission_id: Some("message_1".to_owned()),
-    };
-    let value = serde_json::to_value(&params).expect("serialize");
-    assert_validates(&bundle, "MessageSubmitParams", &value);
-
-    let outcome = AgentApiOutcome::new(MessageSubmitResponse {
-        submission_id: "message_1".to_owned(),
-        accepted: true,
-    });
-    let value = serde_json::to_value(&outcome).expect("serialize");
-    assert_validates(&bundle, "AgentApiOutcomeOfMessageSubmitResponse", &value);
-
     let run = RunView {
         id: "run_1".to_owned(),
         status: RunStatus::Completed,
@@ -86,7 +68,7 @@ fn serialized_fixtures_validate_against_exported_schemas() {
                 text: "hello".to_owned(),
             }],
         },
-        items: Vec::new(),
+        entries: Vec::new(),
         tool_batches: Vec::new(),
     };
     let outcome = AgentApiOutcome::with_notifications(

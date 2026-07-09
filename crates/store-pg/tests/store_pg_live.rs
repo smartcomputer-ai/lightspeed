@@ -37,8 +37,8 @@ use host_protocol::{
     },
 };
 use mcp::{
-    CreateMcpServerRecord, ListMcpServers, McpApprovalPolicy, McpRegistryError, McpRegistryStore,
-    McpServerAuthPolicy, McpServerId, McpServerStatus, RemoteMcpTransport, UpdateMcpServerRecord,
+    ListMcpServers, McpApprovalPolicy, McpRegistryError, McpRegistryStore, McpServerAuthPolicy,
+    McpServerId, McpServerStatus, PutMcpServerRecord, RemoteMcpTransport,
 };
 use messaging::{
     EnqueueOutboundMessage, OutboundAck, OutboundOrigin, OutboundPayload, OutboxStore,
@@ -1179,17 +1179,15 @@ async fn pg_live_mcp_crud_and_universe_isolation() {
     let right = live_store("mcp-right", 1024).await;
     let server_id = McpServerId::new("crm");
 
+    // Absent record: put creates at revision 1 even with an expected revision.
     let created = left
-        .create_server(create_mcp_server("crm", McpServerStatus::Active))
+        .put_server(put_mcp_server("crm", McpServerStatus::Active), Some(7))
         .await
         .expect("create MCP server");
     assert_eq!(created.server_id, server_id);
-
-    assert!(matches!(
-        left.create_server(create_mcp_server("crm", McpServerStatus::Active))
-            .await,
-        Err(McpRegistryError::AlreadyExists { server_id }) if server_id.as_str() == "crm"
-    ));
+    assert_eq!(created.revision, 1);
+    assert_eq!(created.created_at_ms, 10);
+    assert_eq!(created.updated_at_ms, 10);
 
     assert_eq!(
         left.read_server(&server_id).await.expect("read MCP server"),
@@ -1201,10 +1199,10 @@ async fn pg_live_mcp_crud_and_universe_isolation() {
     ));
 
     let oauth = left
-        .create_server(create_oauth_mcp_server(
-            "docs",
-            McpServerStatus::NeedsAuthConfig,
-        ))
+        .put_server(
+            put_oauth_mcp_server("docs", McpServerStatus::NeedsAuthConfig),
+            None,
+        )
         .await
         .expect("create OAuth MCP server");
     assert!(matches!(
@@ -1220,64 +1218,57 @@ async fn pg_live_mcp_crud_and_universe_isolation() {
         .expect("list active MCP servers");
     assert_eq!(active, vec![created.clone()]);
 
-    let updated = left
-        .update_server(
-            &server_id,
-            UpdateMcpServerRecord {
-                display_name: None,
-                server_url: Some("https://crm2.example.com/mcp".to_owned()),
-                transport: None,
-                default_server_label: None,
-                description: Some(None),
-                allowed_tools: None,
-                approval_default: Some(McpApprovalPolicy::Always),
-                defer_loading_default: None,
-                auth_policy: None,
-                status: Some(McpServerStatus::Disabled),
-                updated_at_ms: created.updated_at_ms + 5,
-            },
-        )
+    // Existing record: put replaces the whole document and bumps the revision.
+    let mut replacement = put_mcp_server("crm", McpServerStatus::Disabled);
+    replacement.server_url = "https://crm2.example.com/mcp".to_owned();
+    replacement.description = None;
+    replacement.approval_default = McpApprovalPolicy::Always;
+    replacement.now_ms = created.updated_at_ms + 5;
+    let replaced = left
+        .put_server(replacement, Some(created.revision))
         .await
-        .expect("update MCP server");
-    assert_eq!(updated.server_url, "https://crm2.example.com/mcp");
-    assert_eq!(updated.description, None);
-    assert_eq!(updated.approval_default, McpApprovalPolicy::Always);
-    assert_eq!(updated.status, McpServerStatus::Disabled);
-    assert_eq!(updated.display_name, created.display_name);
-    assert_eq!(updated.created_at_ms, created.created_at_ms);
-    assert_eq!(updated.updated_at_ms, created.updated_at_ms + 5);
+        .expect("replace MCP server");
+    assert_eq!(replaced.revision, 2);
+    assert_eq!(replaced.server_url, "https://crm2.example.com/mcp");
+    assert_eq!(replaced.description, None);
+    assert_eq!(replaced.approval_default, McpApprovalPolicy::Always);
+    assert_eq!(replaced.status, McpServerStatus::Disabled);
+    assert_eq!(replaced.display_name, created.display_name);
+    assert_eq!(replaced.created_at_ms, created.created_at_ms);
+    assert_eq!(replaced.updated_at_ms, created.updated_at_ms + 5);
     assert_eq!(
         left.read_server(&server_id).await.expect("re-read"),
-        updated
+        replaced
     );
-    // Universe isolation: the sibling store cannot update it either.
+
+    // Stale expected revision on an existing record is a conflict.
     assert!(matches!(
-        right
-            .update_server(
-                &server_id,
-                UpdateMcpServerRecord {
-                    display_name: None,
-                    server_url: None,
-                    transport: None,
-                    default_server_label: None,
-                    description: None,
-                    allowed_tools: None,
-                    approval_default: None,
-                    defer_loading_default: None,
-                    auth_policy: None,
-                    status: None,
-                    updated_at_ms: 99,
-                },
-            )
+        left.put_server(put_mcp_server("crm", McpServerStatus::Active), Some(1))
             .await,
-        Err(McpRegistryError::NotFound { .. })
+        Err(McpRegistryError::RevisionConflict {
+            expected: 1,
+            actual: 2,
+            ..
+        })
     ));
+
+    // Universe isolation: the sibling store creates its own record at
+    // revision 1 instead of replacing the left store's document.
+    let sibling = right
+        .put_server(put_mcp_server("crm", McpServerStatus::Active), None)
+        .await
+        .expect("sibling universe put");
+    assert_eq!(sibling.revision, 1);
+    assert_eq!(
+        left.read_server(&server_id).await.expect("left unchanged"),
+        replaced
+    );
 
     let deleted = left
         .delete_server(&server_id)
         .await
         .expect("delete MCP server");
-    assert_eq!(deleted, updated);
+    assert_eq!(deleted, replaced);
     assert!(matches!(
         left.read_server(&server_id).await,
         Err(McpRegistryError::NotFound { server_id }) if server_id.as_str() == "crm"
@@ -2135,8 +2126,8 @@ fn open_event(at_ms: u64) -> UncommittedStoredEvent {
     }
 }
 
-fn create_mcp_server(server_id: &str, status: McpServerStatus) -> CreateMcpServerRecord {
-    CreateMcpServerRecord {
+fn put_mcp_server(server_id: &str, status: McpServerStatus) -> PutMcpServerRecord {
+    PutMcpServerRecord {
         server_id: McpServerId::new(server_id),
         display_name: Some(format!("{server_id} MCP")),
         server_url: format!("https://{server_id}.example.com/mcp"),
@@ -2148,12 +2139,12 @@ fn create_mcp_server(server_id: &str, status: McpServerStatus) -> CreateMcpServe
         defer_loading_default: Some(true),
         auth_policy: McpServerAuthPolicy::None,
         status,
-        created_at_ms: 10,
+        now_ms: 10,
     }
 }
 
-fn create_oauth_mcp_server(server_id: &str, status: McpServerStatus) -> CreateMcpServerRecord {
-    let mut record = create_mcp_server(server_id, status);
+fn put_oauth_mcp_server(server_id: &str, status: McpServerStatus) -> PutMcpServerRecord {
+    let mut record = put_mcp_server(server_id, status);
     record.auth_policy = McpServerAuthPolicy::RequiredOAuth {
         resource: format!("https://{server_id}.example.com"),
         scopes_default: Vec::new(),

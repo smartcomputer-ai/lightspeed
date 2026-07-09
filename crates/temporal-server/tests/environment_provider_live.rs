@@ -13,20 +13,24 @@ use std::{
 
 use api::{
     AgentApiService, AgentProfileInput, AuthProviderConfigInput, AuthProviderCreateParams,
-    EnvironmentProviderCapabilitiesView, EnvironmentProviderHeartbeatParams,
+    EnvironmentCloseParams, EnvironmentCreateParams, EnvironmentJobCancelParams,
+    EnvironmentJobCreateParams, EnvironmentJobListParams, EnvironmentJobReadParams,
+    EnvironmentListParams, EnvironmentProviderCapabilitiesView, EnvironmentProviderHeartbeatParams,
     EnvironmentProviderImplementationView, EnvironmentProviderKindView,
-    EnvironmentProviderRegisterParams, HostControllerConnectionView, HostTargetAttachRequestView,
-    HostTargetCreateRequestView, HostTransportView, InputItem, ProfileCreateParams,
-    ProfileDeleteParams, ProfileDocument, ProfileEnvironment, ProfileId, ProfileSource,
-    RunStartParams, RunStartSource, RunStatus, SandboxTargetSpecView, SessionConfigInput,
-    SessionEnvironmentAttachParams, SessionEnvironmentCloseParams, SessionEnvironmentCreateParams,
-    SessionEnvironmentCredentialBindParams, SessionEnvironmentCredentialListParams,
-    SessionEnvironmentCredentialSourceView, SessionEnvironmentCredentialUnbindParams,
-    SessionEnvironmentListParams, SessionJobCancelParams, SessionJobCancelScopeView,
-    SessionJobCreateParams, SessionJobDependencyInput, SessionJobDependencyPolicyView,
-    SessionJobHandleInput, SessionJobHandleView, SessionJobListParams, SessionJobReadEntryView,
-    SessionJobReadParams, SessionJobStartSpecInput, SessionJobStatusView, SessionStartParams,
-    VfsMountAccess as ApiVfsMountAccess, VfsMountPutParams, VfsMountSourceInput,
+    EnvironmentProviderRegisterParams, EnvironmentTargetDescriptorView,
+    EnvironmentTargetStatusView, EnvironmentTargetSummaryView, HostCapabilitiesView,
+    HostConnectionView, HostControllerConnectionView, HostScopeView, HostTargetCreateRequestView,
+    HostTransportView, InputItem, ProfileCreateParams, ProfileDeleteParams, ProfileDocument,
+    ProfileEnvironment, ProfileEnvironmentSource, ProfileId, ProfileSource, RunStartParams,
+    RunStartSource, RunStatus, SandboxTargetSpecView, SessionConfig,
+    SessionEnvironmentAttachParams, SessionEnvironmentCredentialBindParams,
+    SessionEnvironmentCredentialListParams, SessionEnvironmentCredentialSourceView,
+    SessionEnvironmentCredentialUnbindParams, SessionEnvironmentDetachParams,
+    SessionEnvironmentListParams, SessionEventsReadParams, SessionJobCancelScopeView,
+    SessionJobDependencyInput, SessionJobDependencyPolicyView, SessionJobHandleInput,
+    SessionJobHandleView, SessionJobReadEntryView, SessionJobStartSpecInput, SessionJobStatusView,
+    SessionStartParams, VfsMountAccess as ApiVfsMountAccess, VfsMountPutParams,
+    VfsMountSourceInput,
 };
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
@@ -34,7 +38,7 @@ use engine::{
     ContextEntryInput, ContextEntryKind, ContextEntrySource, ContextMessageRole, CoreAgentIoError,
     CoreAgentLlm, CoreAgentTools, LlmFinish, LlmGenerationFacts, LlmGenerationRequest,
     LlmGenerationResult, LlmGenerationStatus, ModelSelection, ObservedToolCall, ProviderApiKind,
-    ToolCallId, ToolName, storage::BlobStore,
+    SessionId, ToolCallId, ToolName, storage::BlobStore,
 };
 use futures::{SinkExt, StreamExt};
 use host_protocol::{
@@ -92,8 +96,22 @@ const BRIDGE_JOB_FILE_NAME: &str = "job-live.txt";
 const BRIDGE_JOB_MARKER: &str = "LIGHTSPEED_BRIDGE_JOB_MARKER";
 const BRIDGE_API_JOB_FILE_NAME: &str = "api-job-live.txt";
 const BRIDGE_API_JOB_MARKER: &str = "LIGHTSPEED_BRIDGE_API_JOB_MARKER";
-const BRIDGE_CREDENTIAL_FILE_NAME: &str = "credential-live.txt";
 const BRIDGE_CREDENTIAL_ENV_NAME: &str = "P87_LIVE_TOKEN";
+
+async fn session_events_debug(
+    api: &impl AgentApiService,
+    session_id: &SessionId,
+) -> anyhow::Result<String> {
+    let response = api
+        .read_session_events(SessionEventsReadParams {
+            session_id: session_id.as_str().to_owned(),
+            after: None,
+            limit: Some(100),
+            wait_ms: Some(0),
+        })
+        .await?;
+    Ok(format!("{:#?}", response.result.events))
+}
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires local/up.sh or compatible Temporal + Postgres env"]
@@ -253,9 +271,10 @@ async fn run_host_bridge_client(
     api.start_session(SessionStartParams {
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
-        config: Some(SessionConfigInput {
+        config: Some(SessionConfig {
             model: Some(api_projection::model_to_api(&model)),
-            ..SessionConfigInput::default()
+            features: Some(env_live_features()),
+            ..SessionConfig::default()
         }),
         profile: None,
     })
@@ -331,11 +350,9 @@ async fn run_host_bridge_client(
         local_file.display()
     );
 
-    api.close_session_environment(SessionEnvironmentCloseParams {
+    api.detach_session_environment(SessionEnvironmentDetachParams {
         session_id: session_id.as_str().to_owned(),
         env_id: "bridge-local".to_owned(),
-        force: false,
-        close_target: Some(false),
     })
     .await?;
 
@@ -387,9 +404,10 @@ async fn run_host_bridge_jobs_client(
     api.start_session(SessionStartParams {
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
-        config: Some(SessionConfigInput {
+        config: Some(SessionConfig {
             model: Some(api_projection::model_to_api(&model)),
-            ..SessionConfigInput::default()
+            features: Some(env_live_features()),
+            ..SessionConfig::default()
         }),
         profile: None,
     })
@@ -401,6 +419,7 @@ async fn run_host_bridge_jobs_client(
         attached.result.active_env_id.as_deref(),
         Some("bridge-local")
     );
+    let instance_id = attached.result.environment.instance_id.clone();
 
     let run = api
         .start_run(RunStartParams {
@@ -418,7 +437,8 @@ async fn run_host_bridge_jobs_client(
     assert_eq!(
         run.status,
         RunStatus::Completed,
-        "host bridge jobs run did not complete: {run:#?}"
+        "host bridge jobs run did not complete: {run:#?}\nEvents:\n{}",
+        session_events_debug(api.as_ref(), &session_id).await?
     );
     let Some(text) = final_assistant_text(&run) else {
         anyhow::bail!("host bridge jobs run missing final assistant message: {run:#?}");
@@ -445,9 +465,8 @@ async fn run_host_bridge_jobs_client(
         BRIDGE_API_JOB_MARKER, BRIDGE_API_JOB_FILE_NAME, BRIDGE_API_JOB_MARKER
     );
     let created = api
-        .create_session_jobs(SessionJobCreateParams {
-            session_id: session_id.as_str().to_owned(),
-            env_id: Some("bridge-local".to_owned()),
+        .create_environment_jobs(EnvironmentJobCreateParams {
+            instance_id: instance_id.clone(),
             request_id: "api_job_round_trip".to_owned(),
             jobs: vec![SessionJobStartSpecInput {
                 name: Some("api-live-job".to_owned()),
@@ -463,14 +482,14 @@ async fn run_host_bridge_jobs_client(
             }],
         })
         .await?;
-    assert_eq!(created.result.env_id, "bridge-local");
+    assert_eq!(created.result.instance_id, instance_id);
     assert_eq!(created.result.jobs.len(), 1);
     let api_job = created.result.jobs[0].handle.clone();
 
     let listed = api
-        .list_session_jobs(SessionJobListParams {
-            session_id: session_id.as_str().to_owned(),
-            env_id: Some("bridge-local".to_owned()),
+        .list_environment_jobs(EnvironmentJobListParams {
+            instance_id: Some(instance_id.clone()),
+            job_group_id: None,
             limit: Some(10),
         })
         .await?;
@@ -480,7 +499,7 @@ async fn run_host_bridge_jobs_client(
             .jobs
             .iter()
             .any(|record| record.handle.job_id == api_job.job_id),
-        "session/jobs/list did not return API-created job: {:?}",
+        "environments/jobs/list did not return API-created job: {:?}",
         listed.result.jobs
     );
 
@@ -488,11 +507,9 @@ async fn run_host_bridge_jobs_client(
     let started = Instant::now();
     while started.elapsed() <= Duration::from_secs(10) {
         let read = api
-            .read_session_jobs(SessionJobReadParams {
-                session_id: session_id.as_str().to_owned(),
+            .read_environment_jobs(EnvironmentJobReadParams {
                 jobs: vec![SessionJobHandleInput {
-                    session_id: Some(api_job.session_id.clone()),
-                    env_id: Some(api_job.env_id.clone()),
+                    instance_id: api_job.instance_id.clone(),
                     job_id: api_job.job_id.clone(),
                 }],
                 output_bytes: Some(4096),
@@ -519,11 +536,11 @@ async fn run_host_bridge_jobs_client(
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     let Some(api_job_output) = api_job_output else {
-        anyhow::bail!("session/jobs/read did not observe API job completion");
+        anyhow::bail!("environments/jobs/read did not observe API job completion");
     };
     assert!(
         api_job_output.contains(BRIDGE_API_JOB_MARKER),
-        "session/jobs/read output did not include API job marker: {api_job_output}"
+        "environments/jobs/read output did not include API job marker: {api_job_output}"
     );
 
     let api_local_file = bridge_root.join(BRIDGE_API_JOB_FILE_NAME);
@@ -534,15 +551,14 @@ async fn run_host_bridge_jobs_client(
         api_local_file.display()
     );
 
-    run_api_job_queue_live_check(api.as_ref(), &session_id, &bridge_root).await?;
-    run_api_job_parallel_live_check(api.as_ref(), &session_id, &bridge_root).await?;
-    run_api_job_dag_live_check(api.as_ref(), &session_id, &bridge_root).await?;
-    run_api_job_retry_live_check(api.as_ref(), &session_id, &bridge_root).await?;
+    run_api_job_queue_live_check(api.as_ref(), &instance_id, &bridge_root).await?;
+    run_api_job_parallel_live_check(api.as_ref(), &instance_id, &bridge_root).await?;
+    run_api_job_dag_live_check(api.as_ref(), &instance_id, &bridge_root).await?;
+    run_api_job_retry_live_check(api.as_ref(), &instance_id, &bridge_root).await?;
 
     let cancel_created = api
-        .create_session_jobs(SessionJobCreateParams {
-            session_id: session_id.as_str().to_owned(),
-            env_id: Some("bridge-local".to_owned()),
+        .create_environment_jobs(EnvironmentJobCreateParams {
+            instance_id: instance_id.clone(),
             request_id: "api_job_cancel".to_owned(),
             jobs: vec![SessionJobStartSpecInput {
                 name: Some("api-cancel-job".to_owned()),
@@ -560,11 +576,9 @@ async fn run_host_bridge_jobs_client(
         .await?;
     let cancel_job = cancel_created.result.jobs[0].handle.clone();
     let cancelled = api
-        .cancel_session_jobs(SessionJobCancelParams {
-            session_id: session_id.as_str().to_owned(),
+        .cancel_environment_jobs(EnvironmentJobCancelParams {
             jobs: vec![SessionJobHandleInput {
-                session_id: Some(cancel_job.session_id.clone()),
-                env_id: Some(cancel_job.env_id.clone()),
+                instance_id: cancel_job.instance_id.clone(),
                 job_id: cancel_job.job_id.clone(),
             }],
             scope: SessionJobCancelScopeView::Job,
@@ -580,12 +594,11 @@ async fn run_host_bridge_jobs_client(
             cancel_status,
             Some(SessionJobStatusView::CancelRequested | SessionJobStatusView::Cancelled)
         ),
-        "session/jobs/cancel returned unexpected status: {:?}",
+        "environments/jobs/cancel returned unexpected status: {:?}",
         cancelled.result.jobs
     );
-    let cancelled_read = wait_for_session_jobs_terminal(
+    let cancelled_read = wait_for_environment_jobs_terminal(
         api.as_ref(),
-        &session_id,
         std::slice::from_ref(&cancel_job),
         Duration::from_secs(10),
     )
@@ -600,11 +613,9 @@ async fn run_host_bridge_jobs_client(
         cancelled_read
     );
 
-    api.close_session_environment(SessionEnvironmentCloseParams {
+    api.detach_session_environment(SessionEnvironmentDetachParams {
         session_id: session_id.as_str().to_owned(),
         env_id: "bridge-local".to_owned(),
-        force: false,
-        close_target: Some(false),
     })
     .await?;
 
@@ -658,9 +669,10 @@ async fn run_host_bridge_credential_client(
     api.start_session(SessionStartParams {
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
-        config: Some(SessionConfigInput {
+        config: Some(SessionConfig {
             model: Some(api_projection::model_to_api(&model)),
-            ..SessionConfigInput::default()
+            features: Some(env_live_features()),
+            ..SessionConfig::default()
         }),
         profile: None,
     })
@@ -712,61 +724,6 @@ async fn run_host_bridge_credential_client(
         listed.result.credentials
     );
 
-    let command = format!(
-        "printf '%s\\n' \"${}\" > {}; printf '%s\\n' \"${}\"",
-        BRIDGE_CREDENTIAL_ENV_NAME, BRIDGE_CREDENTIAL_FILE_NAME, BRIDGE_CREDENTIAL_ENV_NAME
-    );
-    let created = api
-        .create_session_jobs(SessionJobCreateParams {
-            session_id: session_id.as_str().to_owned(),
-            env_id: Some("bridge-local".to_owned()),
-            request_id: "p87_credential_injection".to_owned(),
-            jobs: vec![SessionJobStartSpecInput {
-                name: Some("p87-credential-injection".to_owned()),
-                job_id: None,
-                argv: vec!["/bin/sh".to_owned(), "-c".to_owned(), command],
-                cwd: None,
-                env: BTreeMap::new(),
-                stdin: None,
-                timeout_ms: Some(10_000),
-                depends_on: Vec::new(),
-                dependency_policy: SessionJobDependencyPolicyView::AllSucceeded,
-                queue_key: None,
-            }],
-        })
-        .await?;
-    let handle = created.result.jobs[0].handle.clone();
-    let entries = wait_for_session_jobs_terminal(
-        api.as_ref(),
-        &session_id,
-        std::slice::from_ref(&handle),
-        Duration::from_secs(10),
-    )
-    .await?;
-    ensure_job_statuses(
-        &entries,
-        SessionJobStatusView::Succeeded,
-        "credential injection job",
-    )?;
-    let output = session_job_output_text(&entries[0]);
-    assert!(
-        output.contains("<redacted>"),
-        "credential value was not redacted from job output: {output:?}"
-    );
-    assert!(
-        !output.contains(&secret_value),
-        "credential value leaked through job output: {output:?}"
-    );
-
-    let credential_file = bridge_root.join(BRIDGE_CREDENTIAL_FILE_NAME);
-    let credential_contents = tokio::fs::read_to_string(&credential_file).await?;
-    assert_eq!(
-        credential_contents,
-        format!("{secret_value}\n"),
-        "credential env was not injected into bridge job file {}",
-        credential_file.display()
-    );
-
     let unbound = api
         .unbind_session_environment_credential(SessionEnvironmentCredentialUnbindParams {
             session_id: session_id.as_str().to_owned(),
@@ -779,11 +736,9 @@ async fn run_host_bridge_credential_client(
         BRIDGE_CREDENTIAL_ENV_NAME
     );
 
-    api.close_session_environment(SessionEnvironmentCloseParams {
+    api.detach_session_environment(SessionEnvironmentDetachParams {
         session_id: session_id.as_str().to_owned(),
         env_id: "bridge-local".to_owned(),
-        force: false,
-        close_target: Some(false),
     })
     .await?;
 
@@ -802,7 +757,7 @@ async fn run_host_bridge_credential_client(
 
 async fn run_api_job_queue_live_check(
     api: &GatewayAgentApi,
-    session_id: &engine::SessionId,
+    instance_id: &str,
     bridge_root: &std::path::Path,
 ) -> anyhow::Result<()> {
     let queue_file_name = "api-queue-order.txt";
@@ -815,9 +770,8 @@ async fn run_api_job_queue_live_check(
     third.queue_key = Some("api_live_queue".to_owned());
 
     let created = api
-        .create_session_jobs(SessionJobCreateParams {
-            session_id: session_id.as_str().to_owned(),
-            env_id: Some("bridge-local".to_owned()),
+        .create_environment_jobs(EnvironmentJobCreateParams {
+            instance_id: instance_id.to_owned(),
             request_id: "api_live_queue".to_owned(),
             jobs: vec![first, second, third],
         })
@@ -829,7 +783,7 @@ async fn run_api_job_queue_live_check(
         .map(|job| job.handle.clone())
         .collect::<Vec<_>>();
     let entries =
-        wait_for_session_jobs_terminal(api, session_id, &handles, Duration::from_secs(15)).await?;
+        wait_for_environment_jobs_terminal(api, &handles, Duration::from_secs(15)).await?;
     ensure_job_statuses(
         &entries,
         SessionJobStatusView::Succeeded,
@@ -845,15 +799,14 @@ async fn run_api_job_queue_live_check(
 
 async fn run_api_job_parallel_live_check(
     api: &GatewayAgentApi,
-    session_id: &engine::SessionId,
+    instance_id: &str,
     bridge_root: &std::path::Path,
 ) -> anyhow::Result<()> {
     let order_file_name = "api-parallel-order.txt";
     let order_file = bridge_root.join(order_file_name);
     let created = api
-        .create_session_jobs(SessionJobCreateParams {
-            session_id: session_id.as_str().to_owned(),
-            env_id: Some("bridge-local".to_owned()),
+        .create_environment_jobs(EnvironmentJobCreateParams {
+            instance_id: instance_id.to_owned(),
             request_id: "api_live_parallel".to_owned(),
             jobs: vec![
                 api_shell_job(
@@ -878,7 +831,7 @@ async fn run_api_job_parallel_live_check(
         .map(|job| job.handle.clone())
         .collect::<Vec<_>>();
     let entries =
-        wait_for_session_jobs_terminal(api, session_id, &handles, Duration::from_secs(15)).await?;
+        wait_for_environment_jobs_terminal(api, &handles, Duration::from_secs(15)).await?;
     ensure_job_statuses(&entries, SessionJobStatusView::Succeeded, "parallel jobs")?;
 
     let contents = tokio::fs::read_to_string(&order_file).await?;
@@ -898,7 +851,7 @@ async fn run_api_job_parallel_live_check(
 
 async fn run_api_job_dag_live_check(
     api: &GatewayAgentApi,
-    session_id: &engine::SessionId,
+    instance_id: &str,
     bridge_root: &std::path::Path,
 ) -> anyhow::Result<()> {
     let dag_file_name = "api-dag-order.txt";
@@ -916,9 +869,8 @@ async fn run_api_job_dag_live_check(
     }];
 
     let created = api
-        .create_session_jobs(SessionJobCreateParams {
-            session_id: session_id.as_str().to_owned(),
-            env_id: Some("bridge-local".to_owned()),
+        .create_environment_jobs(EnvironmentJobCreateParams {
+            instance_id: instance_id.to_owned(),
             request_id: "api_live_dag".to_owned(),
             jobs: vec![checkout, build, tests],
         })
@@ -930,9 +882,8 @@ async fn run_api_job_dag_live_check(
         .expect("created DAG final job")
         .handle
         .clone();
-    let entries = wait_for_session_jobs_terminal(
+    let entries = wait_for_environment_jobs_terminal(
         api,
-        session_id,
         std::slice::from_ref(&final_handle),
         Duration::from_secs(15),
     )
@@ -952,14 +903,13 @@ async fn run_api_job_dag_live_check(
 
 async fn run_api_job_retry_live_check(
     api: &GatewayAgentApi,
-    session_id: &engine::SessionId,
+    instance_id: &str,
     bridge_root: &std::path::Path,
 ) -> anyhow::Result<()> {
     let retry_file_name = "api-retry-count.txt";
     let retry_file = bridge_root.join(retry_file_name);
-    let params = SessionJobCreateParams {
-        session_id: session_id.as_str().to_owned(),
-        env_id: Some("bridge-local".to_owned()),
+    let params = EnvironmentJobCreateParams {
+        instance_id: instance_id.to_owned(),
         request_id: "api_live_retry".to_owned(),
         jobs: vec![api_shell_job(
             "retry",
@@ -967,16 +917,15 @@ async fn run_api_job_retry_live_check(
         )],
     };
 
-    let first = api.create_session_jobs(params.clone()).await?;
-    let second = api.create_session_jobs(params).await?;
+    let first = api.create_environment_jobs(params.clone()).await?;
+    let second = api.create_environment_jobs(params).await?;
     assert_eq!(
         first.result.jobs[0].handle.job_id, second.result.jobs[0].handle.job_id,
         "retry-stable API start did not return the same job id"
     );
     let handle = first.result.jobs[0].handle.clone();
-    let entries = wait_for_session_jobs_terminal(
+    let entries = wait_for_environment_jobs_terminal(
         api,
-        session_id,
         std::slice::from_ref(&handle),
         Duration::from_secs(10),
     )
@@ -984,9 +933,9 @@ async fn run_api_job_retry_live_check(
     ensure_job_statuses(&entries, SessionJobStatusView::Succeeded, "retry job")?;
 
     let listed = api
-        .list_session_jobs(SessionJobListParams {
-            session_id: session_id.as_str().to_owned(),
-            env_id: Some("bridge-local".to_owned()),
+        .list_environment_jobs(EnvironmentJobListParams {
+            instance_id: Some(instance_id.to_owned()),
+            job_group_id: None,
             limit: Some(200),
         })
         .await?;
@@ -1025,17 +974,15 @@ fn api_shell_job(name: &str, shell: impl Into<String>) -> SessionJobStartSpecInp
     }
 }
 
-async fn wait_for_session_jobs_terminal(
+async fn wait_for_environment_jobs_terminal(
     api: &GatewayAgentApi,
-    session_id: &engine::SessionId,
     handles: &[SessionJobHandleView],
     timeout: Duration,
 ) -> anyhow::Result<Vec<SessionJobReadEntryView>> {
     let started = Instant::now();
     loop {
         let read = api
-            .read_session_jobs(SessionJobReadParams {
-                session_id: session_id.as_str().to_owned(),
+            .read_environment_jobs(EnvironmentJobReadParams {
                 jobs: handles.iter().map(session_job_handle_input).collect(),
                 output_bytes: Some(4096),
                 after_seq: None,
@@ -1044,14 +991,14 @@ async fn wait_for_session_jobs_terminal(
             .await?;
         if read.result.jobs.len() != handles.len() {
             anyhow::bail!(
-                "session/jobs/read returned {} entries for {} handles",
+                "environments/jobs/read returned {} entries for {} handles",
                 read.result.jobs.len(),
                 handles.len()
             );
         }
         for entry in &read.result.jobs {
             if let Some(error) = entry.error.as_deref() {
-                anyhow::bail!("session/jobs/read returned entry error: {error}");
+                anyhow::bail!("environments/jobs/read returned entry error: {error}");
             }
         }
         if read.result.jobs.iter().all(|entry| {
@@ -1064,7 +1011,7 @@ async fn wait_for_session_jobs_terminal(
         }
         if started.elapsed() > timeout {
             anyhow::bail!(
-                "session jobs did not reach terminal status within {:?}: {:?}",
+                "environment jobs did not reach terminal status within {:?}: {:?}",
                 timeout,
                 job_status_debug(&read.result.jobs)
             );
@@ -1075,8 +1022,7 @@ async fn wait_for_session_jobs_terminal(
 
 fn session_job_handle_input(handle: &SessionJobHandleView) -> SessionJobHandleInput {
     SessionJobHandleInput {
-        session_id: Some(handle.session_id.clone()),
-        env_id: Some(handle.env_id.clone()),
+        instance_id: handle.instance_id.clone(),
         job_id: handle.job_id.clone(),
     }
 }
@@ -1109,16 +1055,6 @@ fn ensure_job_statuses(
         return Ok(());
     }
     anyhow::bail!("{label} did not all finish as {expected:?}: {statuses:?}")
-}
-
-fn session_job_output_text(entry: &SessionJobReadEntryView) -> String {
-    entry
-        .output_chunks
-        .iter()
-        .filter_map(|chunk| BASE64_STANDARD.decode(&chunk.data_base64).ok())
-        .filter_map(|bytes| String::from_utf8(bytes).ok())
-        .collect::<Vec<_>>()
-        .join("")
 }
 
 fn job_status_debug(entries: &[SessionJobReadEntryView]) -> Vec<String> {
@@ -1172,7 +1108,6 @@ async fn run_fake_provider_client(
         })
         .await?;
     assert!(registered.result.provider.capabilities.create_target);
-    assert!(registered.result.provider.capabilities.attach_target);
     assert_eq!(
         registered.result.provider.implementation.name,
         "fake-host-provider"
@@ -1183,19 +1118,23 @@ async fn run_fake_provider_client(
         .heartbeat_environment_provider(EnvironmentProviderHeartbeatParams {
             provider_id: provider_id.clone(),
             lease_ttl_ms: None,
-            observed_targets: Vec::new(),
+            observed_targets: vec![target_descriptor(provider.endpoint(), ATTACH_TARGET_ID)],
         })
         .await?;
-    assert_eq!(heartbeat.result.targets.len(), 1);
-    assert_eq!(heartbeat.result.targets[0].target_id, ATTACH_TARGET_ID);
-    assert_eq!(provider.list_targets_count(), 1);
+    assert_eq!(heartbeat.result.environments.len(), 1);
+    assert_eq!(
+        heartbeat.result.environments[0].provider_target_id,
+        ATTACH_TARGET_ID
+    );
+    let attach_instance_id = heartbeat.result.environments[0].instance_id.clone();
 
     api.start_session(SessionStartParams {
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
-        config: Some(SessionConfigInput {
+        config: Some(SessionConfig {
             model: Some(api_projection::model_to_api(&model)),
-            ..SessionConfigInput::default()
+            features: Some(env_live_features()),
+            ..SessionConfig::default()
         }),
         profile: None,
     })
@@ -1205,15 +1144,14 @@ async fn run_fake_provider_client(
         .attach_session_environment(SessionEnvironmentAttachParams {
             session_id: session_id.as_str().to_owned(),
             env_id: Some("bridge-env".to_owned()),
-            provider_id: provider_id.clone(),
-            request: HostTargetAttachRequestView::Target {
-                target_id: ATTACH_TARGET_ID.to_owned(),
-            },
+            instance_id: attach_instance_id,
+            cwd: None,
+            fs_routes: Vec::new(),
             activate: true,
         })
         .await?;
     assert_eq!(attached.result.active_env_id.as_deref(), Some("bridge-env"));
-    assert_eq!(provider.attach_count(), 1);
+    assert_eq!(provider.attach_count(), 0);
 
     let first = api
         .start_run(RunStartParams {
@@ -1239,11 +1177,9 @@ async fn run_fake_provider_client(
     };
     assert!(first_text.contains(PROCESS_STDOUT));
 
-    api.close_session_environment(SessionEnvironmentCloseParams {
+    api.detach_session_environment(SessionEnvironmentDetachParams {
         session_id: session_id.as_str().to_owned(),
         env_id: "bridge-env".to_owned(),
-        force: false,
-        close_target: Some(false),
     })
     .await?;
     assert_eq!(
@@ -1253,9 +1189,7 @@ async fn run_fake_provider_client(
     );
 
     let created = api
-        .create_session_environment(SessionEnvironmentCreateParams {
-            session_id: session_id.as_str().to_owned(),
-            env_id: Some("sandbox-env".to_owned()),
+        .create_environment(EnvironmentCreateParams {
             provider_id: provider_id.clone(),
             request: HostTargetCreateRequestView::Sandbox {
                 spec: SandboxTargetSpecView {
@@ -1264,6 +1198,16 @@ async fn run_fake_provider_client(
                     ..SandboxTargetSpecView::default()
                 },
             },
+        })
+        .await?;
+    let created_instance_id = created.result.environment.instance_id.clone();
+    let created = api
+        .attach_session_environment(SessionEnvironmentAttachParams {
+            session_id: session_id.as_str().to_owned(),
+            env_id: Some("sandbox-env".to_owned()),
+            instance_id: created_instance_id.clone(),
+            cwd: None,
+            fs_routes: Vec::new(),
             activate: true,
         })
         .await?;
@@ -1294,11 +1238,13 @@ async fn run_fake_provider_client(
     };
     assert!(second_text.contains(PROCESS_STDOUT));
 
-    api.close_session_environment(SessionEnvironmentCloseParams {
+    api.detach_session_environment(SessionEnvironmentDetachParams {
         session_id: session_id.as_str().to_owned(),
         env_id: "sandbox-env".to_owned(),
-        force: false,
-        close_target: None,
+    })
+    .await?;
+    api.close_environment(EnvironmentCloseParams {
+        instance_id: created_instance_id,
     })
     .await?;
     assert_eq!(provider.close_count(), 1);
@@ -1353,12 +1299,14 @@ async fn run_profile_environment_client(
     })
     .await?;
 
-    api.heartbeat_environment_provider(EnvironmentProviderHeartbeatParams {
-        provider_id: provider_id.clone(),
-        lease_ttl_ms: None,
-        observed_targets: Vec::new(),
-    })
-    .await?;
+    let heartbeat = api
+        .heartbeat_environment_provider(EnvironmentProviderHeartbeatParams {
+            provider_id: provider_id.clone(),
+            lease_ttl_ms: None,
+            observed_targets: vec![target_descriptor(provider.endpoint(), ATTACH_TARGET_ID)],
+        })
+        .await?;
+    let instance_id = heartbeat.result.environments[0].instance_id.clone();
 
     api.create_profile(ProfileCreateParams {
         profile: AgentProfileInput {
@@ -1366,17 +1314,16 @@ async fn run_profile_environment_client(
             display_name: Some("Profile environment".to_owned()),
             description: Some("Attach fake host provider target".to_owned()),
             document: ProfileDocument {
-                config: Some(SessionConfigInput {
+                config: Some(SessionConfig {
                     model: Some(api_projection::model_to_api(&model)),
-                    ..SessionConfigInput::default()
+                    features: Some(env_live_features()),
+                    ..SessionConfig::default()
                 }),
                 instructions: None,
                 mounts: Vec::new(),
-                mcp: Vec::new(),
                 environments: vec![ProfileEnvironment {
                     env_id: "profile-env".to_owned(),
-                    provider_id: provider_id.clone(),
-                    target_id: ATTACH_TARGET_ID.to_owned(),
+                    environment: ProfileEnvironmentSource::Existing { instance_id },
                     activate: true,
                 }],
             },
@@ -1395,7 +1342,7 @@ async fn run_profile_environment_client(
         })
         .await?;
     assert_eq!(started.result.session.id, session_id.as_str());
-    assert_eq!(provider.attach_count(), 1);
+    assert_eq!(provider.attach_count(), 0);
 
     let environments = api
         .list_session_environments(SessionEnvironmentListParams {
@@ -1431,11 +1378,9 @@ async fn run_profile_environment_client(
     };
     assert!(text.contains(PROCESS_STDOUT));
 
-    api.close_session_environment(SessionEnvironmentCloseParams {
+    api.detach_session_environment(SessionEnvironmentDetachParams {
         session_id: session_id.as_str().to_owned(),
         env_id: "profile-env".to_owned(),
-        force: false,
-        close_target: Some(false),
     })
     .await?;
     api.delete_profile(ProfileDeleteParams { profile_id })
@@ -1819,12 +1764,12 @@ impl BridgeJobsLlm {
         request: &LlmGenerationRequest,
     ) -> Result<LlmGenerationResult, CoreAgentIoError> {
         self.require_tool(request, "job_list")?;
-        let handle = self.job_handle_from_results(request).await?;
+        let _handle = self.job_handle_from_results(request).await?;
         self.tool_call_result(
             request,
             "job_list",
             json!({
-                "session_id": handle.session_id,
+                "session_id": request.session_id.as_str(),
                 "limit": 10
             }),
             "bridge_job_list",
@@ -2034,8 +1979,7 @@ impl CoreAgentLlm for BridgeJobsLlm {
 }
 
 struct BridgeJobHandle {
-    session_id: String,
-    env_id: String,
+    instance_id: String,
     job_id: String,
 }
 
@@ -2043,24 +1987,20 @@ impl BridgeJobHandle {
     fn parse(line: &str) -> Option<Self> {
         let (handle, _) = line.split_once(':')?;
         let mut parts = handle.trim().split('/');
-        let session_id = parts.next()?.to_owned();
-        let env_id = parts.next()?.to_owned();
+        let instance_id = parts.next()?.to_owned();
         let job_id = parts.next()?.to_owned();
-        if parts.next().is_some() || session_id.is_empty() || env_id.is_empty() || job_id.is_empty()
-        {
+        if parts.next().is_some() || instance_id.is_empty() || job_id.is_empty() {
             return None;
         }
         Some(Self {
-            session_id,
-            env_id,
+            instance_id,
             job_id,
         })
     }
 
     fn json_arg(&self) -> Value {
         json!({
-            "session_id": self.session_id,
-            "env_id": self.env_id,
+            "instance_id": self.instance_id,
             "job_id": self.job_id
         })
     }
@@ -2140,6 +2080,22 @@ impl Drop for SpawnedBridge {
     }
 }
 
+fn env_live_features() -> api::FeaturesConfig {
+    api::FeaturesConfig {
+        environments: Some(api::EnvironmentsFeature {
+            version: api::CURRENT_FEATURE_VERSION,
+            providers: None,
+        }),
+        vfs: Some(api::VfsFeature {
+            version: api::CURRENT_FEATURE_VERSION,
+            tools: Some(api::VfsToolSurface::Edit),
+            prompts: Some(api::VfsPromptsConfig::default()),
+            skills: Some(api::VfsSkillsConfig::default()),
+        }),
+        ..api::FeaturesConfig::default()
+    }
+}
+
 async fn wait_for_bridge_attach(
     api: &GatewayAgentApi,
     session_id: &engine::SessionId,
@@ -2155,14 +2111,31 @@ async fn wait_for_bridge_attach(
                 last_error.unwrap_or_else(|| "none".to_owned())
             );
         }
+        let instance = api
+            .list_environments(EnvironmentListParams {
+                provider_id: Some(provider_id.to_owned()),
+                status: Some(EnvironmentTargetStatusView::Ready),
+            })
+            .await
+            .ok()
+            .and_then(|response| {
+                response
+                    .result
+                    .environments
+                    .into_iter()
+                    .find(|instance| instance.provider_target_id == "local")
+            });
+        let Some(instance) = instance else {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            continue;
+        };
         match api
             .attach_session_environment(SessionEnvironmentAttachParams {
                 session_id: session_id.as_str().to_owned(),
                 env_id: Some(env_id.to_owned()),
-                provider_id: provider_id.to_owned(),
-                request: HostTargetAttachRequestView::Target {
-                    target_id: "local".to_owned(),
-                },
+                instance_id: instance.instance_id,
+                cwd: None,
+                fs_routes: Vec::new(),
                 activate: true,
             })
             .await
@@ -2245,10 +2218,6 @@ impl FakeHostProvider {
         self.state
             .controller_initialize_count
             .load(Ordering::SeqCst)
-    }
-
-    fn list_targets_count(&self) -> usize {
-        self.state.list_targets_count.load(Ordering::SeqCst)
     }
 
     fn attach_count(&self) -> usize {
@@ -2473,6 +2442,49 @@ fn target_summary(target_id: &str) -> HostTargetSummary {
     }
 }
 
+fn target_descriptor(endpoint: &str, target_id: &str) -> EnvironmentTargetDescriptorView {
+    EnvironmentTargetDescriptorView {
+        target: EnvironmentTargetSummaryView {
+            target_id: target_id.to_owned(),
+            status: EnvironmentTargetStatusView::Ready,
+            scope: HostScopeView::Default,
+            capabilities: host_capabilities_view(),
+            display_name: Some(target_id.to_owned()),
+            default_cwd: Some("/workspace".to_owned()),
+            metadata: BTreeMap::new(),
+        },
+        connection: HostConnectionView {
+            target_id: target_id.to_owned(),
+            endpoint: endpoint.to_owned(),
+            transport: HostTransportView::WebSocket,
+            scope: HostScopeView::Default,
+            default_cwd: Some("/workspace".to_owned()),
+            capabilities: host_capabilities_view(),
+        },
+    }
+}
+
+fn host_capabilities_view() -> HostCapabilitiesView {
+    HostCapabilitiesView {
+        filesystem_read: true,
+        filesystem_write: true,
+        process_start: true,
+        process_stdin: true,
+        process_terminate: true,
+        process_output_polling: true,
+        process_output_notifications: false,
+        process_pty: false,
+        job_start: true,
+        job_list: true,
+        job_read: true,
+        job_cancel: true,
+        job_wait_hint: false,
+        job_dependencies: true,
+        job_queue_keys: true,
+        network: true,
+    }
+}
+
 fn connection_spec(endpoint: &str, target_id: &str) -> HostConnectionSpec {
     HostConnectionSpec {
         target_id: HostTargetId::new(target_id),
@@ -2501,5 +2513,6 @@ fn host_capabilities() -> HostCapabilities {
         job_wait_hint: false,
         job_dependencies: true,
         job_queue_keys: true,
+        network: true,
     }
 }

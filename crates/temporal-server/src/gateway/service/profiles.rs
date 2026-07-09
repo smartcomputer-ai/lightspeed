@@ -1,5 +1,6 @@
+use super::api_config::engine_session_config_from_api;
 use super::*;
-use ::profiles::{ProfileError, ProfileSourceExt, ProfileStore, UpdateAgentProfile};
+use ::profiles::{ProfileError, ProfileSourceExt, ProfileStore};
 
 const PROFILE_INSTRUCTIONS_CONTEXT_KEY: &str = "instructions.050.profile";
 
@@ -56,39 +57,6 @@ impl GatewayAgentApi {
             .await
             .map_err(map_profile_error)?;
         Ok(ProfilePutResponse { profile })
-    }
-
-    pub(super) async fn update_profile_record(
-        &self,
-        params: ProfileUpdateParams,
-    ) -> Result<ProfileUpdateResponse, AgentApiError> {
-        if params.patch.is_empty() {
-            let profile = self
-                .store
-                .read_agent_profile(&params.profile_id)
-                .await
-                .map_err(map_profile_error)?;
-            if let Some(expected) = params.expected_revision
-                && profile.revision != expected
-            {
-                return Err(AgentApiError::conflict(format!(
-                    "expected profile revision {expected}, got {}",
-                    profile.revision
-                )));
-            }
-            return Ok(ProfileUpdateResponse { profile });
-        }
-        let profile = self
-            .store
-            .update_agent_profile(UpdateAgentProfile {
-                profile_id: params.profile_id,
-                expected_revision: params.expected_revision,
-                patch: params.patch,
-                updated_at_ms: now_ms()?,
-            })
-            .await
-            .map_err(map_profile_error)?;
-        Ok(ProfileUpdateResponse { profile })
     }
 
     pub(super) async fn delete_profile_record(
@@ -178,20 +146,9 @@ impl GatewayAgentApi {
             }
         }
 
-        if !document.mcp.is_empty() {
+        if expected_tools_revision.is_some() {
             self.assert_tools_revision(session_id, expected_tools_revision)
                 .await?;
-        } else if expected_tools_revision.is_some() {
-            self.assert_tools_revision(session_id, expected_tools_revision)
-                .await?;
-        }
-        for link in &document.mcp {
-            if self
-                .apply_profile_mcp_link(session_id, link.clone())
-                .await?
-            {
-                applied.mcp_changed = applied.mcp_changed.saturating_add(1);
-            }
         }
 
         for environment in &document.environments {
@@ -209,22 +166,21 @@ impl GatewayAgentApi {
 
     pub(super) fn merge_profile_start_config(
         &self,
-        profile_config: Option<SessionConfigInput>,
-        explicit_config: Option<SessionConfigInput>,
-    ) -> Option<SessionConfigInput> {
+        profile_config: Option<api::SessionConfig>,
+        explicit_config: Option<api::SessionConfig>,
+    ) -> Option<api::SessionConfig> {
         let Some(profile_config) = profile_config else {
             return explicit_config;
         };
         let Some(explicit_config) = explicit_config else {
             return Some(profile_config);
         };
-        Some(SessionConfigInput {
+        Some(api::SessionConfig {
             model: explicit_config.model.or(profile_config.model),
             generation: explicit_config.generation.or(profile_config.generation),
+            limits: explicit_config.limits.or(profile_config.limits),
             context: explicit_config.context.or(profile_config.context),
-            run_defaults: explicit_config.run_defaults.or(profile_config.run_defaults),
-            tools: explicit_config.tools.or(profile_config.tools),
-            fleet: explicit_config.fleet.or(profile_config.fleet),
+            features: explicit_config.features.or(profile_config.features),
         })
     }
 
@@ -267,7 +223,7 @@ impl GatewayAgentApi {
     async fn apply_profile_config(
         &self,
         session_id: &SessionId,
-        config: SessionConfigInput,
+        config: api::SessionConfig,
         expected_revision: Option<u64>,
     ) -> Result<bool, AgentApiError> {
         let loaded = self.load_session_state(session_id).await?;
@@ -283,19 +239,20 @@ impl GatewayAgentApi {
                 )));
             }
         }
-        let mut candidate = current.clone();
-        self.apply_session_config_input(&mut candidate, Some(config.clone()))
-            .await?;
+        // Apply means "make the session's config the profile's config":
+        // full-document put semantics, sections absent from the profile
+        // revert to defaults.
+        let candidate = engine_session_config_from_api(config.clone(), self.default_model.clone())?;
         candidate
-            .validate_provider_compatibility()
+            .validate()
             .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
         if &candidate == current {
             return Ok(false);
         }
-        self.update_session(SessionUpdateParams {
+        self.put_session_config(SessionConfigPutParams {
             session_id: session_id.as_str().to_owned(),
             expected_config_revision: Some(loaded.state.lifecycle.config_revision),
-            patch: session_config_patch_from_input(config),
+            config,
         })
         .await?;
         Ok(true)
@@ -405,56 +362,6 @@ impl GatewayAgentApi {
         Ok(true)
     }
 
-    async fn apply_profile_mcp_link(
-        &self,
-        session_id: &SessionId,
-        link: api::ProfileMcpLink,
-    ) -> Result<bool, AgentApiError> {
-        let params = SessionMcpLinkParams {
-            session_id: session_id.as_str().to_owned(),
-            server_id: link.server_id,
-            tool_id: link.tool_id,
-            server_label: link.server_label,
-            allowed_tools: link.allowed_tools,
-            approval: link.approval,
-            defer_loading: link.defer_loading,
-            auth_grant_id: link.auth_grant_id,
-        };
-        let server_id = parse_mcp_server_id(params.server_id.clone())?;
-        let server = self
-            .store
-            .read_server(&server_id)
-            .await
-            .map_err(map_mcp_error)?;
-        let grant = match params.auth_grant_id.clone() {
-            Some(grant_id) => {
-                let grant_id = parse_auth_grant_id(grant_id)?;
-                Some(
-                    self.store
-                        .read_grant(&grant_id)
-                        .await
-                        .map_err(map_auth_error)?,
-                )
-            }
-            None => None,
-        };
-        let draft = session_mcp_link_from_record(params.clone(), &server, grant.as_ref())?;
-        let tool_name = draft.tool_name.clone();
-        let desired = engine::ToolSpec {
-            name: tool_name.clone(),
-            kind: engine::ToolKind::RemoteMcp(draft.spec),
-            parallelism: engine::ToolParallelism::ParallelSafe,
-            target_requirement: engine::ToolTargetRequirement::None,
-        };
-        let loaded = self.load_session_state(session_id).await?;
-        self.require_open_idle_session(session_id, &loaded, "profile MCP apply")?;
-        if loaded.state.tooling.tools.get(&tool_name) == Some(&desired) {
-            return Ok(false);
-        }
-        self.link_session_mcp(params).await?;
-        Ok(true)
-    }
-
     async fn apply_profile_environment(
         &self,
         session_id: &SessionId,
@@ -493,13 +400,44 @@ impl GatewayAgentApi {
             }
             return Ok(false);
         }
+        let instance_id = match environment.environment {
+            api::ProfileEnvironmentSource::Existing { instance_id } => instance_id,
+            api::ProfileEnvironmentSource::Provision {
+                provider_id,
+                request,
+            } => {
+                let allowed = loaded
+                    .state
+                    .lifecycle
+                    .config
+                    .as_ref()
+                    .and_then(|config| config.features.environments.as_ref())
+                    .is_some_and(|feature| {
+                        feature.providers.as_ref().is_none_or(|providers| {
+                            providers.iter().any(|candidate| candidate == &provider_id)
+                        })
+                    });
+                if !allowed {
+                    return Err(AgentApiError::rejected(format!(
+                        "environment provider is not allowed by session config: {provider_id}"
+                    )));
+                }
+                self.create_environment(EnvironmentCreateParams {
+                    provider_id,
+                    request,
+                })
+                .await?
+                .result
+                .environment
+                .instance_id
+            }
+        };
         self.attach_session_environment(SessionEnvironmentAttachParams {
             session_id: session_id.as_str().to_owned(),
             env_id: Some(environment.env_id),
-            provider_id: environment.provider_id,
-            request: HostTargetAttachRequestView::Target {
-                target_id: environment.target_id,
-            },
+            instance_id,
+            cwd: None,
+            fs_routes: Vec::new(),
             activate: environment.activate,
         })
         .await?;
@@ -524,35 +462,5 @@ pub(super) fn map_profile_error(error: ProfileError) -> AgentApiError {
         )),
         ProfileError::InvalidInput { message } => AgentApiError::invalid_request(message),
         ProfileError::Store { message } => AgentApiError::internal(message),
-    }
-}
-
-fn session_config_patch_from_input(input: SessionConfigInput) -> SessionConfigPatchInput {
-    SessionConfigPatchInput {
-        model: input.model,
-        generation: input.generation.map(|generation| GenerationConfigPatch {
-            max_output_tokens: generation.max_output_tokens.map(FieldPatch::Set),
-            reasoning_effort: generation.reasoning_effort,
-            tool_choice: generation.tool_choice.map(FieldPatch::Set),
-        }),
-        context: input.context.map(|context| ContextConfigPatchInput {
-            compaction: context.compaction.map(FieldPatch::Set),
-        }),
-        run_defaults: input.run_defaults.map(|run_defaults| RunDefaultsPatch {
-            max_turns: run_defaults.max_turns.map(FieldPatch::Set),
-            max_tool_rounds: run_defaults.max_tool_rounds.map(FieldPatch::Set),
-        }),
-        tools: input.tools.map(|tools| ToolConfigPatchInput {
-            web_search: tools.web_search.map(FieldPatch::Set),
-            web_fetch: tools.web_fetch.map(FieldPatch::Set),
-            filesystem: tools.filesystem.map(FieldPatch::Set),
-            messaging: tools.messaging.map(FieldPatch::Set),
-            fleet: tools.fleet.map(FieldPatch::Set),
-            timer: tools.timer.map(FieldPatch::Set),
-        }),
-        fleet: input.fleet.map(|fleet| FleetConfigPatchInput {
-            profiles: fleet.profiles.map(FieldPatch::Set),
-            spawn: fleet.spawn.map(FieldPatch::Set),
-        }),
     }
 }

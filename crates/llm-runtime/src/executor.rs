@@ -215,6 +215,8 @@ mod tests {
                 tools: Vec::new(),
                 tool_choice: None,
                 output_limit: None,
+                reasoning_effort: None,
+                parallel_tool_use: None,
                 provider_response_id: None,
                 compaction: None,
                 params: None,

@@ -3,10 +3,16 @@
   "displayName": "Example Workspace Prompts And Skills",
   "description": "Imports a local workspace containing conventional prompt and skill files.",
   "config": {
-    "tools": {
-      "filesystem": "edit",
-      "webFetch": true,
-      "webSearch": true
+    "features": {
+      "vfs": {
+        "tools": "edit",
+        "prompts": {},
+        "skills": {}
+      },
+      "web": {
+        "fetch": {},
+        "search": {}
+      }
     }
   },
   "instructions": {

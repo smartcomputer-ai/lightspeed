@@ -178,13 +178,11 @@ pub struct AgentProfileSummary {
 #[serde(rename_all = "camelCase")]
 pub struct ProfileDocument {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub config: Option<SessionConfigInput>,
+    pub config: Option<SessionConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instructions: Option<ProfileInstructions>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mounts: Vec<ProfileMount>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub mcp: Vec<ProfileMcpLink>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub environments: Vec<ProfileEnvironment>,
 }
@@ -210,30 +208,27 @@ pub struct ProfileMount {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct ProfileMcpLink {
-    pub server_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub server_label: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub allowed_tools: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub approval: Option<RemoteMcpApprovalPolicy>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub defer_loading: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auth_grant_id: Option<String>,
+pub struct ProfileEnvironment {
+    pub env_id: EnvironmentId,
+    pub environment: ProfileEnvironmentSource,
+    #[serde(default)]
+    pub activate: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct ProfileEnvironment {
-    pub env_id: EnvironmentId,
-    pub provider_id: EnvironmentProviderId,
-    pub target_id: EnvironmentTargetId,
-    #[serde(default)]
-    pub activate: bool,
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ProfileEnvironmentSource {
+    Existing {
+        instance_id: EnvironmentInstanceId,
+    },
+    Provision {
+        provider_id: EnvironmentProviderId,
+        request: HostTargetCreateRequestView,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -250,37 +245,6 @@ pub enum ProfileSource {
     Inline {
         profile: InlineAgentProfile,
     },
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentProfileUpdatePatch {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub display_name: Option<FieldPatch<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<FieldPatch<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub config: Option<FieldPatch<SessionConfigInput>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub instructions: Option<FieldPatch<ProfileInstructions>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mounts: Option<Vec<ProfileMount>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mcp: Option<Vec<ProfileMcpLink>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub environments: Option<Vec<ProfileEnvironment>>,
-}
-
-impl AgentProfileUpdatePatch {
-    pub fn is_empty(&self) -> bool {
-        self.display_name.is_none()
-            && self.description.is_none()
-            && self.config.is_none()
-            && self.instructions.is_none()
-            && self.mounts.is_none()
-            && self.mcp.is_none()
-            && self.environments.is_none()
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -336,22 +300,6 @@ pub struct ProfilePutResponse {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct ProfileUpdateParams {
-    pub profile_id: ProfileId,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expected_revision: Option<u64>,
-    #[serde(default)]
-    pub patch: AgentProfileUpdatePatch,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct ProfileUpdateResponse {
-    pub profile: AgentProfile,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct ProfileDeleteParams {
     pub profile_id: ProfileId,
 }
@@ -387,6 +335,5 @@ pub struct ProfileApplySummary {
     pub config_changed: bool,
     pub instructions_changed: bool,
     pub mounts_changed: u32,
-    pub mcp_changed: u32,
     pub environments_changed: u32,
 }

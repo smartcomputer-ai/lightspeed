@@ -1,9 +1,6 @@
 use api::{AgentProfile, AgentProfileInput, AgentProfileSummary, ProfileId};
 use async_trait::async_trait;
-use profiles::{
-    AgentProfileExt, AgentProfileInputExt, AgentProfileUpdatePatchExt, ProfileError, ProfileStore,
-    UpdateAgentProfile,
-};
+use profiles::{AgentProfileExt, AgentProfileInputExt, ProfileError, ProfileStore};
 use sqlx::Row;
 
 use crate::PgStore;
@@ -178,37 +175,6 @@ impl ProfileStore for PgStore {
                 }
             }
         }
-    }
-
-    async fn update_agent_profile(
-        &self,
-        update: UpdateAgentProfile,
-    ) -> Result<AgentProfile, ProfileError> {
-        self.ensure_universe()
-            .await
-            .map_err(|error| profile_store_error("ensure universe", error))?;
-        let current = self.read_agent_profile(&update.profile_id).await?;
-        if let Some(expected) = update.expected_revision
-            && current.revision != expected
-        {
-            return Err(ProfileError::RevisionConflict {
-                profile_id: update.profile_id,
-                expected,
-                actual: current.revision,
-            });
-        }
-        let current_revision = current.revision;
-        let profile_id = update.profile_id.clone();
-        let updated = update.patch.apply_to(current, update.updated_at_ms)?;
-        let Some(profile) = self.cas_write_profile(&updated, current_revision).await? else {
-            let actual = self.read_agent_profile(&profile_id).await?.revision;
-            return Err(ProfileError::RevisionConflict {
-                profile_id,
-                expected: current_revision,
-                actual,
-            });
-        };
-        Ok(profile)
     }
 
     async fn delete_agent_profile(

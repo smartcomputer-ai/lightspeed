@@ -137,39 +137,6 @@ impl GatewayAgentApi {
         }
     }
 
-    pub(super) async fn wait_for_tool_revision(
-        &self,
-        session_id: &SessionId,
-        target_revision: u64,
-        baseline_failures: usize,
-    ) -> Result<SessionView, AgentApiError> {
-        let started = Instant::now();
-        loop {
-            if started.elapsed() > self.operation_timeout {
-                return Err(AgentApiError::internal(format!(
-                    "timed out waiting for agent tools update: {session_id}"
-                )));
-            }
-            if let Some(status) = self.query_status_optional(session_id).await? {
-                if status.admission_failures.len() > baseline_failures {
-                    if let Some(failure) = status.admission_failures.last() {
-                        return Err(map_admission_failure_to_api_error(failure));
-                    }
-                }
-                if let Some(error) = status.last_error {
-                    return Err(AgentApiError::internal(format!(
-                        "agent workflow reported error: {error}"
-                    )));
-                }
-            }
-            let loaded = self.load_session_state(session_id).await?;
-            if loaded.state.tooling.revision >= target_revision {
-                return self.project_session_by_id(session_id).await;
-            }
-            tokio::time::sleep(self.poll_interval).await;
-        }
-    }
-
     /// Waits for exact context entries to commit; any per-entry admission
     /// failure is escalated to a call-level typed error. Built on the same
     /// wait loop as `session/context/append`.
@@ -403,76 +370,6 @@ impl GatewayAgentApi {
                 return self
                     .project_run_by_id(session_id, RunId::new(run.run_id), run.status)
                     .await;
-            }
-            if let Some(error) = status.last_error {
-                return Err(AgentApiError::internal(format!(
-                    "agent workflow reported error: {error}"
-                )));
-            }
-            tokio::time::sleep(self.poll_interval).await;
-        }
-    }
-
-    pub(super) async fn wait_for_message_accepted(
-        &self,
-        session_id: &SessionId,
-        submission_id: &SubmissionId,
-        baseline_failures: usize,
-        wait_for_admission_drain: bool,
-    ) -> Result<(), AgentApiError> {
-        let started = Instant::now();
-        loop {
-            if started.elapsed() > self.operation_timeout {
-                return Err(AgentApiError::internal(format!(
-                    "timed out waiting for agent message admission: {submission_id}"
-                )));
-            }
-            let Some(status) = self.query_status_optional(session_id).await? else {
-                tokio::time::sleep(self.poll_interval).await;
-                continue;
-            };
-            if let Some(failure) = status
-                .admission_failures
-                .iter()
-                .skip(baseline_failures)
-                .rev()
-                .find(|failure| failure.submission_id.as_ref() == Some(submission_id))
-            {
-                return Err(map_admission_failure_to_api_error(failure));
-            }
-            let can_return = !wait_for_admission_drain || status.pending_admissions == 0;
-            if can_return
-                && status
-                    .consumed_message_submissions
-                    .iter()
-                    .any(|consumed| &consumed.submission_id == submission_id)
-            {
-                return Ok(());
-            }
-            if can_return
-                && status
-                    .active_run
-                    .as_ref()
-                    .is_some_and(|run| run.submission_id.as_ref() == Some(submission_id))
-            {
-                return Ok(());
-            }
-            if can_return
-                && status
-                    .queued_runs
-                    .iter()
-                    .any(|run| run.submission_id.as_ref() == Some(submission_id))
-            {
-                return Ok(());
-            }
-            if can_return
-                && status
-                    .completed_runs
-                    .iter()
-                    .rev()
-                    .any(|run| run.submission_id.as_ref() == Some(submission_id))
-            {
-                return Ok(());
             }
             if let Some(error) = status.last_error {
                 return Err(AgentApiError::internal(format!(

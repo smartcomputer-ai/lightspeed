@@ -2,6 +2,7 @@
 
 ## Core
 - [x] [P91](p91-core-agent-structure-cleanup.md) — cleanup of CoreAgent structures: delete the SDK-era open-kernel layer, commit to a closed event vocabulary and core FSM
+- [x] [P95](p95-config-redesign.md) — config redesign: full-document puts with expected revisions, feature-oriented capability config (secure by default), feature versioning, derived toolset; removes patch semantics and the unused `session/messages/submit` RPC surface
 - [ ] optimize: we're rading all session events to get latest state, this will get expensve in the future
 
 ## Fleet (sub-agents)
@@ -22,6 +23,7 @@
 - [ ] incremental tool discovery support (at least OAI)
 
 ## Environmnets & Sandboxes
+- [ ] [P96](p96-environment-api.md) — environment API review: machines as universe resources vs session bindings, real presence leases, machine-keyed durable jobs, occupancy-checked teardown
 - [ ] Fix host-bridge fs routing doubled path: absolute guest paths get
       re-prefixed with the bridge root, so file-tool reads of shell-written
       absolute paths fail (`environment_provider_live` host-bridge agent

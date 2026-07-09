@@ -6,7 +6,7 @@ use engine::{
     ContextMessageRole, ContextSnapshot, LlmFinish, LlmGenerationRequest, LlmGenerationStatus,
     LlmRequest, ModelSelection, OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND,
     OPENAI_RESPONSES_WEB_SEARCH_CALL_PROVIDER_KIND, ProviderApiKind, ProviderParams, RunId,
-    SessionId, ToolChoice, ToolChoiceMode, TurnId,
+    SessionId, ToolChoice, TurnId,
     storage::{BlobStore, InMemoryBlobStore},
 };
 use llm_clients::openai::responses::{Client, Config};
@@ -208,6 +208,8 @@ async fn openai_responses_live_adapter_describes_image_input() {
             tools: Vec::new(),
             tool_choice: None,
             output_limit: Some(512),
+            reasoning_effort: None,
+            parallel_tool_use: None,
             provider_response_id: None,
             compaction: None,
             params: Some(openai_params(&OpenAiResponsesParams {
@@ -354,6 +356,8 @@ async fn openai_responses_live_adapter_reads_pdf_document_input() {
             tools: Vec::new(),
             tool_choice: None,
             output_limit: Some(512),
+            reasoning_effort: None,
+            parallel_tool_use: None,
             provider_response_id: None,
             compaction: None,
             params: Some(openai_params(&OpenAiResponsesParams {
@@ -442,6 +446,8 @@ async fn openai_responses_live_adapter_generates_result() {
             tools: Vec::new(),
             tool_choice: None,
             output_limit: Some(512),
+            reasoning_effort: None,
+            parallel_tool_use: None,
             provider_response_id: None,
             compaction: None,
             params: Some(openai_params(&OpenAiResponsesParams {
@@ -565,6 +571,8 @@ async fn openai_responses_live_adapter_captures_provider_triggered_compaction() 
             tools: Vec::new(),
             tool_choice: None,
             output_limit: Some(512),
+            reasoning_effort: None,
+            parallel_tool_use: None,
             provider_response_id: None,
             compaction: Some(CompactionPolicy::ProviderTriggered {
                 compact_threshold_tokens: Some(2000),
@@ -660,11 +668,10 @@ async fn openai_responses_live_adapter_captures_web_search_call() {
                 token_estimate: None,
             },
             tools: vec![bundle.spec],
-            tool_choice: Some(ToolChoice {
-                mode: ToolChoiceMode::RequiredAny,
-                disable_parallel_tool_use: None,
-            }),
+            tool_choice: Some(ToolChoice::RequiredAny),
             output_limit: Some(1024),
+            reasoning_effort: None,
+            parallel_tool_use: None,
             provider_response_id: None,
             compaction: None,
             params: Some(openai_params(&OpenAiResponsesParams {

@@ -9,14 +9,14 @@ use api::{
     EnvironmentProviderImplementationView, EnvironmentProviderKindView,
     EnvironmentProviderRegisterParams, EnvironmentProviderRegisterResponse,
     EnvironmentProviderUnregisterParams, EnvironmentProviderUnregisterResponse,
-    EnvironmentTargetStatusView, EnvironmentTargetSummaryView, HostCapabilitiesView,
-    HostControllerConnectionView, HostScopeView, HostTransportView, JsonRpcRequest,
-    JsonRpcResponse, METHOD_ENVIRONMENTS_PROVIDERS_HEARTBEAT,
+    EnvironmentTargetDescriptorView, EnvironmentTargetStatusView, EnvironmentTargetSummaryView,
+    HostCapabilitiesView, HostConnectionView, HostControllerConnectionView, HostScopeView,
+    HostTransportView, JsonRpcRequest, JsonRpcResponse, METHOD_ENVIRONMENTS_PROVIDERS_HEARTBEAT,
     METHOD_ENVIRONMENTS_PROVIDERS_REGISTER, METHOD_ENVIRONMENTS_PROVIDERS_UNREGISTER, RequestId,
 };
 use host_protocol::{
     control::targets::{HostTargetStatus, HostTargetSummary},
-    shared::{HostCapabilities, HostScope, HostTransport, ImplementationInfo},
+    shared::{HostCapabilities, HostConnectionSpec, HostScope, HostTransport, ImplementationInfo},
 };
 use serde::{Serialize, de::DeserializeOwned};
 
@@ -56,7 +56,6 @@ impl GatewayClient {
                 capabilities: EnvironmentProviderCapabilitiesView {
                     list_targets: true,
                     create_target: false,
-                    attach_target: true,
                     get_target: true,
                     close_target: true,
                 },
@@ -73,13 +72,17 @@ impl GatewayClient {
         &self,
         config: &BridgeConfig,
         target: HostTargetSummary,
+        connection: HostConnectionSpec,
     ) -> Result<AgentApiOutcome<EnvironmentProviderHeartbeatResponse>, AgentApiError> {
         self.request(
             METHOD_ENVIRONMENTS_PROVIDERS_HEARTBEAT,
             EnvironmentProviderHeartbeatParams {
                 provider_id: config.provider_id.clone(),
                 lease_ttl_ms: Some(config.lease_ttl_ms_i64()),
-                observed_targets: vec![target_summary_view(target)],
+                observed_targets: vec![EnvironmentTargetDescriptorView {
+                    target: target_summary_view(target),
+                    connection: connection_view(connection),
+                }],
             },
         )
         .await
@@ -137,6 +140,17 @@ impl GatewayClient {
             .ok_or_else(|| AgentApiError::internal("JSON-RPC response missing result"))?;
         serde_json::from_value::<AgentApiOutcome<R>>(value)
             .map_err(|error| AgentApiError::internal(format!("invalid API result: {error}")))
+    }
+}
+
+fn connection_view(value: HostConnectionSpec) -> HostConnectionView {
+    HostConnectionView {
+        target_id: value.target_id.0,
+        endpoint: value.endpoint,
+        transport: transport_view(value.transport),
+        scope: scope_view(value.scope),
+        default_cwd: value.default_cwd.map(|path| path.to_string()),
+        capabilities: capabilities_view(value.capabilities),
     }
 }
 
@@ -210,10 +224,10 @@ fn capabilities_view(value: HostCapabilities) -> HostCapabilitiesView {
         job_wait_hint: value.job_wait_hint,
         job_dependencies: value.job_dependencies,
         job_queue_keys: value.job_queue_keys,
+        network: value.network,
     }
 }
 
-#[allow(dead_code)]
 fn transport_view(value: HostTransport) -> HostTransportView {
     match value {
         HostTransport::WebSocket => HostTransportView::WebSocket,

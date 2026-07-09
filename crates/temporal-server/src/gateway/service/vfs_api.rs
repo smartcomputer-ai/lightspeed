@@ -214,6 +214,19 @@ impl GatewayAgentApi {
                 "vfs mounts can only change while no run is active or queued",
             ));
         }
+        // Resource verbs are authorized by config (P95 §5): mounts bind into
+        // the session VFS, which must be granted first.
+        if !loaded
+            .state
+            .lifecycle
+            .config
+            .as_ref()
+            .is_some_and(|config| config.features.vfs.is_some())
+        {
+            return Err(AgentApiError::rejected(
+                "mounting requires the vfs feature to be granted in the session config",
+            ));
+        }
 
         let record = VfsMountRecord {
             session_id: session_id.clone(),
@@ -361,8 +374,12 @@ impl GatewayAgentApi {
         let blobs: Arc<dyn BlobStore> = self.store.clone();
         store_tool_documents(blobs.as_ref(), &toolset.documents).await?;
 
-        let expected_standard_tools = toolset.tools.keys().cloned().collect::<BTreeSet<_>>();
-        let patch = standard_toolset_patch(&loaded.state.tooling.tools, toolset);
+        // Remote MCP tools are derived from the config's declared links,
+        // exactly like the standard toolset is derived from the features.
+        let desired_mcp = self.desired_mcp_tools(&session_config.features).await?;
+        let mut expected_tools = toolset.tools.keys().cloned().collect::<BTreeSet<_>>();
+        expected_tools.extend(desired_mcp.keys().cloned());
+        let patch = toolset_reconcile_patch(&loaded.state.tooling.tools, toolset, desired_mcp);
 
         let baseline_failures = self
             .query_status_optional(session_id)
@@ -398,7 +415,7 @@ impl GatewayAgentApi {
         }
         self.wait_for_session_toolset(
             session_id,
-            expected_standard_tools,
+            expected_tools,
             fs_tools_enabled,
             baseline_failures,
         )
@@ -408,7 +425,7 @@ impl GatewayAgentApi {
     pub(super) async fn wait_for_session_toolset(
         &self,
         session_id: &SessionId,
-        expected_standard_tools: BTreeSet<ToolName>,
+        expected_tools: BTreeSet<ToolName>,
         expect_fs_target: bool,
         baseline_failures: usize,
     ) -> Result<SessionView, AgentApiError> {
@@ -432,7 +449,13 @@ impl GatewayAgentApi {
                 }
             }
             let loaded = self.load_session_state(session_id).await?;
-            let actual_standard_tools = standard_tool_names(&loaded.state.tooling.tools);
+            let actual_tools = loaded
+                .state
+                .tooling
+                .tools
+                .keys()
+                .cloned()
+                .collect::<BTreeSet<_>>();
             let target = loaded
                 .state
                 .tooling
@@ -444,7 +467,7 @@ impl GatewayAgentApi {
             } else {
                 target.is_none()
             };
-            if actual_standard_tools == expected_standard_tools && target_ready {
+            if actual_tools == expected_tools && target_ready {
                 return self.project_session_by_id(session_id).await;
             }
             tokio::time::sleep(self.poll_interval).await;
@@ -452,37 +475,29 @@ impl GatewayAgentApi {
     }
 }
 
-pub(super) fn standard_toolset_patch(
+/// Level-triggered reconciliation: converge the installed tools to what the
+/// current config implies (standard toolset from features, remote MCP tools
+/// from declared links). Re-running against a converged state is a no-op.
+pub(super) fn toolset_reconcile_patch(
     active: &BTreeMap<ToolName, engine::ToolSpec>,
     toolset: ResolvedToolset,
+    desired_mcp: BTreeMap<ToolName, engine::ToolSpec>,
 ) -> engine::ToolPatch {
     let mut remove = Vec::new();
-    for (tool_name, tool) in active {
-        if matches!(tool.kind, engine::ToolKind::RemoteMcp(_)) {
-            continue;
-        }
-        if !toolset.tools.contains_key(tool_name) {
+    for tool_name in active.keys() {
+        if !toolset.tools.contains_key(tool_name) && !desired_mcp.contains_key(tool_name) {
             remove.push(tool_name.clone());
         }
     }
 
     let mut upsert = Vec::new();
-    for (tool_name, tool) in toolset.tools {
+    for (tool_name, tool) in toolset.tools.into_iter().chain(desired_mcp) {
         if active.get(&tool_name) != Some(&tool) {
             upsert.push(tool);
         }
     }
 
     engine::ToolPatch { upsert, remove }
-}
-
-fn standard_tool_names(active: &BTreeMap<ToolName, engine::ToolSpec>) -> BTreeSet<ToolName> {
-    active
-        .iter()
-        .filter_map(|(tool_name, tool)| {
-            (!matches!(tool.kind, engine::ToolKind::RemoteMcp(_))).then_some(tool_name.clone())
-        })
-        .collect()
 }
 
 pub(super) async fn commit_vfs_snapshot(

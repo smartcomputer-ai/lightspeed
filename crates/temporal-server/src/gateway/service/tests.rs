@@ -168,12 +168,19 @@ fn environment_view_maps_record_and_active_status() {
         "local",
         tools::environment::projection::EnvironmentStatus::Ready,
     );
+    let runtime = RuntimeEnvironment::new(
+        record,
+        tools::environment::EnvironmentToolContext::new(
+            None,
+            Arc::new(engine::storage::InMemoryBlobStore::new()),
+        ),
+    );
 
-    let view = super::environments::session_environment_view(&record, Some("local"));
+    let view = super::environments::session_environment_view(&runtime, Some("local"));
 
     assert_eq!(view.env_id, "local");
-    assert_eq!(view.kind, SessionEnvironmentKindView::AttachedHost);
-    assert_eq!(view.status, SessionEnvironmentStatusView::Ready);
+    assert_eq!(view.instance_id, "local");
+    assert_eq!(view.state, SessionEnvironmentStateView::Attached);
     assert!(view.capabilities.process_exec);
     assert_eq!(view.exec_target.expect("exec target").namespace, "env");
     assert_eq!(view.cwd.as_deref(), Some("/workspace"));
@@ -229,28 +236,23 @@ fn inactive_environment_cannot_be_activation_target() {
 }
 
 #[test]
-fn mcp_link_materializes_remote_tool_patch() {
+fn declared_mcp_link_materializes_remote_tool() {
     let tool_name = ToolName::new("mcp_crm");
-    let tools = BTreeMap::new();
+    let active = BTreeMap::new();
     let record = test_mcp_server_record("crm", mcp::McpServerStatus::Active);
-    let draft = session_mcp_link_from_record(
-        api::SessionMcpLinkParams {
-            session_id: "session_1".to_owned(),
-            server_id: "crm".to_owned(),
-            tool_id: Some(tool_name.as_str().to_owned()),
-            server_label: None,
-            allowed_tools: Some(vec!["lookup_customer".to_owned()]),
-            approval: Some(api::RemoteMcpApprovalPolicy::Never),
-            defer_loading: Some(true),
-            auth_grant_id: None,
-        },
-        &record,
-        None,
-    )
-    .expect("materialize MCP link draft");
+    let link = engine::McpServerLink {
+        server_id: "crm".to_owned(),
+        allowed_tools: Some(vec!["lookup_customer".to_owned()]),
+        approval: Some(engine::RemoteMcpApprovalPolicy::Never),
+        defer_loading: Some(true),
+        auth_grant_id: None,
+    };
 
-    let patch = apply_session_mcp_link(&tools, draft).expect("apply MCP link");
-    let tools = patch.apply_to(&tools).expect("apply MCP patch");
+    let tool = mcp_api::mcp_tool_from_config_link(&link, &record, None)
+        .expect("materialize MCP tool from config link");
+    let desired = BTreeMap::from([(tool.name.clone(), tool)]);
+    let patch = super::vfs_api::toolset_reconcile_patch(&active, empty_resolved_toolset(), desired);
+    let tools = patch.apply_to(&active).expect("apply MCP patch");
 
     let tool = tools.get(&tool_name).expect("MCP tool");
     let engine::ToolKind::RemoteMcp(spec) = &tool.kind else {
@@ -259,7 +261,7 @@ fn mcp_link_materializes_remote_tool_patch() {
     assert_eq!(spec.server_label, "crm");
     assert_eq!(spec.allowed_tools, Some(vec!["lookup_customer".to_owned()]));
     assert_eq!(spec.approval, engine::RemoteMcpApprovalPolicy::Never);
-    assert_eq!(linked_session_mcp(&tools)[0].tool_id, tool_name.as_str());
+    assert_eq!(spec.defer_loading, Some(true));
 }
 
 fn test_auth_grant_record(
@@ -288,12 +290,9 @@ fn test_auth_grant_record(
     .into_record()
 }
 
-fn mcp_link_params_with_grant(grant_id: &str) -> api::SessionMcpLinkParams {
-    api::SessionMcpLinkParams {
-        session_id: "session_1".to_owned(),
+fn mcp_config_link_with_grant(grant_id: &str) -> engine::McpServerLink {
+    engine::McpServerLink {
         server_id: "crm".to_owned(),
-        tool_id: Some("mcp_crm".to_owned()),
-        server_label: None,
         allowed_tools: None,
         approval: None,
         defer_loading: None,
@@ -312,15 +311,18 @@ fn mcp_link_with_grant_materializes_auth_ref_for_bearer_server() {
         Some("https://crm.example.com"),
     );
 
-    let draft = session_mcp_link_from_record(
-        mcp_link_params_with_grant("authgrant_1"),
+    let tool = mcp_api::mcp_tool_from_config_link(
+        &mcp_config_link_with_grant("authgrant_1"),
         &record,
         Some(&grant),
     )
-    .expect("materialize MCP link draft with grant");
+    .expect("materialize MCP tool with grant");
 
+    let engine::ToolKind::RemoteMcp(spec) = &tool.kind else {
+        panic!("expected remote MCP tool");
+    };
     assert_eq!(
-        draft.spec.auth_ref,
+        spec.auth_ref,
         Some(engine::SecretRef {
             namespace: "auth_grant".to_owned(),
             id: "authgrant_1".to_owned(),
@@ -339,8 +341,8 @@ fn mcp_link_rejects_revoked_grant() {
         None,
     );
 
-    let error = session_mcp_link_from_record(
-        mcp_link_params_with_grant("authgrant_1"),
+    let error = mcp_api::mcp_tool_from_config_link(
+        &mcp_config_link_with_grant("authgrant_1"),
         &record,
         Some(&grant),
     )
@@ -365,8 +367,8 @@ fn mcp_link_rejects_grant_kind_incompatible_with_auth_policy() {
         None,
     );
 
-    let error = session_mcp_link_from_record(
-        mcp_link_params_with_grant("authgrant_1"),
+    let error = mcp_api::mcp_tool_from_config_link(
+        &mcp_config_link_with_grant("authgrant_1"),
         &record,
         Some(&grant),
     )
@@ -386,8 +388,8 @@ fn mcp_link_rejects_grant_audience_that_does_not_cover_server() {
         Some("https://other.example.com"),
     );
 
-    let error = session_mcp_link_from_record(
-        mcp_link_params_with_grant("authgrant_1"),
+    let error = mcp_api::mcp_tool_from_config_link(
+        &mcp_config_link_with_grant("authgrant_1"),
         &record,
         Some(&grant),
     )
@@ -406,8 +408,8 @@ fn mcp_link_rejects_grant_for_no_auth_server() {
         None,
     );
 
-    let error = session_mcp_link_from_record(
-        mcp_link_params_with_grant("authgrant_1"),
+    let error = mcp_api::mcp_tool_from_config_link(
+        &mcp_config_link_with_grant("authgrant_1"),
         &record,
         Some(&grant),
     )
@@ -420,17 +422,17 @@ fn mcp_link_rejects_grant_for_no_auth_server() {
 fn mcp_link_requires_grant_for_required_auth_server() {
     let mut record = test_mcp_server_record("crm", mcp::McpServerStatus::Active);
     record.auth_policy = mcp::McpServerAuthPolicy::RequiredBearer;
-    let mut params = mcp_link_params_with_grant("authgrant_1");
-    params.auth_grant_id = None;
+    let mut link = mcp_config_link_with_grant("authgrant_1");
+    link.auth_grant_id = None;
 
-    let error = session_mcp_link_from_record(params, &record, None)
+    let error = mcp_api::mcp_tool_from_config_link(&link, &record, None)
         .expect_err("missing grant must be rejected for required auth");
 
     assert_eq!(error.kind, api::AgentApiErrorKind::Rejected);
 }
 
 #[test]
-fn standard_toolset_patch_preserves_remote_mcp_links() {
+fn toolset_reconcile_patch_preserves_declared_remote_mcp_tools() {
     let remote_tool_name = ToolName::new("mcp_crm");
     let old_tool_name = ToolName::new("old_tool");
     let new_tool_name = ToolName::new("new_tool");
@@ -453,9 +455,13 @@ fn standard_toolset_patch_preserves_remote_mcp_links() {
         catalog: tools::runtime::ToolCatalog::new(),
         provider_params_patch: tools::toolset::ProviderParamsPatch::default(),
     };
+    let desired_mcp = BTreeMap::from([(
+        remote_tool_name.clone(),
+        test_remote_mcp_tool(remote_tool_name.clone()),
+    )]);
 
-    let patch = super::vfs_api::standard_toolset_patch(&active, toolset);
-    let tools = patch.apply_to(&active).expect("apply standard tool patch");
+    let patch = super::vfs_api::toolset_reconcile_patch(&active, toolset, desired_mcp);
+    let tools = patch.apply_to(&active).expect("apply reconcile patch");
 
     assert!(tools.contains_key(&remote_tool_name));
     assert!(!tools.contains_key(&old_tool_name));
@@ -463,41 +469,18 @@ fn standard_toolset_patch_preserves_remote_mcp_links() {
 }
 
 #[test]
-fn session_tools_update_patch_accepts_remote_mcp_tool() {
-    let update = api::SessionToolsUpdateInput::Patch {
-        upsert: vec![api_remote_mcp_tool("mcp_crm", "crm")],
-        remove: Vec::new(),
-    };
+fn toolset_reconcile_patch_removes_undeclared_remote_mcp_tools() {
+    let remote_tool_name = ToolName::new("mcp_crm");
+    let active = BTreeMap::from([(
+        remote_tool_name.clone(),
+        test_remote_mcp_tool(remote_tool_name.clone()),
+    )]);
 
-    let tools_api::CoreToolUpdate::Patch(patch) =
-        tools_api::core_tool_update_from_api(update).expect("convert tool update")
-    else {
-        panic!("expected tool patch");
-    };
-    patch
-        .validate_for(&BTreeMap::new())
-        .expect("validate tool patch");
+    let patch =
+        super::vfs_api::toolset_reconcile_patch(&active, empty_resolved_toolset(), BTreeMap::new());
+    let tools = patch.apply_to(&active).expect("apply reconcile patch");
 
-    assert_eq!(patch.upsert.len(), 1);
-    assert_eq!(patch.upsert[0].name, ToolName::new("mcp_crm"));
-    let engine::ToolKind::RemoteMcp(remote_mcp) = &patch.upsert[0].kind else {
-        panic!("expected remote MCP tool");
-    };
-    assert_eq!(remote_mcp.server_label, "crm");
-}
-
-#[test]
-fn session_tools_update_replace_rejects_duplicate_tool_ids() {
-    let update = api::SessionToolsUpdateInput::Replace {
-        tools: vec![
-            api_remote_mcp_tool("mcp_crm", "crm"),
-            api_remote_mcp_tool("mcp_crm", "crm_alt"),
-        ],
-    };
-
-    let error = tools_api::core_tool_update_from_api(update).expect_err("duplicate tool id");
-
-    assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
+    assert!(!tools.contains_key(&remote_tool_name));
 }
 
 #[test]
@@ -592,67 +575,84 @@ async fn read_skill_doc_for_activation_rejects_host_locations() {
 
 #[test]
 fn session_start_config_maps_reasoning_and_max_output_tokens() {
-    let mut config = default_session_config(openai_model());
-
-    apply_generation_config(
-        &mut config,
-        Some(GenerationConfig {
-            max_output_tokens: Some(2048),
-            reasoning_effort: Some(ReasoningEffort::High),
-            tool_choice: None,
-        }),
+    let config = engine_session_config_from_api(
+        api::SessionConfig {
+            generation: Some(api::GenerationConfig {
+                max_output_tokens: Some(2048),
+                reasoning_effort: Some("high".to_owned()),
+                tool_choice: None,
+                parallel_tool_use: None,
+            }),
+            ..api::SessionConfig::default()
+        },
+        openai_model(),
     )
-    .expect("apply config");
+    .expect("map config");
 
-    assert_eq!(config.turn.max_output_tokens, Some(2048));
-    let params = config.turn.provider_params.expect("provider params");
-    assert_eq!(params.api_kind, engine::ProviderApiKind::OpenAiResponses);
-    assert_eq!(params.body["reasoning"]["effort"], "high");
-    assert_eq!(params.body["reasoning"]["summary"], "auto");
+    assert_eq!(config.generation.max_output_tokens, Some(2048));
+    assert_eq!(config.generation.reasoning_effort.as_deref(), Some("high"));
 }
 
 #[test]
-fn session_start_config_maps_tool_choice() {
-    let mut config = default_session_config(openai_model());
-
-    apply_generation_config(
-        &mut config,
-        Some(GenerationConfig {
-            max_output_tokens: None,
-            reasoning_effort: None,
-            tool_choice: Some(ToolChoiceConfig {
-                mode: ToolChoiceModeConfig::Specific {
-                    tool_id: "web_fetch".to_owned(),
-                },
-                disable_parallel_tool_use: Some(true),
+fn session_start_config_rejects_unknown_reasoning_effort() {
+    let error = engine_session_config_from_api(
+        api::SessionConfig {
+            generation: Some(api::GenerationConfig {
+                max_output_tokens: None,
+                reasoning_effort: Some("hyper".to_owned()),
+                tool_choice: None,
+                parallel_tool_use: None,
             }),
-        }),
+            ..api::SessionConfig::default()
+        },
+        openai_model(),
     )
-    .expect("apply config");
+    .expect_err("unknown reasoning effort must be rejected");
 
-    let tool_choice = config.turn.tool_choice.expect("tool choice");
-    assert_eq!(tool_choice.disable_parallel_tool_use, Some(true));
+    assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
+}
+
+#[test]
+fn session_start_config_maps_tool_choice_and_parallel_tool_use() {
+    let config = engine_session_config_from_api(
+        api::SessionConfig {
+            generation: Some(api::GenerationConfig {
+                max_output_tokens: None,
+                reasoning_effort: None,
+                tool_choice: Some(api::ToolChoice::Specific {
+                    tool_id: "web_fetch".to_owned(),
+                }),
+                parallel_tool_use: Some(false),
+            }),
+            ..api::SessionConfig::default()
+        },
+        openai_model(),
+    )
+    .expect("map config");
+
     assert_eq!(
-        tool_choice.mode,
-        engine::ToolChoiceMode::Specific {
+        config.generation.tool_choice,
+        Some(engine::ToolChoice::Specific {
             tool_name: ToolName::new("web_fetch")
-        }
+        })
     );
+    assert_eq!(config.generation.parallel_tool_use, Some(false));
 }
 
 #[test]
 fn session_start_config_maps_provider_triggered_compaction() {
-    let mut config = default_session_config(openai_model());
-
-    apply_context_config(
-        &mut config.context,
-        Some(ApiContextConfigInput {
-            compaction: Some(CompactionPolicyInput::ProviderTriggered {
-                compact_threshold_tokens: Some(120_000),
+    let config = engine_session_config_from_api(
+        api::SessionConfig {
+            context: Some(api::ContextConfig {
+                compaction: Some(api::CompactionPolicy::ProviderTriggered {
+                    compact_threshold_tokens: Some(120_000),
+                }),
             }),
-            ..ApiContextConfigInput::default()
-        }),
-    );
+            ..api::SessionConfig::default()
+        },
+        openai_model(),
+    )
+    .expect("map config");
 
     assert_eq!(
         config.context.compaction,
@@ -664,18 +664,19 @@ fn session_start_config_maps_provider_triggered_compaction() {
 
 #[test]
 fn session_start_config_maps_provider_standalone_compaction() {
-    let mut config = default_session_config(openai_model());
-
-    apply_context_config(
-        &mut config.context,
-        Some(ApiContextConfigInput {
-            compaction: Some(CompactionPolicyInput::ProviderStandalone {
-                compact_threshold_tokens: Some(120_000),
-                target_tokens: Some(80_000),
+    let config = engine_session_config_from_api(
+        api::SessionConfig {
+            context: Some(api::ContextConfig {
+                compaction: Some(api::CompactionPolicy::ProviderStandalone {
+                    compact_threshold_tokens: Some(120_000),
+                    target_tokens: Some(80_000),
+                }),
             }),
-            ..ApiContextConfigInput::default()
-        }),
-    );
+            ..api::SessionConfig::default()
+        },
+        openai_model(),
+    )
+    .expect("map config");
 
     assert_eq!(
         config.context.compaction,
@@ -688,7 +689,9 @@ fn session_start_config_maps_provider_standalone_compaction() {
 
 #[test]
 fn run_start_config_maps_model_and_generation_overrides() {
-    let session_config = default_session_config(openai_model());
+    let session_config =
+        engine_session_config_from_api(api::SessionConfig::default(), openai_model())
+            .expect("session config");
     let mut run_config = RunConfig::default();
 
     apply_run_start_config(
@@ -700,10 +703,11 @@ fn run_start_config_maps_model_and_generation_overrides() {
                 api_kind: "openai:responses".to_owned(),
                 model: "gpt-5.5-mini".to_owned(),
             }),
-            generation: Some(GenerationConfig {
+            generation: Some(api::GenerationConfig {
                 max_output_tokens: Some(1024),
-                reasoning_effort: Some(ReasoningEffort::Medium),
+                reasoning_effort: Some("medium".to_owned()),
                 tool_choice: None,
+                parallel_tool_use: None,
             }),
             limits: None,
         }),
@@ -718,29 +722,27 @@ fn run_start_config_maps_model_and_generation_overrides() {
         Some("gpt-5.5-mini")
     );
     assert_eq!(run_config.max_output_tokens, Some(1024));
-    let params = run_config.provider_params.expect("provider params");
-    assert_eq!(params.api_kind, engine::ProviderApiKind::OpenAiResponses);
-    assert_eq!(params.body["reasoning"]["effort"], "medium");
+    assert_eq!(run_config.reasoning_effort.as_deref(), Some("medium"));
     assert!(run_config.tool_choice.is_none());
 }
 
 #[test]
 fn run_start_config_maps_tool_choice() {
-    let session_config = default_session_config(openai_model());
-    let mut run_config = session_config.run.clone();
+    let session_config =
+        engine_session_config_from_api(api::SessionConfig::default(), openai_model())
+            .expect("session config");
+    let mut run_config = RunConfig::default();
 
     apply_run_start_config(
         &mut run_config,
         &session_config,
         Some(RunStartConfig {
             model: None,
-            generation: Some(GenerationConfig {
+            generation: Some(api::GenerationConfig {
                 max_output_tokens: None,
                 reasoning_effort: None,
-                tool_choice: Some(ToolChoiceConfig {
-                    mode: ToolChoiceModeConfig::RequiredAny,
-                    disable_parallel_tool_use: None,
-                }),
+                tool_choice: Some(api::ToolChoice::RequiredAny),
+                parallel_tool_use: None,
             }),
             limits: None,
         }),
@@ -748,8 +750,8 @@ fn run_start_config_maps_tool_choice() {
     .expect("apply run config");
 
     assert_eq!(
-        run_config.tool_choice.expect("tool choice").mode,
-        engine::ToolChoiceMode::RequiredAny
+        run_config.tool_choice.expect("tool choice"),
+        engine::ToolChoice::RequiredAny
     );
 }
 
@@ -794,72 +796,71 @@ fn existing_run_submission_rejects_completed_duplicate_with_different_input() {
 }
 
 #[test]
-fn web_search_defaults_on_for_openai_responses_sessions() {
-    let config = default_session_config(openai_model());
+fn features_default_off_for_sessions() {
+    // Secure by default: an empty config document grants nothing — no web
+    // tools, no filesystem tools, no messaging/fleet/timers.
+    let config = engine_session_config_from_api(api::SessionConfig::default(), openai_model())
+        .expect("map config");
 
-    assert!(effective_web_search_enabled(&config));
+    assert_eq!(config.features, engine::FeaturesConfig::default());
+    assert!(config.features.web.is_none());
+    assert!(config.features.vfs.is_none());
 }
 
 #[test]
-fn web_search_can_be_disabled_in_session_tools_config() {
-    let mut config = default_session_config(openai_model());
-    apply_tool_config(
-        &mut config.tools,
-        Some(ToolConfigInput {
-            web_search: Some(false),
-            web_fetch: None,
-            filesystem: None,
-            messaging: None,
-            fleet: None,
-            timer: None,
-        }),
-    );
+fn web_feature_grant_maps_search_and_fetch() {
+    let config = engine_session_config_from_api(
+        api::SessionConfig {
+            features: Some(api::FeaturesConfig {
+                web: Some(api::WebFeature {
+                    version: api::CURRENT_FEATURE_VERSION,
+                    fetch: Some(api::WebFetchFeature {}),
+                    search: Some(api::WebSearchFeature {
+                        allowed_domains: None,
+                        blocked_domains: Vec::new(),
+                    }),
+                }),
+                ..api::FeaturesConfig::default()
+            }),
+            ..api::SessionConfig::default()
+        },
+        openai_model(),
+    )
+    .expect("map config");
+    config.validate().expect("valid web grant for OpenAI");
 
-    assert!(!effective_web_search_enabled(&config));
-}
-
-#[test]
-fn web_fetch_defaults_on_and_can_be_disabled() {
-    let mut config = default_session_config(openai_model());
-
-    assert!(effective_web_fetch_enabled(&config));
-
-    apply_tool_config(
-        &mut config.tools,
-        Some(ToolConfigInput {
-            web_search: None,
-            web_fetch: Some(false),
-            filesystem: None,
-            messaging: None,
-            fleet: None,
-            timer: None,
-        }),
-    );
-
-    assert!(!effective_web_fetch_enabled(&config));
+    let web = config.features.web.expect("web feature");
+    assert!(web.search.is_some());
+    assert!(web.fetch.is_some());
 }
 
 #[test]
 fn web_search_rejects_explicit_enable_for_non_openai_responses() {
-    let mut config = default_session_config(ModelSelection {
-        api_kind: ProviderApiKind::AnthropicMessages,
-        provider_id: "anthropic".to_owned(),
-        model: "claude-test".to_owned(),
-    });
-    apply_tool_config(
-        &mut config.tools,
-        Some(ToolConfigInput {
-            web_search: Some(true),
-            web_fetch: None,
-            filesystem: None,
-            messaging: None,
-            fleet: None,
-            timer: None,
-        }),
-    );
+    let config = engine_session_config_from_api(
+        api::SessionConfig {
+            features: Some(api::FeaturesConfig {
+                web: Some(api::WebFeature {
+                    version: api::CURRENT_FEATURE_VERSION,
+                    fetch: None,
+                    search: Some(api::WebSearchFeature {
+                        allowed_domains: None,
+                        blocked_domains: Vec::new(),
+                    }),
+                }),
+                ..api::FeaturesConfig::default()
+            }),
+            ..api::SessionConfig::default()
+        },
+        ModelSelection {
+            api_kind: ProviderApiKind::AnthropicMessages,
+            provider_id: "anthropic".to_owned(),
+            model: "claude-test".to_owned(),
+        },
+    )
+    .expect("map config");
 
     let error = config
-        .validate_provider_compatibility()
+        .validate()
         .expect_err("web search enable should reject Anthropic");
 
     assert!(matches!(
@@ -869,51 +870,56 @@ fn web_search_rejects_explicit_enable_for_non_openai_responses() {
 }
 
 #[test]
-fn filesystem_tools_default_to_edit_for_sessions() {
-    let config = default_session_config(openai_model());
+fn vfs_feature_grant_maps_tool_surfaces() {
+    for (api_surface, engine_surface) in [
+        (
+            api::VfsToolSurface::ReadOnly,
+            engine::VfsToolSurface::ReadOnly,
+        ),
+        (api::VfsToolSurface::Edit, engine::VfsToolSurface::Edit),
+    ] {
+        let config = engine_session_config_from_api(
+            api::SessionConfig {
+                features: Some(api::FeaturesConfig {
+                    vfs: Some(api::VfsFeature {
+                        version: api::CURRENT_FEATURE_VERSION,
+                        tools: Some(api_surface),
+                        prompts: None,
+                        skills: None,
+                    }),
+                    ..api::FeaturesConfig::default()
+                }),
+                ..api::SessionConfig::default()
+            },
+            openai_model(),
+        )
+        .expect("map config");
 
-    assert_eq!(
-        effective_filesystem_tool_mode(&config),
-        FilesystemToolMode::Edit
-    );
-}
+        assert_eq!(
+            config.features.vfs.expect("vfs feature").tools,
+            Some(engine_surface)
+        );
+    }
 
-#[test]
-fn filesystem_tools_can_be_configured_read_only_or_none() {
-    let mut config = default_session_config(openai_model());
-    apply_tool_config(
-        &mut config.tools,
-        Some(ToolConfigInput {
-            web_search: None,
-            web_fetch: None,
-            filesystem: Some(api::FilesystemToolMode::ReadOnly),
-            messaging: None,
-            fleet: None,
-            timer: None,
-        }),
-    );
+    // A VFS grant without tools yields a VFS with no fs tool surface.
+    let config = engine_session_config_from_api(
+        api::SessionConfig {
+            features: Some(api::FeaturesConfig {
+                vfs: Some(api::VfsFeature {
+                    version: api::CURRENT_FEATURE_VERSION,
+                    tools: None,
+                    prompts: None,
+                    skills: None,
+                }),
+                ..api::FeaturesConfig::default()
+            }),
+            ..api::SessionConfig::default()
+        },
+        openai_model(),
+    )
+    .expect("map config");
 
-    assert_eq!(
-        effective_filesystem_tool_mode(&config),
-        FilesystemToolMode::ReadOnly
-    );
-
-    apply_tool_config(
-        &mut config.tools,
-        Some(ToolConfigInput {
-            web_search: None,
-            web_fetch: None,
-            filesystem: Some(api::FilesystemToolMode::None),
-            messaging: None,
-            fleet: None,
-            timer: None,
-        }),
-    );
-
-    assert_eq!(
-        effective_filesystem_tool_mode(&config),
-        FilesystemToolMode::None
-    );
+    assert_eq!(config.features.vfs.expect("vfs feature").tools, None);
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -1536,7 +1542,7 @@ fn test_environment_record(
 }
 
 fn test_mcp_server_record(server_id: &str, status: mcp::McpServerStatus) -> mcp::McpServerRecord {
-    mcp::CreateMcpServerRecord {
+    mcp::PutMcpServerRecord {
         server_id: mcp::McpServerId::new(server_id),
         display_name: Some(format!("{server_id} MCP")),
         server_url: format!("https://{server_id}.example.com/mcp"),
@@ -1548,25 +1554,17 @@ fn test_mcp_server_record(server_id: &str, status: mcp::McpServerStatus) -> mcp:
         defer_loading_default: None,
         auth_policy: mcp::McpServerAuthPolicy::None,
         status,
-        created_at_ms: 1,
+        now_ms: 1,
     }
     .into_record()
 }
 
-fn api_remote_mcp_tool(tool_id: &str, server_label: &str) -> api::ToolView {
-    api::ToolView {
-        tool_id: tool_id.to_owned(),
-        kind: api::ToolKindView::RemoteMcp {
-            server_label: server_label.to_owned(),
-            server_url: format!("https://{server_label}.example.com/mcp"),
-            description_ref: None,
-            allowed_tools: None,
-            approval: api::RemoteMcpApprovalPolicy::ProviderDefault,
-            defer_loading: None,
-            auth_ref: None,
-        },
-        parallelism: api::ToolParallelismView::ParallelSafe,
-        target_requirement: api::ToolTargetRequirementView::None,
+fn empty_resolved_toolset() -> ResolvedToolset {
+    ResolvedToolset {
+        tools: BTreeMap::new(),
+        documents: Vec::new(),
+        catalog: tools::runtime::ToolCatalog::new(),
+        provider_params_patch: tools::toolset::ProviderParamsPatch::default(),
     }
 }
 

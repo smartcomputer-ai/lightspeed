@@ -18,6 +18,7 @@ pub struct McpServerView {
     pub defer_loading_default: Option<bool>,
     pub auth_policy: McpServerAuthPolicy,
     pub status: McpServerStatus,
+    pub revision: u64,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
 }
@@ -77,9 +78,10 @@ pub enum McpServerStatus {
     Disabled,
 }
 
+/// Full MCP server document as submitted by clients.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct McpServerCreateParams {
+pub struct McpServerInput {
     pub server_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
@@ -103,7 +105,17 @@ pub struct McpServerCreateParams {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct McpServerCreateResponse {
+pub struct McpServerPutParams {
+    pub server: McpServerInput,
+    /// Checked only when the server already exists; absent replaces (or
+    /// creates) unconditionally.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_revision: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerPutResponse {
     pub server: McpServerView,
 }
 
@@ -133,47 +145,6 @@ pub struct McpServerReadResponse {
     pub server: McpServerView,
 }
 
-/// Partial update; absent fields keep their value. Clearable optionals use
-/// `FieldPatch` (`{op:set,value}` / `{op:clear}`), matching profile updates.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct McpServerUpdatePatch {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub display_name: Option<FieldPatch<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub server_url: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub transport: Option<RemoteMcpTransport>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default_server_label: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<FieldPatch<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub allowed_tools: Option<FieldPatch<Vec<String>>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub approval_default: Option<RemoteMcpApprovalPolicy>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub defer_loading_default: Option<FieldPatch<bool>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auth_policy: Option<McpServerAuthPolicy>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub status: Option<McpServerStatus>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct McpServerUpdateParams {
-    pub server_id: String,
-    #[serde(default)]
-    pub patch: McpServerUpdatePatch,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct McpServerUpdateResponse {
-    pub server: McpServerView,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct McpServerDeleteParams {
@@ -188,79 +159,7 @@ pub struct McpServerDeleteResponse {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct SessionMcpLinkView {
-    pub tool_id: String,
-    pub server_label: String,
-    pub server_url: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub allowed_tools: Option<Vec<String>>,
-    pub approval: RemoteMcpApprovalPolicy,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub defer_loading: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auth_ref: Option<SecretRefView>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct SecretRefView {
     pub namespace: String,
     pub id: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionMcpLinkParams {
-    pub session_id: SessionId,
-    pub server_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub server_label: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub allowed_tools: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub approval: Option<RemoteMcpApprovalPolicy>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub defer_loading: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auth_grant_id: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionMcpLinkResponse {
-    pub link: SessionMcpLinkView,
-    #[serde(default)]
-    pub links: Vec<SessionMcpLinkView>,
-    pub session: SessionView,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionMcpUnlinkParams {
-    pub session_id: SessionId,
-    pub tool_id: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionMcpUnlinkResponse {
-    pub tool_id: String,
-    #[serde(default)]
-    pub links: Vec<SessionMcpLinkView>,
-    pub session: SessionView,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionMcpListParams {
-    pub session_id: SessionId,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionMcpListResponse {
-    #[serde(default)]
-    pub links: Vec<SessionMcpLinkView>,
 }

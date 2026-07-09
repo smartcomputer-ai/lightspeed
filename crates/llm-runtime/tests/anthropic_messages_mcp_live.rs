@@ -239,21 +239,23 @@ fn remote_mcp_echo_tools() -> BTreeMap<ToolName, ToolSpec> {
 fn session_config(model: ModelSelection) -> SessionConfig {
     SessionConfig {
         model,
-        run: run_config(),
-        turn: engine::TurnConfig {
+        generation: engine::GenerationConfig {
             max_output_tokens: Some(1024),
+            reasoning_effort: None,
             tool_choice: None,
-            provider_params: None,
+            parallel_tool_use: None,
         },
+        limits: Default::default(),
         context: ContextConfig { compaction: None },
-        tools: Default::default(),
-        fleet: Default::default(),
+        features: Default::default(),
     }
 }
 
 fn run_config() -> RunConfig {
     RunConfig {
         max_turns: Some(2),
+        reasoning_effort: None,
+        parallel_tool_use: None,
         max_tool_rounds: Some(1),
         model_override: None,
         max_output_tokens: None,

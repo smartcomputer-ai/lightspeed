@@ -65,10 +65,7 @@ pub fn core_agent_clone_opening_events(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        ContextConfig, ModelSelection, ProviderApiKind, RunConfig, SessionConfig, ToolConfig,
-        TurnConfig,
-    };
+    use crate::{ContextConfig, ModelSelection, ProviderApiKind, SessionConfig};
 
     fn config() -> SessionConfig {
         SessionConfig {
@@ -77,15 +74,10 @@ mod tests {
                 provider_id: "openai".to_owned(),
                 model: "gpt-test".to_owned(),
             },
-            run: RunConfig::default(),
-            turn: TurnConfig {
-                max_output_tokens: None,
-                tool_choice: None,
-                provider_params: None,
-            },
+            generation: Default::default(),
+            limits: Default::default(),
             context: ContextConfig { compaction: None },
-            tools: ToolConfig::default(),
-            fleet: Default::default(),
+            features: Default::default(),
         }
     }
 

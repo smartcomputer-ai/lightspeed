@@ -108,15 +108,16 @@ cargo run -p cli -- chat --api-url http://127.0.0.1:18080/rpc --session session_
 - `crates/mcp/` — provider-independent remote MCP server catalog DTOs,
   validation, and store traits.
 - `crates/profiles/` — agent profile registry validation helpers,
-  errors, update records, and the substrate-neutral `ProfileStore` trait over
-  `api` profile DTOs.
+  errors, and the substrate-neutral `ProfileStore` trait over `api` profile
+  DTOs.
 - `crates/auth/` — generic auth grant/secret/provider records,
   OAuth client and authorization-flow records, PKCE helpers, the MCP OAuth
   and GitHub App drivers, store traits, typed broker errors, the runtime
   token broker with single-flight refresh and on-demand minting (P69), and
   deployment-scoped inbound API keys for gateway authentication (P90).
-- `crates/environments/` — environment provider, host target, and
-  session environment binding DTOs, validation, errors, and store traits.
+- `crates/environments/` — environment provider presence, universe
+  environment instances, session binding, credential binding, and
+  environment-owned job DTOs, validation, errors, and store traits.
 - `crates/eval/` — eval harness for agent/tool workflows.
 - `crates/llm-runtime/` — CoreAgent LLM runtime from planned requests to
   provider-native client calls.
@@ -147,6 +148,13 @@ cargo run -p cli -- chat --api-url http://127.0.0.1:18080/rpc --session session_
 - Treat hosted `session/runs/start` as an acceptance/start boundary, not a final-output
   boundary. Clients should follow `session/events/read` or refresh
   `session/read` for progress and completion.
+- Session config is a sparse, capability-oriented document (core sections plus
+  default-off feature grants) replaced whole via `session/config/put` with an
+  expected revision. Do not reintroduce field-level patch vocabulary; registry
+  documents (profiles, MCP servers) follow the same put-with-expected-revision
+  pattern. The session toolset — including remote MCP tools declared under
+  `features.mcp` — is derived from config and never written directly by
+  clients. See `docs/roadmap/p95-config-redesign.md`.
 - Preserve Rust 2024 and the existing crate-local `thiserror` error style.
 - Use `tokio` current-thread tests where async tests are needed.
 

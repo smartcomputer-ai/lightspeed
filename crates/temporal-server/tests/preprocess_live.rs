@@ -3,8 +3,9 @@ mod support;
 use std::sync::{Arc, Mutex};
 
 use api::{
-    AgentApiService, BlobPutItem, BlobPutParams, InputItem, MediaKind, RunStartParams,
-    RunStartSource, RunStatus, SessionConfigInput, SessionItemView, SessionStartParams,
+    AgentApiService, BlobPutItem, BlobPutParams, ContextEntryKindView, ContextMessageRoleView,
+    InputItem, MediaKind, RunStartParams, RunStartSource, RunStatus, SessionConfig,
+    SessionStartParams,
 };
 use api_projection::model_to_api;
 use async_trait::async_trait;
@@ -94,9 +95,9 @@ async fn run_audio_preprocess_live_client(
     api.start_session(SessionStartParams {
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
-        config: Some(SessionConfigInput {
+        config: Some(SessionConfig {
             model: Some(model_to_api(&model)),
-            ..SessionConfigInput::default()
+            ..SessionConfig::default()
         }),
         profile: None,
     })
@@ -131,10 +132,12 @@ async fn run_audio_preprocess_live_client(
     assert!(output.contains("Fake agent completed run"));
 
     let user_messages: Vec<&str> = run
-        .items
+        .entries
         .iter()
-        .filter_map(|item| match item {
-            SessionItemView::UserMessage { text, .. } => Some(text.as_str()),
+        .filter_map(|entry| match entry.kind {
+            ContextEntryKindView::Message {
+                role: ContextMessageRoleView::User,
+            } => entry.text.as_deref(),
             _ => None,
         })
         .collect();
@@ -186,9 +189,9 @@ async fn run_transcodable_audio_preprocess_live_client(
     api.start_session(SessionStartParams {
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
-        config: Some(SessionConfigInput {
+        config: Some(SessionConfig {
             model: Some(model_to_api(&model)),
-            ..SessionConfigInput::default()
+            ..SessionConfig::default()
         }),
         profile: None,
     })
@@ -221,10 +224,12 @@ async fn run_transcodable_audio_preprocess_live_client(
     assert_eq!(run.status, RunStatus::Completed);
 
     let user_messages: Vec<&str> = run
-        .items
+        .entries
         .iter()
-        .filter_map(|item| match item {
-            SessionItemView::UserMessage { text, .. } => Some(text.as_str()),
+        .filter_map(|entry| match entry.kind {
+            ContextEntryKindView::Message {
+                role: ContextMessageRoleView::User,
+            } => entry.text.as_deref(),
             _ => None,
         })
         .collect();

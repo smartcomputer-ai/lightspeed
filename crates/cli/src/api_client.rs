@@ -12,53 +12,49 @@ use api::{
     AuthProviderCreateParams, AuthProviderCreateResponse, AuthProviderDeleteParams,
     AuthProviderDeleteResponse, AuthProviderListParams, AuthProviderListResponse,
     AuthProviderReadParams, AuthProviderReadResponse, BlobHasParams, BlobHasResponse,
-    BlobPutParams, BlobPutResponse, BlobReadParams, BlobReadResponse,
-    EnvironmentProviderListParams, EnvironmentProviderListResponse,
-    EnvironmentProviderTargetListParams, EnvironmentProviderTargetListResponse, JsonRpcRequest,
-    JsonRpcResponse, METHOD_AUTH_CLIENTS_CREATE, METHOD_AUTH_CLIENTS_DELETE,
+    BlobPutParams, BlobPutResponse, BlobReadParams, BlobReadResponse, EnvironmentListParams,
+    EnvironmentListResponse, EnvironmentProviderListParams, EnvironmentProviderListResponse,
+    JsonRpcRequest, JsonRpcResponse, METHOD_AUTH_CLIENTS_CREATE, METHOD_AUTH_CLIENTS_DELETE,
     METHOD_AUTH_CLIENTS_LIST, METHOD_AUTH_CLIENTS_READ, METHOD_AUTH_FLOWS_READ,
     METHOD_AUTH_FLOWS_START, METHOD_AUTH_GITHUB_INSTALLATIONS_GRANT,
     METHOD_AUTH_GITHUB_INSTALLATIONS_LIST, METHOD_AUTH_GRANTS_IMPORT, METHOD_AUTH_GRANTS_LIST,
     METHOD_AUTH_GRANTS_READ, METHOD_AUTH_GRANTS_REVOKE, METHOD_AUTH_PROVIDERS_CREATE,
     METHOD_AUTH_PROVIDERS_DELETE, METHOD_AUTH_PROVIDERS_LIST, METHOD_AUTH_PROVIDERS_READ,
-    METHOD_BLOBS_HAS, METHOD_BLOBS_PUT, METHOD_BLOBS_READ, METHOD_ENVIRONMENTS_PROVIDERS_LIST,
-    METHOD_ENVIRONMENTS_PROVIDERS_TARGETS_LIST, METHOD_MCP_SERVERS_CREATE,
-    METHOD_MCP_SERVERS_DELETE, METHOD_MCP_SERVERS_LIST, METHOD_MCP_SERVERS_READ,
-    METHOD_MCP_SERVERS_UPDATE, METHOD_PROFILES_DELETE, METHOD_PROFILES_LIST, METHOD_PROFILES_PUT,
-    METHOD_PROFILES_READ, METHOD_SESSION_ENVIRONMENTS_ACTIVATE, METHOD_SESSION_ENVIRONMENTS_ATTACH,
-    METHOD_SESSION_ENVIRONMENTS_CLOSE, METHOD_SESSION_ENVIRONMENTS_CREDENTIALS_BIND,
-    METHOD_SESSION_ENVIRONMENTS_CREDENTIALS_LIST, METHOD_SESSION_ENVIRONMENTS_CREDENTIALS_UNBIND,
-    METHOD_SESSION_ENVIRONMENTS_DEACTIVATE, METHOD_SESSION_ENVIRONMENTS_LIST,
+    METHOD_BLOBS_HAS, METHOD_BLOBS_PUT, METHOD_BLOBS_READ, METHOD_ENVIRONMENTS_LIST,
+    METHOD_ENVIRONMENTS_PROVIDERS_LIST, METHOD_MCP_SERVERS_DELETE, METHOD_MCP_SERVERS_LIST,
+    METHOD_MCP_SERVERS_PUT, METHOD_MCP_SERVERS_READ, METHOD_PROFILES_DELETE, METHOD_PROFILES_LIST,
+    METHOD_PROFILES_PUT, METHOD_PROFILES_READ, METHOD_SESSION_CONFIG_PUT,
+    METHOD_SESSION_ENVIRONMENTS_ACTIVATE, METHOD_SESSION_ENVIRONMENTS_ATTACH,
+    METHOD_SESSION_ENVIRONMENTS_CREDENTIALS_BIND, METHOD_SESSION_ENVIRONMENTS_CREDENTIALS_LIST,
+    METHOD_SESSION_ENVIRONMENTS_CREDENTIALS_UNBIND, METHOD_SESSION_ENVIRONMENTS_DEACTIVATE,
+    METHOD_SESSION_ENVIRONMENTS_DETACH, METHOD_SESSION_ENVIRONMENTS_LIST,
     METHOD_SESSION_ENVIRONMENTS_READ, METHOD_SESSION_EVENTS_READ, METHOD_SESSION_LIST,
-    METHOD_SESSION_MCP_LINK, METHOD_SESSION_MCP_LIST, METHOD_SESSION_MCP_UNLINK,
     METHOD_SESSION_MOUNTS_DELETE, METHOD_SESSION_MOUNTS_LIST, METHOD_SESSION_MOUNTS_PUT,
     METHOD_SESSION_PROFILES_APPLY, METHOD_SESSION_READ, METHOD_SESSION_RUNS_START,
     METHOD_SESSION_SKILLS_ACTIVATE, METHOD_SESSION_SKILLS_ACTIVE, METHOD_SESSION_SKILLS_DEACTIVATE,
     METHOD_SESSION_SKILLS_LIST, METHOD_SESSION_START, METHOD_VFS_SNAPSHOTS_COMMIT,
     METHOD_VFS_SNAPSHOTS_READ, METHOD_VFS_WORKSPACES_CREATE, METHOD_VFS_WORKSPACES_DELETE,
     METHOD_VFS_WORKSPACES_LIST, METHOD_VFS_WORKSPACES_READ, METHOD_VFS_WORKSPACES_UPDATE,
-    McpServerCreateParams, McpServerCreateResponse, McpServerDeleteParams, McpServerDeleteResponse,
-    McpServerListParams, McpServerListResponse, McpServerReadParams, McpServerReadResponse,
-    McpServerUpdateParams, McpServerUpdateResponse, ProfileApplyParams, ProfileApplyResponse,
-    ProfileDeleteParams, ProfileDeleteResponse, ProfileListParams, ProfileListResponse,
-    ProfilePutParams, ProfilePutResponse, ProfileReadParams, ProfileReadResponse, RequestId,
-    RunStartParams, RunStartResponse, SessionEnvironmentActivateParams,
+    McpServerDeleteParams, McpServerDeleteResponse, McpServerListParams, McpServerListResponse,
+    McpServerPutParams, McpServerPutResponse, McpServerReadParams, McpServerReadResponse,
+    ProfileApplyParams, ProfileApplyResponse, ProfileDeleteParams, ProfileDeleteResponse,
+    ProfileListParams, ProfileListResponse, ProfilePutParams, ProfilePutResponse,
+    ProfileReadParams, ProfileReadResponse, RequestId, RunStartParams, RunStartResponse,
+    SessionConfigPutParams, SessionConfigPutResponse, SessionEnvironmentActivateParams,
     SessionEnvironmentActivateResponse, SessionEnvironmentAttachParams,
-    SessionEnvironmentAttachResponse, SessionEnvironmentCloseParams,
-    SessionEnvironmentCloseResponse, SessionEnvironmentCredentialBindParams,
+    SessionEnvironmentAttachResponse, SessionEnvironmentCredentialBindParams,
     SessionEnvironmentCredentialBindResponse, SessionEnvironmentCredentialListParams,
     SessionEnvironmentCredentialListResponse, SessionEnvironmentCredentialUnbindParams,
     SessionEnvironmentCredentialUnbindResponse, SessionEnvironmentDeactivateParams,
-    SessionEnvironmentDeactivateResponse, SessionEnvironmentListParams,
-    SessionEnvironmentListResponse, SessionEnvironmentReadParams, SessionEnvironmentReadResponse,
-    SessionEventsReadParams, SessionEventsReadResponse, SessionListParams, SessionListResponse,
-    SessionMcpLinkParams, SessionMcpLinkResponse, SessionMcpListParams, SessionMcpListResponse,
-    SessionMcpUnlinkParams, SessionMcpUnlinkResponse, SessionReadParams, SessionReadResponse,
-    SessionStartParams, SessionStartResponse, SkillActivateParams, SkillActivateResponse,
-    SkillActiveParams, SkillActiveResponse, SkillDeactivateParams, SkillDeactivateResponse,
-    SkillListParams, SkillListResponse, VfsMountDeleteParams, VfsMountDeleteResponse,
-    VfsMountListParams, VfsMountListResponse, VfsMountPutParams, VfsMountPutResponse,
-    VfsSnapshotCommitParams, VfsSnapshotCommitResponse, VfsSnapshotReadParams,
+    SessionEnvironmentDeactivateResponse, SessionEnvironmentDetachParams,
+    SessionEnvironmentDetachResponse, SessionEnvironmentListParams, SessionEnvironmentListResponse,
+    SessionEnvironmentReadParams, SessionEnvironmentReadResponse, SessionEventsReadParams,
+    SessionEventsReadResponse, SessionListParams, SessionListResponse, SessionReadParams,
+    SessionReadResponse, SessionStartParams, SessionStartResponse, SkillActivateParams,
+    SkillActivateResponse, SkillActiveParams, SkillActiveResponse, SkillDeactivateParams,
+    SkillDeactivateResponse, SkillListParams, SkillListResponse, VfsMountDeleteParams,
+    VfsMountDeleteResponse, VfsMountListParams, VfsMountListResponse, VfsMountPutParams,
+    VfsMountPutResponse, VfsSnapshotCommitParams, VfsSnapshotCommitResponse, VfsSnapshotReadParams,
     VfsSnapshotReadResponse, VfsWorkspaceCreateParams, VfsWorkspaceCreateResponse,
     VfsWorkspaceDeleteParams, VfsWorkspaceDeleteResponse, VfsWorkspaceListParams,
     VfsWorkspaceListResponse, VfsWorkspaceReadParams, VfsWorkspaceReadResponse,
@@ -329,11 +325,11 @@ impl HttpAgentApi {
         self.request(METHOD_SESSION_MOUNTS_LIST, params).await
     }
 
-    pub(crate) async fn create_mcp_server(
+    pub(crate) async fn put_mcp_server(
         &self,
-        params: McpServerCreateParams,
-    ) -> Result<AgentApiOutcome<McpServerCreateResponse>, AgentApiError> {
-        self.request(METHOD_MCP_SERVERS_CREATE, params).await
+        params: McpServerPutParams,
+    ) -> Result<AgentApiOutcome<McpServerPutResponse>, AgentApiError> {
+        self.request(METHOD_MCP_SERVERS_PUT, params).await
     }
 
     pub(crate) async fn list_mcp_servers(
@@ -348,13 +344,6 @@ impl HttpAgentApi {
         params: McpServerReadParams,
     ) -> Result<AgentApiOutcome<McpServerReadResponse>, AgentApiError> {
         self.request(METHOD_MCP_SERVERS_READ, params).await
-    }
-
-    pub(crate) async fn update_mcp_server(
-        &self,
-        params: McpServerUpdateParams,
-    ) -> Result<AgentApiOutcome<McpServerUpdateResponse>, AgentApiError> {
-        self.request(METHOD_MCP_SERVERS_UPDATE, params).await
     }
 
     pub(crate) async fn delete_mcp_server(
@@ -478,25 +467,11 @@ impl HttpAgentApi {
             .await
     }
 
-    pub(crate) async fn link_session_mcp(
+    pub(crate) async fn put_session_config(
         &self,
-        params: SessionMcpLinkParams,
-    ) -> Result<AgentApiOutcome<SessionMcpLinkResponse>, AgentApiError> {
-        self.request(METHOD_SESSION_MCP_LINK, params).await
-    }
-
-    pub(crate) async fn unlink_session_mcp(
-        &self,
-        params: SessionMcpUnlinkParams,
-    ) -> Result<AgentApiOutcome<SessionMcpUnlinkResponse>, AgentApiError> {
-        self.request(METHOD_SESSION_MCP_UNLINK, params).await
-    }
-
-    pub(crate) async fn list_session_mcp(
-        &self,
-        params: SessionMcpListParams,
-    ) -> Result<AgentApiOutcome<SessionMcpListResponse>, AgentApiError> {
-        self.request(METHOD_SESSION_MCP_LIST, params).await
+        params: SessionConfigPutParams,
+    ) -> Result<AgentApiOutcome<SessionConfigPutResponse>, AgentApiError> {
+        self.request(METHOD_SESSION_CONFIG_PUT, params).await
     }
 
     pub(crate) async fn list_session_environments(
@@ -537,11 +512,11 @@ impl HttpAgentApi {
             .await
     }
 
-    pub(crate) async fn close_session_environment(
+    pub(crate) async fn detach_session_environment(
         &self,
-        params: SessionEnvironmentCloseParams,
-    ) -> Result<AgentApiOutcome<SessionEnvironmentCloseResponse>, AgentApiError> {
-        self.request(METHOD_SESSION_ENVIRONMENTS_CLOSE, params)
+        params: SessionEnvironmentDetachParams,
+    ) -> Result<AgentApiOutcome<SessionEnvironmentDetachResponse>, AgentApiError> {
+        self.request(METHOD_SESSION_ENVIRONMENTS_DETACH, params)
             .await
     }
 
@@ -577,12 +552,11 @@ impl HttpAgentApi {
             .await
     }
 
-    pub(crate) async fn list_environment_provider_targets(
+    pub(crate) async fn list_environments(
         &self,
-        params: EnvironmentProviderTargetListParams,
-    ) -> Result<AgentApiOutcome<EnvironmentProviderTargetListResponse>, AgentApiError> {
-        self.request(METHOD_ENVIRONMENTS_PROVIDERS_TARGETS_LIST, params)
-            .await
+        params: EnvironmentListParams,
+    ) -> Result<AgentApiOutcome<EnvironmentListResponse>, AgentApiError> {
+        self.request(METHOD_ENVIRONMENTS_LIST, params).await
     }
 
     async fn request<P, R>(

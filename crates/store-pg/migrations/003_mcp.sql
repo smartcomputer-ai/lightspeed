@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
     auth_policy text NOT NULL DEFAULT 'none',
     auth_metadata_json jsonb NOT NULL DEFAULT '{}',
     status text NOT NULL DEFAULT 'active',
+    revision bigint NOT NULL,
     created_at_ms bigint NOT NULL,
     updated_at_ms bigint NOT NULL,
 
@@ -73,6 +74,8 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
         CHECK (jsonb_typeof(auth_metadata_json) = 'object'),
     CONSTRAINT mcp_servers_status_known
         CHECK (status IN ('active', 'needs_auth_config', 'unverified', 'disabled')),
+    CONSTRAINT mcp_servers_revision_positive
+        CHECK (revision > 0),
     CONSTRAINT mcp_servers_created_at_ms_nonnegative
         CHECK (created_at_ms >= 0),
     CONSTRAINT mcp_servers_updated_at_ms_nonnegative

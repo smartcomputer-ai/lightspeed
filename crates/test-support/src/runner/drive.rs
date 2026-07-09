@@ -680,7 +680,7 @@ mod tests {
         ContextEntryKind, ContextMessageRole, CoreAgentCommand, CoreAgentEvent, FunctionToolSpec,
         LlmFinish, ModelSelection, ObservedToolCall, ProviderApiKind, RunConfig, RunStatus,
         SessionConfig, SessionId, ToolCallResult, ToolKind, ToolName, ToolParallelism, ToolSpec,
-        ToolTargetRequirement, TurnConfig, TurnEvent,
+        ToolTargetRequirement, TurnEvent,
         storage::{
             BlobStore, CreateForkedSession, CreateSession, InMemoryBlobStore, InMemorySessionStore,
             SessionStore,
@@ -1073,15 +1073,10 @@ mod tests {
                 provider_id: "openai".to_owned(),
                 model: "gpt-test".to_owned(),
             },
-            run: run_config(),
-            turn: TurnConfig {
-                max_output_tokens: None,
-                tool_choice: None,
-                provider_params: None,
-            },
+            generation: Default::default(),
+            limits: Default::default(),
             context: ContextConfig { compaction: None },
-            tools: Default::default(),
-            fleet: Default::default(),
+            features: Default::default(),
         }
     }
 
@@ -1101,7 +1096,9 @@ mod tests {
             model_override: None,
             max_output_tokens: None,
             provider_params: None,
+            reasoning_effort: None,
             tool_choice: None,
+            parallel_tool_use: None,
         }
     }
 

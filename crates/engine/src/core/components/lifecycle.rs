@@ -51,7 +51,7 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
                     "session can only be opened from new state".into(),
                 ));
             }
-            config.validate_provider_compatibility()?;
+            config.validate()?;
             state.lifecycle.status = Status::Open;
             state.lifecycle.config = Some(config.clone());
             state.lifecycle.config_revision = 0;

@@ -2,7 +2,7 @@ use super::*;
 
 use ::environments::{
     CreateSessionEnvironmentCredential, ListSessionEnvironmentCredentials,
-    SessionEnvironmentBindingStatus, SessionEnvironmentCredentialRecord,
+    SessionEnvironmentBindingState, SessionEnvironmentCredentialRecord,
     SessionEnvironmentCredentialSource, SessionEnvironmentCredentialStore,
 };
 use auth::{AuthGrantId, AuthGrantStatus, AuthProviderId, AuthProviderStatus, SecretId};
@@ -22,7 +22,7 @@ impl GatewayAgentApi {
         )
         .await
         .map_err(map_environments_error)?;
-        if binding.status == SessionEnvironmentBindingStatus::Detached {
+        if binding.state == SessionEnvironmentBindingState::Detached {
             return Err(AgentApiError::rejected(format!(
                 "environment is detached: {}",
                 env_id.as_str()

@@ -38,6 +38,14 @@ pub fn compose_workflow_id(universe_id: Uuid, session_id: &SessionId) -> String 
     format!("{universe_id}/{session_id}")
 }
 
+pub fn compose_environment_job_workflow_id(
+    universe_id: Uuid,
+    instance_id: &str,
+    job_group_id: &str,
+) -> String {
+    format!("{universe_id}/envjob-{instance_id}-{job_group_id}")
+}
+
 /// Split a composed workflow id back into `(universe_id, session_id)`.
 /// Returns `None` for ids that do not match the composed format, including a
 /// session part that is not a valid session id.
@@ -226,9 +234,62 @@ pub struct CancellingWatchdog {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnvironmentJobChanged {
-    pub session_id: String,
-    pub env_id: String,
+    pub instance_id: String,
     pub job_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvironmentJobWorkflowArgs {
+    pub instance_id: String,
+    pub job_group_id: String,
+    pub job_ids: Vec<host_protocol::shared::JobId>,
+    #[serde(default = "default_environment_job_poll_ms")]
+    pub poll_ms: u64,
+    #[serde(default)]
+    pub poll_attempt: u32,
+}
+
+fn default_environment_job_poll_ms() -> u64 {
+    2_000
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvironmentJobWorkflowSnapshot {
+    pub instance_id: String,
+    pub job_group_id: String,
+    #[serde(default)]
+    pub jobs: Vec<host_protocol::data::jobs::JobSummary>,
+    pub terminal: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvironmentJobPollActivityRequest {
+    pub instance_id: String,
+    pub job_group_id: String,
+    pub job_ids: Vec<host_protocol::shared::JobId>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvironmentJobPollActivityResult {
+    pub jobs: Vec<host_protocol::data::jobs::JobSummary>,
+    pub terminal: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvironmentJobCancelSignal {
+    pub jobs: Vec<host_protocol::shared::JobId>,
+    pub scope: host_protocol::data::jobs::JobCancelScope,
+    pub force: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvironmentJobCancelActivityRequest {
+    pub instance_id: String,
+    pub jobs: Vec<host_protocol::shared::JobId>,
+    pub scope: host_protocol::data::jobs::JobCancelScope,
+    pub force: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -363,7 +424,7 @@ pub struct ToolInvokeBatchActivityRequest {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SkillCatalogRefreshActivityRequest {
+pub struct RuntimeProjectionRefreshActivityRequest {
     pub session_id: SessionId,
     pub active_catalog_ref: Option<BlobRef>,
     pub active_vfs_catalog_ref: Option<BlobRef>,
@@ -374,7 +435,7 @@ pub struct SkillCatalogRefreshActivityRequest {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SkillCatalogRefreshActivityResult {
+pub struct RuntimeProjectionRefreshActivityResult {
     pub commands: Vec<CoreAgentCommand>,
 }
 

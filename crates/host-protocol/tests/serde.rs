@@ -346,5 +346,6 @@ fn remote_host_capabilities() -> HostCapabilities {
         job_wait_hint: false,
         job_dependencies: true,
         job_queue_keys: true,
+        network: true,
     }
 }

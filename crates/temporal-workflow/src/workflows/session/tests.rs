@@ -115,8 +115,7 @@ fn environment_job_changed_marks_matching_promise_source_poll_due() {
         PromiseSourcePoll {
             promise_id: "p1".to_owned(),
             source: PromiseSource::EnvJob {
-                target_session_id: "session_1".to_owned(),
-                env_id: "env_1".to_owned(),
+                instance_id: "evi_1".to_owned(),
                 job_id: "job_1".to_owned(),
             },
             next_check_at_ms: 42_000,
@@ -125,8 +124,7 @@ fn environment_job_changed_marks_matching_promise_source_poll_due() {
     );
 
     workflow.record_environment_job_changed(EnvironmentJobChanged {
-        session_id: "session_1".to_owned(),
-        env_id: "env_1".to_owned(),
+        instance_id: "evi_1".to_owned(),
         job_id: "job_1".to_owned(),
     });
 
@@ -671,8 +669,7 @@ fn continue_as_new_allows_pending_sources_and_parked_awaits() {
             "p_env",
             PromiseStatus::Pending,
             PromiseSource::EnvJob {
-                target_session_id: "session_1".to_owned(),
-                env_id: "env_1".to_owned(),
+                instance_id: "evi_1".to_owned(),
                 job_id: "job_1".to_owned(),
             },
             PromiseScope::Run {
@@ -724,8 +721,7 @@ fn promise_source_polls_rehydrate_from_pending_poll_sources() {
         },
     );
     let env_source = PromiseSource::EnvJob {
-        target_session_id: "session_1".to_owned(),
-        env_id: "env_1".to_owned(),
+        instance_id: "evi_1".to_owned(),
         job_id: "job_1".to_owned(),
     };
     let timer_source = PromiseSource::Timer { fire_at_ms: 60_000 };
@@ -764,8 +760,7 @@ fn promise_source_polls_rehydrate_from_pending_poll_sources() {
             "p_resolved_env",
             PromiseStatus::Resolved,
             PromiseSource::EnvJob {
-                target_session_id: "session_1".to_owned(),
-                env_id: "env_1".to_owned(),
+                instance_id: "evi_1".to_owned(),
                 job_id: "job_done".to_owned(),
             },
             PromiseScope::Session,

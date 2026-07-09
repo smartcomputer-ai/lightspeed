@@ -6,7 +6,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, anyhow, bail};
-use api::{RunStatus, SessionItemView};
+use api::{ContextEntryKindView, ContextEntryView, ContextMessageRoleView, RunStatus};
 use api_projection::{
     CoreAgentProjector, MAX_EVENT_PAGE_LIMIT, ProjectSession, read_all_session_entries,
     started_run_id,
@@ -16,8 +16,8 @@ use casefile::{EvalCase, FileExpectation, load_cases};
 use clap::{Parser, Subcommand};
 use engine::{
     ContextConfig, ContextEntryInput, ContextEntryKey, ContextEntryKind, ContextMessageRole,
-    CoreAgentCommand, ModelSelection, ProviderApiKind, RunConfig, SessionConfig, SessionId,
-    ToolExecutionTarget, ToolName, ToolSpec, TurnConfig,
+    CoreAgentCommand, GenerationConfig, LimitsConfig, ModelSelection, ProviderApiKind, RunConfig,
+    SessionConfig, SessionId, ToolExecutionTarget, ToolName, ToolSpec,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
 };
 use llm_clients::ApiResponse;
@@ -376,7 +376,7 @@ async fn run_attempt(
         .iter()
         .find(|candidate| candidate.id == run.id)
         .unwrap_or(&run);
-    let observations = collect_observations(&run_view.items, &runtime.tool_id_by_name);
+    let observations = collect_observations(&run_view.entries, &runtime.tool_id_by_name);
     let mut failures = Vec::new();
 
     if !matches!(run_view.status, RunStatus::Completed) {
@@ -511,7 +511,11 @@ impl EvalRuntime {
                     source: engine::RunRequestSource::Input {
                         input: user_input(input_ref),
                     },
-                    run_config: self.config.run.clone(),
+                    run_config: RunConfig {
+                        max_turns: self.config.limits.max_turns,
+                        max_tool_rounds: self.config.limits.max_tool_rounds,
+                        ..Default::default()
+                    },
                 }),
                 20,
             )
@@ -726,22 +730,16 @@ fn resolve_eval_toolset(model: &ModelSelection, case: &EvalCase) -> Result<Resol
 fn session_config(case: &EvalCase, model: ModelSelection) -> SessionConfig {
     SessionConfig {
         model,
-        run: RunConfig {
+        generation: GenerationConfig {
+            max_output_tokens: case.run.max_tokens,
+            ..Default::default()
+        },
+        limits: LimitsConfig {
             max_turns: Some(case.run.max_turns.unwrap_or(12)),
             max_tool_rounds: Some(case.run.max_tool_rounds.unwrap_or(8)),
-            model_override: None,
-            max_output_tokens: None,
-            provider_params: None,
-            tool_choice: None,
-        },
-        turn: TurnConfig {
-            max_output_tokens: case.run.max_tokens,
-            tool_choice: None,
-            provider_params: None,
         },
         context: ContextConfig { compaction: None },
-        tools: Default::default(),
-        fleet: Default::default(),
+        features: Default::default(),
     }
 }
 
@@ -785,41 +783,39 @@ async fn store_tool_documents(blobs: &dyn BlobStore, documents: &[ToolDocument])
 }
 
 fn collect_observations(
-    items: &[SessionItemView],
+    entries: &[ContextEntryView],
     tool_id_by_name: &BTreeMap<String, String>,
 ) -> ConversationObservations {
     let mut observations = ConversationObservations::default();
-    for item in items {
-        match item {
-            SessionItemView::AssistantMessage { text, .. } => {
-                if !text.trim().is_empty() {
+    for entry in entries {
+        match &entry.kind {
+            ContextEntryKindView::Message {
+                role: ContextMessageRoleView::Assistant,
+            } => {
+                if let Some(text) = entry.text.as_deref()
+                    && !text.trim().is_empty()
+                {
                     observations.assistant_text.push_str(text.trim());
                     observations.assistant_text.push('\n');
                 }
             }
-            SessionItemView::ToolCall {
-                tool_name,
-                arguments,
-                ..
-            } => {
+            ContextEntryKindView::ToolCall { name, .. } => {
                 let tool_id = tool_id_by_name
-                    .get(tool_name)
+                    .get(name)
                     .cloned()
-                    .unwrap_or_else(|| canonical_tool_id(tool_name));
+                    .unwrap_or_else(|| canonical_tool_id(name));
                 observations.used_tools.insert(tool_id.clone());
-                if let Some(arguments) = arguments {
+                if let Some(arguments) = entry.text.as_deref() {
                     observations
                         .tool_arguments
                         .push(format!("{tool_id} {}", compact_json_text(arguments)));
                 }
             }
-            SessionItemView::ToolResult {
-                output, is_error, ..
-            } => {
-                if let Some(output) = output {
-                    observations.tool_outputs.push(output.clone());
+            ContextEntryKindView::ToolResult { is_error, .. } => {
+                if let Some(output) = entry.text.as_deref() {
+                    observations.tool_outputs.push(output.to_owned());
                     if *is_error {
-                        observations.tool_errors.push(output.clone());
+                        observations.tool_errors.push(output.to_owned());
                     }
                 } else if *is_error {
                     observations
@@ -827,9 +823,7 @@ fn collect_observations(
                         .push("missing tool error output".into());
                 }
             }
-            SessionItemView::UserMessage { .. }
-            | SessionItemView::SystemEvent { .. }
-            | SessionItemView::ProviderContext { .. } => {}
+            _ => {}
         }
     }
     observations.assistant_text = observations.assistant_text.trim().to_string();
@@ -1109,6 +1103,22 @@ fn api_error(error: api::AgentApiError) -> anyhow::Error {
 mod tests {
     use super::*;
 
+    fn test_entry(id: &str, kind: ContextEntryKindView, text: Option<&str>) -> ContextEntryView {
+        ContextEntryView {
+            id: id.to_owned(),
+            key: None,
+            kind,
+            content_ref: "sha256:entry".to_owned(),
+            media_type: None,
+            preview: None,
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+            text: text.map(str::to_owned),
+            display: None,
+        }
+    }
+
     #[test]
     fn canonical_tool_id_accepts_lightspeed_names_and_legacy_aos_fs_names() {
         assert_eq!(canonical_tool_id("read_file"), "fs.read_file");
@@ -1124,24 +1134,29 @@ mod tests {
         tool_ids.insert("read_file".to_string(), "fs.read_file".to_string());
         let observations = collect_observations(
             &[
-                SessionItemView::ToolCall {
-                    id: "item_1".into(),
-                    call_id: "call_1".into(),
-                    tool_name: "read_file".into(),
-                    arguments: Some(r#"{"path":"notes/fruit.txt"}"#.into()),
-                    status: api::ToolItemStatus::Requested,
-                },
-                SessionItemView::ToolResult {
-                    id: "item_2".into(),
-                    call_id: "call_1".into(),
-                    output: Some("pear-9421".into()),
-                    is_error: false,
-                    status: api::ToolItemStatus::Succeeded,
-                },
-                SessionItemView::AssistantMessage {
-                    id: "item_3".into(),
-                    text: "FRUIT=pear-9421".into(),
-                },
+                test_entry(
+                    "item_1",
+                    ContextEntryKindView::ToolCall {
+                        call_id: "call_1".into(),
+                        name: "read_file".into(),
+                    },
+                    Some(r#"{"path":"notes/fruit.txt"}"#),
+                ),
+                test_entry(
+                    "item_2",
+                    ContextEntryKindView::ToolResult {
+                        call_id: "call_1".into(),
+                        is_error: false,
+                    },
+                    Some("pear-9421"),
+                ),
+                test_entry(
+                    "item_3",
+                    ContextEntryKindView::Message {
+                        role: ContextMessageRoleView::Assistant,
+                    },
+                    Some("FRUIT=pear-9421"),
+                ),
             ],
             &tool_ids,
         );

@@ -1,4 +1,14 @@
-use api::{FilesystemToolMode, RunStatus, SessionStatus, SkillActivationScope};
+use api::{RunStatus, SessionStatus, SkillActivationScope};
+
+/// CLI-local filesystem tool surface setting: `None` grants a VFS without fs
+/// tools; the api-level surface is `api::VfsToolSurface`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FilesystemToolMode {
+    None,
+    ReadOnly,
+    Edit,
+}
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 
@@ -18,6 +28,10 @@ pub(crate) struct ChatDraftSettings {
     pub web_search: Option<bool>,
     pub web_fetch: Option<bool>,
     pub filesystem_tools: Option<FilesystemToolMode>,
+    /// Send no feature grants at all: the true secure default (model +
+    /// runs only) instead of the CLI's dev feature set.
+    #[serde(default)]
+    pub bare: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
@@ -44,6 +58,7 @@ impl Default for ChatDraftSettings {
             web_search: None,
             web_fetch: None,
             filesystem_tools: None,
+            bare: false,
         }
     }
 }
