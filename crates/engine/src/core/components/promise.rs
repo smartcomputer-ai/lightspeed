@@ -41,11 +41,7 @@ pub enum PromiseSource {
         target_run_id: u64,
     },
     /// A durable environment job; resolved by poll + nudge (P86 transport).
-    EnvJob {
-        target_session_id: String,
-        env_id: String,
-        job_id: String,
-    },
+    EnvJob { instance_id: String, job_id: String },
     /// A durable timer owned by the session workflow.
     Timer { fire_at_ms: u64 },
 }
@@ -235,7 +231,7 @@ pub const PROMISE_EFFECT_ID: &str = "promise_id";
 pub const PROMISE_EFFECT_SOURCE: &str = "source";
 pub const PROMISE_EFFECT_TARGET_SESSION_ID: &str = "target_session_id";
 pub const PROMISE_EFFECT_TARGET_RUN_ID: &str = "target_run_id";
-pub const PROMISE_EFFECT_ENV_ID: &str = "env_id";
+pub const PROMISE_EFFECT_INSTANCE_ID: &str = "instance_id";
 pub const PROMISE_EFFECT_JOB_ID: &str = "job_id";
 pub const PROMISE_EFFECT_FIRE_AT_MS: &str = "fire_at_ms";
 pub const PROMISE_EFFECT_DEADLINE_MS: &str = "deadline_ms";
@@ -270,19 +266,14 @@ pub fn promise_create_effect(
             );
         }
         PromiseSource::EnvJob {
-            target_session_id,
-            env_id,
+            instance_id,
             job_id,
         } => {
             data.insert(
                 PROMISE_EFFECT_SOURCE.to_owned(),
                 PROMISE_EFFECT_SOURCE_ENV_JOB.to_owned(),
             );
-            data.insert(
-                PROMISE_EFFECT_TARGET_SESSION_ID.to_owned(),
-                target_session_id.clone(),
-            );
-            data.insert(PROMISE_EFFECT_ENV_ID.to_owned(), env_id.clone());
+            data.insert(PROMISE_EFFECT_INSTANCE_ID.to_owned(), instance_id.clone());
             data.insert(PROMISE_EFFECT_JOB_ID.to_owned(), job_id.clone());
         }
         PromiseSource::Timer { fire_at_ms } => {
@@ -360,8 +351,7 @@ pub(crate) fn promise_from_create_effect(
             )?,
         },
         PROMISE_EFFECT_SOURCE_ENV_JOB => PromiseSource::EnvJob {
-            target_session_id: field(PROMISE_EFFECT_TARGET_SESSION_ID)?,
-            env_id: field(PROMISE_EFFECT_ENV_ID)?,
+            instance_id: field(PROMISE_EFFECT_INSTANCE_ID)?,
             job_id: field(PROMISE_EFFECT_JOB_ID)?,
         },
         PROMISE_EFFECT_SOURCE_TIMER => PromiseSource::Timer {

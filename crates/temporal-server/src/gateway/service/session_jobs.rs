@@ -1,9 +1,9 @@
 use super::*;
 
 use ::environments::{
-    CreateJobHandle, EnvironmentId as RegistryEnvironmentId, JobHandleRecord, JobHandleStore,
-    ListJobHandles, SessionEnvironmentBindingRecord, SessionEnvironmentBindingStatus,
-    SessionEnvironmentBindingStore,
+    CreateJobHandle, EnvironmentInstanceId, EnvironmentInstanceRecord, EnvironmentJobGroupId,
+    EnvironmentJobGroupStatus, JobHandleRecord, JobHandleStore, ListJobHandles,
+    ReserveEnvironmentJobGroup, UpdateEnvironmentJobGroupStatus,
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use engine::validate_general_string_id;
@@ -29,111 +29,161 @@ use host_protocol::{
         HostTransport, JobId,
     },
 };
-use tools::targets::ENV_TARGET_NAMESPACE;
 
-use crate::credential_injection::EnvironmentCredentialResolver;
-
-const DEFAULT_SESSION_JOB_LIST_LIMIT: usize = 20;
-const MAX_SESSION_JOB_LIST_LIMIT: usize = 200;
+const DEFAULT_JOB_LIST_LIMIT: usize = 20;
+const MAX_JOB_LIST_LIMIT: usize = 200;
 
 impl GatewayAgentApi {
-    pub(super) async fn create_session_job_records(
+    pub(super) async fn create_environment_job_records(
         &self,
-        params: SessionJobCreateParams,
-    ) -> Result<SessionJobCreateResponse, AgentApiError> {
-        let session_id = parse_job_session_id(params.session_id)?;
-        validate_job_request_id(&params.request_id)?;
-        if params.jobs.is_empty() {
+        params: EnvironmentJobCreateParams,
+    ) -> Result<EnvironmentJobCreateResponse, AgentApiError> {
+        let instance_id = parse_environment_job_instance_id(params.instance_id)?;
+        self.start_environment_jobs(instance_id, params.request_id, params.jobs, None)
+            .await
+    }
+
+    async fn start_environment_jobs(
+        &self,
+        instance_id: EnvironmentInstanceId,
+        request_id: String,
+        jobs: Vec<SessionJobStartSpecInput>,
+        default_cwd: Option<HostPath>,
+    ) -> Result<EnvironmentJobCreateResponse, AgentApiError> {
+        let mut host_specs = Vec::with_capacity(jobs.len());
+        for (index, spec) in jobs.into_iter().enumerate() {
+            let job_id = spec
+                .job_id
+                .as_deref()
+                .map(parse_host_job_id)
+                .transpose()
+                .map_err(AgentApiError::invalid_request)?
+                .unwrap_or_else(|| derived_job_id(&instance_id, &request_id, index));
+            let mut spec =
+                api_start_spec_to_host(spec, job_id).map_err(AgentApiError::invalid_request)?;
+            if spec.cwd.is_none() {
+                spec.cwd = default_cwd.clone();
+            }
+            host_specs.push(spec);
+        }
+        let instance = self.read_job_instance(&instance_id).await?;
+        self.start_environment_jobs_host_specs(instance, request_id, host_specs)
+            .await
+    }
+
+    async fn start_environment_jobs_host_specs(
+        &self,
+        instance: EnvironmentInstanceRecord,
+        request_id: String,
+        jobs: Vec<HostJobStartSpec>,
+    ) -> Result<EnvironmentJobCreateResponse, AgentApiError> {
+        validate_job_request_id(&request_id)?;
+        if jobs.is_empty() {
             return Err(AgentApiError::invalid_request(
-                "session/jobs/create requires at least one job",
+                "environments/jobs/create requires at least one job",
             ));
         }
-
-        let loaded = self
-            .load_session_state_with_current_environment_projection(&session_id)
+        self.read_live_environment_provider(&instance.provider_id)
             .await?;
-        let active_env_target = loaded
-            .state
-            .tooling
-            .routing
-            .default_targets
-            .get(ENV_TARGET_NAMESPACE);
-        let env_id = resolve_session_job_env_id(params.env_id.as_deref(), active_env_target)
-            .map_err(AgentApiError::invalid_request)?;
-        let binding = self.read_job_binding(&session_id, &env_id).await?;
-        if binding.status != SessionEnvironmentBindingStatus::Ready {
-            return Err(AgentApiError::rejected(format!(
-                "environment is not ready: {}",
-                env_id.as_str()
-            )));
-        }
-
-        let mut jobs = Vec::with_capacity(params.jobs.len());
-        for (index, spec) in params.jobs.into_iter().enumerate() {
-            let job_id = match spec.job_id.as_deref() {
-                Some(job_id) => {
-                    parse_host_job_id(job_id).map_err(AgentApiError::invalid_request)?
-                }
-                None => derived_api_job_id(&session_id, &env_id, &params.request_id, index),
-            };
-            jobs.push(
-                api_start_spec_to_host(spec, job_id).map_err(AgentApiError::invalid_request)?,
-            );
-        }
         let request = HostStartJobsParams {
-            namespace: session_id.as_str().to_owned(),
-            request_id: params.request_id,
+            namespace: instance.instance_id.as_str().to_owned(),
+            request_id: request_id.clone(),
             jobs,
         };
-        let resolver = EnvironmentCredentialResolver::from_pg_store(self.store.clone());
-        let mut request = request;
-        for job in &mut request.jobs {
-            let secret_env = resolver
-                .resolve_secret_env(&session_id, &env_id, &job.env)
-                .await
-                .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
-            for (name, value) in secret_env {
-                job.secret_env.insert(name, value);
+        let request_hash = job_start_request_hash(&request)?;
+        let job_group_id = derived_job_group_id(&instance.instance_id, &request_id);
+        JobHandleStore::reserve_job_group(
+            self.store.as_ref(),
+            ReserveEnvironmentJobGroup {
+                instance_id: instance.instance_id.clone(),
+                job_group_id: job_group_id.clone(),
+                request_id,
+                start_request_hash: request_hash.clone(),
+                created_at_ms: now_ms()?,
+            },
+        )
+        .await
+        .map_err(map_environments_error)?;
+
+        let result = async {
+            let (mut client, capabilities) =
+                connect_initialized_host_data_client(&instance.connection).await?;
+            if !capabilities.job_start {
+                return Err(AgentApiError::rejected(format!(
+                    "environment does not support durable job start: {}",
+                    instance.instance_id
+                )));
             }
+            client
+                .start_jobs(&request)
+                .await
+                .map_err(map_host_client_api_error)
         }
-        let request_hash = session_job_start_request_hash(&request)?;
-
-        let (mut client, capabilities) = connect_initialized_host_data_client(&binding).await?;
-        if !capabilities.job_start {
-            return Err(AgentApiError::rejected(format!(
-                "environment does not support durable job start: {}",
-                env_id.as_str()
-            )));
-        }
-        let response = client
-            .start_jobs(&request)
-            .await
-            .map_err(map_host_client_api_error)?;
-
+        .await;
+        let response = match result {
+            Ok(response) => response,
+            Err(error) => {
+                let _ = JobHandleStore::update_job_group_status(
+                    self.store.as_ref(),
+                    UpdateEnvironmentJobGroupStatus {
+                        instance_id: instance.instance_id.clone(),
+                        job_group_id: job_group_id.clone(),
+                        status: EnvironmentJobGroupStatus::Failed,
+                        updated_at_ms: now_ms()?,
+                    },
+                )
+                .await;
+                return Err(error);
+            }
+        };
         let created_at_ms = now_ms()?;
         let records = response
             .jobs
             .iter()
             .map(|summary| CreateJobHandle {
-                session_id: session_id.clone(),
-                env_id: env_id.clone(),
-                provider_id: binding.provider_id.clone(),
-                target_id: binding.target_id.clone(),
-                namespace: request.namespace.clone(),
+                instance_id: instance.instance_id.clone(),
+                job_group_id: job_group_id.clone(),
                 job_id: summary.job_id.clone(),
                 name: summary.name.clone(),
                 queue_key: summary.queue_key.clone(),
+                created_by_session_id: None,
                 created_by_run_id: None,
                 created_by_turn_id: None,
                 created_by_tool_call_id: None,
                 created_at_ms,
                 start_request_hash: request_hash.clone(),
             })
-            .collect::<Vec<_>>();
+            .collect();
         let stored = JobHandleStore::create_job_handles(self.store.as_ref(), records)
             .await
             .map_err(map_environments_error)?;
-        let handle_by_job_id = stored
+        let status = if response
+            .jobs
+            .iter()
+            .all(|job| is_terminal_job_status(job.status))
+        {
+            EnvironmentJobGroupStatus::Terminal
+        } else {
+            EnvironmentJobGroupStatus::Running
+        };
+        JobHandleStore::update_job_group_status(
+            self.store.as_ref(),
+            UpdateEnvironmentJobGroupStatus {
+                instance_id: instance.instance_id.clone(),
+                job_group_id: job_group_id.clone(),
+                status,
+                updated_at_ms: now_ms()?,
+            },
+        )
+        .await
+        .map_err(map_environments_error)?;
+        self.start_environment_job_workflow(
+            &instance.instance_id,
+            &job_group_id,
+            response.jobs.iter().map(|job| job.job_id.clone()).collect(),
+        )
+        .await?;
+        let handles = stored
             .iter()
             .map(|record| {
                 (
@@ -142,28 +192,28 @@ impl GatewayAgentApi {
                 )
             })
             .collect::<BTreeMap<_, _>>();
-
-        Ok(SessionJobCreateResponse {
-            env_id: env_id.as_str().to_owned(),
+        Ok(EnvironmentJobCreateResponse {
+            instance_id: instance.instance_id.as_str().to_owned(),
+            job_group_id: job_group_id.as_str().to_owned(),
             jobs: response
                 .jobs
                 .into_iter()
                 .map(|summary| SessionJobStartedView {
                     name: summary.name,
                     job_id: summary.job_id.as_str().to_owned(),
-                    handle: handle_by_job_id
+                    handle: handles
                         .get(summary.job_id.as_str())
                         .cloned()
                         .unwrap_or_else(|| SessionJobHandleView {
-                            session_id: session_id.as_str().to_owned(),
-                            env_id: env_id.as_str().to_owned(),
+                            instance_id: instance.instance_id.as_str().to_owned(),
                             job_id: summary.job_id.as_str().to_owned(),
                         }),
+                    promise_id: None,
                     status: api_job_status(summary.status),
                     dependencies: summary
                         .dependencies
                         .into_iter()
-                        .map(|job_id| job_id.as_str().to_owned())
+                        .map(|id| id.as_str().to_owned())
                         .collect(),
                     queue_key: summary.queue_key,
                 })
@@ -171,226 +221,231 @@ impl GatewayAgentApi {
         })
     }
 
-    pub(super) async fn list_session_job_records(
+    async fn start_environment_job_workflow(
         &self,
-        params: SessionJobListParams,
-    ) -> Result<SessionJobListResponse, AgentApiError> {
-        let session_id = parse_job_session_id(params.session_id)?;
-        let env_id = params
-            .env_id
-            .map(|env_id| {
-                RegistryEnvironmentId::try_new(env_id).map_err(|error| {
-                    AgentApiError::invalid_request(format!("invalid env_id: {error}"))
-                })
-            })
-            .transpose()?;
-        let limit = normalize_session_job_list_limit(params.limit)?;
+        instance_id: &EnvironmentInstanceId,
+        job_group_id: &EnvironmentJobGroupId,
+        job_ids: Vec<JobId>,
+    ) -> Result<(), AgentApiError> {
+        let workflow_id = temporal_workflow::compose_environment_job_workflow_id(
+            self.universe_id(),
+            instance_id.as_str(),
+            job_group_id.as_str(),
+        );
+        match self
+            .client
+            .start_workflow(
+                temporal_workflow::EnvironmentJobWorkflow::run,
+                temporal_workflow::EnvironmentJobWorkflowArgs {
+                    instance_id: instance_id.as_str().to_owned(),
+                    job_group_id: job_group_id.as_str().to_owned(),
+                    job_ids,
+                    poll_ms: 2_000,
+                    poll_attempt: 0,
+                },
+                WorkflowStartOptions::new(self.task_queue.clone(), workflow_id).build(),
+            )
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                let error = map_workflow_start_error(error);
+                if error.kind == AgentApiErrorKind::Conflict {
+                    Ok(())
+                } else {
+                    Err(error)
+                }
+            }
+        }
+    }
+
+    pub(super) async fn list_environment_job_records(
+        &self,
+        params: EnvironmentJobListParams,
+    ) -> Result<EnvironmentJobListResponse, AgentApiError> {
         let records = JobHandleStore::list_job_handles(
             self.store.as_ref(),
             ListJobHandles {
-                session_id,
-                env_id,
-                limit: Some(limit),
+                instance_id: params
+                    .instance_id
+                    .map(parse_environment_job_instance_id)
+                    .transpose()?,
+                job_group_id: params.job_group_id.map(parse_job_group_id).transpose()?,
+                created_by_session_id: None,
+                limit: Some(normalize_job_list_limit(params.limit)?),
             },
         )
         .await
         .map_err(map_environments_error)?;
-        Ok(SessionJobListResponse {
+        Ok(EnvironmentJobListResponse {
             jobs: records.iter().map(session_job_record_view).collect(),
         })
     }
 
-    pub(super) async fn read_session_job_records(
+    pub(super) async fn read_environment_job_records(
         &self,
-        params: SessionJobReadParams,
-    ) -> Result<SessionJobReadResponse, AgentApiError> {
-        if params.jobs.is_empty() {
-            return Err(AgentApiError::invalid_request(
-                "session/jobs/read requires at least one job",
-            ));
-        }
-        let session_id = parse_job_session_id(params.session_id)?;
-        let loaded = self
-            .load_session_state_with_current_environment_projection(&session_id)
+        params: EnvironmentJobReadParams,
+    ) -> Result<EnvironmentJobReadResponse, AgentApiError> {
+        let jobs = self
+            .read_jobs(
+                params.jobs,
+                params.output_bytes,
+                params.after_seq,
+                params.include_artifacts,
+            )
             .await?;
-        let active_env_target = loaded
-            .state
-            .tooling
-            .routing
-            .default_targets
-            .get(ENV_TARGET_NAMESPACE);
-
-        let mut entries = Vec::with_capacity(params.jobs.len());
-        for handle in params.jobs {
-            entries.push(
-                self.read_one_session_job(
-                    &session_id,
-                    active_env_target,
-                    handle,
-                    params.output_bytes,
-                    params.after_seq,
-                    params.include_artifacts,
-                )
-                .await,
-            );
-        }
-        Ok(SessionJobReadResponse { jobs: entries })
+        Ok(EnvironmentJobReadResponse { jobs })
     }
 
-    pub(super) async fn cancel_session_job_records(
+    async fn read_jobs(
         &self,
-        params: SessionJobCancelParams,
-    ) -> Result<SessionJobCancelResponse, AgentApiError> {
-        if params.jobs.is_empty() {
-            return Err(AgentApiError::invalid_request(
-                "session/jobs/cancel requires at least one job",
-            ));
-        }
-        let session_id = parse_job_session_id(params.session_id)?;
-        let loaded = self
-            .load_session_state_with_current_environment_projection(&session_id)
-            .await?;
-        let active_env_target = loaded
-            .state
-            .tooling
-            .routing
-            .default_targets
-            .get(ENV_TARGET_NAMESPACE);
-
-        let mut entries = Vec::with_capacity(params.jobs.len());
-        for handle in params.jobs {
-            entries.push(
-                self.cancel_one_session_job(
-                    &session_id,
-                    active_env_target,
-                    handle,
-                    params.scope,
-                    params.force,
-                )
-                .await,
-            );
-        }
-        Ok(SessionJobCancelResponse { jobs: entries })
-    }
-
-    async fn read_one_session_job(
-        &self,
-        session_id: &SessionId,
-        active_env_target: Option<&engine::ToolExecutionTarget>,
-        handle: SessionJobHandleInput,
+        handles: Vec<SessionJobHandleInput>,
         output_bytes: Option<usize>,
         after_seq: Option<u64>,
         include_artifacts: bool,
-    ) -> SessionJobReadEntryView {
-        let resolved = match resolve_session_job_handle(session_id, active_env_target, handle) {
-            Ok(handle) => handle,
-            Err(error) => return session_job_read_error(None, error),
-        };
-        let record = match self.read_job_handle_record(&resolved).await {
-            Ok(record) => record,
-            Err(error) => return session_job_read_error(Some(resolved), error),
-        };
-        let mut client = match self.connect_client_for_job_record(&record, "read").await {
-            Ok(client) => client,
-            Err(error) => return session_job_read_error(Some(session_job_handle(&record)), error),
-        };
-        let response = match client
-            .read_jobs(&HostReadJobsParams {
-                namespace: record.namespace.clone(),
-                jobs: vec![record.job_id.clone()],
-                after_seq,
-                max_bytes: output_bytes,
-                include_artifacts,
-                wait_ms: None,
-            })
-            .await
-        {
-            Ok(response) => response,
-            Err(error) => {
-                return session_job_read_error(
+    ) -> Result<Vec<SessionJobReadEntryView>, AgentApiError> {
+        if handles.is_empty() {
+            return Err(AgentApiError::invalid_request(
+                "environments/jobs/read requires at least one job",
+            ));
+        }
+        let mut entries = Vec::with_capacity(handles.len());
+        for handle in handles {
+            let resolved = match parse_job_handle(handle) {
+                Ok(handle) => handle,
+                Err(error) => {
+                    entries.push(session_job_read_error(None, error));
+                    continue;
+                }
+            };
+            let record = match self.read_job_handle_record(&resolved).await {
+                Ok(record) => record,
+                Err(error) => {
+                    entries.push(session_job_read_error(Some(resolved), error));
+                    continue;
+                }
+            };
+            let mut client = match self.connect_client_for_job_record(&record, "read").await {
+                Ok(client) => client,
+                Err(error) => {
+                    entries.push(session_job_read_error(Some(resolved), error));
+                    continue;
+                }
+            };
+            match client
+                .read_jobs(&HostReadJobsParams {
+                    namespace: record.instance_id.as_str().to_owned(),
+                    jobs: vec![record.job_id.clone()],
+                    after_seq,
+                    max_bytes: output_bytes,
+                    include_artifacts,
+                    wait_ms: None,
+                })
+                .await
+            {
+                Ok(response) => entries.push(session_job_read_entry_from_response(
+                    session_job_handle(&record),
+                    response.jobs.into_iter().next(),
+                )),
+                Err(error) => entries.push(session_job_read_error(
                     Some(session_job_handle(&record)),
                     error.to_string(),
-                );
+                )),
             }
-        };
-        session_job_read_entry_from_response(
-            session_job_handle(&record),
-            response.jobs.into_iter().next(),
-        )
+        }
+        Ok(entries)
     }
 
-    async fn cancel_one_session_job(
+    pub(super) async fn cancel_environment_job_records(
         &self,
-        session_id: &SessionId,
-        active_env_target: Option<&engine::ToolExecutionTarget>,
-        handle: SessionJobHandleInput,
+        params: EnvironmentJobCancelParams,
+    ) -> Result<EnvironmentJobCancelResponse, AgentApiError> {
+        let jobs = self
+            .cancel_jobs(params.jobs, params.scope, params.force)
+            .await?;
+        Ok(EnvironmentJobCancelResponse { jobs })
+    }
+
+    async fn cancel_jobs(
+        &self,
+        handles: Vec<SessionJobHandleInput>,
         scope: SessionJobCancelScopeView,
         force: bool,
-    ) -> SessionJobCancelEntryView {
-        let resolved = match resolve_session_job_handle(session_id, active_env_target, handle) {
-            Ok(handle) => handle,
-            Err(error) => return session_job_cancel_error(None, error),
-        };
-        let record = match self.read_job_handle_record(&resolved).await {
-            Ok(record) => record,
-            Err(error) => return session_job_cancel_error(Some(resolved), error),
-        };
-        let mut client = match self.connect_client_for_job_record(&record, "cancel").await {
-            Ok(client) => client,
-            Err(error) => {
-                return session_job_cancel_error(Some(session_job_handle(&record)), error);
-            }
-        };
-        let response = match client
-            .cancel_jobs(&HostCancelJobsParams {
-                namespace: record.namespace.clone(),
-                jobs: vec![record.job_id.clone()],
-                scope: host_cancel_scope(scope),
-                force,
-            })
-            .await
-        {
-            Ok(response) => response,
-            Err(error) => {
-                return session_job_cancel_error(
+    ) -> Result<Vec<SessionJobCancelEntryView>, AgentApiError> {
+        if handles.is_empty() {
+            return Err(AgentApiError::invalid_request(
+                "environments/jobs/cancel requires at least one job",
+            ));
+        }
+        let mut entries = Vec::with_capacity(handles.len());
+        for handle in handles {
+            let resolved = match parse_job_handle(handle) {
+                Ok(handle) => handle,
+                Err(error) => {
+                    entries.push(session_job_cancel_error(None, error));
+                    continue;
+                }
+            };
+            let record = match self.read_job_handle_record(&resolved).await {
+                Ok(record) => record,
+                Err(error) => {
+                    entries.push(session_job_cancel_error(Some(resolved), error));
+                    continue;
+                }
+            };
+            let mut client = match self.connect_client_for_job_record(&record, "cancel").await {
+                Ok(client) => client,
+                Err(error) => {
+                    entries.push(session_job_cancel_error(Some(resolved), error));
+                    continue;
+                }
+            };
+            match client
+                .cancel_jobs(&HostCancelJobsParams {
+                    namespace: record.instance_id.as_str().to_owned(),
+                    jobs: vec![record.job_id.clone()],
+                    scope: host_cancel_scope(scope),
+                    force,
+                })
+                .await
+            {
+                Ok(response) => match response.jobs.into_iter().next() {
+                    Some(summary) => entries.push(SessionJobCancelEntryView {
+                        handle: Some(session_job_handle(&record)),
+                        summary: Some(api_job_summary(summary)),
+                        error: None,
+                    }),
+                    None => entries.push(session_job_cancel_error(
+                        Some(session_job_handle(&record)),
+                        "provider returned no job result".to_owned(),
+                    )),
+                },
+                Err(error) => entries.push(session_job_cancel_error(
                     Some(session_job_handle(&record)),
                     error.to_string(),
-                );
+                )),
             }
-        };
-        match response.jobs.into_iter().next() {
-            Some(summary) => SessionJobCancelEntryView {
-                handle: Some(session_job_handle(&record)),
-                summary: Some(api_job_summary(summary)),
-                error: None,
-            },
-            None => session_job_cancel_error(
-                Some(session_job_handle(&record)),
-                "provider returned no job result".to_owned(),
-            ),
         }
+        Ok(entries)
     }
 
     async fn read_job_handle_record(
         &self,
         handle: &SessionJobHandleView,
     ) -> Result<JobHandleRecord, String> {
-        let session_id = SessionId::try_new(handle.session_id.clone())
-            .map_err(|error| format!("invalid job handle session_id: {error}"))?;
-        let env_id = RegistryEnvironmentId::try_new(handle.env_id.clone())
-            .map_err(|error| format!("invalid job handle env_id: {error}"))?;
+        let instance_id = EnvironmentInstanceId::try_new(handle.instance_id.clone())
+            .map_err(|error| format!("invalid job handle instance_id: {error}"))?;
         let job_id = parse_host_job_id(&handle.job_id)?;
-        JobHandleStore::read_job_handle(self.store.as_ref(), &session_id, &env_id, &job_id)
+        JobHandleStore::read_job_handle(self.store.as_ref(), &instance_id, &job_id)
             .await
             .map_err(|error| error.to_string())
     }
 
-    async fn read_job_binding(
+    async fn read_job_instance(
         &self,
-        session_id: &SessionId,
-        env_id: &RegistryEnvironmentId,
-    ) -> Result<SessionEnvironmentBindingRecord, AgentApiError> {
-        SessionEnvironmentBindingStore::read_binding(self.store.as_ref(), session_id, env_id)
+        instance_id: &EnvironmentInstanceId,
+    ) -> Result<EnvironmentInstanceRecord, AgentApiError> {
+        ::environments::EnvironmentInstanceStore::read_instance(self.store.as_ref(), instance_id)
             .await
             .map_err(map_environments_error)
     }
@@ -400,17 +455,14 @@ impl GatewayAgentApi {
         record: &JobHandleRecord,
         operation: &str,
     ) -> Result<HostDataClient<host_client::WebSocketTransport>, String> {
-        let binding = self
-            .read_job_binding(&record.session_id, &record.env_id)
+        let instance = self
+            .read_job_instance(&record.instance_id)
             .await
             .map_err(|error| error.to_string())?;
-        if binding.provider_id != record.provider_id || binding.target_id != record.target_id {
-            return Err(format!(
-                "environment binding no longer points at job target: expected {}/{} got {}/{}",
-                record.provider_id, record.target_id, binding.provider_id, binding.target_id
-            ));
-        }
-        let (client, capabilities) = connect_initialized_host_data_client(&binding)
+        self.read_live_environment_provider(&instance.provider_id)
+            .await
+            .map_err(|error| error.to_string())?;
+        let (client, capabilities) = connect_initialized_host_data_client(&instance.connection)
             .await
             .map_err(|error| error.to_string())?;
         let supported = match operation {
@@ -421,16 +473,24 @@ impl GatewayAgentApi {
         if !supported {
             return Err(format!(
                 "environment does not support durable job {operation}: {}",
-                record.env_id
+                record.instance_id
             ));
         }
         Ok(client)
     }
 }
 
-fn parse_job_session_id(value: String) -> Result<SessionId, AgentApiError> {
-    SessionId::try_new(value)
-        .map_err(|error| AgentApiError::invalid_request(format!("invalid session id: {error}")))
+fn parse_environment_job_instance_id(
+    value: String,
+) -> Result<EnvironmentInstanceId, AgentApiError> {
+    EnvironmentInstanceId::try_new(value).map_err(|error| {
+        AgentApiError::invalid_request(format!("invalid environment instance id: {error}"))
+    })
+}
+
+fn parse_job_group_id(value: String) -> Result<EnvironmentJobGroupId, AgentApiError> {
+    EnvironmentJobGroupId::try_new(value)
+        .map_err(|error| AgentApiError::invalid_request(format!("invalid job group id: {error}")))
 }
 
 fn validate_job_request_id(value: &str) -> Result<(), AgentApiError> {
@@ -444,57 +504,24 @@ fn parse_host_job_id(value: &str) -> Result<JobId, String> {
     Ok(JobId::new(value.to_owned()))
 }
 
-fn resolve_session_job_env_id(
-    explicit_env_id: Option<&str>,
-    active_env_target: Option<&engine::ToolExecutionTarget>,
-) -> Result<RegistryEnvironmentId, String> {
-    let env_id = if let Some(env_id) = explicit_env_id {
-        env_id
-    } else {
-        let Some(target) = active_env_target else {
-            return Err("job API requires env_id or an active environment target".to_owned());
-        };
-        if target.namespace != ENV_TARGET_NAMESPACE {
-            return Err(format!(
-                "active tool target is not an environment: {}:{}",
-                target.namespace, target.id
-            ));
-        }
-        target.id.as_str()
-    };
-    RegistryEnvironmentId::try_new(env_id).map_err(|error| format!("invalid env_id: {error}"))
-}
-
-fn resolve_session_job_handle(
-    current_session_id: &SessionId,
-    active_env_target: Option<&engine::ToolExecutionTarget>,
-    handle: SessionJobHandleInput,
-) -> Result<SessionJobHandleView, String> {
-    let session_id = match handle.session_id {
-        Some(session_id) => SessionId::try_new(session_id)
-            .map_err(|error| format!("invalid job handle session_id: {error}"))?,
-        None => current_session_id.clone(),
-    };
-    if &session_id != current_session_id {
-        return Err("cross-session environment job access is not supported".to_owned());
-    }
-    let env_id = resolve_session_job_env_id(handle.env_id.as_deref(), active_env_target)?;
+fn parse_job_handle(handle: SessionJobHandleInput) -> Result<SessionJobHandleView, String> {
+    let instance_id = EnvironmentInstanceId::try_new(handle.instance_id)
+        .map_err(|error| format!("invalid job handle instance_id: {error}"))?;
     let job_id = parse_host_job_id(&handle.job_id)?;
     Ok(SessionJobHandleView {
-        session_id: session_id.as_str().to_owned(),
-        env_id: env_id.as_str().to_owned(),
+        instance_id: instance_id.as_str().to_owned(),
         job_id: job_id.as_str().to_owned(),
     })
 }
 
-fn normalize_session_job_list_limit(limit: Option<usize>) -> Result<usize, AgentApiError> {
-    let limit = limit.unwrap_or(DEFAULT_SESSION_JOB_LIST_LIMIT);
+fn normalize_job_list_limit(limit: Option<usize>) -> Result<usize, AgentApiError> {
+    let limit = limit.unwrap_or(DEFAULT_JOB_LIST_LIMIT);
     if limit == 0 {
         return Err(AgentApiError::invalid_request(
-            "session/jobs/list limit must be greater than zero",
+            "jobs/list limit must be greater than zero",
         ));
     }
-    Ok(limit.min(MAX_SESSION_JOB_LIST_LIMIT))
+    Ok(limit.min(MAX_JOB_LIST_LIMIT))
 }
 
 fn api_start_spec_to_host(
@@ -523,7 +550,10 @@ fn api_start_spec_to_host(
             .into_iter()
             .map(api_dependency_to_host)
             .collect::<Result<Vec<_>, _>>()?,
-        dependency_policy: host_dependency_policy(spec.dependency_policy),
+        dependency_policy: match spec.dependency_policy {
+            SessionJobDependencyPolicyView::AllSucceeded => HostJobDependencyPolicy::AllSucceeded,
+            SessionJobDependencyPolicyView::AllTerminal => HostJobDependencyPolicy::AllTerminal,
+        },
         queue_key: spec.queue_key,
     })
 }
@@ -547,13 +577,6 @@ fn api_dependency_to_host(
     }
 }
 
-fn host_dependency_policy(policy: SessionJobDependencyPolicyView) -> HostJobDependencyPolicy {
-    match policy {
-        SessionJobDependencyPolicyView::AllSucceeded => HostJobDependencyPolicy::AllSucceeded,
-        SessionJobDependencyPolicyView::AllTerminal => HostJobDependencyPolicy::AllTerminal,
-    }
-}
-
 fn host_cancel_scope(scope: SessionJobCancelScopeView) -> HostJobCancelScope {
     match scope {
         SessionJobCancelScopeView::Job => HostJobCancelScope::Job,
@@ -561,77 +584,27 @@ fn host_cancel_scope(scope: SessionJobCancelScopeView) -> HostJobCancelScope {
     }
 }
 
-fn derived_api_job_id(
-    session_id: &SessionId,
-    env_id: &RegistryEnvironmentId,
-    request_id: &str,
-    index: usize,
-) -> JobId {
-    let seed = format!(
-        "{}:{}:{}:{}",
-        session_id.as_str(),
-        env_id.as_str(),
-        request_id,
-        index
-    );
-    let hash = BlobRef::from_bytes(seed.as_bytes());
-    let suffix = &hash.as_str()["sha256:".len().."sha256:".len() + 24];
-    JobId::new(format!("job-{suffix}"))
+fn derived_job_id(instance_id: &EnvironmentInstanceId, request_id: &str, index: usize) -> JobId {
+    let hash = BlobRef::from_bytes(format!("{instance_id}:{request_id}:{index}").as_bytes());
+    JobId::new(format!("job-{}", &hash.as_str()[7..31]))
 }
 
-fn session_job_start_request_hash(request: &HostStartJobsParams) -> Result<String, AgentApiError> {
-    #[derive(serde::Serialize)]
-    #[serde(rename_all = "camelCase")]
-    struct SanitizedStartJobsParams<'a> {
-        namespace: &'a str,
-        request_id: &'a str,
-        jobs: Vec<SanitizedJobStartSpec<'a>>,
-    }
+fn derived_job_group_id(
+    instance_id: &EnvironmentInstanceId,
+    request_id: &str,
+) -> EnvironmentJobGroupId {
+    let hash = BlobRef::from_bytes(format!("{instance_id}:{request_id}").as_bytes());
+    EnvironmentJobGroupId::new(format!("ejg_{}", &hash.as_str()[7..31]))
+}
 
-    #[derive(serde::Serialize)]
-    #[serde(rename_all = "camelCase")]
-    struct SanitizedJobStartSpec<'a> {
-        job_id: &'a JobId,
-        name: &'a Option<String>,
-        argv: &'a [String],
-        cwd: &'a Option<HostPath>,
-        env: &'a BTreeMap<String, String>,
-        secret_env_names: Vec<&'a String>,
-        stdin: &'a Option<ByteChunk>,
-        timeout_ms: Option<u64>,
-        depends_on: &'a [HostJobDependency],
-        dependency_policy: HostJobDependencyPolicy,
-        queue_key: &'a Option<String>,
-    }
-
-    let material = SanitizedStartJobsParams {
-        namespace: &request.namespace,
-        request_id: &request.request_id,
-        jobs: request
-            .jobs
-            .iter()
-            .map(|job| SanitizedJobStartSpec {
-                job_id: &job.job_id,
-                name: &job.name,
-                argv: &job.argv,
-                cwd: &job.cwd,
-                env: &job.env,
-                secret_env_names: job.secret_env.keys().collect(),
-                stdin: &job.stdin,
-                timeout_ms: job.timeout_ms,
-                depends_on: &job.depends_on,
-                dependency_policy: job.dependency_policy,
-                queue_key: &job.queue_key,
-            })
-            .collect(),
-    };
-    serde_json::to_vec(&material)
+fn job_start_request_hash(request: &HostStartJobsParams) -> Result<String, AgentApiError> {
+    serde_json::to_vec(request)
         .map(|bytes| BlobRef::from_bytes(&bytes).to_string())
         .map_err(|error| AgentApiError::internal(format!("encode job start request hash: {error}")))
 }
 
 async fn connect_initialized_host_data_client(
-    binding: &SessionEnvironmentBindingRecord,
+    connection: &HostConnectionSpec,
 ) -> Result<
     (
         HostDataClient<host_client::WebSocketTransport>,
@@ -639,12 +612,12 @@ async fn connect_initialized_host_data_client(
     ),
     AgentApiError,
 > {
-    let mut client = connect_host_data_client(&binding.connection).await?;
+    let mut client = connect_host_data_client(connection).await?;
     let response = client
         .initialize(&HostInitializeParams {
             protocol_version: CURRENT_PROTOCOL_VERSION,
             client_name: "lightspeed-temporal-server".to_owned(),
-            scope: binding.connection.scope.clone(),
+            scope: connection.scope.clone(),
             resume_connection_id: None,
         })
         .await
@@ -663,7 +636,7 @@ async fn connect_initialized_host_data_client(
     Ok((client, capabilities))
 }
 
-async fn connect_host_data_client(
+pub(crate) async fn connect_host_data_client(
     connection: &HostConnectionSpec,
 ) -> Result<HostDataClient<host_client::WebSocketTransport>, AgentApiError> {
     match &connection.transport {
@@ -677,7 +650,7 @@ async fn connect_host_data_client(
         .await
         .map_err(map_host_client_api_error),
         other => Err(AgentApiError::rejected(format!(
-            "unsupported host data transport for session jobs: {other:?}"
+            "unsupported host data transport for environment jobs: {other:?}"
         ))),
     }
 }
@@ -687,10 +660,9 @@ fn map_host_client_api_error(error: HostClientError) -> AgentApiError {
         HostClientError::Host(error) => match error.code {
             HostErrorCode::InvalidRequest => AgentApiError::invalid_request(error.message),
             HostErrorCode::NotFound => AgentApiError::not_found(error.message),
-            HostErrorCode::Conflict => AgentApiError::rejected(error.message),
-            HostErrorCode::Unsupported | HostErrorCode::CapabilityUnavailable => {
-                AgentApiError::rejected(error.message)
-            }
+            HostErrorCode::Conflict
+            | HostErrorCode::Unsupported
+            | HostErrorCode::CapabilityUnavailable => AgentApiError::rejected(error.message),
             _ => AgentApiError::internal(error.message),
         },
         other => AgentApiError::internal(other.to_string()),
@@ -700,17 +672,19 @@ fn map_host_client_api_error(error: HostClientError) -> AgentApiError {
 fn session_job_record_view(record: &JobHandleRecord) -> SessionJobHandleRecordView {
     SessionJobHandleRecordView {
         handle: session_job_handle(record),
-        provider_id: record.provider_id.as_str().to_owned(),
-        target_id: record.target_id.as_str().to_owned(),
-        namespace: record.namespace.clone(),
+        job_group_id: record.job_group_id.as_str().to_owned(),
         name: record.name.clone(),
         queue_key: record.queue_key.clone(),
+        created_by_session_id: record
+            .created_by_session_id
+            .as_ref()
+            .map(|id| id.as_str().to_owned()),
         created_by_run_id: record.created_by_run_id.map(api_run_id),
-        created_by_turn_id: record.created_by_turn_id.map(|turn_id| turn_id.as_u64()),
+        created_by_turn_id: record.created_by_turn_id.map(|id| id.as_u64()),
         created_by_tool_call_id: record
             .created_by_tool_call_id
             .as_ref()
-            .map(|call_id| call_id.as_str().to_owned()),
+            .map(|id| id.as_str().to_owned()),
         created_at_ms: record.created_at_ms,
         start_request_hash: record.start_request_hash.clone(),
     }
@@ -718,8 +692,7 @@ fn session_job_record_view(record: &JobHandleRecord) -> SessionJobHandleRecordVi
 
 fn session_job_handle(record: &JobHandleRecord) -> SessionJobHandleView {
     SessionJobHandleView {
-        session_id: record.session_id.as_str().to_owned(),
-        env_id: record.env_id.as_str().to_owned(),
+        instance_id: record.instance_id.as_str().to_owned(),
         job_id: record.job_id.as_str().to_owned(),
     }
 }
@@ -783,7 +756,7 @@ fn api_job_summary(summary: HostJobSummary) -> SessionJobSummaryView {
         dependencies: summary
             .dependencies
             .into_iter()
-            .map(|job_id| job_id.as_str().to_owned())
+            .map(|id| id.as_str().to_owned())
             .collect(),
         created_at_ms: summary.created_at_ms,
         queued_at_ms: summary.queued_at_ms,
@@ -809,6 +782,19 @@ fn api_job_status(status: HostJobStatus) -> SessionJobStatusView {
         HostJobStatus::Interrupted => SessionJobStatusView::Interrupted,
         HostJobStatus::Lost => SessionJobStatusView::Lost,
     }
+}
+
+fn is_terminal_job_status(status: HostJobStatus) -> bool {
+    matches!(
+        status,
+        HostJobStatus::Succeeded
+            | HostJobStatus::Failed
+            | HostJobStatus::Cancelled
+            | HostJobStatus::TimedOut
+            | HostJobStatus::DependencyFailed
+            | HostJobStatus::Interrupted
+            | HostJobStatus::Lost
+    )
 }
 
 fn api_job_output_chunk(chunk: HostJobOutputChunk) -> SessionJobOutputChunkView {

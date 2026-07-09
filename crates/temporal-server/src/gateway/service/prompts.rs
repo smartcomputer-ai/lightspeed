@@ -148,44 +148,6 @@ impl GatewayAgentApi {
             tokio::time::sleep(self.poll_interval).await;
         }
     }
-
-    pub(super) async fn project_active_prompts(
-        &self,
-        loaded: &LoadedSession,
-    ) -> Result<PromptsActiveResponse, AgentApiError> {
-        let mut entries = active_prompt_context_entries(&loaded.state);
-        entries.sort_by(|left, right| left.key.cmp(&right.key));
-        let report_ref = prompt_report_ref_for_entries(&entries)?;
-        let report = match report_ref.as_ref() {
-            Some(report_ref) => Some(self.read_prompt_report(report_ref).await?),
-            None => None,
-        };
-
-        Ok(PromptsActiveResponse {
-            instructions: entries
-                .into_iter()
-                .filter_map(prompt_instruction_view)
-                .collect(),
-            report_ref: report_ref.map(|report_ref| report_ref.as_str().to_owned()),
-            report,
-        })
-    }
-
-    pub(super) async fn read_prompt_report(
-        &self,
-        report_ref: &BlobRef,
-    ) -> Result<serde_json::Value, AgentApiError> {
-        let bytes = self
-            .store
-            .read_bytes(report_ref)
-            .await
-            .map_err(map_blob_read_error)?;
-        serde_json::from_slice(&bytes).map_err(|error| {
-            AgentApiError::internal(format!(
-                "stored prompt instructions report is invalid JSON: {error}"
-            ))
-        })
-    }
 }
 
 fn sorted_prompt_refs(
@@ -195,31 +157,12 @@ fn sorted_prompt_refs(
     refs
 }
 
+#[cfg(test)]
 pub(super) fn active_prompt_context_entries(state: &engine::CoreAgentState) -> Vec<&ContextEntry> {
     tools::prompts::active_prompt_instruction_entries(state)
 }
 
-pub(super) fn prompt_report_ref_for_entries(
-    entries: &[&ContextEntry],
-) -> Result<Option<BlobRef>, AgentApiError> {
-    let mut report_ref = None;
-    for entry in entries {
-        let Some(next) = prompt_report_ref(entry)? else {
-            continue;
-        };
-        match report_ref.as_ref() {
-            Some(existing) if existing != &next => {
-                return Err(AgentApiError::internal(
-                    "active prompt instruction entries reference multiple reports",
-                ));
-            }
-            Some(_) => {}
-            None => report_ref = Some(next),
-        }
-    }
-    Ok(report_ref)
-}
-
+#[cfg(test)]
 pub(super) fn prompt_report_ref(entry: &ContextEntry) -> Result<Option<BlobRef>, AgentApiError> {
     if entry.provider_kind.as_deref() != Some(tools::prompts::PROMPT_INSTRUCTIONS_PROVIDER_KIND) {
         return Ok(None);
@@ -229,14 +172,5 @@ pub(super) fn prompt_report_ref(entry: &ContextEntry) -> Result<Option<BlobRef>,
     };
     BlobRef::parse(value).map(Some).map_err(|error| {
         AgentApiError::internal(format!("stored prompt report ref is invalid: {error}"))
-    })
-}
-
-fn prompt_instruction_view(entry: &ContextEntry) -> Option<PromptInstructionView> {
-    Some(PromptInstructionView {
-        key: entry.key.as_ref()?.as_str().to_owned(),
-        instructions_ref: entry.content_ref.as_str().to_owned(),
-        media_type: entry.media_type.clone(),
-        preview: entry.preview.clone(),
     })
 }

@@ -6,9 +6,9 @@
 use std::collections::BTreeSet;
 
 use api::{
-    AgentProfile, AgentProfileInput, AgentProfileSummary, AgentProfileUpdatePatch,
-    InlineAgentProfile, ProfileDocument, ProfileEnvironment, ProfileId, ProfileInstructions,
-    ProfileMcpLink, ProfileMount, ProfileSource,
+    AgentProfile, AgentProfileInput, AgentProfileSummary, InlineAgentProfile, ProfileDocument,
+    ProfileEnvironment, ProfileEnvironmentSource, ProfileId, ProfileInstructions, ProfileMount,
+    ProfileSource,
 };
 use async_trait::async_trait;
 use thiserror::Error;
@@ -35,14 +35,6 @@ pub enum ProfileError {
     Store { message: String },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct UpdateAgentProfile {
-    pub profile_id: ProfileId,
-    pub expected_revision: Option<u64>,
-    pub patch: AgentProfileUpdatePatch,
-    pub updated_at_ms: i64,
-}
-
 #[async_trait]
 pub trait ProfileStore: Send + Sync {
     async fn create_agent_profile(
@@ -67,11 +59,6 @@ pub trait ProfileStore: Send + Sync {
     ) -> Result<AgentProfile, ProfileError>;
 
     async fn list_agent_profiles(&self) -> Result<Vec<AgentProfileSummary>, ProfileError>;
-
-    async fn update_agent_profile(
-        &self,
-        update: UpdateAgentProfile,
-    ) -> Result<AgentProfile, ProfileError>;
 
     async fn delete_agent_profile(
         &self,
@@ -176,54 +163,6 @@ impl ProfileSourceExt for ProfileSource {
     }
 }
 
-pub trait AgentProfileUpdatePatchExt {
-    fn apply_to(
-        self,
-        profile: AgentProfile,
-        updated_at_ms: i64,
-    ) -> Result<AgentProfile, ProfileError>;
-}
-
-impl AgentProfileUpdatePatchExt for AgentProfileUpdatePatch {
-    fn apply_to(
-        self,
-        mut profile: AgentProfile,
-        updated_at_ms: i64,
-    ) -> Result<AgentProfile, ProfileError> {
-        if let Some(patch) = self.display_name {
-            profile.display_name = patch.into_option();
-        }
-        if let Some(patch) = self.description {
-            profile.description = patch.into_option();
-        }
-        if let Some(patch) = self.config {
-            profile.document.config = patch.into_option();
-        }
-        if let Some(patch) = self.instructions {
-            profile.document.instructions = patch.into_option();
-        }
-        if let Some(mounts) = self.mounts {
-            profile.document.mounts = mounts;
-        }
-        if let Some(mcp) = self.mcp {
-            profile.document.mcp = mcp;
-        }
-        if let Some(environments) = self.environments {
-            profile.document.environments = environments;
-        }
-        profile.revision =
-            profile
-                .revision
-                .checked_add(1)
-                .ok_or_else(|| ProfileError::InvalidInput {
-                    message: "profile revision exhausted".to_owned(),
-                })?;
-        profile.updated_at_ms = updated_at_ms;
-        profile.validate()?;
-        Ok(profile)
-    }
-}
-
 pub fn validate_profile_document(document: &ProfileDocument) -> Result<(), ProfileError> {
     if let Some(instructions) = &document.instructions {
         validate_profile_instructions(instructions)?;
@@ -234,15 +173,6 @@ pub fn validate_profile_document(document: &ProfileDocument) -> Result<(), Profi
         if !mount_paths.insert(mount.mount_path.clone()) {
             return Err(ProfileError::InvalidInput {
                 message: format!("duplicate mountPath {}", mount.mount_path),
-            });
-        }
-    }
-    let mut server_ids = BTreeSet::new();
-    for link in &document.mcp {
-        validate_profile_mcp_link(link)?;
-        if !server_ids.insert(link.server_id.clone()) {
-            return Err(ProfileError::InvalidInput {
-                message: format!("duplicate mcp serverId {}", link.server_id),
             });
         }
     }
@@ -286,28 +216,16 @@ fn validate_profile_mount(mount: &ProfileMount) -> Result<(), ProfileError> {
     validate_absolute_path("mountPath", &mount.mount_path)
 }
 
-fn validate_profile_mcp_link(link: &ProfileMcpLink) -> Result<(), ProfileError> {
-    validate_nonempty_string("mcp.serverId", &link.server_id)?;
-    validate_nonempty_optional("mcp.toolId", link.tool_id.as_deref())?;
-    validate_nonempty_optional("mcp.serverLabel", link.server_label.as_deref())?;
-    validate_nonempty_optional("mcp.authGrantId", link.auth_grant_id.as_deref())?;
-    if let Some(allowed_tools) = &link.allowed_tools {
-        if allowed_tools.is_empty() {
-            return Err(ProfileError::InvalidInput {
-                message: "mcp.allowedTools must not be empty when present".to_owned(),
-            });
-        }
-        for tool in allowed_tools {
-            validate_nonempty_string("mcp.allowedTools[]", tool)?;
-        }
-    }
-    Ok(())
-}
-
 fn validate_profile_environment(environment: &ProfileEnvironment) -> Result<(), ProfileError> {
     validate_nonempty_string("environment.envId", &environment.env_id)?;
-    validate_nonempty_string("environment.providerId", &environment.provider_id)?;
-    validate_nonempty_string("environment.targetId", &environment.target_id)
+    match &environment.environment {
+        ProfileEnvironmentSource::Existing { instance_id } => {
+            validate_nonempty_string("environment.instanceId", instance_id)
+        }
+        ProfileEnvironmentSource::Provision { provider_id, .. } => {
+            validate_nonempty_string("environment.providerId", provider_id)
+        }
+    }
 }
 
 fn validate_nonempty_optional(name: &str, value: Option<&str>) -> Result<(), ProfileError> {
@@ -348,9 +266,7 @@ fn validate_absolute_path(name: &str, value: &str) -> Result<(), ProfileError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use api::{
-        FieldPatch, SessionConfigInput, ToolConfigInput, VfsMountAccess, VfsMountSourceInput,
-    };
+    use api::{VfsMountAccess, VfsMountSourceInput};
 
     #[test]
     fn input_into_record_stamps_registry_metadata() {
@@ -398,14 +314,16 @@ mod tests {
             environments: vec![
                 ProfileEnvironment {
                     env_id: "dev_a".to_owned(),
-                    provider_id: "host".to_owned(),
-                    target_id: "local".to_owned(),
+                    environment: ProfileEnvironmentSource::Existing {
+                        instance_id: "evi_local".to_owned(),
+                    },
                     activate: true,
                 },
                 ProfileEnvironment {
                     env_id: "dev_b".to_owned(),
-                    provider_id: "host".to_owned(),
-                    target_id: "local".to_owned(),
+                    environment: ProfileEnvironmentSource::Existing {
+                        instance_id: "evi_local".to_owned(),
+                    },
                     activate: true,
                 },
             ],
@@ -483,42 +401,5 @@ mod tests {
             mismatched,
             Err(ProfileError::InvalidInput { message }) if message.contains("does not match")
         ));
-    }
-
-    #[test]
-    fn update_patch_applies_and_increments_revision() {
-        let profile = AgentProfile {
-            profile_id: ProfileId::new("support"),
-            display_name: Some("Support".to_owned()),
-            description: None,
-            revision: 7,
-            document: ProfileDocument::default(),
-            created_at_ms: 10,
-            updated_at_ms: 10,
-        };
-        let updated = AgentProfileUpdatePatch {
-            display_name: Some(FieldPatch::Set("Support v2".to_owned())),
-            config: Some(FieldPatch::Set(SessionConfigInput {
-                tools: Some(ToolConfigInput {
-                    messaging: Some(true),
-                    ..ToolConfigInput::default()
-                }),
-                ..SessionConfigInput::default()
-            })),
-            ..AgentProfileUpdatePatch::default()
-        }
-        .apply_to(profile, 20)
-        .expect("patch should apply");
-
-        assert_eq!(updated.display_name.as_deref(), Some("Support v2"));
-        assert_eq!(updated.revision, 8);
-        assert_eq!(updated.updated_at_ms, 20);
-        assert_eq!(
-            updated.document.config.and_then(|config| config.tools),
-            Some(ToolConfigInput {
-                messaging: Some(true),
-                ..ToolConfigInput::default()
-            })
-        );
     }
 }

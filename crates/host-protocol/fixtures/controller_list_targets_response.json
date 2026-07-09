@@ -11,6 +11,7 @@
         "jobQueueKeys": true,
         "jobStart": true,
         "jobWaitHint": false,
+        "network": true,
         "processOutputNotifications": true,
         "processOutputPolling": true,
         "processPty": false,

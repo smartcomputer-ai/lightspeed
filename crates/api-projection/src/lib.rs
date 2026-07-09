@@ -7,17 +7,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use api::{
-    ActiveToolsView, AgentApiError, CompactionPolicyInput, ContextConfigInput,
-    ContextEntryInputView, ContextEntryKindView, ContextMessageRoleView, ContextView, EventCursor,
-    EventJoinsView, FilesystemToolMode as ApiFilesystemToolMode, FleetConfigView,
-    FleetProfilesConfigView, FleetSpawnBaseConfig, FleetSpawnConfigView, GenerationConfig,
-    InputItem, MediaKind, ModelConfig, ProfileId, ProviderContextDisplayView,
-    ProviderNativeToolExecutionView, ReasoningEffort, RunAcceptedSourceView, RunDefaultsConfig,
-    RunStatus as ApiRunStatus, RunView, RunViewSource, SessionConfigView, SessionEventKindView,
-    SessionEventView, SessionItemView, SessionStatus as ApiSessionStatus, SessionView,
-    TokenEstimateQualityView, TokenEstimateView, ToolBatchView, ToolCallDisplayGroup,
-    ToolCallDisplayView, ToolCallEventView, ToolCallView, ToolChoiceConfig, ToolChoiceModeConfig,
-    ToolConfigView, ToolEffectView, ToolExecutionTargetView, ToolItemStatus, ToolKindView,
+    ActiveToolsView, AgentApiError, ContextEntryInputView, ContextEntryKindView, ContextEntryView,
+    ContextMessageRoleView, ContextView, EventCursor, EventJoinsView, InputItem, MediaKind,
+    ModelConfig, ProfileId, ProviderContextDisplayView, ProviderNativeToolExecutionView,
+    RunAcceptedSourceView, RunStatus as ApiRunStatus, RunView, RunViewSource, SessionEventKindView,
+    SessionEventView, SessionStatus as ApiSessionStatus, SessionView, TokenEstimateQualityView,
+    TokenEstimateView, ToolBatchView, ToolCallDisplayGroup, ToolCallDisplayView, ToolCallEventView,
+    ToolCallView, ToolEffectView, ToolExecutionTargetView, ToolItemStatus, ToolKindView,
     ToolParallelismView, ToolTargetRequirementView, ToolView,
 };
 use engine::ToolExecutionTarget;
@@ -27,10 +23,9 @@ use engine::{
     ContextMessageRole, ContextRemovalReason, ContextRewriteReason, CoreAgentCodec, CoreAgentEntry,
     CoreAgentEvent, CoreAgentJoins, CoreAgentLifecycleEvent, CoreAgentState, CoreAgentStatus,
     EventSeq, LlmGenerationStatus, ModelSelection, OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND,
-    ObservedToolCall, ProviderApiKind, ProviderParams, RunEvent, RunFailure, RunId, RunSource,
-    RunStatus, SessionConfig, SessionId, SteeringId, ToolBatchId, ToolCallStatus, ToolChoice,
-    ToolChoiceMode, ToolConfigEvent, ToolEvent, ToolKind, ToolParallelism, ToolSpec,
-    ToolTargetRequirement, TurnEvent, TurnId,
+    ObservedToolCall, ProviderApiKind, RunEvent, RunFailure, RunId, RunSource, RunStatus,
+    SessionConfig, SessionId, SteeringId, ToolBatchId, ToolCallStatus, ToolChoice, ToolConfigEvent,
+    ToolEvent, ToolKind, ToolParallelism, ToolSpec, ToolTargetRequirement, TurnEvent, TurnId,
     storage::{
         BlobStore, BlobStoreError, ReadSessionEvents, SessionRecord, SessionStore,
         SessionStoreError, StoredSessionEntry,
@@ -110,11 +105,10 @@ impl<'a> CoreAgentProjector<'a> {
         let projection = CoreAgentProjection::new(entries);
         let source = projection.accepted_source_for_run(run_id);
         let context_entries = projection.context_entries_for_run_with_source(run_id, source);
-        let mut items = Vec::new();
+        let mut projected_entries = Vec::new();
 
-        for item in &context_entries {
-            let projected = self.project_item(item).await?;
-            items.push(projected);
+        for entry in &context_entries {
+            projected_entries.push(self.project_context_entry(entry).await?);
         }
 
         Ok(RunView {
@@ -132,7 +126,7 @@ impl<'a> CoreAgentProjector<'a> {
                 },
                 None => RunViewSource::Input { items: Vec::new() },
             },
-            items,
+            entries: projected_entries,
             tool_batches: self
                 .project_tool_batches_for_run(&projection, &context_entries, run_id)
                 .await?,
@@ -144,112 +138,52 @@ impl<'a> CoreAgentProjector<'a> {
         revision: u64,
         entries: &[ContextEntry],
     ) -> Result<ContextView, AgentApiError> {
-        let mut items = Vec::with_capacity(entries.len());
+        let mut projected = Vec::with_capacity(entries.len());
         for entry in entries {
-            items.push(self.project_item(entry).await?);
+            projected.push(self.project_context_entry(entry).await?);
         }
-        Ok(ContextView { revision, items })
+        Ok(ContextView {
+            revision,
+            entries: projected,
+        })
     }
 
-    pub async fn project_item(
+    pub async fn project_context_entry(
         &self,
-        item: &ContextEntry,
-    ) -> Result<SessionItemView, AgentApiError> {
-        let id = api_item_id(item.entry_id);
-        match &item.kind {
-            ContextEntryKind::Message { role } => {
-                // Binary media entries render from their preview; decoding
-                // the blob as UTF-8 text would fail.
-                let text = if is_text_message_media_type(item.media_type.as_deref()) {
-                    self.read_blob_text(&item.content_ref).await?
+        entry: &ContextEntry,
+    ) -> Result<ContextEntryView, AgentApiError> {
+        let text = match &entry.kind {
+            // Binary media entries render from their preview; decoding
+            // the blob as UTF-8 text would fail.
+            ContextEntryKind::Message { .. } => {
+                if is_text_message_media_type(entry.media_type.as_deref()) {
+                    Some(self.read_blob_text(&entry.content_ref).await?)
                 } else {
-                    item.preview.clone().unwrap_or_else(|| "[media]".to_owned())
-                };
-                match role {
-                    ContextMessageRole::User => Ok(SessionItemView::UserMessage { id, text }),
-                    ContextMessageRole::Assistant => {
-                        Ok(SessionItemView::AssistantMessage { id, text })
-                    }
+                    None
                 }
             }
-            ContextEntryKind::ToolCall { call_id, name } => Ok(SessionItemView::ToolCall {
-                id,
-                call_id: call_id.as_str().to_owned(),
-                tool_name: name.as_str().to_owned(),
-                arguments: Some(self.read_blob_text(&item.content_ref).await?),
-                status: ToolItemStatus::Requested,
-            }),
-            ContextEntryKind::ToolResult { call_id, is_error } => Ok(SessionItemView::ToolResult {
-                id,
-                call_id: call_id.as_str().to_owned(),
-                output: Some(self.read_blob_text(&item.content_ref).await?),
-                is_error: *is_error,
-                status: if *is_error {
-                    ToolItemStatus::Failed
-                } else {
-                    ToolItemStatus::Succeeded
-                },
-            }),
-            ContextEntryKind::Instructions => Ok(SessionItemView::SystemEvent {
-                id,
-                text: item
-                    .preview
-                    .clone()
-                    .unwrap_or_else(|| "instructions".to_owned()),
-            }),
-            ContextEntryKind::VfsCatalog => Ok(SessionItemView::SystemEvent {
-                id,
-                text: item
-                    .preview
-                    .clone()
-                    .unwrap_or_else(|| "VFS catalog".to_owned()),
-            }),
-            ContextEntryKind::EnvironmentCatalog => Ok(SessionItemView::SystemEvent {
-                id,
-                text: item
-                    .preview
-                    .clone()
-                    .unwrap_or_else(|| "environment catalog".to_owned()),
-            }),
-            ContextEntryKind::EnvironmentActive => Ok(SessionItemView::SystemEvent {
-                id,
-                text: item
-                    .preview
-                    .clone()
-                    .unwrap_or_else(|| "active environment".to_owned()),
-            }),
-            ContextEntryKind::SkillCatalog => Ok(SessionItemView::SystemEvent {
-                id,
-                text: item
-                    .preview
-                    .clone()
-                    .unwrap_or_else(|| "skills catalog".to_owned()),
-            }),
-            ContextEntryKind::SkillActivation { skill_id } => Ok(SessionItemView::SystemEvent {
-                id,
-                text: item
-                    .preview
-                    .clone()
-                    .unwrap_or_else(|| format!("skill activated: {skill_id}")),
-            }),
-            ContextEntryKind::ReasoningState => Ok(SessionItemView::SystemEvent {
-                id,
-                text: item
-                    .preview
-                    .clone()
-                    .unwrap_or_else(|| "context item".to_owned()),
-            }),
-            ContextEntryKind::ProviderOpaque => Ok(SessionItemView::ProviderContext {
-                id,
-                content_ref: item.content_ref.as_str().to_owned(),
-                media_type: item.media_type.clone(),
-                preview: item.preview.clone(),
-                provider_kind: item.provider_kind.clone(),
-                provider_item_id: item.provider_item_id.clone(),
-                token_estimate: item.token_estimate.as_ref().map(token_estimate_to_api),
-                display: self.provider_context_display(item).await,
-            }),
-        }
+            ContextEntryKind::ToolCall { .. } | ContextEntryKind::ToolResult { .. } => {
+                Some(self.read_blob_text(&entry.content_ref).await?)
+            }
+            _ => None,
+        };
+        let display = match &entry.kind {
+            ContextEntryKind::ProviderOpaque => self.provider_context_display(entry).await,
+            _ => None,
+        };
+        Ok(ContextEntryView {
+            id: api_item_id(entry.entry_id),
+            key: entry.key.as_ref().map(|key| key.as_str().to_owned()),
+            kind: context_entry_kind_to_api(&entry.kind),
+            content_ref: entry.content_ref.as_str().to_owned(),
+            media_type: entry.media_type.clone(),
+            preview: entry.preview.clone(),
+            provider_kind: entry.provider_kind.clone(),
+            provider_item_id: entry.provider_item_id.clone(),
+            token_estimate: entry.token_estimate.as_ref().map(token_estimate_to_api),
+            text,
+            display,
+        })
     }
 
     pub async fn project_input_entries(
@@ -289,34 +223,8 @@ impl<'a> CoreAgentProjector<'a> {
     pub async fn project_session_config(
         &self,
         config: &SessionConfig,
-    ) -> Result<SessionConfigView, AgentApiError> {
-        Ok(SessionConfigView {
-            model: model_to_api(&config.model),
-            generation: GenerationConfig {
-                max_output_tokens: config.turn.max_output_tokens,
-                reasoning_effort: reasoning_effort_to_api(config.turn.provider_params.as_ref()),
-                tool_choice: config.turn.tool_choice.as_ref().map(tool_choice_to_api),
-            },
-            context: ContextConfigInput {
-                compaction: config
-                    .context
-                    .compaction
-                    .as_ref()
-                    .map(compaction_policy_to_api),
-            },
-            run_defaults: RunDefaultsConfig {
-                max_turns: config.run.max_turns,
-                max_tool_rounds: config.run.max_tool_rounds,
-            },
-            tools: ToolConfigView {
-                web_search: effective_web_search_enabled(config),
-                web_fetch: effective_web_fetch_enabled(config),
-                filesystem: filesystem_tool_mode_to_api(effective_filesystem_tool_mode(config)),
-                fleet: effective_fleet_enabled(config),
-                timer: effective_timer_enabled(config),
-            },
-            fleet: fleet_config_to_api(&config.fleet)?,
-        })
+    ) -> Result<api::SessionConfig, AgentApiError> {
+        session_config_to_api(config)
     }
 
     pub async fn project_entry(
@@ -500,12 +408,12 @@ impl<'a> CoreAgentProjector<'a> {
                 } => {
                     let mut projected = Vec::with_capacity(entries.len());
                     for entry in entries {
-                        projected.push(self.project_item(entry).await?);
+                        projected.push(self.project_context_entry(entry).await?);
                     }
                     Ok(SessionEventKindView::ContextEntriesApplied {
                         base_revision: *base_revision,
                         revision: context_event_revision(*base_revision)?,
-                        items: projected,
+                        entries: projected,
                     })
                 }
                 ContextEvent::EntriesRemoved {
@@ -515,7 +423,7 @@ impl<'a> CoreAgentProjector<'a> {
                 } => Ok(SessionEventKindView::ContextEntriesRemoved {
                     base_revision: *base_revision,
                     revision: context_event_revision(*base_revision)?,
-                    item_ids: entry_ids
+                    entry_ids: entry_ids
                         .iter()
                         .map(|entry_id| api_item_id(*entry_id))
                         .collect(),
@@ -536,13 +444,13 @@ impl<'a> CoreAgentProjector<'a> {
                 } => {
                     let mut projected = Vec::with_capacity(entries.len());
                     for entry in entries {
-                        projected.push(self.project_item(entry).await?);
+                        projected.push(self.project_context_entry(entry).await?);
                     }
                     Ok(SessionEventKindView::ContextKeyPrefixReplaced {
                         base_revision: *base_revision,
                         revision: context_event_revision(*base_revision)?,
                         key_prefix: key_prefix.as_str().to_owned(),
-                        items: projected,
+                        entries: projected,
                     })
                 }
                 ContextEvent::StateReplaced {
@@ -552,12 +460,12 @@ impl<'a> CoreAgentProjector<'a> {
                 } => {
                     let mut projected = Vec::with_capacity(entries.len());
                     for entry in entries {
-                        projected.push(self.project_item(entry).await?);
+                        projected.push(self.project_context_entry(entry).await?);
                     }
                     Ok(SessionEventKindView::ContextStateReplaced {
                         base_revision: *base_revision,
                         revision: context_event_revision(*base_revision)?,
-                        items: projected,
+                        entries: projected,
                         reason: context_rewrite_reason_to_api(reason).to_owned(),
                     })
                 }
@@ -1094,18 +1002,18 @@ fn context_compaction_status_to_api(status: ContextCompactionStatus) -> &'static
     }
 }
 
-fn compaction_policy_to_api(policy: &CompactionPolicy) -> CompactionPolicyInput {
+fn compaction_policy_to_api(policy: &CompactionPolicy) -> api::CompactionPolicy {
     match policy {
-        CompactionPolicy::Disabled => CompactionPolicyInput::Disabled,
+        CompactionPolicy::Disabled => api::CompactionPolicy::Disabled,
         CompactionPolicy::ProviderTriggered {
             compact_threshold_tokens,
-        } => CompactionPolicyInput::ProviderTriggered {
+        } => api::CompactionPolicy::ProviderTriggered {
             compact_threshold_tokens: *compact_threshold_tokens,
         },
         CompactionPolicy::ProviderStandalone {
             compact_threshold_tokens,
             target_tokens,
-        } => CompactionPolicyInput::ProviderStandalone {
+        } => api::CompactionPolicy::ProviderStandalone {
             compact_threshold_tokens: *compact_threshold_tokens,
             target_tokens: *target_tokens,
         },
@@ -1170,88 +1078,171 @@ pub fn model_to_api(model: &ModelSelection) -> ModelConfig {
     }
 }
 
-fn reasoning_effort_to_api(params: Option<&ProviderParams>) -> Option<ReasoningEffort> {
-    let params = params?;
-    if params.api_kind != ProviderApiKind::OpenAiResponses {
-        return None;
-    }
-    let effort = params
-        .body
-        .get("reasoning")?
-        .get("effort")?
-        .as_str()?
-        .to_ascii_lowercase();
-    match effort.as_str() {
-        "low" => Some(ReasoningEffort::Low),
-        "medium" => Some(ReasoningEffort::Medium),
-        "high" => Some(ReasoningEffort::High),
-        _ => None,
-    }
-}
-
-fn tool_choice_to_api(choice: &ToolChoice) -> ToolChoiceConfig {
-    ToolChoiceConfig {
-        mode: match &choice.mode {
-            ToolChoiceMode::Auto => ToolChoiceModeConfig::Auto,
-            ToolChoiceMode::None => ToolChoiceModeConfig::None,
-            ToolChoiceMode::RequiredAny => ToolChoiceModeConfig::RequiredAny,
-            ToolChoiceMode::Specific { tool_name } => ToolChoiceModeConfig::Specific {
-                tool_id: tool_name.as_str().to_owned(),
-            },
+fn tool_choice_to_api(choice: &ToolChoice) -> api::ToolChoice {
+    match choice {
+        ToolChoice::Auto => api::ToolChoice::Auto,
+        ToolChoice::None => api::ToolChoice::None,
+        ToolChoice::RequiredAny => api::ToolChoice::RequiredAny,
+        ToolChoice::Specific { tool_name } => api::ToolChoice::Specific {
+            tool_id: tool_name.as_str().to_owned(),
         },
-        disable_parallel_tool_use: choice.disable_parallel_tool_use,
     }
 }
 
-fn effective_web_search_enabled(config: &SessionConfig) -> bool {
-    config.model.api_kind == ProviderApiKind::OpenAiResponses
-        && config.tools.web_search.unwrap_or(true)
+/// Sparse engine-doc to wire-doc mapping: a section that equals its engine
+/// default projects to `None`; engine `Option` fields map 1:1.
+pub fn session_config_to_api(config: &SessionConfig) -> Result<api::SessionConfig, AgentApiError> {
+    Ok(api::SessionConfig {
+        model: Some(model_to_api(&config.model)),
+        generation: (!config.generation.is_default())
+            .then(|| generation_config_to_api(&config.generation)),
+        limits: (!config.limits.is_default()).then(|| api::LimitsConfig {
+            max_turns: config.limits.max_turns,
+            max_tool_rounds: config.limits.max_tool_rounds,
+        }),
+        context: (!config.context.is_default()).then(|| api::ContextConfig {
+            compaction: config
+                .context
+                .compaction
+                .as_ref()
+                .map(compaction_policy_to_api),
+        }),
+        features: if config.features.is_default() {
+            None
+        } else {
+            Some(features_config_to_api(&config.features)?)
+        },
+    })
 }
 
-fn effective_web_fetch_enabled(config: &SessionConfig) -> bool {
-    config.tools.web_fetch.unwrap_or(true)
+fn generation_config_to_api(generation: &engine::GenerationConfig) -> api::GenerationConfig {
+    api::GenerationConfig {
+        max_output_tokens: generation.max_output_tokens,
+        reasoning_effort: generation.reasoning_effort.clone(),
+        tool_choice: generation.tool_choice.as_ref().map(tool_choice_to_api),
+        parallel_tool_use: generation.parallel_tool_use,
+    }
 }
 
-fn effective_filesystem_tool_mode(config: &SessionConfig) -> engine::FilesystemToolMode {
-    config
-        .tools
-        .filesystem
-        .unwrap_or(engine::FilesystemToolMode::Edit)
+fn features_config_to_api(
+    features: &engine::FeaturesConfig,
+) -> Result<api::FeaturesConfig, AgentApiError> {
+    Ok(api::FeaturesConfig {
+        vfs: features.vfs.as_ref().map(vfs_feature_to_api),
+        web: features.web.as_ref().map(web_feature_to_api),
+        messaging: features
+            .messaging
+            .as_ref()
+            .map(|messaging| api::MessagingFeature {
+                version: messaging.version,
+            }),
+        fleet: features
+            .fleet
+            .as_ref()
+            .map(fleet_feature_to_api)
+            .transpose()?,
+        timers: features.timers.as_ref().map(|timers| api::TimersFeature {
+            version: timers.version,
+        }),
+        environments: features
+            .environments
+            .as_ref()
+            .map(|environments| api::EnvironmentsFeature {
+                version: environments.version,
+                providers: environments.providers.clone(),
+            }),
+        mcp: features.mcp.as_ref().map(mcp_feature_to_api),
+    })
 }
 
-fn effective_fleet_enabled(config: &SessionConfig) -> bool {
-    config.tools.fleet.unwrap_or(false)
+fn vfs_feature_to_api(vfs: &engine::VfsFeature) -> api::VfsFeature {
+    api::VfsFeature {
+        version: vfs.version,
+        tools: vfs.tools.map(|tools| match tools {
+            engine::VfsToolSurface::ReadOnly => api::VfsToolSurface::ReadOnly,
+            engine::VfsToolSurface::Edit => api::VfsToolSurface::Edit,
+        }),
+        prompts: vfs.prompts.as_ref().map(|prompts| api::VfsPromptsConfig {
+            roots: prompts.roots.clone(),
+        }),
+        skills: vfs.skills.as_ref().map(|skills| api::VfsSkillsConfig {
+            roots: skills.roots.clone(),
+        }),
+    }
 }
 
-fn effective_timer_enabled(config: &SessionConfig) -> bool {
-    config.tools.timer.unwrap_or(false)
+fn web_feature_to_api(web: &engine::WebFeature) -> api::WebFeature {
+    api::WebFeature {
+        version: web.version,
+        fetch: web.fetch.as_ref().map(|_| api::WebFetchFeature {}),
+        search: web.search.as_ref().map(|search| api::WebSearchFeature {
+            allowed_domains: search.allowed_domains.clone(),
+            blocked_domains: search.blocked_domains.clone(),
+        }),
+    }
 }
 
-fn fleet_config_to_api(config: &engine::FleetConfig) -> Result<FleetConfigView, AgentApiError> {
-    Ok(FleetConfigView {
-        profiles: FleetProfilesConfigView {
-            allow: config
+fn fleet_feature_to_api(fleet: &engine::FleetFeature) -> Result<api::FleetFeature, AgentApiError> {
+    let profiles = if fleet.profiles.is_default() {
+        None
+    } else {
+        Some(api::FleetProfilesConfig {
+            allow: fleet
                 .profiles
                 .allow
                 .as_ref()
                 .map(|allow| profile_ids_to_api(allow))
                 .transpose()?,
-            deny: profile_ids_to_api(&config.profiles.deny)?,
-            inline: config.profiles.inline,
-        },
-        spawn: FleetSpawnConfigView {
-            bases: config.spawn.bases.as_ref().map(|bases| {
-                bases
-                    .iter()
-                    .map(|base| match base {
-                        engine::FleetSpawnBase::Self_ => FleetSpawnBaseConfig::Self_,
-                        engine::FleetSpawnBase::Session => FleetSpawnBaseConfig::Session,
-                        engine::FleetSpawnBase::Profile => FleetSpawnBaseConfig::Profile,
-                    })
-                    .collect()
-            }),
-        },
+            deny: profile_ids_to_api(&fleet.profiles.deny)?,
+            inline: (!fleet.profiles.inline).then_some(false),
+        })
+    };
+    let spawn = (!fleet.spawn.is_default()).then(|| api::FleetSpawnConfig {
+        bases: fleet.spawn.bases.as_ref().map(|bases| {
+            bases
+                .iter()
+                .map(|base| match base {
+                    engine::FleetSpawnBase::Self_ => api::FleetSpawnBase::Self_,
+                    engine::FleetSpawnBase::Session => api::FleetSpawnBase::Session,
+                    engine::FleetSpawnBase::Profile => api::FleetSpawnBase::Profile,
+                })
+                .collect()
+        }),
+    });
+    Ok(api::FleetFeature {
+        version: fleet.version,
+        profiles,
+        spawn,
     })
+}
+
+fn mcp_feature_to_api(mcp: &engine::McpFeature) -> api::McpFeature {
+    api::McpFeature {
+        version: mcp.version,
+        servers: mcp
+            .servers
+            .iter()
+            .map(|link| api::McpServerLink {
+                server_id: link.server_id.clone(),
+                allowed_tools: link.allowed_tools.clone(),
+                approval: link.approval.as_ref().map(remote_mcp_approval_to_api),
+                defer_loading: link.defer_loading,
+                auth_grant_id: link.auth_grant_id.clone(),
+            })
+            .collect(),
+    }
+}
+
+fn remote_mcp_approval_to_api(
+    policy: &engine::RemoteMcpApprovalPolicy,
+) -> api::RemoteMcpApprovalPolicy {
+    match policy {
+        engine::RemoteMcpApprovalPolicy::ProviderDefault => {
+            api::RemoteMcpApprovalPolicy::ProviderDefault
+        }
+        engine::RemoteMcpApprovalPolicy::Always => api::RemoteMcpApprovalPolicy::Always,
+        engine::RemoteMcpApprovalPolicy::Never => api::RemoteMcpApprovalPolicy::Never,
+    }
 }
 
 fn profile_ids_to_api(profile_ids: &[String]) -> Result<Vec<ProfileId>, AgentApiError> {
@@ -1265,14 +1256,6 @@ fn profile_ids_to_api(profile_ids: &[String]) -> Result<Vec<ProfileId>, AgentApi
             })
         })
         .collect()
-}
-
-fn filesystem_tool_mode_to_api(mode: engine::FilesystemToolMode) -> ApiFilesystemToolMode {
-    match mode {
-        engine::FilesystemToolMode::None => ApiFilesystemToolMode::None,
-        engine::FilesystemToolMode::ReadOnly => ApiFilesystemToolMode::ReadOnly,
-        engine::FilesystemToolMode::Edit => ApiFilesystemToolMode::Edit,
-    }
 }
 
 fn active_tools_to_api(
@@ -1336,13 +1319,7 @@ fn tool_kind_to_api(kind: &ToolKind) -> ToolKindView {
                 .as_ref()
                 .map(|blob_ref| blob_ref.as_str().to_owned()),
             allowed_tools: remote_mcp.allowed_tools.clone(),
-            approval: match &remote_mcp.approval {
-                engine::RemoteMcpApprovalPolicy::ProviderDefault => {
-                    api::RemoteMcpApprovalPolicy::ProviderDefault
-                }
-                engine::RemoteMcpApprovalPolicy::Always => api::RemoteMcpApprovalPolicy::Always,
-                engine::RemoteMcpApprovalPolicy::Never => api::RemoteMcpApprovalPolicy::Never,
-            },
+            approval: remote_mcp_approval_to_api(&remote_mcp.approval),
             defer_loading: remote_mcp.defer_loading,
             auth_ref: remote_mcp
                 .auth_ref
@@ -1390,7 +1367,7 @@ pub fn session_config_for_api_model(
         model: model.model,
     };
     config
-        .validate_provider_compatibility()
+        .validate()
         .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
     Ok(config)
 }
@@ -1947,7 +1924,7 @@ mod tests {
             SessionEventKindView::ContextEntriesRemoved {
                 base_revision: 7,
                 revision: 8,
-                item_ids: vec!["item_11".to_owned(), "item_12".to_owned()],
+                entry_ids: vec!["item_11".to_owned(), "item_12".to_owned()],
                 reason: "providerCompacted".to_owned(),
             }
         );
@@ -1965,7 +1942,7 @@ mod tests {
             SessionEventKindView::ContextStateReplaced {
                 base_revision: 8,
                 revision: 9,
-                items: Vec::new(),
+                entries: Vec::new(),
                 reason: "providerCompacted".to_owned(),
             }
         );
@@ -1995,14 +1972,16 @@ mod tests {
         };
 
         let projected = projector
-            .project_item(&item)
+            .project_context_entry(&item)
             .await
-            .expect("project provider context item");
+            .expect("project provider context entry");
 
         assert_eq!(
             projected,
-            SessionItemView::ProviderContext {
+            ContextEntryView {
                 id: "item_42".to_owned(),
+                key: None,
+                kind: ContextEntryKindView::ProviderOpaque,
                 content_ref: BlobRef::from_bytes(br#"{"type":"compaction"}"#)
                     .as_str()
                     .to_owned(),
@@ -2014,6 +1993,7 @@ mod tests {
                     tokens: 123,
                     quality: TokenEstimateQualityView::ProviderCounted,
                 }),
+                text: None,
                 display: None,
             }
         );
@@ -2047,20 +2027,23 @@ mod tests {
         };
 
         let projected = projector
-            .project_item(&item)
+            .project_context_entry(&item)
             .await
-            .expect("project mcp provider context item");
+            .expect("project mcp provider context entry");
 
         assert_eq!(
             projected,
-            SessionItemView::ProviderContext {
+            ContextEntryView {
                 id: "item_43".to_owned(),
+                key: None,
+                kind: ContextEntryKindView::ProviderOpaque,
                 content_ref: content_ref.as_str().to_owned(),
                 media_type: Some("application/json".to_owned()),
                 preview: Some("OpenAI Responses MCP tool call: echo.echo".to_owned()),
                 provider_kind: Some(OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND.to_owned()),
                 provider_item_id: Some("mcp_1".to_owned()),
                 token_estimate: None,
+                text: None,
                 display: Some(ProviderContextDisplayView {
                     summary: ToolCallDisplayView {
                         group: ToolCallDisplayGroup::Other,
@@ -2075,6 +2058,215 @@ mod tests {
                     output: Some("Echoing your input: simba".to_owned()),
                     error: None,
                 }),
+            }
+        );
+    }
+
+    #[test]
+    fn session_config_with_default_sections_projects_sparse_document() {
+        let config = SessionConfig {
+            model: ModelSelection {
+                api_kind: ProviderApiKind::OpenAiResponses,
+                provider_id: "openai".to_owned(),
+                model: "gpt-5".to_owned(),
+            },
+            generation: engine::GenerationConfig::default(),
+            limits: engine::LimitsConfig::default(),
+            context: engine::ContextConfig::default(),
+            features: engine::FeaturesConfig::default(),
+        };
+
+        let projected = session_config_to_api(&config).expect("project sparse config");
+
+        assert_eq!(
+            projected,
+            api::SessionConfig {
+                model: Some(ModelConfig {
+                    provider_id: "openai".to_owned(),
+                    api_kind: "openai:responses".to_owned(),
+                    model: "gpt-5".to_owned(),
+                }),
+                generation: None,
+                limits: None,
+                context: None,
+                features: None,
+            }
+        );
+    }
+
+    #[test]
+    fn session_config_projects_sections_and_features_field_by_field() {
+        let config = SessionConfig {
+            model: ModelSelection {
+                api_kind: ProviderApiKind::AnthropicMessages,
+                provider_id: "anthropic".to_owned(),
+                model: "claude".to_owned(),
+            },
+            generation: engine::GenerationConfig {
+                max_output_tokens: Some(2048),
+                reasoning_effort: Some("high".to_owned()),
+                tool_choice: Some(ToolChoice::Specific {
+                    tool_name: engine::ToolName::new("read_file"),
+                }),
+                parallel_tool_use: Some(false),
+            },
+            limits: engine::LimitsConfig {
+                max_turns: Some(12),
+                max_tool_rounds: Some(3),
+            },
+            context: engine::ContextConfig {
+                compaction: Some(engine::CompactionPolicy::ProviderStandalone {
+                    compact_threshold_tokens: Some(20_000),
+                    target_tokens: Some(8_000),
+                }),
+            },
+            features: engine::FeaturesConfig {
+                vfs: Some(engine::VfsFeature {
+                    version: engine::CURRENT_FEATURE_VERSION,
+                    tools: Some(engine::VfsToolSurface::ReadOnly),
+                    prompts: Some(engine::VfsPromptsConfig {
+                        roots: Some(vec!["/prompts".to_owned()]),
+                    }),
+                    skills: Some(engine::VfsSkillsConfig { roots: None }),
+                }),
+                web: Some(engine::WebFeature {
+                    version: engine::CURRENT_FEATURE_VERSION,
+                    fetch: Some(engine::WebFetchFeature {}),
+                    search: Some(engine::WebSearchFeature {
+                        allowed_domains: Some(vec!["example.com".to_owned()]),
+                        blocked_domains: vec!["blocked.example".to_owned()],
+                    }),
+                }),
+                messaging: Some(engine::MessagingFeature::default()),
+                fleet: Some(engine::FleetFeature {
+                    version: engine::CURRENT_FEATURE_VERSION,
+                    profiles: engine::FleetProfilesConfig {
+                        allow: Some(vec!["researcher".to_owned()]),
+                        deny: vec!["admin".to_owned()],
+                        inline: false,
+                    },
+                    spawn: engine::FleetSpawnConfig {
+                        bases: Some(vec![
+                            engine::FleetSpawnBase::Self_,
+                            engine::FleetSpawnBase::Profile,
+                        ]),
+                    },
+                }),
+                timers: Some(engine::TimersFeature::default()),
+                environments: Some(engine::EnvironmentsFeature::default()),
+                mcp: Some(engine::McpFeature {
+                    version: engine::CURRENT_FEATURE_VERSION,
+                    servers: vec![engine::McpServerLink {
+                        server_id: "linear".to_owned(),
+                        allowed_tools: Some(vec!["search_issues".to_owned()]),
+                        approval: Some(engine::RemoteMcpApprovalPolicy::Never),
+                        defer_loading: Some(true),
+                        auth_grant_id: Some("grant_1".to_owned()),
+                    }],
+                }),
+            },
+        };
+
+        let projected = session_config_to_api(&config).expect("project populated config");
+
+        assert_eq!(
+            projected,
+            api::SessionConfig {
+                model: Some(ModelConfig {
+                    provider_id: "anthropic".to_owned(),
+                    api_kind: "anthropic:messages".to_owned(),
+                    model: "claude".to_owned(),
+                }),
+                generation: Some(api::GenerationConfig {
+                    max_output_tokens: Some(2048),
+                    reasoning_effort: Some("high".to_owned()),
+                    tool_choice: Some(api::ToolChoice::Specific {
+                        tool_id: "read_file".to_owned(),
+                    }),
+                    parallel_tool_use: Some(false),
+                }),
+                limits: Some(api::LimitsConfig {
+                    max_turns: Some(12),
+                    max_tool_rounds: Some(3),
+                }),
+                context: Some(api::ContextConfig {
+                    compaction: Some(api::CompactionPolicy::ProviderStandalone {
+                        compact_threshold_tokens: Some(20_000),
+                        target_tokens: Some(8_000),
+                    }),
+                }),
+                features: Some(api::FeaturesConfig {
+                    vfs: Some(api::VfsFeature {
+                        version: api::CURRENT_FEATURE_VERSION,
+                        tools: Some(api::VfsToolSurface::ReadOnly),
+                        prompts: Some(api::VfsPromptsConfig {
+                            roots: Some(vec!["/prompts".to_owned()]),
+                        }),
+                        skills: Some(api::VfsSkillsConfig { roots: None }),
+                    }),
+                    web: Some(api::WebFeature {
+                        version: api::CURRENT_FEATURE_VERSION,
+                        fetch: Some(api::WebFetchFeature {}),
+                        search: Some(api::WebSearchFeature {
+                            allowed_domains: Some(vec!["example.com".to_owned()]),
+                            blocked_domains: vec!["blocked.example".to_owned()],
+                        }),
+                    }),
+                    messaging: Some(api::MessagingFeature {
+                        version: api::CURRENT_FEATURE_VERSION,
+                    }),
+                    fleet: Some(api::FleetFeature {
+                        version: api::CURRENT_FEATURE_VERSION,
+                        profiles: Some(api::FleetProfilesConfig {
+                            allow: Some(vec![
+                                ProfileId::try_new("researcher".to_owned())
+                                    .expect("valid profile id")
+                            ]),
+                            deny: vec![
+                                ProfileId::try_new("admin".to_owned()).expect("valid profile id")
+                            ],
+                            inline: Some(false),
+                        }),
+                        spawn: Some(api::FleetSpawnConfig {
+                            bases: Some(vec![
+                                api::FleetSpawnBase::Self_,
+                                api::FleetSpawnBase::Profile,
+                            ]),
+                        }),
+                    }),
+                    timers: Some(api::TimersFeature {
+                        version: api::CURRENT_FEATURE_VERSION,
+                    }),
+                    environments: Some(api::EnvironmentsFeature {
+                        version: api::CURRENT_FEATURE_VERSION,
+                        providers: None,
+                    }),
+                    mcp: Some(api::McpFeature {
+                        version: api::CURRENT_FEATURE_VERSION,
+                        servers: vec![api::McpServerLink {
+                            server_id: "linear".to_owned(),
+                            allowed_tools: Some(vec!["search_issues".to_owned()]),
+                            approval: Some(api::RemoteMcpApprovalPolicy::Never),
+                            defer_loading: Some(true),
+                            auth_grant_id: Some("grant_1".to_owned()),
+                        }],
+                    }),
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn fleet_feature_with_default_sub_sections_projects_sparse() {
+        let projected =
+            fleet_feature_to_api(&engine::FleetFeature::default()).expect("project fleet feature");
+
+        assert_eq!(
+            projected,
+            api::FleetFeature {
+                version: api::CURRENT_FEATURE_VERSION,
+                profiles: None,
+                spawn: None,
             }
         );
     }

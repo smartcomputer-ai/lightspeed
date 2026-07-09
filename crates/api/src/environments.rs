@@ -4,29 +4,22 @@ use super::*;
 #[serde(rename_all = "camelCase")]
 pub struct SessionEnvironmentView {
     pub env_id: EnvironmentId,
-    pub kind: SessionEnvironmentKindView,
-    pub status: SessionEnvironmentStatusView,
+    pub instance_id: EnvironmentInstanceId,
+    pub state: SessionEnvironmentStateView,
     pub capabilities: SessionEnvironmentCapabilitiesView,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exec_target: Option<ToolExecutionTargetView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fs_routes: Vec<SessionEnvironmentFsRouteView>,
     pub active: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub enum SessionEnvironmentKindView {
-    Sandbox,
-    AttachedHost,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub enum SessionEnvironmentStatusView {
-    Attaching,
-    Ready,
-    Degraded,
+pub enum SessionEnvironmentStateView {
+    Attached,
     Detached,
 }
 
@@ -52,7 +45,24 @@ pub struct SessionEnvironmentCapabilitiesView {
     #[serde(default)]
     pub job_queue_keys: bool,
     pub network: bool,
-    pub persistent: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionEnvironmentFsRouteView {
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_path: Option<String>,
+    pub access: SessionEnvironmentFsAccessView,
+    #[serde(default)]
+    pub same_state_as_active_env: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum SessionEnvironmentFsAccessView {
+    ReadOnly,
+    ReadWrite,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -83,36 +93,17 @@ pub struct SessionEnvironmentReadResponse {
     pub environment: SessionEnvironmentView,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionEnvironmentCreateParams {
-    pub session_id: SessionId,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub env_id: Option<EnvironmentId>,
-    pub provider_id: EnvironmentProviderId,
-    pub request: HostTargetCreateRequestView,
-    #[serde(default)]
-    pub activate: bool,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionEnvironmentCreateResponse {
-    pub environment: SessionEnvironmentView,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub active_env_id: Option<EnvironmentId>,
-    #[serde(default)]
-    pub environments: Vec<SessionEnvironmentView>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionEnvironmentAttachParams {
     pub session_id: SessionId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env_id: Option<EnvironmentId>,
-    pub provider_id: EnvironmentProviderId,
-    pub request: HostTargetAttachRequestView,
+    pub instance_id: EnvironmentInstanceId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fs_routes: Vec<SessionEnvironmentFsRouteView>,
     #[serde(default)]
     pub activate: bool,
 }
@@ -127,7 +118,7 @@ pub struct SessionEnvironmentAttachResponse {
     pub environments: Vec<SessionEnvironmentView>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "type",
     rename_all = "camelCase",
@@ -171,17 +162,6 @@ pub struct AttachedHostSpecView {
     pub provider_options: Option<Value>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(
-    tag = "type",
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase"
-)]
-pub enum HostTargetAttachRequestView {
-    Target { target_id: EnvironmentTargetId },
-    Provider { provider_type: String, spec: Value },
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionEnvironmentActivateParams {
@@ -216,23 +196,72 @@ pub struct SessionEnvironmentDeactivateResponse {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct SessionEnvironmentCloseParams {
+pub struct SessionEnvironmentDetachParams {
     pub session_id: SessionId,
     pub env_id: EnvironmentId,
-    #[serde(default)]
-    pub force: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub close_target: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct SessionEnvironmentCloseResponse {
+pub struct SessionEnvironmentDetachResponse {
     pub environment: SessionEnvironmentView,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_env_id: Option<EnvironmentId>,
     #[serde(default)]
     pub environments: Vec<SessionEnvironmentView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentCreateParams {
+    pub provider_id: EnvironmentProviderId,
+    pub request: HostTargetCreateRequestView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentCreateResponse {
+    pub environment: EnvironmentInstanceView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentReadParams {
+    pub instance_id: EnvironmentInstanceId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentReadResponse {
+    pub environment: EnvironmentInstanceView,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentListParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<EnvironmentProviderId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<EnvironmentTargetStatusView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentListResponse {
+    #[serde(default)]
+    pub environments: Vec<EnvironmentInstanceView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentCloseParams {
+    pub instance_id: EnvironmentInstanceId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentCloseResponse {
+    pub environment: EnvironmentInstanceView,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -304,29 +333,15 @@ pub struct SessionEnvironmentCredentialUnbindResponse {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionJobHandleView {
-    pub session_id: SessionId,
-    pub env_id: EnvironmentId,
+    pub instance_id: EnvironmentInstanceId,
     pub job_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionJobHandleInput {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<SessionId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub env_id: Option<EnvironmentId>,
+    pub instance_id: EnvironmentInstanceId,
     pub job_id: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionJobCreateParams {
-    pub session_id: SessionId,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub env_id: Option<EnvironmentId>,
-    pub request_id: String,
-    pub jobs: Vec<SessionJobStartSpecInput>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -372,19 +387,13 @@ pub enum SessionJobDependencyPolicyView {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct SessionJobCreateResponse {
-    pub env_id: EnvironmentId,
-    #[serde(default)]
-    pub jobs: Vec<SessionJobStartedView>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct SessionJobStartedView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     pub job_id: String,
     pub handle: SessionJobHandleView,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub promise_id: Option<String>,
     pub status: SessionJobStatusView,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dependencies: Vec<String>,
@@ -394,32 +403,15 @@ pub struct SessionJobStartedView {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct SessionJobListParams {
-    pub session_id: SessionId,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub env_id: Option<EnvironmentId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub limit: Option<usize>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionJobListResponse {
-    #[serde(default)]
-    pub jobs: Vec<SessionJobHandleRecordView>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct SessionJobHandleRecordView {
     pub handle: SessionJobHandleView,
-    pub provider_id: EnvironmentProviderId,
-    pub target_id: EnvironmentTargetId,
-    pub namespace: String,
+    pub job_group_id: EnvironmentJobGroupId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_by_session_id: Option<SessionId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_by_run_id: Option<RunId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -428,26 +420,6 @@ pub struct SessionJobHandleRecordView {
     pub created_by_tool_call_id: Option<String>,
     pub created_at_ms: i64,
     pub start_request_hash: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionJobReadParams {
-    pub session_id: SessionId,
-    pub jobs: Vec<SessionJobHandleInput>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub output_bytes: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub after_seq: Option<u64>,
-    #[serde(default)]
-    pub include_artifacts: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionJobReadResponse {
-    #[serde(default)]
-    pub jobs: Vec<SessionJobReadEntryView>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -464,24 +436,6 @@ pub struct SessionJobReadEntryView {
     pub artifacts: Vec<SessionJobArtifactView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionJobCancelParams {
-    pub session_id: SessionId,
-    pub jobs: Vec<SessionJobHandleInput>,
-    #[serde(default)]
-    pub scope: SessionJobCancelScopeView,
-    #[serde(default)]
-    pub force: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionJobCancelResponse {
-    #[serde(default)]
-    pub jobs: Vec<SessionJobCancelEntryView>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -571,6 +525,77 @@ pub struct SessionJobArtifactView {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+pub struct EnvironmentJobCreateParams {
+    pub instance_id: EnvironmentInstanceId,
+    pub request_id: String,
+    pub jobs: Vec<SessionJobStartSpecInput>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentJobCreateResponse {
+    pub instance_id: EnvironmentInstanceId,
+    pub job_group_id: EnvironmentJobGroupId,
+    #[serde(default)]
+    pub jobs: Vec<SessionJobStartedView>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentJobListParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance_id: Option<EnvironmentInstanceId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job_group_id: Option<EnvironmentJobGroupId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentJobListResponse {
+    #[serde(default)]
+    pub jobs: Vec<SessionJobHandleRecordView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentJobReadParams {
+    pub jobs: Vec<SessionJobHandleInput>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_bytes: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after_seq: Option<u64>,
+    #[serde(default)]
+    pub include_artifacts: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentJobReadResponse {
+    #[serde(default)]
+    pub jobs: Vec<SessionJobReadEntryView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentJobCancelParams {
+    pub jobs: Vec<SessionJobHandleInput>,
+    #[serde(default)]
+    pub scope: SessionJobCancelScopeView,
+    #[serde(default)]
+    pub force: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentJobCancelResponse {
+    #[serde(default)]
+    pub jobs: Vec<SessionJobCancelEntryView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct EnvironmentProviderView {
     pub provider_id: EnvironmentProviderId,
     pub provider_kind: EnvironmentProviderKindView,
@@ -597,11 +622,9 @@ pub enum EnvironmentProviderKindView {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum EnvironmentProviderStatusView {
-    Registering,
     Online,
     Stale,
     Offline,
-    Disabled,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -632,9 +655,6 @@ pub struct EnvironmentProviderCapabilitiesView {
     pub list_targets: bool,
     #[serde(default)]
     pub create_target: bool,
-    #[serde(default)]
-    pub attach_target: bool,
-    #[serde(default)]
     pub get_target: bool,
     #[serde(default)]
     pub close_target: bool,
@@ -661,6 +681,52 @@ pub struct EnvironmentTargetSummaryView {
     pub default_cwd: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub metadata: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum EnvironmentInstanceOriginView {
+    Provided,
+    Provisioned,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HostConnectionView {
+    pub target_id: EnvironmentTargetId,
+    pub endpoint: String,
+    pub transport: HostTransportView,
+    pub scope: HostScopeView,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_cwd: Option<String>,
+    pub capabilities: HostCapabilitiesView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentTargetDescriptorView {
+    pub target: EnvironmentTargetSummaryView,
+    pub connection: HostConnectionView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentInstanceView {
+    pub instance_id: EnvironmentInstanceId,
+    pub provider_id: EnvironmentProviderId,
+    pub provider_target_id: EnvironmentTargetId,
+    pub origin: EnvironmentInstanceOriginView,
+    pub status: EnvironmentTargetStatusView,
+    pub scope: HostScopeView,
+    pub capabilities: HostCapabilitiesView,
+    pub connection: HostConnectionView,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub metadata: BTreeMap<String, String>,
+    pub observed_at_ms: i64,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -720,6 +786,8 @@ pub struct HostCapabilitiesView {
     pub job_dependencies: bool,
     #[serde(default)]
     pub job_queue_keys: bool,
+    #[serde(default)]
+    pub network: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -750,7 +818,7 @@ pub struct EnvironmentProviderHeartbeatParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lease_ttl_ms: Option<i64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub observed_targets: Vec<EnvironmentTargetSummaryView>,
+    pub observed_targets: Vec<EnvironmentTargetDescriptorView>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -758,7 +826,7 @@ pub struct EnvironmentProviderHeartbeatParams {
 pub struct EnvironmentProviderHeartbeatResponse {
     pub provider: EnvironmentProviderView,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub targets: Vec<EnvironmentTargetSummaryView>,
+    pub environments: Vec<EnvironmentInstanceView>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -787,19 +855,4 @@ pub struct EnvironmentProviderListParams {
 pub struct EnvironmentProviderListResponse {
     #[serde(default)]
     pub providers: Vec<EnvironmentProviderView>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct EnvironmentProviderTargetListParams {
-    pub provider_id: EnvironmentProviderId,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub status: Option<EnvironmentTargetStatusView>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct EnvironmentProviderTargetListResponse {
-    #[serde(default)]
-    pub targets: Vec<EnvironmentTargetSummaryView>,
 }

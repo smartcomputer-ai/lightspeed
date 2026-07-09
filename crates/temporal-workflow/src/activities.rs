@@ -8,9 +8,11 @@ use temporalio_sdk::activities::{ActivityContext, ActivityError};
 
 use crate::{
     AppendEventsRequest, ContextCompactActivityRequest, CreateOrLoadSessionRequest,
-    CreateOrLoadSessionResult, LlmGenerateActivityRequest, PreprocessRunInputActivityRequest,
+    CreateOrLoadSessionResult, EnvironmentJobCancelActivityRequest,
+    EnvironmentJobPollActivityRequest, EnvironmentJobPollActivityResult,
+    LlmGenerateActivityRequest, PreprocessRunInputActivityRequest,
     PreprocessRunInputActivityResult, PutBlobRequest, ReadBlobRequest, ReadBlobResult,
-    SkillCatalogRefreshActivityRequest, SkillCatalogRefreshActivityResult,
+    RuntimeProjectionRefreshActivityRequest, RuntimeProjectionRefreshActivityResult,
     ToolInvokeBatchActivityRequest,
 };
 
@@ -22,9 +24,12 @@ pub const ACTIVITY_LLM_GENERATE: &str = "WorkflowActivities::llm_generate";
 pub const ACTIVITY_PREPROCESS_RUN_INPUT: &str = "WorkflowActivities::preprocess_run_input";
 pub const ACTIVITY_CONTEXT_COMPACT: &str = "WorkflowActivities::context_compact";
 pub const ACTIVITY_TOOL_INVOKE_BATCH: &str = "WorkflowActivities::tool_invoke_batch";
-pub const ACTIVITY_SKILL_CATALOG_REFRESH: &str = "WorkflowActivities::skill_catalog_refresh";
+pub const ACTIVITY_RUNTIME_PROJECTION_REFRESH: &str =
+    "WorkflowActivities::runtime_projection_refresh";
 pub const ACTIVITY_CHECK_PROMISE_SOURCE: &str = "WorkflowActivities::check_promise_source";
 pub const ACTIVITY_CANCEL_PROMISE_SOURCE: &str = "WorkflowActivities::cancel_promise_source";
+pub const ACTIVITY_ENVIRONMENT_JOB_POLL: &str = "WorkflowActivities::environment_job_poll";
+pub const ACTIVITY_ENVIRONMENT_JOB_CANCEL: &str = "WorkflowActivities::environment_job_cancel";
 
 pub struct WorkflowActivities;
 
@@ -94,11 +99,11 @@ impl WorkflowActivities {
         unimplemented!("workflow activity definition only")
     }
 
-    #[activity(name = ACTIVITY_SKILL_CATALOG_REFRESH)]
-    pub async fn skill_catalog_refresh(
+    #[activity(name = ACTIVITY_RUNTIME_PROJECTION_REFRESH)]
+    pub async fn runtime_projection_refresh(
         _ctx: ActivityContext,
-        _request: SkillCatalogRefreshActivityRequest,
-    ) -> Result<SkillCatalogRefreshActivityResult, ActivityError> {
+        _request: RuntimeProjectionRefreshActivityRequest,
+    ) -> Result<RuntimeProjectionRefreshActivityResult, ActivityError> {
         unimplemented!("workflow activity definition only")
     }
 
@@ -115,6 +120,22 @@ impl WorkflowActivities {
         _ctx: ActivityContext,
         _request: PromiseSourceCancelRequest,
     ) -> Result<PromiseSourceCancelResult, ActivityError> {
+        unimplemented!("workflow activity definition only")
+    }
+
+    #[activity(name = ACTIVITY_ENVIRONMENT_JOB_POLL)]
+    pub async fn environment_job_poll(
+        _ctx: ActivityContext,
+        _request: EnvironmentJobPollActivityRequest,
+    ) -> Result<EnvironmentJobPollActivityResult, ActivityError> {
+        unimplemented!("workflow activity definition only")
+    }
+
+    #[activity(name = ACTIVITY_ENVIRONMENT_JOB_CANCEL)]
+    pub async fn environment_job_cancel(
+        _ctx: ActivityContext,
+        _request: EnvironmentJobCancelActivityRequest,
+    ) -> Result<Vec<host_protocol::data::jobs::JobSummary>, ActivityError> {
         unimplemented!("workflow activity definition only")
     }
 }

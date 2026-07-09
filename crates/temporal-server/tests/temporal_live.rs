@@ -3,15 +3,14 @@ mod support;
 use std::{env, future::Future, sync::Arc, time::Duration};
 
 use api::{
-    AgentApiErrorKind, AgentApiService, AgentProfileInput, AgentProfileUpdatePatch,
-    ContextAppendEntry, ContextAppendParams, ContextAppendStatus, FieldPatch, InitializeParams,
-    InputItem, McpServerCreateParams, McpServerDeleteParams, McpServerListParams,
+    AgentApiErrorKind, AgentApiService, AgentProfileInput, ContextAppendEntry, ContextAppendParams,
+    ContextAppendStatus, ContextEntryKindView, ContextMessageRoleView, InitializeParams, InputItem,
+    McpServerDeleteParams, McpServerInput, McpServerListParams, McpServerPutParams,
     McpServerReadParams, McpServerStatus, ProfileApplyParams, ProfileCreateParams,
     ProfileDeleteParams, ProfileDocument, ProfileId, ProfileInstructions, ProfileListParams,
-    ProfileMcpLink, ProfileReadParams, ProfileSource, ProfileUpdateParams, RemoteMcpApprovalPolicy,
-    RemoteMcpTransport, RunStartParams, RunStartSource, SessionConfigInput,
-    SessionEventsReadParams, SessionItemView, SessionMcpLinkParams, SessionMcpListParams,
-    SessionMcpUnlinkParams, SessionReadParams, SessionStartParams, SessionStatus, ToolConfigInput,
+    ProfilePutParams, ProfileReadParams, ProfileSource, RemoteMcpApprovalPolicy,
+    RemoteMcpTransport, RunStartParams, RunStartSource, SessionConfig, SessionConfigPutParams,
+    SessionEventsReadParams, SessionReadParams, SessionStartParams, SessionStatus,
 };
 use api_projection::model_to_api;
 use async_trait::async_trait;
@@ -19,7 +18,8 @@ use engine::{
     ContextEntryInput, ContextEntryKind, ContextMessageRole, CoreAgentCommand, CoreAgentIoError,
     CoreAgentLlm, CoreAgentTools, LlmFinish, LlmGenerationFacts, LlmGenerationRequest,
     LlmGenerationResult, LlmGenerationStatus, ModelSelection, ObservedToolCall, RunId, SessionId,
-    ToolBatchId, ToolCallId, ToolCallStatus, ToolInvocationRequest, ToolName, TurnId,
+    ToolBatchId, ToolCallId, ToolCallStatus, ToolInvocationRequest, ToolInvocationResult, ToolName,
+    TurnId,
     storage::{BlobStore, ListSessionLinks, SessionLinkDirection, SessionStore},
 };
 use support::live::{
@@ -51,6 +51,21 @@ use tools::{
         PROFILE_LIST_TOOL_NAME, PROFILE_READ_TOOL_NAME, ProfileListOutput, ProfileReadOutput,
     },
 };
+
+async fn tool_result_text(
+    blobs: &Arc<dyn BlobStore>,
+    result: &ToolInvocationResult,
+) -> anyhow::Result<String> {
+    let content_ref = result.output_ref.as_ref().or(result.error_ref.as_ref());
+    let Some(content_ref) = content_ref else {
+        return Ok(format!(
+            "tool status {:?} with no output_ref or error_ref",
+            result.status
+        ));
+    };
+    let bytes = blobs.read_bytes(content_ref).await?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires local/up.sh or compatible Temporal + Postgres env"]
@@ -646,6 +661,19 @@ fn io_error(error: impl std::fmt::Display) -> CoreAgentIoError {
     }
 }
 
+/// Feature grant equivalent of the old `tools: { fleet: true }` config: the
+/// fleet toolset is granted and everything else (web, vfs, ...) stays off.
+fn fleet_only_features() -> api::FeaturesConfig {
+    api::FeaturesConfig {
+        fleet: Some(api::FleetFeature {
+            version: api::CURRENT_FEATURE_VERSION,
+            profiles: None,
+            spawn: None,
+        }),
+        ..api::FeaturesConfig::default()
+    }
+}
+
 async fn run_fake_live_client(
     client: Client,
     task_queue: String,
@@ -668,9 +696,9 @@ async fn run_fake_live_client(
         .start_session(SessionStartParams {
             session_id: Some(session_id.as_str().to_owned()),
             display_name: None,
-            config: Some(SessionConfigInput {
+            config: Some(SessionConfig {
                 model: Some(model_to_api(&model)),
-                ..SessionConfigInput::default()
+                ..SessionConfig::default()
             }),
             profile: None,
         })
@@ -814,13 +842,10 @@ async fn run_fleet_spawn_live_client(
     api.start_session(SessionStartParams {
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
-        config: Some(SessionConfigInput {
+        config: Some(SessionConfig {
             model: Some(model_to_api(&model)),
-            tools: Some(ToolConfigInput {
-                fleet: Some(true),
-                ..ToolConfigInput::default()
-            }),
-            ..SessionConfigInput::default()
+            features: Some(fleet_only_features()),
+            ..SessionConfig::default()
         }),
         profile: None,
     })
@@ -871,16 +896,18 @@ async fn run_fleet_spawn_live_client(
         })
         .await?;
     assert_eq!(child.result.session.id, child_session_id.as_str());
-    assert_eq!(
+    assert!(
         child
             .result
             .session
             .config
             .as_ref()
             .expect("child config")
-            .tools
-            .fleet,
-        true
+            .features
+            .as_ref()
+            .expect("child features")
+            .fleet
+            .is_some()
     );
 
     let run = wait_for_terminal_run(api.as_ref(), &child_session_id, child_run_id).await?;
@@ -983,19 +1010,14 @@ async fn run_fleet_profile_spawn_live_client(
             display_name: Some("Live child profile".to_owned()),
             description: Some("Fleet live profile child".to_owned()),
             document: ProfileDocument {
-                config: Some(SessionConfigInput {
-                    tools: Some(ToolConfigInput {
-                        fleet: Some(true),
-                        web_fetch: Some(false),
-                        ..ToolConfigInput::default()
-                    }),
-                    ..SessionConfigInput::default()
+                config: Some(SessionConfig {
+                    features: Some(fleet_only_features()),
+                    ..SessionConfig::default()
                 }),
                 instructions: Some(ProfileInstructions::Text {
                     text: "You are a profile-spawned live child.".to_owned(),
                 }),
                 mounts: Vec::new(),
-                mcp: Vec::new(),
                 environments: Vec::new(),
             },
         },
@@ -1005,13 +1027,10 @@ async fn run_fleet_profile_spawn_live_client(
     api.start_session(SessionStartParams {
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
-        config: Some(SessionConfigInput {
+        config: Some(SessionConfig {
             model: Some(model_to_api(&model)),
-            tools: Some(ToolConfigInput {
-                fleet: Some(true),
-                ..ToolConfigInput::default()
-            }),
-            ..SessionConfigInput::default()
+            features: Some(fleet_only_features()),
+            ..SessionConfig::default()
         }),
         profile: None,
     })
@@ -1077,16 +1096,20 @@ async fn run_fleet_profile_spawn_live_client(
         })
         .await?;
     let child_config = child.result.session.config.as_ref().expect("child config");
-    assert!(child_config.tools.fleet);
-    assert!(!child_config.tools.web_fetch);
+    let child_features = child_config.features.as_ref().expect("child features");
+    assert!(child_features.fleet.is_some());
+    assert!(child_features.web.is_none());
     assert!(
         child
             .result
             .session
             .active_context
-            .items
+            .entries
             .iter()
-            .any(|item| matches!(item, SessionItemView::SystemEvent { text, .. } if text == "Profile instructions")),
+            .any(
+                |entry| matches!(&entry.kind, ContextEntryKindView::Instructions)
+                    && entry.preview.as_deref() == Some("Profile instructions")
+            ),
         "profile instructions should be projected"
     );
 
@@ -1136,10 +1159,11 @@ async fn run_fleet_profile_tools_live_client(
 ) -> anyhow::Result<()> {
     let store = pg_store_from_env().await?;
     let model = default_model_from_env();
+    let cleanup_client = client.clone();
     let api = Arc::new(
         GatewayAgentApi::builder(client, store.clone())
             .with_task_queue(task_queue)
-            .with_default_model(model)
+            .with_default_model(model.clone())
             .with_max_steps_per_input(128)
             .build(),
     );
@@ -1154,22 +1178,29 @@ async fn run_fleet_profile_tools_live_client(
             display_name: Some("Live profile tools".to_owned()),
             description: Some("Fleet profile discovery live test".to_owned()),
             document: ProfileDocument {
-                config: Some(SessionConfigInput {
-                    tools: Some(ToolConfigInput {
-                        fleet: Some(true),
-                        web_fetch: Some(false),
-                        ..ToolConfigInput::default()
-                    }),
-                    ..SessionConfigInput::default()
+                config: Some(SessionConfig {
+                    features: Some(fleet_only_features()),
+                    ..SessionConfig::default()
                 }),
                 instructions: Some(ProfileInstructions::Text {
                     text: "Profile read tools should return this document.".to_owned(),
                 }),
                 mounts: Vec::new(),
-                mcp: Vec::new(),
                 environments: Vec::new(),
             },
         },
+    })
+    .await?;
+
+    api.start_session(SessionStartParams {
+        session_id: Some(session_id.as_str().to_owned()),
+        display_name: None,
+        config: Some(SessionConfig {
+            model: Some(model_to_api(&model)),
+            features: Some(fleet_only_features()),
+            ..SessionConfig::default()
+        }),
+        profile: None,
     })
     .await?;
 
@@ -1202,7 +1233,12 @@ async fn run_fleet_profile_tools_live_client(
         )
         .await
         .map_err(|error| anyhow::anyhow!("{error}"))?;
-    assert_eq!(list_result.status, ToolCallStatus::Succeeded);
+    assert_eq!(
+        list_result.status,
+        ToolCallStatus::Succeeded,
+        "{}",
+        tool_result_text(&blobs, &list_result).await?
+    );
     let list_output_ref = list_result.output_ref.expect("profile list output ref");
     let list_output: ProfileListOutput =
         serde_json::from_slice(&blobs.read_bytes(&list_output_ref).await?)?;
@@ -1218,7 +1254,7 @@ async fn run_fleet_profile_tools_live_client(
     let read_result = executor
         .invoke(
             FleetInvocationContext {
-                parent_session_id: session_id,
+                parent_session_id: session_id.clone(),
                 parent_run_id: RunId::new(1),
                 turn_id: TurnId::new(1),
                 batch_id: ToolBatchId::new(2),
@@ -1247,6 +1283,14 @@ async fn run_fleet_profile_tools_live_client(
 
     api.delete_profile(ProfileDeleteParams { profile_id })
         .await?;
+    let handle = live_workflow_handle(&cleanup_client, &session_id)?;
+    let _ = handle
+        .terminate(
+            WorkflowTerminateOptions::builder()
+                .reason("fleet profile tools live test cleanup")
+                .build(),
+        )
+        .await;
     Ok(())
 }
 
@@ -1261,13 +1305,10 @@ async fn run_fleet_wait_live_client(
     api.start_session(SessionStartParams {
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
-        config: Some(SessionConfigInput {
+        config: Some(SessionConfig {
             model: Some(model_to_api(&model)),
-            tools: Some(ToolConfigInput {
-                fleet: Some(true),
-                ..ToolConfigInput::default()
-            }),
-            ..SessionConfigInput::default()
+            features: Some(fleet_only_features()),
+            ..SessionConfig::default()
         }),
         profile: None,
     })
@@ -1365,13 +1406,10 @@ async fn run_fleet_send_report_back_live_client(
     api.start_session(SessionStartParams {
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
-        config: Some(SessionConfigInput {
+        config: Some(SessionConfig {
             model: Some(model_to_api(&model)),
-            tools: Some(ToolConfigInput {
-                fleet: Some(true),
-                ..ToolConfigInput::default()
-            }),
-            ..SessionConfigInput::default()
+            features: Some(fleet_only_features()),
+            ..SessionConfig::default()
         }),
         profile: None,
     })
@@ -1600,9 +1638,9 @@ async fn run_continue_as_new_live_client(
     api.start_session(SessionStartParams {
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
-        config: Some(SessionConfigInput {
+        config: Some(SessionConfig {
             model: Some(model_to_api(&model)),
-            ..SessionConfigInput::default()
+            ..SessionConfig::default()
         }),
         profile: None,
     })
@@ -1806,9 +1844,9 @@ async fn run_context_append_live_client(
     api.start_session(SessionStartParams {
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
-        config: Some(SessionConfigInput {
+        config: Some(SessionConfig {
             model: Some(model_to_api(&model)),
-            ..SessionConfigInput::default()
+            ..SessionConfig::default()
         }),
         profile: None,
     })
@@ -1859,10 +1897,12 @@ async fn run_context_append_live_client(
         .result
         .session
         .active_context
-        .items
+        .entries
         .iter()
-        .filter_map(|item| match item {
-            SessionItemView::UserMessage { text, .. } => Some(text.as_str()),
+        .filter_map(|entry| match entry.kind {
+            ContextEntryKindView::Message {
+                role: ContextMessageRoleView::User,
+            } => entry.text.as_deref(),
             _ => None,
         })
         .collect();
@@ -1990,9 +2030,9 @@ async fn run_admission_failure_live_client(
     api.start_session(SessionStartParams {
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
-        config: Some(SessionConfigInput {
+        config: Some(SessionConfig {
             model: Some(model_to_api(&model)),
-            ..SessionConfigInput::default()
+            ..SessionConfig::default()
         }),
         profile: None,
     })
@@ -2092,21 +2132,25 @@ async fn run_mcp_live_client(
     let server_id = format!("crm_{}", uuid::Uuid::new_v4().simple());
 
     let created = api
-        .create_mcp_server(McpServerCreateParams {
-            server_id: server_id.clone(),
-            display_name: Some("CRM".to_owned()),
-            server_url: format!("https://{server_id}.example.com/mcp"),
-            transport: RemoteMcpTransport::Auto,
-            default_server_label: "crm".to_owned(),
-            description: Some("CRM MCP server".to_owned()),
-            allowed_tools: Some(vec!["lookup_customer".to_owned()]),
-            approval_default: RemoteMcpApprovalPolicy::Never,
-            defer_loading_default: Some(true),
-            auth_policy: api::McpServerAuthPolicy::None,
-            status: McpServerStatus::Active,
+        .put_mcp_server(McpServerPutParams {
+            server: McpServerInput {
+                server_id: server_id.clone(),
+                display_name: Some("CRM".to_owned()),
+                server_url: format!("https://{server_id}.example.com/mcp"),
+                transport: RemoteMcpTransport::Auto,
+                default_server_label: "crm".to_owned(),
+                description: Some("CRM MCP server".to_owned()),
+                allowed_tools: Some(vec!["lookup_customer".to_owned()]),
+                approval_default: RemoteMcpApprovalPolicy::Never,
+                defer_loading_default: Some(true),
+                auth_policy: api::McpServerAuthPolicy::None,
+                status: McpServerStatus::Active,
+            },
+            expected_revision: None,
         })
         .await?;
     assert_eq!(created.result.server.server_id, server_id);
+    assert_eq!(created.result.server.revision, 1);
 
     let read = api
         .read_mcp_server(McpServerReadParams {
@@ -2131,48 +2175,113 @@ async fn run_mcp_live_client(
     api.start_session(SessionStartParams {
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
-        config: Some(SessionConfigInput {
+        config: Some(SessionConfig {
             model: Some(model_to_api(&model)),
-            ..SessionConfigInput::default()
+            ..SessionConfig::default()
         }),
         profile: None,
     })
     .await?;
 
-    let linked = api
-        .link_session_mcp(SessionMcpLinkParams {
+    // Link declaratively: put the session config back with the MCP server
+    // declared in features.mcp, merged into the existing config document.
+    let session = api
+        .read_session(SessionReadParams {
             session_id: session_id.as_str().to_owned(),
+        })
+        .await?
+        .result
+        .session;
+    let mut linked_config = session.config.clone().expect("session config");
+    let mut features = linked_config.features.clone().unwrap_or_default();
+    features.mcp = Some(api::McpFeature {
+        version: api::CURRENT_FEATURE_VERSION,
+        servers: vec![api::McpServerLink {
             server_id: server_id.clone(),
-            tool_id: Some("mcp_crm".to_owned()),
-            server_label: None,
             allowed_tools: Some(vec!["lookup_customer".to_owned()]),
             approval: Some(RemoteMcpApprovalPolicy::Never),
             defer_loading: Some(true),
             auth_grant_id: None,
+        }],
+    });
+    linked_config.features = Some(features);
+    let linked = api
+        .put_session_config(SessionConfigPutParams {
+            session_id: session_id.as_str().to_owned(),
+            expected_config_revision: Some(session.config_revision),
+            config: linked_config.clone(),
         })
         .await?;
-    assert_eq!(linked.result.link.tool_id, "mcp_crm");
-    assert_eq!(linked.result.link.server_label, "crm");
-    assert_eq!(
-        linked.result.link.allowed_tools,
-        Some(vec!["lookup_customer".to_owned()])
+    let tool_id = format!("mcp_{server_id}");
+    assert!(
+        linked
+            .result
+            .session
+            .active_tools
+            .tools
+            .iter()
+            .any(|tool| tool.tool_id == tool_id),
+        "declared MCP tool should materialize into the session toolset"
     );
 
-    let session_links = api
-        .list_session_mcp(SessionMcpListParams {
-            session_id: session_id.as_str().to_owned(),
-        })
-        .await?;
-    assert_eq!(session_links.result.links.len(), 1);
-    assert_eq!(session_links.result.links[0].tool_id, "mcp_crm");
+    let mcp_tools: Vec<_> = linked
+        .result
+        .session
+        .active_tools
+        .tools
+        .iter()
+        .filter(|tool| matches!(tool.kind, api::ToolKindView::RemoteMcp { .. }))
+        .collect();
+    assert_eq!(mcp_tools.len(), 1);
+    let tool = mcp_tools[0];
+    assert_eq!(tool.tool_id, tool_id);
+    let api::ToolKindView::RemoteMcp {
+        server_label,
+        allowed_tools,
+        approval,
+        defer_loading,
+        ..
+    } = &tool.kind
+    else {
+        panic!("expected remote MCP tool kind");
+    };
+    assert_eq!(server_label, "crm");
+    assert_eq!(allowed_tools, &Some(vec!["lookup_customer".to_owned()]));
+    assert_eq!(*approval, RemoteMcpApprovalPolicy::Never);
+    assert_eq!(*defer_loading, Some(true));
 
+    // Unlink declaratively: put the config again without the server.
+    let mut unlinked_config = linked_config;
+    if let Some(features) = unlinked_config.features.as_mut() {
+        features.mcp = None;
+    }
     let unlinked = api
-        .unlink_session_mcp(SessionMcpUnlinkParams {
+        .put_session_config(SessionConfigPutParams {
             session_id: session_id.as_str().to_owned(),
-            tool_id: "mcp_crm".to_owned(),
+            expected_config_revision: Some(linked.result.session.config_revision),
+            config: unlinked_config,
         })
         .await?;
-    assert!(unlinked.result.links.is_empty());
+    assert!(
+        unlinked
+            .result
+            .session
+            .active_tools
+            .tools
+            .iter()
+            .all(|tool| tool.tool_id != tool_id),
+        "undeclared MCP tool should be removed from the session toolset"
+    );
+    assert!(
+        unlinked
+            .result
+            .session
+            .active_tools
+            .tools
+            .iter()
+            .all(|tool| !matches!(tool.kind, api::ToolKindView::RemoteMcp { .. })),
+        "no remote MCP tools should remain after undeclaring"
+    );
 
     let deleted = api
         .delete_mcp_server(McpServerDeleteParams { server_id })
@@ -2205,18 +2314,21 @@ async fn run_profiles_live_client(
     let profile_id = ProfileId::new(format!("live_profile_{}", uuid::Uuid::new_v4().simple()));
     let server_id = format!("profile_crm_{}", uuid::Uuid::new_v4().simple());
 
-    api.create_mcp_server(McpServerCreateParams {
-        server_id: server_id.clone(),
-        display_name: Some("Profile CRM".to_owned()),
-        server_url: format!("https://{server_id}.example.com/mcp"),
-        transport: RemoteMcpTransport::Auto,
-        default_server_label: "profile_crm".to_owned(),
-        description: Some("Profile live MCP server".to_owned()),
-        allowed_tools: Some(vec!["lookup_customer".to_owned()]),
-        approval_default: RemoteMcpApprovalPolicy::Never,
-        defer_loading_default: Some(true),
-        auth_policy: api::McpServerAuthPolicy::None,
-        status: McpServerStatus::Active,
+    api.put_mcp_server(McpServerPutParams {
+        server: McpServerInput {
+            server_id: server_id.clone(),
+            display_name: Some("Profile CRM".to_owned()),
+            server_url: format!("https://{server_id}.example.com/mcp"),
+            transport: RemoteMcpTransport::Auto,
+            default_server_label: "profile_crm".to_owned(),
+            description: Some("Profile live MCP server".to_owned()),
+            allowed_tools: Some(vec!["lookup_customer".to_owned()]),
+            approval_default: RemoteMcpApprovalPolicy::Never,
+            defer_loading_default: Some(true),
+            auth_policy: api::McpServerAuthPolicy::None,
+            status: McpServerStatus::Active,
+        },
+        expected_revision: None,
     })
     .await?;
 
@@ -2227,27 +2339,26 @@ async fn run_profiles_live_client(
                 display_name: Some("Live profile".to_owned()),
                 description: Some("Initial live profile".to_owned()),
                 document: ProfileDocument {
-                    config: Some(SessionConfigInput {
-                        tools: Some(ToolConfigInput {
-                            fleet: Some(true),
-                            web_fetch: Some(false),
-                            ..ToolConfigInput::default()
+                    config: Some(SessionConfig {
+                        features: Some(api::FeaturesConfig {
+                            mcp: Some(api::McpFeature {
+                                version: api::CURRENT_FEATURE_VERSION,
+                                servers: vec![api::McpServerLink {
+                                    server_id: server_id.clone(),
+                                    allowed_tools: Some(vec!["lookup_customer".to_owned()]),
+                                    approval: Some(RemoteMcpApprovalPolicy::Never),
+                                    defer_loading: Some(true),
+                                    auth_grant_id: None,
+                                }],
+                            }),
+                            ..fleet_only_features()
                         }),
-                        ..SessionConfigInput::default()
+                        ..SessionConfig::default()
                     }),
                     instructions: Some(ProfileInstructions::Text {
                         text: "Use the profile instructions in this live test.".to_owned(),
                     }),
                     mounts: Vec::new(),
-                    mcp: vec![ProfileMcpLink {
-                        server_id: server_id.clone(),
-                        tool_id: Some("mcp_profile_crm".to_owned()),
-                        server_label: None,
-                        allowed_tools: Some(vec!["lookup_customer".to_owned()]),
-                        approval: Some(RemoteMcpApprovalPolicy::Never),
-                        defer_loading: Some(true),
-                        auth_grant_id: None,
-                    }],
                     environments: Vec::new(),
                 },
             },
@@ -2256,14 +2367,18 @@ async fn run_profiles_live_client(
     assert_eq!(created.result.profile.profile_id, profile_id);
     assert_eq!(created.result.profile.revision, 1);
 
+    // Full-document put: re-send the created profile with a new description.
+    let mut updated_input = AgentProfileInput {
+        profile_id: profile_id.clone(),
+        display_name: created.result.profile.display_name.clone(),
+        description: created.result.profile.description.clone(),
+        document: created.result.profile.document.clone(),
+    };
+    updated_input.description = Some("Updated live profile".to_owned());
     let updated = api
-        .update_profile(ProfileUpdateParams {
-            profile_id: profile_id.clone(),
+        .put_profile(ProfilePutParams {
+            profile: updated_input,
             expected_revision: Some(1),
-            patch: AgentProfileUpdatePatch {
-                description: Some(FieldPatch::Set("Updated live profile".to_owned())),
-                ..AgentProfileUpdatePatch::default()
-            },
         })
         .await?;
     assert_eq!(updated.result.profile.revision, 2);
@@ -2291,9 +2406,9 @@ async fn run_profiles_live_client(
         .start_session(SessionStartParams {
             session_id: Some(session_id.as_str().to_owned()),
             display_name: None,
-            config: Some(SessionConfigInput {
+            config: Some(SessionConfig {
                 model: Some(model_to_api(&model)),
-                ..SessionConfigInput::default()
+                ..SessionConfig::default()
             }),
             profile: Some(ProfileSource::Named {
                 profile_id: profile_id.clone(),
@@ -2302,25 +2417,30 @@ async fn run_profiles_live_client(
         .await?;
     let session = &started.result.session;
     let config = session.config.as_ref().expect("session config");
-    assert!(config.tools.fleet);
-    assert!(!config.tools.web_fetch);
+    let features = config.features.as_ref().expect("session features");
+    assert!(features.fleet.is_some());
+    assert!(features.web.is_none());
     assert!(
-        session
-            .active_context
-            .items
-            .iter()
-            .any(|item| matches!(item, SessionItemView::SystemEvent { text, .. } if text == "Profile instructions")),
+        session.active_context.entries.iter().any(|entry| matches!(
+            &entry.kind,
+            ContextEntryKindView::Instructions
+        ) && entry.preview.as_deref()
+            == Some("Profile instructions")),
         "profile instructions should be projected"
     );
 
-    let linked = api
-        .list_session_mcp(SessionMcpListParams {
-            session_id: session_id.as_str().to_owned(),
-        })
-        .await?;
-    assert_eq!(linked.result.links.len(), 1);
-    assert_eq!(linked.result.links[0].tool_id, "mcp_profile_crm");
-    assert_eq!(linked.result.links[0].server_label, "profile_crm");
+    let mcp_tools: Vec<_> = session
+        .active_tools
+        .tools
+        .iter()
+        .filter(|tool| matches!(tool.kind, api::ToolKindView::RemoteMcp { .. }))
+        .collect();
+    assert_eq!(mcp_tools.len(), 1);
+    assert_eq!(mcp_tools[0].tool_id, format!("mcp_{server_id}"));
+    let api::ToolKindView::RemoteMcp { server_label, .. } = &mcp_tools[0].kind else {
+        panic!("expected remote MCP tool kind");
+    };
+    assert_eq!(server_label, "profile_crm");
 
     let applied = api
         .apply_profile(ProfileApplyParams {
@@ -2335,7 +2455,6 @@ async fn run_profiles_live_client(
     assert!(!applied.result.applied.config_changed);
     assert!(!applied.result.applied.instructions_changed);
     assert_eq!(applied.result.applied.mounts_changed, 0);
-    assert_eq!(applied.result.applied.mcp_changed, 0);
     assert_eq!(applied.result.applied.environments_changed, 0);
 
     let run = api
@@ -2389,9 +2508,9 @@ async fn run_openai_live_client(
     api.start_session(SessionStartParams {
         session_id: Some(session_id.as_str().to_owned()),
         display_name: None,
-        config: Some(SessionConfigInput {
+        config: Some(SessionConfig {
             model: Some(model_to_api(&model)),
-            ..SessionConfigInput::default()
+            ..SessionConfig::default()
         }),
         profile: None,
     })

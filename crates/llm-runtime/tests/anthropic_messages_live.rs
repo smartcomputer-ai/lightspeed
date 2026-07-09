@@ -6,7 +6,7 @@ use engine::{
     ContextCompactionStatus, ContextCompactionTask, ContextEntry, ContextEntryId,
     ContextEntryInput, ContextEntryKind, ContextEntrySource, ContextMessageRole, ContextSnapshot,
     LlmFinish, LlmGenerationRequest, LlmGenerationStatus, LlmRequest, ModelSelection,
-    ProviderApiKind, RunId, SessionId, ToolChoice, ToolChoiceMode, ToolName, TurnId,
+    ProviderApiKind, RunId, SessionId, ToolChoice, ToolName, TurnId,
     storage::{BlobStore, InMemoryBlobStore},
 };
 use llm_clients::anthropic::messages::{Client, Config};
@@ -129,6 +129,8 @@ fn intent_request(fingerprint: &str, entries: Vec<ContextEntry>) -> LlmRequest {
         tools: Vec::new(),
         tool_choice: None,
         output_limit: Some(1024),
+        reasoning_effort: None,
+        parallel_tool_use: None,
         provider_response_id: None,
         compaction: None,
         params: None,
@@ -454,10 +456,8 @@ async fn anthropic_messages_live_adapter_runs_tool_round_trip() {
         schema_ref.clone(),
         description_ref.clone(),
     )];
-    request.tool_choice = Some(ToolChoice {
-        mode: ToolChoiceMode::RequiredAny,
-        disable_parallel_tool_use: Some(true),
-    });
+    request.tool_choice = Some(ToolChoice::RequiredAny);
+    request.parallel_tool_use = Some(false);
 
     let execution = adapter
         .generate(generation_request(1, request))

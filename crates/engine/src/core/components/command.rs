@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ContextEntryInput, ContextEntryKey, PromiseId, PromiseResolution, ResumeAwaitCommand, RunId,
-    RunRequestCommand, SessionConfig, SessionConfigPatch, SubmitMessageCommand,
-    ToolExecutionTarget, ToolName, ToolPatch, ToolSpec,
+    RunRequestCommand, SessionConfig, SubmitMessageCommand, ToolExecutionTarget, ToolName,
+    ToolPatch, ToolSpec,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -14,9 +14,13 @@ pub enum CoreAgentCommand {
     OpenSession {
         config: SessionConfig,
     },
-    PatchSessionConfig {
+    /// Replace the session config with a complete document. The previous
+    /// config is not consulted beyond validation (api-kind pinning) and the
+    /// revision guard; anything omitted from the document reverts to
+    /// defaults. Putting an identical document is an idempotent no-op.
+    ReplaceSessionConfig {
         expected_revision: Option<u64>,
-        patch: SessionConfigPatch,
+        config: SessionConfig,
     },
     ReplaceTools {
         expected_revision: Option<u64>,

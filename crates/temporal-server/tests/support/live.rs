@@ -7,7 +7,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use api::{AgentApiService, RunStatus, SessionItemView, SessionReadParams, SessionStatus};
+use api::{
+    AgentApiService, ContextEntryKindView, ContextMessageRoleView, RunStatus, SessionReadParams,
+    SessionStatus,
+};
 use engine::{
     CoreAgentLlm, CoreAgentTools, ModelSelection, ProviderApiKind, SessionId, storage::BlobStore,
 };
@@ -121,8 +124,10 @@ pub async fn fake_activity_state() -> anyhow::Result<ActivityState> {
 }
 
 pub fn final_assistant_text(run: &api::RunView) -> Option<&str> {
-    run.items.iter().rev().find_map(|item| match item {
-        SessionItemView::AssistantMessage { text, .. } => Some(text.as_str()),
+    run.entries.iter().rev().find_map(|entry| match entry.kind {
+        ContextEntryKindView::Message {
+            role: ContextMessageRoleView::Assistant,
+        } => entry.text.as_deref(),
         _ => None,
     })
 }

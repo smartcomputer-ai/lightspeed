@@ -1,8 +1,7 @@
-//! Runtime environment provider registry contracts.
+//! Runtime environment registry contracts.
 //!
-//! This crate owns provider-independent records and store traits for the
-//! hosted runtime's environment-provider registry. Concrete persistence
-//! adapters, such as `store-pg`, implement these traits outside this crate.
+//! Providers advertise presence, environment instances own machine lifetime,
+//! and session bindings are lightweight aliases to instances.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -100,15 +99,17 @@ macro_rules! registry_string_id {
         }
 
         impl fmt::Display for $name {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str(&self.0)
+            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str(&self.0)
             }
         }
     };
 }
 
 registry_string_id!(EnvironmentProviderId);
+registry_string_id!(EnvironmentInstanceId);
 registry_string_id!(EnvironmentId);
+registry_string_id!(EnvironmentJobGroupId);
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum EnvironmentRegistryError {
@@ -117,6 +118,15 @@ pub enum EnvironmentRegistryError {
 
     #[error("environment registry {kind} not found: {id}")]
     NotFound { kind: &'static str, id: String },
+
+    #[error(
+        "environment instance {instance_id} is occupied: bindings={bindings:?}, job_groups={job_groups:?}"
+    )]
+    Occupied {
+        instance_id: EnvironmentInstanceId,
+        bindings: Vec<String>,
+        job_groups: Vec<EnvironmentJobGroupId>,
+    },
 
     #[error("invalid environment registry request: {message}")]
     InvalidInput { message: String },
@@ -142,31 +152,31 @@ pub struct EnvironmentProviderRecord {
 }
 
 impl EnvironmentProviderRecord {
+    pub fn is_live_at(&self, now_ms: i64) -> bool {
+        self.status == EnvironmentProviderStatus::Online && self.lease_expires_ms > now_ms
+    }
+
+    pub fn presence_at(&self, now_ms: i64) -> EnvironmentProviderPresence {
+        match self.status {
+            EnvironmentProviderStatus::Offline => EnvironmentProviderPresence::Offline,
+            EnvironmentProviderStatus::Online if self.lease_expires_ms > now_ms => {
+                EnvironmentProviderPresence::Online
+            }
+            EnvironmentProviderStatus::Online => EnvironmentProviderPresence::Stale,
+        }
+    }
+
     pub fn validate(&self) -> Result<(), EnvironmentRegistryError> {
         validate_nonempty_optional("display_name", self.display_name.as_deref())?;
         self.controller_connection.validate()?;
         self.capabilities.validate()?;
-        validate_implementation(&self.implementation)?;
+        validate_nonempty_string("implementation name", &self.implementation.name)?;
         validate_metadata(&self.metadata)?;
         validate_nonnegative_i64(self.last_seen_ms, "last_seen_ms")?;
         validate_nonnegative_i64(self.lease_expires_ms, "lease_expires_ms")?;
-        validate_nonnegative_i64(self.created_at_ms, "created_at_ms")?;
-        validate_nonnegative_i64(self.updated_at_ms, "updated_at_ms")?;
-        if self.updated_at_ms < self.created_at_ms {
-            return Err(EnvironmentRegistryError::InvalidInput {
-                message: format!(
-                    "updated_at_ms {} must be >= created_at_ms {}",
-                    self.updated_at_ms, self.created_at_ms
-                ),
-            });
-        }
+        validate_timestamps(self.created_at_ms, self.updated_at_ms)?;
         if self.lease_expires_ms < self.last_seen_ms {
-            return Err(EnvironmentRegistryError::InvalidInput {
-                message: format!(
-                    "lease_expires_ms {} must be >= last_seen_ms {}",
-                    self.lease_expires_ms, self.last_seen_ms
-                ),
-            });
+            return invalid("lease_expires_ms must be >= last_seen_ms");
         }
         Ok(())
     }
@@ -215,11 +225,26 @@ impl RegisterEnvironmentProvider {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ObservedEnvironmentTarget {
+    pub target: HostTargetSummary,
+    pub connection: HostConnectionSpec,
+}
+
+impl ObservedEnvironmentTarget {
+    pub fn validate(&self) -> Result<(), EnvironmentRegistryError> {
+        if self.target.target_id != self.connection.target_id {
+            return invalid("observed target and connection target ids must match");
+        }
+        validate_host_connection(&self.connection)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct EnvironmentProviderHeartbeat {
     pub provider_id: EnvironmentProviderId,
     pub observed_at_ms: i64,
     pub lease_ttl_ms: Option<i64>,
-    pub observed_targets: Vec<HostTargetSummary>,
+    pub observed_targets: Vec<ObservedEnvironmentTarget>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -246,11 +271,16 @@ pub enum EnvironmentProviderKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EnvironmentProviderStatus {
-    Registering,
+    Online,
+    Offline,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EnvironmentProviderPresence {
     Online,
     Stale,
     Offline,
-    Disabled,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -279,8 +309,6 @@ pub struct EnvironmentProviderCapabilities {
     #[serde(default)]
     pub create_target: bool,
     #[serde(default)]
-    pub attach_target: bool,
-    #[serde(default)]
     pub get_target: bool,
     #[serde(default)]
     pub close_target: bool,
@@ -291,122 +319,159 @@ impl EnvironmentProviderCapabilities {
         Self {
             list_targets: value.list_targets,
             create_target: value.create_target,
-            attach_target: value.attach_target,
             get_target: value.get_target,
             close_target: value.close_target,
         }
     }
 
     pub fn validate(&self) -> Result<(), EnvironmentRegistryError> {
-        if !self.list_targets
-            && !self.create_target
-            && !self.attach_target
-            && !self.get_target
-            && !self.close_target
-        {
-            return Err(EnvironmentRegistryError::InvalidInput {
-                message: "environment provider must expose at least one controller capability"
-                    .to_owned(),
-            });
+        if !self.list_targets && !self.create_target && !self.get_target && !self.close_target {
+            return invalid("environment provider must expose at least one controller capability");
         }
         Ok(())
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EnvironmentInstanceOrigin {
+    Provided,
+    Provisioned,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EnvironmentTargetRecord {
+pub struct EnvironmentInstanceRecord {
+    pub instance_id: EnvironmentInstanceId,
     pub provider_id: EnvironmentProviderId,
-    pub target_id: HostTargetId,
+    pub provider_target_id: HostTargetId,
+    pub origin: EnvironmentInstanceOrigin,
     pub display_name: Option<String>,
     pub status: HostTargetStatus,
     pub scope: HostScope,
     pub capabilities: HostCapabilities,
+    pub connection: HostConnectionSpec,
     pub default_cwd: Option<HostPath>,
     pub metadata: BTreeMap<String, String>,
     pub observed_at_ms: i64,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
 }
 
-impl EnvironmentTargetRecord {
+impl EnvironmentInstanceRecord {
     pub fn validate(&self) -> Result<(), EnvironmentRegistryError> {
-        validate_host_target_id(&self.target_id)?;
+        validate_host_target_id(&self.provider_target_id)?;
+        if self.connection.target_id != self.provider_target_id {
+            return invalid("instance connection target id must equal provider_target_id");
+        }
+        validate_host_connection(&self.connection)?;
         validate_nonempty_optional("display_name", self.display_name.as_deref())?;
         validate_metadata(&self.metadata)?;
-        validate_nonnegative_i64(self.observed_at_ms, "observed_at_ms")
+        validate_nonnegative_i64(self.observed_at_ms, "observed_at_ms")?;
+        validate_timestamps(self.created_at_ms, self.updated_at_ms)
+    }
+
+    pub fn is_attachable(&self) -> bool {
+        matches!(self.status, HostTargetStatus::Ready)
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UpsertEnvironmentTargetRecord {
+pub struct ObserveEnvironmentInstance {
+    pub instance_id: EnvironmentInstanceId,
     pub provider_id: EnvironmentProviderId,
-    pub target_id: HostTargetId,
+    pub provider_target_id: HostTargetId,
+    pub origin: EnvironmentInstanceOrigin,
     pub display_name: Option<String>,
     pub status: HostTargetStatus,
     pub scope: HostScope,
     pub capabilities: HostCapabilities,
+    pub connection: HostConnectionSpec,
     pub default_cwd: Option<HostPath>,
     pub metadata: BTreeMap<String, String>,
     pub observed_at_ms: i64,
 }
 
-impl UpsertEnvironmentTargetRecord {
-    pub fn into_record(self) -> EnvironmentTargetRecord {
-        EnvironmentTargetRecord {
+impl ObserveEnvironmentInstance {
+    pub fn from_observation(
+        instance_id: EnvironmentInstanceId,
+        provider_id: EnvironmentProviderId,
+        origin: EnvironmentInstanceOrigin,
+        observation: ObservedEnvironmentTarget,
+        observed_at_ms: i64,
+    ) -> Self {
+        Self {
+            instance_id,
+            provider_id,
+            provider_target_id: observation.target.target_id,
+            origin,
+            display_name: observation.target.display_name,
+            status: observation.target.status,
+            scope: observation.target.scope,
+            capabilities: observation.connection.capabilities.clone(),
+            default_cwd: observation
+                .connection
+                .default_cwd
+                .clone()
+                .or(observation.target.default_cwd),
+            connection: observation.connection,
+            metadata: observation.target.metadata,
+            observed_at_ms,
+        }
+    }
+
+    pub fn into_record(self) -> EnvironmentInstanceRecord {
+        EnvironmentInstanceRecord {
+            instance_id: self.instance_id,
             provider_id: self.provider_id,
-            target_id: self.target_id,
+            provider_target_id: self.provider_target_id,
+            origin: self.origin,
             display_name: self.display_name,
             status: self.status,
             scope: self.scope,
             capabilities: self.capabilities,
+            connection: self.connection,
             default_cwd: self.default_cwd,
             metadata: self.metadata,
             observed_at_ms: self.observed_at_ms,
-        }
-    }
-}
-
-impl From<(EnvironmentProviderId, HostTargetSummary, i64)> for UpsertEnvironmentTargetRecord {
-    fn from(
-        (provider_id, target, observed_at_ms): (EnvironmentProviderId, HostTargetSummary, i64),
-    ) -> Self {
-        Self {
-            provider_id,
-            target_id: target.target_id,
-            display_name: target.display_name,
-            status: target.status,
-            scope: target.scope,
-            capabilities: target.capabilities,
-            default_cwd: target.default_cwd,
-            metadata: target.metadata,
-            observed_at_ms,
+            created_at_ms: self.observed_at_ms,
+            updated_at_ms: self.observed_at_ms,
         }
     }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ListEnvironmentTargets {
+pub struct ListEnvironmentInstances {
     pub provider_id: Option<EnvironmentProviderId>,
     pub status: Option<HostTargetStatus>,
+    pub origin: Option<EnvironmentInstanceOrigin>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UpdateEnvironmentTargetStatus {
-    pub provider_id: EnvironmentProviderId,
-    pub target_id: HostTargetId,
+pub struct UpdateEnvironmentInstanceStatus {
+    pub instance_id: EnvironmentInstanceId,
     pub status: HostTargetStatus,
     pub observed_at_ms: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BeginCloseEnvironmentInstance {
+    pub instance_id: EnvironmentInstanceId,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionEnvironmentBindingState {
+    Attached,
+    Detached,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionEnvironmentBindingRecord {
     pub session_id: SessionId,
     pub env_id: EnvironmentId,
-    pub provider_id: EnvironmentProviderId,
-    pub target_id: HostTargetId,
-    pub exec_target: ToolExecutionTarget,
-    pub kind: SessionEnvironmentKind,
-    pub status: SessionEnvironmentBindingStatus,
-    pub capabilities: SessionEnvironmentCapabilities,
-    pub connection: HostConnectionSpec,
+    pub instance_id: EnvironmentInstanceId,
+    pub state: SessionEnvironmentBindingState,
     pub cwd: Option<HostPath>,
     pub fs_routes: Vec<SessionEnvironmentFsRoute>,
     pub created_at_ms: i64,
@@ -414,80 +479,48 @@ pub struct SessionEnvironmentBindingRecord {
 }
 
 impl SessionEnvironmentBindingRecord {
+    pub fn exec_target(&self) -> ToolExecutionTarget {
+        ToolExecutionTarget::new("env", self.env_id.as_str())
+    }
+
     pub fn validate(&self) -> Result<(), EnvironmentRegistryError> {
-        validate_host_target_id(&self.target_id)?;
-        self.exec_target
-            .validate()
-            .map_err(|error| EnvironmentRegistryError::InvalidInput {
-                message: format!("invalid exec_target: {error}"),
-            })?;
-        if self.exec_target.namespace != "env" || self.exec_target.id != self.env_id.as_str() {
-            return Err(EnvironmentRegistryError::InvalidInput {
-                message: format!(
-                    "exec_target must be env:{} for session environment binding",
-                    self.env_id
-                ),
-            });
-        }
-        self.capabilities.validate()?;
-        validate_host_connection(&self.connection)?;
         for route in &self.fs_routes {
             route.validate()?;
         }
-        validate_nonnegative_i64(self.created_at_ms, "created_at_ms")?;
-        validate_nonnegative_i64(self.updated_at_ms, "updated_at_ms")?;
-        if self.updated_at_ms < self.created_at_ms {
-            return Err(EnvironmentRegistryError::InvalidInput {
-                message: format!(
-                    "updated_at_ms {} must be >= created_at_ms {}",
-                    self.updated_at_ms, self.created_at_ms
-                ),
-            });
-        }
-        Ok(())
+        validate_timestamps(self.created_at_ms, self.updated_at_ms)
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CreateSessionEnvironmentBinding {
+pub struct PutSessionEnvironmentBinding {
     pub session_id: SessionId,
     pub env_id: EnvironmentId,
-    pub provider_id: EnvironmentProviderId,
-    pub target_id: HostTargetId,
-    pub kind: SessionEnvironmentKind,
-    pub status: SessionEnvironmentBindingStatus,
-    pub capabilities: SessionEnvironmentCapabilities,
-    pub connection: HostConnectionSpec,
+    pub instance_id: EnvironmentInstanceId,
     pub cwd: Option<HostPath>,
     pub fs_routes: Vec<SessionEnvironmentFsRoute>,
-    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
 }
 
-impl CreateSessionEnvironmentBinding {
+impl PutSessionEnvironmentBinding {
     pub fn into_record(self) -> SessionEnvironmentBindingRecord {
         SessionEnvironmentBindingRecord {
-            exec_target: ToolExecutionTarget::new("env", self.env_id.as_str()),
             session_id: self.session_id,
             env_id: self.env_id,
-            provider_id: self.provider_id,
-            target_id: self.target_id,
-            kind: self.kind,
-            status: self.status,
-            capabilities: self.capabilities,
-            connection: self.connection,
+            instance_id: self.instance_id,
+            state: SessionEnvironmentBindingState::Attached,
             cwd: self.cwd,
             fs_routes: self.fs_routes,
-            created_at_ms: self.created_at_ms,
-            updated_at_ms: self.created_at_ms,
+            created_at_ms: self.updated_at_ms,
+            updated_at_ms: self.updated_at_ms,
         }
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UpdateSessionEnvironmentBindingStatus {
+pub struct UpdateSessionEnvironmentBindingState {
     pub session_id: SessionId,
     pub env_id: EnvironmentId,
-    pub status: SessionEnvironmentBindingStatus,
+    pub state: SessionEnvironmentBindingState,
     pub updated_at_ms: i64,
 }
 
@@ -504,17 +537,7 @@ pub struct SessionEnvironmentCredentialRecord {
 impl SessionEnvironmentCredentialRecord {
     pub fn validate(&self) -> Result<(), EnvironmentRegistryError> {
         validate_env_name(&self.env_name)?;
-        validate_nonnegative_i64(self.created_at_ms, "created_at_ms")?;
-        validate_nonnegative_i64(self.updated_at_ms, "updated_at_ms")?;
-        if self.updated_at_ms < self.created_at_ms {
-            return Err(EnvironmentRegistryError::InvalidInput {
-                message: format!(
-                    "updated_at_ms {} must be >= created_at_ms {}",
-                    self.updated_at_ms, self.created_at_ms
-                ),
-            });
-        }
-        Ok(())
+        validate_timestamps(self.created_at_ms, self.updated_at_ms)
     }
 }
 
@@ -554,106 +577,6 @@ pub struct ListSessionEnvironmentCredentials {
     pub env_id: EnvironmentId,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SessionEnvironmentKind {
-    Sandbox,
-    AttachedHost,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SessionEnvironmentBindingStatus {
-    Attaching,
-    Ready,
-    Degraded,
-    Detached,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SessionEnvironmentCapabilities {
-    #[serde(default)]
-    pub fs_read: bool,
-    #[serde(default)]
-    pub fs_write: bool,
-    #[serde(default)]
-    pub process_exec: bool,
-    #[serde(default)]
-    pub process_stdin: bool,
-    #[serde(default)]
-    pub job_start: bool,
-    #[serde(default)]
-    pub job_list: bool,
-    #[serde(default)]
-    pub job_read: bool,
-    #[serde(default)]
-    pub job_cancel: bool,
-    #[serde(default)]
-    pub job_wait_hint: bool,
-    #[serde(default)]
-    pub job_dependencies: bool,
-    #[serde(default)]
-    pub job_queue_keys: bool,
-    #[serde(default)]
-    pub network: bool,
-    #[serde(default)]
-    pub persistent: bool,
-}
-
-impl SessionEnvironmentCapabilities {
-    pub fn from_host(capabilities: &HostCapabilities, persistent: bool) -> Self {
-        Self {
-            fs_read: capabilities.filesystem_read,
-            fs_write: capabilities.filesystem_write,
-            process_exec: capabilities.process_start,
-            process_stdin: capabilities.process_stdin,
-            job_start: capabilities.job_start,
-            job_list: capabilities.job_list,
-            job_read: capabilities.job_read,
-            job_cancel: capabilities.job_cancel,
-            job_wait_hint: capabilities.job_wait_hint,
-            job_dependencies: capabilities.job_dependencies,
-            job_queue_keys: capabilities.job_queue_keys,
-            network: false,
-            persistent,
-        }
-    }
-
-    pub fn validate(&self) -> Result<(), EnvironmentRegistryError> {
-        if self.fs_write && !self.fs_read {
-            return Err(EnvironmentRegistryError::InvalidInput {
-                message: "fs_write requires fs_read".to_owned(),
-            });
-        }
-        if self.process_stdin && !self.process_exec {
-            return Err(EnvironmentRegistryError::InvalidInput {
-                message: "process_stdin requires process_exec".to_owned(),
-            });
-        }
-        if self.job_wait_hint && !self.job_read {
-            return Err(EnvironmentRegistryError::InvalidInput {
-                message: "job_wait_hint requires job_read".to_owned(),
-            });
-        }
-        if self.job_list && !self.job_read {
-            return Err(EnvironmentRegistryError::InvalidInput {
-                message: "job_list requires job_read".to_owned(),
-            });
-        }
-        if self.job_dependencies && !self.job_start {
-            return Err(EnvironmentRegistryError::InvalidInput {
-                message: "job_dependencies requires job_start".to_owned(),
-            });
-        }
-        if self.job_queue_keys && !self.job_start {
-            return Err(EnvironmentRegistryError::InvalidInput {
-                message: "job_queue_keys requires job_start".to_owned(),
-            });
-        }
-        Ok(())
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionEnvironmentFsRoute {
     pub path: HostPath,
@@ -666,18 +589,17 @@ pub struct SessionEnvironmentFsRoute {
 impl SessionEnvironmentFsRoute {
     pub fn validate(&self) -> Result<(), EnvironmentRegistryError> {
         if !self.path.is_absolute() {
-            return Err(EnvironmentRegistryError::InvalidInput {
-                message: format!("environment fs route path must be absolute: {}", self.path),
-            });
+            return invalid(format!(
+                "environment fs route path must be absolute: {}",
+                self.path
+            ));
         }
-        if let Some(source_path) = self.source_path.as_ref() {
-            if !source_path.is_absolute() {
-                return Err(EnvironmentRegistryError::InvalidInput {
-                    message: format!(
-                        "environment fs route source_path must be absolute: {source_path}"
-                    ),
-                });
-            }
+        if self
+            .source_path
+            .as_ref()
+            .is_some_and(|path| !path.is_absolute())
+        {
+            return invalid("environment fs route source_path must be absolute");
         }
         Ok(())
     }
@@ -690,16 +612,89 @@ pub enum SessionEnvironmentFsRouteAccess {
     ReadWrite,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EnvironmentJobGroupStatus {
+    Starting,
+    Running,
+    Terminal,
+    Failed,
+}
+
+impl EnvironmentJobGroupStatus {
+    pub fn is_terminal(self) -> bool {
+        matches!(self, Self::Terminal | Self::Failed)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvironmentJobGroupRecord {
+    pub instance_id: EnvironmentInstanceId,
+    pub job_group_id: EnvironmentJobGroupId,
+    pub request_id: String,
+    pub start_request_hash: String,
+    pub status: EnvironmentJobGroupStatus,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+    pub terminal_at_ms: Option<i64>,
+}
+
+impl EnvironmentJobGroupRecord {
+    pub fn validate(&self) -> Result<(), EnvironmentRegistryError> {
+        validate_general_string_id("job request_id", &self.request_id).map_err(|error| {
+            EnvironmentRegistryError::InvalidInput {
+                message: error.to_string(),
+            }
+        })?;
+        validate_nonempty_string("start_request_hash", &self.start_request_hash)?;
+        validate_timestamps(self.created_at_ms, self.updated_at_ms)?;
+        if self.status.is_terminal() != self.terminal_at_ms.is_some() {
+            return invalid("terminal_at_ms must be set exactly for terminal job groups");
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReserveEnvironmentJobGroup {
+    pub instance_id: EnvironmentInstanceId,
+    pub job_group_id: EnvironmentJobGroupId,
+    pub request_id: String,
+    pub start_request_hash: String,
+    pub created_at_ms: i64,
+}
+
+impl ReserveEnvironmentJobGroup {
+    pub fn into_record(self) -> EnvironmentJobGroupRecord {
+        EnvironmentJobGroupRecord {
+            instance_id: self.instance_id,
+            job_group_id: self.job_group_id,
+            request_id: self.request_id,
+            start_request_hash: self.start_request_hash,
+            status: EnvironmentJobGroupStatus::Starting,
+            created_at_ms: self.created_at_ms,
+            updated_at_ms: self.created_at_ms,
+            terminal_at_ms: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdateEnvironmentJobGroupStatus {
+    pub instance_id: EnvironmentInstanceId,
+    pub job_group_id: EnvironmentJobGroupId,
+    pub status: EnvironmentJobGroupStatus,
+    pub updated_at_ms: i64,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JobHandleRecord {
-    pub session_id: SessionId,
-    pub env_id: EnvironmentId,
-    pub provider_id: EnvironmentProviderId,
-    pub target_id: HostTargetId,
-    pub namespace: String,
+    pub instance_id: EnvironmentInstanceId,
+    pub job_group_id: EnvironmentJobGroupId,
     pub job_id: JobId,
     pub name: Option<String>,
     pub queue_key: Option<String>,
+    pub created_by_session_id: Option<SessionId>,
     pub created_by_run_id: Option<RunId>,
     pub created_by_turn_id: Option<TurnId>,
     pub created_by_tool_call_id: Option<ToolCallId>,
@@ -710,43 +705,28 @@ pub struct JobHandleRecord {
 impl JobHandleRecord {
     pub fn validate(&self) -> Result<(), EnvironmentRegistryError> {
         validate_host_job_id(&self.job_id)?;
-        validate_host_target_id(&self.target_id)?;
-        validate_general_string_id("namespace", &self.namespace).map_err(|error| {
-            EnvironmentRegistryError::InvalidInput {
-                message: format!("invalid namespace: {error}"),
-            }
-        })?;
-        if self.namespace != self.session_id.as_str() {
-            return Err(EnvironmentRegistryError::InvalidInput {
-                message: "job namespace must equal session_id".to_owned(),
-            });
-        }
         validate_nonempty_optional("job name", self.name.as_deref())?;
         validate_nonempty_optional("queue_key", self.queue_key.as_deref())?;
-        validate_optional_metadata_component("job name", self.name.as_deref())?;
         if let Some(queue_key) = self.queue_key.as_deref() {
             validate_general_string_id("queue_key", queue_key).map_err(|error| {
                 EnvironmentRegistryError::InvalidInput {
-                    message: format!("invalid queue_key: {error}"),
+                    message: error.to_string(),
                 }
             })?;
         }
         validate_nonempty_string("start_request_hash", &self.start_request_hash)?;
-        validate_metadata_component("start_request_hash", &self.start_request_hash)?;
         validate_nonnegative_i64(self.created_at_ms, "created_at_ms")
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreateJobHandle {
-    pub session_id: SessionId,
-    pub env_id: EnvironmentId,
-    pub provider_id: EnvironmentProviderId,
-    pub target_id: HostTargetId,
-    pub namespace: String,
+    pub instance_id: EnvironmentInstanceId,
+    pub job_group_id: EnvironmentJobGroupId,
     pub job_id: JobId,
     pub name: Option<String>,
     pub queue_key: Option<String>,
+    pub created_by_session_id: Option<SessionId>,
     pub created_by_run_id: Option<RunId>,
     pub created_by_turn_id: Option<TurnId>,
     pub created_by_tool_call_id: Option<ToolCallId>,
@@ -757,14 +737,12 @@ pub struct CreateJobHandle {
 impl CreateJobHandle {
     pub fn into_record(self) -> JobHandleRecord {
         JobHandleRecord {
-            session_id: self.session_id,
-            env_id: self.env_id,
-            provider_id: self.provider_id,
-            target_id: self.target_id,
-            namespace: self.namespace,
+            instance_id: self.instance_id,
+            job_group_id: self.job_group_id,
             job_id: self.job_id,
             name: self.name,
             queue_key: self.queue_key,
+            created_by_session_id: self.created_by_session_id,
             created_by_run_id: self.created_by_run_id,
             created_by_turn_id: self.created_by_turn_id,
             created_by_tool_call_id: self.created_by_tool_call_id,
@@ -774,10 +752,11 @@ impl CreateJobHandle {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ListJobHandles {
-    pub session_id: SessionId,
-    pub env_id: Option<EnvironmentId>,
+    pub instance_id: Option<EnvironmentInstanceId>,
+    pub job_group_id: Option<EnvironmentJobGroupId>,
+    pub created_by_session_id: Option<SessionId>,
     pub limit: Option<usize>,
 }
 
@@ -787,27 +766,22 @@ pub trait EnvironmentProviderStore: Send + Sync {
         &self,
         record: RegisterEnvironmentProvider,
     ) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError>;
-
     async fn read_provider(
         &self,
         provider_id: &EnvironmentProviderId,
     ) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError>;
-
     async fn list_providers(
         &self,
         request: ListEnvironmentProviders,
     ) -> Result<Vec<EnvironmentProviderRecord>, EnvironmentRegistryError>;
-
     async fn update_provider_heartbeat(
         &self,
         heartbeat: EnvironmentProviderHeartbeat,
     ) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError>;
-
     async fn update_provider_status(
         &self,
         request: UpdateEnvironmentProviderStatus,
     ) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError>;
-
     async fn delete_provider(
         &self,
         provider_id: &EnvironmentProviderId,
@@ -815,52 +789,63 @@ pub trait EnvironmentProviderStore: Send + Sync {
 }
 
 #[async_trait]
-pub trait EnvironmentTargetStore: Send + Sync {
-    async fn upsert_target(
+pub trait EnvironmentInstanceStore: Send + Sync {
+    async fn observe_instance(
         &self,
-        record: UpsertEnvironmentTargetRecord,
-    ) -> Result<EnvironmentTargetRecord, EnvironmentRegistryError>;
-
-    async fn read_target(
+        record: ObserveEnvironmentInstance,
+    ) -> Result<EnvironmentInstanceRecord, EnvironmentRegistryError>;
+    async fn read_instance(
+        &self,
+        instance_id: &EnvironmentInstanceId,
+    ) -> Result<EnvironmentInstanceRecord, EnvironmentRegistryError>;
+    async fn read_instance_by_provider_target(
         &self,
         provider_id: &EnvironmentProviderId,
-        target_id: &HostTargetId,
-    ) -> Result<EnvironmentTargetRecord, EnvironmentRegistryError>;
-
-    async fn list_targets(
+        provider_target_id: &HostTargetId,
+    ) -> Result<EnvironmentInstanceRecord, EnvironmentRegistryError>;
+    async fn list_instances(
         &self,
-        request: ListEnvironmentTargets,
-    ) -> Result<Vec<EnvironmentTargetRecord>, EnvironmentRegistryError>;
-
-    async fn update_target_status(
+        request: ListEnvironmentInstances,
+    ) -> Result<Vec<EnvironmentInstanceRecord>, EnvironmentRegistryError>;
+    async fn mark_missing_provided_instances_unknown(
         &self,
-        request: UpdateEnvironmentTargetStatus,
-    ) -> Result<EnvironmentTargetRecord, EnvironmentRegistryError>;
+        provider_id: &EnvironmentProviderId,
+        observed_target_ids: &BTreeSet<HostTargetId>,
+        observed_at_ms: i64,
+    ) -> Result<Vec<EnvironmentInstanceRecord>, EnvironmentRegistryError>;
+    async fn update_instance_status(
+        &self,
+        request: UpdateEnvironmentInstanceStatus,
+    ) -> Result<EnvironmentInstanceRecord, EnvironmentRegistryError>;
+    async fn begin_close_instance(
+        &self,
+        request: BeginCloseEnvironmentInstance,
+    ) -> Result<EnvironmentInstanceRecord, EnvironmentRegistryError>;
 }
 
 #[async_trait]
 pub trait SessionEnvironmentBindingStore: Send + Sync {
-    async fn create_binding(
+    async fn put_binding(
         &self,
-        record: CreateSessionEnvironmentBinding,
+        record: PutSessionEnvironmentBinding,
     ) -> Result<SessionEnvironmentBindingRecord, EnvironmentRegistryError>;
-
     async fn read_binding(
         &self,
         session_id: &SessionId,
         env_id: &EnvironmentId,
     ) -> Result<SessionEnvironmentBindingRecord, EnvironmentRegistryError>;
-
     async fn list_bindings_for_session(
         &self,
         session_id: &SessionId,
     ) -> Result<Vec<SessionEnvironmentBindingRecord>, EnvironmentRegistryError>;
-
-    async fn update_binding_status(
+    async fn list_bindings_for_instance(
         &self,
-        request: UpdateSessionEnvironmentBindingStatus,
+        instance_id: &EnvironmentInstanceId,
+    ) -> Result<Vec<SessionEnvironmentBindingRecord>, EnvironmentRegistryError>;
+    async fn update_binding_state(
+        &self,
+        request: UpdateSessionEnvironmentBindingState,
     ) -> Result<SessionEnvironmentBindingRecord, EnvironmentRegistryError>;
-
     async fn delete_binding(
         &self,
         session_id: &SessionId,
@@ -874,12 +859,10 @@ pub trait SessionEnvironmentCredentialStore: Send + Sync {
         &self,
         record: CreateSessionEnvironmentCredential,
     ) -> Result<SessionEnvironmentCredentialRecord, EnvironmentRegistryError>;
-
     async fn list_credentials(
         &self,
         request: ListSessionEnvironmentCredentials,
     ) -> Result<Vec<SessionEnvironmentCredentialRecord>, EnvironmentRegistryError>;
-
     async fn unbind_credential(
         &self,
         session_id: &SessionId,
@@ -890,27 +873,35 @@ pub trait SessionEnvironmentCredentialStore: Send + Sync {
 
 #[async_trait]
 pub trait JobHandleStore: Send + Sync {
+    async fn reserve_job_group(
+        &self,
+        record: ReserveEnvironmentJobGroup,
+    ) -> Result<EnvironmentJobGroupRecord, EnvironmentRegistryError>;
+    async fn read_job_group(
+        &self,
+        instance_id: &EnvironmentInstanceId,
+        job_group_id: &EnvironmentJobGroupId,
+    ) -> Result<EnvironmentJobGroupRecord, EnvironmentRegistryError>;
+    async fn update_job_group_status(
+        &self,
+        request: UpdateEnvironmentJobGroupStatus,
+    ) -> Result<EnvironmentJobGroupRecord, EnvironmentRegistryError>;
     async fn create_job_handles(
         &self,
         records: Vec<CreateJobHandle>,
     ) -> Result<Vec<JobHandleRecord>, EnvironmentRegistryError>;
-
     async fn read_job_handle(
         &self,
-        session_id: &SessionId,
-        env_id: &EnvironmentId,
+        instance_id: &EnvironmentInstanceId,
         job_id: &JobId,
     ) -> Result<JobHandleRecord, EnvironmentRegistryError>;
-
     async fn list_job_handles(
         &self,
         request: ListJobHandles,
     ) -> Result<Vec<JobHandleRecord>, EnvironmentRegistryError>;
-
     async fn delete_job_handle(
         &self,
-        session_id: &SessionId,
-        env_id: &EnvironmentId,
+        instance_id: &EnvironmentInstanceId,
         job_id: &JobId,
     ) -> Result<JobHandleRecord, EnvironmentRegistryError>;
 }
@@ -918,128 +909,57 @@ pub trait JobHandleStore: Send + Sync {
 mod memory;
 pub use memory::InMemoryEnvironmentRegistryStore;
 
-fn validate_implementation(
-    implementation: &ImplementationInfo,
-) -> Result<(), EnvironmentRegistryError> {
-    validate_nonempty_string("implementation name", &implementation.name)?;
-    validate_nonempty_optional("implementation version", implementation.version.as_deref())
-}
-
-fn validate_host_connection(
-    connection: &HostConnectionSpec,
-) -> Result<(), EnvironmentRegistryError> {
-    validate_host_target_id(&connection.target_id)?;
-    validate_endpoint("host data-plane endpoint", &connection.endpoint)
-}
-
-fn validate_host_target_id(target_id: &HostTargetId) -> Result<(), EnvironmentRegistryError> {
-    validate_general_string_id("HostTargetId", target_id.as_str()).map_err(|error| {
-        EnvironmentRegistryError::InvalidInput {
-            message: format!("invalid host target id: {error}"),
-        }
+fn invalid<T>(message: impl Into<String>) -> Result<T, EnvironmentRegistryError> {
+    Err(EnvironmentRegistryError::InvalidInput {
+        message: message.into(),
     })
 }
 
-fn validate_host_job_id(job_id: &JobId) -> Result<(), EnvironmentRegistryError> {
-    validate_general_string_id("JobId", job_id.as_str()).map_err(|error| {
-        EnvironmentRegistryError::InvalidInput {
-            message: format!("invalid job id: {error}"),
-        }
-    })
-}
-
-fn validate_list_job_handles(request: &ListJobHandles) -> Result<(), EnvironmentRegistryError> {
-    if matches!(request.limit, Some(0)) {
-        return Err(EnvironmentRegistryError::InvalidInput {
-            message: "job handle list limit must be greater than zero".to_owned(),
-        });
-    }
-    Ok(())
-}
-
-fn validate_env_name(value: &str) -> Result<(), EnvironmentRegistryError> {
-    let mut chars = value.chars();
-    let Some(first) = chars.next() else {
-        return Err(EnvironmentRegistryError::InvalidInput {
-            message: "credential env name must not be empty".to_owned(),
-        });
-    };
-    if !(first == '_' || first.is_ascii_alphabetic()) {
-        return Err(EnvironmentRegistryError::InvalidInput {
-            message: format!("invalid credential env name: {value}"),
-        });
-    }
-    let len = 1 + chars
-        .try_fold(0usize, |count, ch| {
-            if ch == '_' || ch.is_ascii_alphanumeric() {
-                Ok(count + 1)
-            } else {
-                Err(())
-            }
-        })
-        .map_err(|()| EnvironmentRegistryError::InvalidInput {
-            message: format!("invalid credential env name: {value}"),
-        })?;
-    if len > 128 {
-        return Err(EnvironmentRegistryError::InvalidInput {
-            message: format!("credential env name is too long: {len} bytes, max 128"),
-        });
-    }
-    Ok(())
-}
-
-fn validate_optional_metadata_component(
-    name: &'static str,
-    value: Option<&str>,
+fn validate_timestamps(
+    created_at_ms: i64,
+    updated_at_ms: i64,
 ) -> Result<(), EnvironmentRegistryError> {
-    if let Some(value) = value {
-        validate_metadata_component(name, value)?;
+    validate_nonnegative_i64(created_at_ms, "created_at_ms")?;
+    validate_nonnegative_i64(updated_at_ms, "updated_at_ms")?;
+    if updated_at_ms < created_at_ms {
+        return invalid("updated_at_ms must be >= created_at_ms");
     }
     Ok(())
 }
 
 fn validate_endpoint(name: &'static str, value: &str) -> Result<(), EnvironmentRegistryError> {
     validate_nonempty_string(name, value)?;
-    if value.len() > 2048 {
-        return Err(EnvironmentRegistryError::InvalidInput {
-            message: format!("{name} is too long: {} bytes, max 2048", value.len()),
-        });
-    }
-    if value.chars().any(char::is_whitespace) || value.chars().any(|ch| ch.is_control()) {
-        return Err(EnvironmentRegistryError::InvalidInput {
-            message: format!("{name} must not contain whitespace or control characters"),
-        });
+    if value.chars().any(char::is_whitespace) {
+        return invalid(format!("{name} must not contain whitespace"));
     }
     Ok(())
 }
 
-fn validate_metadata(metadata: &BTreeMap<String, String>) -> Result<(), EnvironmentRegistryError> {
-    let mut seen = BTreeSet::new();
-    for (key, value) in metadata {
-        validate_metadata_component("metadata key", key)?;
-        validate_metadata_component("metadata value", value)?;
-        if !seen.insert(key.as_str()) {
-            return Err(EnvironmentRegistryError::InvalidInput {
-                message: format!("duplicate metadata key {key}"),
-            });
+fn validate_host_connection(value: &HostConnectionSpec) -> Result<(), EnvironmentRegistryError> {
+    validate_host_target_id(&value.target_id)?;
+    validate_endpoint("host connection endpoint", &value.endpoint)
+}
+
+fn validate_host_target_id(value: &HostTargetId) -> Result<(), EnvironmentRegistryError> {
+    validate_general_string_id("target_id", value.as_str()).map_err(|error| {
+        EnvironmentRegistryError::InvalidInput {
+            message: error.to_string(),
         }
-    }
-    Ok(())
+    })
 }
 
-fn validate_metadata_component(
-    name: &'static str,
-    value: &str,
-) -> Result<(), EnvironmentRegistryError> {
-    if value.len() > 512 {
-        return Err(EnvironmentRegistryError::InvalidInput {
-            message: format!("{name} is too long: {} bytes, max 512", value.len()),
-        });
-    }
-    if value.chars().any(|ch| ch.is_control()) {
-        return Err(EnvironmentRegistryError::InvalidInput {
-            message: format!("{name} must not contain control characters"),
-        });
+fn validate_host_job_id(value: &JobId) -> Result<(), EnvironmentRegistryError> {
+    validate_general_string_id("job_id", value.as_str()).map_err(|error| {
+        EnvironmentRegistryError::InvalidInput {
+            message: error.to_string(),
+        }
+    })
+}
+
+fn validate_metadata(value: &BTreeMap<String, String>) -> Result<(), EnvironmentRegistryError> {
+    for (key, value) in value {
+        validate_nonempty_string("metadata key", key)?;
+        validate_nonempty_string("metadata value", value)?;
     }
     Ok(())
 }
@@ -1048,8 +968,8 @@ fn validate_nonempty_optional(
     name: &'static str,
     value: Option<&str>,
 ) -> Result<(), EnvironmentRegistryError> {
-    if let Some(value) = value {
-        validate_nonempty_string(name, value)?;
+    if value.is_some_and(str::is_empty) {
+        return invalid(format!("{name} must not be empty"));
     }
     Ok(())
 }
@@ -1059,30 +979,40 @@ fn validate_nonempty_string(
     value: &str,
 ) -> Result<(), EnvironmentRegistryError> {
     if value.is_empty() {
-        return Err(EnvironmentRegistryError::InvalidInput {
-            message: format!("{name} must not be empty"),
-        });
+        return invalid(format!("{name} must not be empty"));
     }
     Ok(())
 }
 
-fn validate_nonnegative_i64(
+pub(crate) fn validate_nonnegative_i64(
     value: i64,
     name: &'static str,
 ) -> Result<(), EnvironmentRegistryError> {
     if value < 0 {
-        return Err(EnvironmentRegistryError::InvalidInput {
-            message: format!("{name} must be nonnegative: {value}"),
-        });
+        return invalid(format!("{name} must be nonnegative"));
     }
     Ok(())
 }
 
-fn validate_positive_i64(value: i64, name: &'static str) -> Result<(), EnvironmentRegistryError> {
+pub(crate) fn validate_positive_i64(
+    value: i64,
+    name: &'static str,
+) -> Result<(), EnvironmentRegistryError> {
     if value <= 0 {
-        return Err(EnvironmentRegistryError::InvalidInput {
-            message: format!("{name} must be positive: {value}"),
-        });
+        return invalid(format!("{name} must be positive"));
+    }
+    Ok(())
+}
+
+fn validate_env_name(value: &str) -> Result<(), EnvironmentRegistryError> {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return invalid("credential env_name must not be empty");
+    };
+    if !(first == '_' || first.is_ascii_alphabetic())
+        || chars.any(|value| !(value == '_' || value.is_ascii_alphanumeric()))
+    {
+        return invalid("credential env_name must match [A-Za-z_][A-Za-z0-9_]*");
     }
     Ok(())
 }

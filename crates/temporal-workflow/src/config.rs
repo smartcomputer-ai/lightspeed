@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use engine::{ContextConfig, ModelSelection, RunConfig, SessionConfig, TurnConfig};
+use engine::{ModelSelection, RunConfig, SessionConfig};
 use temporalio_sdk::ActivityOptions;
 
 pub const DEFAULT_TASK_QUEUE: &str = "lightspeed-agent";
@@ -22,28 +22,18 @@ pub const DEFAULT_BOOTSTRAP_PAYLOAD_BUDGET_BYTES: u64 = 1_500_000;
 pub const FAKE_TOOL_NAME: &str = "agent_echo";
 
 pub fn default_run_config() -> RunConfig {
-    RunConfig {
-        max_turns: None,
-        max_tool_rounds: None,
-        model_override: None,
-        max_output_tokens: None,
-        provider_params: None,
-        tool_choice: None,
-    }
+    RunConfig::default()
 }
 
+/// The secure-by-default session config: a model that can process runs and
+/// nothing else. Every capability is an explicitly granted feature.
 pub fn default_session_config(model: ModelSelection) -> SessionConfig {
     SessionConfig {
         model,
-        run: default_run_config(),
-        turn: TurnConfig {
-            max_output_tokens: None,
-            tool_choice: None,
-            provider_params: None,
-        },
-        context: ContextConfig { compaction: None },
-        tools: engine::ToolConfig::default(),
-        fleet: engine::FleetConfig::default(),
+        generation: Default::default(),
+        limits: Default::default(),
+        context: Default::default(),
+        features: Default::default(),
     }
 }
 

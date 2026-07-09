@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 engine = { path = "../engine" }
+host-protocol = { path = "../host-protocol" }
 anyhow = "1"
 futures = "0.3"
 futures-util = "0.3"

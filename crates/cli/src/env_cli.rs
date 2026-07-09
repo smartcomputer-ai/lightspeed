@@ -15,13 +15,13 @@ enum EnvCommand {
     List(EnvListArgs),
     /// Read one session environment.
     Read(EnvReadArgs),
-    /// Attach a provider target to a session.
+    /// Attach an environment instance to a session.
     Attach(EnvAttachArgs),
     /// Activate a ready session environment.
     Activate(EnvActivateArgs),
     /// Deactivate the current session environment.
     Deactivate(EnvDeactivateArgs),
-    /// Close or detach a session environment.
+    /// Detach a session environment.
     Close(EnvCloseArgs),
     /// Bind, list, or unbind environment credentials.
     Credentials(EnvCredentialsArgs),
@@ -85,12 +85,9 @@ struct EnvAttachArgs {
     /// Environment id to create for this session binding.
     #[arg(long = "env-id")]
     env_id: Option<String>,
-    /// Registered environment provider id.
-    #[arg(long = "provider-id")]
-    provider_id: String,
-    /// Provider target id to attach. `host-bridge` defaults to `local`.
-    #[arg(long = "target-id", default_value = "local")]
-    target_id: String,
+    /// Universe environment instance id.
+    #[arg(long = "instance-id")]
+    instance_id: String,
     /// Activate the environment immediately after attaching it.
     #[arg(long)]
     activate: bool,
@@ -135,16 +132,7 @@ struct EnvCloseArgs {
     /// Session id to change.
     #[arg(long)]
     session: String,
-    /// Force provider-side target close when closing a target.
-    #[arg(long)]
-    force: bool,
-    /// Close the provider target as well as the session binding.
-    #[arg(long = "close-target", conflicts_with = "detach_only")]
-    close_target: bool,
-    /// Detach only; do not call provider closeTarget.
-    #[arg(long = "detach-only", conflicts_with = "close_target")]
-    detach_only: bool,
-    /// Environment id to close.
+    /// Environment id to detach.
     env_id: String,
 }
 
@@ -270,10 +258,9 @@ async fn attach(args: EnvAttachArgs) -> Result<()> {
         .attach_session_environment(api::SessionEnvironmentAttachParams {
             session_id: args.session,
             env_id: args.env_id,
-            provider_id: args.provider_id,
-            request: api::HostTargetAttachRequestView::Target {
-                target_id: args.target_id,
-            },
+            instance_id: args.instance_id,
+            cwd: None,
+            fs_routes: Vec::new(),
             activate: args.activate,
         })
         .await
@@ -330,19 +317,11 @@ async fn deactivate(args: EnvDeactivateArgs) -> Result<()> {
 }
 
 async fn close(args: EnvCloseArgs) -> Result<()> {
-    let close_target = match (args.close_target, args.detach_only) {
-        (true, false) => Some(true),
-        (false, true) => Some(false),
-        (false, false) => None,
-        (true, true) => unreachable!("clap conflicts prevent both close flags"),
-    };
     let api = HttpAgentApi::new(args.api_url);
     let response = api
-        .close_session_environment(api::SessionEnvironmentCloseParams {
+        .detach_session_environment(api::SessionEnvironmentDetachParams {
             session_id: args.session,
             env_id: args.env_id,
-            force: args.force,
-            close_target,
         })
         .await
         .map_err(crate::api_client::api_error)?
@@ -352,7 +331,7 @@ async fn close(args: EnvCloseArgs) -> Result<()> {
         return Ok(());
     }
 
-    println!("closed {}", response.environment.env_id);
+    println!("detached {}", response.environment.env_id);
     if let Some(active) = response.active_env_id {
         println!("active {active}");
     } else {
@@ -475,17 +454,16 @@ fn print_environment(environment: &api::SessionEnvironmentView, json: bool) -> R
     }
 
     print_environment_summary(&environment);
-    println!("kind {}", kind_label(environment.kind));
-    println!("status {}", status_label(environment.status));
+    println!("instanceId {}", environment.instance_id);
+    println!("state {}", state_label(environment.state));
     println!("active {}", environment.active);
     println!(
-        "capabilities fsRead={} fsWrite={} processExec={} processStdin={} network={} persistent={}",
+        "capabilities fsRead={} fsWrite={} processExec={} processStdin={} network={}",
         environment.capabilities.fs_read,
         environment.capabilities.fs_write,
         environment.capabilities.process_exec,
         environment.capabilities.process_stdin,
-        environment.capabilities.network,
-        environment.capabilities.persistent
+        environment.capabilities.network
     );
     if let Some(cwd) = &environment.cwd {
         println!("cwd {cwd}");
@@ -500,27 +478,18 @@ fn print_environment_summary(environment: &api::SessionEnvironmentView) {
     let active = if environment.active { " active" } else { "" };
     let cwd = environment.cwd.as_deref().unwrap_or("-");
     println!(
-        "{} {} {} cwd={}{}",
+        "{} instance={} {} cwd={}{}",
         environment.env_id,
-        kind_label(environment.kind),
-        status_label(environment.status),
+        environment.instance_id,
+        state_label(environment.state),
         cwd,
         active
     );
 }
 
-fn kind_label(kind: api::SessionEnvironmentKindView) -> &'static str {
-    match kind {
-        api::SessionEnvironmentKindView::Sandbox => "sandbox",
-        api::SessionEnvironmentKindView::AttachedHost => "attachedHost",
-    }
-}
-
-fn status_label(status: api::SessionEnvironmentStatusView) -> &'static str {
-    match status {
-        api::SessionEnvironmentStatusView::Attaching => "attaching",
-        api::SessionEnvironmentStatusView::Ready => "ready",
-        api::SessionEnvironmentStatusView::Degraded => "degraded",
-        api::SessionEnvironmentStatusView::Detached => "detached",
+fn state_label(state: api::SessionEnvironmentStateView) -> &'static str {
+    match state {
+        api::SessionEnvironmentStateView::Attached => "attached",
+        api::SessionEnvironmentStateView::Detached => "detached",
     }
 }

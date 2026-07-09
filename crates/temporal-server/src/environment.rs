@@ -4,9 +4,10 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use engine::{CoreAgentState, SessionId, ToolExecutionTarget, storage::BlobStore};
 use environments::{
-    SessionEnvironmentBindingRecord, SessionEnvironmentBindingStatus, SessionEnvironmentFsRoute,
-    SessionEnvironmentFsRouteAccess, SessionEnvironmentKind,
+    EnvironmentInstanceRecord, SessionEnvironmentBindingRecord, SessionEnvironmentBindingState,
+    SessionEnvironmentFsRoute, SessionEnvironmentFsRouteAccess,
 };
+use host_protocol::{control::targets::HostTargetStatus, shared::HostCapabilities};
 use thiserror::Error;
 use tools::{
     environment::EnvironmentToolContext,
@@ -27,6 +28,8 @@ use vfs::{VfsCatalogError, VfsMountRecord, VfsMountStore};
 #[derive(Clone)]
 pub struct RuntimeEnvironment {
     record: EnvironmentRecord,
+    instance_id: Option<String>,
+    binding_state: SessionEnvironmentBindingState,
     tool_context: EnvironmentToolContext,
     fs_context: Option<FsToolContext>,
     fs_routes: Vec<FsRoute>,
@@ -36,6 +39,8 @@ impl RuntimeEnvironment {
     pub fn new(record: EnvironmentRecord, tool_context: EnvironmentToolContext) -> Self {
         Self {
             record,
+            instance_id: None,
+            binding_state: SessionEnvironmentBindingState::Attached,
             tool_context,
             fs_context: None,
             fs_routes: Vec::new(),
@@ -58,6 +63,14 @@ impl RuntimeEnvironment {
 
     pub fn record(&self) -> &EnvironmentRecord {
         &self.record
+    }
+
+    pub fn instance_id(&self) -> Option<&str> {
+        self.instance_id.as_deref()
+    }
+
+    pub fn binding_state(&self) -> SessionEnvironmentBindingState {
+        self.binding_state
     }
 
     pub fn tool_context(&self) -> &EnvironmentToolContext {
@@ -354,28 +367,44 @@ pub enum RuntimeEnvironmentBindingError {
 
 pub fn runtime_environment_from_binding_record(
     binding: &SessionEnvironmentBindingRecord,
+    instance: &EnvironmentInstanceRecord,
     tool_context: EnvironmentToolContext,
 ) -> Result<RuntimeEnvironment, RuntimeEnvironmentBindingError> {
-    let record = environment_record_from_binding(binding)?;
+    let record = environment_record_from_binding(binding, instance)?;
     let fs_routes = fs_routes_from_binding(binding)?;
-    Ok(RuntimeEnvironment::new(record, tool_context).with_fs_routes(fs_routes))
+    Ok(RuntimeEnvironment::new(record, tool_context)
+        .with_instance_binding(instance.instance_id.as_str(), binding.state)
+        .with_fs_routes(fs_routes))
+}
+
+impl RuntimeEnvironment {
+    fn with_instance_binding(
+        mut self,
+        instance_id: &str,
+        state: SessionEnvironmentBindingState,
+    ) -> Self {
+        self.instance_id = Some(instance_id.to_owned());
+        self.binding_state = state;
+        self
+    }
 }
 
 pub fn environment_record_from_binding(
     binding: &SessionEnvironmentBindingRecord,
+    instance: &EnvironmentInstanceRecord,
 ) -> Result<EnvironmentRecord, RuntimeEnvironmentBindingError> {
     Ok(EnvironmentRecord {
         env_id: binding.env_id.as_str().to_owned(),
-        kind: environment_kind_from_binding(binding.kind),
-        capabilities: environment_capabilities_from_binding(binding.capabilities),
-        exec_target: Some(binding.exec_target.clone()),
+        kind: EnvironmentKind::AttachedHost,
+        capabilities: environment_capabilities_from_host(&instance.capabilities),
+        exec_target: Some(binding.exec_target()),
         cwd: binding
             .cwd
             .as_ref()
             .map(|cwd| FsPath::new(cwd.as_str()))
             .transpose()
             .map_err(|error| RuntimeEnvironmentBindingError::InvalidCwd(error.to_string()))?,
-        status: environment_status_from_binding(binding.status),
+        status: environment_status_from_binding(binding.state, instance.status),
     })
 }
 
@@ -385,7 +414,7 @@ pub fn fs_routes_from_binding(
     binding
         .fs_routes
         .iter()
-        .map(|route| fs_route_from_binding(route, &binding.exec_target))
+        .map(|route| fs_route_from_binding(route, &binding.exec_target()))
         .collect()
 }
 
@@ -419,29 +448,29 @@ fn fs_route_from_binding(
     })
 }
 
-fn environment_kind_from_binding(kind: SessionEnvironmentKind) -> EnvironmentKind {
-    match kind {
-        SessionEnvironmentKind::Sandbox => EnvironmentKind::Sandbox,
-        SessionEnvironmentKind::AttachedHost => EnvironmentKind::AttachedHost,
+fn environment_status_from_binding(
+    state: SessionEnvironmentBindingState,
+    status: HostTargetStatus,
+) -> EnvironmentStatus {
+    if state == SessionEnvironmentBindingState::Detached {
+        return EnvironmentStatus::Detached;
     }
-}
-
-fn environment_status_from_binding(status: SessionEnvironmentBindingStatus) -> EnvironmentStatus {
     match status {
-        SessionEnvironmentBindingStatus::Attaching => EnvironmentStatus::Attaching,
-        SessionEnvironmentBindingStatus::Ready => EnvironmentStatus::Ready,
-        SessionEnvironmentBindingStatus::Degraded => EnvironmentStatus::Degraded,
-        SessionEnvironmentBindingStatus::Detached => EnvironmentStatus::Detached,
+        HostTargetStatus::Ready => EnvironmentStatus::Ready,
+        HostTargetStatus::Creating | HostTargetStatus::Starting => EnvironmentStatus::Attaching,
+        HostTargetStatus::Stopped
+        | HostTargetStatus::Closing
+        | HostTargetStatus::Closed
+        | HostTargetStatus::Failed
+        | HostTargetStatus::Unknown => EnvironmentStatus::Degraded,
     }
 }
 
-fn environment_capabilities_from_binding(
-    capabilities: environments::SessionEnvironmentCapabilities,
-) -> EnvironmentCapabilities {
+fn environment_capabilities_from_host(capabilities: &HostCapabilities) -> EnvironmentCapabilities {
     EnvironmentCapabilities {
-        fs_read: capabilities.fs_read,
-        fs_write: capabilities.fs_write,
-        process_exec: capabilities.process_exec,
+        fs_read: capabilities.filesystem_read,
+        fs_write: capabilities.filesystem_write,
+        process_exec: capabilities.process_start,
         process_stdin: capabilities.process_stdin,
         job_start: capabilities.job_start,
         job_list: capabilities.job_list,
@@ -451,7 +480,7 @@ fn environment_capabilities_from_binding(
         job_dependencies: capabilities.job_dependencies,
         job_queue_keys: capabilities.job_queue_keys,
         network: capabilities.network,
-        persistent: capabilities.persistent,
+        persistent: true,
     }
 }
 

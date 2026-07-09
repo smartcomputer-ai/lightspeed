@@ -5,13 +5,14 @@ mod config;
 mod rehydrate;
 mod temporal_helpers;
 mod types;
-mod workflow;
+mod workflows;
 
 pub use activities::{
     ACTIVITY_APPEND_EVENTS, ACTIVITY_CANCEL_PROMISE_SOURCE, ACTIVITY_CHECK_PROMISE_SOURCE,
-    ACTIVITY_CONTEXT_COMPACT, ACTIVITY_CREATE_OR_LOAD_SESSION, ACTIVITY_LLM_GENERATE,
-    ACTIVITY_PREPROCESS_RUN_INPUT, ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB,
-    ACTIVITY_SKILL_CATALOG_REFRESH, ACTIVITY_TOOL_INVOKE_BATCH, WorkflowActivities,
+    ACTIVITY_CONTEXT_COMPACT, ACTIVITY_CREATE_OR_LOAD_SESSION, ACTIVITY_ENVIRONMENT_JOB_CANCEL,
+    ACTIVITY_ENVIRONMENT_JOB_POLL, ACTIVITY_LLM_GENERATE, ACTIVITY_PREPROCESS_RUN_INPUT,
+    ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB, ACTIVITY_RUNTIME_PROJECTION_REFRESH,
+    ACTIVITY_TOOL_INVOKE_BATCH, WorkflowActivities,
 };
 pub use config::{
     DEFAULT_BOOTSTRAP_PAYLOAD_BUDGET_BYTES, DEFAULT_CONTINUE_AS_NEW_HISTORY_THRESHOLD,
@@ -26,13 +27,15 @@ pub use types::{
     AgentCompletedRunSummary, AgentMessageSubmissionConsumptionSummary, AgentQueuedRunSummary,
     AgentSessionArgs, AgentSessionStatus, AppendEventsRequest, AwaitOutcome, AwaitOutput,
     AwaitPromiseResult, CancellingWatchdog, ContextCompactActivityRequest,
-    CreateOrLoadSessionRequest, CreateOrLoadSessionResult, EnvironmentJobChanged,
+    CreateOrLoadSessionRequest, CreateOrLoadSessionResult, EnvironmentJobCancelActivityRequest,
+    EnvironmentJobCancelSignal, EnvironmentJobChanged, EnvironmentJobPollActivityRequest,
+    EnvironmentJobPollActivityResult, EnvironmentJobWorkflowArgs, EnvironmentJobWorkflowSnapshot,
     LlmGenerateActivityRequest, PendingPromiseCancellation, PendingPromiseNotification,
     PendingToolBatchResume, PreprocessRunInputActivityRequest, PreprocessRunInputActivityResult,
     PreprocessRunInputFailure, PreprocessRunInputFailureKind, PreprocessRunInputOutcome,
     PromiseResolutionSignal, PromiseSourcePoll, PutBlobRequest, ReadBlobRequest, ReadBlobResult,
-    SessionBootstrapPayloadTooLarge, SkillCatalogRefreshActivityRequest,
-    SkillCatalogRefreshActivityResult, ToolInvokeBatchActivityRequest, compose_workflow_id,
-    split_workflow_id,
+    RuntimeProjectionRefreshActivityRequest, RuntimeProjectionRefreshActivityResult,
+    SessionBootstrapPayloadTooLarge, ToolInvokeBatchActivityRequest,
+    compose_environment_job_workflow_id, compose_workflow_id, split_workflow_id,
 };
-pub use workflow::AgentSessionWorkflow;
+pub use workflows::{AgentSessionWorkflow, EnvironmentJobWorkflow};

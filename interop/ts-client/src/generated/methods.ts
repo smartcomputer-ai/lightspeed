@@ -9,18 +9,15 @@ export const METHODS = [
   "session/start",
   "session/read",
   "session/list",
-  "session/update",
+  "session/config/put",
   "session/rename",
   "session/close",
   "session/events/read",
-  "session/tools/update",
   "session/context/append",
   "session/context/remove",
   "session/context/compact",
-  "session/messages/submit",
   "session/runs/start",
   "session/runs/cancel",
-  "session/prompts/active",
   "session/skills/list",
   "session/skills/active",
   "session/skills/activate",
@@ -29,28 +26,27 @@ export const METHODS = [
   "session/mounts/put",
   "session/mounts/list",
   "session/mounts/delete",
-  "session/mcp/link",
-  "session/mcp/unlink",
-  "session/mcp/list",
-  "session/environments/create",
   "session/environments/read",
   "session/environments/list",
   "session/environments/attach",
   "session/environments/activate",
   "session/environments/deactivate",
-  "session/environments/close",
+  "session/environments/detach",
   "session/environments/credentials/bind",
   "session/environments/credentials/list",
   "session/environments/credentials/unbind",
-  "session/jobs/create",
-  "session/jobs/read",
-  "session/jobs/list",
-  "session/jobs/cancel",
+  "environments/create",
+  "environments/read",
+  "environments/list",
+  "environments/close",
+  "environments/jobs/create",
+  "environments/jobs/read",
+  "environments/jobs/list",
+  "environments/jobs/cancel",
   "profiles/create",
   "profiles/read",
   "profiles/list",
   "profiles/put",
-  "profiles/update",
   "profiles/delete",
   "blobs/put",
   "blobs/read",
@@ -62,16 +58,14 @@ export const METHODS = [
   "vfs/workspaces/list",
   "vfs/workspaces/update",
   "vfs/workspaces/delete",
-  "mcp/servers/create",
+  "mcp/servers/put",
   "mcp/servers/read",
   "mcp/servers/list",
-  "mcp/servers/update",
   "mcp/servers/delete",
   "environments/providers/register",
   "environments/providers/heartbeat",
   "environments/providers/unregister",
   "environments/providers/list",
-  "environments/providers/targets/list",
   "auth/grants/import",
   "auth/grants/read",
   "auth/grants/list",
@@ -103,7 +97,6 @@ export const NOTIFICATIONS = [
   "session/event",
   "session/runs/started",
   "session/runs/completed",
-  "session/items/completed",
   "error",
 ] as const;
 
@@ -127,9 +120,9 @@ export interface MethodMap {
     params: Api.SessionListParams;
     result: Api.AgentApiOutcomeOfSessionListResponse;
   };
-  "session/update": {
-    params: Api.SessionUpdateParams;
-    result: Api.AgentApiOutcomeOfSessionUpdateResponse;
+  "session/config/put": {
+    params: Api.SessionConfigPutParams;
+    result: Api.AgentApiOutcomeOfSessionConfigPutResponse;
   };
   "session/rename": {
     params: Api.SessionRenameParams;
@@ -143,10 +136,6 @@ export interface MethodMap {
     params: Api.SessionEventsReadParams;
     result: Api.AgentApiOutcomeOfSessionEventsReadResponse;
   };
-  "session/tools/update": {
-    params: Api.SessionToolsUpdateParams;
-    result: Api.AgentApiOutcomeOfSessionToolsUpdateResponse;
-  };
   "session/context/append": {
     params: Api.ContextAppendParams;
     result: Api.AgentApiOutcomeOfContextAppendResponse;
@@ -159,10 +148,6 @@ export interface MethodMap {
     params: Api.ContextCompactParams;
     result: Api.AgentApiOutcomeOfContextCompactResponse;
   };
-  "session/messages/submit": {
-    params: Api.MessageSubmitParams;
-    result: Api.AgentApiOutcomeOfMessageSubmitResponse;
-  };
   "session/runs/start": {
     params: Api.RunStartParams;
     result: Api.AgentApiOutcomeOfRunStartResponse;
@@ -170,10 +155,6 @@ export interface MethodMap {
   "session/runs/cancel": {
     params: Api.RunCancelParams;
     result: Api.AgentApiOutcomeOfRunCancelResponse;
-  };
-  "session/prompts/active": {
-    params: Api.PromptsActiveParams;
-    result: Api.AgentApiOutcomeOfPromptsActiveResponse;
   };
   "session/skills/list": {
     params: Api.SkillListParams;
@@ -207,22 +188,6 @@ export interface MethodMap {
     params: Api.VfsMountDeleteParams;
     result: Api.AgentApiOutcomeOfVfsMountDeleteResponse;
   };
-  "session/mcp/link": {
-    params: Api.SessionMcpLinkParams;
-    result: Api.AgentApiOutcomeOfSessionMcpLinkResponse;
-  };
-  "session/mcp/unlink": {
-    params: Api.SessionMcpUnlinkParams;
-    result: Api.AgentApiOutcomeOfSessionMcpUnlinkResponse;
-  };
-  "session/mcp/list": {
-    params: Api.SessionMcpListParams;
-    result: Api.AgentApiOutcomeOfSessionMcpListResponse;
-  };
-  "session/environments/create": {
-    params: Api.SessionEnvironmentCreateParams;
-    result: Api.AgentApiOutcomeOfSessionEnvironmentCreateResponse;
-  };
   "session/environments/read": {
     params: Api.SessionEnvironmentReadParams;
     result: Api.AgentApiOutcomeOfSessionEnvironmentReadResponse;
@@ -243,9 +208,9 @@ export interface MethodMap {
     params: Api.SessionEnvironmentDeactivateParams;
     result: Api.AgentApiOutcomeOfSessionEnvironmentDeactivateResponse;
   };
-  "session/environments/close": {
-    params: Api.SessionEnvironmentCloseParams;
-    result: Api.AgentApiOutcomeOfSessionEnvironmentCloseResponse;
+  "session/environments/detach": {
+    params: Api.SessionEnvironmentDetachParams;
+    result: Api.AgentApiOutcomeOfSessionEnvironmentDetachResponse;
   };
   "session/environments/credentials/bind": {
     params: Api.SessionEnvironmentCredentialBindParams;
@@ -259,21 +224,37 @@ export interface MethodMap {
     params: Api.SessionEnvironmentCredentialUnbindParams;
     result: Api.AgentApiOutcomeOfSessionEnvironmentCredentialUnbindResponse;
   };
-  "session/jobs/create": {
-    params: Api.SessionJobCreateParams;
-    result: Api.AgentApiOutcomeOfSessionJobCreateResponse;
+  "environments/create": {
+    params: Api.EnvironmentCreateParams;
+    result: Api.AgentApiOutcomeOfEnvironmentCreateResponse;
   };
-  "session/jobs/read": {
-    params: Api.SessionJobReadParams;
-    result: Api.AgentApiOutcomeOfSessionJobReadResponse;
+  "environments/read": {
+    params: Api.EnvironmentReadParams;
+    result: Api.AgentApiOutcomeOfEnvironmentReadResponse;
   };
-  "session/jobs/list": {
-    params: Api.SessionJobListParams;
-    result: Api.AgentApiOutcomeOfSessionJobListResponse;
+  "environments/list": {
+    params: Api.EnvironmentListParams;
+    result: Api.AgentApiOutcomeOfEnvironmentListResponse;
   };
-  "session/jobs/cancel": {
-    params: Api.SessionJobCancelParams;
-    result: Api.AgentApiOutcomeOfSessionJobCancelResponse;
+  "environments/close": {
+    params: Api.EnvironmentCloseParams;
+    result: Api.AgentApiOutcomeOfEnvironmentCloseResponse;
+  };
+  "environments/jobs/create": {
+    params: Api.EnvironmentJobCreateParams;
+    result: Api.AgentApiOutcomeOfEnvironmentJobCreateResponse;
+  };
+  "environments/jobs/read": {
+    params: Api.EnvironmentJobReadParams;
+    result: Api.AgentApiOutcomeOfEnvironmentJobReadResponse;
+  };
+  "environments/jobs/list": {
+    params: Api.EnvironmentJobListParams;
+    result: Api.AgentApiOutcomeOfEnvironmentJobListResponse;
+  };
+  "environments/jobs/cancel": {
+    params: Api.EnvironmentJobCancelParams;
+    result: Api.AgentApiOutcomeOfEnvironmentJobCancelResponse;
   };
   "profiles/create": {
     params: Api.ProfileCreateParams;
@@ -290,10 +271,6 @@ export interface MethodMap {
   "profiles/put": {
     params: Api.ProfilePutParams;
     result: Api.AgentApiOutcomeOfProfilePutResponse;
-  };
-  "profiles/update": {
-    params: Api.ProfileUpdateParams;
-    result: Api.AgentApiOutcomeOfProfileUpdateResponse;
   };
   "profiles/delete": {
     params: Api.ProfileDeleteParams;
@@ -339,9 +316,9 @@ export interface MethodMap {
     params: Api.VfsWorkspaceDeleteParams;
     result: Api.AgentApiOutcomeOfVfsWorkspaceDeleteResponse;
   };
-  "mcp/servers/create": {
-    params: Api.McpServerCreateParams;
-    result: Api.AgentApiOutcomeOfMcpServerCreateResponse;
+  "mcp/servers/put": {
+    params: Api.McpServerPutParams;
+    result: Api.AgentApiOutcomeOfMcpServerPutResponse;
   };
   "mcp/servers/read": {
     params: Api.McpServerReadParams;
@@ -350,10 +327,6 @@ export interface MethodMap {
   "mcp/servers/list": {
     params: Api.McpServerListParams;
     result: Api.AgentApiOutcomeOfMcpServerListResponse;
-  };
-  "mcp/servers/update": {
-    params: Api.McpServerUpdateParams;
-    result: Api.AgentApiOutcomeOfMcpServerUpdateResponse;
   };
   "mcp/servers/delete": {
     params: Api.McpServerDeleteParams;
@@ -374,10 +347,6 @@ export interface MethodMap {
   "environments/providers/list": {
     params: Api.EnvironmentProviderListParams;
     result: Api.AgentApiOutcomeOfEnvironmentProviderListResponse;
-  };
-  "environments/providers/targets/list": {
-    params: Api.EnvironmentProviderTargetListParams;
-    result: Api.AgentApiOutcomeOfEnvironmentProviderTargetListResponse;
   };
   "auth/grants/import": {
     params: Api.AuthGrantImportParams;
@@ -493,8 +462,8 @@ export const rpc = {
   sessionList(client: RpcCaller, params: Api.SessionListParams): Promise<Api.AgentApiOutcomeOfSessionListResponse> {
     return client.call("session/list", params);
   },
-  sessionUpdate(client: RpcCaller, params: Api.SessionUpdateParams): Promise<Api.AgentApiOutcomeOfSessionUpdateResponse> {
-    return client.call("session/update", params);
+  sessionConfigPut(client: RpcCaller, params: Api.SessionConfigPutParams): Promise<Api.AgentApiOutcomeOfSessionConfigPutResponse> {
+    return client.call("session/config/put", params);
   },
   sessionRename(client: RpcCaller, params: Api.SessionRenameParams): Promise<Api.AgentApiOutcomeOfSessionRenameResponse> {
     return client.call("session/rename", params);
@@ -505,9 +474,6 @@ export const rpc = {
   sessionEventsRead(client: RpcCaller, params: Api.SessionEventsReadParams): Promise<Api.AgentApiOutcomeOfSessionEventsReadResponse> {
     return client.call("session/events/read", params);
   },
-  sessionToolsUpdate(client: RpcCaller, params: Api.SessionToolsUpdateParams): Promise<Api.AgentApiOutcomeOfSessionToolsUpdateResponse> {
-    return client.call("session/tools/update", params);
-  },
   sessionContextAppend(client: RpcCaller, params: Api.ContextAppendParams): Promise<Api.AgentApiOutcomeOfContextAppendResponse> {
     return client.call("session/context/append", params);
   },
@@ -517,17 +483,11 @@ export const rpc = {
   sessionContextCompact(client: RpcCaller, params: Api.ContextCompactParams): Promise<Api.AgentApiOutcomeOfContextCompactResponse> {
     return client.call("session/context/compact", params);
   },
-  sessionMessagesSubmit(client: RpcCaller, params: Api.MessageSubmitParams): Promise<Api.AgentApiOutcomeOfMessageSubmitResponse> {
-    return client.call("session/messages/submit", params);
-  },
   sessionRunsStart(client: RpcCaller, params: Api.RunStartParams): Promise<Api.AgentApiOutcomeOfRunStartResponse> {
     return client.call("session/runs/start", params);
   },
   sessionRunsCancel(client: RpcCaller, params: Api.RunCancelParams): Promise<Api.AgentApiOutcomeOfRunCancelResponse> {
     return client.call("session/runs/cancel", params);
-  },
-  sessionPromptsActive(client: RpcCaller, params: Api.PromptsActiveParams): Promise<Api.AgentApiOutcomeOfPromptsActiveResponse> {
-    return client.call("session/prompts/active", params);
   },
   sessionSkillsList(client: RpcCaller, params: Api.SkillListParams): Promise<Api.AgentApiOutcomeOfSkillListResponse> {
     return client.call("session/skills/list", params);
@@ -553,18 +513,6 @@ export const rpc = {
   sessionMountsDelete(client: RpcCaller, params: Api.VfsMountDeleteParams): Promise<Api.AgentApiOutcomeOfVfsMountDeleteResponse> {
     return client.call("session/mounts/delete", params);
   },
-  sessionMcpLink(client: RpcCaller, params: Api.SessionMcpLinkParams): Promise<Api.AgentApiOutcomeOfSessionMcpLinkResponse> {
-    return client.call("session/mcp/link", params);
-  },
-  sessionMcpUnlink(client: RpcCaller, params: Api.SessionMcpUnlinkParams): Promise<Api.AgentApiOutcomeOfSessionMcpUnlinkResponse> {
-    return client.call("session/mcp/unlink", params);
-  },
-  sessionMcpList(client: RpcCaller, params: Api.SessionMcpListParams): Promise<Api.AgentApiOutcomeOfSessionMcpListResponse> {
-    return client.call("session/mcp/list", params);
-  },
-  sessionEnvironmentsCreate(client: RpcCaller, params: Api.SessionEnvironmentCreateParams): Promise<Api.AgentApiOutcomeOfSessionEnvironmentCreateResponse> {
-    return client.call("session/environments/create", params);
-  },
   sessionEnvironmentsRead(client: RpcCaller, params: Api.SessionEnvironmentReadParams): Promise<Api.AgentApiOutcomeOfSessionEnvironmentReadResponse> {
     return client.call("session/environments/read", params);
   },
@@ -580,8 +528,8 @@ export const rpc = {
   sessionEnvironmentsDeactivate(client: RpcCaller, params: Api.SessionEnvironmentDeactivateParams): Promise<Api.AgentApiOutcomeOfSessionEnvironmentDeactivateResponse> {
     return client.call("session/environments/deactivate", params);
   },
-  sessionEnvironmentsClose(client: RpcCaller, params: Api.SessionEnvironmentCloseParams): Promise<Api.AgentApiOutcomeOfSessionEnvironmentCloseResponse> {
-    return client.call("session/environments/close", params);
+  sessionEnvironmentsDetach(client: RpcCaller, params: Api.SessionEnvironmentDetachParams): Promise<Api.AgentApiOutcomeOfSessionEnvironmentDetachResponse> {
+    return client.call("session/environments/detach", params);
   },
   sessionEnvironmentsCredentialsBind(client: RpcCaller, params: Api.SessionEnvironmentCredentialBindParams): Promise<Api.AgentApiOutcomeOfSessionEnvironmentCredentialBindResponse> {
     return client.call("session/environments/credentials/bind", params);
@@ -592,17 +540,29 @@ export const rpc = {
   sessionEnvironmentsCredentialsUnbind(client: RpcCaller, params: Api.SessionEnvironmentCredentialUnbindParams): Promise<Api.AgentApiOutcomeOfSessionEnvironmentCredentialUnbindResponse> {
     return client.call("session/environments/credentials/unbind", params);
   },
-  sessionJobsCreate(client: RpcCaller, params: Api.SessionJobCreateParams): Promise<Api.AgentApiOutcomeOfSessionJobCreateResponse> {
-    return client.call("session/jobs/create", params);
+  environmentsCreate(client: RpcCaller, params: Api.EnvironmentCreateParams): Promise<Api.AgentApiOutcomeOfEnvironmentCreateResponse> {
+    return client.call("environments/create", params);
   },
-  sessionJobsRead(client: RpcCaller, params: Api.SessionJobReadParams): Promise<Api.AgentApiOutcomeOfSessionJobReadResponse> {
-    return client.call("session/jobs/read", params);
+  environmentsRead(client: RpcCaller, params: Api.EnvironmentReadParams): Promise<Api.AgentApiOutcomeOfEnvironmentReadResponse> {
+    return client.call("environments/read", params);
   },
-  sessionJobsList(client: RpcCaller, params: Api.SessionJobListParams): Promise<Api.AgentApiOutcomeOfSessionJobListResponse> {
-    return client.call("session/jobs/list", params);
+  environmentsList(client: RpcCaller, params: Api.EnvironmentListParams): Promise<Api.AgentApiOutcomeOfEnvironmentListResponse> {
+    return client.call("environments/list", params);
   },
-  sessionJobsCancel(client: RpcCaller, params: Api.SessionJobCancelParams): Promise<Api.AgentApiOutcomeOfSessionJobCancelResponse> {
-    return client.call("session/jobs/cancel", params);
+  environmentsClose(client: RpcCaller, params: Api.EnvironmentCloseParams): Promise<Api.AgentApiOutcomeOfEnvironmentCloseResponse> {
+    return client.call("environments/close", params);
+  },
+  environmentsJobsCreate(client: RpcCaller, params: Api.EnvironmentJobCreateParams): Promise<Api.AgentApiOutcomeOfEnvironmentJobCreateResponse> {
+    return client.call("environments/jobs/create", params);
+  },
+  environmentsJobsRead(client: RpcCaller, params: Api.EnvironmentJobReadParams): Promise<Api.AgentApiOutcomeOfEnvironmentJobReadResponse> {
+    return client.call("environments/jobs/read", params);
+  },
+  environmentsJobsList(client: RpcCaller, params: Api.EnvironmentJobListParams): Promise<Api.AgentApiOutcomeOfEnvironmentJobListResponse> {
+    return client.call("environments/jobs/list", params);
+  },
+  environmentsJobsCancel(client: RpcCaller, params: Api.EnvironmentJobCancelParams): Promise<Api.AgentApiOutcomeOfEnvironmentJobCancelResponse> {
+    return client.call("environments/jobs/cancel", params);
   },
   profilesCreate(client: RpcCaller, params: Api.ProfileCreateParams): Promise<Api.AgentApiOutcomeOfProfileCreateResponse> {
     return client.call("profiles/create", params);
@@ -615,9 +575,6 @@ export const rpc = {
   },
   profilesPut(client: RpcCaller, params: Api.ProfilePutParams): Promise<Api.AgentApiOutcomeOfProfilePutResponse> {
     return client.call("profiles/put", params);
-  },
-  profilesUpdate(client: RpcCaller, params: Api.ProfileUpdateParams): Promise<Api.AgentApiOutcomeOfProfileUpdateResponse> {
-    return client.call("profiles/update", params);
   },
   profilesDelete(client: RpcCaller, params: Api.ProfileDeleteParams): Promise<Api.AgentApiOutcomeOfProfileDeleteResponse> {
     return client.call("profiles/delete", params);
@@ -652,17 +609,14 @@ export const rpc = {
   vfsWorkspacesDelete(client: RpcCaller, params: Api.VfsWorkspaceDeleteParams): Promise<Api.AgentApiOutcomeOfVfsWorkspaceDeleteResponse> {
     return client.call("vfs/workspaces/delete", params);
   },
-  mcpServersCreate(client: RpcCaller, params: Api.McpServerCreateParams): Promise<Api.AgentApiOutcomeOfMcpServerCreateResponse> {
-    return client.call("mcp/servers/create", params);
+  mcpServersPut(client: RpcCaller, params: Api.McpServerPutParams): Promise<Api.AgentApiOutcomeOfMcpServerPutResponse> {
+    return client.call("mcp/servers/put", params);
   },
   mcpServersRead(client: RpcCaller, params: Api.McpServerReadParams): Promise<Api.AgentApiOutcomeOfMcpServerReadResponse> {
     return client.call("mcp/servers/read", params);
   },
   mcpServersList(client: RpcCaller, params: Api.McpServerListParams): Promise<Api.AgentApiOutcomeOfMcpServerListResponse> {
     return client.call("mcp/servers/list", params);
-  },
-  mcpServersUpdate(client: RpcCaller, params: Api.McpServerUpdateParams): Promise<Api.AgentApiOutcomeOfMcpServerUpdateResponse> {
-    return client.call("mcp/servers/update", params);
   },
   mcpServersDelete(client: RpcCaller, params: Api.McpServerDeleteParams): Promise<Api.AgentApiOutcomeOfMcpServerDeleteResponse> {
     return client.call("mcp/servers/delete", params);
@@ -678,9 +632,6 @@ export const rpc = {
   },
   environmentsProvidersList(client: RpcCaller, params: Api.EnvironmentProviderListParams): Promise<Api.AgentApiOutcomeOfEnvironmentProviderListResponse> {
     return client.call("environments/providers/list", params);
-  },
-  environmentsProvidersTargetsList(client: RpcCaller, params: Api.EnvironmentProviderTargetListParams): Promise<Api.AgentApiOutcomeOfEnvironmentProviderTargetListResponse> {
-    return client.call("environments/providers/targets/list", params);
   },
   authGrantsImport(client: RpcCaller, params: Api.AuthGrantImportParams): Promise<Api.AgentApiOutcomeOfAuthGrantImportResponse> {
     return client.call("auth/grants/import", params);

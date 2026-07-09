@@ -4,7 +4,7 @@ use crate::{
     CommandError, CommandRejection, CommandRejectionKind, ContextEntrySource, ContextEvent,
     CoreAgentCommand, CoreAgentEvent, CoreAgentEventProposal, CoreAgentJoins,
     CoreAgentLifecycleEvent, CoreAgentState, CoreAgentStatus, DomainError, MessageStatus,
-    PromiseEvent, PromiseResolution, RunEvent, RunRequestSource, RunSource, RunStatus,
+    PromiseEvent, PromiseResolution, RunConfig, RunEvent, RunRequestSource, RunSource, RunStatus,
     ToolConfigEvent,
     core::components::{
         config::{validate_config_update_for_state, validate_run_config_for_state},
@@ -27,17 +27,15 @@ pub fn admit_command(
                     "session can only be opened from new state",
                 );
             }
-            config
-                .validate_provider_compatibility()
-                .map_err(command_rejection_from_domain)?;
+            config.validate().map_err(command_rejection_from_domain)?;
             Ok(vec![CoreAgentEventProposal::new(
                 CoreAgentJoins::default(),
                 CoreAgentEvent::Lifecycle(CoreAgentLifecycleEvent::Opened { config }),
             )])
         }
-        CoreAgentCommand::PatchSessionConfig {
+        CoreAgentCommand::ReplaceSessionConfig {
             expected_revision,
-            patch,
+            config,
         } => {
             require_open(state)?;
             require_no_active_or_queued_work(
@@ -61,7 +59,11 @@ pub fn admit_command(
                     "open session is missing config".to_owned(),
                 ))
             })?;
-            let config = patch.apply_to(current);
+            if &config == current {
+                // Replacing with the identical document is an idempotent
+                // no-op; the revision stays untouched.
+                return Ok(Vec::new());
+            }
             validate_config_update_for_state(state, &config)
                 .map_err(command_rejection_from_domain)?;
             let revision = state
@@ -199,12 +201,9 @@ pub fn admit_command(
             }
             crate::core::components::context::validate_run_input_entries(&message.input)
                 .map_err(command_rejection_from_domain)?;
-            let current_config = state.lifecycle.config.as_ref().ok_or_else(|| {
-                CommandError::Domain(DomainError::InvariantViolation(
-                    "open session is missing config".to_owned(),
-                ))
-            })?;
-            let run_config = current_config.run.clone();
+            // Message-origin runs carry no per-run overrides; session
+            // defaults (generation, limits) apply at planning time.
+            let run_config = RunConfig::default();
             validate_run_config_for_state(state, &run_config)
                 .map_err(command_rejection_from_domain)?;
             if state.runs.active.as_ref().is_some_and(|run| {

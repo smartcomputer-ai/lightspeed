@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, sync::Arc};
 use engine::{
     BlobRef, ContextEntryInput, ContextEntryKind, ContextMessageRole, CoreAgentCommand,
     FunctionToolSpec, ModelSelection, ProviderApiKind, SessionId, SubmissionId, ToolChoice,
-    ToolChoiceMode, ToolKind, ToolName, ToolParallelism, ToolSpec, ToolTargetRequirement,
+    ToolKind, ToolName, ToolParallelism, ToolSpec, ToolTargetRequirement,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
 };
 use temporal_server::worker::{
@@ -50,10 +50,8 @@ async fn fake_llm_tool_loop_completes_a_run() {
         .await
         .expect("store schema");
     let mut config = default_session_config(model());
-    config.turn.tool_choice = Some(ToolChoice {
-        mode: ToolChoiceMode::Auto,
-        disable_parallel_tool_use: Some(true),
-    });
+    config.generation.tool_choice = Some(ToolChoice::Auto);
+    config.generation.parallel_tool_use = Some(false);
 
     let opened = runner
         .drive_command(DriveCommand {

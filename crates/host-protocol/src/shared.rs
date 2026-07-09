@@ -88,6 +88,8 @@ pub enum HostScope {
 #[serde(rename_all = "camelCase")]
 pub struct HostCapabilities {
     #[serde(default)]
+    pub network: bool,
+    #[serde(default)]
     pub filesystem_read: bool,
     #[serde(default)]
     pub filesystem_write: bool,

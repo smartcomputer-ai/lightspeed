@@ -7,8 +7,7 @@ use host_protocol::{
     control::{
         handshake::{ControllerInitializeParams, ControllerInitializeResponse},
         targets::{
-            AttachTargetParams, AttachTargetResponse, CloseTargetParams, CloseTargetResponse,
-            CreateTargetParams, CreateTargetResponse, ListTargetsParams, ListTargetsResponse,
+            CloseTargetParams, CloseTargetResponse, CreateTargetParams, CreateTargetResponse,
         },
     },
     shared::HostTransport,
@@ -21,20 +20,10 @@ pub(crate) trait HostController: Send {
         params: &ControllerInitializeParams,
     ) -> Result<ControllerInitializeResponse, AgentApiError>;
 
-    async fn list_targets(
-        &mut self,
-        params: &ListTargetsParams,
-    ) -> Result<ListTargetsResponse, AgentApiError>;
-
     async fn create_target(
         &mut self,
         params: &CreateTargetParams,
     ) -> Result<CreateTargetResponse, AgentApiError>;
-
-    async fn attach_target(
-        &mut self,
-        params: &AttachTargetParams,
-    ) -> Result<AttachTargetResponse, AgentApiError>;
 
     async fn close_target(
         &mut self,
@@ -95,29 +84,11 @@ where
             .map_err(map_host_client_error)
     }
 
-    async fn list_targets(
-        &mut self,
-        params: &ListTargetsParams,
-    ) -> Result<ListTargetsResponse, AgentApiError> {
-        HostControllerClient::list_targets(self, params)
-            .await
-            .map_err(map_host_client_error)
-    }
-
     async fn create_target(
         &mut self,
         params: &CreateTargetParams,
     ) -> Result<CreateTargetResponse, AgentApiError> {
         HostControllerClient::create_target(self, params)
-            .await
-            .map_err(map_host_client_error)
-    }
-
-    async fn attach_target(
-        &mut self,
-        params: &AttachTargetParams,
-    ) -> Result<AttachTargetResponse, AgentApiError> {
-        HostControllerClient::attach_target(self, params)
             .await
             .map_err(map_host_client_error)
     }

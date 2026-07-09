@@ -21,8 +21,8 @@ pub(super) async fn process_admissions(
                 }
             }
         }
-        if should_refresh_skill_catalog_before_admitting(drive.state(), &command) {
-            refresh_skill_catalog_before_run(ctx, &mut drive).await?;
+        if should_refresh_runtime_projection_before_admitting(drive.state(), &command) {
+            refresh_runtime_projection_before_run(ctx, &mut drive).await?;
         }
         match admit_and_append_command(ctx, &mut drive, command, context_key).await? {
             CommandAdmissionResult::Accepted => {}
@@ -192,7 +192,7 @@ pub(super) fn preprocess_failure_to_admission_failure(
     }
 }
 
-fn should_refresh_skill_catalog_before_admitting(
+fn should_refresh_runtime_projection_before_admitting(
     state: &CoreAgentState,
     command: &CoreAgentCommand,
 ) -> bool {
@@ -201,14 +201,14 @@ fn should_refresh_skill_catalog_before_admitting(
         && state.runs.queued.is_empty()
 }
 
-async fn refresh_skill_catalog_before_run(
+async fn refresh_runtime_projection_before_run(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     drive: &mut CoreAgentDrive,
 ) -> anyhow::Result<()> {
     let result = ctx
         .start_activity(
-            WorkflowActivities::skill_catalog_refresh,
-            SkillCatalogRefreshActivityRequest {
+            WorkflowActivities::runtime_projection_refresh,
+            RuntimeProjectionRefreshActivityRequest {
                 session_id: drive.session_id().clone(),
                 active_catalog_ref: active_skill_catalog_ref(drive.state()),
                 active_vfs_catalog_ref: active_context_ref(

@@ -5,12 +5,13 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
 use api::{
-    AgentApiOutcome, EventCursor, FilesystemToolMode, GenerationConfig, InlineAgentProfile,
-    InputItem, ModelConfig, ProfileId, ProfileSource, ReasoningEffort as ApiReasoningEffort,
-    RunStartConfig, RunStartParams, RunStartResponse, RunStartSource, SessionConfigInput,
-    SessionEventKindView, SessionEventView, SessionEventsReadParams, SessionItemView,
-    SessionReadParams, SessionStartParams, SessionView, ToolBatchView, ToolCallEventView,
-    ToolCallView, ToolConfigInput, ToolItemStatus,
+    AgentApiOutcome, ContextEntryKindView, ContextEntryView, ContextMessageRoleView, EventCursor,
+    FeaturesConfig, GenerationConfig, InlineAgentProfile, InputItem, ModelConfig, ProfileId,
+    ProfileSource, RunStartConfig, RunStartParams, RunStartResponse, RunStartSource,
+    SessionEventKindView, SessionEventView, SessionEventsReadParams, SessionReadParams,
+    SessionStartParams, SessionView, TimersFeature, ToolBatchView, ToolCallEventView, ToolCallView,
+    ToolItemStatus, VfsFeature, VfsPromptsConfig, VfsSkillsConfig, VfsToolSurface, WebFeature,
+    WebFetchFeature, WebSearchFeature,
 };
 use clap::Args;
 use serde_json::Value;
@@ -71,6 +72,10 @@ pub(crate) struct ChatArgs {
     /// Filesystem tool mode for this session: edit, read-only, or none.
     #[arg(long = "filesystem-tools")]
     filesystem_tools: Option<String>,
+    /// Start with no feature grants at all (model + runs only) instead of
+    /// the CLI's dev defaults (vfs, web, timers).
+    #[arg(long)]
+    bare: bool,
     /// Start a new session from a named agent profile.
     #[arg(long)]
     profile: Option<String>,
@@ -1075,25 +1080,29 @@ fn project_turns(session: &SessionView, settings: &ChatDraftSettings) -> Vec<Cha
                         ref_: Some(blob_ref.clone()),
                     }),
                 });
-            let assistant = run.items.iter().rev().find_map(|item| match item {
-                SessionItemView::AssistantMessage { id, text } => Some(ChatMessageView {
-                    id: id.clone(),
+            let assistant = run.entries.iter().rev().find_map(|entry| match entry.kind {
+                ContextEntryKindView::Message {
+                    role: ContextMessageRoleView::Assistant,
+                } => Some(ChatMessageView {
+                    id: entry.id.clone(),
                     role: "assistant".into(),
-                    content: text.clone(),
+                    content: entry
+                        .text
+                        .clone()
+                        .or_else(|| entry.preview.clone())
+                        .unwrap_or_else(|| "[media]".to_owned()),
                     ref_: None,
                 }),
                 _ => None,
             });
-            let assistant_reasoning = run.items.iter().rev().find_map(|item| match item {
-                SessionItemView::SystemEvent { id, text } if displayable_reasoning_text(text) => {
-                    Some(ChatReasoningView {
-                        id: id.clone(),
-                        content: text.clone(),
-                        ref_: None,
-                        output_ref: None,
-                    })
-                }
-                _ => None,
+            let assistant_reasoning = run.entries.iter().rev().find_map(|entry| {
+                let text = system_note_text(entry)?;
+                displayable_reasoning_text(&text).then(|| ChatReasoningView {
+                    id: entry.id.clone(),
+                    content: text,
+                    ref_: None,
+                    output_ref: None,
+                })
             });
             ChatTurn {
                 turn_id: run.id.clone(),
@@ -1126,7 +1135,7 @@ fn project_tool_chains(run: &api::RunView) -> Vec<ChatToolChainView> {
         .iter()
         .map(|batch| project_tool_batch(&run.id, batch))
         .collect::<Vec<_>>();
-    chains.extend(project_provider_tool_chains(&run.id, &run.items));
+    chains.extend(project_provider_tool_chains(&run.id, &run.entries));
     chains
 }
 
@@ -1147,21 +1156,16 @@ fn project_tool_batch(run_id: &str, batch: &ToolBatchView) -> ChatToolChainView 
     }
 }
 
-fn project_provider_tool_chains(run_id: &str, items: &[SessionItemView]) -> Vec<ChatToolChainView> {
-    items
+fn project_provider_tool_chains(
+    run_id: &str,
+    entries: &[ContextEntryView],
+) -> Vec<ChatToolChainView> {
+    entries
         .iter()
-        .filter_map(|item| match item {
-            SessionItemView::ProviderContext {
-                id,
-                provider_item_id,
-                display: Some(display),
-                ..
-            } => Some(project_provider_tool_chain(
-                run_id,
-                id,
-                provider_item_id,
-                display,
-            )),
+        .filter_map(|entry| match (&entry.kind, &entry.display) {
+            (ContextEntryKindView::ProviderOpaque, Some(display)) => Some(
+                project_provider_tool_chain(run_id, &entry.id, &entry.provider_item_id, display),
+            ),
             _ => None,
         })
         .collect()
@@ -1318,11 +1322,13 @@ fn summary_from_session(session: &SessionView) -> ChatSessionSummary {
         provider: session
             .config
             .as_ref()
-            .map(|config| config.model.provider_id.clone()),
+            .and_then(|config| config.model.as_ref())
+            .map(|model| model.provider_id.clone()),
         model: session
             .config
             .as_ref()
-            .map(|config| config.model.model.clone()),
+            .and_then(|config| config.model.as_ref())
+            .map(|model| model.model.clone()),
         active_run: session
             .runs
             .iter()
@@ -1419,6 +1425,7 @@ fn draft_settings(args: &ChatArgs) -> Result<ChatDraftSettings> {
         max_tokens: args.max_tokens,
         web_search: args.no_web_search.then_some(false),
         web_fetch: args.no_web_fetch.then_some(false),
+        bare: args.bare,
         filesystem_tools: args
             .filesystem_tools
             .as_deref()
@@ -1427,7 +1434,8 @@ fn draft_settings(args: &ChatArgs) -> Result<ChatDraftSettings> {
     })
 }
 
-fn parse_filesystem_tool_mode(value: &str) -> Result<FilesystemToolMode> {
+fn parse_filesystem_tool_mode(value: &str) -> Result<crate::chat::protocol::FilesystemToolMode> {
+    use crate::chat::protocol::FilesystemToolMode;
     match value {
         "edit" => Ok(FilesystemToolMode::Edit),
         "read-only" | "read_only" | "readonly" => Ok(FilesystemToolMode::ReadOnly),
@@ -1446,29 +1454,44 @@ fn model_config(settings: &ChatDraftSettings) -> ModelConfig {
     }
 }
 
-fn session_start_config(settings: &ChatDraftSettings) -> SessionConfigInput {
-    let tools = if settings.web_search.is_some()
-        || settings.web_fetch.is_some()
-        || settings.filesystem_tools.is_some()
-    {
-        Some(ToolConfigInput {
-            web_search: settings.web_search,
-            web_fetch: settings.web_fetch,
-            filesystem: settings.filesystem_tools,
-            messaging: None,
-            fleet: None,
-            timer: None,
-        })
-    } else {
-        None
-    };
-    SessionConfigInput {
+fn session_start_config(settings: &ChatDraftSettings) -> api::SessionConfig {
+    api::SessionConfig {
         model: Some(model_config(settings)),
         generation: Some(generation_config(settings)),
+        limits: None,
         context: None,
-        run_defaults: None,
-        tools,
-        fleet: None,
+        features: (!settings.bare).then(|| dev_features(settings)),
+    }
+}
+
+/// The CLI's development defaults: features are secure-by-default on the
+/// server (absent = off), so the chat client grants a usable dev surface
+/// explicitly — VFS with fs tools and prompt/skill sourcing, web, timers.
+fn dev_features(settings: &ChatDraftSettings) -> FeaturesConfig {
+    let vfs_tools = match settings.filesystem_tools {
+        None => Some(VfsToolSurface::Edit),
+        Some(crate::chat::protocol::FilesystemToolMode::Edit) => Some(VfsToolSurface::Edit),
+        Some(crate::chat::protocol::FilesystemToolMode::ReadOnly) => Some(VfsToolSurface::ReadOnly),
+        Some(crate::chat::protocol::FilesystemToolMode::None) => None,
+    };
+    let web_fetch = settings.web_fetch.unwrap_or(true);
+    let web_search = settings.web_search.unwrap_or(true) && settings.api_kind == "openai:responses";
+    FeaturesConfig {
+        vfs: Some(VfsFeature {
+            version: api::CURRENT_FEATURE_VERSION,
+            tools: vfs_tools,
+            prompts: Some(VfsPromptsConfig::default()),
+            skills: Some(VfsSkillsConfig::default()),
+        }),
+        web: (web_fetch || web_search).then(|| WebFeature {
+            version: api::CURRENT_FEATURE_VERSION,
+            fetch: web_fetch.then(WebFetchFeature::default),
+            search: web_search.then(WebSearchFeature::default),
+        }),
+        timers: Some(TimersFeature {
+            version: api::CURRENT_FEATURE_VERSION,
+        }),
+        ..FeaturesConfig::default()
     }
 }
 
@@ -1485,19 +1508,23 @@ fn generation_config(settings: &ChatDraftSettings) -> GenerationConfig {
         max_output_tokens: settings.max_tokens,
         reasoning_effort: api_reasoning_effort(settings),
         tool_choice: None,
+        parallel_tool_use: None,
     }
 }
 
-fn api_reasoning_effort(settings: &ChatDraftSettings) -> Option<ApiReasoningEffort> {
+fn api_reasoning_effort(settings: &ChatDraftSettings) -> Option<String> {
     if settings.api_kind != "openai:responses" {
         return None;
     }
-    Some(match settings.reasoning_effort {
-        None => ApiReasoningEffort::None,
-        Some(crate::chat::protocol::ReasoningEffort::Low) => ApiReasoningEffort::Low,
-        Some(crate::chat::protocol::ReasoningEffort::Medium) => ApiReasoningEffort::Medium,
-        Some(crate::chat::protocol::ReasoningEffort::High) => ApiReasoningEffort::High,
-    })
+    Some(
+        match settings.reasoning_effort {
+            None => "none",
+            Some(crate::chat::protocol::ReasoningEffort::Low) => "low",
+            Some(crate::chat::protocol::ReasoningEffort::Medium) => "medium",
+            Some(crate::chat::protocol::ReasoningEffort::High) => "high",
+        }
+        .to_owned(),
+    )
 }
 
 fn print_event(event: &ChatEvent) -> Result<()> {
@@ -1678,6 +1705,20 @@ fn run_seq_from_id(id: &str) -> u64 {
         .unwrap_or_default()
 }
 
+fn system_note_text(entry: &ContextEntryView) -> Option<String> {
+    let fallback = match &entry.kind {
+        ContextEntryKindView::Instructions => "instructions",
+        ContextEntryKindView::VfsCatalog => "VFS catalog",
+        ContextEntryKindView::EnvironmentCatalog => "environment catalog",
+        ContextEntryKindView::EnvironmentActive => "active environment",
+        ContextEntryKindView::SkillCatalog => "skills catalog",
+        ContextEntryKindView::SkillActivation { .. } => "skill activated",
+        ContextEntryKindView::ReasoningState => "context item",
+        _ => return None,
+    };
+    Some(entry.preview.clone().unwrap_or_else(|| fallback.to_owned()))
+}
+
 fn displayable_reasoning_text(text: &str) -> bool {
     let text = text.trim();
     if text.is_empty() {
@@ -1697,6 +1738,22 @@ fn displayable_reasoning_text(text: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    fn reasoning_state_entry(id: &str, preview: &str) -> ContextEntryView {
+        ContextEntryView {
+            id: id.to_owned(),
+            key: None,
+            kind: ContextEntryKindView::ReasoningState,
+            content_ref: "sha256:reasoning".to_owned(),
+            media_type: None,
+            preview: Some(preview.to_owned()),
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+            text: None,
+            display: None,
+        }
+    }
+
     use super::*;
 
     #[test]
@@ -1705,7 +1762,7 @@ mod tests {
             id: "run_7".into(),
             status: api::RunStatus::Running,
             source: api::RunViewSource::Input { items: Vec::new() },
-            items: Vec::new(),
+            entries: Vec::new(),
             tool_batches: vec![ToolBatchView {
                 id: "tool_batch_1".into(),
                 turn_id: "turn_1".into(),
@@ -1759,14 +1816,17 @@ mod tests {
             id: "run_7".into(),
             status: api::RunStatus::Completed,
             source: api::RunViewSource::Input { items: Vec::new() },
-            items: vec![SessionItemView::ProviderContext {
+            entries: vec![ContextEntryView {
                 id: "item_43".into(),
+                key: None,
+                kind: ContextEntryKindView::ProviderOpaque,
                 content_ref: "sha256:mcp".into(),
                 media_type: Some("application/json".into()),
                 preview: Some("OpenAI Responses MCP tool call: echo.echo".into()),
                 provider_kind: Some("openai.responses.mcp_call".into()),
                 provider_item_id: Some("mcp_1".into()),
                 token_estimate: None,
+                text: None,
                 display: Some(api::ProviderContextDisplayView {
                     summary: api::ToolCallDisplayView {
                         group: api::ToolCallDisplayGroup::Other,
@@ -1839,7 +1899,7 @@ mod tests {
                 id: "run_1".into(),
                 status: api::RunStatus::Running,
                 source: api::RunViewSource::Input { items: Vec::new() },
-                items: Vec::new(),
+                entries: Vec::new(),
                 tool_batches: vec![
                     ToolBatchView {
                         id: "tool_batch_1".into(),
@@ -1869,6 +1929,7 @@ mod tests {
             web_search: None,
             web_fetch: None,
             filesystem_tools: None,
+            bare: false,
         };
 
         let chains = project_active_tool_chains(&session, &settings);
@@ -1941,15 +2002,9 @@ mod tests {
                 id: "run_1".into(),
                 status: api::RunStatus::Completed,
                 source: api::RunViewSource::Input { items: Vec::new() },
-                items: vec![
-                    SessionItemView::SystemEvent {
-                        id: "item_1".into(),
-                        text: "I should inspect the crate layout first.".into(),
-                    },
-                    SessionItemView::SystemEvent {
-                        id: "item_2".into(),
-                        text: "reasoning state rs_abc123".into(),
-                    },
+                entries: vec![
+                    reasoning_state_entry("item_1", "I should inspect the crate layout first."),
+                    reasoning_state_entry("item_2", "reasoning state rs_abc123"),
                 ],
                 tool_batches: Vec::new(),
             }],
@@ -1966,6 +2021,7 @@ mod tests {
             web_search: None,
             web_fetch: None,
             filesystem_tools: None,
+            bare: false,
         };
 
         let turns = project_turns(&session, &settings);
@@ -1993,10 +2049,7 @@ mod tests {
                 id: "run_1".into(),
                 status: api::RunStatus::Completed,
                 source: api::RunViewSource::Input { items: Vec::new() },
-                items: vec![SessionItemView::SystemEvent {
-                    id: "item_1".into(),
-                    text: "reasoning state rs_abc123".into(),
-                }],
+                entries: vec![reasoning_state_entry("item_1", "reasoning state rs_abc123")],
                 tool_batches: Vec::new(),
             }],
             active_context: api::ContextView::default(),
@@ -2012,6 +2065,7 @@ mod tests {
             web_search: None,
             web_fetch: None,
             filesystem_tools: None,
+            bare: false,
         };
 
         let turns = project_turns(&session, &settings);
@@ -2075,7 +2129,24 @@ mod tests {
         assert_eq!(config.model.expect("model").model, "gpt-5.5");
         let generation = config.generation.expect("generation");
         assert_eq!(generation.max_output_tokens, Some(2048));
-        assert_eq!(generation.reasoning_effort, Some(ApiReasoningEffort::None));
+        assert_eq!(generation.reasoning_effort, Some("none".to_owned()));
+    }
+
+    #[test]
+    fn session_start_config_grants_dev_features_by_default() {
+        let settings = draft_settings(&chat_args_with_effort(None)).expect("draft settings");
+
+        let config = session_start_config(&settings);
+
+        let features = config.features.expect("features");
+        let vfs = features.vfs.expect("vfs");
+        assert_eq!(vfs.tools, Some(VfsToolSurface::Edit));
+        assert!(vfs.prompts.is_some());
+        assert!(vfs.skills.is_some());
+        let web = features.web.expect("web");
+        assert!(web.fetch.is_some());
+        assert!(web.search.is_some());
+        assert!(features.timers.is_some());
     }
 
     #[test]
@@ -2086,7 +2157,9 @@ mod tests {
 
         let config = session_start_config(&settings);
 
-        assert_eq!(config.tools.expect("tools").web_search, Some(false));
+        let web = config.features.expect("features").web.expect("web");
+        assert!(web.search.is_none());
+        assert!(web.fetch.is_some());
     }
 
     #[test]
@@ -2097,7 +2170,9 @@ mod tests {
 
         let config = session_start_config(&settings);
 
-        assert_eq!(config.tools.expect("tools").web_fetch, Some(false));
+        let web = config.features.expect("features").web.expect("web");
+        assert!(web.fetch.is_none());
+        assert!(web.search.is_some());
     }
 
     #[test]
@@ -2108,10 +2183,19 @@ mod tests {
 
         let config = session_start_config(&settings);
 
-        assert_eq!(
-            config.tools.expect("tools").filesystem,
-            Some(FilesystemToolMode::ReadOnly)
-        );
+        let vfs = config.features.expect("features").vfs.expect("vfs");
+        assert_eq!(vfs.tools, Some(VfsToolSurface::ReadOnly));
+    }
+
+    #[test]
+    fn session_start_config_bare_sends_no_feature_grants() {
+        let mut args = chat_args_with_effort(None);
+        args.bare = true;
+        let settings = draft_settings(&args).expect("draft settings");
+
+        let config = session_start_config(&settings);
+
+        assert!(config.features.is_none());
     }
 
     #[test]
@@ -2140,6 +2224,7 @@ mod tests {
             no_web_search: false,
             no_web_fetch: false,
             filesystem_tools: None,
+            bare: false,
             profile: None,
             profile_json: None,
             mount: None,
@@ -2191,14 +2276,14 @@ mod tests {
             &SessionEventKindView::ContextEntriesApplied {
                 base_revision: 0,
                 revision: 1,
-                items: Vec::new(),
+                entries: Vec::new(),
             }
         ));
         assert!(event_needs_snapshot(
             &SessionEventKindView::ContextStateReplaced {
                 base_revision: 1,
                 revision: 2,
-                items: Vec::new(),
+                entries: Vec::new(),
                 reason: "pruned".into(),
             }
         ));
@@ -2206,7 +2291,7 @@ mod tests {
             &SessionEventKindView::ContextEntriesRemoved {
                 base_revision: 2,
                 revision: 3,
-                item_ids: Vec::new(),
+                entry_ids: Vec::new(),
                 reason: "pruned".into(),
             }
         ));

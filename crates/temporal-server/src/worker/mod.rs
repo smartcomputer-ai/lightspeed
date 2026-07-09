@@ -19,7 +19,7 @@ pub use activities::{
     ActivityState, AudioTranscodeError, AudioTranscodeOutput, AudioTranscodeRequest,
     AudioTranscoder, AudioTranscriber, AudioTranscription, AudioTranscriptionError,
     AudioTranscriptionRequest, FfmpegAudioTranscoder, LlmActivityDeps, PreprocessActivityDeps,
-    SkillCatalogActivityDeps, StorageActivityDeps, ToolActivityDeps, WorkerActivities,
+    RuntimeProjectionActivityDeps, StorageActivityDeps, ToolActivityDeps, WorkerActivities,
     default_audio_transcoder_from_env,
 };
 pub use fake::{FakeLlm, FakeTools};
@@ -28,16 +28,18 @@ pub use secrets::{BrokerSecretResolver, StoredProviderKeyResolver};
 pub use session_tools::SessionTools;
 pub use temporal_workflow::{
     ACTIVITY_APPEND_EVENTS, ACTIVITY_CANCEL_PROMISE_SOURCE, ACTIVITY_CHECK_PROMISE_SOURCE,
-    ACTIVITY_CONTEXT_COMPACT, ACTIVITY_CREATE_OR_LOAD_SESSION, ACTIVITY_LLM_GENERATE,
-    ACTIVITY_PREPROCESS_RUN_INPUT, ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB,
-    ACTIVITY_SKILL_CATALOG_REFRESH, ACTIVITY_TOOL_INVOKE_BATCH, AgentSessionWorkflow,
-    AppendEventsRequest, ContextCompactActivityRequest, CreateOrLoadSessionRequest,
-    CreateOrLoadSessionResult, DEFAULT_TASK_QUEUE, DEFAULT_TEMPORAL_NAMESPACE,
-    DEFAULT_TEMPORAL_TARGET, FAKE_TOOL_NAME, LlmGenerateActivityRequest,
-    PreprocessRunInputActivityRequest, PreprocessRunInputActivityResult, PutBlobRequest,
-    ReadBlobRequest, ReadBlobResult, SkillCatalogRefreshActivityRequest,
-    SkillCatalogRefreshActivityResult, ToolInvokeBatchActivityRequest, connect_temporal,
-    default_run_config, default_session_config,
+    ACTIVITY_CONTEXT_COMPACT, ACTIVITY_CREATE_OR_LOAD_SESSION, ACTIVITY_ENVIRONMENT_JOB_CANCEL,
+    ACTIVITY_ENVIRONMENT_JOB_POLL, ACTIVITY_LLM_GENERATE, ACTIVITY_PREPROCESS_RUN_INPUT,
+    ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB, ACTIVITY_RUNTIME_PROJECTION_REFRESH,
+    ACTIVITY_TOOL_INVOKE_BATCH, AgentSessionWorkflow, AppendEventsRequest,
+    ContextCompactActivityRequest, CreateOrLoadSessionRequest, CreateOrLoadSessionResult,
+    DEFAULT_TASK_QUEUE, DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET,
+    EnvironmentJobCancelActivityRequest, EnvironmentJobPollActivityRequest,
+    EnvironmentJobPollActivityResult, EnvironmentJobWorkflow, EnvironmentJobWorkflowArgs,
+    FAKE_TOOL_NAME, LlmGenerateActivityRequest, PreprocessRunInputActivityRequest,
+    PreprocessRunInputActivityResult, PutBlobRequest, ReadBlobRequest, ReadBlobResult,
+    RuntimeProjectionRefreshActivityRequest, RuntimeProjectionRefreshActivityResult,
+    ToolInvokeBatchActivityRequest, connect_temporal, default_run_config, default_session_config,
 };
 
 #[derive(Clone, Debug)]
@@ -64,6 +66,7 @@ pub fn worker_with_activities(
 ) -> anyhow::Result<Worker> {
     let worker_options = WorkerOptions::new(task_queue)
         .register_workflow::<AgentSessionWorkflow>()
+        .register_workflow::<EnvironmentJobWorkflow>()
         .register_activities(activities)
         .task_types(WorkerTaskTypes::all())
         .build();

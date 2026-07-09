@@ -1232,16 +1232,15 @@ mod tests {
     use super::*;
     use crate::{
         BlobRef, CommandRejectionKind, CompactionPolicy, ContextCompactionStatus,
-        ContextCompactionTrigger, ContextConfig, ContextConfigPatch, ContextEntry, ContextEntryId,
-        ContextEntryInput, ContextEntryKey, ContextEntryKind, ContextRemovalReason,
-        ContextRewriteReason, CoreAgentCommand, FunctionToolSpec, LlmGenerationFacts,
-        ModelSelection, OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, ObservedToolCall,
-        OptionalConfigPatch, ProviderApiKind, RunConfig, RunFailureKind, RunRequestCommand,
-        RunRequestSource, RunStatus, SKILL_ACTIVATION_PROVIDER_KIND_RUN, SKILL_CATALOG_CONTEXT_KEY,
-        SessionConfig, SessionConfigPatch, SkillId, SubmitMessageCommand, TokenEstimate,
-        TokenEstimateQuality, ToolBatchOutcome, ToolChoice, ToolChoiceMode, ToolEffect,
-        ToolInvocationResult, ToolKind, ToolName, ToolParallelism, ToolSpec, ToolTargetRequirement,
-        TurnConfig, TurnConfigPatch, TurnStatus, skill_activation_context_key,
+        ContextCompactionTrigger, ContextConfig, ContextEntry, ContextEntryId, ContextEntryInput,
+        ContextEntryKey, ContextEntryKind, ContextRemovalReason, ContextRewriteReason,
+        CoreAgentCommand, FunctionToolSpec, LlmGenerationFacts, ModelSelection,
+        OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, ObservedToolCall, ProviderApiKind, RunConfig,
+        RunFailureKind, RunRequestCommand, RunRequestSource, RunStatus,
+        SKILL_ACTIVATION_PROVIDER_KIND_RUN, SKILL_CATALOG_CONTEXT_KEY, SessionConfig, SkillId,
+        SubmitMessageCommand, TokenEstimate, TokenEstimateQuality, ToolBatchOutcome, ToolChoice,
+        ToolEffect, ToolInvocationResult, ToolKind, ToolName, ToolParallelism, ToolSpec,
+        ToolTargetRequirement, TurnStatus, skill_activation_context_key,
     };
 
     fn config() -> SessionConfig {
@@ -1251,34 +1250,15 @@ mod tests {
                 provider_id: "openai".to_owned(),
                 model: "gpt-test".to_owned(),
             },
-            run: RunConfig {
-                max_turns: None,
-                max_tool_rounds: None,
-                model_override: None,
-                max_output_tokens: None,
-                provider_params: None,
-                tool_choice: None,
-            },
-            turn: TurnConfig {
-                max_output_tokens: None,
-                tool_choice: None,
-                provider_params: None,
-            },
+            generation: Default::default(),
+            limits: Default::default(),
             context: ContextConfig { compaction: None },
-            tools: Default::default(),
-            fleet: Default::default(),
+            features: Default::default(),
         }
     }
 
     fn run_config() -> RunConfig {
-        RunConfig {
-            max_turns: None,
-            max_tool_rounds: None,
-            model_override: None,
-            max_output_tokens: None,
-            provider_params: None,
-            tool_choice: None,
-        }
+        RunConfig::default()
     }
 
     fn standalone_compaction_config(
@@ -2934,7 +2914,7 @@ mod tests {
     }
 
     #[test]
-    fn patch_session_config_updates_full_config_snapshot() {
+    fn replace_session_config_updates_full_config_snapshot() {
         let session_id = SessionId::new("session-a");
         let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
         let open = drive
@@ -2942,23 +2922,17 @@ mod tests {
             .expect("open");
         commit_action(&mut drive, open);
 
-        let patch = SessionConfigPatch {
-            turn: TurnConfigPatch {
-                max_output_tokens: Some(OptionalConfigPatch::Set(2048)),
-                ..TurnConfigPatch::default()
-            },
-            context: ContextConfigPatch::default(),
-            ..SessionConfigPatch::default()
-        };
+        let mut next = config();
+        next.generation.max_output_tokens = Some(2048);
         let action = drive
             .admit_command(
-                CoreAgentCommand::PatchSessionConfig {
+                CoreAgentCommand::ReplaceSessionConfig {
                     expected_revision: Some(0),
-                    patch,
+                    config: next,
                 },
                 20,
             )
-            .expect("patch config");
+            .expect("replace config");
         commit_action(&mut drive, action);
 
         let config = drive
@@ -2968,11 +2942,11 @@ mod tests {
             .as_ref()
             .expect("session config");
         assert_eq!(drive.state().lifecycle.config_revision, 1);
-        assert_eq!(config.turn.max_output_tokens, Some(2048));
+        assert_eq!(config.generation.max_output_tokens, Some(2048));
     }
 
     #[test]
-    fn patch_session_config_rejects_specific_tool_choice_for_missing_tool() {
+    fn replace_session_config_with_identical_document_is_a_noop() {
         let session_id = SessionId::new("session-a");
         let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
         let open = drive
@@ -2980,28 +2954,43 @@ mod tests {
             .expect("open");
         commit_action(&mut drive, open);
 
-        let patch = SessionConfigPatch {
-            turn: TurnConfigPatch {
-                tool_choice: Some(OptionalConfigPatch::Set(ToolChoice {
-                    mode: ToolChoiceMode::Specific {
-                        tool_name: ToolName::new("missing_tool"),
-                    },
-                    disable_parallel_tool_use: None,
-                })),
-                ..TurnConfigPatch::default()
-            },
-            ..SessionConfigPatch::default()
-        };
-
-        let error = drive
+        let action = drive
             .admit_command(
-                CoreAgentCommand::PatchSessionConfig {
+                CoreAgentCommand::ReplaceSessionConfig {
                     expected_revision: Some(0),
-                    patch,
+                    config: config(),
                 },
                 20,
             )
-            .expect_err("patch must reject missing specific tool choice");
+            .expect("identical replace admits as no-op");
+
+        assert!(matches!(action, CoreAgentAction::Idle));
+        assert_eq!(drive.state().lifecycle.config_revision, 0);
+    }
+
+    #[test]
+    fn replace_session_config_rejects_specific_tool_choice_for_missing_tool() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let open = drive
+            .admit_command(CoreAgentCommand::OpenSession { config: config() }, 10)
+            .expect("open");
+        commit_action(&mut drive, open);
+
+        let mut next = config();
+        next.generation.tool_choice = Some(ToolChoice::Specific {
+            tool_name: ToolName::new("missing_tool"),
+        });
+
+        let error = drive
+            .admit_command(
+                CoreAgentCommand::ReplaceSessionConfig {
+                    expected_revision: Some(0),
+                    config: next,
+                },
+                20,
+            )
+            .expect_err("replace must reject missing specific tool choice");
 
         let CoreAgentDriveError::Command(crate::CommandError::Rejected(rejection)) = error else {
             panic!("expected rejected command");
@@ -3018,11 +3007,8 @@ mod tests {
             .expect("open");
         commit_action(&mut drive, open);
         let mut run_config = run_config();
-        run_config.tool_choice = Some(ToolChoice {
-            mode: ToolChoiceMode::Specific {
-                tool_name: ToolName::new("missing_tool"),
-            },
-            disable_parallel_tool_use: None,
+        run_config.tool_choice = Some(ToolChoice::Specific {
+            tool_name: ToolName::new("missing_tool"),
         });
 
         let error = drive
@@ -3039,7 +3025,7 @@ mod tests {
     }
 
     #[test]
-    fn patch_session_config_rejects_queued_work() {
+    fn replace_session_config_rejects_queued_work() {
         let session_id = SessionId::new("session-a");
         let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
         let open = drive
@@ -3060,13 +3046,13 @@ mod tests {
 
         let error = drive
             .admit_command(
-                CoreAgentCommand::PatchSessionConfig {
+                CoreAgentCommand::ReplaceSessionConfig {
                     expected_revision: Some(0),
-                    patch: SessionConfigPatch::default(),
+                    config: config(),
                 },
                 30,
             )
-            .expect_err("patch must reject queued work");
+            .expect_err("replace must reject queued work");
 
         let CoreAgentDriveError::Command(crate::CommandError::Rejected(rejection)) = error else {
             panic!("expected rejected command");

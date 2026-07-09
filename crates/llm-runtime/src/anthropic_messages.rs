@@ -20,8 +20,8 @@ use engine::{
     ContextEntryInput, ContextEntryKind, ContextMessageRole, LlmFinish, LlmGenerationFacts,
     LlmGenerationRequest, LlmGenerationResult, LlmGenerationStatus, LlmRequest, LlmUsage,
     ObservedToolCall, ProviderApiKind, ProviderNativeToolExecution, RemoteMcpApprovalPolicy,
-    RemoteMcpToolSpec, TokenEstimate, TokenEstimateQuality, ToolCallId, ToolChoice, ToolChoiceMode,
-    ToolKind, ToolName, ToolSpec, storage::BlobStore,
+    RemoteMcpToolSpec, TokenEstimate, TokenEstimateQuality, ToolCallId, ToolChoice, ToolKind,
+    ToolName, ToolSpec, storage::BlobStore,
 };
 use llm_clients::{ApiResponse, anthropic::messages as am};
 use serde_json::{Value, json};
@@ -30,7 +30,7 @@ use crate::{
     blob_io::{put_json, put_text, read_json, read_text},
     error::{LlmAdapterError, LlmAdapterResult},
     executor::{LlmCompactionAdapter, LlmGenerationAdapter},
-    params::anthropic_messages_params,
+    params::{anthropic_messages_params, anthropic_thinking_from_effort},
     provider_keys::{NoStoredProviderKeys, ProviderKeyResolver, resolve_stored_provider_key},
     result::LlmGenerationExecution,
     secrets::{REDACTED_SECRET_PLACEHOLDER, SecretResolver, UnconfiguredSecretResolver},
@@ -203,7 +203,20 @@ pub async fn materialize_create_request(
     blobs: &dyn BlobStore,
     request: &LlmRequest,
 ) -> LlmAdapterResult<am::CreateMessageRequest> {
-    let params = anthropic_messages_params(request.params.as_ref())?;
+    let mut params = anthropic_messages_params(request.params.as_ref())?;
+    // Materialize the intent reasoning effort into provider params. Explicit
+    // per-run provider params win: derived values never overwrite fields the
+    // params body already sets.
+    if let Some(effort) = request.reasoning_effort.as_deref() {
+        let derived = anthropic_thinking_from_effort(effort)?;
+        if params.thinking.is_none()
+            && params.output_config.is_none()
+            && let Some((thinking, output_config)) = derived
+        {
+            params.thinking = Some(thinking);
+            params.output_config = Some(output_config);
+        }
+    }
     if request.provider_response_id.is_some() {
         return Err(LlmAdapterError::InvalidProviderRequest {
             message: "Anthropic Messages has no provider response continuation; \
@@ -264,7 +277,7 @@ pub async fn materialize_create_request(
             extra: thinking.extra.clone(),
         }),
         output_config: params.output_config.clone(),
-        tool_choice: request.tool_choice.as_ref().map(anthropic_tool_choice),
+        tool_choice: anthropic_tool_choice(request.tool_choice.as_ref(), request.parallel_tool_use),
         tools: non_empty(tools),
         top_k: params.top_k.map(u64::from),
         top_p: optional_f64(params.top_p.as_ref(), "top_p")?,
@@ -694,17 +707,28 @@ fn set_remote_mcp_authorization_token(
     Ok(())
 }
 
-fn anthropic_tool_choice(choice: &ToolChoice) -> am::ToolChoice {
-    let mut materialized = match &choice.mode {
-        ToolChoiceMode::Auto => am::ToolChoice::auto(),
-        ToolChoiceMode::None => am::ToolChoice::none(),
-        ToolChoiceMode::RequiredAny => am::ToolChoice::any(),
-        ToolChoiceMode::Specific { tool_name } => am::ToolChoice::tool(tool_name.as_str()),
+/// Materialize the provider tool choice. Anthropic carries the parallel
+/// tool-use switch on `tool_choice`, so an intent with `parallel_tool_use`
+/// but no explicit tool choice lowers to `auto` with the flag set.
+fn anthropic_tool_choice(
+    choice: Option<&ToolChoice>,
+    parallel_tool_use: Option<bool>,
+) -> Option<am::ToolChoice> {
+    let choice = match (choice, parallel_tool_use) {
+        (Some(choice), _) => choice,
+        (None, Some(_)) => &ToolChoice::Auto,
+        (None, None) => return None,
     };
-    if !matches!(choice.mode, ToolChoiceMode::None) {
-        materialized.disable_parallel_tool_use = choice.disable_parallel_tool_use;
+    let mut materialized = match choice {
+        ToolChoice::Auto => am::ToolChoice::auto(),
+        ToolChoice::None => am::ToolChoice::none(),
+        ToolChoice::RequiredAny => am::ToolChoice::any(),
+        ToolChoice::Specific { tool_name } => am::ToolChoice::tool(tool_name.as_str()),
+    };
+    if !matches!(choice, ToolChoice::None) {
+        materialized.disable_parallel_tool_use = parallel_tool_use.map(|parallel| !parallel);
     }
-    materialized
+    Some(materialized)
 }
 
 fn optional_f64(value: Option<&Value>, name: &'static str) -> LlmAdapterResult<Option<f64>> {
@@ -1095,6 +1119,8 @@ mod tests {
             tools: Vec::new(),
             tool_choice: None,
             output_limit: None,
+            reasoning_effort: None,
+            parallel_tool_use: None,
             provider_response_id: None,
             compaction: None,
             params: None,
@@ -1106,6 +1132,131 @@ mod tests {
             ProviderApiKind::AnthropicMessages,
             serde_json::to_value(params).expect("serialize params"),
         )
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn materialize_create_request_derives_thinking_from_reasoning_effort() {
+        let blobs = InMemoryBlobStore::new();
+        let mut request = intent_request(Vec::new());
+        request.reasoning_effort = Some("ultra".to_string());
+
+        let materialized = materialize_create_request(&blobs, &request)
+            .await
+            .expect("materialize");
+        let value = serde_json::to_value(materialized).expect("json");
+
+        assert_eq!(value["thinking"], json!({ "type": "adaptive" }));
+        assert_eq!(value["output_config"], json!({ "effort": "ultra" }));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn materialize_create_request_none_reasoning_effort_omits_thinking() {
+        let blobs = InMemoryBlobStore::new();
+        let mut request = intent_request(Vec::new());
+        request.reasoning_effort = Some("none".to_string());
+
+        let materialized = materialize_create_request(&blobs, &request)
+            .await
+            .expect("materialize");
+        let value = serde_json::to_value(materialized).expect("json");
+
+        assert!(value.get("thinking").is_none());
+        assert!(value.get("output_config").is_none());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn materialize_create_request_params_thinking_wins_over_reasoning_effort() {
+        let blobs = InMemoryBlobStore::new();
+        let mut request = intent_request(Vec::new());
+        request.reasoning_effort = Some("high".to_string());
+        request.output_limit = Some(2048);
+        request.params = Some(anthropic_params(&AnthropicMessagesParams {
+            thinking: Some(AnthropicThinkingConfig {
+                r#type: "enabled".to_string(),
+                budget_tokens: Some(512),
+                display: None,
+                extra: BTreeMap::new(),
+            }),
+            ..AnthropicMessagesParams::default()
+        }));
+
+        let materialized = materialize_create_request(&blobs, &request)
+            .await
+            .expect("materialize");
+        let value = serde_json::to_value(materialized).expect("json");
+
+        assert_eq!(
+            value["thinking"],
+            json!({ "type": "enabled", "budget_tokens": 512 })
+        );
+        assert!(value.get("output_config").is_none());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn materialize_create_request_rejects_unknown_reasoning_effort() {
+        let blobs = InMemoryBlobStore::new();
+        let mut request = intent_request(Vec::new());
+        request.reasoning_effort = Some("xhigh".to_string());
+
+        let error = materialize_create_request(&blobs, &request)
+            .await
+            .expect_err("unknown effort must fail");
+
+        assert!(matches!(
+            error,
+            LlmAdapterError::InvalidProviderRequest { .. }
+        ));
+        assert!(error.to_string().contains("unknown reasoning effort"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn materialize_create_request_maps_parallel_tool_use_onto_tool_choice() {
+        let blobs = InMemoryBlobStore::new();
+        let mut request = intent_request(Vec::new());
+        request.tool_choice = Some(ToolChoice::Auto);
+        request.parallel_tool_use = Some(false);
+
+        let materialized = materialize_create_request(&blobs, &request)
+            .await
+            .expect("materialize");
+        let value = serde_json::to_value(materialized).expect("json");
+
+        assert_eq!(
+            value["tool_choice"],
+            json!({ "type": "auto", "disable_parallel_tool_use": true })
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn materialize_create_request_parallel_tool_use_without_tool_choice_lowers_auto() {
+        let blobs = InMemoryBlobStore::new();
+        let mut request = intent_request(Vec::new());
+        request.parallel_tool_use = Some(true);
+
+        let materialized = materialize_create_request(&blobs, &request)
+            .await
+            .expect("materialize");
+        let value = serde_json::to_value(materialized).expect("json");
+
+        assert_eq!(
+            value["tool_choice"],
+            json!({ "type": "auto", "disable_parallel_tool_use": false })
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn materialize_create_request_none_tool_choice_ignores_parallel_tool_use() {
+        let blobs = InMemoryBlobStore::new();
+        let mut request = intent_request(Vec::new());
+        request.tool_choice = Some(ToolChoice::None);
+        request.parallel_tool_use = Some(true);
+
+        let materialized = materialize_create_request(&blobs, &request)
+            .await
+            .expect("materialize");
+        let value = serde_json::to_value(materialized).expect("json");
+
+        assert_eq!(value["tool_choice"], json!({ "type": "none" }));
     }
 
     fn user_entry(entry_id: u64, content_ref: BlobRef) -> ContextEntry {
@@ -1198,12 +1349,10 @@ mod tests {
             parallelism: ToolParallelism::ParallelSafe,
             target_requirement: Default::default(),
         }];
-        request.tool_choice = Some(ToolChoice {
-            mode: ToolChoiceMode::Specific {
-                tool_name: ToolName::new("read_file"),
-            },
-            disable_parallel_tool_use: Some(true),
+        request.tool_choice = Some(ToolChoice::Specific {
+            tool_name: ToolName::new("read_file"),
         });
+        request.parallel_tool_use = Some(false);
         request.output_limit = Some(2048);
         request.params = Some(anthropic_params(&AnthropicMessagesParams {
             thinking: Some(AnthropicThinkingConfig {

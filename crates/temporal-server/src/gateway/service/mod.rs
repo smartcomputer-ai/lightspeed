@@ -19,10 +19,10 @@ mod profiles;
 mod prompts;
 mod session_jobs;
 mod skills;
-mod tools_api;
 mod vfs_api;
 mod workflow;
 
+use api_config::engine_session_config_from_api;
 #[cfg(test)]
 use api_config::*;
 use auth_api::{
@@ -42,11 +42,7 @@ use github_api::{
 };
 use host_controllers::{HostControllerConnector, WebSocketHostControllerConnector};
 use input::{context_entry_input_from_api, run_input_from_api};
-use mcp_api::{
-    apply_session_mcp_link, create_mcp_server_record, linked_session_mcp, map_mcp_error,
-    mcp_server_view, parse_mcp_server_id, parse_mcp_tool_name, remove_session_mcp_link,
-    session_mcp_link_from_record,
-};
+use mcp_api::{map_mcp_error, mcp_server_view, parse_mcp_server_id, put_mcp_server_record};
 use oauth_api::{
     auth_client_create_draft, auth_flow_view, cimd_config, map_mcp_oauth_error,
     mcp_oauth_target_from_record, oauth_client_view, oauth_redirect_uri, parse_auth_flow_id,
@@ -70,87 +66,10 @@ use std::{
 
 use crate::environment::{RuntimeEnvironment, SessionEnvironmentManager};
 
+use api::*;
 use api::{
-    AgentApiError, AgentApiErrorKind, AgentApiOutcome, AgentApiService, AttachedHostSpecView,
-    AuthClientCreateParams, AuthClientCreateResponse, AuthClientDeleteParams,
-    AuthClientDeleteResponse, AuthClientListParams, AuthClientListResponse, AuthClientReadParams,
-    AuthClientReadResponse, AuthFlowStartParams, AuthFlowStartResponse, AuthFlowStatusParams,
-    AuthFlowStatusResponse, AuthGitHubInstallationGrantParams, AuthGitHubInstallationGrantResponse,
-    AuthGitHubInstallationListParams, AuthGitHubInstallationListResponse, AuthGrantImportParams,
-    AuthGrantImportResponse, AuthGrantListParams, AuthGrantListResponse, AuthGrantReadParams,
-    AuthGrantReadResponse, AuthGrantRevokeParams, AuthGrantRevokeResponse,
-    AuthProviderCreateParams, AuthProviderCreateResponse, AuthProviderDeleteParams,
-    AuthProviderDeleteResponse, AuthProviderListParams, AuthProviderListResponse,
-    AuthProviderReadParams, AuthProviderReadResponse, BlobHasItem, BlobHasParams, BlobHasResponse,
-    BlobPutParams, BlobPutResponse, BlobPutResult, BlobReadParams, BlobReadResponse,
-    ClientCapabilities, CompactionPolicyInput, ContextAppendParams, ContextAppendResponse,
-    ContextAppendResult, ContextAppendStatus, ContextCompactParams, ContextCompactResponse,
-    ContextConfigInput as ApiContextConfigInput, ContextConfigPatchInput, ContextRemoveParams,
-    ContextRemoveResponse, ContextRemoveResult, ContextRemoveStatus,
-    EnvironmentProviderCapabilitiesView, EnvironmentProviderHeartbeatParams,
-    EnvironmentProviderHeartbeatResponse, EnvironmentProviderImplementationView,
-    EnvironmentProviderKindView, EnvironmentProviderListParams, EnvironmentProviderListResponse,
-    EnvironmentProviderRegisterParams, EnvironmentProviderRegisterResponse,
-    EnvironmentProviderStatusView, EnvironmentProviderTargetListParams,
-    EnvironmentProviderTargetListResponse, EnvironmentProviderUnregisterParams,
-    EnvironmentProviderUnregisterResponse, EnvironmentProviderView, EnvironmentTargetStatusView,
-    EnvironmentTargetSummaryView, FieldPatch, FleetConfigInput, FleetConfigPatchInput,
-    FleetProfilesConfigInput, FleetSpawnBaseConfig, FleetSpawnConfigInput, GenerationConfig,
-    GenerationConfigPatch, HostCapabilitiesView, HostControllerConnectionView, HostScopeView,
-    HostTargetAttachRequestView, HostTargetCreateRequestView, HostTransportView, InitializeParams,
-    InitializeResponse, InputAdmissionFailureKind, InputAdmissionFailureView, InputItem,
-    McpServerCreateParams, McpServerCreateResponse, McpServerDeleteParams, McpServerDeleteResponse,
-    McpServerListParams, McpServerListResponse, McpServerReadParams, McpServerReadResponse,
-    McpServerUpdateParams, McpServerUpdatePatch, McpServerUpdateResponse, MediaKind,
-    MessageSubmitParams, MessageSubmitResponse, ModelConfig, OutboundAckInput, OutboundMessageView,
-    OutboundOriginView, OutboundPayloadView, OutboundStatusView, OutboxAckParams,
-    OutboxAckResponse, OutboxReadParams, OutboxReadResponse, ProfileApplyParams,
-    ProfileApplyResponse, ProfileApplySummary, ProfileCreateParams, ProfileCreateResponse,
-    ProfileDeleteParams, ProfileDeleteResponse, ProfileDocument, ProfileInstructions,
-    ProfileListParams, ProfileListResponse, ProfilePutParams, ProfilePutResponse,
-    ProfileReadParams, ProfileReadResponse, ProfileSource, ProfileUpdateParams,
-    ProfileUpdateResponse, PromptInstructionView, PromptsActiveParams, PromptsActiveResponse,
-    ReasoningEffort, RunCancelParams, RunCancelResponse, RunDefaultsConfig, RunDefaultsPatch,
-    RunLimitsConfig, RunStartConfig, RunStartParams, RunStartResponse, RunStartSource, RunView,
-    SandboxTargetSpecView, ServerCapabilities, ServerInfo, SessionCloseParams,
-    SessionCloseResponse, SessionConfigInput, SessionConfigPatchInput,
-    SessionEnvironmentActivateParams, SessionEnvironmentActivateResponse,
-    SessionEnvironmentAttachParams, SessionEnvironmentAttachResponse,
-    SessionEnvironmentCapabilitiesView, SessionEnvironmentCloseParams,
-    SessionEnvironmentCloseResponse, SessionEnvironmentCreateParams,
-    SessionEnvironmentCreateResponse, SessionEnvironmentCredentialBindParams,
-    SessionEnvironmentCredentialBindResponse, SessionEnvironmentCredentialListParams,
-    SessionEnvironmentCredentialListResponse, SessionEnvironmentCredentialSourceView,
-    SessionEnvironmentCredentialUnbindParams, SessionEnvironmentCredentialUnbindResponse,
-    SessionEnvironmentCredentialView, SessionEnvironmentDeactivateParams,
-    SessionEnvironmentDeactivateResponse, SessionEnvironmentKindView, SessionEnvironmentListParams,
-    SessionEnvironmentListResponse, SessionEnvironmentReadParams, SessionEnvironmentReadResponse,
-    SessionEnvironmentStatusView, SessionEnvironmentView, SessionEventsReadParams,
-    SessionEventsReadResponse, SessionJobArtifactView, SessionJobCancelEntryView,
-    SessionJobCancelParams, SessionJobCancelResponse, SessionJobCancelScopeView,
-    SessionJobCreateParams, SessionJobCreateResponse, SessionJobDependencyInput,
-    SessionJobDependencyPolicyView, SessionJobHandleInput, SessionJobHandleRecordView,
-    SessionJobHandleView, SessionJobListParams, SessionJobListResponse, SessionJobOutputChunkView,
-    SessionJobOutputStreamView, SessionJobReadEntryView, SessionJobReadParams,
-    SessionJobReadResponse, SessionJobStartSpecInput, SessionJobStartedView, SessionJobStatusView,
-    SessionJobSummaryView, SessionListParams, SessionListResponse, SessionMcpLinkParams,
-    SessionMcpLinkResponse, SessionMcpListParams, SessionMcpListResponse, SessionMcpUnlinkParams,
-    SessionMcpUnlinkResponse, SessionReadParams, SessionReadResponse, SessionRenameParams,
-    SessionRenameResponse, SessionStartParams, SessionStartResponse, SessionSummaryView,
-    SessionToolsUpdateParams, SessionToolsUpdateResponse, SessionUpdateParams,
-    SessionUpdateResponse, SessionView, SkillActivateParams, SkillActivateResponse,
     SkillActivationScope as ApiSkillActivationScope,
-    SkillActivationSource as ApiSkillActivationSource, SkillActivationView, SkillActiveParams,
-    SkillActiveResponse, SkillDeactivateParams, SkillDeactivateResponse, SkillListItem,
-    SkillListParams, SkillListResponse, ToolChoiceConfig, ToolChoiceModeConfig, ToolConfigInput,
-    ToolConfigPatchInput, ToolExecutionTargetView, VfsMountAccess as ApiVfsMountAccess,
-    VfsMountDeleteParams, VfsMountDeleteResponse, VfsMountListParams, VfsMountListResponse,
-    VfsMountPutParams, VfsMountPutResponse, VfsMountSourceInput, VfsMountSourceView, VfsMountView,
-    VfsSnapshotCommitParams, VfsSnapshotCommitResponse, VfsSnapshotReadParams,
-    VfsSnapshotReadResponse, VfsWorkspaceCreateParams, VfsWorkspaceCreateResponse,
-    VfsWorkspaceDeleteParams, VfsWorkspaceDeleteResponse, VfsWorkspaceListParams,
-    VfsWorkspaceListResponse, VfsWorkspaceReadParams, VfsWorkspaceReadResponse,
-    VfsWorkspaceUpdateParams, VfsWorkspaceUpdateResponse, VfsWorkspaceView,
+    SkillActivationSource as ApiSkillActivationSource, VfsMountAccess as ApiVfsMountAccess,
 };
 use api_projection::{
     CoreAgentProjector, MAX_EVENT_PAGE_LIMIT, ProjectSession, api_kind_from_str, api_run_id,
@@ -167,13 +86,11 @@ use auth::{
     OAuthFlowService, OAuthMetadataClient, OAuthTokenClient, SecretStore, StartAuthFlow,
 };
 use engine::{
-    BlobRef, CompactionPolicy, ContextConfigPatch, ContextEntry, ContextEntryInput,
-    ContextEntryKey, ContextEntryKind, ContextMessageRole, CoreAgentCommand, CoreAgentStatus,
-    FilesystemToolMode, ModelSelection, OptionalConfigPatch, ProviderApiKind, ProviderParams,
-    RunConfig, RunConfigPatch, RunId, RunStatus, SKILL_ACTIVATION_PROVIDER_KIND_RUN,
-    SKILL_ACTIVATION_PROVIDER_KIND_SESSION, SKILL_CATALOG_CONTEXT_KEY, SessionConfig,
-    SessionConfigPatch, SessionId, SkillId, SubmissionId, ToolChoice, ToolChoiceMode, ToolName,
-    TurnConfigPatch, skill_activation_context_key,
+    BlobRef, CompactionPolicy, ContextEntry, ContextEntryInput, ContextEntryKey, ContextEntryKind,
+    ContextMessageRole, CoreAgentCommand, CoreAgentStatus, ModelSelection, ProviderApiKind,
+    RunConfig, RunId, RunStatus, SKILL_ACTIVATION_PROVIDER_KIND_RUN,
+    SKILL_ACTIVATION_PROVIDER_KIND_SESSION, SKILL_CATALOG_CONTEXT_KEY, SessionConfig, SessionId,
+    SkillId, SubmissionId, ToolChoice, ToolName, skill_activation_context_key,
     storage::{BlobStore, BlobStoreError, ReadSessionEvents, SessionStore},
 };
 use mcp::McpRegistryStore;
@@ -206,8 +123,7 @@ use vfs::{
 use super::{
     AgentAdmission, AgentAdmissionFailure, AgentAdmissionFailureKind, AgentSessionArgs,
     AgentSessionStatus, AgentSessionWorkflow, DEFAULT_TASK_QUEUE, DEFAULT_TEMPORAL_NAMESPACE,
-    DEFAULT_TEMPORAL_TARGET, connect_temporal, default_model_from_env, default_session_config,
-    pg_store_from_env,
+    DEFAULT_TEMPORAL_TARGET, connect_temporal, default_model_from_env, pg_store_from_env,
 };
 
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(500);
@@ -911,34 +827,45 @@ impl GatewayAgentApi {
         SubmissionId::new(format!("submit_{}", uuid::Uuid::new_v4().simple()))
     }
 
+    /// Materialize the session's granted features into the provider-aware
+    /// toolset. Absent feature = no tools: capability semantics need no
+    /// effective-default resolution here.
     fn session_toolset_config(
         &self,
         session_config: &SessionConfig,
         include_process_tools: bool,
         include_job_tools: bool,
     ) -> ToolsetConfig {
+        let features = &session_config.features;
         let mut config = ToolsetConfig::empty();
-        config.builtin = match effective_filesystem_tool_mode(session_config) {
-            FilesystemToolMode::None => tools::toolset::BuiltinToolsetConfig::disabled(),
-            FilesystemToolMode::ReadOnly => tools::toolset::BuiltinToolsetConfig {
+        config.builtin = match features.vfs.as_ref().and_then(|vfs| vfs.tools) {
+            None => tools::toolset::BuiltinToolsetConfig::disabled(),
+            Some(engine::VfsToolSurface::ReadOnly) => tools::toolset::BuiltinToolsetConfig {
                 fs: tools::toolset::FilesystemToolsetConfig::read_only(),
                 ..tools::toolset::BuiltinToolsetConfig::disabled()
             },
-            FilesystemToolMode::Edit => tools::toolset::BuiltinToolsetConfig::workspace(),
+            Some(engine::VfsToolSurface::Edit) => tools::toolset::BuiltinToolsetConfig::workspace(),
         };
-        if effective_web_search_enabled(session_config) {
-            config.openai_web_search = OpenAiResponsesWebSearchConfig::cached();
+        if let Some(web) = features.web.as_ref() {
+            if web.search.is_some()
+                && session_config.model.api_kind == engine::ProviderApiKind::OpenAiResponses
+            {
+                config.openai_web_search = OpenAiResponsesWebSearchConfig::cached();
+            }
+            if web.fetch.is_some() {
+                config.web_fetch = WebFetchToolConfig::enabled();
+            }
         }
-        if effective_web_fetch_enabled(session_config) {
-            config.web_fetch = WebFetchToolConfig::enabled();
-        }
-        if session_config.tools.messaging.unwrap_or(false) {
+        if features.messaging.is_some() {
             config.messaging = tools::messaging::MessagingToolsetConfig::enabled();
         }
-        if session_config.tools.fleet.unwrap_or(false) {
+        if features.fleet.is_some() {
             config.fleet = tools::fleet::FleetToolsetConfig::enabled();
         }
-        if session_config.tools.timer.unwrap_or(false) {
+        if features.timers.is_some() || features.fleet.is_some() {
+            // Fleet waiting depends on the base concurrency tools, so the
+            // fleet grant implies them; the timers grant adds nothing extra
+            // today beyond the same surface.
             config.concurrency = tools::concurrency::ConcurrencyToolsetConfig::timer();
         }
         if include_process_tools {
@@ -1347,22 +1274,6 @@ impl GatewayAgentApi {
     }
 }
 
-fn effective_web_search_enabled(session_config: &SessionConfig) -> bool {
-    session_config.model.api_kind == ProviderApiKind::OpenAiResponses
-        && session_config.tools.web_search.unwrap_or(true)
-}
-
-fn effective_web_fetch_enabled(session_config: &SessionConfig) -> bool {
-    session_config.tools.web_fetch.unwrap_or(true)
-}
-
-fn effective_filesystem_tool_mode(session_config: &SessionConfig) -> FilesystemToolMode {
-    session_config
-        .tools
-        .filesystem
-        .unwrap_or(FilesystemToolMode::Edit)
-}
-
 pub(super) struct LoadedSession {
     pub(super) record: engine::storage::SessionRecord,
     pub(super) entries: Vec<engine::CoreAgentEntry>,
@@ -1441,15 +1352,6 @@ impl AgentApiService for GatewayAgentApi {
             .map(AgentApiOutcome::new)
     }
 
-    async fn update_profile(
-        &self,
-        params: ProfileUpdateParams,
-    ) -> Result<AgentApiOutcome<ProfileUpdateResponse>, AgentApiError> {
-        self.update_profile_record(params)
-            .await
-            .map(AgentApiOutcome::new)
-    }
-
     async fn delete_profile(
         &self,
         params: ProfileDeleteParams,
@@ -1468,10 +1370,10 @@ impl AgentApiService for GatewayAgentApi {
             .map(AgentApiOutcome::new)
     }
 
-    async fn update_session(
+    async fn put_session_config(
         &self,
-        params: SessionUpdateParams,
-    ) -> Result<AgentApiOutcome<SessionUpdateResponse>, AgentApiError> {
+        params: SessionConfigPutParams,
+    ) -> Result<AgentApiOutcome<SessionConfigPutResponse>, AgentApiError> {
         let session_id = SessionId::try_new(params.session_id).map_err(|error| {
             AgentApiError::invalid_request(format!("invalid session id: {error}"))
         })?;
@@ -1497,13 +1399,58 @@ impl AgentApiService for GatewayAgentApi {
                 )));
             }
         }
-        let patch = self
-            .core_session_patch_from_api(current_config, params.patch)
-            .await?;
-        if patch.is_empty() {
-            return Ok(AgentApiOutcome::new(SessionUpdateResponse {
+        let config = engine_session_config_from_api(params.config, self.default_model.clone())?;
+        config
+            .validate()
+            .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
+        // Declared MCP links must resolve (catalog record, grant/policy
+        // compatibility) before the document enters the session log.
+        self.desired_mcp_tools(&config.features).await?;
+        if &config == current_config {
+            // Idempotent no-op: the engine would admit zero events, so skip
+            // the round-trip and return the unchanged session.
+            return Ok(AgentApiOutcome::new(SessionConfigPutResponse {
                 session: self.project_session_by_id(&session_id).await?,
             }));
+        }
+        // Revoking a granting feature while dependent bindings are live is a
+        // conflict (P95 §5): teardown is explicit, a config put never closes
+        // resources as a side effect.
+        if config.features.vfs.is_none() {
+            let mounts = self
+                .store
+                .list_mounts(&session_id)
+                .await
+                .map_err(map_vfs_catalog_error)?;
+            if !mounts.is_empty() {
+                let paths = mounts
+                    .iter()
+                    .map(|mount| mount.mount_path.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(AgentApiError::conflict(format!(
+                    "cannot revoke the vfs feature while mounts exist ({paths}); delete the mounts first"
+                )));
+            }
+        }
+        if config.features.environments.is_none() {
+            let environments = self
+                .project_session_environments(&session_id, &loaded.state)
+                .await?
+                .environments;
+            let live = environments
+                .iter()
+                .filter(|environment| {
+                    environment.state != api::SessionEnvironmentStateView::Detached
+                })
+                .map(|environment| environment.env_id.to_string())
+                .collect::<Vec<_>>();
+            if !live.is_empty() {
+                return Err(AgentApiError::conflict(format!(
+                    "cannot revoke the environments feature while environments are attached ({}); close them first",
+                    live.join(", ")
+                )));
+            }
         }
         let baseline_failures = self
             .query_status_optional(&session_id)
@@ -1518,9 +1465,9 @@ impl AgentApiService for GatewayAgentApi {
             .ok_or_else(|| AgentApiError::internal("config revision exhausted"))?;
         self.submit_core_command(
             &session_id,
-            CoreAgentCommand::PatchSessionConfig {
+            CoreAgentCommand::ReplaceSessionConfig {
                 expected_revision: Some(loaded.state.lifecycle.config_revision),
-                patch,
+                config,
             },
         )
         .await?;
@@ -1528,55 +1475,7 @@ impl AgentApiService for GatewayAgentApi {
             .await?;
         let loaded = self.load_session_state(&session_id).await?;
         let session = self.configure_session_toolset(&session_id, &loaded).await?;
-        Ok(AgentApiOutcome::new(SessionUpdateResponse { session }))
-    }
-
-    async fn update_session_tools(
-        &self,
-        params: SessionToolsUpdateParams,
-    ) -> Result<AgentApiOutcome<SessionToolsUpdateResponse>, AgentApiError> {
-        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
-            AgentApiError::invalid_request(format!("invalid session id: {error}"))
-        })?;
-        let loaded = self.load_session_state(&session_id).await?;
-        self.require_open_idle_session(&session_id, &loaded, "tool update")?;
-        if let Some(expected) = params.expected_tools_revision {
-            let actual = loaded.state.tooling.revision;
-            if expected != actual {
-                return Err(AgentApiError::conflict(format!(
-                    "expected tools revision {expected}, got {actual}"
-                )));
-            }
-        }
-
-        let update = tools_api::core_tool_update_from_api(params.update)?;
-        update.validate_for(&loaded.state.tooling.tools)?;
-        if update.is_empty() {
-            return Ok(AgentApiOutcome::new(SessionToolsUpdateResponse {
-                session: self.project_session_by_id(&session_id).await?,
-            }));
-        }
-
-        let target_revision = loaded
-            .state
-            .tooling
-            .revision
-            .checked_add(1)
-            .ok_or_else(|| AgentApiError::internal("tools revision exhausted"))?;
-        let baseline_failures = self
-            .query_status_optional(&session_id)
-            .await?
-            .map(|status| status.admission_failures.len())
-            .unwrap_or(0);
-        self.submit_core_command(
-            &session_id,
-            update.into_command(params.expected_tools_revision),
-        )
-        .await?;
-        let session = self
-            .wait_for_tool_revision(&session_id, target_revision, baseline_failures)
-            .await?;
-        Ok(AgentApiOutcome::new(SessionToolsUpdateResponse { session }))
+        Ok(AgentApiOutcome::new(SessionConfigPutResponse { session }))
     }
 
     async fn read_session(
@@ -1715,6 +1614,8 @@ impl AgentApiService for GatewayAgentApi {
         })?;
         let loaded = self.load_session_state(&session_id).await?;
         if loaded.state.lifecycle.status == CoreAgentStatus::Closed {
+            self.detach_all_session_environment_bindings(&session_id)
+                .await?;
             return Ok(AgentApiOutcome::new(SessionCloseResponse {
                 session: self.project_session_by_id(&session_id).await?,
             }));
@@ -1728,6 +1629,8 @@ impl AgentApiService for GatewayAgentApi {
             self.submit_core_command(&session_id, CoreAgentCommand::CloseSession { force: false })
                 .await?;
             let session = self.wait_for_closed_session(&session_id).await?;
+            self.detach_all_session_environment_bindings(&session_id)
+                .await?;
             return Ok(AgentApiOutcome::new(SessionCloseResponse { session }));
         }
 
@@ -1740,6 +1643,8 @@ impl AgentApiService for GatewayAgentApi {
                 .is_ok();
             if signalled {
                 if let Ok(session) = self.wait_for_closed_session(&session_id).await {
+                    self.detach_all_session_environment_bindings(&session_id)
+                        .await?;
                     return Ok(AgentApiOutcome::new(SessionCloseResponse { session }));
                 }
             }
@@ -1757,6 +1662,8 @@ impl AgentApiService for GatewayAgentApi {
         // row; the expected-head CAS protects against a concurrent writer.
         self.force_close_session_in_store(&session_id).await?;
         let session = self.project_session_by_id(&session_id).await?;
+        self.detach_all_session_environment_bindings(&session_id)
+            .await?;
         Ok(AgentApiOutcome::new(SessionCloseResponse { session }))
     }
 
@@ -2123,75 +2030,6 @@ impl AgentApiService for GatewayAgentApi {
         self.start_run_internal(params, Vec::new()).await
     }
 
-    async fn submit_message(
-        &self,
-        params: MessageSubmitParams,
-    ) -> Result<AgentApiOutcome<MessageSubmitResponse>, AgentApiError> {
-        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
-            AgentApiError::invalid_request(format!("invalid session id: {error}"))
-        })?;
-        if params.items.is_empty() {
-            return Err(AgentApiError::invalid_request(
-                "session/messages/submit requires at least one item",
-            ));
-        }
-        let loaded = self
-            .load_session_state_with_current_run_context(&session_id)
-            .await?;
-        let client_supplied_submission_id = params.submission_id.is_some();
-        let submission_id = match params.submission_id {
-            Some(submission_id) => SubmissionId::try_new(submission_id).map_err(|error| {
-                AgentApiError::invalid_request(format!("invalid submission id: {error}"))
-            })?,
-            None => self.allocate_submission_id(),
-        };
-        let input = run_input_from_api(self.store.as_ref(), &params.items).await?;
-        if let Some(existing) = existing_message_submission(&loaded.state, &submission_id, &input) {
-            return match existing {
-                ExistingMessageSubmission::Accepted => {
-                    Ok(AgentApiOutcome::new(MessageSubmitResponse {
-                        submission_id: submission_id.as_str().to_owned(),
-                        accepted: true,
-                    }))
-                }
-                ExistingMessageSubmission::Reject => {
-                    Err(duplicate_submission_error(&submission_id))
-                }
-            };
-        }
-        if loaded.state.lifecycle.status != CoreAgentStatus::Open {
-            return Err(AgentApiError::rejected(format!(
-                "session is not open: {session_id}"
-            )));
-        }
-        let status_before_signal = self.query_status_optional(&session_id).await?;
-        let baseline_admission_failures = status_before_signal
-            .as_ref()
-            .map(|status| status.admission_failures.len())
-            .unwrap_or(0);
-        let wait_for_admission_drain = client_supplied_submission_id
-            || status_has_submission(status_before_signal.as_ref(), &submission_id);
-        self.submit_core_command(
-            &session_id,
-            CoreAgentCommand::SubmitMessage(engine::SubmitMessageCommand {
-                submission_id: Some(submission_id.clone()),
-                input,
-            }),
-        )
-        .await?;
-        self.wait_for_message_accepted(
-            &session_id,
-            &submission_id,
-            baseline_admission_failures,
-            wait_for_admission_drain,
-        )
-        .await?;
-        Ok(AgentApiOutcome::new(MessageSubmitResponse {
-            submission_id: submission_id.as_str().to_owned(),
-            accepted: true,
-        }))
-    }
-
     async fn cancel_run(
         &self,
         params: RunCancelParams,
@@ -2253,19 +2091,6 @@ impl AgentApiService for GatewayAgentApi {
             .wait_for_cancelled_run(&session_id, requested_run_id)
             .await?;
         Ok(AgentApiOutcome::new(RunCancelResponse { run }))
-    }
-
-    async fn active_prompts(
-        &self,
-        params: PromptsActiveParams,
-    ) -> Result<AgentApiOutcome<PromptsActiveResponse>, AgentApiError> {
-        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
-            AgentApiError::invalid_request(format!("invalid session id: {error}"))
-        })?;
-        let loaded = self.load_session_state(&session_id).await?;
-        Ok(AgentApiOutcome::new(
-            self.project_active_prompts(&loaded).await?,
-        ))
     }
 
     async fn list_skills(
@@ -2460,11 +2285,38 @@ impl AgentApiService for GatewayAgentApi {
         }))
     }
 
-    async fn create_session_environment(
+    async fn create_environment(
         &self,
-        params: SessionEnvironmentCreateParams,
-    ) -> Result<AgentApiOutcome<SessionEnvironmentCreateResponse>, AgentApiError> {
-        self.create_session_environment_record(params)
+        params: EnvironmentCreateParams,
+    ) -> Result<AgentApiOutcome<EnvironmentCreateResponse>, AgentApiError> {
+        self.create_environment_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn read_environment(
+        &self,
+        params: EnvironmentReadParams,
+    ) -> Result<AgentApiOutcome<EnvironmentReadResponse>, AgentApiError> {
+        self.read_environment_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn list_environments(
+        &self,
+        params: EnvironmentListParams,
+    ) -> Result<AgentApiOutcome<EnvironmentListResponse>, AgentApiError> {
+        self.list_environment_records(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn close_environment(
+        &self,
+        params: EnvironmentCloseParams,
+    ) -> Result<AgentApiOutcome<EnvironmentCloseResponse>, AgentApiError> {
+        self.close_environment_record(params)
             .await
             .map(AgentApiOutcome::new)
     }
@@ -2567,11 +2419,11 @@ impl AgentApiService for GatewayAgentApi {
         }))
     }
 
-    async fn close_session_environment(
+    async fn detach_session_environment(
         &self,
-        params: SessionEnvironmentCloseParams,
-    ) -> Result<AgentApiOutcome<SessionEnvironmentCloseResponse>, AgentApiError> {
-        self.close_session_environment_record(params)
+        params: SessionEnvironmentDetachParams,
+    ) -> Result<AgentApiOutcome<SessionEnvironmentDetachResponse>, AgentApiError> {
+        self.detach_session_environment_record(params)
             .await
             .map(AgentApiOutcome::new)
     }
@@ -2603,38 +2455,38 @@ impl AgentApiService for GatewayAgentApi {
             .map(AgentApiOutcome::new)
     }
 
-    async fn create_session_jobs(
+    async fn create_environment_jobs(
         &self,
-        params: SessionJobCreateParams,
-    ) -> Result<AgentApiOutcome<SessionJobCreateResponse>, AgentApiError> {
-        self.create_session_job_records(params)
+        params: EnvironmentJobCreateParams,
+    ) -> Result<AgentApiOutcome<EnvironmentJobCreateResponse>, AgentApiError> {
+        self.create_environment_job_records(params)
             .await
             .map(AgentApiOutcome::new)
     }
 
-    async fn list_session_jobs(
+    async fn read_environment_jobs(
         &self,
-        params: SessionJobListParams,
-    ) -> Result<AgentApiOutcome<SessionJobListResponse>, AgentApiError> {
-        self.list_session_job_records(params)
+        params: EnvironmentJobReadParams,
+    ) -> Result<AgentApiOutcome<EnvironmentJobReadResponse>, AgentApiError> {
+        self.read_environment_job_records(params)
             .await
             .map(AgentApiOutcome::new)
     }
 
-    async fn read_session_jobs(
+    async fn list_environment_jobs(
         &self,
-        params: SessionJobReadParams,
-    ) -> Result<AgentApiOutcome<SessionJobReadResponse>, AgentApiError> {
-        self.read_session_job_records(params)
+        params: EnvironmentJobListParams,
+    ) -> Result<AgentApiOutcome<EnvironmentJobListResponse>, AgentApiError> {
+        self.list_environment_job_records(params)
             .await
             .map(AgentApiOutcome::new)
     }
 
-    async fn cancel_session_jobs(
+    async fn cancel_environment_jobs(
         &self,
-        params: SessionJobCancelParams,
-    ) -> Result<AgentApiOutcome<SessionJobCancelResponse>, AgentApiError> {
-        self.cancel_session_job_records(params)
+        params: EnvironmentJobCancelParams,
+    ) -> Result<AgentApiOutcome<EnvironmentJobCancelResponse>, AgentApiError> {
+        self.cancel_environment_job_records(params)
             .await
             .map(AgentApiOutcome::new)
     }
@@ -2671,15 +2523,6 @@ impl AgentApiService for GatewayAgentApi {
         params: EnvironmentProviderListParams,
     ) -> Result<AgentApiOutcome<EnvironmentProviderListResponse>, AgentApiError> {
         self.list_environment_provider_records(params)
-            .await
-            .map(AgentApiOutcome::new)
-    }
-
-    async fn list_environment_provider_targets(
-        &self,
-        params: EnvironmentProviderTargetListParams,
-    ) -> Result<AgentApiOutcome<EnvironmentProviderTargetListResponse>, AgentApiError> {
-        self.list_environment_provider_target_records(params)
             .await
             .map(AgentApiOutcome::new)
     }
@@ -2824,17 +2667,17 @@ impl AgentApiService for GatewayAgentApi {
         }))
     }
 
-    async fn create_mcp_server(
+    async fn put_mcp_server(
         &self,
-        params: McpServerCreateParams,
-    ) -> Result<AgentApiOutcome<McpServerCreateResponse>, AgentApiError> {
-        let record = create_mcp_server_record(params, now_ms()?)?;
+        params: McpServerPutParams,
+    ) -> Result<AgentApiOutcome<McpServerPutResponse>, AgentApiError> {
+        let record = put_mcp_server_record(params.server, now_ms()?)?;
         let server = self
             .store
-            .create_server(record)
+            .put_server(record, params.expected_revision)
             .await
             .map_err(map_mcp_error)?;
-        Ok(AgentApiOutcome::new(McpServerCreateResponse {
+        Ok(AgentApiOutcome::new(McpServerPutResponse {
             server: mcp_server_view(server),
         }))
     }
@@ -2871,22 +2714,6 @@ impl AgentApiService for GatewayAgentApi {
         }))
     }
 
-    async fn update_mcp_server(
-        &self,
-        params: McpServerUpdateParams,
-    ) -> Result<AgentApiOutcome<McpServerUpdateResponse>, AgentApiError> {
-        let server_id = parse_mcp_server_id(params.server_id)?;
-        let update = mcp_api::update_mcp_server_record(params.patch, now_ms()?);
-        let server = self
-            .store
-            .update_server(&server_id, update)
-            .await
-            .map_err(map_mcp_error)?;
-        Ok(AgentApiOutcome::new(McpServerUpdateResponse {
-            server: mcp_server_view(server),
-        }))
-    }
-
     async fn delete_mcp_server(
         &self,
         params: McpServerDeleteParams,
@@ -2899,127 +2726,6 @@ impl AgentApiService for GatewayAgentApi {
             .map_err(map_mcp_error)?;
         Ok(AgentApiOutcome::new(McpServerDeleteResponse {
             server: mcp_server_view(server),
-        }))
-    }
-
-    async fn link_session_mcp(
-        &self,
-        params: SessionMcpLinkParams,
-    ) -> Result<AgentApiOutcome<SessionMcpLinkResponse>, AgentApiError> {
-        let session_id = SessionId::try_new(params.session_id.clone()).map_err(|error| {
-            AgentApiError::invalid_request(format!("invalid session id: {error}"))
-        })?;
-        let server_id = parse_mcp_server_id(params.server_id.clone())?;
-        let server = self
-            .store
-            .read_server(&server_id)
-            .await
-            .map_err(map_mcp_error)?;
-        let grant = match params.auth_grant_id.clone() {
-            Some(grant_id) => {
-                let grant_id = parse_auth_grant_id(grant_id)?;
-                Some(
-                    self.store
-                        .read_grant(&grant_id)
-                        .await
-                        .map_err(map_auth_error)?,
-                )
-            }
-            None => None,
-        };
-        let loaded = self.load_session_state(&session_id).await?;
-        self.require_open_idle_session(&session_id, &loaded, "MCP link")?;
-
-        let draft = session_mcp_link_from_record(params, &server, grant.as_ref())?;
-        let link_tool_name = draft.tool_name.clone();
-        let patch = apply_session_mcp_link(&loaded.state.tooling.tools, draft)?;
-        let expected_tools = patch
-            .apply_to(&loaded.state.tooling.tools)
-            .map_err(|error| {
-                AgentApiError::invalid_request(format!("invalid MCP tool patch: {error}"))
-            })?;
-        let expected_tool_ids = mcp_api::linked_session_mcp_tool_ids(&expected_tools);
-        let baseline_failures = self
-            .query_status_optional(&session_id)
-            .await?
-            .map(|status| status.admission_failures.len())
-            .unwrap_or(0);
-        self.submit_core_command(
-            &session_id,
-            CoreAgentCommand::PatchTools {
-                expected_revision: Some(loaded.state.tooling.revision),
-                patch,
-            },
-        )
-        .await?;
-        let (session, links) = self
-            .wait_for_session_mcp_links(&session_id, expected_tool_ids, baseline_failures)
-            .await?;
-        let link = links
-            .iter()
-            .find(|link| link.tool_id == link_tool_name.as_str())
-            .cloned()
-            .ok_or_else(|| {
-                AgentApiError::internal(format!("linked MCP tool not visible: {link_tool_name}"))
-            })?;
-        Ok(AgentApiOutcome::new(SessionMcpLinkResponse {
-            link,
-            links,
-            session,
-        }))
-    }
-
-    async fn unlink_session_mcp(
-        &self,
-        params: SessionMcpUnlinkParams,
-    ) -> Result<AgentApiOutcome<SessionMcpUnlinkResponse>, AgentApiError> {
-        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
-            AgentApiError::invalid_request(format!("invalid session id: {error}"))
-        })?;
-        let tool_name = parse_mcp_tool_name(params.tool_id)?;
-        let loaded = self.load_session_state(&session_id).await?;
-        self.require_open_idle_session(&session_id, &loaded, "MCP unlink")?;
-
-        let patch = remove_session_mcp_link(&loaded.state.tooling.tools, &tool_name)?;
-        let expected_tools = patch
-            .apply_to(&loaded.state.tooling.tools)
-            .map_err(|error| {
-                AgentApiError::invalid_request(format!("invalid MCP tool patch: {error}"))
-            })?;
-        let expected_tool_ids = mcp_api::linked_session_mcp_tool_ids(&expected_tools);
-        let baseline_failures = self
-            .query_status_optional(&session_id)
-            .await?
-            .map(|status| status.admission_failures.len())
-            .unwrap_or(0);
-        self.submit_core_command(
-            &session_id,
-            CoreAgentCommand::PatchTools {
-                expected_revision: Some(loaded.state.tooling.revision),
-                patch,
-            },
-        )
-        .await?;
-        let (session, links) = self
-            .wait_for_session_mcp_links(&session_id, expected_tool_ids, baseline_failures)
-            .await?;
-        Ok(AgentApiOutcome::new(SessionMcpUnlinkResponse {
-            tool_id: tool_name.as_str().to_owned(),
-            links,
-            session,
-        }))
-    }
-
-    async fn list_session_mcp(
-        &self,
-        params: SessionMcpListParams,
-    ) -> Result<AgentApiOutcome<SessionMcpListResponse>, AgentApiError> {
-        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
-            AgentApiError::invalid_request(format!("invalid session id: {error}"))
-        })?;
-        let loaded = self.load_session_state(&session_id).await?;
-        Ok(AgentApiOutcome::new(SessionMcpListResponse {
-            links: linked_session_mcp(&loaded.state.tooling.tools),
         }))
     }
 

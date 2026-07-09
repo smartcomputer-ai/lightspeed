@@ -49,11 +49,12 @@ pub struct ToolActivityDeps {
 }
 
 #[derive(Clone)]
-pub struct SkillCatalogActivityDeps {
+pub struct RuntimeProjectionActivityDeps {
     pub(super) blobs: Arc<dyn BlobStore>,
     pub(super) workspace_store: Arc<dyn VfsWorkspaceStore>,
     pub(super) mount_store: Arc<dyn VfsMountStore>,
     pub(super) environment_bindings: Arc<dyn SessionEnvironmentBindingStore>,
+    pub(super) environment_instances: Arc<dyn environments::EnvironmentInstanceStore>,
 }
 
 #[derive(Clone)]
@@ -68,8 +69,9 @@ pub struct ActivityState {
     storage: StorageActivityDeps,
     llm: LlmActivityDeps,
     tools: ToolActivityDeps,
-    skill_catalog: Option<SkillCatalogActivityDeps>,
+    runtime_projection: Option<RuntimeProjectionActivityDeps>,
     preprocess: PreprocessActivityDeps,
+    environment_jobs: Option<Arc<PgStore>>,
 }
 
 impl ActivityState {
@@ -92,26 +94,29 @@ impl ActivityState {
                 tools,
                 blobs: blobs.clone(),
             },
-            skill_catalog: None,
+            runtime_projection: None,
             preprocess: PreprocessActivityDeps {
                 blobs: blobs.clone(),
                 transcriber: Arc::new(UnavailableAudioTranscriber),
                 transcoder: None,
             },
+            environment_jobs: None,
         }
     }
 
-    pub fn with_skill_catalog_deps(
+    pub fn with_runtime_projection_deps(
         mut self,
         workspace_store: Arc<dyn VfsWorkspaceStore>,
         mount_store: Arc<dyn VfsMountStore>,
         environment_bindings: Arc<dyn SessionEnvironmentBindingStore>,
+        environment_instances: Arc<dyn environments::EnvironmentInstanceStore>,
     ) -> Self {
-        self.skill_catalog = Some(SkillCatalogActivityDeps {
+        self.runtime_projection = Some(RuntimeProjectionActivityDeps {
             blobs: self.storage.blobs.clone(),
             workspace_store,
             mount_store,
             environment_bindings,
+            environment_instances,
         });
         self
     }
@@ -135,12 +140,16 @@ impl ActivityState {
         let blobs: Arc<dyn BlobStore> = store.clone();
         let workspace_store: Arc<dyn VfsWorkspaceStore> = store.clone();
         let mount_store: Arc<dyn VfsMountStore> = store.clone();
-        let environment_bindings: Arc<dyn SessionEnvironmentBindingStore> = store;
-        Self::new(sessions, blobs, llm, tools).with_skill_catalog_deps(
+        let environment_bindings: Arc<dyn SessionEnvironmentBindingStore> = store.clone();
+        let environment_instances: Arc<dyn environments::EnvironmentInstanceStore> = store.clone();
+        let mut state = Self::new(sessions, blobs, llm, tools).with_runtime_projection_deps(
             workspace_store,
             mount_store,
             environment_bindings,
-        )
+            environment_instances,
+        );
+        state.environment_jobs = Some(store);
+        state
     }
 
     pub fn from_pg_store_with_default_runtime(store: Arc<PgStore>) -> anyhow::Result<Self> {
@@ -185,6 +194,9 @@ impl ActivityState {
         store: Arc<PgStore>,
         fleet_runtime: Option<Arc<dyn FleetChildRuntime>>,
         clients: &DeploymentClients,
+        temporal_client: temporalio_client::Client,
+        task_queue: String,
+        universe_id: uuid::Uuid,
     ) -> anyhow::Result<Self> {
         let blobs: Arc<dyn BlobStore> = store.clone();
         let broker = registry_token_broker_with_clients(
@@ -205,9 +217,22 @@ impl ActivityState {
             clients.openai.clone(),
             clients.anthropic.clone(),
         );
-        let tools = match fleet_runtime {
-            Some(fleet_runtime) => session_tools_with_fleet(store.clone(), fleet_runtime),
-            None => session_tools(store.clone()),
+        let tools: Arc<dyn CoreAgentTools> = match fleet_runtime {
+            Some(fleet_runtime) => Arc::new(
+                SessionTools::from_pg_store_with_fleet_runtime(store.clone(), fleet_runtime)
+                    .with_environment_job_workflow_runtime(
+                        temporal_client.clone(),
+                        task_queue.clone(),
+                        universe_id,
+                    ),
+            ),
+            None => Arc::new(
+                SessionTools::from_pg_store(store.clone()).with_environment_job_workflow_runtime(
+                    temporal_client,
+                    task_queue,
+                    universe_id,
+                ),
+            ),
         };
         let mut state = Self::from_pg_store(store, llm, tools).with_audio_transcriber(transcriber);
         if let Some(transcoder) = clients.audio_transcoder.clone() {
@@ -233,12 +258,16 @@ impl ActivityState {
         &self.tools
     }
 
-    pub(super) fn skill_catalog(&self) -> Option<&SkillCatalogActivityDeps> {
-        self.skill_catalog.as_ref()
+    pub(super) fn runtime_projection(&self) -> Option<&RuntimeProjectionActivityDeps> {
+        self.runtime_projection.as_ref()
     }
 
     pub(super) fn preprocess(&self) -> &PreprocessActivityDeps {
         &self.preprocess
+    }
+
+    pub(super) fn environment_jobs(&self) -> Option<&Arc<PgStore>> {
+        self.environment_jobs.as_ref()
     }
 }
 

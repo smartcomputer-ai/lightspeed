@@ -8,8 +8,11 @@ pub struct SessionView {
     pub display_name: Option<String>,
     pub status: SessionStatus,
     pub config_revision: u64,
+    /// The stored sparse config document, exactly as last put (model and
+    /// feature versions materialized at admission). Effective tool reality
+    /// is visible via `active_tools`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub config: Option<SessionConfigView>,
+    pub config: Option<SessionConfig>,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
     #[serde(default)]
@@ -26,52 +29,7 @@ pub struct SessionView {
 pub struct ContextView {
     pub revision: u64,
     #[serde(default)]
-    pub items: Vec<SessionItemView>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionConfigView {
-    pub model: ModelConfig,
-    pub generation: GenerationConfig,
-    pub context: ContextConfigInput,
-    pub run_defaults: RunDefaultsConfig,
-    pub tools: ToolConfigView,
-    pub fleet: FleetConfigView,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct ToolConfigView {
-    pub web_search: bool,
-    pub web_fetch: bool,
-    pub filesystem: FilesystemToolMode,
-    pub fleet: bool,
-    pub timer: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct FleetConfigView {
-    pub profiles: FleetProfilesConfigView,
-    pub spawn: FleetSpawnConfigView,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct FleetProfilesConfigView {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub allow: Option<Vec<ProfileId>>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub deny: Vec<ProfileId>,
-    pub inline: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct FleetSpawnConfigView {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bases: Option<Vec<FleetSpawnBaseConfig>>,
+    pub entries: Vec<ContextEntryView>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -91,7 +49,7 @@ pub struct RunView {
     pub status: RunStatus,
     pub source: RunViewSource,
     #[serde(default)]
-    pub items: Vec<SessionItemView>,
+    pub entries: Vec<ContextEntryView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tool_batches: Vec<ToolBatchView>,
 }
@@ -280,55 +238,34 @@ pub enum TokenEstimateQualityView {
     Estimated,
 }
 
+/// A session context entry, faithful to the stored engine entry: keyed,
+/// kind-tagged, ref-backed. Keys are a stable extension point — clients
+/// reconstruct derived surfaces (e.g. the prompted instruction set via the
+/// `prompt_instructions/` key prefix) by filtering on `key` and fetching
+/// bodies through `blobs/read`. `text` inlines blob content only for
+/// message and tool entries; every other kind is ref + preview.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(
-    tag = "type",
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase"
-)]
-pub enum SessionItemView {
-    UserMessage {
-        id: ItemId,
-        text: String,
-    },
-    AssistantMessage {
-        id: ItemId,
-        text: String,
-    },
-    ToolCall {
-        id: ItemId,
-        call_id: String,
-        tool_name: String,
-        arguments: Option<String>,
-        status: ToolItemStatus,
-    },
-    ToolResult {
-        id: ItemId,
-        call_id: String,
-        output: Option<String>,
-        is_error: bool,
-        status: ToolItemStatus,
-    },
-    SystemEvent {
-        id: ItemId,
-        text: String,
-    },
-    ProviderContext {
-        id: ItemId,
-        content_ref: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        media_type: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        preview: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        provider_kind: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        provider_item_id: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        token_estimate: Option<TokenEstimateView>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        display: Option<ProviderContextDisplayView>,
-    },
+#[serde(rename_all = "camelCase")]
+pub struct ContextEntryView {
+    pub id: ItemId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    pub kind: ContextEntryKindView,
+    pub content_ref: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_item_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_estimate: Option<TokenEstimateView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display: Option<ProviderContextDisplayView>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

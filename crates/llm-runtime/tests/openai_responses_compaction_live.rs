@@ -5,7 +5,7 @@ use engine::{
     ContextEntryInput, ContextEntryKey, ContextEntryKind, ContextMessageRole, ContextRemovalReason,
     CoreAgentCommand, CoreAgentEvent, ModelSelection, OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND,
     ProviderApiKind, RunConfig, RunStatus, SessionConfig, SessionId, TokenEstimate,
-    TokenEstimateQuality, TurnConfig,
+    TokenEstimateQuality,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
 };
 use llm_clients::openai::responses::{Client, Config};
@@ -409,25 +409,19 @@ fn live_model_selection() -> ModelSelection {
 fn session_config(model: ModelSelection) -> SessionConfig {
     SessionConfig {
         model,
-        run: run_config(),
-        turn: TurnConfig {
+        generation: engine::GenerationConfig {
             max_output_tokens: Some(160),
+            reasoning_effort: None,
             tool_choice: None,
-            provider_params: Some(support::openai_params(
-                &llm_runtime::OpenAiResponsesParams {
-                    store: Some(false),
-                    stream: Some(false),
-                    ..llm_runtime::OpenAiResponsesParams::default()
-                },
-            )),
+            parallel_tool_use: None,
         },
+        limits: Default::default(),
         context: ContextConfig {
             compaction: Some(CompactionPolicy::ProviderTriggered {
                 compact_threshold_tokens: Some(2_000),
             }),
         },
-        tools: Default::default(),
-        fleet: Default::default(),
+        features: Default::default(),
     }
 }
 
@@ -437,36 +431,38 @@ fn standalone_session_config(
 ) -> SessionConfig {
     SessionConfig {
         model,
-        run: run_config(),
-        turn: TurnConfig {
+        generation: engine::GenerationConfig {
             max_output_tokens: Some(160),
+            reasoning_effort: None,
             tool_choice: None,
-            provider_params: Some(support::openai_params(
-                &llm_runtime::OpenAiResponsesParams {
-                    store: Some(false),
-                    stream: Some(false),
-                    ..llm_runtime::OpenAiResponsesParams::default()
-                },
-            )),
+            parallel_tool_use: None,
         },
+        limits: Default::default(),
         context: ContextConfig {
             compaction: Some(CompactionPolicy::ProviderStandalone {
                 compact_threshold_tokens,
                 target_tokens: Some(128),
             }),
         },
-        tools: Default::default(),
-        fleet: Default::default(),
+        features: Default::default(),
     }
 }
 
 fn run_config() -> RunConfig {
     RunConfig {
         max_turns: Some(4),
+        reasoning_effort: None,
+        parallel_tool_use: None,
         max_tool_rounds: Some(0),
         model_override: None,
         max_output_tokens: None,
-        provider_params: None,
+        provider_params: Some(support::openai_params(
+            &llm_runtime::OpenAiResponsesParams {
+                store: Some(false),
+                stream: Some(false),
+                ..llm_runtime::OpenAiResponsesParams::default()
+            },
+        )),
         tool_choice: None,
     }
 }

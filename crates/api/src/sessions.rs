@@ -7,45 +7,61 @@ pub struct SessionStartParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub config: Option<SessionConfigInput>,
+    pub config: Option<SessionConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<ProfileSource>,
 }
 
+/// Current version of every feature block. Omitted versions on input decode
+/// to this value; documents read back from a session always carry the pinned
+/// version.
+pub const CURRENT_FEATURE_VERSION: u32 = 1;
+
+fn default_feature_version() -> u32 {
+    CURRENT_FEATURE_VERSION
+}
+
+/// Declared session configuration document.
+///
+/// Sparse and capability-oriented: an omitted section means defaults, an
+/// absent feature is not granted (no tools, no access). The document is
+/// replaced whole via `session/config/put`; reads return exactly the stored
+/// document, so read-modify-write round-trips.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionConfigInput {
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SessionConfig {
+    /// Absent on input means the deployment default model. Documents read
+    /// back from a session always carry the model; the provider api kind is
+    /// pinned for the session's lifetime.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<ModelConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generation: Option<GenerationConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub context: Option<ContextConfigInput>,
+    pub limits: Option<LimitsConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub run_defaults: Option<RunDefaultsConfig>,
+    pub context: Option<ContextConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tools: Option<ToolConfigInput>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fleet: Option<FleetConfigInput>,
+    pub features: Option<FeaturesConfig>,
 }
 
+/// Turn-shaping defaults applied to every LLM generation. Per-run overrides
+/// ride `session/runs/start`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GenerationConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_output_tokens: Option<u32>,
+    /// Reasoning effort tier as a provider-native string (e.g. "none",
+    /// "high", "xhigh", "ultra"); validated against the session's provider.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reasoning_effort: Option<ReasoningEffort>,
+    pub reasoning_effort: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool_choice: Option<ToolChoiceConfig>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct ToolChoiceConfig {
-    pub mode: ToolChoiceModeConfig,
+    pub tool_choice: Option<ToolChoice>,
+    /// Whether the model may call several tools in one turn; absent leaves
+    /// the provider default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub disable_parallel_tool_use: Option<bool>,
+    pub parallel_tool_use: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -54,23 +70,33 @@ pub struct ToolChoiceConfig {
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
-pub enum ToolChoiceModeConfig {
+pub enum ToolChoice {
     Auto,
     None,
     RequiredAny,
     Specific { tool_id: String },
 }
 
+/// Run budget defaults enforced by the engine drive loop.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct ContextConfigInput {
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LimitsConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub compaction: Option<CompactionPolicyInput>,
+    pub max_turns: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tool_rounds: Option<u32>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ContextConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction: Option<CompactionPolicy>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", tag = "mode")]
-pub enum CompactionPolicyInput {
+pub enum CompactionPolicy {
     Disabled,
     ProviderTriggered {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -84,50 +110,124 @@ pub enum CompactionPolicyInput {
     },
 }
 
+/// Capability grants. An absent feature is not granted; `{}` grants it with
+/// defaults. Every block carries a behavior `version` that pins semantics.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FeaturesConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vfs: Option<VfsFeature>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web: Option<WebFeature>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub messaging: Option<MessagingFeature>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fleet: Option<FleetFeature>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timers: Option<TimersFeature>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environments: Option<EnvironmentsFeature>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp: Option<McpFeature>,
+}
+
+/// Grants the session virtual filesystem: mounts may be attached and the VFS
+/// catalog is surfaced. Sub-grants are independent; `{}` grants a VFS with
+/// no tools and no sourcing.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct VfsFeature {
+    #[serde(default = "default_feature_version")]
+    pub version: u32,
+    /// Agent-facing filesystem tool surface; absent = no fs tools. Per-path
+    /// writability is defined by each mount's own access.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools: Option<VfsToolSurface>,
+    /// Prompt-instruction sourcing from the VFS.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompts: Option<VfsPromptsConfig>,
+    /// Skill discovery sourcing from the VFS.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skills: Option<VfsSkillsConfig>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct RunDefaultsConfig {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_turns: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_tool_rounds: Option<u32>,
+pub enum VfsToolSurface {
+    ReadOnly,
+    Edit,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct ToolConfigInput {
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct VfsPromptsConfig {
+    /// Absent means the conventional roots; an explicit list must be
+    /// non-empty.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub web_search: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub web_fetch: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub filesystem: Option<FilesystemToolMode>,
-    /// Enables the messaging toolset (message_send/react/edit/noop) for
-    /// sessions bound to a chat channel.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub messaging: Option<bool>,
-    /// Enables the Fleet subagent control-plane tools
-    /// (agent_spawn/send/read/list/cancel and profile_list/read).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fleet: Option<bool>,
-    /// Enables timer promises through the sleep tool. Also exposes the base
-    /// concurrency tools (await/cancel/detach).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timer: Option<bool>,
+    pub roots: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct FleetConfigInput {
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct VfsSkillsConfig {
+    /// Absent means the conventional roots; an explicit list must be
+    /// non-empty.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub profiles: Option<FleetProfilesConfigInput>,
+    pub roots: Option<Vec<String>>,
+}
+
+/// Grants network access through the web toolset; `fetch` and `search` are
+/// independently granted, and a web block granting neither is rejected.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WebFeature {
+    #[serde(default = "default_feature_version")]
+    pub version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub spawn: Option<FleetSpawnConfigInput>,
+    pub fetch: Option<WebFetchFeature>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search: Option<WebSearchFeature>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct FleetProfilesConfigInput {
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WebFetchFeature {}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WebSearchFeature {
+    /// Absent means all domains; an explicit list must be non-empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_domains: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blocked_domains: Vec<String>,
+}
+
+/// Grants the messaging toolset (message_send/react/edit/noop) for sessions
+/// bound to a chat channel.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MessagingFeature {
+    #[serde(default = "default_feature_version")]
+    pub version: u32,
+}
+
+/// Grants the Fleet subagent control plane
+/// (agent_spawn/send/read/list/cancel and profile_list/read).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FleetFeature {
+    #[serde(default = "default_feature_version")]
+    pub version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profiles: Option<FleetProfilesConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spawn: Option<FleetSpawnConfig>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FleetProfilesConfig {
     /// Absent means all named profiles are visible/readable/spawnable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allow: Option<Vec<ProfileId>>,
@@ -139,28 +239,70 @@ pub struct FleetProfilesConfigInput {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct FleetSpawnConfigInput {
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FleetSpawnConfig {
     /// Absent means all bases are allowed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bases: Option<Vec<FleetSpawnBaseConfig>>,
+    pub bases: Option<Vec<FleetSpawnBase>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub enum FleetSpawnBaseConfig {
+pub enum FleetSpawnBase {
     #[serde(rename = "self")]
     Self_,
     Session,
     Profile,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub enum FilesystemToolMode {
-    None,
-    ReadOnly,
-    Edit,
+/// Grants timer promises through the sleep tool plus the base concurrency
+/// tools (await/cancel/detach).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TimersFeature {
+    #[serde(default = "default_feature_version")]
+    pub version: u32,
+}
+
+/// Grants attaching/activating session environments and their process/job
+/// tool surface.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EnvironmentsFeature {
+    #[serde(default = "default_feature_version")]
+    pub version: u32,
+    /// Absent means every registered provider is allowed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub providers: Option<Vec<EnvironmentProviderId>>,
+}
+
+/// Grants remote MCP tools by declaring linked servers from the universe MCP
+/// catalog; must link at least one server, with unique server ids.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct McpFeature {
+    #[serde(default = "default_feature_version")]
+    pub version: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub servers: Vec<McpServerLink>,
+}
+
+/// A linked catalog server with optional per-session overrides; absent
+/// fields defer to the catalog record's defaults.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct McpServerLink {
+    pub server_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_tools: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval: Option<RemoteMcpApprovalPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub defer_loading: Option<bool>,
+    /// Universe-scoped auth grant used to authenticate against the server;
+    /// compatibility with the server's auth policy is validated at put time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_grant_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -169,140 +311,24 @@ pub struct SessionStartResponse {
     pub session: SessionView,
 }
 
+/// Replace the session config with a complete document. Anything omitted
+/// from the document reverts to defaults; an absent feature is revoked.
+/// Requires an idle session; putting an identical document is a no-op that
+/// leaves the revision untouched.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct SessionUpdateParams {
+pub struct SessionConfigPutParams {
     pub session_id: SessionId,
+    /// Checked against the session's current config revision when present;
+    /// absent replaces unconditionally.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_config_revision: Option<u64>,
-    #[serde(default)]
-    pub patch: SessionConfigPatchInput,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionConfigPatchInput {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model: Option<ModelConfig>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub generation: Option<GenerationConfigPatch>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub context: Option<ContextConfigPatchInput>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub run_defaults: Option<RunDefaultsPatch>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tools: Option<ToolConfigPatchInput>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fleet: Option<FleetConfigPatchInput>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", tag = "op", content = "value")]
-#[schemars(rename = "FieldPatchOf{T}")]
-pub enum FieldPatch<T> {
-    Set(T),
-    Clear,
-}
-
-impl<T> FieldPatch<T> {
-    pub fn into_option(self) -> Option<T> {
-        match self {
-            Self::Set(value) => Some(value),
-            Self::Clear => None,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct GenerationConfigPatch {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_output_tokens: Option<FieldPatch<u32>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reasoning_effort: Option<ReasoningEffort>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool_choice: Option<FieldPatch<ToolChoiceConfig>>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct ContextConfigPatchInput {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub compaction: Option<FieldPatch<CompactionPolicyInput>>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct RunDefaultsPatch {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_turns: Option<FieldPatch<u32>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_tool_rounds: Option<FieldPatch<u32>>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct ToolConfigPatchInput {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub web_search: Option<FieldPatch<bool>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub web_fetch: Option<FieldPatch<bool>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub filesystem: Option<FieldPatch<FilesystemToolMode>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub messaging: Option<FieldPatch<bool>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fleet: Option<FieldPatch<bool>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timer: Option<FieldPatch<bool>>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct FleetConfigPatchInput {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub profiles: Option<FieldPatch<FleetProfilesConfigInput>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub spawn: Option<FieldPatch<FleetSpawnConfigInput>>,
+    pub config: SessionConfig,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct SessionUpdateResponse {
-    pub session: SessionView,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionToolsUpdateParams {
-    pub session_id: SessionId,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expected_tools_revision: Option<u64>,
-    pub update: SessionToolsUpdateInput,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(
-    tag = "type",
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase"
-)]
-pub enum SessionToolsUpdateInput {
-    Replace {
-        #[serde(default)]
-        tools: Vec<ToolView>,
-    },
-    Patch {
-        #[serde(default)]
-        upsert: Vec<ToolView>,
-        #[serde(default)]
-        remove: Vec<String>,
-    },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionToolsUpdateResponse {
+pub struct SessionConfigPutResponse {
     pub session: SessionView,
 }
 
@@ -864,12 +890,12 @@ pub enum SessionEventKindView {
     ContextEntriesApplied {
         base_revision: u64,
         revision: u64,
-        items: Vec<SessionItemView>,
+        entries: Vec<ContextEntryView>,
     },
     ContextEntriesRemoved {
         base_revision: u64,
         revision: u64,
-        item_ids: Vec<ItemId>,
+        entry_ids: Vec<ItemId>,
         reason: String,
     },
     ContextKeysRemoved {
@@ -881,12 +907,12 @@ pub enum SessionEventKindView {
         base_revision: u64,
         revision: u64,
         key_prefix: String,
-        items: Vec<SessionItemView>,
+        entries: Vec<ContextEntryView>,
     },
     ContextStateReplaced {
         base_revision: u64,
         revision: u64,
-        items: Vec<SessionItemView>,
+        entries: Vec<ContextEntryView>,
         reason: String,
     },
     ContextCompactionRequested {

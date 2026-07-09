@@ -3,7 +3,9 @@ use engine::{
     CoreAgentCommand, CoreAgentState, ENVIRONMENT_ACTIVE_CONTEXT_KEY,
     ENVIRONMENT_CATALOG_CONTEXT_KEY, SKILL_CATALOG_CONTEXT_KEY, VFS_CATALOG_CONTEXT_KEY,
 };
-use temporal_workflow::{SkillCatalogRefreshActivityRequest, SkillCatalogRefreshActivityResult};
+use temporal_workflow::{
+    RuntimeProjectionRefreshActivityRequest, RuntimeProjectionRefreshActivityResult,
+};
 use temporalio_sdk::activities::ActivityError;
 use tools::{
     environment::EnvironmentToolContext,
@@ -16,14 +18,14 @@ use tools::{
 
 use crate::environment::{SessionEnvironmentManager, runtime_environment_from_binding_record};
 
-use super::{common::activity_error, state::SkillCatalogActivityDeps};
+use super::{common::activity_error, state::RuntimeProjectionActivityDeps};
 
-pub(super) async fn refresh_skill_catalog(
-    deps: Option<&SkillCatalogActivityDeps>,
-    request: SkillCatalogRefreshActivityRequest,
-) -> Result<SkillCatalogRefreshActivityResult, ActivityError> {
+pub(super) async fn refresh_runtime_projection(
+    deps: Option<&RuntimeProjectionActivityDeps>,
+    request: RuntimeProjectionRefreshActivityRequest,
+) -> Result<RuntimeProjectionRefreshActivityResult, ActivityError> {
     let Some(deps) = deps else {
-        return Ok(SkillCatalogRefreshActivityResult {
+        return Ok(RuntimeProjectionRefreshActivityResult {
             commands: Vec::new(),
         });
     };
@@ -66,20 +68,28 @@ pub(super) async fn refresh_skill_catalog(
             .insert(ENV_TARGET_NAMESPACE.to_owned(), target);
     }
 
-    let environments = ::environments::SessionEnvironmentBindingStore::list_bindings_for_session(
+    let bindings = ::environments::SessionEnvironmentBindingStore::list_bindings_for_session(
         deps.environment_bindings.as_ref(),
         &request.session_id,
     )
     .await
     .map_err(activity_error)?
-    .into_iter()
-    .map(|binding| {
+    .into_iter();
+    let mut environments = Vec::new();
+    for binding in bindings {
+        let instance = ::environments::EnvironmentInstanceStore::read_instance(
+            deps.environment_instances.as_ref(),
+            &binding.instance_id,
+        )
+        .await
+        .map_err(activity_error)?;
         let tool_context = EnvironmentToolContext::new(None, deps.blobs.clone())
             .with_session_id(binding.session_id.as_str());
-        runtime_environment_from_binding_record(&binding, tool_context)
-    })
-    .collect::<Result<Vec<_>, _>>()
-    .map_err(activity_error)?;
+        environments.push(
+            runtime_environment_from_binding_record(&binding, &instance, tool_context)
+                .map_err(activity_error)?,
+        );
+    }
     let manager = SessionEnvironmentManager::new(deps.blobs.clone(), deps.mount_store.clone());
     let mut commands = manager
         .refresh_projection_for_runtime_environments(&state, mounts.clone(), environments)
@@ -89,7 +99,7 @@ pub(super) async fn refresh_skill_catalog(
 
     let specs = conventional_vfs_skill_root_specs(&mounts);
     if specs.is_empty() {
-        return Ok(SkillCatalogRefreshActivityResult {
+        return Ok(RuntimeProjectionRefreshActivityResult {
             commands: append_optional(
                 commands,
                 clear_catalog_command(request.active_catalog_ref.as_ref()),
@@ -110,7 +120,7 @@ pub(super) async fn refresh_skill_catalog(
         .await
         .map_err(activity_error)?;
     if inputs.is_empty() {
-        return Ok(SkillCatalogRefreshActivityResult {
+        return Ok(RuntimeProjectionRefreshActivityResult {
             commands: append_optional(
                 commands,
                 clear_catalog_command(request.active_catalog_ref.as_ref()),
@@ -124,7 +134,7 @@ pub(super) async fn refresh_skill_catalog(
     if let Some(command) = publication.command {
         commands.push(command);
     }
-    Ok(SkillCatalogRefreshActivityResult { commands })
+    Ok(RuntimeProjectionRefreshActivityResult { commands })
 }
 
 fn append_optional(
@@ -223,13 +233,15 @@ mod tests {
         storage::{BlobStore, InMemoryBlobStore},
     };
     use environments::{
-        CreateSessionEnvironmentBinding, EnvironmentId, EnvironmentProviderId,
-        InMemoryEnvironmentRegistryStore, SessionEnvironmentBindingStatus,
-        SessionEnvironmentBindingStore, SessionEnvironmentCapabilities, SessionEnvironmentFsRoute,
-        SessionEnvironmentFsRouteAccess, SessionEnvironmentKind,
+        EnvironmentId, EnvironmentInstanceId, EnvironmentInstanceOrigin, EnvironmentInstanceStore,
+        EnvironmentProviderCapabilities, EnvironmentProviderId, EnvironmentProviderKind,
+        EnvironmentProviderStore, HostControllerConnectionSpec, InMemoryEnvironmentRegistryStore,
+        ObserveEnvironmentInstance, PutSessionEnvironmentBinding, RegisterEnvironmentProvider,
+        SessionEnvironmentBindingStore, SessionEnvironmentFsRoute, SessionEnvironmentFsRouteAccess,
     };
     use host_protocol::shared::{
         HostCapabilities, HostConnectionSpec, HostPath, HostScope, HostTargetId, HostTransport,
+        ImplementationInfo,
     };
     use tools::environment::projection::{EnvironmentActive, EnvironmentCatalogSnapshot};
     use vfs::{
@@ -240,24 +252,52 @@ mod tests {
     use super::*;
 
     #[tokio::test(flavor = "current_thread")]
-    async fn skill_catalog_refresh_preserves_bound_active_environment_projection() {
+    async fn runtime_projection_refresh_preserves_bound_active_environment_projection() {
         let blobs: Arc<dyn BlobStore> = Arc::new(InMemoryBlobStore::new());
         let vfs = Arc::new(EmptyVfsStore);
         let bindings = Arc::new(InMemoryEnvironmentRegistryStore::new());
         bindings
-            .create_binding(test_binding("session_1", "devbox"))
+            .register_provider(RegisterEnvironmentProvider {
+                provider_id: EnvironmentProviderId::new("bridge-local"),
+                provider_kind: EnvironmentProviderKind::Bridge,
+                display_name: None,
+                controller_connection: HostControllerConnectionSpec::new(
+                    "ws://127.0.0.1:9001/controller",
+                    HostTransport::WebSocket,
+                ),
+                capabilities: EnvironmentProviderCapabilities {
+                    get_target: true,
+                    ..EnvironmentProviderCapabilities::default()
+                },
+                implementation: ImplementationInfo {
+                    name: "test".to_owned(),
+                    version: None,
+                },
+                lease_ttl_ms: 60_000,
+                metadata: Default::default(),
+                observed_at_ms: 1,
+            })
+            .await
+            .expect("create provider");
+        bindings
+            .observe_instance(test_instance("session_1"))
+            .await
+            .expect("create instance");
+        bindings
+            .put_binding(test_binding("session_1", "devbox"))
             .await
             .expect("create binding");
-        let deps = SkillCatalogActivityDeps {
+        let deps = RuntimeProjectionActivityDeps {
             blobs: blobs.clone(),
             workspace_store: vfs.clone(),
             mount_store: vfs,
-            environment_bindings: bindings,
+            environment_bindings: bindings.clone(),
+            environment_instances: bindings,
         };
 
-        let result = refresh_skill_catalog(
+        let result = refresh_runtime_projection(
             Some(&deps),
-            SkillCatalogRefreshActivityRequest {
+            RuntimeProjectionRefreshActivityRequest {
                 session_id: SessionId::new("session_1"),
                 active_catalog_ref: None,
                 active_vfs_catalog_ref: None,
@@ -307,22 +347,34 @@ mod tests {
         assert_eq!(active.env_id, "devbox");
     }
 
-    fn test_binding(session_id: &str, env_id: &str) -> CreateSessionEnvironmentBinding {
-        CreateSessionEnvironmentBinding {
+    fn test_binding(session_id: &str, env_id: &str) -> PutSessionEnvironmentBinding {
+        PutSessionEnvironmentBinding {
             session_id: SessionId::new(session_id),
             env_id: EnvironmentId::new(env_id),
+            instance_id: EnvironmentInstanceId::new("evi-local"),
+            cwd: Some(HostPath::new("/workspace").expect("cwd")),
+            fs_routes: vec![SessionEnvironmentFsRoute {
+                path: HostPath::root(),
+                source_path: None,
+                access: SessionEnvironmentFsRouteAccess::ReadWrite,
+                same_state_as_active_env: Some(EnvironmentId::new(env_id)),
+            }],
+            updated_at_ms: 1,
+        }
+    }
+
+    fn test_instance(session_id: &str) -> ObserveEnvironmentInstance {
+        ObserveEnvironmentInstance {
+            instance_id: EnvironmentInstanceId::new("evi-local"),
             provider_id: EnvironmentProviderId::new("bridge-local"),
-            target_id: HostTargetId::new("local-host"),
-            kind: SessionEnvironmentKind::AttachedHost,
-            status: SessionEnvironmentBindingStatus::Ready,
-            capabilities: SessionEnvironmentCapabilities {
-                fs_read: true,
-                fs_write: true,
-                process_exec: true,
-                process_stdin: true,
-                persistent: true,
-                ..SessionEnvironmentCapabilities::default()
+            provider_target_id: HostTargetId::new("local-host"),
+            origin: EnvironmentInstanceOrigin::Provided,
+            display_name: None,
+            status: host_protocol::control::targets::HostTargetStatus::Ready,
+            scope: HostScope::Session {
+                session_id: session_id.to_owned(),
             },
+            capabilities: HostCapabilities::filesystem(true, true).with_process(),
             connection: HostConnectionSpec {
                 target_id: HostTargetId::new("local-host"),
                 endpoint: "ws://127.0.0.1:9001/data".to_owned(),
@@ -333,14 +385,9 @@ mod tests {
                 default_cwd: Some(HostPath::new("/workspace").expect("cwd")),
                 capabilities: HostCapabilities::filesystem(true, true).with_process(),
             },
-            cwd: Some(HostPath::new("/workspace").expect("cwd")),
-            fs_routes: vec![SessionEnvironmentFsRoute {
-                path: HostPath::root(),
-                source_path: None,
-                access: SessionEnvironmentFsRouteAccess::ReadWrite,
-                same_state_as_active_env: Some(EnvironmentId::new(env_id)),
-            }],
-            created_at_ms: 1,
+            default_cwd: Some(HostPath::new("/workspace").expect("cwd")),
+            metadata: Default::default(),
+            observed_at_ms: 1,
         }
     }
 

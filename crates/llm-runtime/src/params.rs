@@ -224,6 +224,75 @@ pub fn anthropic_messages_params(
     parse_params_body(&params.body)
 }
 
+/// Reasoning effort tiers accepted by the OpenAI Responses adapter.
+pub const OPENAI_REASONING_EFFORT_TIERS: &[&str] =
+    &["none", "minimal", "low", "medium", "high", "xhigh"];
+
+/// Reasoning effort tiers accepted by the Anthropic Messages adapter.
+pub const ANTHROPIC_REASONING_EFFORT_TIERS: &[&str] = &["none", "low", "medium", "high", "ultra"];
+
+fn validate_reasoning_effort(
+    effort: &str,
+    tiers: &'static [&'static str],
+    api_kind: ProviderApiKind,
+) -> LlmAdapterResult<()> {
+    if tiers.contains(&effort) {
+        Ok(())
+    } else {
+        Err(LlmAdapterError::InvalidProviderRequest {
+            message: format!(
+                "unknown reasoning effort {effort:?} for {api_kind:?}; expected one of {}",
+                tiers.join(", ")
+            ),
+        })
+    }
+}
+
+/// Materialize an OpenAI Responses reasoning config from an intent effort
+/// tier. `"none"` means no reasoning config; other tiers request an effort
+/// level with automatic summaries. Unknown tiers are rejected.
+pub fn openai_reasoning_from_effort(
+    effort: &str,
+) -> LlmAdapterResult<Option<OpenAiReasoningConfig>> {
+    validate_reasoning_effort(
+        effort,
+        OPENAI_REASONING_EFFORT_TIERS,
+        ProviderApiKind::OpenAiResponses,
+    )?;
+    if effort == "none" {
+        return Ok(None);
+    }
+    Ok(Some(OpenAiReasoningConfig {
+        effort: Some(effort.to_owned()),
+        summary: Some("auto".to_owned()),
+        extra: BTreeMap::new(),
+    }))
+}
+
+/// Materialize Anthropic Messages thinking settings from an intent effort
+/// tier. Current Anthropic models steer thinking through adaptive thinking
+/// plus an `output_config.effort` level, not token budgets. `"none"` means no
+/// thinking config; unknown tiers are rejected.
+pub fn anthropic_thinking_from_effort(
+    effort: &str,
+) -> LlmAdapterResult<Option<(AnthropicThinkingConfig, Value)>> {
+    validate_reasoning_effort(
+        effort,
+        ANTHROPIC_REASONING_EFFORT_TIERS,
+        ProviderApiKind::AnthropicMessages,
+    )?;
+    if effort == "none" {
+        return Ok(None);
+    }
+    let thinking = AnthropicThinkingConfig {
+        r#type: "adaptive".to_owned(),
+        budget_tokens: None,
+        display: None,
+        extra: BTreeMap::new(),
+    };
+    Ok(Some((thinking, serde_json::json!({ "effort": effort }))))
+}
+
 fn parse_params_body<T: serde::de::DeserializeOwned>(body: &Value) -> LlmAdapterResult<T> {
     serde_json::from_value(body.clone()).map_err(|error| LlmAdapterError::InvalidProviderRequest {
         message: format!("invalid provider params body: {error}"),
@@ -298,6 +367,55 @@ mod tests {
             let params = ProviderParams::new(api_kind, body);
             validate_provider_params(&params).expect("valid params");
         }
+    }
+
+    #[test]
+    fn openai_reasoning_from_effort_maps_tiers() {
+        assert_eq!(
+            openai_reasoning_from_effort("none").expect("none tier"),
+            None
+        );
+        for tier in ["minimal", "low", "medium", "high", "xhigh"] {
+            let reasoning = openai_reasoning_from_effort(tier)
+                .expect("known tier")
+                .expect("non-none tier derives reasoning");
+            assert_eq!(reasoning.effort.as_deref(), Some(tier));
+            assert_eq!(reasoning.summary.as_deref(), Some("auto"));
+        }
+    }
+
+    #[test]
+    fn openai_reasoning_from_effort_rejects_unknown_tier() {
+        let error = openai_reasoning_from_effort("ultra").expect_err("unknown tier must fail");
+        assert!(matches!(
+            error,
+            LlmAdapterError::InvalidProviderRequest { .. }
+        ));
+    }
+
+    #[test]
+    fn anthropic_thinking_from_effort_maps_tiers() {
+        assert_eq!(
+            anthropic_thinking_from_effort("none").expect("none tier"),
+            None
+        );
+        for tier in ["low", "medium", "high", "ultra"] {
+            let (thinking, output_config) = anthropic_thinking_from_effort(tier)
+                .expect("known tier")
+                .expect("non-none tier derives thinking");
+            assert_eq!(thinking.r#type, "adaptive");
+            assert_eq!(thinking.budget_tokens, None);
+            assert_eq!(output_config, json!({ "effort": tier }));
+        }
+    }
+
+    #[test]
+    fn anthropic_thinking_from_effort_rejects_unknown_tier() {
+        let error = anthropic_thinking_from_effort("xhigh").expect_err("unknown tier must fail");
+        assert!(matches!(
+            error,
+            LlmAdapterError::InvalidProviderRequest { .. }
+        ));
     }
 
     #[test]

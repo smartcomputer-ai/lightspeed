@@ -53,8 +53,11 @@ What constitutes an "agent harness" is a rapidly expanding set of table-stakes f
 - [x] **Multi-tenancy**: many isolated universes (tenants) on one worker, with pluggable gateway auth
 
 **Borrowed compute**
-- [x] **Dedicated VMs**, connected to the agent via a bridge daemon
-- [x] **Jobs** for long-running work: downloads, delegating to coding agents like Codex
+- [x] **Dedicated VMs**, connected as universe environment instances that
+  sessions attach to through explicit bindings
+- [x] **Jobs** for long-running work: environment-owned downloads,
+  experiments, and delegated coding-agent runs with optional session/run
+  supervision
 - [ ] **Ad-hoc sandboxes**
 
 **Security & auth**

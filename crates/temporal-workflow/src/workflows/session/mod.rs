@@ -38,7 +38,7 @@ use crate::{
     PendingPromiseCancellation, PendingPromiseNotification, PendingToolBatchResume,
     PreprocessRunInputActivityRequest, PreprocessRunInputFailure, PreprocessRunInputFailureKind,
     PreprocessRunInputOutcome, PromiseResolutionSignal, PromiseSourcePoll, PutBlobRequest,
-    SkillCatalogRefreshActivityRequest, ToolInvokeBatchActivityRequest, WorkflowActivities,
+    RuntimeProjectionRefreshActivityRequest, ToolInvokeBatchActivityRequest, WorkflowActivities,
     activity_options, compose_workflow_id, default_instructions, split_workflow_id,
 };
 

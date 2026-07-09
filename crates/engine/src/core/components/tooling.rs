@@ -745,15 +745,13 @@ pub enum ProviderNativeToolExecution {
     ClientEffect,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ToolChoice {
-    pub mode: ToolChoiceMode,
-    pub disable_parallel_tool_use: Option<bool>,
-}
-
+/// Which tool the model must (or must not) call. Parallel tool-call
+/// behavior is a separate generation knob (`parallel_tool_use`), not part of
+/// the choice — bundling them was Anthropic request shape, not neutral
+/// vocabulary.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ToolChoiceMode {
+pub enum ToolChoice {
     Auto,
     None,
     RequiredAny,

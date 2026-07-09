@@ -3,9 +3,9 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    ActiveRun, CompactionPolicy, ContextSnapshot, CoreAgentState, DomainError, PlannedRequestState,
-    PlanningError, RunConfig, RunId, SessionConfig, SessionId, ToolChoice, ToolChoiceMode,
-    ToolKind, ToolSpec, TurnId,
+    ActiveRun, CompactionPolicy, ContextSnapshot, CoreAgentState, DomainError, GenerationConfig,
+    PlannedRequestState, PlanningError, RunConfig, RunId, SessionId, ToolChoice, ToolKind,
+    ToolSpec, TurnId,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -73,6 +73,14 @@ pub struct LlmRequest {
     pub tool_choice: Option<ToolChoice>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_limit: Option<u32>,
+    /// Provider-native reasoning effort tier carried opaquely from config;
+    /// runtime adapters materialize it into provider request params.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+    /// Neutral parallel tool-call switch; adapters map it provider-natively
+    /// (OpenAI `parallel_tool_calls`, Anthropic `disable_parallel_tool_use`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parallel_tool_use: Option<bool>,
     /// Provider continuity token (e.g. OpenAI Responses `previous_response_id`)
     /// threaded from prior generation facts. Currently always `None`; adapters
     /// must tolerate absence.
@@ -132,13 +140,12 @@ pub(crate) fn build_llm_request(
         .model_override
         .clone()
         .unwrap_or_else(|| config.model.clone());
-    let request_config = session_config_for_run(config, &active_run.run_config);
+    let generation = effective_generation(&config.generation, &active_run.run_config);
     let context =
         crate::core::components::context::planned_context_snapshot(state, model.api_kind.clone())?;
     let tools = active_tools(state, &model.api_kind)?;
-    let tool_choice = request_config.turn.tool_choice.clone();
-    validate_tool_choice(&tools, tool_choice.as_ref())?;
-    let params = request_config.turn.provider_params.clone();
+    validate_tool_choice(&tools, generation.tool_choice.as_ref())?;
+    let params = active_run.run_config.provider_params.clone();
     if let Some(params) = params.as_ref()
         && params.api_kind != model.api_kind
     {
@@ -148,14 +155,12 @@ pub(crate) fn build_llm_request(
         ))
         .into());
     }
-    let output_limit = request_config.turn.max_output_tokens;
-    let compaction = request_config.context.compaction.clone();
+    let compaction = config.context.compaction.clone();
     let request_fingerprint = request_fingerprint(
         &model,
         &context,
         &tools,
-        tool_choice.as_ref(),
-        output_limit,
+        &generation,
         params.as_ref(),
         active_run.run_id,
         turn_id,
@@ -165,8 +170,10 @@ pub(crate) fn build_llm_request(
         request_fingerprint,
         context,
         tools,
-        tool_choice,
-        output_limit,
+        tool_choice: generation.tool_choice,
+        output_limit: generation.max_output_tokens,
+        reasoning_effort: generation.reasoning_effort,
+        parallel_tool_use: generation.parallel_tool_use,
         provider_response_id: None,
         compaction,
         params,
@@ -238,7 +245,9 @@ pub(crate) fn build_context_compaction_task(
         state,
         config.model.api_kind.clone(),
     )?;
-    let params = config.turn.provider_params.clone();
+    // Session-level provider params no longer exist; compaction-specific
+    // params can become runtime adapter policy if a need appears.
+    let params: Option<ProviderParams> = None;
     let request_fingerprint =
         compaction_request_fingerprint(&config.model, &context, *target_tokens, params.as_ref())?;
     Ok(ContextCompactionTask {
@@ -250,18 +259,20 @@ pub(crate) fn build_context_compaction_task(
     })
 }
 
-fn session_config_for_run(config: &SessionConfig, run_config: &RunConfig) -> SessionConfig {
-    let mut config = config.clone();
-    if let Some(max_output_tokens) = run_config.max_output_tokens {
-        config.turn.max_output_tokens = Some(max_output_tokens);
+/// Session generation defaults overlaid with the run's overrides.
+fn effective_generation(base: &GenerationConfig, run_config: &RunConfig) -> GenerationConfig {
+    GenerationConfig {
+        max_output_tokens: run_config.max_output_tokens.or(base.max_output_tokens),
+        reasoning_effort: run_config
+            .reasoning_effort
+            .clone()
+            .or_else(|| base.reasoning_effort.clone()),
+        tool_choice: run_config
+            .tool_choice
+            .clone()
+            .or_else(|| base.tool_choice.clone()),
+        parallel_tool_use: run_config.parallel_tool_use.or(base.parallel_tool_use),
     }
-    if let Some(params) = run_config.provider_params.clone() {
-        config.turn.provider_params = Some(params);
-    }
-    if let Some(tool_choice) = run_config.tool_choice.clone() {
-        config.turn.tool_choice = Some(tool_choice);
-    }
-    config
 }
 
 fn active_tools(
@@ -301,11 +312,7 @@ fn validate_tool_choice(
     tools: &[ToolSpec],
     tool_choice: Option<&ToolChoice>,
 ) -> Result<(), PlanningError> {
-    let Some(ToolChoice {
-        mode: ToolChoiceMode::Specific { tool_name },
-        ..
-    }) = tool_choice
-    else {
+    let Some(ToolChoice::Specific { tool_name }) = tool_choice else {
         return Ok(());
     };
     if tools.iter().any(|tool| &tool.name == tool_name) {
@@ -326,28 +333,19 @@ fn remote_mcp_supported_by_provider(api_kind: &ProviderApiKind) -> bool {
     )
 }
 
-#[expect(clippy::too_many_arguments)]
 fn request_fingerprint(
     model: &ModelSelection,
     context: &ContextSnapshot,
     tools: &[ToolSpec],
-    tool_choice: Option<&ToolChoice>,
-    output_limit: Option<u32>,
+    generation: &GenerationConfig,
     params: Option<&ProviderParams>,
     run_id: RunId,
     turn_id: TurnId,
 ) -> Result<String, PlanningError> {
-    let encoded = serde_json::to_vec(&(
-        model,
-        context,
-        tools,
-        tool_choice,
-        output_limit,
-        params,
-        run_id,
-        turn_id,
-    ))
-    .map_err(|error| PlanningError::Rejected(format!("failed to fingerprint request: {error}")))?;
+    let encoded = serde_json::to_vec(&(model, context, tools, generation, params, run_id, turn_id))
+        .map_err(|error| {
+            PlanningError::Rejected(format!("failed to fingerprint request: {error}"))
+        })?;
     let digest = Sha256::digest(encoded);
     Ok(format!("sha256:{}", hex::encode(digest)))
 }
@@ -370,42 +368,41 @@ fn compaction_request_fingerprint(
 mod tests {
     use super::*;
 
-    fn test_config() -> SessionConfig {
-        SessionConfig {
-            model: ModelSelection {
-                api_kind: ProviderApiKind::OpenAiResponses,
-                provider_id: "openai".to_owned(),
-                model: "gpt-test".to_owned(),
-            },
-            run: RunConfig::default(),
-            turn: crate::TurnConfig {
-                max_output_tokens: None,
-                tool_choice: None,
-                provider_params: None,
-            },
-            context: crate::ContextConfig { compaction: None },
-            tools: Default::default(),
-            fleet: Default::default(),
-        }
-    }
-
     #[test]
-    fn session_config_for_run_applies_generation_overrides() {
-        let config = test_config();
-        let params = ProviderParams::new(
-            ProviderApiKind::OpenAiResponses,
-            serde_json::json!({ "reasoning": { "effort": "high" } }),
-        );
+    fn effective_generation_applies_run_overrides() {
+        let base = GenerationConfig {
+            max_output_tokens: Some(1024),
+            reasoning_effort: Some("high".to_owned()),
+            tool_choice: Some(ToolChoice::Auto),
+            parallel_tool_use: None,
+        };
         let run_config = RunConfig {
             max_output_tokens: Some(2048),
-            provider_params: Some(params.clone()),
+            tool_choice: Some(ToolChoice::RequiredAny),
+            parallel_tool_use: Some(false),
             ..RunConfig::default()
         };
 
-        let resolved = session_config_for_run(&config, &run_config);
+        let resolved = effective_generation(&base, &run_config);
 
-        assert_eq!(resolved.turn.max_output_tokens, Some(2048));
-        assert_eq!(resolved.turn.provider_params, Some(params));
+        assert_eq!(resolved.max_output_tokens, Some(2048));
+        assert_eq!(resolved.reasoning_effort, Some("high".to_owned()));
+        assert_eq!(resolved.tool_choice, Some(ToolChoice::RequiredAny));
+        assert_eq!(resolved.parallel_tool_use, Some(false));
+    }
+
+    #[test]
+    fn effective_generation_falls_back_to_session_defaults() {
+        let base = GenerationConfig {
+            max_output_tokens: Some(1024),
+            reasoning_effort: None,
+            tool_choice: Some(ToolChoice::Auto),
+            parallel_tool_use: Some(true),
+        };
+
+        let resolved = effective_generation(&base, &RunConfig::default());
+
+        assert_eq!(resolved, base);
     }
 
     #[test]
@@ -499,7 +496,11 @@ mod tests {
 
     #[test]
     fn remote_mcp_sanitized_auth_ref_participates_in_request_fingerprint() {
-        let config = test_config();
+        let model = ModelSelection {
+            api_kind: ProviderApiKind::OpenAiResponses,
+            provider_id: "openai".to_owned(),
+            model: "gpt-test".to_owned(),
+        };
         let context = ContextSnapshot {
             api_kind: ProviderApiKind::OpenAiResponses,
             context_revision: 7,
@@ -515,23 +516,22 @@ mod tests {
         assert!(encoded.contains("mcpgrant_123"));
         assert!(!encoded.contains("runtime-token"));
 
+        let generation = GenerationConfig::default();
         let first_fingerprint = request_fingerprint(
-            &config.model,
+            &model,
             &context,
             &first_tools,
-            None,
-            None,
+            &generation,
             None,
             RunId::new(1),
             TurnId::new(1),
         )
         .expect("fingerprint first request");
         let second_fingerprint = request_fingerprint(
-            &config.model,
+            &model,
             &context,
             &second_tools,
-            None,
-            None,
+            &generation,
             None,
             RunId::new(1),
             TurnId::new(1),

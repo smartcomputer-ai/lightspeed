@@ -533,12 +533,14 @@ mod tests {
     }
 
     #[test]
-    fn mcp_server_add_parse_accepts_registry_options() {
+    fn mcp_server_put_parse_accepts_registry_options() {
         let cli = Cli::try_parse_from([
             "lightspeed",
             "mcp",
             "server",
-            "add",
+            "put",
+            "--expected-revision",
+            "2",
             "--api-url",
             "http://127.0.0.1:18080/rpc",
             "--id",
@@ -551,7 +553,7 @@ mod tests {
             "never",
             "https://echo.example.com/mcp",
         ])
-        .expect("parse mcp server add");
+        .expect("parse mcp server put");
         assert!(matches!(cli.command, Command::Mcp(_)));
     }
 
@@ -640,12 +642,12 @@ mod tests {
     }
 
     #[test]
-    fn mcp_server_add_parse_accepts_oauth_policy_metadata() {
+    fn mcp_server_put_parse_accepts_oauth_policy_metadata() {
         let cli = Cli::try_parse_from([
             "lightspeed",
             "mcp",
             "server",
-            "add",
+            "put",
             "--api-url",
             "http://127.0.0.1:18080/rpc",
             "--id",
@@ -660,7 +662,7 @@ mod tests {
             "https://as.example.com",
             "https://crm.example.com/mcp",
         ])
-        .expect("parse mcp server add with oauth policy");
+        .expect("parse mcp server put with oauth policy");
         assert!(matches!(cli.command, Command::Mcp(_)));
     }
 

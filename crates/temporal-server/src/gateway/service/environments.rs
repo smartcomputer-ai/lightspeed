@@ -1,12 +1,10 @@
 use super::*;
 
-use ::environments::SessionEnvironmentBindingRecord;
+use ::environments::{EnvironmentInstanceRecord, SessionEnvironmentBindingRecord};
 use engine::ToolExecutionTarget;
 use tools::{
     environment::EnvironmentToolContext,
-    environment::projection::{
-        EnvironmentCapabilities, EnvironmentKind, EnvironmentRecord, EnvironmentStatus,
-    },
+    environment::projection::{EnvironmentCapabilities, EnvironmentRecord, EnvironmentStatus},
     targets::ENV_TARGET_NAMESPACE,
 };
 
@@ -38,8 +36,15 @@ impl GatewayAgentApi {
         .map_err(map_environments_error)?;
         let blobs: Arc<dyn BlobStore> = self.store.clone();
         for binding in bindings {
+            let instance = ::environments::EnvironmentInstanceStore::read_instance(
+                self.store.as_ref(),
+                &binding.instance_id,
+            )
+            .await
+            .map_err(map_environments_error)?;
             environments.push(runtime_environment_from_binding_projection(
                 binding,
+                instance,
                 blobs.clone(),
             )?);
         }
@@ -58,9 +63,7 @@ impl GatewayAgentApi {
             .map(ToOwned::to_owned);
         let environments = runtime_environments
             .iter()
-            .map(|environment| {
-                session_environment_view(environment.record(), active_env_id.as_deref())
-            })
+            .map(|environment| session_environment_view(environment, active_env_id.as_deref()))
             .collect();
         Ok(SessionEnvironmentListResponse {
             active_env_id,
@@ -82,10 +85,7 @@ impl GatewayAgentApi {
             .iter()
             .find(|environment| environment.env_id() == env_id)
             .ok_or_else(|| AgentApiError::not_found(format!("environment not found: {env_id}")))?;
-        Ok(session_environment_view(
-            environment.record(),
-            active_env_id,
-        ))
+        Ok(session_environment_view(environment, active_env_id))
     }
 
     pub(super) async fn activation_target_for_environment(
@@ -169,10 +169,12 @@ impl GatewayAgentApi {
 
 pub(super) fn runtime_environment_from_binding_projection(
     binding: SessionEnvironmentBindingRecord,
+    instance: EnvironmentInstanceRecord,
     blobs: Arc<dyn BlobStore>,
 ) -> Result<RuntimeEnvironment, AgentApiError> {
     crate::environment::runtime_environment_from_binding_record(
         &binding,
+        &instance,
         EnvironmentToolContext::new(None, blobs).with_session_id(binding.session_id.as_str()),
     )
     .map_err(|error| AgentApiError::internal(error.to_string()))
@@ -230,17 +232,48 @@ pub(super) fn deactivate_environment_command() -> CoreAgentCommand {
 }
 
 pub(super) fn session_environment_view(
-    record: &EnvironmentRecord,
+    environment: &RuntimeEnvironment,
     active_env_id: Option<&str>,
 ) -> SessionEnvironmentView {
+    let record = environment.record();
     SessionEnvironmentView {
         env_id: record.env_id.clone(),
-        kind: api_environment_kind(record.kind),
-        status: api_environment_status(record.status),
+        instance_id: environment
+            .instance_id()
+            .unwrap_or(record.env_id.as_str())
+            .to_owned(),
+        state: match environment.binding_state() {
+            ::environments::SessionEnvironmentBindingState::Attached => {
+                SessionEnvironmentStateView::Attached
+            }
+            ::environments::SessionEnvironmentBindingState::Detached => {
+                SessionEnvironmentStateView::Detached
+            }
+        },
         capabilities: api_environment_capabilities(record.capabilities),
         exec_target: record.exec_target.as_ref().map(api_tool_execution_target),
         cwd: record.cwd.as_ref().map(|cwd| cwd.as_str().to_owned()),
+        fs_routes: environment.fs_routes().iter().map(api_fs_route).collect(),
         active: active_env_id == Some(record.env_id.as_str()),
+    }
+}
+
+fn api_fs_route(route: &tools::environment::projection::FsRoute) -> SessionEnvironmentFsRouteView {
+    SessionEnvironmentFsRouteView {
+        path: route.path.as_str().to_owned(),
+        source_path: route
+            .source_path
+            .as_ref()
+            .map(|path| path.as_str().to_owned()),
+        access: match route.access {
+            tools::environment::projection::FsRouteAccess::ReadOnly => {
+                SessionEnvironmentFsAccessView::ReadOnly
+            }
+            tools::environment::projection::FsRouteAccess::ReadWrite => {
+                SessionEnvironmentFsAccessView::ReadWrite
+            }
+        },
+        same_state_as_active_env: route.same_state_as_active_env.is_some(),
     }
 }
 
@@ -248,22 +281,6 @@ fn api_tool_execution_target(target: &ToolExecutionTarget) -> ToolExecutionTarge
     ToolExecutionTargetView {
         namespace: target.namespace.clone(),
         id: target.id.clone(),
-    }
-}
-
-fn api_environment_kind(kind: EnvironmentKind) -> SessionEnvironmentKindView {
-    match kind {
-        EnvironmentKind::Sandbox => SessionEnvironmentKindView::Sandbox,
-        EnvironmentKind::AttachedHost => SessionEnvironmentKindView::AttachedHost,
-    }
-}
-
-fn api_environment_status(status: EnvironmentStatus) -> SessionEnvironmentStatusView {
-    match status {
-        EnvironmentStatus::Attaching => SessionEnvironmentStatusView::Attaching,
-        EnvironmentStatus::Ready => SessionEnvironmentStatusView::Ready,
-        EnvironmentStatus::Degraded => SessionEnvironmentStatusView::Degraded,
-        EnvironmentStatus::Detached => SessionEnvironmentStatusView::Detached,
     }
 }
 
@@ -283,6 +300,5 @@ fn api_environment_capabilities(
         job_dependencies: capabilities.job_dependencies,
         job_queue_keys: capabilities.job_queue_keys,
         network: capabilities.network,
-        persistent: capabilities.persistent,
     }
 }

@@ -32,11 +32,6 @@ pub trait AgentApiService: Send + Sync {
         params: ProfilePutParams,
     ) -> Result<AgentApiOutcome<ProfilePutResponse>, AgentApiError>;
 
-    async fn update_profile(
-        &self,
-        params: ProfileUpdateParams,
-    ) -> Result<AgentApiOutcome<ProfileUpdateResponse>, AgentApiError>;
-
     async fn delete_profile(
         &self,
         params: ProfileDeleteParams,
@@ -47,15 +42,10 @@ pub trait AgentApiService: Send + Sync {
         params: ProfileApplyParams,
     ) -> Result<AgentApiOutcome<ProfileApplyResponse>, AgentApiError>;
 
-    async fn update_session(
+    async fn put_session_config(
         &self,
-        params: SessionUpdateParams,
-    ) -> Result<AgentApiOutcome<SessionUpdateResponse>, AgentApiError>;
-
-    async fn update_session_tools(
-        &self,
-        params: SessionToolsUpdateParams,
-    ) -> Result<AgentApiOutcome<SessionToolsUpdateResponse>, AgentApiError>;
+        params: SessionConfigPutParams,
+    ) -> Result<AgentApiOutcome<SessionConfigPutResponse>, AgentApiError>;
 
     async fn read_session(
         &self,
@@ -107,11 +97,6 @@ pub trait AgentApiService: Send + Sync {
         params: OutboxAckParams,
     ) -> Result<AgentApiOutcome<OutboxAckResponse>, AgentApiError>;
 
-    async fn submit_message(
-        &self,
-        params: MessageSubmitParams,
-    ) -> Result<AgentApiOutcome<MessageSubmitResponse>, AgentApiError>;
-
     async fn start_run(
         &self,
         params: RunStartParams,
@@ -121,11 +106,6 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: RunCancelParams,
     ) -> Result<AgentApiOutcome<RunCancelResponse>, AgentApiError>;
-
-    async fn active_prompts(
-        &self,
-        params: PromptsActiveParams,
-    ) -> Result<AgentApiOutcome<PromptsActiveResponse>, AgentApiError>;
 
     async fn list_skills(
         &self,
@@ -157,11 +137,6 @@ pub trait AgentApiService: Send + Sync {
         params: SessionEnvironmentReadParams,
     ) -> Result<AgentApiOutcome<SessionEnvironmentReadResponse>, AgentApiError>;
 
-    async fn create_session_environment(
-        &self,
-        params: SessionEnvironmentCreateParams,
-    ) -> Result<AgentApiOutcome<SessionEnvironmentCreateResponse>, AgentApiError>;
-
     async fn attach_session_environment(
         &self,
         params: SessionEnvironmentAttachParams,
@@ -177,10 +152,30 @@ pub trait AgentApiService: Send + Sync {
         params: SessionEnvironmentDeactivateParams,
     ) -> Result<AgentApiOutcome<SessionEnvironmentDeactivateResponse>, AgentApiError>;
 
-    async fn close_session_environment(
+    async fn detach_session_environment(
         &self,
-        params: SessionEnvironmentCloseParams,
-    ) -> Result<AgentApiOutcome<SessionEnvironmentCloseResponse>, AgentApiError>;
+        params: SessionEnvironmentDetachParams,
+    ) -> Result<AgentApiOutcome<SessionEnvironmentDetachResponse>, AgentApiError>;
+
+    async fn create_environment(
+        &self,
+        params: EnvironmentCreateParams,
+    ) -> Result<AgentApiOutcome<EnvironmentCreateResponse>, AgentApiError>;
+
+    async fn read_environment(
+        &self,
+        params: EnvironmentReadParams,
+    ) -> Result<AgentApiOutcome<EnvironmentReadResponse>, AgentApiError>;
+
+    async fn list_environments(
+        &self,
+        params: EnvironmentListParams,
+    ) -> Result<AgentApiOutcome<EnvironmentListResponse>, AgentApiError>;
+
+    async fn close_environment(
+        &self,
+        params: EnvironmentCloseParams,
+    ) -> Result<AgentApiOutcome<EnvironmentCloseResponse>, AgentApiError>;
 
     async fn bind_session_environment_credential(
         &self,
@@ -197,25 +192,25 @@ pub trait AgentApiService: Send + Sync {
         params: SessionEnvironmentCredentialUnbindParams,
     ) -> Result<AgentApiOutcome<SessionEnvironmentCredentialUnbindResponse>, AgentApiError>;
 
-    async fn create_session_jobs(
+    async fn create_environment_jobs(
         &self,
-        params: SessionJobCreateParams,
-    ) -> Result<AgentApiOutcome<SessionJobCreateResponse>, AgentApiError>;
+        params: EnvironmentJobCreateParams,
+    ) -> Result<AgentApiOutcome<EnvironmentJobCreateResponse>, AgentApiError>;
 
-    async fn list_session_jobs(
+    async fn read_environment_jobs(
         &self,
-        params: SessionJobListParams,
-    ) -> Result<AgentApiOutcome<SessionJobListResponse>, AgentApiError>;
+        params: EnvironmentJobReadParams,
+    ) -> Result<AgentApiOutcome<EnvironmentJobReadResponse>, AgentApiError>;
 
-    async fn read_session_jobs(
+    async fn list_environment_jobs(
         &self,
-        params: SessionJobReadParams,
-    ) -> Result<AgentApiOutcome<SessionJobReadResponse>, AgentApiError>;
+        params: EnvironmentJobListParams,
+    ) -> Result<AgentApiOutcome<EnvironmentJobListResponse>, AgentApiError>;
 
-    async fn cancel_session_jobs(
+    async fn cancel_environment_jobs(
         &self,
-        params: SessionJobCancelParams,
-    ) -> Result<AgentApiOutcome<SessionJobCancelResponse>, AgentApiError>;
+        params: EnvironmentJobCancelParams,
+    ) -> Result<AgentApiOutcome<EnvironmentJobCancelResponse>, AgentApiError>;
 
     async fn register_environment_provider(
         &self,
@@ -236,11 +231,6 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: EnvironmentProviderListParams,
     ) -> Result<AgentApiOutcome<EnvironmentProviderListResponse>, AgentApiError>;
-
-    async fn list_environment_provider_targets(
-        &self,
-        params: EnvironmentProviderTargetListParams,
-    ) -> Result<AgentApiOutcome<EnvironmentProviderTargetListResponse>, AgentApiError>;
 
     async fn put_blobs(
         &self,
@@ -307,10 +297,12 @@ pub trait AgentApiService: Send + Sync {
         params: VfsMountListParams,
     ) -> Result<AgentApiOutcome<VfsMountListResponse>, AgentApiError>;
 
-    async fn create_mcp_server(
+    /// Create-or-replace an MCP server document. `expected_revision` is
+    /// checked only when the record already exists.
+    async fn put_mcp_server(
         &self,
-        params: McpServerCreateParams,
-    ) -> Result<AgentApiOutcome<McpServerCreateResponse>, AgentApiError>;
+        params: McpServerPutParams,
+    ) -> Result<AgentApiOutcome<McpServerPutResponse>, AgentApiError>;
 
     async fn list_mcp_servers(
         &self,
@@ -322,30 +314,10 @@ pub trait AgentApiService: Send + Sync {
         params: McpServerReadParams,
     ) -> Result<AgentApiOutcome<McpServerReadResponse>, AgentApiError>;
 
-    async fn update_mcp_server(
-        &self,
-        params: McpServerUpdateParams,
-    ) -> Result<AgentApiOutcome<McpServerUpdateResponse>, AgentApiError>;
-
     async fn delete_mcp_server(
         &self,
         params: McpServerDeleteParams,
     ) -> Result<AgentApiOutcome<McpServerDeleteResponse>, AgentApiError>;
-
-    async fn link_session_mcp(
-        &self,
-        params: SessionMcpLinkParams,
-    ) -> Result<AgentApiOutcome<SessionMcpLinkResponse>, AgentApiError>;
-
-    async fn unlink_session_mcp(
-        &self,
-        params: SessionMcpUnlinkParams,
-    ) -> Result<AgentApiOutcome<SessionMcpUnlinkResponse>, AgentApiError>;
-
-    async fn list_session_mcp(
-        &self,
-        params: SessionMcpListParams,
-    ) -> Result<AgentApiOutcome<SessionMcpListResponse>, AgentApiError>;
 
     async fn import_auth_grant(
         &self,

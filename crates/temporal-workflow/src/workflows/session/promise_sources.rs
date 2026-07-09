@@ -48,17 +48,14 @@ pub(super) fn record_environment_job_changed(
 ) {
     for poll in workflow.promise_source_polls.values_mut() {
         let engine::PromiseSource::EnvJob {
-            target_session_id,
-            env_id,
+            instance_id,
             job_id,
+            ..
         } = &poll.source
         else {
             continue;
         };
-        if target_session_id == &changed.session_id
-            && env_id == &changed.env_id
-            && job_id == &changed.job_id
-        {
+        if instance_id == &changed.instance_id && job_id == &changed.job_id {
             poll.next_check_at_ms = 0;
         }
     }

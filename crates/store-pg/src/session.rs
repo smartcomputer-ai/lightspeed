@@ -1064,63 +1064,6 @@ async fn copy_session_resources_in_tx(
     .await
     .map_err(|error| session_sql_error("copy vfs mounts", error))?;
 
-    sqlx::query(
-        r#"
-        INSERT INTO session_environment_bindings (
-            universe_id,
-            session_id,
-            env_id,
-            provider_id,
-            target_id,
-            exec_target_json,
-            kind,
-            status,
-            capabilities_json,
-            connection_json,
-            cwd,
-            fs_routes_json,
-            created_at_ms,
-            updated_at_ms
-        )
-        SELECT
-            universe_id,
-            $3,
-            env_id,
-            provider_id,
-            target_id,
-            exec_target_json,
-            kind,
-            status,
-            capabilities_json,
-            connection_json,
-            cwd,
-            fs_routes_json,
-            created_at_ms,
-            updated_at_ms
-        FROM session_environment_bindings
-        WHERE universe_id = $1 AND session_id = $2
-        ON CONFLICT (universe_id, session_id, env_id) DO UPDATE
-        SET
-            provider_id = EXCLUDED.provider_id,
-            target_id = EXCLUDED.target_id,
-            exec_target_json = EXCLUDED.exec_target_json,
-            kind = EXCLUDED.kind,
-            status = EXCLUDED.status,
-            capabilities_json = EXCLUDED.capabilities_json,
-            connection_json = EXCLUDED.connection_json,
-            cwd = EXCLUDED.cwd,
-            fs_routes_json = EXCLUDED.fs_routes_json,
-            created_at_ms = EXCLUDED.created_at_ms,
-            updated_at_ms = EXCLUDED.updated_at_ms
-        "#,
-    )
-    .bind(universe_id)
-    .bind(source_session_id.as_str())
-    .bind(child_session_id.as_str())
-    .execute(&mut **tx)
-    .await
-    .map_err(|error| session_sql_error("copy session environment bindings", error))?;
-
     Ok(())
 }
 

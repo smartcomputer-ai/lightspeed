@@ -10,8 +10,7 @@ use engine::{
     OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND, OPENAI_RESPONSES_MCP_LIST_TOOLS_PROVIDER_KIND,
     OPENAI_RESPONSES_WEB_SEARCH_CALL_PROVIDER_KIND, ObservedToolCall, ProviderApiKind,
     ProviderNativeToolExecution, RemoteMcpApprovalPolicy, RemoteMcpToolSpec, TokenEstimate,
-    TokenEstimateQuality, ToolCallId, ToolChoice, ToolChoiceMode, ToolKind, ToolName, ToolSpec,
-    storage::BlobStore,
+    TokenEstimateQuality, ToolCallId, ToolChoice, ToolKind, ToolName, ToolSpec, storage::BlobStore,
 };
 use llm_clients::{ApiResponse, openai::responses as oai};
 use serde_json::{Value, json};
@@ -20,7 +19,7 @@ use crate::{
     blob_io::{put_json, put_text, read_json, read_text},
     error::{LlmAdapterError, LlmAdapterResult},
     executor::{LlmCompactionAdapter, LlmGenerationAdapter},
-    params::openai_responses_params,
+    params::{openai_reasoning_from_effort, openai_responses_params},
     provider_keys::{NoStoredProviderKeys, ProviderKeyResolver, resolve_stored_provider_key},
     result::LlmGenerationExecution,
     secrets::{REDACTED_SECRET_PLACEHOLDER, SecretResolver, UnconfiguredSecretResolver},
@@ -189,7 +188,19 @@ pub async fn materialize_create_request(
     blobs: &dyn BlobStore,
     request: &LlmRequest,
 ) -> LlmAdapterResult<oai::CreateResponseRequest> {
-    let params = openai_responses_params(request.params.as_ref())?;
+    let mut params = openai_responses_params(request.params.as_ref())?;
+    // Materialize intent fields into provider params. Explicit per-run
+    // provider params win: derived values never overwrite fields the params
+    // body already sets.
+    if let Some(effort) = request.reasoning_effort.as_deref() {
+        let derived = openai_reasoning_from_effort(effort)?;
+        if params.reasoning.is_none() {
+            params.reasoning = derived;
+        }
+    }
+    if params.parallel_tool_calls.is_none() {
+        params.parallel_tool_calls = request.parallel_tool_use;
+    }
     let instructions = materialize_instructions(blobs, &request.context.entries).await?;
     let input_entries = request
         .context
@@ -666,11 +677,11 @@ fn set_remote_mcp_authorization(
 }
 
 fn openai_tool_choice(choice: &ToolChoice) -> oai::ToolChoice {
-    match &choice.mode {
-        ToolChoiceMode::Auto => oai::ToolChoice::Mode(oai::ToolChoiceMode::Auto),
-        ToolChoiceMode::None => oai::ToolChoice::Mode(oai::ToolChoiceMode::None),
-        ToolChoiceMode::RequiredAny => oai::ToolChoice::Mode(oai::ToolChoiceMode::Required),
-        ToolChoiceMode::Specific { tool_name } => oai::ToolChoice::Function {
+    match choice {
+        ToolChoice::Auto => oai::ToolChoice::Mode(oai::ToolChoiceMode::Auto),
+        ToolChoice::None => oai::ToolChoice::Mode(oai::ToolChoiceMode::None),
+        ToolChoice::RequiredAny => oai::ToolChoice::Mode(oai::ToolChoiceMode::Required),
+        ToolChoice::Specific { tool_name } => oai::ToolChoice::Function {
             r#type: oai::FunctionToolType::Function,
             name: tool_name.as_str().to_string(),
         },
@@ -1254,6 +1265,8 @@ mod tests {
             tools: Vec::new(),
             tool_choice: None,
             output_limit: None,
+            reasoning_effort: None,
+            parallel_tool_use: None,
             provider_response_id: None,
             compaction: None,
             params: None,
@@ -1265,6 +1278,81 @@ mod tests {
             ProviderApiKind::OpenAiResponses,
             serde_json::to_value(params).expect("serialize params"),
         )
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn materialize_create_request_derives_reasoning_and_parallel_from_intent() {
+        let blobs = InMemoryBlobStore::new();
+        let mut request = intent_request(Vec::new());
+        request.reasoning_effort = Some("xhigh".to_string());
+        request.parallel_tool_use = Some(false);
+
+        let materialized = materialize_create_request(&blobs, &request)
+            .await
+            .expect("materialize");
+        let value = serde_json::to_value(materialized).expect("json");
+
+        assert_eq!(
+            value["reasoning"],
+            json!({ "effort": "xhigh", "summary": "auto" })
+        );
+        assert_eq!(value["parallel_tool_calls"], json!(false));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn materialize_create_request_none_reasoning_effort_omits_reasoning() {
+        let blobs = InMemoryBlobStore::new();
+        let mut request = intent_request(Vec::new());
+        request.reasoning_effort = Some("none".to_string());
+
+        let materialized = materialize_create_request(&blobs, &request)
+            .await
+            .expect("materialize");
+        let value = serde_json::to_value(materialized).expect("json");
+
+        assert!(value.get("reasoning").is_none());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn materialize_create_request_params_win_over_intent_fields() {
+        let blobs = InMemoryBlobStore::new();
+        let mut request = intent_request(Vec::new());
+        request.reasoning_effort = Some("high".to_string());
+        request.parallel_tool_use = Some(false);
+        request.params = Some(openai_params(&OpenAiResponsesParams {
+            reasoning: Some(OpenAiReasoningConfig {
+                effort: Some("low".to_string()),
+                summary: None,
+                extra: BTreeMap::new(),
+            }),
+            parallel_tool_calls: Some(true),
+            ..OpenAiResponsesParams::default()
+        }));
+
+        let materialized = materialize_create_request(&blobs, &request)
+            .await
+            .expect("materialize");
+        let value = serde_json::to_value(materialized).expect("json");
+
+        assert_eq!(value["reasoning"], json!({ "effort": "low" }));
+        assert_eq!(value["parallel_tool_calls"], json!(true));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn materialize_create_request_rejects_unknown_reasoning_effort() {
+        let blobs = InMemoryBlobStore::new();
+        let mut request = intent_request(Vec::new());
+        request.reasoning_effort = Some("ultra".to_string());
+
+        let error = materialize_create_request(&blobs, &request)
+            .await
+            .expect_err("unknown effort must fail");
+
+        assert!(matches!(
+            error,
+            LlmAdapterError::InvalidProviderRequest { .. }
+        ));
+        assert!(error.to_string().contains("unknown reasoning effort"));
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1330,11 +1418,8 @@ mod tests {
             parallelism: ToolParallelism::ParallelSafe,
             target_requirement: Default::default(),
         }];
-        request.tool_choice = Some(ToolChoice {
-            mode: ToolChoiceMode::Specific {
-                tool_name: ToolName::new("read_file"),
-            },
-            disable_parallel_tool_use: None,
+        request.tool_choice = Some(ToolChoice::Specific {
+            tool_name: ToolName::new("read_file"),
         });
         request.output_limit = Some(2048);
         request.provider_response_id = Some("resp_prev".to_string());
@@ -1424,10 +1509,7 @@ mod tests {
         }
         let mut request = intent_request(Vec::new());
         request.tools = vec![bundle.spec];
-        request.tool_choice = Some(ToolChoice {
-            mode: ToolChoiceMode::Auto,
-            disable_parallel_tool_use: None,
-        });
+        request.tool_choice = Some(ToolChoice::Auto);
         request.output_limit = Some(1024);
         request.params = Some(openai_params(&OpenAiResponsesParams {
             include: vec![crate::params::OPENAI_RESPONSES_WEB_SEARCH_SOURCES_INCLUDE.to_string()],
@@ -1477,10 +1559,7 @@ mod tests {
             parallelism: ToolParallelism::ParallelSafe,
             target_requirement: Default::default(),
         }];
-        request.tool_choice = Some(ToolChoice {
-            mode: ToolChoiceMode::Auto,
-            disable_parallel_tool_use: None,
-        });
+        request.tool_choice = Some(ToolChoice::Auto);
         request.output_limit = Some(1024);
 
         let materialized = materialize_create_request(&blobs, &request)
@@ -2576,6 +2655,8 @@ mod tests {
                 tools: Vec::new(),
                 tool_choice: None,
                 output_limit: None,
+                reasoning_effort: None,
+                parallel_tool_use: None,
                 provider_response_id: None,
                 compaction: None,
                 params: None,

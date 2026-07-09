@@ -18,24 +18,21 @@ pub const METHOD_INITIALIZE: &str = "initialize";
 pub const METHOD_SESSION_START: &str = "session/start";
 pub const METHOD_SESSION_READ: &str = "session/read";
 pub const METHOD_SESSION_LIST: &str = "session/list";
-pub const METHOD_SESSION_UPDATE: &str = "session/update";
+pub const METHOD_SESSION_CONFIG_PUT: &str = "session/config/put";
 pub const METHOD_SESSION_RENAME: &str = "session/rename";
 pub const METHOD_SESSION_CLOSE: &str = "session/close";
 
 // ── Sessions: facets (event log, tools, context, runs) ─────────────────────
 
 pub const METHOD_SESSION_EVENTS_READ: &str = "session/events/read";
-pub const METHOD_SESSION_TOOLS_UPDATE: &str = "session/tools/update";
 pub const METHOD_SESSION_CONTEXT_APPEND: &str = "session/context/append";
 pub const METHOD_SESSION_CONTEXT_REMOVE: &str = "session/context/remove";
 pub const METHOD_SESSION_CONTEXT_COMPACT: &str = "session/context/compact";
-pub const METHOD_SESSION_MESSAGES_SUBMIT: &str = "session/messages/submit";
 pub const METHOD_SESSION_RUNS_START: &str = "session/runs/start";
 pub const METHOD_SESSION_RUNS_CANCEL: &str = "session/runs/cancel";
 
 // ── Sessions: prompt and skill state ────────────────────────────────────────
 
-pub const METHOD_SESSION_PROMPTS_ACTIVE: &str = "session/prompts/active";
 pub const METHOD_SESSION_SKILLS_LIST: &str = "session/skills/list";
 pub const METHOD_SESSION_SKILLS_ACTIVE: &str = "session/skills/active";
 pub const METHOD_SESSION_SKILLS_ACTIVATE: &str = "session/skills/activate";
@@ -47,29 +44,21 @@ pub const METHOD_SESSION_PROFILES_APPLY: &str = "session/profiles/apply";
 pub const METHOD_SESSION_MOUNTS_PUT: &str = "session/mounts/put";
 pub const METHOD_SESSION_MOUNTS_LIST: &str = "session/mounts/list";
 pub const METHOD_SESSION_MOUNTS_DELETE: &str = "session/mounts/delete";
-pub const METHOD_SESSION_MCP_LINK: &str = "session/mcp/link";
-pub const METHOD_SESSION_MCP_UNLINK: &str = "session/mcp/unlink";
-pub const METHOD_SESSION_MCP_LIST: &str = "session/mcp/list";
 
-// ── Sessions: environments and jobs ─────────────────────────────────────────
+// ── Sessions: environments ──────────────────────────────────────────────────
 
-pub const METHOD_SESSION_ENVIRONMENTS_CREATE: &str = "session/environments/create";
 pub const METHOD_SESSION_ENVIRONMENTS_READ: &str = "session/environments/read";
 pub const METHOD_SESSION_ENVIRONMENTS_LIST: &str = "session/environments/list";
 pub const METHOD_SESSION_ENVIRONMENTS_ATTACH: &str = "session/environments/attach";
 pub const METHOD_SESSION_ENVIRONMENTS_ACTIVATE: &str = "session/environments/activate";
 pub const METHOD_SESSION_ENVIRONMENTS_DEACTIVATE: &str = "session/environments/deactivate";
-pub const METHOD_SESSION_ENVIRONMENTS_CLOSE: &str = "session/environments/close";
+pub const METHOD_SESSION_ENVIRONMENTS_DETACH: &str = "session/environments/detach";
 pub const METHOD_SESSION_ENVIRONMENTS_CREDENTIALS_BIND: &str =
     "session/environments/credentials/bind";
 pub const METHOD_SESSION_ENVIRONMENTS_CREDENTIALS_LIST: &str =
     "session/environments/credentials/list";
 pub const METHOD_SESSION_ENVIRONMENTS_CREDENTIALS_UNBIND: &str =
     "session/environments/credentials/unbind";
-pub const METHOD_SESSION_JOBS_CREATE: &str = "session/jobs/create";
-pub const METHOD_SESSION_JOBS_READ: &str = "session/jobs/read";
-pub const METHOD_SESSION_JOBS_LIST: &str = "session/jobs/list";
-pub const METHOD_SESSION_JOBS_CANCEL: &str = "session/jobs/cancel";
 
 // ── Universe: agent profile catalog ─────────────────────────────────────────
 
@@ -77,7 +66,6 @@ pub const METHOD_PROFILES_CREATE: &str = "profiles/create";
 pub const METHOD_PROFILES_READ: &str = "profiles/read";
 pub const METHOD_PROFILES_LIST: &str = "profiles/list";
 pub const METHOD_PROFILES_PUT: &str = "profiles/put";
-pub const METHOD_PROFILES_UPDATE: &str = "profiles/update";
 pub const METHOD_PROFILES_DELETE: &str = "profiles/delete";
 
 // ── Universe: content-addressed storage and VFS ─────────────────────────────
@@ -95,19 +83,26 @@ pub const METHOD_VFS_WORKSPACES_DELETE: &str = "vfs/workspaces/delete";
 
 // ── Universe: MCP server catalog ────────────────────────────────────────────
 
-pub const METHOD_MCP_SERVERS_CREATE: &str = "mcp/servers/create";
+pub const METHOD_MCP_SERVERS_PUT: &str = "mcp/servers/put";
 pub const METHOD_MCP_SERVERS_READ: &str = "mcp/servers/read";
 pub const METHOD_MCP_SERVERS_LIST: &str = "mcp/servers/list";
-pub const METHOD_MCP_SERVERS_UPDATE: &str = "mcp/servers/update";
 pub const METHOD_MCP_SERVERS_DELETE: &str = "mcp/servers/delete";
 
-// ── Universe: environment provider registry ─────────────────────────────────
+// ── Universe: environments and provider presence ────────────────────────────
+
+pub const METHOD_ENVIRONMENTS_CREATE: &str = "environments/create";
+pub const METHOD_ENVIRONMENTS_READ: &str = "environments/read";
+pub const METHOD_ENVIRONMENTS_LIST: &str = "environments/list";
+pub const METHOD_ENVIRONMENTS_CLOSE: &str = "environments/close";
+pub const METHOD_ENVIRONMENTS_JOBS_CREATE: &str = "environments/jobs/create";
+pub const METHOD_ENVIRONMENTS_JOBS_READ: &str = "environments/jobs/read";
+pub const METHOD_ENVIRONMENTS_JOBS_LIST: &str = "environments/jobs/list";
+pub const METHOD_ENVIRONMENTS_JOBS_CANCEL: &str = "environments/jobs/cancel";
 
 pub const METHOD_ENVIRONMENTS_PROVIDERS_REGISTER: &str = "environments/providers/register";
 pub const METHOD_ENVIRONMENTS_PROVIDERS_HEARTBEAT: &str = "environments/providers/heartbeat";
 pub const METHOD_ENVIRONMENTS_PROVIDERS_UNREGISTER: &str = "environments/providers/unregister";
 pub const METHOD_ENVIRONMENTS_PROVIDERS_LIST: &str = "environments/providers/list";
-pub const METHOD_ENVIRONMENTS_PROVIDERS_TARGETS_LIST: &str = "environments/providers/targets/list";
 
 // ── Universe: auth ──────────────────────────────────────────────────────────
 
@@ -140,5 +135,4 @@ pub const NOTIFY_SESSION_STATUS_CHANGED: &str = "session/status/changed";
 pub const NOTIFY_SESSION_EVENT: &str = "session/event";
 pub const NOTIFY_SESSION_RUNS_STARTED: &str = "session/runs/started";
 pub const NOTIFY_SESSION_RUNS_COMPLETED: &str = "session/runs/completed";
-pub const NOTIFY_SESSION_ITEMS_COMPLETED: &str = "session/items/completed";
 pub const NOTIFY_ERROR: &str = "error";

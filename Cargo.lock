@@ -3926,6 +3926,7 @@ dependencies = [
  "engine",
  "futures",
  "futures-util",
+ "host-protocol",
  "serde",
  "serde_json",
  "temporalio-client",
