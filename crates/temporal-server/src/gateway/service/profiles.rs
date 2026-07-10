@@ -134,11 +134,9 @@ impl GatewayAgentApi {
             }
         }
 
-        if document.instructions.is_some() {
-            applied.instructions_changed = self
-                .apply_profile_instructions(session_id, document.instructions.clone())
-                .await?;
-        }
+        applied.instructions_changed = self
+            .apply_profile_instructions(session_id, document.instructions.clone())
+            .await?;
 
         for mount in &document.mounts {
             if self.apply_profile_mount(session_id, mount.clone()).await? {
@@ -160,6 +158,8 @@ impl GatewayAgentApi {
             }
         }
 
+        self.load_session_state_with_current_run_context(session_id)
+            .await?;
         let session = self.project_session_by_id(session_id).await?;
         Ok((session, applied))
     }
@@ -263,68 +263,53 @@ impl GatewayAgentApi {
         session_id: &SessionId,
         instructions: Option<ProfileInstructions>,
     ) -> Result<bool, AgentApiError> {
-        let Some(instructions) = instructions else {
-            return Ok(false);
-        };
-        let content_ref = match instructions {
-            ProfileInstructions::Text { text } => self
-                .store
-                .as_ref()
-                .put_bytes(text.into_bytes())
-                .await
-                .map_err(map_blob_store_error)?,
-            ProfileInstructions::TextRef { blob_ref } => {
-                let blob_ref = parse_blob_ref(&blob_ref)?;
-                if !self
+        let mut source_entries = BTreeMap::new();
+        if let Some(instructions) = instructions {
+            let content_ref = match instructions {
+                ProfileInstructions::Text { text } => self
                     .store
                     .as_ref()
-                    .has_blob(&blob_ref)
+                    .put_bytes(text.into_bytes())
                     .await
-                    .map_err(map_blob_store_error)?
-                {
-                    return Err(AgentApiError::not_found(format!(
-                        "profile instructions blob not found: {blob_ref}"
-                    )));
+                    .map_err(map_blob_store_error)?,
+                ProfileInstructions::TextRef { blob_ref } => {
+                    let blob_ref = parse_blob_ref(&blob_ref)?;
+                    if !self
+                        .store
+                        .as_ref()
+                        .has_blob(&blob_ref)
+                        .await
+                        .map_err(map_blob_store_error)?
+                    {
+                        return Err(AgentApiError::not_found(format!(
+                            "profile instructions blob not found: {blob_ref}"
+                        )));
+                    }
+                    blob_ref
                 }
-                blob_ref
-            }
-        };
-        let key = ContextEntryKey::new(PROFILE_INSTRUCTIONS_CONTEXT_KEY);
-        let entry = ContextEntryInput {
-            kind: ContextEntryKind::Instructions,
-            content_ref,
-            media_type: Some("text/plain".to_owned()),
-            preview: Some("Profile instructions".to_owned()),
-            provider_kind: None,
-            provider_item_id: None,
-            token_estimate: None,
-        };
+            };
+            source_entries.insert(
+                ContextEntryKey::new(PROFILE_INSTRUCTIONS_CONTEXT_KEY),
+                ContextEntryInput {
+                    kind: ContextEntryKind::Instructions,
+                    content_ref,
+                    media_type: Some("text/plain".to_owned()),
+                    preview: Some("Profile instructions".to_owned()),
+                    provider_kind: None,
+                    provider_item_id: None,
+                    token_estimate: None,
+                },
+            );
+        }
         let loaded = self.load_session_state(session_id).await?;
         self.require_open_idle_session(session_id, &loaded, "profile instructions apply")?;
-        let unchanged = loaded.state.context.entries.iter().any(|active| {
-            active.key.as_ref() == Some(&key)
-                && active.kind == entry.kind
-                && active.content_ref == entry.content_ref
-        });
-        if unchanged {
-            return Ok(false);
-        }
-        let baseline_failures = self
-            .query_status_optional(session_id)
-            .await?
-            .map(|status| status.admission_failures.len())
-            .unwrap_or(0);
-        self.submit_core_command(
+        self.reconcile_managed_instructions(
             session_id,
-            CoreAgentCommand::UpsertContext {
-                key: key.clone(),
-                entry: entry.clone(),
-            },
+            &loaded.state,
+            PROFILE_INSTRUCTIONS_CONTEXT_KEY,
+            source_entries,
         )
-        .await?;
-        self.wait_for_context_entries_applied(session_id, &[(key, entry)], baseline_failures)
-            .await?;
-        Ok(true)
+        .await
     }
 
     async fn apply_profile_mount(

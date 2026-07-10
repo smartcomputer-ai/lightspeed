@@ -218,7 +218,11 @@ impl UniverseRuntime {
             .with_task_queue(self.task_queue.clone())
             .with_oauth_token_client(self.clients.oauth_token.clone())
             .with_oauth_metadata_client(self.clients.oauth_metadata.clone())
-            .with_github_api_client(self.clients.github.clone());
+            .with_github_api_client(self.clients.github.clone())
+            .with_model_discovery_clients(
+                self.clients.openai.clone(),
+                self.clients.anthropic.clone(),
+            );
         if let Some(public_base_url) = &self.public_base_url {
             api = api.with_public_base_url(public_base_url.clone());
         }

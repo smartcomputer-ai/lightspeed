@@ -13,23 +13,23 @@ use std::{
 
 use api::{
     AgentApiService, AgentProfileInput, AuthProviderConfigInput, AuthProviderCreateParams,
-    EnvironmentCloseParams, EnvironmentCreateParams, EnvironmentJobCancelParams,
-    EnvironmentJobCreateParams, EnvironmentJobListParams, EnvironmentJobReadParams,
-    EnvironmentListParams, EnvironmentProviderCapabilitiesView, EnvironmentProviderHeartbeatParams,
-    EnvironmentProviderImplementationView, EnvironmentProviderKindView,
-    EnvironmentProviderRegisterParams, EnvironmentTargetDescriptorView,
-    EnvironmentTargetStatusView, EnvironmentTargetSummaryView, HostCapabilitiesView,
-    HostConnectionView, HostControllerConnectionView, HostScopeView, HostTargetCreateRequestView,
-    HostTransportView, InputItem, ProfileCreateParams, ProfileDeleteParams, ProfileDocument,
-    ProfileEnvironment, ProfileEnvironmentSource, ProfileId, ProfileSource, RunStartParams,
-    RunStartSource, RunStatus, SandboxTargetSpecView, SessionConfig,
+    ContextEntryKindView, EnvironmentCloseParams, EnvironmentCreateParams,
+    EnvironmentJobCancelParams, EnvironmentJobCreateParams, EnvironmentJobListParams,
+    EnvironmentJobReadParams, EnvironmentListParams, EnvironmentProviderCapabilitiesView,
+    EnvironmentProviderHeartbeatParams, EnvironmentProviderImplementationView,
+    EnvironmentProviderKindView, EnvironmentProviderRegisterParams,
+    EnvironmentTargetDescriptorView, EnvironmentTargetStatusView, EnvironmentTargetSummaryView,
+    HostCapabilitiesView, HostConnectionView, HostControllerConnectionView, HostScopeView,
+    HostTargetCreateRequestView, HostTransportView, InputItem, ProfileCreateParams,
+    ProfileDeleteParams, ProfileDocument, ProfileEnvironment, ProfileEnvironmentSource, ProfileId,
+    ProfileSource, RunStartParams, RunStartSource, RunStatus, SandboxTargetSpecView, SessionConfig,
     SessionEnvironmentAttachParams, SessionEnvironmentCredentialBindParams,
     SessionEnvironmentCredentialListParams, SessionEnvironmentCredentialSourceView,
     SessionEnvironmentCredentialUnbindParams, SessionEnvironmentDetachParams,
     SessionEnvironmentListParams, SessionEventsReadParams, SessionJobCancelScopeView,
     SessionJobDependencyInput, SessionJobDependencyPolicyView, SessionJobHandleInput,
     SessionJobHandleView, SessionJobReadEntryView, SessionJobStartSpecInput, SessionJobStatusView,
-    SessionStartParams, VfsMountAccess as ApiVfsMountAccess, VfsMountPutParams,
+    SessionReadParams, SessionStartParams, VfsMountAccess as ApiVfsMountAccess, VfsMountPutParams,
     VfsMountSourceInput,
 };
 use async_trait::async_trait;
@@ -1141,17 +1141,32 @@ async fn run_fake_provider_client(
     );
     let attach_instance_id = heartbeat.result.environments[0].instance_id.clone();
 
-    api.start_session(SessionStartParams {
-        session_id: Some(session_id.as_str().to_owned()),
-        display_name: None,
-        config: Some(SessionConfig {
-            model: Some(api_projection::model_to_api(&model)),
-            features: Some(env_live_features()),
-            ..SessionConfig::default()
-        }),
-        profile: None,
-    })
-    .await?;
+    let started = api
+        .start_session(SessionStartParams {
+            session_id: Some(session_id.as_str().to_owned()),
+            display_name: None,
+            config: Some(SessionConfig {
+                model: Some(api_projection::model_to_api(&model)),
+                features: Some(env_live_features()),
+                ..SessionConfig::default()
+            }),
+            profile: None,
+        })
+        .await?;
+    for expected in [
+        ContextEntryKindView::VfsCatalog,
+        ContextEntryKindView::EnvironmentCatalog,
+    ] {
+        assert!(
+            started
+                .result
+                .session
+                .active_context
+                .entries
+                .iter()
+                .any(|entry| entry.kind == expected)
+        );
+    }
 
     let attached = api
         .attach_session_environment(SessionEnvironmentAttachParams {
@@ -1165,6 +1180,20 @@ async fn run_fake_provider_client(
         .await?;
     assert_eq!(attached.result.active_env_id.as_deref(), Some("bridge-env"));
     assert_eq!(provider.attach_count(), 0);
+    let session = api
+        .read_session(SessionReadParams {
+            session_id: session_id.as_str().to_owned(),
+        })
+        .await?;
+    assert!(
+        session
+            .result
+            .session
+            .active_context
+            .entries
+            .iter()
+            .any(|entry| { matches!(entry.kind, ContextEntryKindView::EnvironmentActive) })
+    );
 
     let first = api
         .start_run(RunStartParams {

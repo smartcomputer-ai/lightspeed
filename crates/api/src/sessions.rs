@@ -53,7 +53,7 @@ pub struct GenerationConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_output_tokens: Option<u32>,
     /// Reasoning effort tier as a provider-native string (e.g. "none",
-    /// "high", "xhigh", "ultra"); validated against the session's provider.
+    /// "high", "xhigh", "max"); validated against the session's provider.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -679,8 +679,17 @@ pub struct SessionSummaryView {
     pub id: SessionId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
+    pub lifecycle_status: SessionLifecycleStatus,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum SessionLifecycleStatus {
+    New,
+    Open,
+    Closed,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -695,6 +704,18 @@ pub struct SessionRenameParams {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionRenameResponse {
+    pub session: SessionSummaryView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionDeleteParams {
+    pub session_id: SessionId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionDeleteResponse {
     pub session: SessionSummaryView,
 }
 

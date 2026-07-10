@@ -1,8 +1,7 @@
 use std::{cmp::Ordering, collections::BTreeMap};
 
 use engine::{
-    BlobRef, ContextEntry, ContextEntryInput, ContextEntryKey, ContextEntryKind, CoreAgentCommand,
-    CoreAgentState,
+    BlobRef, ContextEntry, ContextEntryInput, ContextEntryKey, ContextEntryKind, CoreAgentState,
     storage::{BlobStore, BlobStoreError},
 };
 use serde::Serialize;
@@ -48,7 +47,7 @@ pub struct PromptInstructionsBuild {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PromptInstructionsPublication {
     pub build: PromptInstructionsBuild,
-    pub command: Option<CoreAgentCommand>,
+    pub desired: BTreeMap<ContextEntryKey, ContextEntryInput>,
 }
 
 #[derive(Debug, Error)]
@@ -156,22 +155,13 @@ pub async fn build_prompt_instructions(
 
 pub async fn prepare_prompt_instructions_publication(
     blobs: &dyn BlobStore,
-    state: &CoreAgentState,
     roots: &[PromptRootInput<'_>],
     limits: PromptAssemblyLimits,
 ) -> Result<PromptInstructionsPublication, PromptInstructionsError> {
     let build = build_prompt_instructions(blobs, roots, limits).await?;
     let desired = prompt_instruction_inputs_for_entries(&build.entries);
-    let command = if active_prompt_instruction_inputs(state) == desired {
-        None
-    } else {
-        Some(CoreAgentCommand::ReplaceContextPrefix {
-            key_prefix: ContextEntryKey::new(PROMPT_INSTRUCTIONS_CONTEXT_KEY_PREFIX),
-            entries: desired,
-        })
-    };
 
-    Ok(PromptInstructionsPublication { build, command })
+    Ok(PromptInstructionsPublication { build, desired })
 }
 
 pub fn prompt_source_instructions_context_input(
@@ -842,10 +832,7 @@ fn source_order(path: &str) -> u8 {
 mod tests {
     use std::sync::Arc;
 
-    use engine::{
-        ContextEntryId, ContextEntrySource,
-        storage::{BlobStore, InMemoryBlobStore},
-    };
+    use engine::storage::{BlobStore, InMemoryBlobStore};
     use vfs::VfsMountAccess;
 
     use super::*;
@@ -955,36 +942,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn publication_replaces_prompt_prefix_and_clears_missing_sources() {
+    async fn publication_returns_complete_desired_source_map() {
         let fs = prompt_fs(&[("/workspace/.lightspeed/prompts/instructions.md", "first")]).await;
         let blobs = InMemoryBlobStore::new();
         let publication = prepare_prompt_instructions_publication(
             &blobs,
-            &CoreAgentState::new(),
             &[root_input(&fs, "/workspace/.lightspeed/prompts", "project")],
             PromptAssemblyLimits::default(),
         )
         .await
         .expect("publication");
 
-        let Some(CoreAgentCommand::ReplaceContextPrefix {
-            key_prefix,
-            entries,
-        }) = publication.command
-        else {
-            panic!("expected prefix replacement");
-        };
-        assert_eq!(key_prefix.as_str(), PROMPT_INSTRUCTIONS_CONTEXT_KEY_PREFIX);
-        assert_eq!(entries.len(), 1);
-        let (key, entry) = entries.iter().next().expect("prompt entry");
+        assert_eq!(publication.desired.len(), 1);
+        let (key, entry) = publication.desired.iter().next().expect("prompt entry");
         assert!(
             key.as_str()
                 .starts_with(PROMPT_INSTRUCTIONS_CONTEXT_KEY_PREFIX)
         );
         assert!(matches!(entry.kind, ContextEntryKind::Instructions));
 
-        let mut state = CoreAgentState::new();
-        state.context.entries = vec![active_entry(key.clone(), entry.clone())];
         let empty_fs = prompt_fs(&[]).await;
         empty_fs
             .create_directory(
@@ -996,7 +972,6 @@ mod tests {
 
         let clear = prepare_prompt_instructions_publication(
             &blobs,
-            &state,
             &[root_input(
                 &empty_fs,
                 "/workspace/.lightspeed/prompts",
@@ -1007,12 +982,7 @@ mod tests {
         .await
         .expect("clear publication");
 
-        assert!(matches!(
-            clear.command,
-            Some(CoreAgentCommand::ReplaceContextPrefix { ref key_prefix, ref entries })
-                if key_prefix.as_str() == PROMPT_INSTRUCTIONS_CONTEXT_KEY_PREFIX
-                    && entries.is_empty()
-        ));
+        assert!(clear.desired.is_empty());
     }
 
     async fn prompt_fs(files: &[(&str, &str)]) -> InMemoryFileSystem {
@@ -1047,21 +1017,6 @@ mod tests {
                 access: VfsMountAccess::ReadOnly,
             },
             fs,
-        }
-    }
-
-    fn active_entry(key: ContextEntryKey, input: ContextEntryInput) -> ContextEntry {
-        ContextEntry {
-            entry_id: ContextEntryId::new(1),
-            key: Some(key),
-            kind: input.kind,
-            source: ContextEntrySource::ContextEdit,
-            content_ref: input.content_ref,
-            media_type: input.media_type,
-            preview: input.preview,
-            provider_kind: input.provider_kind,
-            provider_item_id: input.provider_item_id,
-            token_estimate: input.token_estimate,
         }
     }
 }

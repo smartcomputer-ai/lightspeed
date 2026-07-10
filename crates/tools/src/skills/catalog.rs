@@ -132,6 +132,7 @@ pub async fn prepare_skill_catalog_publication(
         None
     } else {
         Some(CoreAgentCommand::UpsertContext {
+            expected_revision: None,
             key: ContextEntryKey::new(SKILL_CATALOG_CONTEXT_KEY),
             entry: skill_catalog_context_input(build.catalog_ref.clone()),
         })
@@ -959,6 +960,7 @@ mod tests {
         assert_eq!(
             publication.command,
             Some(CoreAgentCommand::UpsertContext {
+                expected_revision: None,
                 key: ContextEntryKey::new(SKILL_CATALOG_CONTEXT_KEY),
                 entry: skill_catalog_context_input(publication.build.catalog_ref.clone()),
             })

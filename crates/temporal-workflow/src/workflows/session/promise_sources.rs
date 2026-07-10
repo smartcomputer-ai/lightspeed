@@ -223,7 +223,7 @@ pub(super) async fn flush_pending_promise_cancellations(
                     command: CoreAgentCommand::CancelRun {
                         run_id: engine::RunId::new(target_run_id),
                     },
-                    context_key: None,
+                    correlation_token: None,
                 };
                 let _ = ctx
                     .external_workflow(workflow_id, None)
@@ -258,7 +258,7 @@ fn queue_resolution(
                 promise_id: engine::PromiseId::new(promise_id),
                 resolution,
             },
-            context_key: None,
+            correlation_token: None,
         });
     });
 }

@@ -183,19 +183,30 @@ impl SessionEnvironmentManager {
         &self,
         session_id: &SessionId,
         state: &CoreAgentState,
+        vfs_catalog_enabled: bool,
+        environment_catalog_enabled: bool,
     ) -> Result<EnvironmentProjectionRefresh, SessionEnvironmentManagerError> {
         let mounts = self.mount_store.list_mounts(session_id).await?;
-        self.refresh_projection_for_mounts(state, mounts).await
+        self.refresh_projection_for_mounts(
+            state,
+            mounts,
+            vfs_catalog_enabled,
+            environment_catalog_enabled,
+        )
+        .await
     }
 
     pub async fn refresh_projection_for_mounts(
         &self,
         state: &CoreAgentState,
         mounts: Vec<VfsMountRecord>,
+        vfs_catalog_enabled: bool,
+        environment_catalog_enabled: bool,
     ) -> Result<EnvironmentProjectionRefresh, SessionEnvironmentManagerError> {
         let active_environment = self.active_environment(state);
         let mut input = EnvironmentProjectionInput::from_mounts(mounts)
-            .with_environments(self.environment_records());
+            .with_environments(self.environment_records())
+            .with_catalog_grants(vfs_catalog_enabled, environment_catalog_enabled);
         if let Some(environment) = active_environment {
             input = input
                 .with_active_environment(environment.env_id(), environment.fs_routes().to_vec());
@@ -208,14 +219,18 @@ impl SessionEnvironmentManager {
         state: &CoreAgentState,
         mounts: Vec<VfsMountRecord>,
         environments: Vec<RuntimeEnvironment>,
+        vfs_catalog_enabled: bool,
+        environment_catalog_enabled: bool,
     ) -> Result<EnvironmentProjectionRefresh, SessionEnvironmentManagerError> {
         let active_environment = active_environment_for_slice(&environments, state);
-        let mut input = EnvironmentProjectionInput::from_mounts(mounts).with_environments(
-            environments
-                .iter()
-                .map(|environment| environment.record.clone())
-                .collect(),
-        );
+        let mut input = EnvironmentProjectionInput::from_mounts(mounts)
+            .with_environments(
+                environments
+                    .iter()
+                    .map(|environment| environment.record.clone())
+                    .collect(),
+            )
+            .with_catalog_grants(vfs_catalog_enabled, environment_catalog_enabled);
         if let Some(environment) = active_environment {
             input = input
                 .with_active_environment(environment.env_id(), environment.fs_routes().to_vec());
@@ -558,7 +573,7 @@ mod tests {
         );
 
         let refresh = manager
-            .refresh_projection_for_mounts(&state, Vec::new())
+            .refresh_projection_for_mounts(&state, Vec::new(), true, true)
             .await
             .expect("refresh projection");
 

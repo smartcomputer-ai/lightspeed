@@ -382,7 +382,7 @@ async fn openai_responses_live_uses_vfs_prompt_instructions() {
                 key_prefix,
                 entries,
                 ..
-            }) if key_prefix.as_str() == PROMPT_INSTRUCTIONS_CONTEXT_KEY_PREFIX
+            }) if key_prefix.as_str() == "instructions"
                 && entries.len() == 2
         )
     }));

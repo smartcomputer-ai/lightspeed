@@ -138,6 +138,39 @@ async fn dispatch_json_rpc_calls_api_service() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn dispatch_json_rpc_routes_models_list() {
+    let response = dispatch_json_rpc(
+        &TestService,
+        JsonRpcRequest {
+            id: RequestId::Number(1),
+            method: METHOD_MODELS_LIST.to_owned(),
+            params: Some(json!({})),
+        },
+    )
+    .await;
+
+    assert!(response.error.is_none(), "{:?}", response.error);
+    let result = response.result.expect("result");
+    assert_eq!(
+        result["result"]["models"][0]["apiKind"],
+        json!("openai:responses")
+    );
+}
+
+#[test]
+fn model_list_params_default_to_the_unfiltered_provider_list() {
+    let params: ModelListParams = serde_json::from_value(json!({})).expect("params");
+    assert!(!params.selectable_only);
+    assert_eq!(
+        serde_json::to_value(ModelListParams {
+            selectable_only: true,
+        })
+        .expect("serialize"),
+        json!({ "selectableOnly": true })
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn dispatch_json_rpc_rejects_unknown_methods() {
     let response = dispatch_json_rpc(
         &TestService,
@@ -172,6 +205,25 @@ async fn dispatch_json_rpc_routes_session_close() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn dispatch_json_rpc_routes_session_delete() {
+    let response = dispatch_json_rpc(
+        &TestService,
+        JsonRpcRequest {
+            id: RequestId::Number(1),
+            method: METHOD_SESSION_DELETE.to_owned(),
+            params: Some(json!({ "sessionId": "session_1" })),
+        },
+    )
+    .await;
+
+    assert!(response.error.is_none(), "{:?}", response.error);
+    assert_eq!(
+        response.result.expect("result")["result"]["session"]["lifecycleStatus"],
+        json!("closed")
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn dispatch_json_rpc_routes_session_list() {
     let response = dispatch_json_rpc(
         &TestService,
@@ -188,6 +240,10 @@ async fn dispatch_json_rpc_routes_session_list() {
     assert_eq!(
         result["result"]["sessions"][0]["displayName"],
         json!("Test session")
+    );
+    assert_eq!(
+        result["result"]["sessions"][0]["lifecycleStatus"],
+        json!("open")
     );
     assert_eq!(result["result"]["nextCursor"], json!("40:session_prev"));
 }
@@ -1389,6 +1445,29 @@ struct TestService;
 
 #[async_trait]
 impl AgentApiService for TestService {
+    async fn list_models(
+        &self,
+        _params: ModelListParams,
+    ) -> Result<AgentApiOutcome<ModelListResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(ModelListResponse {
+            models: vec![ModelView {
+                provider_id: "openai".to_owned(),
+                api_kind: "openai:responses".to_owned(),
+                model: "gpt-test".to_owned(),
+                display_name: "gpt-test".to_owned(),
+                capabilities: ModelCapabilitiesView::default(),
+                source: ModelSource::Provider,
+                fetched_at_ms: 1,
+            }],
+            providers: vec![ModelProviderDiscoveryView {
+                provider_id: "openai".to_owned(),
+                api_kinds: vec!["openai:responses".to_owned()],
+                fetched_at_ms: Some(1),
+                error: None,
+            }],
+        }))
+    }
+
     async fn initialize(
         &self,
         _params: InitializeParams,
@@ -1506,6 +1585,7 @@ impl AgentApiService for TestService {
             sessions: vec![SessionSummaryView {
                 id: "session_test".to_owned(),
                 display_name: Some("Test session".to_owned()),
+                lifecycle_status: SessionLifecycleStatus::Open,
                 created_at_ms: 1,
                 updated_at_ms: 2,
             }],
@@ -1521,6 +1601,7 @@ impl AgentApiService for TestService {
             session: SessionSummaryView {
                 id: params.session_id,
                 display_name: params.display_name,
+                lifecycle_status: SessionLifecycleStatus::Open,
                 created_at_ms: 1,
                 updated_at_ms: 2,
             },
@@ -1540,6 +1621,21 @@ impl AgentApiService for TestService {
     ) -> Result<AgentApiOutcome<SessionCloseResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(SessionCloseResponse {
             session: test_session(params.session_id, SessionStatus::Closed),
+        }))
+    }
+
+    async fn delete_session(
+        &self,
+        params: SessionDeleteParams,
+    ) -> Result<AgentApiOutcome<SessionDeleteResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(SessionDeleteResponse {
+            session: SessionSummaryView {
+                id: params.session_id,
+                display_name: None,
+                lifecycle_status: SessionLifecycleStatus::Closed,
+                created_at_ms: 1,
+                updated_at_ms: 2,
+            },
         }))
     }
 

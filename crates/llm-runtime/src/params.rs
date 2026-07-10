@@ -229,7 +229,7 @@ pub const OPENAI_REASONING_EFFORT_TIERS: &[&str] =
     &["none", "minimal", "low", "medium", "high", "xhigh"];
 
 /// Reasoning effort tiers accepted by the Anthropic Messages adapter.
-pub const ANTHROPIC_REASONING_EFFORT_TIERS: &[&str] = &["none", "low", "medium", "high", "ultra"];
+pub const ANTHROPIC_REASONING_EFFORT_TIERS: &[&str] = &["none", "low", "medium", "high", "max"];
 
 fn validate_reasoning_effort(
     effort: &str,
@@ -399,7 +399,7 @@ mod tests {
             anthropic_thinking_from_effort("none").expect("none tier"),
             None
         );
-        for tier in ["low", "medium", "high", "ultra"] {
+        for tier in ["low", "medium", "high", "max"] {
             let (thinking, output_config) = anthropic_thinking_from_effort(tier)
                 .expect("known tier")
                 .expect("non-none tier derives thinking");

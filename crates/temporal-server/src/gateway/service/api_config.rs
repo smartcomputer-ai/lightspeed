@@ -225,7 +225,7 @@ pub(super) fn validate_reasoning_effort(
 ) -> Result<(), AgentApiError> {
     let supported: &[&str] = match api_kind {
         ProviderApiKind::OpenAiResponses => &["none", "low", "medium", "high", "xhigh"],
-        ProviderApiKind::AnthropicMessages => &["none", "low", "medium", "high", "ultra"],
+        ProviderApiKind::AnthropicMessages => &["none", "low", "medium", "high", "max"],
         ProviderApiKind::OpenAiCompletions => {
             return Err(AgentApiError::invalid_request(
                 "reasoning effort is not supported for openai:completions",

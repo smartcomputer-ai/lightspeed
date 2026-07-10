@@ -19,14 +19,17 @@ pub enum CoreAgentCommand {
     /// revision guard; anything omitted from the document reverts to
     /// defaults. Putting an identical document is an idempotent no-op.
     ReplaceSessionConfig {
+        #[serde(default)]
         expected_revision: Option<u64>,
         config: SessionConfig,
     },
     ReplaceTools {
+        #[serde(default)]
         expected_revision: Option<u64>,
         tools: BTreeMap<ToolName, ToolSpec>,
     },
     PatchTools {
+        #[serde(default)]
         expected_revision: Option<u64>,
         patch: ToolPatch,
     },
@@ -37,14 +40,20 @@ pub enum CoreAgentCommand {
         namespace: String,
     },
     UpsertContext {
+        #[serde(default)]
+        expected_revision: Option<u64>,
         key: ContextEntryKey,
         entry: ContextEntryInput,
     },
     ReplaceContextPrefix {
+        #[serde(default)]
+        expected_revision: Option<u64>,
         key_prefix: ContextEntryKey,
         entries: BTreeMap<ContextEntryKey, ContextEntryInput>,
     },
     RemoveContext {
+        #[serde(default)]
+        expected_revision: Option<u64>,
         key: ContextEntryKey,
     },
     CompactContext,

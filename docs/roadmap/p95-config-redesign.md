@@ -86,11 +86,13 @@
   `environments` with non-detached bindings — conflict listing the bindings;
   teardown stays explicit). Live suites re-validated with grants added to
   their session configs.
-- Known remaining gap (follow-up work, not P95-blocking):
-  `features.vfs.prompts`/`features.vfs.skills` sourcing roots are declared
-  and validated but the gateway prompt/skill discovery still resolves the
-  hardcoded conventional roots unconditionally — the sourcing config is not
-  yet consulted, and discovery is not yet gated on the grants.
+- Follow-up 2026-07-10: runtime projection now honors the sparse feature
+  grants end to end. VFS and environment catalogs are published only while
+  `features.vfs` and `features.environments` are granted (and stale managed
+  entries are removed on revocation). Prompt and skill discovery are gated by
+  `features.vfs.prompts` / `features.vfs.skills`, including their optional
+  explicit root lists, across the gateway, Temporal pre-run refresh, and the
+  in-process test runner.
 - Follow-up 2026-07-09: `session/prompts/active` removed; context entries
   unified on one faithful view. `SessionItemView` (display-oriented, lossy:
   keys dropped, kinds collapsed to `SystemEvent`, refs missing) replaced by a

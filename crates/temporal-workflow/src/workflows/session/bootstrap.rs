@@ -55,22 +55,16 @@ async fn open_new_session(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     args: AgentSessionArgs,
 ) -> anyhow::Result<()> {
-    let instructions_ref = match args.instructions_ref.clone() {
-        Some(blob_ref) => Some(blob_ref),
-        None => {
-            let blob_ref = ctx
-                .start_activity(
-                    WorkflowActivities::put_blob,
-                    PutBlobRequest {
-                        bytes: default_instructions().as_bytes().to_vec(),
-                    },
-                    activity_options(),
-                )
-                .await
-                .map_err(|error| anyhow::anyhow!("{error}"))?;
-            Some(blob_ref)
-        }
-    };
+    let instructions_ref = ctx
+        .start_activity(
+            WorkflowActivities::put_blob,
+            PutBlobRequest {
+                bytes: default_instructions().as_bytes().to_vec(),
+            },
+            activity_options(),
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
     let session_config = args.session_config;
 
     let mut drive = drive_from_state(ctx)?;
@@ -82,17 +76,16 @@ async fn open_new_session(
         },
     )
     .await?;
-    if let Some(instructions_ref) = instructions_ref {
-        append_command(
-            ctx,
-            &mut drive,
-            CoreAgentCommand::UpsertContext {
-                key: ContextEntryKey::new("instructions.000.default"),
-                entry: instruction_context_input(instructions_ref),
-            },
-        )
-        .await?;
-    }
+    append_command(
+        ctx,
+        &mut drive,
+        CoreAgentCommand::UpsertContext {
+            expected_revision: None,
+            key: ContextEntryKey::new("instructions.000.default"),
+            entry: instruction_context_input(instructions_ref),
+        },
+    )
+    .await?;
     Ok(())
 }
 

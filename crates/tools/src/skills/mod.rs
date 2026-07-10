@@ -14,5 +14,6 @@ pub use model::*;
 pub use parser::{SkillFrontmatter, SkillParseError, parse_skill_frontmatter};
 pub use vfs::{
     MountedVfsSkillCatalogRoots, SkillVfsRootError, VfsSkillRootSpec,
-    conventional_vfs_skill_root_specs, resolve_mounted_vfs_skill_roots,
+    configured_vfs_skill_root_specs, conventional_vfs_skill_root_specs,
+    resolve_mounted_vfs_skill_roots,
 };

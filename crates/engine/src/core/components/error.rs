@@ -24,6 +24,8 @@ pub enum CommandError {
 pub struct CommandRejection {
     pub kind: CommandRejectionKind,
     pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<CommandRejectionDetails>,
 }
 
 impl CommandRejection {
@@ -31,8 +33,23 @@ impl CommandRejection {
         Self {
             kind,
             message: message.into(),
+            details: None,
         }
     }
+
+    pub fn context_revision_conflict(expected: u64, actual: u64) -> Self {
+        Self {
+            kind: CommandRejectionKind::RevisionConflict,
+            message: format!("expected context revision {expected}, got {actual}"),
+            details: Some(CommandRejectionDetails::ContextRevisionConflict { expected, actual }),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CommandRejectionDetails {
+    ContextRevisionConflict { expected: u64, actual: u64 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,6 +63,7 @@ pub enum CommandRejectionKind {
     ProviderCompatibility,
     InvariantViolation,
     DuplicateSubmission,
+    RevisionConflict,
     Other,
 }
 

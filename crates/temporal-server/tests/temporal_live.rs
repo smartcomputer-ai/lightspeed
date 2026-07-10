@@ -4,13 +4,14 @@ use std::{env, future::Future, sync::Arc, time::Duration};
 
 use api::{
     AgentApiErrorKind, AgentApiService, AgentProfileInput, ContextAppendEntry, ContextAppendParams,
-    ContextAppendStatus, ContextEntryKindView, ContextMessageRoleView, InitializeParams, InputItem,
-    McpServerDeleteParams, McpServerInput, McpServerListParams, McpServerPutParams,
-    McpServerReadParams, McpServerStatus, ProfileApplyParams, ProfileCreateParams,
-    ProfileDeleteParams, ProfileDocument, ProfileId, ProfileInstructions, ProfileListParams,
-    ProfilePutParams, ProfileReadParams, ProfileSource, RemoteMcpApprovalPolicy,
+    ContextAppendStatus, ContextEntryKindView, ContextMessageRoleView, InitializeParams,
+    InlineAgentProfile, InputItem, McpServerDeleteParams, McpServerInput, McpServerListParams,
+    McpServerPutParams, McpServerReadParams, McpServerStatus, ProfileApplyParams,
+    ProfileCreateParams, ProfileDeleteParams, ProfileDocument, ProfileId, ProfileInstructions,
+    ProfileListParams, ProfilePutParams, ProfileReadParams, ProfileSource, RemoteMcpApprovalPolicy,
     RemoteMcpTransport, RunStartParams, RunStartSource, SessionConfig, SessionConfigPutParams,
-    SessionEventsReadParams, SessionReadParams, SessionStartParams, SessionStatus,
+    SessionDeleteParams, SessionEventsReadParams, SessionLifecycleStatus, SessionListParams,
+    SessionReadParams, SessionStartParams, SessionStatus,
 };
 use api_projection::model_to_api;
 use async_trait::async_trait;
@@ -76,6 +77,17 @@ async fn temporal_live_session_start_then_run_start_completes_fake_runs() -> any
 
     let activities = fake_worker_activities().await?;
     run_with_live_worker(activities, run_fake_live_client).await
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires local/up.sh or compatible Temporal + Postgres env"]
+async fn temporal_live_session_lifecycle_list_and_closed_only_delete() -> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().expect("live test lock");
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+
+    let activities = fake_worker_activities().await?;
+    run_with_live_worker(activities, run_lifecycle_delete_live_client).await
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -704,6 +716,92 @@ async fn run_fake_live_client(
         })
         .await?;
     assert_eq!(started.result.session.id, session_id.as_str());
+    assert!(
+        !started
+            .result
+            .session
+            .active_context
+            .entries
+            .iter()
+            .any(|entry| {
+                matches!(
+                    entry.kind,
+                    ContextEntryKindView::VfsCatalog | ContextEntryKindView::EnvironmentCatalog
+                )
+            })
+    );
+
+    let mut enabled_config = started
+        .result
+        .session
+        .config
+        .clone()
+        .expect("started session config");
+    let mut enabled_features = enabled_config.features.unwrap_or_default();
+    enabled_features.vfs = Some(api::VfsFeature {
+        version: api::CURRENT_FEATURE_VERSION,
+        tools: None,
+        prompts: None,
+        skills: None,
+    });
+    enabled_features.environments = Some(api::EnvironmentsFeature {
+        version: api::CURRENT_FEATURE_VERSION,
+        providers: None,
+    });
+    enabled_config.features = Some(enabled_features);
+    let enabled = api
+        .put_session_config(SessionConfigPutParams {
+            session_id: session_id.as_str().to_owned(),
+            expected_config_revision: Some(started.result.session.config_revision),
+            config: enabled_config,
+        })
+        .await?;
+    for expected in [
+        ContextEntryKindView::VfsCatalog,
+        ContextEntryKindView::EnvironmentCatalog,
+    ] {
+        assert!(
+            enabled
+                .result
+                .session
+                .active_context
+                .entries
+                .iter()
+                .any(|entry| entry.kind == expected)
+        );
+    }
+
+    let mut disabled_config = enabled
+        .result
+        .session
+        .config
+        .clone()
+        .expect("enabled session config");
+    if let Some(features) = disabled_config.features.as_mut() {
+        features.vfs = None;
+        features.environments = None;
+    }
+    let disabled = api
+        .put_session_config(SessionConfigPutParams {
+            session_id: session_id.as_str().to_owned(),
+            expected_config_revision: Some(enabled.result.session.config_revision),
+            config: disabled_config,
+        })
+        .await?;
+    assert!(
+        !disabled
+            .result
+            .session
+            .active_context
+            .entries
+            .iter()
+            .any(|entry| {
+                matches!(
+                    entry.kind,
+                    ContextEntryKindView::VfsCatalog | ContextEntryKindView::EnvironmentCatalog
+                )
+            })
+    );
 
     let first = api
         .start_run(RunStartParams {
@@ -821,6 +919,90 @@ async fn run_fake_live_client(
                 .build(),
         )
         .await;
+    Ok(())
+}
+
+async fn run_lifecycle_delete_live_client(
+    client: Client,
+    task_queue: String,
+    session_id: SessionId,
+) -> anyhow::Result<()> {
+    let store = pg_store_from_env().await?;
+    let model = default_model_from_env();
+    let api = GatewayAgentApi::builder(client, store)
+        .with_task_queue(task_queue)
+        .with_default_model(model)
+        .with_max_steps_per_input(128)
+        .build();
+
+    api.start_session(SessionStartParams {
+        session_id: Some(session_id.as_str().to_owned()),
+        display_name: Some("Lifecycle delete live test".to_owned()),
+        config: None,
+        profile: None,
+    })
+    .await?;
+
+    let listed = api.list_sessions(SessionListParams::default()).await?;
+    let open_summary = listed
+        .result
+        .sessions
+        .iter()
+        .find(|summary| summary.id == session_id.as_str())
+        .expect("started session is listed");
+    assert_eq!(open_summary.lifecycle_status, SessionLifecycleStatus::Open);
+
+    let delete_open = api
+        .delete_session(SessionDeleteParams {
+            session_id: session_id.as_str().to_owned(),
+        })
+        .await
+        .expect_err("open session deletion must be rejected");
+    assert_eq!(delete_open.kind, AgentApiErrorKind::Rejected);
+
+    api.close_session(api::SessionCloseParams {
+        session_id: session_id.as_str().to_owned(),
+        force: false,
+    })
+    .await?;
+
+    let listed = api.list_sessions(SessionListParams::default()).await?;
+    let closed_summary = listed
+        .result
+        .sessions
+        .iter()
+        .find(|summary| summary.id == session_id.as_str())
+        .expect("closed session remains listed");
+    assert_eq!(
+        closed_summary.lifecycle_status,
+        SessionLifecycleStatus::Closed
+    );
+
+    let deleted = api
+        .delete_session(SessionDeleteParams {
+            session_id: session_id.as_str().to_owned(),
+        })
+        .await?;
+    assert_eq!(
+        deleted.result.session.lifecycle_status,
+        SessionLifecycleStatus::Closed
+    );
+
+    let listed = api.list_sessions(SessionListParams::default()).await?;
+    assert!(
+        listed
+            .result
+            .sessions
+            .iter()
+            .all(|summary| summary.id != session_id.as_str())
+    );
+    let read_deleted = api
+        .read_session(SessionReadParams {
+            session_id: session_id.as_str().to_owned(),
+        })
+        .await
+        .expect_err("deleted session must not be readable");
+    assert_eq!(read_deleted.kind, AgentApiErrorKind::NotFound);
     Ok(())
 }
 
@@ -1099,6 +1281,18 @@ async fn run_fleet_profile_spawn_live_client(
     let child_features = child_config.features.as_ref().expect("child features");
     assert!(child_features.fleet.is_some());
     assert!(child_features.web.is_none());
+    assert_eq!(
+        child
+            .result
+            .session
+            .active_context
+            .entries
+            .iter()
+            .filter(|entry| matches!(&entry.kind, ContextEntryKindView::Instructions))
+            .count(),
+        1,
+        "profile instructions should replace the product fallback"
+    );
     assert!(
         child
             .result
@@ -2046,7 +2240,7 @@ async fn run_admission_failure_live_client(
                 // No run is active, so admission rejects this command; the
                 // session must keep serving later admissions regardless.
                 command: CoreAgentCommand::RequestRunSteering { input: Vec::new() },
-                context_key: None,
+                correlation_token: None,
             }],
             WorkflowSignalOptions::default(),
         )
@@ -2079,7 +2273,7 @@ async fn run_admission_failure_live_client(
             AgentSessionWorkflow::submit_admissions,
             vec![AgentAdmission {
                 command: CoreAgentCommand::CloseSession { force: false },
-                context_key: None,
+                correlation_token: None,
             }],
             WorkflowSignalOptions::default(),
         )
@@ -2420,6 +2614,16 @@ async fn run_profiles_live_client(
     let features = config.features.as_ref().expect("session features");
     assert!(features.fleet.is_some());
     assert!(features.web.is_none());
+    assert_eq!(
+        session
+            .active_context
+            .entries
+            .iter()
+            .filter(|entry| matches!(&entry.kind, ContextEntryKindView::Instructions))
+            .count(),
+        1,
+        "profile instructions should replace the product fallback"
+    );
     assert!(
         session.active_context.entries.iter().any(|entry| matches!(
             &entry.kind,
@@ -2456,6 +2660,58 @@ async fn run_profiles_live_client(
     assert!(!applied.result.applied.instructions_changed);
     assert_eq!(applied.result.applied.mounts_changed, 0);
     assert_eq!(applied.result.applied.environments_changed, 0);
+
+    let cleared = api
+        .apply_profile(ProfileApplyParams {
+            session_id: session_id.as_str().to_owned(),
+            profile: ProfileSource::Inline {
+                profile: InlineAgentProfile {
+                    display_name: Some("No profile instructions".to_owned()),
+                    description: None,
+                    document: ProfileDocument::default(),
+                },
+            },
+            expected_config_revision: Some(applied.result.session.config_revision),
+            expected_tools_revision: Some(applied.result.session.active_tools.revision),
+        })
+        .await?;
+    assert!(cleared.result.applied.instructions_changed);
+    let cleared_instructions = cleared
+        .result
+        .session
+        .active_context
+        .entries
+        .iter()
+        .filter(|entry| matches!(&entry.kind, ContextEntryKindView::Instructions))
+        .collect::<Vec<_>>();
+    assert_eq!(cleared_instructions.len(), 1);
+    assert_ne!(
+        cleared_instructions[0].preview.as_deref(),
+        Some("Profile instructions")
+    );
+
+    let restored = api
+        .apply_profile(ProfileApplyParams {
+            session_id: session_id.as_str().to_owned(),
+            profile: ProfileSource::Named {
+                profile_id: profile_id.clone(),
+            },
+            expected_config_revision: Some(cleared.result.session.config_revision),
+            expected_tools_revision: Some(cleared.result.session.active_tools.revision),
+        })
+        .await?;
+    assert!(restored.result.applied.instructions_changed);
+    assert_eq!(
+        restored
+            .result
+            .session
+            .active_context
+            .entries
+            .iter()
+            .filter(|entry| matches!(&entry.kind, ContextEntryKindView::Instructions))
+            .count(),
+        1
+    );
 
     let run = api
         .start_run(RunStartParams {
@@ -2496,12 +2752,10 @@ async fn run_openai_live_client(
 ) -> anyhow::Result<()> {
     let store = pg_store_from_env().await?;
     let instructions = "You are Agent in a live integration test. Do not call tools for this test. Reply with the exact phrase requested by the user.";
-    let instructions_ref = store.put_bytes(instructions.as_bytes().to_vec()).await?;
     let model = openai_live_model();
     let api = GatewayAgentApi::builder(client.clone(), store)
         .with_task_queue(task_queue)
         .with_default_model(model.clone())
-        .with_instructions_ref(instructions_ref)
         .with_max_steps_per_input(128)
         .build();
 
@@ -2512,7 +2766,18 @@ async fn run_openai_live_client(
             model: Some(model_to_api(&model)),
             ..SessionConfig::default()
         }),
-        profile: None,
+        profile: Some(ProfileSource::Inline {
+            profile: InlineAgentProfile {
+                display_name: Some("OpenAI live test".to_owned()),
+                description: None,
+                document: ProfileDocument {
+                    instructions: Some(ProfileInstructions::Text {
+                        text: instructions.to_owned(),
+                    }),
+                    ..ProfileDocument::default()
+                },
+            },
+        }),
     })
     .await?;
 

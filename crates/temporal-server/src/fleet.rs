@@ -2224,6 +2224,10 @@ fn map_session_store_error(error: SessionStoreError) -> AgentApiError {
         | SessionStoreError::InvalidLimit { .. } => {
             AgentApiError::invalid_request(error.to_string())
         }
+        SessionStoreError::SessionNotClosed { .. } => AgentApiError::rejected(error.to_string()),
+        SessionStoreError::SessionHasForkChildren { .. } => {
+            AgentApiError::conflict(error.to_string())
+        }
         SessionStoreError::Store { .. } => AgentApiError::internal(error.to_string()),
     }
 }

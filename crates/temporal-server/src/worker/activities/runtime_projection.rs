@@ -10,7 +10,7 @@ use temporalio_sdk::activities::ActivityError;
 use tools::{
     environment::EnvironmentToolContext,
     skills::{
-        conventional_vfs_skill_root_specs, prepare_skill_catalog_publication,
+        configured_vfs_skill_root_specs, prepare_skill_catalog_publication,
         resolve_mounted_vfs_skill_roots, skill_catalog_context_input,
     },
     targets::ENV_TARGET_NAMESPACE,
@@ -92,12 +92,27 @@ pub(super) async fn refresh_runtime_projection(
     }
     let manager = SessionEnvironmentManager::new(deps.blobs.clone(), deps.mount_store.clone());
     let mut commands = manager
-        .refresh_projection_for_runtime_environments(&state, mounts.clone(), environments)
+        .refresh_projection_for_runtime_environments(
+            &state,
+            mounts.clone(),
+            environments,
+            request.vfs_catalog_enabled,
+            request.environment_catalog_enabled,
+        )
         .await
         .map(|refresh| refresh.commands)
         .map_err(activity_error)?;
 
-    let specs = conventional_vfs_skill_root_specs(&mounts);
+    if !request.vfs_skills_enabled {
+        return Ok(RuntimeProjectionRefreshActivityResult {
+            commands: append_optional(
+                commands,
+                clear_catalog_command(request.active_catalog_ref.as_ref()),
+            ),
+        });
+    }
+    let specs = configured_vfs_skill_root_specs(&mounts, request.vfs_skill_roots.as_deref())
+        .map_err(activity_error)?;
     if specs.is_empty() {
         return Ok(RuntimeProjectionRefreshActivityResult {
             commands: append_optional(
@@ -149,6 +164,7 @@ fn append_optional(
 
 fn clear_catalog_command(active_catalog_ref: Option<&BlobRef>) -> Option<CoreAgentCommand> {
     active_catalog_ref.map(|_| CoreAgentCommand::RemoveContext {
+        expected_revision: None,
         key: ContextEntryKey::new(SKILL_CATALOG_CONTEXT_KEY),
     })
 }
@@ -299,6 +315,10 @@ mod tests {
             Some(&deps),
             RuntimeProjectionRefreshActivityRequest {
                 session_id: SessionId::new("session_1"),
+                vfs_catalog_enabled: true,
+                environment_catalog_enabled: true,
+                vfs_skills_enabled: false,
+                vfs_skill_roots: None,
                 active_catalog_ref: None,
                 active_vfs_catalog_ref: None,
                 active_environment_catalog_ref: None,
@@ -313,7 +333,7 @@ mod tests {
             .commands
             .iter()
             .find_map(|command| match command {
-                CoreAgentCommand::UpsertContext { key, entry }
+                CoreAgentCommand::UpsertContext { key, entry, .. }
                     if key.as_str() == ENVIRONMENT_CATALOG_CONTEXT_KEY =>
                 {
                     Some(entry.content_ref.clone())
@@ -333,7 +353,7 @@ mod tests {
             .commands
             .iter()
             .find_map(|command| match command {
-                CoreAgentCommand::UpsertContext { key, entry }
+                CoreAgentCommand::UpsertContext { key, entry, .. }
                     if key.as_str() == ENVIRONMENT_ACTIVE_CONTEXT_KEY =>
                 {
                     Some(entry.content_ref.clone())

@@ -1,7 +1,8 @@
 //! Session event-log storage contract.
 
-use crate::session::{
-    EventSeq, SessionId, SessionPosition, StoredSessionEntry, UncommittedStoredEvent,
+use crate::{
+    CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND, CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND,
+    session::{EventSeq, SessionId, SessionPosition, StoredSessionEntry, UncommittedStoredEvent},
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -16,11 +17,29 @@ pub struct SessionRecord {
     /// log or deterministic replay.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
+    /// Cheap, durable projection of the CoreAgent lifecycle. The event log
+    /// remains authoritative; stores update this alongside event appends.
+    #[serde(default)]
+    pub lifecycle_status: SessionLifecycleStatus,
+    /// Sequence of the terminal lifecycle event. Besides auditing closure,
+    /// this lets forks derive lifecycle state at their branch point without
+    /// replaying inherited history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub closed_at_seq: Option<EventSeq>,
     pub head: Option<SessionPosition>,
     pub source_session_id: Option<SessionId>,
     pub source_seq: Option<EventSeq>,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionLifecycleStatus {
+    #[default]
+    New,
+    Open,
+    Closed,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -164,6 +183,15 @@ pub enum SessionStoreError {
     #[error("invalid session link relationship: {relationship:?}")]
     InvalidRelationship { relationship: String },
 
+    #[error("session is not closed: {session_id} ({lifecycle_status:?})")]
+    SessionNotClosed {
+        session_id: SessionId,
+        lifecycle_status: SessionLifecycleStatus,
+    },
+
+    #[error("session has fork children and still backs their inherited history: {session_id}")]
+    SessionHasForkChildren { session_id: SessionId },
+
     #[error("session store failure: {message}")]
     Store { message: String },
 }
@@ -203,6 +231,20 @@ pub trait SessionStore: Send + Sync {
         Err(SessionStoreError::Store {
             message: format!(
                 "set_session_display_name is not supported by this session store for {session_id}"
+            ),
+        })
+    }
+
+    /// Delete a logically closed session. Implementations must perform the
+    /// lifecycle check and delete atomically and reject sessions whose event
+    /// history is still inherited by a fork child.
+    async fn delete_closed_session(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<SessionRecord, SessionStoreError> {
+        Err(SessionStoreError::Store {
+            message: format!(
+                "delete_closed_session is not supported by this session store for {session_id}"
             ),
         })
     }
@@ -314,6 +356,8 @@ impl SessionStore for InMemorySessionStore {
         let record = SessionRecord {
             session_id: request.session_id,
             display_name: request.display_name,
+            lifecycle_status: SessionLifecycleStatus::New,
+            closed_at_seq: None,
             head: None,
             source_session_id: None,
             source_seq: None,
@@ -396,6 +440,46 @@ impl SessionStore for InMemorySessionStore {
         Ok(record.clone())
     }
 
+    async fn delete_closed_session(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<SessionRecord, SessionStoreError> {
+        let mut inner = self.inner.write().map_err(|_| SessionStoreError::Store {
+            message: "session store write lock poisoned".into(),
+        })?;
+        let record = inner.records.get(session_id).cloned().ok_or_else(|| {
+            SessionStoreError::SessionNotFound {
+                session_id: session_id.clone(),
+            }
+        })?;
+        if record.lifecycle_status != SessionLifecycleStatus::Closed {
+            return Err(SessionStoreError::SessionNotClosed {
+                session_id: session_id.clone(),
+                lifecycle_status: record.lifecycle_status,
+            });
+        }
+        if inner.records.values().any(|candidate| {
+            candidate.source_session_id.as_ref() == Some(session_id)
+                && candidate.source_seq.is_some()
+        }) {
+            return Err(SessionStoreError::SessionHasForkChildren {
+                session_id: session_id.clone(),
+            });
+        }
+
+        inner.records.remove(session_id);
+        inner.entries.remove(session_id);
+        inner
+            .links
+            .retain(|(from, to, _), _| from != session_id && to != session_id);
+        for candidate in inner.records.values_mut() {
+            if candidate.source_session_id.as_ref() == Some(session_id) {
+                candidate.source_session_id = None;
+            }
+        }
+        Ok(record)
+    }
+
     async fn create_cloned_session(
         &self,
         request: CreateClonedSession,
@@ -417,6 +501,8 @@ impl SessionStore for InMemorySessionStore {
         let mut record = SessionRecord {
             session_id: request.session_id,
             display_name: None,
+            lifecycle_status: SessionLifecycleStatus::New,
+            closed_at_seq: None,
             head: None,
             source_session_id: Some(request.source_session_id),
             source_seq: None,
@@ -449,10 +535,17 @@ impl SessionStore for InMemorySessionStore {
             });
         }
         validate_in_memory_fork_point(&inner, &request.source_session_id, request.source_seq)?;
+        let source = inner
+            .records
+            .get(&request.source_session_id)
+            .expect("validated source session");
+        let (lifecycle_status, closed_at_seq) = lifecycle_at_fork(source, request.source_seq);
         let head = position_from_nonzero_seq(request.source_seq);
         let record = SessionRecord {
             session_id: request.session_id,
             display_name: None,
+            lifecycle_status,
+            closed_at_seq,
             head,
             source_session_id: Some(request.source_session_id),
             source_seq: Some(request.source_seq),
@@ -764,11 +857,41 @@ fn commit_uncommitted_events(
             joins: event.joins,
             event: event.event,
         };
+        apply_lifecycle_projection(record, &entry);
         record.head = Some(position);
         record.updated_at_ms = entry.observed_at_ms;
         committed.push(entry);
     }
     committed
+}
+
+pub fn apply_lifecycle_projection(record: &mut SessionRecord, entry: &StoredSessionEntry) {
+    match entry.event.kind.as_str() {
+        CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND => {
+            record.lifecycle_status = SessionLifecycleStatus::Open;
+            record.closed_at_seq = None;
+        }
+        CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND => {
+            record.lifecycle_status = SessionLifecycleStatus::Closed;
+            record.closed_at_seq = Some(entry.position.seq);
+        }
+        _ => {}
+    }
+}
+
+pub fn lifecycle_at_fork(
+    source: &SessionRecord,
+    source_seq: EventSeq,
+) -> (SessionLifecycleStatus, Option<EventSeq>) {
+    if source_seq.as_u64() == 0 {
+        return (SessionLifecycleStatus::New, None);
+    }
+    if let Some(closed_at_seq) = source.closed_at_seq
+        && closed_at_seq <= source_seq
+    {
+        return (SessionLifecycleStatus::Closed, Some(closed_at_seq));
+    }
+    (SessionLifecycleStatus::Open, None)
 }
 
 fn effective_head_u64(
@@ -876,6 +999,14 @@ mod tests {
 
     fn open_event(at_ms: u64) -> UncommittedStoredEvent {
         test_event(at_ms, "lightspeed.test.lifecycle.closed")
+    }
+
+    fn lifecycle_opened_event(at_ms: u64) -> UncommittedStoredEvent {
+        test_event(at_ms, CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND)
+    }
+
+    fn lifecycle_closed_event(at_ms: u64) -> UncommittedStoredEvent {
+        test_event(at_ms, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND)
     }
 
     fn run_event(at_ms: u64, kind: &'static str, run_id: u64) -> UncommittedStoredEvent {
@@ -1011,6 +1142,119 @@ mod tests {
                 .await,
             Err(SessionStoreError::SessionNotFound { .. })
         ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn lifecycle_projection_drives_forks_and_closed_only_deletion() {
+        let store = InMemorySessionStore::new();
+        let parent = SessionId::new("parent");
+        store
+            .create_session(CreateSession {
+                session_id: parent.clone(),
+                display_name: None,
+                created_at_ms: 1,
+            })
+            .await
+            .expect("create parent");
+
+        let not_closed = store
+            .delete_closed_session(&parent)
+            .await
+            .expect_err("new session cannot be deleted");
+        assert!(matches!(
+            not_closed,
+            SessionStoreError::SessionNotClosed {
+                lifecycle_status: SessionLifecycleStatus::New,
+                ..
+            }
+        ));
+
+        store
+            .append(AppendSessionEvents {
+                session_id: parent.clone(),
+                expected_head: None,
+                events: vec![
+                    lifecycle_opened_event(10),
+                    test_event(11, "parent.work"),
+                    lifecycle_closed_event(12),
+                ],
+            })
+            .await
+            .expect("close parent");
+        let parent_record = store
+            .load_session(&parent)
+            .await
+            .expect("load parent")
+            .expect("parent exists");
+        assert_eq!(
+            parent_record.lifecycle_status,
+            SessionLifecycleStatus::Closed
+        );
+        assert_eq!(parent_record.closed_at_seq, Some(EventSeq::new(3)));
+
+        let before_close = SessionId::new("before-close");
+        let before_close_record = store
+            .create_forked_session(CreateForkedSession {
+                source_session_id: parent.clone(),
+                session_id: before_close.clone(),
+                source_seq: EventSeq::new(2),
+                created_at_ms: 20,
+            })
+            .await
+            .expect("fork before close");
+        assert_eq!(
+            before_close_record.lifecycle_status,
+            SessionLifecycleStatus::Open
+        );
+        assert_eq!(before_close_record.closed_at_seq, None);
+
+        let after_close = SessionId::new("after-close");
+        let after_close_record = store
+            .create_forked_session(CreateForkedSession {
+                source_session_id: parent.clone(),
+                session_id: after_close.clone(),
+                source_seq: EventSeq::new(3),
+                created_at_ms: 21,
+            })
+            .await
+            .expect("fork after close");
+        assert_eq!(
+            after_close_record.lifecycle_status,
+            SessionLifecycleStatus::Closed
+        );
+        assert_eq!(after_close_record.closed_at_seq, Some(EventSeq::new(3)));
+
+        assert!(matches!(
+            store.delete_closed_session(&parent).await,
+            Err(SessionStoreError::SessionHasForkChildren { .. })
+        ));
+        store
+            .delete_closed_session(&after_close)
+            .await
+            .expect("delete closed leaf");
+        store
+            .append(AppendSessionEvents {
+                session_id: before_close.clone(),
+                expected_head: before_close_record.head,
+                events: vec![lifecycle_closed_event(22)],
+            })
+            .await
+            .expect("close open fork");
+        store
+            .delete_closed_session(&before_close)
+            .await
+            .expect("delete second closed leaf");
+        store
+            .delete_closed_session(&parent)
+            .await
+            .expect("delete parent after fork leaves");
+        assert!(
+            store
+                .load_session(&parent)
+                .await
+                .expect("load deleted parent")
+                .is_none()
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

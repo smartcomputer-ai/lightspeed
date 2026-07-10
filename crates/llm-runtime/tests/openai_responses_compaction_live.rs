@@ -251,6 +251,7 @@ async fn openai_responses_live_manual_standalone_compaction() {
             session_id: session_id.clone(),
             observed_at_ms: 20,
             command: CoreAgentCommand::UpsertContext {
+                expected_revision: None,
                 key: ContextEntryKey::new("client.openai.raw.manual"),
                 entry: openai_raw_context_input(context_ref.clone(), None),
             },
@@ -332,6 +333,7 @@ async fn openai_responses_live_high_watermark_standalone_compaction() {
             session_id,
             observed_at_ms: 20,
             command: CoreAgentCommand::UpsertContext {
+                expected_revision: None,
                 key: ContextEntryKey::new("client.openai.raw.high_watermark"),
                 entry: openai_raw_context_input(context_ref.clone(), Some(11)),
             },

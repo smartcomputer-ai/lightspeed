@@ -8,6 +8,8 @@ use crate::{
 
 const CORE_AGENT_EVENT_KIND_PREFIX: &str = "lightspeed.core.";
 const CORE_AGENT_SCHEMA_VERSION: u32 = 1;
+pub const CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND: &str = "lightspeed.core.lifecycle.opened";
+pub const CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND: &str = "lightspeed.core.lifecycle.closed";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CoreAgentCodec;
@@ -103,11 +105,11 @@ fn ensure_core_agent_event_envelope(kind: &str, version: u32) -> Result<(), Code
 fn core_agent_event_envelope_kind(event: &CoreAgentEvent) -> &'static str {
     match event {
         CoreAgentEvent::Lifecycle(event) => match event {
-            CoreAgentLifecycleEvent::Opened { .. } => "lightspeed.core.lifecycle.opened",
+            CoreAgentLifecycleEvent::Opened { .. } => CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND,
             CoreAgentLifecycleEvent::ConfigChanged { .. } => {
                 "lightspeed.core.lifecycle.config_changed"
             }
-            CoreAgentLifecycleEvent::Closed => "lightspeed.core.lifecycle.closed",
+            CoreAgentLifecycleEvent::Closed => CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND,
         },
         CoreAgentEvent::Run(event) => match event {
             RunEvent::Accepted(_) => "lightspeed.core.run.accepted",

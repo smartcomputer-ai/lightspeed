@@ -95,6 +95,7 @@ pub struct Client {
     responses_url: Url,
     compact_url: Url,
     input_tokens_url: Url,
+    models_url: Url,
     /// Configured `Authorization` value; requests may override it with a
     /// per-request key, and fail before I/O when neither exists.
     auth: Option<HeaderValue>,
@@ -106,6 +107,7 @@ impl Client {
         let responses_url = join_url(&base_url, "responses")?;
         let compact_url = join_url(&base_url, "responses/compact")?;
         let input_tokens_url = join_url(&base_url, "responses/input_tokens")?;
+        let models_url = join_url(&base_url, "models")?;
         let auth = config
             .api_key
             .as_deref()
@@ -135,6 +137,7 @@ impl Client {
             responses_url,
             compact_url,
             input_tokens_url,
+            models_url,
             auth,
         })
     }
@@ -164,6 +167,33 @@ impl Client {
         request: CreateResponseRequest,
     ) -> Result<ApiResponse<Response>, LlmApiError> {
         self.create_with_auth(request, None).await
+    }
+
+    /// List account-visible models directly from OpenAI's Models API.
+    pub async fn list_models(&self) -> Result<ApiResponse<ModelList>, LlmApiError> {
+        self.list_models_with_auth(None).await
+    }
+
+    /// Like [`Self::list_models`], with an API-key or OAuth bearer override.
+    pub async fn list_models_with_auth(
+        &self,
+        auth: Option<crate::RequestAuth<'_>>,
+    ) -> Result<ApiResponse<ModelList>, LlmApiError> {
+        let auth = self.auth_header(auth)?;
+        let response = self
+            .http
+            .request(Method::GET, self.models_url.clone())
+            .header(AUTHORIZATION, auth)
+            .send()
+            .await
+            .map_err(|err| self.map_reqwest_error(err))?;
+        let status = response.status();
+        let headers = HeaderSnapshot::from_headermap(response.headers());
+        let body = response
+            .text()
+            .await
+            .map_err(|err| self.map_reqwest_error(err))?;
+        parse_json_response(status, headers, body, "OpenAI model list")
     }
 
     pub async fn create_with_auth(
@@ -736,6 +766,28 @@ pub struct Reasoning {
     pub extra: BTreeMap<String, Value>,
 }
 
+/// OpenAI `GET /v1/models` response. The Models API exposes availability and
+/// identity only; it intentionally carries no per-model Responses capability
+/// matrix.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ModelList {
+    #[serde(default)]
+    pub data: Vec<Model>,
+    #[serde(default)]
+    pub object: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Model {
+    pub id: String,
+    #[serde(default)]
+    pub created: Option<i64>,
+    #[serde(default)]
+    pub object: Option<String>,
+    #[serde(default)]
+    pub owned_by: Option<String>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Response {
     pub id: String,
@@ -1216,6 +1268,24 @@ mod tests {
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].name, "get_weather");
         assert_eq!(calls[0].call_id, Some("call_1"));
+    }
+
+    #[test]
+    fn model_list_keeps_the_identity_fields_returned_by_openai() {
+        let models: ModelList = serde_json::from_value(json!({
+            "object": "list",
+            "data": [{
+                "id": "gpt-test",
+                "object": "model",
+                "created": 1,
+                "owned_by": "openai"
+            }]
+        }))
+        .expect("model list");
+
+        assert_eq!(models.data[0].id, "gpt-test");
+        assert_eq!(models.data[0].created, Some(1));
+        assert_eq!(models.data[0].owned_by.as_deref(), Some("openai"));
     }
 
     #[test]

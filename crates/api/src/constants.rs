@@ -21,6 +21,7 @@ pub const METHOD_SESSION_LIST: &str = "session/list";
 pub const METHOD_SESSION_CONFIG_PUT: &str = "session/config/put";
 pub const METHOD_SESSION_RENAME: &str = "session/rename";
 pub const METHOD_SESSION_CLOSE: &str = "session/close";
+pub const METHOD_SESSION_DELETE: &str = "session/delete";
 
 // ── Sessions: facets (event log, tools, context, runs) ─────────────────────
 
@@ -61,6 +62,10 @@ pub const METHOD_SESSION_ENVIRONMENTS_CREDENTIALS_UNBIND: &str =
     "session/environments/credentials/unbind";
 
 // ── Universe: agent profile catalog ─────────────────────────────────────────
+
+// ── Universe: direct provider model discovery ───────────────────────────────
+
+pub const METHOD_MODELS_LIST: &str = "models/list";
 
 pub const METHOD_PROFILES_CREATE: &str = "profiles/create";
 pub const METHOD_PROFILES_READ: &str = "profiles/read";

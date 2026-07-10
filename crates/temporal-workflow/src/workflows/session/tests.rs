@@ -25,11 +25,13 @@ fn pending_admissions_are_fifo() {
 #[test]
 fn admission_failure_status_does_not_poison_later_admission() {
     let mut workflow = AgentSessionWorkflow::default();
+    let rejection = engine::CommandRejection::context_revision_conflict(3, 4);
     workflow.admission_failures.push(AgentAdmissionFailure {
         submission_id: Some(SubmissionId::new("submit_rejected")),
-        context_key: None,
+        correlation_token: Some("admit_test".to_owned()),
         kind: AgentAdmissionFailureKind::RejectedCommand,
-        message: "session must be open".to_owned(),
+        message: rejection.to_string(),
+        rejection: Some(rejection.clone()),
     });
     workflow.queue_admission(admission(deliver_message("submit_later")));
 
@@ -45,6 +47,11 @@ fn admission_failure_status_does_not_poison_later_admission() {
         status.admission_failures[0].kind,
         AgentAdmissionFailureKind::RejectedCommand
     );
+    assert_eq!(
+        status.admission_failures[0].correlation_token.as_deref(),
+        Some("admit_test")
+    );
+    assert_eq!(status.admission_failures[0].rejection, Some(rejection));
     assert_eq!(status.last_error, None);
 }
 
@@ -234,7 +241,7 @@ fn user_input(content_ref: engine::BlobRef) -> Vec<ContextEntryInput> {
 fn admission(command: CoreAgentCommand) -> AgentAdmission {
     AgentAdmission {
         command,
-        context_key: None,
+        correlation_token: None,
     }
 }
 
@@ -248,7 +255,6 @@ fn agent_session_args_with_close_on_terminal(close_on_terminal: bool) -> AgentSe
             provider_id: "openai".to_owned(),
             model: "gpt-test".to_owned(),
         }),
-        instructions_ref: None,
         max_steps_per_input: None,
         continue_as_new_history_threshold: None,
         close_on_terminal,

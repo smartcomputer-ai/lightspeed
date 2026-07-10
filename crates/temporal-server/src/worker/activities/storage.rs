@@ -339,6 +339,7 @@ mod tests {
                     session_id: session_id.clone(),
                     observed_at_ms: 100 + index,
                     command: engine::CoreAgentCommand::UpsertContext {
+                        expected_revision: None,
                         key: engine::ContextEntryKey::new("note.live"),
                         entry: engine::ContextEntryInput {
                             kind: engine::ContextEntryKind::ProviderOpaque,
@@ -409,6 +410,8 @@ mod tests {
             record: SessionRecord {
                 session_id: session_id.clone(),
                 display_name: None,
+                lifecycle_status: engine::storage::SessionLifecycleStatus::New,
+                closed_at_seq: None,
                 head: None,
                 source_session_id: None,
                 source_seq: None,

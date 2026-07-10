@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use engine::{
-    BlobRef, ContextEntryInput, ContextEntryKey, CoreAgentCommand, CoreAgentState, RunStatus,
+    BlobRef, CommandRejection, ContextEntryInput, CoreAgentCommand, CoreAgentState, RunStatus,
     SessionConfig, SessionId, SessionPosition, SubmissionId, ToolBatchId,
     storage::{SessionRecord, UncommittedStoredEvent},
 };
@@ -19,7 +19,6 @@ pub struct AgentSessionArgs {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     pub session_config: SessionConfig,
-    pub instructions_ref: Option<BlobRef>,
     pub max_steps_per_input: Option<u32>,
     pub continue_as_new_history_threshold: Option<u32>,
     #[serde(default)]
@@ -60,7 +59,7 @@ pub fn split_workflow_id(workflow_id: &str) -> Option<(Uuid, SessionId)> {
 pub struct AgentAdmission {
     pub command: CoreAgentCommand,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub context_key: Option<ContextEntryKey>,
+    pub correlation_token: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -98,15 +97,17 @@ pub struct AgentMessageSubmissionConsumptionSummary {
 pub struct AgentAdmissionFailure {
     pub submission_id: Option<SubmissionId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub context_key: Option<ContextEntryKey>,
+    pub correlation_token: Option<String>,
     pub kind: AgentAdmissionFailureKind,
     pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rejection: Option<CommandRejection>,
 }
 
 impl AgentAdmissionFailure {
-    pub fn with_context_key(mut self, context_key: Option<ContextEntryKey>) -> Self {
-        if self.context_key.is_none() {
-            self.context_key = context_key;
+    pub fn with_correlation_token(mut self, correlation_token: Option<String>) -> Self {
+        if self.correlation_token.is_none() {
+            self.correlation_token = correlation_token;
         }
         self
     }
@@ -498,6 +499,11 @@ pub struct ToolInvokeBatchActivityRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeProjectionRefreshActivityRequest {
     pub session_id: SessionId,
+    pub vfs_catalog_enabled: bool,
+    pub environment_catalog_enabled: bool,
+    pub vfs_skills_enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vfs_skill_roots: Option<Vec<String>>,
     pub active_catalog_ref: Option<BlobRef>,
     pub active_vfs_catalog_ref: Option<BlobRef>,
     pub active_environment_catalog_ref: Option<BlobRef>,
