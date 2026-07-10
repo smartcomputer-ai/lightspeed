@@ -1,11 +1,5 @@
 use super::*;
 
-const INITIAL_POLL_DELAY_MS: u64 = 2_000;
-const FAST_POLL_ATTEMPTS: u32 = 30;
-const MEDIUM_POLL_ATTEMPTS: u32 = 70;
-const MEDIUM_POLL_DELAY_MS: u64 = 15_000;
-const MAX_POLL_DELAY_MS: u64 = 60_000;
-
 pub(super) fn reconcile_polls(ctx: &WorkflowContext<AgentSessionWorkflow>) {
     let now = workflow_time_ms(ctx);
     ctx.state_mut(|state| {
@@ -19,11 +13,11 @@ pub(super) fn reconcile_polls_for_state(state: &mut AgentSessionWorkflow, now_ms
         .promises
         .pending()
         .filter_map(|promise| match &promise.source {
-            engine::PromiseSource::EnvJob { .. } | engine::PromiseSource::Timer { .. } => Some((
+            engine::PromiseSource::Timer { .. } => Some((
                 promise.promise_id.as_str().to_owned(),
                 promise.source.clone(),
             )),
-            engine::PromiseSource::Run { .. } => None,
+            engine::PromiseSource::EnvJob { .. } | engine::PromiseSource::Run { .. } => None,
         })
         .collect::<BTreeMap<_, _>>();
     state
@@ -42,23 +36,81 @@ pub(super) fn reconcile_polls_for_state(state: &mut AgentSessionWorkflow, now_ms
     }
 }
 
-pub(super) fn record_environment_job_changed(
-    workflow: &mut AgentSessionWorkflow,
-    changed: EnvironmentJobChanged,
-) {
-    for poll in workflow.promise_source_polls.values_mut() {
-        let engine::PromiseSource::EnvJob {
-            instance_id,
-            job_id,
-            ..
-        } = &poll.source
-        else {
-            continue;
-        };
-        if instance_id == &changed.instance_id && job_id == &changed.job_id {
-            poll.next_check_at_ms = 0;
+pub(super) fn has_unconfirmed_subscriptions(state: &AgentSessionWorkflow) -> bool {
+    state.core_state.promises.pending().any(|promise| {
+        matches!(promise.source, engine::PromiseSource::EnvJob { .. })
+            && !state
+                .confirmed_promise_source_subscriptions
+                .contains(promise.promise_id.as_str())
+    })
+}
+
+pub(super) async fn process_unconfirmed_subscriptions(
+    ctx: &mut WorkflowContext<AgentSessionWorkflow>,
+) -> anyhow::Result<()> {
+    let pending = ctx.state_mut(|state| {
+        let pending_ids = state
+            .core_state
+            .promises
+            .pending()
+            .filter(|promise| matches!(promise.source, engine::PromiseSource::EnvJob { .. }))
+            .map(|promise| promise.promise_id.as_str().to_owned())
+            .collect::<BTreeSet<_>>();
+        state
+            .confirmed_promise_source_subscriptions
+            .retain(|promise_id| pending_ids.contains(promise_id));
+        state
+            .core_state
+            .promises
+            .pending()
+            .filter(|promise| matches!(promise.source, engine::PromiseSource::EnvJob { .. }))
+            .filter(|promise| {
+                !state
+                    .confirmed_promise_source_subscriptions
+                    .contains(promise.promise_id.as_str())
+            })
+            .map(|promise| {
+                (
+                    promise.promise_id.as_str().to_owned(),
+                    promise.source.clone(),
+                )
+            })
+            .collect::<Vec<_>>()
+    });
+
+    for (promise_id, source) in pending {
+        let result = ctx
+            .start_activity(
+                WorkflowActivities::subscribe_promise_source,
+                engine::PromiseSourceSubscribeRequest {
+                    source,
+                    holder_workflow_id: ctx.workflow_id().to_owned(),
+                    promise_id: promise_id.clone(),
+                },
+                activity_options(),
+            )
+            .await
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+        ctx.state_mut(|state| {
+            state
+                .confirmed_promise_source_subscriptions
+                .insert(promise_id.clone());
+        });
+        match result {
+            engine::PromiseSourceCheckResult::Pending => {}
+            engine::PromiseSourceCheckResult::Resolved { payload_ref } => queue_resolution(
+                ctx,
+                promise_id,
+                engine::PromiseResolution::Resolved { payload_ref },
+            ),
+            engine::PromiseSourceCheckResult::Failed { error_ref } => queue_resolution(
+                ctx,
+                promise_id,
+                engine::PromiseResolution::Failed { error_ref },
+            ),
         }
     }
+    Ok(())
 }
 
 pub(super) fn has_immediate_work(state: &AgentSessionWorkflow) -> bool {
@@ -122,12 +174,14 @@ pub(super) async fn process_due(
         };
         match check {
             engine::PromiseSourceCheckResult::Pending => {
-                advance(&mut poll, now);
-                ctx.state_mut(|state| {
-                    state
-                        .promise_source_polls
-                        .insert(poll.promise_id.clone(), poll);
-                });
+                if matches!(poll.source, engine::PromiseSource::Timer { .. }) {
+                    advance(&mut poll, now);
+                    ctx.state_mut(|state| {
+                        state
+                            .promise_source_polls
+                            .insert(poll.promise_id.clone(), poll);
+                    });
+                }
             }
             engine::PromiseSourceCheckResult::Resolved { payload_ref } => {
                 queue_resolution(
@@ -212,7 +266,7 @@ fn queue_resolution(
 fn initial_check_at_ms(source: &engine::PromiseSource, now_ms: u64) -> u64 {
     match source {
         engine::PromiseSource::Timer { fire_at_ms } => *fire_at_ms,
-        engine::PromiseSource::EnvJob { .. } => now_ms.saturating_add(poll_delay_ms(0)),
+        engine::PromiseSource::EnvJob { .. } => now_ms,
         engine::PromiseSource::Run { .. } => now_ms,
     }
 }
@@ -221,19 +275,7 @@ fn advance(poll: &mut PromiseSourcePoll, now_ms: u64) {
     poll.poll_attempt = poll.poll_attempt.saturating_add(1);
     poll.next_check_at_ms = match &poll.source {
         engine::PromiseSource::Timer { fire_at_ms } => *fire_at_ms,
-        engine::PromiseSource::EnvJob { .. } => {
-            now_ms.saturating_add(poll_delay_ms(poll.poll_attempt))
-        }
+        engine::PromiseSource::EnvJob { .. } => now_ms,
         engine::PromiseSource::Run { .. } => now_ms,
     };
-}
-
-fn poll_delay_ms(poll_attempt: u32) -> u64 {
-    if poll_attempt < FAST_POLL_ATTEMPTS {
-        INITIAL_POLL_DELAY_MS
-    } else if poll_attempt < MEDIUM_POLL_ATTEMPTS {
-        MEDIUM_POLL_DELAY_MS
-    } else {
-        MAX_POLL_DELAY_MS
-    }
 }

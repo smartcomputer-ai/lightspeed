@@ -1,11 +1,15 @@
 # P96: Environment API Review — Machines vs Bindings, Real Presence
 
 **Status**
-- Implemented 2026-07-09 as a greenfield breaking change, with the remaining
-  workflow-supervision items called out below. The shipped cut separates
-  provider presence, universe environment instances, session bindings, and
-  environment-owned jobs across the domain, store, API, gateway, CLI, bridge,
-  profiles, and worker wiring.
+- Implemented 2026-07-09 as a greenfield breaking change. The shipped cut
+  separates provider presence, universe environment instances, session
+  bindings, and environment-owned jobs across the domain, store, API, gateway,
+  CLI, bridge, profiles, and worker wiring.
+- The deliberately small post-implementation seam-hardening slice in §6 and
+  implementation slice 7 was completed 2026-07-10. It finishes job-workflow
+  ownership and protects the transport-neutral filesystem/process/job
+  boundaries without introducing a general plugin system or separately
+  deployed environment service.
 - **Greenfield: breaking changes are fine.** Store schemas
   (`006_environments.sql`) and wire shapes change in place; local stacks are
   reset; contract artifacts + TS client regenerated.
@@ -299,13 +303,12 @@ when every job is terminal. Long histories continue-as-new. Terminal
 output/status reads still go to the provider; the workflow's observation is
 coordination state, not a competing source of truth.
 
-Implementation note: the first P96 cut registers and runs the peer workflow
-after the gateway has reserved the group and the provider has accepted the
-idempotent start. The workflow owns batched polling, cancellation activities,
-terminal marking, queries, cancel/nudge signals, and continue-as-new. Moving
-provider start itself behind a workflow activity, plus full subscription
-fanout, is kept as follow-up so this branch can land the new contract without
-also changing the host start handshake.
+Implementation note: the gateway reserves the group and starts the peer
+workflow with a CAS-backed request. An idempotent workflow activity performs
+the provider start, including late credential resolution, and records the job
+handles. The workflow owns the only repeated provider poll loop, cancellation,
+terminal CAS refs and indexing, queries, cancel/nudge signals, subscriber
+fanout, and continue-as-new.
 
 This deliberately revisits P86's rejection of a separate polling workflow.
 There it would only have duplicated a session-owned wait. Here it represents
@@ -358,8 +361,11 @@ workflow-resident state only. Bare starts do not create promises, so the repair
 path never mistakes an intentionally unsupervised job for an orphan.
 
 Implementation note: this branch uses a minimal supervising `EnvJob` promise
-source and does not expose direct session job APIs. The pending/confirm
-supervision handshake and subscription fanout are deferred follow-up work.
+source and does not expose direct session job APIs. Session-created jobs carry
+pending subscriptions into the peer workflow; after `Promise(Created)` commits,
+the session workflow confirms them through the generic promise-source
+subscription activity. Confirmed subscribers receive terminal resolution
+signals, while the normal workflow/index check path repairs missed delivery.
 
 ### 5. Config and capability cleanup
 
@@ -379,6 +385,104 @@ supervision handshake and subscription fanout are deferred follow-up work.
   `environment: Existing { instance_id } | Provision { provider_id, request }`,
   plus `activate` — apply = (optionally create) + attach, best-effort,
   counted, exactly as today.
+
+### 6. Minimal extraction seam — do now
+
+P96 should leave the environment capability easy to move behind a service
+boundary later without paying for a speculative plugin framework now. The
+minimum useful work is to make the existing control-plane/data-plane boundary
+explicit, finish single-owner job supervision, and keep session integration as
+a projection of external facts rather than a second owner of them.
+
+#### 6.1 Keep execution tools transport-neutral
+
+The host protocol is the external execution-provider data plane. It is not the
+model-facing tool abstraction:
+
+- Filesystem tools depend only on `tools::fs::FileSystem`/`FsToolContext`;
+  process and job tools depend only on `ProcessExecutor` and `JobExecutor`.
+  New tools must not call `HostDataClient` or branch on a host transport.
+- `RemoteHostConnection` remains the adapter that turns one host data-plane
+  connection into those generic contexts. Session filesystem composition
+  continues to route generic `FileSystem` implementations, whether they come
+  from VFS, a local runtime, or an attached environment.
+- Temporal is control plane only. Provisioning, close/reconciliation, and
+  durable job supervision may be workflows; interactive filesystem and
+  process operations remain direct data-plane calls. Do not start a workflow
+  for each file operation.
+- Add one reusable host-data conformance suite covering initialization and
+  capability gating, cwd/path handling, filesystem read/write/metadata/list/
+  remove/copy behavior, route access enforcement, and stable error mapping.
+  The in-tree bridge/server and future provider data-plane implementations
+  must pass the same suite.
+
+Implemented in `tools::host_protocol::assert_host_data_conformance`; the
+`host-bridge` WebSocket integration test runs the suite against the real server.
+
+This is an internal architectural constraint and test surface, not a new wire
+API. A future external environment service can implement the existing host
+protocol or supply another runtime adapter without changing the filesystem
+tools.
+
+#### 6.2 Make the peer job workflow the single durable owner
+
+Complete the ownership implied by §4:
+
+1. The gateway or session tool reserves the deterministic job-group identity
+   and starts `EnvironmentJobWorkflow`; an idempotent workflow activity performs
+   the provider `start_jobs` call and records the accepted job handles.
+2. `EnvironmentJobWorkflow` is the only component that repeatedly polls the
+   provider. It continues to own cancellation, terminal indexing, nudges, and
+   continue-as-new.
+3. A session-created supervised start registers a pending subscription keyed
+   by the stable `(instance_id, job_id)` locator and deterministic promise id.
+   Once `Promise(Created)` is durable, the session runtime confirms the
+   subscription. An unconfirmed supervised start is repairable and eventually
+   cancelled; a deliberately bare start has no subscription and is never
+   treated as an orphan.
+4. The peer workflow fans terminal changes out to confirmed subscribers. A
+   missed notification is repaired by querying the peer workflow or terminal
+   job index, not by establishing a second provider poll loop in the session
+   workflow. A terminal output fetch may still use the provider-authoritative
+   data plane after terminality is known.
+
+Keep `PromiseSource::EnvJob { instance_id, job_id }` in this slice. The clean
+seam is the existing promise-source check/cancel activity boundary plus stable
+resource identity; replacing it with a generic external-operation source is
+deferred until a second durable-operation provider demonstrates the shared
+contract.
+
+Implemented 2026-07-10. Both bare API starts and supervised session-tool starts
+now enter through the same peer workflow. The session workflow subscribes once
+after its durable promise fact exists and does not schedule environment-job
+polls. The reaper and repair checks query the peer snapshot first and use a
+single provider read only when that workflow is already gone.
+
+#### 6.3 Keep session context as an admitted projection
+
+The environment registry or a future environment service remains authoritative
+for current machine and binding facts. The session log remains authoritative
+for what affected a model turn:
+
+- The runtime materializes `environment.catalog` and `environment.active` and
+  submits ordinary `UpsertContext` commands; an environment provider never
+  writes the session log directly.
+- The selected default execution target and the exact CAS-backed context
+  entries seen by the model remain durable session facts. Replays do not
+  refetch mutable provider state to reconstruct an earlier request.
+- Projection refreshes occur at the existing idle/turn boundary. Do not add a
+  general context-provider registry in this slice.
+
+#### 6.4 Explicit non-goals
+
+The following are not required to preserve the seam and remain deferred:
+
+- arbitrary Temporal workflow registration as tools;
+- plugin manifests or generic tool/resource/context-provider registries;
+- a generic `ExternalOperation` promise source;
+- moving environment records or bindings into a separate service/database;
+- replacing the host data protocol or routing filesystem calls through
+  Temporal.
 
 ## Wire surface delta
 
@@ -410,6 +514,9 @@ Net: 82 → 84 methods.
 | Job observation | Deferred until there is an explicit attach/observe-existing-job contract | Add an unused observer promise relation now (rejected: extra state without behavior) |
 | Lease enforcement | Read-time liveness check, no reaper | Background reaper marking `Stale` (rejected: extra machinery; derive staleness) |
 | Binding availability | Derive from binding + instance + provider at use time; failures stay call-scoped | Durable degraded tracking (deferred; requires a controller/reconciler) |
+| Extension scope | Harden the existing execution adapters, projection boundary, and peer job ownership | Build a generic plugin framework now (rejected: no second provider has established the common contract) |
+| Execution data plane | Direct host-protocol adapter behind generic filesystem/process/job traits | Temporal workflow per filesystem/process call (rejected: wrong latency, history, streaming, and connection semantics) |
+| Supervised job observation | Peer job workflow is the sole poller and fans out terminal changes; session queries workflow/index only for repair | Peer workflow plus per-session provider polling (rejected: two owners and duplicated load) |
 
 ## Contract invariants
 
@@ -433,16 +540,26 @@ These are cross-layer requirements, not gateway conventions:
 7. A bare job has no required session, binding, run, or promise owner. Its
    stable identity and routing are `(instance_id, job_id)`.
 8. Each create request has one peer job-group workflow. Provider execution
-   state remains authoritative; the workflow owns polling, cancellation, and
-   monotonic terminal coordination only.
+   state remains authoritative; the workflow owns provider-start orchestration,
+   polling, cancellation, fanout, and monotonic terminal coordination.
 9. Promise scope and job ownership remain separate. Cancelling an environment-job
    promise cancels the underlying job; bare jobs have no promise owner.
 10. A session-started environment-job promise is active only once
-    `Promise(Created)` is durable. A stronger pending/confirm supervision
-    handshake is deferred.
+    `Promise(Created)` is durable. Pending supervision is confirmed after that
+    fact commits; an unconfirmed supervised start is repaired or cancelled and
+    is never silently converted into a bare job.
 11. Structured cancellation routes through the instance/job identity, never
     through a current session binding. Hard-terminated holder workflows are
     treated as dead owners by the reaper.
+12. Model-facing filesystem, process, and job tools are transport-neutral. The
+    host protocol is one runtime adapter and Temporal workflows are never the
+    per-operation filesystem/process data plane.
+13. The peer job-group workflow is the only repeated provider poller. Session
+    promise notification repair reads the workflow or terminal index rather
+    than polling the provider independently.
+14. Environment context enters a session only through admitted, CAS-backed
+    context commands; replay never depends on refetching mutable environment
+    state.
 
 ## Implementation slices
 
@@ -482,9 +599,7 @@ alignment slice.
    `PromiseSource::EnvJob` to `{ instance_id, job_id }`; make the session tool
    job-create path compose the bare workflow with deterministic run-scoped
    promises that can be detached to session scope; route session tool
-   list/read/cancel without a live binding. Follow-up remains for provider start
-   as a workflow activity, subscription fanout, and the pending/confirm
-   supervision handshake.
+   list/read/cancel without a live binding.
 5. **Done: Fleet + profiles** — `Share` creates an explicit child binding by
    instance id (stop relying on clone-copied rows); `ProfileEnvironment`
    reshape; profile apply unchanged in spirit.
@@ -494,6 +609,14 @@ alignment slice.
    host-bridge fs-routing doubled-path fix while fs routes are touched. Retire
    the environment-facing gateway controller `attach_target` path; regenerate
    the contract + TS client; update README/AGENTS notes.
+7. **Done: minimal extraction seam** — provider start runs in the peer job
+   workflow, which is the single repeated provider poller. Pending/confirm
+   supervised subscriptions, terminal fanout, and workflow/index-based repair
+   are implemented. The reusable host-data conformance suite runs against the
+   in-tree bridge. Filesystem/process/job tools remain transport-neutral and
+   independent of Temporal by design. The existing `EnvJob`, target-routing,
+   and context command shapes are preserved; this slice adds no public plugin
+   or arbitrary-workflow API.
 
 ## Deferred work
 
@@ -513,6 +636,11 @@ alignment slice.
   Temporal retention for completed workflow histories.
 - Bridge auto-attach remains client-side polling (register → poll attach).
   A push "offer to session" flow is out of scope here.
-- Job workflow provider-start ownership, subscription fanout, and supervision
-  confirmation are deferred. The current branch starts providers through the
-  gateway, then hands polling/cancel/terminal coordination to the peer workflow.
+- General plugin infrastructure — arbitrary workflow registration, generic
+  resource/context providers, and generic external-operation promises — is
+  deferred until a second concrete integration establishes the shared
+  contract.
+- Separately deploying the environment control plane or moving its records and
+  bindings to another database is deferred until scaling, security, release
+  ownership, or third-party-provider requirements justify the distributed
+  lifecycle and occupancy protocol.

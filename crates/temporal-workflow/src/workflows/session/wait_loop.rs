@@ -46,6 +46,7 @@ pub(super) fn workflow_state_has_immediate_work(state: &AgentSessionWorkflow) ->
         || !state.pending_tool_batch_resumes.is_empty()
         || !state.pending_promise_notifications.is_empty()
         || !state.pending_promise_cancellations.is_empty()
+        || promise_sources::has_unconfirmed_subscriptions(state)
         || awaits::has_satisfied_await(state)
         || promise_sources::has_immediate_work(state)
 }

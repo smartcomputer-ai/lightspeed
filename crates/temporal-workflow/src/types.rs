@@ -233,16 +233,82 @@ pub struct CancellingWatchdog {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EnvironmentJobChanged {
+pub struct PromiseSourceResolutionSignal {
+    pub promise_id: String,
+    pub result: engine::PromiseSourceCheckResult,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvironmentJobProvenance {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<SessionId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<engine::RunId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<engine::TurnId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<engine::ToolCallId>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvironmentJobCredentialScope {
+    pub session_id: SessionId,
+    pub env_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvironmentJobStartActivityRequest {
     pub instance_id: String,
-    pub job_id: String,
+    pub job_group_id: String,
+    pub request_ref: BlobRef,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvironmentJobStartPayload {
+    pub request: host_protocol::data::jobs::StartJobsParams,
+    pub start_request_hash: String,
+    #[serde(default)]
+    pub provenance: EnvironmentJobProvenance,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential_scope: Option<EnvironmentJobCredentialScope>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvironmentJobStartActivityResult {
+    pub jobs: Vec<host_protocol::data::jobs::JobSummary>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvironmentJobSubscription {
+    pub holder_workflow_id: String,
+    pub promise_id: String,
+    pub job_id: host_protocol::shared::JobId,
+    pub confirmation_deadline_ms: u64,
+    #[serde(default)]
+    pub confirmed: bool,
+    #[serde(default)]
+    pub notified: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvironmentJobConfirmSubscriptionSignal {
+    pub holder_workflow_id: String,
+    pub promise_id: String,
+    pub job_id: host_protocol::shared::JobId,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnvironmentJobWorkflowArgs {
-    pub instance_id: String,
-    pub job_group_id: String,
+    pub start: EnvironmentJobStartActivityRequest,
     pub job_ids: Vec<host_protocol::shared::JobId>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subscriptions: Vec<EnvironmentJobSubscription>,
+    #[serde(default)]
+    pub started: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub jobs: Vec<host_protocol::data::jobs::JobSummary>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub resolutions: BTreeMap<String, engine::PromiseSourceCheckResult>,
     #[serde(default = "default_environment_job_poll_ms")]
     pub poll_ms: u64,
     #[serde(default)]
@@ -258,7 +324,11 @@ pub struct EnvironmentJobWorkflowSnapshot {
     pub instance_id: String,
     pub job_group_id: String,
     #[serde(default)]
+    pub started: bool,
+    #[serde(default)]
     pub jobs: Vec<host_protocol::data::jobs::JobSummary>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub resolutions: BTreeMap<String, engine::PromiseSourceCheckResult>,
     pub terminal: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
@@ -274,6 +344,8 @@ pub struct EnvironmentJobPollActivityRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnvironmentJobPollActivityResult {
     pub jobs: Vec<host_protocol::data::jobs::JobSummary>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub resolutions: BTreeMap<String, engine::PromiseSourceCheckResult>,
     pub terminal: bool,
 }
 

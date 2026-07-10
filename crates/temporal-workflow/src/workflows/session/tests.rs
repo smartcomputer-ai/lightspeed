@@ -108,32 +108,25 @@ fn preprocess_failures_preserve_submission_id_for_admission_failure() {
 }
 
 #[test]
-fn environment_job_changed_marks_matching_promise_source_poll_due() {
+fn environment_job_resolution_signal_queues_direct_promise_resolution() {
     let mut workflow = AgentSessionWorkflow::default();
-    workflow.promise_source_polls.insert(
-        "p1".to_owned(),
-        PromiseSourcePoll {
-            promise_id: "p1".to_owned(),
-            source: PromiseSource::EnvJob {
-                instance_id: "evi_1".to_owned(),
-                job_id: "job_1".to_owned(),
-            },
-            next_check_at_ms: 42_000,
-            poll_attempt: 0,
+    let payload_ref = engine::BlobRef::from_bytes(b"job output");
+    workflow.queue_promise_source_resolution(PromiseSourceResolutionSignal {
+        promise_id: "p1".to_owned(),
+        result: engine::PromiseSourceCheckResult::Resolved {
+            payload_ref: Some(payload_ref.clone()),
         },
-    );
-
-    workflow.record_environment_job_changed(EnvironmentJobChanged {
-        instance_id: "evi_1".to_owned(),
-        job_id: "job_1".to_owned(),
     });
 
-    let poll = workflow
-        .promise_source_polls
-        .get("p1")
-        .expect("source poll");
-    assert_eq!(poll.next_check_at_ms, 0);
-    assert!(wait_loop::workflow_state_has_immediate_work(&workflow));
+    assert!(matches!(
+        &workflow.pending_admissions[0].command,
+        CoreAgentCommand::ResolvePromise {
+            promise_id,
+            resolution: engine::PromiseResolution::Resolved {
+                payload_ref: Some(actual),
+            },
+        } if promise_id.as_str() == "p1" && actual == &payload_ref
+    ));
 }
 
 #[test]
@@ -776,18 +769,12 @@ fn promise_source_polls_rehydrate_from_pending_poll_sources() {
 
     promise_sources::reconcile_polls_for_state(&mut workflow, 10_000);
 
-    assert_eq!(workflow.promise_source_polls.len(), 2);
+    assert_eq!(workflow.promise_source_polls.len(), 1);
     assert!(!workflow.promise_source_polls.contains_key("stale"));
+    assert!(!workflow.promise_source_polls.contains_key("p_env"));
     assert!(!workflow.promise_source_polls.contains_key("p_child"));
     assert!(!workflow.promise_source_polls.contains_key("p_request"));
     assert!(!workflow.promise_source_polls.contains_key("p_resolved_env"));
-    let env_poll = workflow
-        .promise_source_polls
-        .get("p_env")
-        .expect("env poll");
-    assert_eq!(env_poll.source, env_source);
-    assert_eq!(env_poll.next_check_at_ms, 12_000);
-    assert_eq!(env_poll.poll_attempt, 0);
     let timer_poll = workflow
         .promise_source_polls
         .get("p_timer")
@@ -795,7 +782,12 @@ fn promise_source_polls_rehydrate_from_pending_poll_sources() {
     assert_eq!(timer_poll.source, timer_source);
     assert_eq!(timer_poll.next_check_at_ms, 60_000);
     assert_eq!(timer_poll.poll_attempt, 0);
-    assert_eq!(promise_sources::nearest_wake_ms(&workflow), Some(12_000));
+    assert_eq!(promise_sources::nearest_wake_ms(&workflow), Some(60_000));
+    assert!(promise_sources::has_unconfirmed_subscriptions(&workflow));
+    workflow
+        .confirmed_promise_source_subscriptions
+        .insert("p_env".to_owned());
+    assert!(!promise_sources::has_unconfirmed_subscriptions(&workflow));
 }
 
 #[test]

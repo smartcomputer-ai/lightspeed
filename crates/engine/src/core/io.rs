@@ -63,6 +63,14 @@ pub trait CoreAgentTools: Send + Sync {
         let _ = request;
         Ok(PromiseSourceCancelResult { cancelled: false })
     }
+
+    async fn subscribe_promise_source(
+        &self,
+        request: PromiseSourceSubscribeRequest,
+    ) -> Result<PromiseSourceCheckResult, CoreAgentIoError> {
+        let _ = request;
+        Ok(PromiseSourceCheckResult::Pending)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -105,6 +113,13 @@ pub struct PromiseSourceCancelRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PromiseSourceCancelResult {
     pub cancelled: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PromiseSourceSubscribeRequest {
+    pub source: PromiseSource,
+    pub holder_workflow_id: String,
+    pub promise_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

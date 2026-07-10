@@ -37,6 +37,19 @@ where
     F: FnOnce(Client, String, SessionId) -> Fut,
     Fut: Future<Output = anyhow::Result<()>>,
 {
+    run_with_live_worker_builder(move |_, _| async move { Ok(activities) }, run_client).await
+}
+
+pub async fn run_with_live_worker_builder<B, BuildFut, F, Fut>(
+    build_activities: B,
+    run_client: F,
+) -> anyhow::Result<()>
+where
+    B: FnOnce(Client, String) -> BuildFut,
+    BuildFut: Future<Output = anyhow::Result<WorkerActivities>>,
+    F: FnOnce(Client, String, SessionId) -> Fut,
+    Fut: Future<Output = anyhow::Result<()>>,
+{
     let task_queue = format!("lightspeed-agent-live-{}", uuid::Uuid::new_v4().simple());
     let session_id = SessionId::new(format!("session_live_{}", uuid::Uuid::new_v4().simple()));
     let temporal_target =
@@ -46,6 +59,7 @@ where
 
     let runtime = core_runtime()?;
     let client = connect_temporal(&temporal_target, &namespace).await?;
+    let activities = build_activities(client.clone(), task_queue.clone()).await?;
     let mut worker =
         worker_with_activities(&runtime, client.clone(), task_queue.clone(), activities)?;
     let shutdown_worker = worker.shutdown_handle();

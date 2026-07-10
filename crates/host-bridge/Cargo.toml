@@ -20,6 +20,7 @@ tokio-tungstenite = { version = "0.26", default-features = false, features = ["h
 [dev-dependencies]
 host-client = { path = "../host-client" }
 tempfile = "3"
+tools = { path = "../tools" }
 
 [[bin]]
 name = "host-bridge"

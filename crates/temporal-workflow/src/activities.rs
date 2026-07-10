@@ -10,6 +10,7 @@ use crate::{
     AppendEventsRequest, ContextCompactActivityRequest, CreateOrLoadSessionRequest,
     CreateOrLoadSessionResult, EnvironmentJobCancelActivityRequest,
     EnvironmentJobPollActivityRequest, EnvironmentJobPollActivityResult,
+    EnvironmentJobStartActivityRequest, EnvironmentJobStartActivityResult,
     LlmGenerateActivityRequest, PreprocessRunInputActivityRequest,
     PreprocessRunInputActivityResult, PutBlobRequest, ReadBlobRequest, ReadBlobResult,
     RuntimeProjectionRefreshActivityRequest, RuntimeProjectionRefreshActivityResult,
@@ -28,6 +29,8 @@ pub const ACTIVITY_RUNTIME_PROJECTION_REFRESH: &str =
     "WorkflowActivities::runtime_projection_refresh";
 pub const ACTIVITY_CHECK_PROMISE_SOURCE: &str = "WorkflowActivities::check_promise_source";
 pub const ACTIVITY_CANCEL_PROMISE_SOURCE: &str = "WorkflowActivities::cancel_promise_source";
+pub const ACTIVITY_SUBSCRIBE_PROMISE_SOURCE: &str = "WorkflowActivities::subscribe_promise_source";
+pub const ACTIVITY_ENVIRONMENT_JOB_START: &str = "WorkflowActivities::environment_job_start";
 pub const ACTIVITY_ENVIRONMENT_JOB_POLL: &str = "WorkflowActivities::environment_job_poll";
 pub const ACTIVITY_ENVIRONMENT_JOB_CANCEL: &str = "WorkflowActivities::environment_job_cancel";
 
@@ -120,6 +123,22 @@ impl WorkflowActivities {
         _ctx: ActivityContext,
         _request: PromiseSourceCancelRequest,
     ) -> Result<PromiseSourceCancelResult, ActivityError> {
+        unimplemented!("workflow activity definition only")
+    }
+
+    #[activity(name = ACTIVITY_SUBSCRIBE_PROMISE_SOURCE)]
+    pub async fn subscribe_promise_source(
+        _ctx: ActivityContext,
+        _request: engine::PromiseSourceSubscribeRequest,
+    ) -> Result<PromiseSourceCheckResult, ActivityError> {
+        unimplemented!("workflow activity definition only")
+    }
+
+    #[activity(name = ACTIVITY_ENVIRONMENT_JOB_START)]
+    pub async fn environment_job_start(
+        _ctx: ActivityContext,
+        _request: EnvironmentJobStartActivityRequest,
+    ) -> Result<EnvironmentJobStartActivityResult, ActivityError> {
         unimplemented!("workflow activity definition only")
     }
 

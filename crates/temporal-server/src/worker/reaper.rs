@@ -131,8 +131,10 @@ impl PromiseReaper {
         let mut stats = ReaperStats::default();
         for (universe_id, _) in universes {
             let store = self.stores.store_for(universe_id);
-            let source_tools: Arc<dyn engine::CoreAgentTools> =
-                Arc::new(SessionTools::from_pg_store(store.clone()));
+            let source_tools: Arc<dyn engine::CoreAgentTools> = Arc::new(
+                SessionTools::from_pg_store(store.clone())
+                    .with_environment_job_workflow_client(self.client.clone(), universe_id),
+            );
             let sessions: Arc<dyn SessionStore> = store.clone();
             let append_store: Arc<dyn SessionStore> = store;
             let universe_stats = reap_universe_once(
