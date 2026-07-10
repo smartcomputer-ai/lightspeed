@@ -62,6 +62,19 @@ Additional per-capability live suites exist for both providers under
 `crates/llm-runtime/tests/` (`*_compaction_live`, `*_mcp_live`,
 `*_prompts_live`, `*_skills_live`).
 
+Temporal live tests share local Temporal/PostgreSQL state and must not run in
+parallel. Always pass `--test-threads=1` after the Cargo test-harness separator,
+including when running a filtered test. Source `local/env.sh` first so the live
+tests use the local stack configuration:
+
+```bash
+source local/env.sh
+cargo test -p temporal-server --test temporal_live -- --ignored --test-threads=1
+cargo test -p temporal-server --test environment_provider_live -- --ignored --test-threads=1
+cargo test -p temporal-server --test preprocess_live -- --ignored --test-threads=1
+cargo test -p temporal-server --test environment_provider_live temporal_live_host_bridge_environment_jobs_round_trip -- --ignored --test-threads=1 --nocapture
+```
+
 After changing `api` wire types, regenerate the committed contract artifacts
 under `interop/contract/` (`cargo test -p api` fails while they are stale):
 

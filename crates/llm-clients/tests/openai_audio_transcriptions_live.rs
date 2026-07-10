@@ -82,6 +82,7 @@ async fn read_fixture_url(url: &str) -> AudioFixture {
     let mime = mime_for_name(&filename, "OPENAI_AUDIO_TRANSCRIPTION_FIXTURE_URL");
     let response = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
+        .user_agent("lightspeed-live-tests/0.1")
         .build()
         .expect("fixture download client")
         .get(parsed_url)
