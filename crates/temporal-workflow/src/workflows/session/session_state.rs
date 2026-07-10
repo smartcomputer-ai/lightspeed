@@ -31,8 +31,23 @@ impl AgentSessionWorkflow {
         });
     }
 
-    pub fn record_environment_job_changed(&mut self, changed: EnvironmentJobChanged) {
-        promise_sources::record_environment_job_changed(self, changed);
+    pub fn queue_promise_source_resolution(&mut self, signal: PromiseSourceResolutionSignal) {
+        let resolution = match signal.result {
+            engine::PromiseSourceCheckResult::Pending => return,
+            engine::PromiseSourceCheckResult::Resolved { payload_ref } => {
+                engine::PromiseResolution::Resolved { payload_ref }
+            }
+            engine::PromiseSourceCheckResult::Failed { error_ref } => {
+                engine::PromiseResolution::Failed { error_ref }
+            }
+        };
+        self.pending_admissions.push(AgentAdmission {
+            command: CoreAgentCommand::ResolvePromise {
+                promise_id: engine::PromiseId::new(signal.promise_id),
+                resolution,
+            },
+            context_key: None,
+        });
     }
 
     /// Outbound push delivery: when a run carrying notify-intents reaches a

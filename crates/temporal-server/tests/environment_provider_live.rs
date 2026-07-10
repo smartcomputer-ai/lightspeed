@@ -197,15 +197,28 @@ async fn temporal_live_host_bridge_environment_jobs_round_trip() -> anyhow::Resu
     let store = pg_store_from_env().await?;
     let blobs: Arc<dyn BlobStore> = store.clone();
     let llm = Arc::new(BridgeJobsLlm::new(blobs.clone())) as Arc<dyn CoreAgentLlm>;
-    let tools = Arc::new(SessionTools::from_pg_store(store.clone())) as Arc<dyn CoreAgentTools>;
-    let activities = WorkerActivities::for_universe(
-        store.config().universe_id,
-        ActivityState::from_pg_store(store, llm, tools),
-    );
+    let universe_id = store.config().universe_id;
 
-    support::live::run_with_live_worker(activities, |client, task_queue, session_id| async move {
-        run_host_bridge_jobs_client(client, task_queue, session_id, bridge_bin, bridge_root).await
-    })
+    support::live::run_with_live_worker_builder(
+        move |client, task_queue| {
+            let store = store.clone();
+            let llm = llm.clone();
+            async move {
+                let tools = Arc::new(
+                    SessionTools::from_pg_store(store.clone())
+                        .with_environment_job_workflow_runtime(client, task_queue, universe_id),
+                ) as Arc<dyn CoreAgentTools>;
+                Ok(WorkerActivities::for_universe(
+                    universe_id,
+                    ActivityState::from_pg_store(store, llm, tools),
+                ))
+            }
+        },
+        |client, task_queue, session_id| async move {
+            run_host_bridge_jobs_client(client, task_queue, session_id, bridge_bin, bridge_root)
+                .await
+        },
+    )
     .await
 }
 

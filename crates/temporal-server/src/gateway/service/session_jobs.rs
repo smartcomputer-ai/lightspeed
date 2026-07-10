@@ -1,9 +1,8 @@
 use super::*;
 
 use ::environments::{
-    CreateJobHandle, EnvironmentInstanceId, EnvironmentInstanceRecord, EnvironmentJobGroupId,
-    EnvironmentJobGroupStatus, JobHandleRecord, JobHandleStore, ListJobHandles,
-    ReserveEnvironmentJobGroup, UpdateEnvironmentJobGroupStatus,
+    EnvironmentInstanceId, EnvironmentInstanceRecord, EnvironmentJobGroupId, JobHandleRecord,
+    JobHandleStore, ListJobHandles, ReserveEnvironmentJobGroup,
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use engine::validate_general_string_id;
@@ -85,6 +84,12 @@ impl GatewayAgentApi {
         }
         self.read_live_environment_provider(&instance.provider_id)
             .await?;
+        if !instance.capabilities.job_start {
+            return Err(AgentApiError::rejected(format!(
+                "environment does not support durable job start: {}",
+                instance.instance_id
+            )));
+        }
         let request = HostStartJobsParams {
             namespace: instance.instance_id.as_str().to_owned(),
             request_id: request_id.clone(),
@@ -105,84 +110,42 @@ impl GatewayAgentApi {
         .await
         .map_err(map_environments_error)?;
 
-        let result = async {
-            let (mut client, capabilities) =
-                connect_initialized_host_data_client(&instance.connection).await?;
-            if !capabilities.job_start {
-                return Err(AgentApiError::rejected(format!(
-                    "environment does not support durable job start: {}",
-                    instance.instance_id
-                )));
-            }
-            client
-                .start_jobs(&request)
-                .await
-                .map_err(map_host_client_api_error)
-        }
-        .await;
-        let response = match result {
-            Ok(response) => response,
-            Err(error) => {
-                let _ = JobHandleStore::update_job_group_status(
-                    self.store.as_ref(),
-                    UpdateEnvironmentJobGroupStatus {
-                        instance_id: instance.instance_id.clone(),
-                        job_group_id: job_group_id.clone(),
-                        status: EnvironmentJobGroupStatus::Failed,
-                        updated_at_ms: now_ms()?,
-                    },
-                )
-                .await;
-                return Err(error);
-            }
+        let job_ids = request.jobs.iter().map(|job| job.job_id.clone()).collect();
+        let start_payload = temporal_workflow::EnvironmentJobStartPayload {
+            request,
+            start_request_hash: request_hash,
+            provenance: temporal_workflow::EnvironmentJobProvenance::default(),
+            credential_scope: None,
         };
-        let created_at_ms = now_ms()?;
-        let records = response
-            .jobs
-            .iter()
-            .map(|summary| CreateJobHandle {
-                instance_id: instance.instance_id.clone(),
-                job_group_id: job_group_id.clone(),
-                job_id: summary.job_id.clone(),
-                name: summary.name.clone(),
-                queue_key: summary.queue_key.clone(),
-                created_by_session_id: None,
-                created_by_run_id: None,
-                created_by_turn_id: None,
-                created_by_tool_call_id: None,
-                created_at_ms,
-                start_request_hash: request_hash.clone(),
-            })
-            .collect();
-        let stored = JobHandleStore::create_job_handles(self.store.as_ref(), records)
+        let request_ref = self
+            .store
+            .put_bytes(serde_json::to_vec(&start_payload).map_err(|error| {
+                AgentApiError::internal(format!("encode environment job workflow start: {error}"))
+            })?)
             .await
-            .map_err(map_environments_error)?;
-        let status = if response
-            .jobs
-            .iter()
-            .all(|job| is_terminal_job_status(job.status))
-        {
-            EnvironmentJobGroupStatus::Terminal
-        } else {
-            EnvironmentJobGroupStatus::Running
-        };
-        JobHandleStore::update_job_group_status(
+            .map_err(map_blob_store_error)?;
+        let snapshot = self
+            .start_environment_job_workflow(
+                temporal_workflow::EnvironmentJobStartActivityRequest {
+                    instance_id: instance.instance_id.as_str().to_owned(),
+                    job_group_id: job_group_id.as_str().to_owned(),
+                    request_ref,
+                },
+                job_ids,
+                Vec::new(),
+            )
+            .await?;
+        let stored = JobHandleStore::list_job_handles(
             self.store.as_ref(),
-            UpdateEnvironmentJobGroupStatus {
-                instance_id: instance.instance_id.clone(),
-                job_group_id: job_group_id.clone(),
-                status,
-                updated_at_ms: now_ms()?,
+            ListJobHandles {
+                instance_id: Some(instance.instance_id.clone()),
+                job_group_id: Some(job_group_id.clone()),
+                created_by_session_id: None,
+                limit: None,
             },
         )
         .await
         .map_err(map_environments_error)?;
-        self.start_environment_job_workflow(
-            &instance.instance_id,
-            &job_group_id,
-            response.jobs.iter().map(|job| job.job_id.clone()).collect(),
-        )
-        .await?;
         let handles = stored
             .iter()
             .map(|record| {
@@ -195,7 +158,7 @@ impl GatewayAgentApi {
         Ok(EnvironmentJobCreateResponse {
             instance_id: instance.instance_id.as_str().to_owned(),
             job_group_id: job_group_id.as_str().to_owned(),
-            jobs: response
+            jobs: snapshot
                 .jobs
                 .into_iter()
                 .map(|summary| SessionJobStartedView {
@@ -223,39 +186,69 @@ impl GatewayAgentApi {
 
     async fn start_environment_job_workflow(
         &self,
-        instance_id: &EnvironmentInstanceId,
-        job_group_id: &EnvironmentJobGroupId,
+        start: temporal_workflow::EnvironmentJobStartActivityRequest,
         job_ids: Vec<JobId>,
-    ) -> Result<(), AgentApiError> {
+        subscriptions: Vec<temporal_workflow::EnvironmentJobSubscription>,
+    ) -> Result<temporal_workflow::EnvironmentJobWorkflowSnapshot, AgentApiError> {
         let workflow_id = temporal_workflow::compose_environment_job_workflow_id(
             self.universe_id(),
-            instance_id.as_str(),
-            job_group_id.as_str(),
+            &start.instance_id,
+            &start.job_group_id,
         );
         match self
             .client
             .start_workflow(
                 temporal_workflow::EnvironmentJobWorkflow::run,
                 temporal_workflow::EnvironmentJobWorkflowArgs {
-                    instance_id: instance_id.as_str().to_owned(),
-                    job_group_id: job_group_id.as_str().to_owned(),
+                    start,
                     job_ids,
+                    subscriptions,
+                    started: false,
+                    jobs: Vec::new(),
+                    resolutions: BTreeMap::new(),
                     poll_ms: 2_000,
                     poll_attempt: 0,
                 },
-                WorkflowStartOptions::new(self.task_queue.clone(), workflow_id).build(),
+                WorkflowStartOptions::new(self.task_queue.clone(), workflow_id.clone()).build(),
             )
             .await
         {
-            Ok(_) => Ok(()),
+            Ok(_) => {}
             Err(error) => {
                 let error = map_workflow_start_error(error);
-                if error.kind == AgentApiErrorKind::Conflict {
-                    Ok(())
-                } else {
-                    Err(error)
+                if error.kind != AgentApiErrorKind::Conflict {
+                    return Err(error);
                 }
             }
+        }
+        let handle = self
+            .client
+            .get_workflow_handle::<temporal_workflow::EnvironmentJobWorkflow>(workflow_id);
+        let started = Instant::now();
+        loop {
+            if started.elapsed() > self.operation_timeout {
+                return Err(AgentApiError::internal(
+                    "timed out waiting for environment job start",
+                ));
+            }
+            match handle
+                .query(
+                    temporal_workflow::EnvironmentJobWorkflow::snapshot,
+                    (),
+                    WorkflowQueryOptions::default(),
+                )
+                .await
+            {
+                Ok(snapshot) if snapshot.started => return Ok(snapshot),
+                Ok(snapshot) if snapshot.last_error.is_some() => {
+                    return Err(AgentApiError::internal(snapshot.last_error.unwrap_or_else(
+                        || "environment job workflow start failed".to_owned(),
+                    )));
+                }
+                Ok(_) | Err(WorkflowQueryError::NotFound(_)) => {}
+                Err(error) => return Err(map_workflow_query_error(error)),
+            }
+            tokio::time::sleep(self.poll_interval).await;
         }
     }
 
@@ -393,40 +386,97 @@ impl GatewayAgentApi {
                     continue;
                 }
             };
-            let mut client = match self.connect_client_for_job_record(&record, "cancel").await {
-                Ok(client) => client,
-                Err(error) => {
-                    entries.push(session_job_cancel_error(Some(resolved), error));
-                    continue;
-                }
-            };
-            match client
-                .cancel_jobs(&HostCancelJobsParams {
-                    namespace: record.instance_id.as_str().to_owned(),
-                    jobs: vec![record.job_id.clone()],
-                    scope: host_cancel_scope(scope),
-                    force,
-                })
-                .await
-            {
-                Ok(response) => match response.jobs.into_iter().next() {
-                    Some(summary) => entries.push(SessionJobCancelEntryView {
-                        handle: Some(session_job_handle(&record)),
-                        summary: Some(api_job_summary(summary)),
-                        error: None,
-                    }),
-                    None => entries.push(session_job_cancel_error(
-                        Some(session_job_handle(&record)),
-                        "provider returned no job result".to_owned(),
-                    )),
-                },
+            match self.cancel_job_via_workflow(&record, scope, force).await {
+                Ok(summary) => entries.push(SessionJobCancelEntryView {
+                    handle: Some(session_job_handle(&record)),
+                    summary: Some(api_job_summary(summary)),
+                    error: None,
+                }),
                 Err(error) => entries.push(session_job_cancel_error(
                     Some(session_job_handle(&record)),
-                    error.to_string(),
+                    error,
                 )),
             }
         }
         Ok(entries)
+    }
+
+    async fn cancel_job_via_workflow(
+        &self,
+        record: &JobHandleRecord,
+        scope: SessionJobCancelScopeView,
+        force: bool,
+    ) -> Result<HostJobSummary, String> {
+        let workflow_id = temporal_workflow::compose_environment_job_workflow_id(
+            self.universe_id(),
+            record.instance_id.as_str(),
+            record.job_group_id.as_str(),
+        );
+        let handle = self
+            .client
+            .get_workflow_handle::<temporal_workflow::EnvironmentJobWorkflow>(workflow_id);
+        match handle
+            .signal(
+                temporal_workflow::EnvironmentJobWorkflow::cancel_jobs,
+                temporal_workflow::EnvironmentJobCancelSignal {
+                    jobs: vec![record.job_id.clone()],
+                    scope: host_cancel_scope(scope),
+                    force,
+                },
+                WorkflowSignalOptions::default(),
+            )
+            .await
+        {
+            Ok(()) => {
+                let started = Instant::now();
+                loop {
+                    if started.elapsed() > self.operation_timeout {
+                        return Err("timed out waiting for environment job cancellation".to_owned());
+                    }
+                    match handle
+                        .query(
+                            temporal_workflow::EnvironmentJobWorkflow::snapshot,
+                            (),
+                            WorkflowQueryOptions::default(),
+                        )
+                        .await
+                    {
+                        Ok(snapshot) => {
+                            if let Some(summary) = snapshot.jobs.into_iter().find(|job| {
+                                job.job_id == record.job_id
+                                    && (job.status == HostJobStatus::CancelRequested
+                                        || job.status.is_terminal())
+                            }) {
+                                return Ok(summary);
+                            }
+                        }
+                        Err(WorkflowQueryError::NotFound(_) | WorkflowQueryError::Rejected(_)) => {
+                            break;
+                        }
+                        Err(error) => return Err(error.to_string()),
+                    }
+                    tokio::time::sleep(self.poll_interval).await;
+                }
+            }
+            Err(WorkflowInteractionError::NotFound(_)) => {}
+            Err(error) => return Err(error.to_string()),
+        }
+
+        let mut client = self.connect_client_for_job_record(record, "cancel").await?;
+        let response = client
+            .cancel_jobs(&HostCancelJobsParams {
+                namespace: record.instance_id.as_str().to_owned(),
+                jobs: vec![record.job_id.clone()],
+                scope: host_cancel_scope(scope),
+                force,
+            })
+            .await
+            .map_err(|error| error.to_string())?;
+        response
+            .jobs
+            .into_iter()
+            .next()
+            .ok_or_else(|| "provider returned no job result".to_owned())
     }
 
     async fn read_job_handle_record(
@@ -782,19 +832,6 @@ fn api_job_status(status: HostJobStatus) -> SessionJobStatusView {
         HostJobStatus::Interrupted => SessionJobStatusView::Interrupted,
         HostJobStatus::Lost => SessionJobStatusView::Lost,
     }
-}
-
-fn is_terminal_job_status(status: HostJobStatus) -> bool {
-    matches!(
-        status,
-        HostJobStatus::Succeeded
-            | HostJobStatus::Failed
-            | HostJobStatus::Cancelled
-            | HostJobStatus::TimedOut
-            | HostJobStatus::DependencyFailed
-            | HostJobStatus::Interrupted
-            | HostJobStatus::Lost
-    )
 }
 
 fn api_job_output_chunk(chunk: HostJobOutputChunk) -> SessionJobOutputChunkView {

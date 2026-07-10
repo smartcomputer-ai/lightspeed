@@ -13,7 +13,10 @@ mod wait_loop;
 mod watchdog;
 
 use std::time::Duration;
-use std::{collections::BTreeMap, time::UNIX_EPOCH};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    time::UNIX_EPOCH,
+};
 
 use engine::{
     BlobRef, CommandError, ContextEntryInput, ContextEntryKey, ContextEntryKind,
@@ -34,12 +37,13 @@ use crate::{
     AgentCompletedRunSummary, AgentMessageSubmissionConsumptionSummary, AgentQueuedRunSummary,
     AgentSessionArgs, AgentSessionStatus, AppendEventsRequest, AwaitOutcome, AwaitOutput,
     AwaitPromiseResult, CancellingWatchdog, CreateOrLoadSessionRequest,
-    DEFAULT_CONTINUE_AS_NEW_HISTORY_THRESHOLD, EnvironmentJobChanged, LlmGenerateActivityRequest,
+    DEFAULT_CONTINUE_AS_NEW_HISTORY_THRESHOLD, LlmGenerateActivityRequest,
     PendingPromiseCancellation, PendingPromiseNotification, PendingToolBatchResume,
     PreprocessRunInputActivityRequest, PreprocessRunInputFailure, PreprocessRunInputFailureKind,
-    PreprocessRunInputOutcome, PromiseResolutionSignal, PromiseSourcePoll, PutBlobRequest,
-    RuntimeProjectionRefreshActivityRequest, ToolInvokeBatchActivityRequest, WorkflowActivities,
-    activity_options, compose_workflow_id, default_instructions, split_workflow_id,
+    PreprocessRunInputOutcome, PromiseResolutionSignal, PromiseSourcePoll,
+    PromiseSourceResolutionSignal, PutBlobRequest, RuntimeProjectionRefreshActivityRequest,
+    ToolInvokeBatchActivityRequest, WorkflowActivities, activity_options, compose_workflow_id,
+    default_instructions, split_workflow_id,
 };
 
 use activity_calls::{call_context_compact, call_llm_generate, call_tool_invoke_batch};
@@ -70,6 +74,7 @@ pub struct AgentSessionWorkflow {
     pending_promise_notifications: Vec<PendingPromiseNotification>,
     pending_promise_cancellations: Vec<PendingPromiseCancellation>,
     promise_source_polls: BTreeMap<String, PromiseSourcePoll>,
+    confirmed_promise_source_subscriptions: BTreeSet<String>,
     run_submissions: BTreeMap<u64, Option<SubmissionId>>,
     cancelling_watchdog: Option<CancellingWatchdog>,
     admission_failures: Vec<AgentAdmissionFailure>,
@@ -89,6 +94,7 @@ impl Default for AgentSessionWorkflow {
             pending_promise_notifications: Vec::new(),
             pending_promise_cancellations: Vec::new(),
             promise_source_polls: BTreeMap::new(),
+            confirmed_promise_source_subscriptions: BTreeSet::new(),
             run_submissions: BTreeMap::new(),
             cancelling_watchdog: None,
             admission_failures: Vec::new(),
@@ -118,6 +124,10 @@ impl AgentSessionWorkflow {
             promise_sources::reconcile_polls(ctx);
             wait_for_workflow_work(ctx).await;
             if let Err(error) = flush_pending_promise_notifications(ctx).await {
+                record_error(ctx, &error);
+                return Err(anyhow::anyhow!("{error}").into());
+            }
+            if let Err(error) = promise_sources::process_unconfirmed_subscriptions(ctx).await {
                 record_error(ctx, &error);
                 return Err(anyhow::anyhow!("{error}").into());
             }
@@ -183,13 +193,13 @@ impl AgentSessionWorkflow {
         self.queue_promise_resolution(signal);
     }
 
-    #[signal(name = "environment_job_changed")]
-    pub fn environment_job_changed(
+    #[signal(name = "resolve_promise_source")]
+    pub fn resolve_promise_source(
         &mut self,
         _ctx: &mut SyncWorkflowContext<Self>,
-        changed: EnvironmentJobChanged,
+        signal: PromiseSourceResolutionSignal,
     ) {
-        self.record_environment_job_changed(changed);
+        self.queue_promise_source_resolution(signal);
     }
 
     #[query(name = "status")]

@@ -17,6 +17,10 @@ use host_protocol::{
     shared::{CURRENT_PROTOCOL_VERSION, HostScope, JobId, ProcessId},
 };
 use tokio::net::TcpListener;
+use tools::{
+    fs::FsPath,
+    host_protocol::{HostDataConformanceOptions, assert_host_data_conformance},
+};
 
 #[tokio::test(flavor = "current_thread")]
 async fn bridge_serves_controller_attach_and_process_data_plane() {
@@ -32,7 +36,7 @@ async fn bridge_serves_controller_attach_and_process_data_plane() {
         listen: local_addr,
         advertise_url: None,
         cwd: root.clone(),
-        fs_root: root,
+        fs_root: root.clone(),
         heartbeat_interval: Duration::from_millis(10_000),
         lease_ttl: Duration::from_millis(30_000),
         read_only_fs: false,
@@ -74,6 +78,39 @@ async fn bridge_serves_controller_attach_and_process_data_plane() {
     assert!(attached.connection.capabilities.job_start);
     assert!(attached.connection.capabilities.job_read);
     assert!(attached.connection.capabilities.job_cancel);
+
+    let conformance_client = HostDataClient::connect(
+        &attached.connection.endpoint,
+        WebSocketConnectOptions::default(),
+    )
+    .await
+    .expect("connect conformance client");
+    let default_cwd = attached
+        .connection
+        .default_cwd
+        .as_ref()
+        .expect("bridge default cwd");
+    let forbidden_path = root
+        .parent()
+        .expect("root parent")
+        .join("outside-host-route");
+    assert_host_data_conformance(
+        conformance_client,
+        HostDataConformanceOptions {
+            initialize: InitializeParams {
+                protocol_version: CURRENT_PROTOCOL_VERSION,
+                client_name: "host-bridge-conformance".to_owned(),
+                scope: HostScope::Default,
+                resume_connection_id: None,
+            },
+            expected_capabilities: attached.connection.capabilities.clone(),
+            expected_default_cwd: FsPath::new(default_cwd.as_str()).expect("default cwd"),
+            test_directory: FsPath::new("host-data-conformance").expect("test directory"),
+            forbidden_path: FsPath::new(forbidden_path.to_string_lossy()).expect("forbidden path"),
+        },
+    )
+    .await
+    .expect("host data conformance");
 
     let mut data = HostDataClient::connect(
         &attached.connection.endpoint,

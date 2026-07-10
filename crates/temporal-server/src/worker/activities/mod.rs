@@ -3,7 +3,7 @@ use std::sync::Arc;
 use engine::{
     BlobRef, ContextCompactionResult, LlmGenerationResult, PromiseSourceCancelRequest,
     PromiseSourceCancelResult, PromiseSourceCheckRequest, PromiseSourceCheckResult,
-    ToolBatchOutcome,
+    PromiseSourceSubscribeRequest, ToolBatchOutcome,
 };
 use store_pg::PgStore;
 use temporalio_common::error::ApplicationFailure;
@@ -15,11 +15,13 @@ use crate::universe::{UniverseError, UniverseRuntime};
 use crate::worker::{
     ACTIVITY_APPEND_EVENTS, ACTIVITY_CANCEL_PROMISE_SOURCE, ACTIVITY_CHECK_PROMISE_SOURCE,
     ACTIVITY_CONTEXT_COMPACT, ACTIVITY_CREATE_OR_LOAD_SESSION, ACTIVITY_ENVIRONMENT_JOB_CANCEL,
-    ACTIVITY_ENVIRONMENT_JOB_POLL, ACTIVITY_LLM_GENERATE, ACTIVITY_PREPROCESS_RUN_INPUT,
-    ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB, ACTIVITY_RUNTIME_PROJECTION_REFRESH,
+    ACTIVITY_ENVIRONMENT_JOB_POLL, ACTIVITY_ENVIRONMENT_JOB_START, ACTIVITY_LLM_GENERATE,
+    ACTIVITY_PREPROCESS_RUN_INPUT, ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB,
+    ACTIVITY_RUNTIME_PROJECTION_REFRESH, ACTIVITY_SUBSCRIBE_PROMISE_SOURCE,
     ACTIVITY_TOOL_INVOKE_BATCH, AppendEventsRequest, ContextCompactActivityRequest,
     CreateOrLoadSessionRequest, CreateOrLoadSessionResult, EnvironmentJobCancelActivityRequest,
     EnvironmentJobPollActivityRequest, EnvironmentJobPollActivityResult,
+    EnvironmentJobStartActivityRequest, EnvironmentJobStartActivityResult,
     LlmGenerateActivityRequest, PreprocessRunInputActivityRequest,
     PreprocessRunInputActivityResult, PutBlobRequest, ReadBlobRequest, ReadBlobResult,
     RuntimeProjectionRefreshActivityRequest, RuntimeProjectionRefreshActivityResult,
@@ -224,6 +226,22 @@ mod tests {
         assert_eq!(
             WorkerActivities::cancel_promise_source.name(),
             temporal_workflow::WorkflowActivities::cancel_promise_source.name()
+        );
+        assert_eq!(
+            WorkerActivities::subscribe_promise_source.name(),
+            temporal_workflow::WorkflowActivities::subscribe_promise_source.name()
+        );
+        assert_eq!(
+            WorkerActivities::environment_job_start.name(),
+            temporal_workflow::WorkflowActivities::environment_job_start.name()
+        );
+        assert_eq!(
+            WorkerActivities::environment_job_poll.name(),
+            temporal_workflow::WorkflowActivities::environment_job_poll.name()
+        );
+        assert_eq!(
+            WorkerActivities::environment_job_cancel.name(),
+            temporal_workflow::WorkflowActivities::environment_job_cancel.name()
         );
     }
 
@@ -441,6 +459,31 @@ impl WorkerActivities {
             .cancel_promise_source(request)
             .await
             .map_err(tools::activity_error_for_core)
+    }
+
+    #[activity(name = ACTIVITY_SUBSCRIBE_PROMISE_SOURCE)]
+    pub async fn subscribe_promise_source(
+        self: Arc<Self>,
+        ctx: ActivityContext,
+        request: PromiseSourceSubscribeRequest,
+    ) -> Result<PromiseSourceCheckResult, ActivityError> {
+        let state = self.state_for(&ctx).await?;
+        state
+            .tools()
+            .tools
+            .subscribe_promise_source(request)
+            .await
+            .map_err(tools::activity_error_for_core)
+    }
+
+    #[activity(name = ACTIVITY_ENVIRONMENT_JOB_START)]
+    pub async fn environment_job_start(
+        self: Arc<Self>,
+        ctx: ActivityContext,
+        request: EnvironmentJobStartActivityRequest,
+    ) -> Result<EnvironmentJobStartActivityResult, ActivityError> {
+        let state = self.state_for(&ctx).await?;
+        environment_jobs::start(state.environment_jobs(), request).await
     }
 
     #[activity(name = ACTIVITY_ENVIRONMENT_JOB_POLL)]
