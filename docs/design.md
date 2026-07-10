@@ -104,6 +104,13 @@ Because sessions can run for weeks to months and Temporal caps workflow history,
 ## The Client API Boundary
 Clients — the CLI, messaging bridges, editors, future frontends — consume the typed `api` crate surface through the JSON-RPC gateway, never the reducer internals. `session/runs/start` is an acceptance boundary, not a final-output boundary: it returns once the run is admitted, and clients follow `session/events/read` or refresh `session/read` for progress and completion. This keeps the public contract stable while the core evolves underneath it.
 
+Collection reads do not fan out to Temporal workflows. `session/list` reads a
+materialized `new` / `open` / `closed` lifecycle projection maintained in the
+session-store transaction that appends lifecycle events; the event log remains
+authoritative. `session/delete` only removes closed sessions and rejects a
+session while a fork still inherits its history, so fork trees are deleted
+leaf-first.
+
 Agent profiles live on this boundary too: a profile is a reusable setup document for session config, instructions, mounts, and environments. Session config itself is a sparse, capability-oriented document: core sections (model, generation, limits, context) plus feature grants (vfs, web, messaging, fleet, timers, environments, mcp) where an absent feature is simply not granted — the default session is a model that can process runs and nothing else. Config is replaced whole via `session/config/put` guarded by an expected revision (no field-level patch vocabulary), and the session's toolset — including remote MCP tools declared under `features.mcp` — is derived from that document rather than managed imperatively. The hosted runtime resolves and applies profiles outside the deterministic core.
 
 ## Tools, Environments & Sub-agents

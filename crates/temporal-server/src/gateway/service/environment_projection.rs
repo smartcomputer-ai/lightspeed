@@ -23,24 +23,38 @@ impl GatewayAgentApi {
         let expected = commands
             .iter()
             .filter_map(|command| match command {
-                CoreAgentCommand::UpsertContext { key, entry } => {
+                CoreAgentCommand::UpsertContext { key, entry, .. } => {
                     Some((key.clone(), entry.clone()))
                 }
                 _ => None,
             })
             .collect::<Vec<_>>();
+        let removed = commands
+            .iter()
+            .filter_map(|command| match command {
+                CoreAgentCommand::RemoveContext { key, .. } => Some(key.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
 
-        let baseline_failures = self
-            .query_status_optional(session_id)
-            .await?
-            .map(|status| status.admission_failures.len())
-            .unwrap_or(0);
+        let mut correlations = BTreeMap::new();
         for command in commands {
-            self.submit_core_command(session_id, command).await?;
+            correlations.extend(
+                self.submit_correlated_context_commands(session_id, vec![command])
+                    .await?,
+            );
         }
         if !expected.is_empty() {
-            self.wait_for_context_entries_applied(session_id, &expected, baseline_failures)
+            self.wait_for_context_entries_applied(session_id, &expected, &correlations)
                 .await?;
+        }
+        if !removed.is_empty() {
+            let (_, outcomes) = self
+                .wait_for_context_keys_removed(session_id, &removed, &correlations)
+                .await?;
+            if let Some(failure) = outcomes.into_values().flatten().next() {
+                return Err(map_admission_failure_to_api_error(&failure));
+            }
         }
         Ok(())
     }
@@ -50,15 +64,36 @@ impl GatewayAgentApi {
         session_id: &SessionId,
         state: &engine::CoreAgentState,
     ) -> Result<Vec<CoreAgentCommand>, AgentApiError> {
-        let mounts = self
-            .store
-            .list_mounts(session_id)
-            .await
-            .map_err(map_vfs_catalog_error)?;
-        let environments = self.load_session_runtime_environments(session_id).await?;
+        let features = state
+            .lifecycle
+            .config
+            .as_ref()
+            .map(|config| &config.features);
+        let vfs_catalog_enabled = features.is_some_and(|features| features.vfs.is_some());
+        let environment_catalog_enabled =
+            features.is_some_and(|features| features.environments.is_some());
+        let mounts = if vfs_catalog_enabled {
+            self.store
+                .list_mounts(session_id)
+                .await
+                .map_err(map_vfs_catalog_error)?
+        } else {
+            Vec::new()
+        };
+        let environments = if environment_catalog_enabled {
+            self.load_session_runtime_environments(session_id).await?
+        } else {
+            Vec::new()
+        };
         let refresh = self
             .environment_manager
-            .refresh_projection_for_runtime_environments(state, mounts, environments)
+            .refresh_projection_for_runtime_environments(
+                state,
+                mounts,
+                environments,
+                vfs_catalog_enabled,
+                environment_catalog_enabled,
+            )
             .await
             .map_err(map_session_environment_error)?;
         Ok(refresh.commands)

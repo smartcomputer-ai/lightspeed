@@ -7,7 +7,7 @@ pub(super) async fn process_admissions(
 ) -> anyhow::Result<()> {
     let mut drive = drive_from_state(ctx)?;
     for admission in admissions {
-        let context_key = admission.context_key.clone();
+        let correlation_token = admission.correlation_token.clone();
         let mut command = admission.command;
         if command_needs_input_preprocessing(&command) {
             let session_id = drive.session_id().clone();
@@ -16,7 +16,10 @@ pub(super) async fn process_admissions(
                     command = rewritten;
                 }
                 RunInputPreprocessResult::Failed { failure } => {
-                    record_admission_failure(ctx, failure.with_context_key(context_key.clone()));
+                    record_admission_failure(
+                        ctx,
+                        failure.with_correlation_token(correlation_token.clone()),
+                    );
                     continue;
                 }
             }
@@ -24,7 +27,7 @@ pub(super) async fn process_admissions(
         if should_refresh_runtime_projection_before_admitting(drive.state(), &command) {
             refresh_runtime_projection_before_run(ctx, &mut drive).await?;
         }
-        match admit_and_append_command(ctx, &mut drive, command, context_key).await? {
+        match admit_and_append_command(ctx, &mut drive, command, correlation_token).await? {
             CommandAdmissionResult::Accepted => {}
             CommandAdmissionResult::Rejected(failure) => {
                 record_admission_failure(ctx, failure);
@@ -84,10 +87,17 @@ async fn preprocess_input_entries(
                 submission_id: message.submission_id,
             },
         ),
-        CoreAgentCommand::UpsertContext { key, entry } => (
+        CoreAgentCommand::UpsertContext {
+            expected_revision,
+            key,
+            entry,
+        } => (
             None,
             vec![entry],
-            InputPreprocessRebuild::UpsertContext { key },
+            InputPreprocessRebuild::UpsertContext {
+                expected_revision,
+                key,
+            },
         ),
         command => return Ok(RunInputPreprocessResult::Succeeded { command }),
     };
@@ -121,6 +131,7 @@ enum InputPreprocessRebuild {
         submission_id: Option<SubmissionId>,
     },
     UpsertContext {
+        expected_revision: Option<u64>,
         key: ContextEntryKey,
     },
 }
@@ -144,7 +155,10 @@ impl InputPreprocessRebuild {
                     input,
                 },
             )),
-            Self::UpsertContext { key } => {
+            Self::UpsertContext {
+                expected_revision,
+                key,
+            } => {
                 let mut input = input;
                 let Some(entry) = input.pop() else {
                     anyhow::bail!("preprocessed context append returned no entry");
@@ -152,7 +166,11 @@ impl InputPreprocessRebuild {
                 if !input.is_empty() {
                     anyhow::bail!("preprocessed context append returned multiple entries");
                 }
-                Ok(CoreAgentCommand::UpsertContext { key, entry })
+                Ok(CoreAgentCommand::UpsertContext {
+                    expected_revision,
+                    key,
+                    entry,
+                })
             }
         }
     }
@@ -164,7 +182,7 @@ pub(super) fn preprocess_failure_to_admission_failure(
 ) -> AgentAdmissionFailure {
     AgentAdmissionFailure {
         submission_id,
-        context_key: None,
+        correlation_token: None,
         kind: match failure.kind {
             PreprocessRunInputFailureKind::UnsupportedAudioMime => {
                 AgentAdmissionFailureKind::UnsupportedAudioMime
@@ -189,6 +207,7 @@ pub(super) fn preprocess_failure_to_admission_failure(
             }
         },
         message: failure.message,
+        rejection: None,
     }
 }
 
@@ -205,11 +224,32 @@ async fn refresh_runtime_projection_before_run(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     drive: &mut CoreAgentDrive,
 ) -> anyhow::Result<()> {
+    let vfs = drive
+        .state()
+        .lifecycle
+        .config
+        .as_ref()
+        .and_then(|config| config.features.vfs.as_ref());
+    let vfs_catalog_enabled = vfs.is_some();
+    let environment_catalog_enabled = drive
+        .state()
+        .lifecycle
+        .config
+        .as_ref()
+        .is_some_and(|config| config.features.environments.is_some());
+    let vfs_skills_enabled = vfs.is_some_and(|vfs| vfs.skills.is_some());
+    let vfs_skill_roots = vfs
+        .and_then(|vfs| vfs.skills.as_ref())
+        .and_then(|skills| skills.roots.clone());
     let result = ctx
         .start_activity(
             WorkflowActivities::runtime_projection_refresh,
             RuntimeProjectionRefreshActivityRequest {
                 session_id: drive.session_id().clone(),
+                vfs_catalog_enabled,
+                environment_catalog_enabled,
+                vfs_skills_enabled,
+                vfs_skill_roots,
                 active_catalog_ref: active_skill_catalog_ref(drive.state()),
                 active_vfs_catalog_ref: active_context_ref(
                     drive.state(),
@@ -275,4 +315,39 @@ fn active_context_ref(
                 && entry.kind == kind
         })
         .map(|entry| entry.content_ref.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn upsert_preprocess_rebuild_preserves_expected_context_revision() {
+        let key = ContextEntryKey::new("client.audio");
+        let entry = ContextEntryInput {
+            kind: engine::ContextEntryKind::ProviderOpaque,
+            content_ref: BlobRef::from_bytes(b"transcribed"),
+            media_type: Some("application/json".to_owned()),
+            preview: None,
+            provider_kind: None,
+            provider_item_id: None,
+            token_estimate: None,
+        };
+
+        let command = InputPreprocessRebuild::UpsertContext {
+            expected_revision: Some(7),
+            key: key.clone(),
+        }
+        .rebuild(vec![entry.clone()])
+        .expect("rebuild upsert");
+
+        assert_eq!(
+            command,
+            CoreAgentCommand::UpsertContext {
+                expected_revision: Some(7),
+                key,
+                entry,
+            }
+        );
+    }
 }

@@ -758,6 +758,11 @@ export type McpServerStatus = "active" | "needsAuthConfig" | "unverified" | "dis
 export type RemoteMcpTransport = "streamableHttp" | "sse" | "auto";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ModelSource".
+ */
+export type ModelSource = "provider";
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "OutboundOriginView".
  */
 export type OutboundOriginView = "toolCall" | "finalText" | "trigger";
@@ -844,6 +849,11 @@ export type VfsMountSourceInput =
       type: "workspace";
       workspaceId: string;
     };
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionLifecycleStatus".
+ */
+export type SessionLifecycleStatus = "new" | "open" | "closed";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionEnvironmentFsAccessView".
@@ -1327,7 +1337,7 @@ export interface GenerationConfig {
   parallelToolUse?: boolean | null;
   /**
    * Reasoning effort tier as a provider-native string (e.g. "none",
-   * "high", "xhigh", "ultra"); validated against the session's provider.
+   * "high", "xhigh", "max"); validated against the session's provider.
    */
   reasoningEffort?: string | null;
   toolChoice?: ToolChoice | null;
@@ -2442,6 +2452,77 @@ export interface McpServerReadResponse {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfModelListResponse".
+ */
+export interface AgentApiOutcomeOfModelListResponse {
+  notifications?: AgentNotification[];
+  result: ModelListResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ModelListResponse".
+ */
+export interface ModelListResponse {
+  models?: ModelView[];
+  providers?: ModelProviderDiscoveryView[];
+}
+/**
+ * A model route returned directly by a provider API.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ModelView".
+ */
+export interface ModelView {
+  /**
+   * Canonical Lightspeed provider API kind, e.g. `openai:responses`.
+   */
+  apiKind: string;
+  capabilities: ModelCapabilitiesView;
+  displayName: string;
+  fetchedAtMs: number;
+  model: string;
+  providerId: string;
+  /**
+   * Always `provider` in P97: there is no maintained model catalog.
+   */
+  source: ModelSource;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ModelCapabilitiesView".
+ */
+export interface ModelCapabilitiesView {
+  maxInputTokens?: number | null;
+  maxOutputTokens?: number | null;
+  /**
+   * Omitted when the provider model-list API does not report this fact.
+   */
+  parallelToolUse?: boolean | null;
+  /**
+   * Provider-reported effort values. Omitted when the provider does not
+   * report per-model effort support.
+   */
+  reasoningEfforts?: string[] | null;
+}
+/**
+ * Best-effort status for one provider. A provider failure does not discard
+ * models discovered from other providers.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ModelProviderDiscoveryView".
+ */
+export interface ModelProviderDiscoveryView {
+  apiKinds: string[];
+  /**
+   * Sanitized Lightspeed error; never a credential, request header, or raw
+   * upstream response body.
+   */
+  error?: string | null;
+  fetchedAtMs?: number | null;
+  providerId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfOperatorOutboxReadResponse".
  */
 export interface AgentApiOutcomeOfOperatorOutboxReadResponse {
@@ -2862,6 +2943,32 @@ export interface SessionConfigPutResponse {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfSessionDeleteResponse".
+ */
+export interface AgentApiOutcomeOfSessionDeleteResponse {
+  notifications?: AgentNotification[];
+  result: SessionDeleteResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionDeleteResponse".
+ */
+export interface SessionDeleteResponse {
+  session: SessionSummaryView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionSummaryView".
+ */
+export interface SessionSummaryView {
+  createdAtMs: number;
+  displayName?: string | null;
+  id: string;
+  lifecycleStatus: SessionLifecycleStatus;
+  updatedAtMs: number;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfSessionEnvironmentActivateResponse".
  */
 export interface AgentApiOutcomeOfSessionEnvironmentActivateResponse {
@@ -3104,16 +3211,6 @@ export interface SessionListResponse {
    */
   nextCursor?: string | null;
   sessions?: SessionSummaryView[];
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionSummaryView".
- */
-export interface SessionSummaryView {
-  createdAtMs: number;
-  displayName?: string | null;
-  id: string;
-  updatedAtMs: number;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -3920,6 +4017,22 @@ export interface McpServerReadParams {
   serverId: string;
 }
 /**
+ * Direct provider model discovery. Each invocation asks the supported
+ * provider APIs again; clients refresh by calling this method.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ModelListParams".
+ */
+export interface ModelListParams {
+  /**
+   * Apply Lightspeed's small, conservative selectable-model policy. It
+   * removes OpenAI model-id families that are clearly not text-generation
+   * routes (embeddings, moderation, image/video, speech, and realtime).
+   * It is an ID policy, not a provider capability claim.
+   */
+  selectableOnly?: boolean;
+}
+/**
  * Multiplexed outbox read: one long-poll serves every universe of the
  * deployment, replacing one `outbox/read` tailer per universe. `seq` is a
  * deployment-global cursor (the outbox sequence is one identity column
@@ -4109,6 +4222,13 @@ export interface SessionConfigPutParams {
    * absent replaces unconditionally.
    */
   expectedConfigRevision?: number | null;
+  sessionId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionDeleteParams".
+ */
+export interface SessionDeleteParams {
   sessionId: string;
 }
 /**

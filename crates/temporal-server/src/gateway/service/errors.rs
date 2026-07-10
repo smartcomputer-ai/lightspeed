@@ -6,6 +6,13 @@ pub(super) fn is_not_found(error: &AgentApiError) -> bool {
 
 pub(super) fn map_admission_failure_to_api_error(failure: &AgentAdmissionFailure) -> AgentApiError {
     match failure.kind {
+        AgentAdmissionFailureKind::RejectedCommand
+            if failure.rejection.as_ref().is_some_and(|rejection| {
+                rejection.kind == engine::CommandRejectionKind::RevisionConflict
+            }) =>
+        {
+            AgentApiError::conflict(failure.message.clone())
+        }
         AgentAdmissionFailureKind::RejectedCommand => {
             AgentApiError::rejected(failure.message.clone())
         }

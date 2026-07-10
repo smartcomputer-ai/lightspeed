@@ -33,6 +33,10 @@ CREATE TABLE IF NOT EXISTS sessions (
     session_id text NOT NULL,
     -- Human-readable name; store metadata only, never event-log state.
     display_name text,
+    -- Materialized CoreAgent lifecycle for cheap list/filter operations. The
+    -- event log remains authoritative and this is updated transactionally.
+    lifecycle_status text NOT NULL DEFAULT 'new',
+    closed_at_seq bigint,
     head_seq bigint,
     created_at_ms bigint NOT NULL,
     updated_at_ms bigint NOT NULL,
@@ -66,6 +70,17 @@ CREATE TABLE IF NOT EXISTS sessions (
         CHECK (session_id ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$'),
     CONSTRAINT sessions_head_seq_positive
         CHECK (head_seq IS NULL OR head_seq > 0),
+    CONSTRAINT sessions_lifecycle_status_known
+        CHECK (lifecycle_status IN ('new', 'open', 'closed')),
+    CONSTRAINT sessions_closed_at_seq_positive
+        CHECK (closed_at_seq IS NULL OR closed_at_seq > 0),
+    CONSTRAINT sessions_closed_projection_consistent
+        CHECK (
+            (lifecycle_status = 'closed' AND closed_at_seq IS NOT NULL)
+            OR (lifecycle_status <> 'closed' AND closed_at_seq IS NULL)
+        ),
+    CONSTRAINT sessions_closed_seq_within_head
+        CHECK (closed_at_seq IS NULL OR closed_at_seq <= head_seq),
     CONSTRAINT sessions_source_seq_nonnegative
         CHECK (source_seq IS NULL OR source_seq >= 0),
     CONSTRAINT sessions_source_seq_requires_source
@@ -82,6 +97,12 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 ALTER TABLE sessions
     ADD COLUMN IF NOT EXISTS display_name text;
+
+ALTER TABLE sessions
+    ADD COLUMN IF NOT EXISTS lifecycle_status text NOT NULL DEFAULT 'new';
+
+ALTER TABLE sessions
+    ADD COLUMN IF NOT EXISTS closed_at_seq bigint;
 
 ALTER TABLE sessions
     ADD COLUMN IF NOT EXISTS source_session_id text;
@@ -142,6 +163,9 @@ CREATE INDEX IF NOT EXISTS sessions_source_session_id_idx
 -- Keyset paging for session listings: newest activity first.
 CREATE INDEX IF NOT EXISTS sessions_updated_at_idx
     ON sessions (universe_id, updated_at_ms DESC, session_id DESC);
+
+CREATE INDEX IF NOT EXISTS sessions_lifecycle_updated_at_idx
+    ON sessions (universe_id, lifecycle_status, updated_at_ms DESC, session_id DESC);
 
 ALTER TABLE sessions
     DROP CONSTRAINT IF EXISTS sessions_source_seq_positive;

@@ -12,7 +12,9 @@ mod errors;
 mod github_api;
 mod host_controllers;
 mod input;
+mod instructions;
 mod mcp_api;
+mod models_api;
 mod oauth_api;
 mod parse;
 mod profiles;
@@ -43,6 +45,7 @@ use github_api::{
 use host_controllers::{HostControllerConnector, WebSocketHostControllerConnector};
 use input::{context_entry_input_from_api, run_input_from_api};
 use mcp_api::{map_mcp_error, mcp_server_view, parse_mcp_server_id, put_mcp_server_record};
+use models_api::{ModelDiscoveryService, stored_provider_key_resolver};
 use oauth_api::{
     auth_client_create_draft, auth_flow_view, cimd_config, map_mcp_oauth_error,
     mcp_oauth_target_from_record, oauth_client_view, oauth_redirect_uri, parse_auth_flow_id,
@@ -93,6 +96,7 @@ use engine::{
     SkillId, SubmissionId, ToolChoice, ToolName, skill_activation_context_key,
     storage::{BlobStore, BlobStoreError, ReadSessionEvents, SessionStore},
 };
+use llm_clients::{anthropic::messages as anthropic, openai::responses as openai};
 use mcp::McpRegistryStore;
 use store_pg::PgStore;
 use temporalio_client::{
@@ -105,7 +109,7 @@ use tools::{
     fs::{FileSystem, FsPath, MountedVfsFileSystem},
     runtime::{ToolDocument, ToolTarget},
     skills::{
-        SkillCatalogSnapshot, SkillLocation, SkillMetadata, conventional_vfs_skill_root_specs,
+        SkillCatalogSnapshot, SkillLocation, SkillMetadata, configured_vfs_skill_root_specs,
         prepare_skill_catalog_publication, resolve_mounted_vfs_skill_roots,
         skill_catalog_context_input,
     },
@@ -149,6 +153,11 @@ fn session_summary_view(record: engine::storage::SessionRecord) -> SessionSummar
     SessionSummaryView {
         id: record.session_id.as_str().to_owned(),
         display_name: record.display_name,
+        lifecycle_status: match record.lifecycle_status {
+            engine::storage::SessionLifecycleStatus::New => SessionLifecycleStatus::New,
+            engine::storage::SessionLifecycleStatus::Open => SessionLifecycleStatus::Open,
+            engine::storage::SessionLifecycleStatus::Closed => SessionLifecycleStatus::Closed,
+        },
         created_at_ms: record.created_at_ms,
         updated_at_ms: record.updated_at_ms,
     }
@@ -604,7 +613,6 @@ pub struct GatewayAgentApiBuilder {
     store: Arc<PgStore>,
     task_queue: String,
     default_model: ModelSelection,
-    instructions_ref: Option<BlobRef>,
     max_steps_per_input: Option<u32>,
     continue_as_new_history_threshold: Option<u32>,
     poll_interval: Duration,
@@ -614,6 +622,8 @@ pub struct GatewayAgentApiBuilder {
     oauth_token_client: Option<Arc<dyn OAuthTokenClient>>,
     oauth_metadata_client: Option<Arc<dyn OAuthMetadataClient>>,
     github_api_client: Option<Arc<dyn GitHubApiClient>>,
+    model_discovery_openai: Option<Arc<openai::Client>>,
+    model_discovery_anthropic: Option<Arc<anthropic::Client>>,
     environments: Vec<RuntimeEnvironment>,
     host_controller_connector: Arc<dyn HostControllerConnector>,
 }
@@ -652,6 +662,17 @@ impl GatewayAgentApiBuilder {
         self
     }
 
+    /// Use deployment-shared LLM clients for direct provider model discovery.
+    pub fn with_model_discovery_clients(
+        mut self,
+        openai: Arc<openai::Client>,
+        anthropic: Arc<anthropic::Client>,
+    ) -> Self {
+        self.model_discovery_openai = Some(openai);
+        self.model_discovery_anthropic = Some(anthropic);
+        self
+    }
+
     pub fn with_environment(mut self, environment: RuntimeEnvironment) -> Self {
         self.environments.push(environment);
         self
@@ -669,11 +690,6 @@ impl GatewayAgentApiBuilder {
 
     pub fn with_default_model(mut self, model: ModelSelection) -> Self {
         self.default_model = model;
-        self
-    }
-
-    pub fn with_instructions_ref(mut self, instructions_ref: BlobRef) -> Self {
-        self.instructions_ref = Some(instructions_ref);
         self
     }
 
@@ -713,7 +729,7 @@ impl GatewayAgentApiBuilder {
             self.store.clone() as Arc<dyn AuthFlowStore>,
             self.store.clone() as Arc<dyn AuthGrantStore>,
             self.store.clone() as Arc<dyn SecretStore>,
-            token_client,
+            token_client.clone(),
         );
         let metadata_client = self.oauth_metadata_client.unwrap_or_else(|| {
             Arc::new(HttpOAuthMetadataClient::new().expect("construct OAuth metadata HTTP client"))
@@ -726,6 +742,27 @@ impl GatewayAgentApiBuilder {
         let github_api = self.github_api_client.unwrap_or_else(|| {
             Arc::new(HttpGitHubApiClient::new().expect("construct GitHub REST HTTP client"))
         });
+        let discovery_openai = self.model_discovery_openai.unwrap_or_else(|| {
+            Arc::new(
+                openai::Client::new(openai::Config::from_env_allow_missing_key())
+                    .expect("construct OpenAI model discovery client"),
+            )
+        });
+        let discovery_anthropic = self.model_discovery_anthropic.unwrap_or_else(|| {
+            Arc::new(
+                anthropic::Client::new(anthropic::Config::from_env_allow_missing_key())
+                    .expect("construct Anthropic model discovery client"),
+            )
+        });
+        let model_discovery = ModelDiscoveryService::new(
+            discovery_openai,
+            discovery_anthropic,
+            stored_provider_key_resolver(
+                self.store.clone(),
+                token_client.clone(),
+                github_api.clone(),
+            ),
+        );
         let mut environment_manager =
             SessionEnvironmentManager::new(self.store.clone(), self.store.clone());
         for environment in self.environments {
@@ -736,7 +773,6 @@ impl GatewayAgentApiBuilder {
             store: self.store,
             task_queue: self.task_queue,
             default_model: self.default_model,
-            instructions_ref: self.instructions_ref,
             max_steps_per_input: self.max_steps_per_input,
             continue_as_new_history_threshold: self.continue_as_new_history_threshold,
             poll_interval: self.poll_interval,
@@ -746,6 +782,7 @@ impl GatewayAgentApiBuilder {
             oauth_flows,
             mcp_oauth,
             github_api,
+            model_discovery,
             environment_manager,
             host_controller_connector: self.host_controller_connector,
         }
@@ -757,7 +794,6 @@ pub struct GatewayAgentApi {
     store: Arc<PgStore>,
     task_queue: String,
     default_model: ModelSelection,
-    instructions_ref: Option<BlobRef>,
     max_steps_per_input: Option<u32>,
     continue_as_new_history_threshold: Option<u32>,
     poll_interval: Duration,
@@ -767,6 +803,7 @@ pub struct GatewayAgentApi {
     oauth_flows: OAuthFlowService,
     mcp_oauth: McpOAuthDriver,
     github_api: Arc<dyn GitHubApiClient>,
+    model_discovery: ModelDiscoveryService,
     environment_manager: SessionEnvironmentManager,
     host_controller_connector: Arc<dyn HostControllerConnector>,
 }
@@ -778,7 +815,6 @@ impl GatewayAgentApi {
             store,
             task_queue: DEFAULT_TASK_QUEUE.to_owned(),
             default_model: default_model_from_env(),
-            instructions_ref: None,
             max_steps_per_input: Some(128),
             continue_as_new_history_threshold: None,
             poll_interval: DEFAULT_POLL_INTERVAL,
@@ -788,6 +824,8 @@ impl GatewayAgentApi {
             oauth_token_client: None,
             oauth_metadata_client: None,
             github_api_client: None,
+            model_discovery_openai: None,
+            model_discovery_anthropic: None,
             environments: Vec::new(),
             host_controller_connector: Arc::new(WebSocketHostControllerConnector),
         }
@@ -889,7 +927,6 @@ impl GatewayAgentApi {
             session_id,
             display_name,
             session_config,
-            instructions_ref: self.instructions_ref.clone(),
             max_steps_per_input: self.max_steps_per_input,
             continue_as_new_history_threshold: self.continue_as_new_history_threshold,
             close_on_terminal,
@@ -1189,12 +1226,14 @@ impl GatewayAgentApi {
         }
         self.wait_for_open_session(&session_id).await?;
         let loaded = self.load_session_state(&session_id).await?;
-        let mut session = self.configure_session_toolset(&session_id, &loaded).await?;
+        let _ = self.configure_session_toolset(&session_id, &loaded).await?;
         if let Some(profile) = resolved_profile {
-            (session, _) = self
-                .apply_profile_document(&session_id, &profile.document, false, None, None)
+            self.apply_profile_document(&session_id, &profile.document, false, None, None)
                 .await?;
         }
+        self.load_session_state_with_current_run_context(&session_id)
+            .await?;
+        let session = self.project_session_by_id(&session_id).await?;
         Ok(AgentApiOutcome::new(SessionStartResponse { session }))
     }
 
@@ -1282,6 +1321,15 @@ pub(super) struct LoadedSession {
 
 #[async_trait]
 impl AgentApiService for GatewayAgentApi {
+    async fn list_models(
+        &self,
+        params: ModelListParams,
+    ) -> Result<AgentApiOutcome<ModelListResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(
+            self.model_discovery.list(params.selectable_only).await,
+        ))
+    }
+
     async fn initialize(
         &self,
         params: InitializeParams,
@@ -1407,8 +1455,10 @@ impl AgentApiService for GatewayAgentApi {
         // compatibility) before the document enters the session log.
         self.desired_mcp_tools(&config.features).await?;
         if &config == current_config {
-            // Idempotent no-op: the engine would admit zero events, so skip
-            // the round-trip and return the unchanged session.
+            // The config event is an idempotent no-op, but derived managed
+            // context may still need repair after an interrupted refresh.
+            self.load_session_state_with_current_run_context(&session_id)
+                .await?;
             return Ok(AgentApiOutcome::new(SessionConfigPutResponse {
                 session: self.project_session_by_id(&session_id).await?,
             }));
@@ -1474,7 +1524,10 @@ impl AgentApiService for GatewayAgentApi {
         self.wait_for_config_revision(&session_id, target_revision, baseline_failures)
             .await?;
         let loaded = self.load_session_state(&session_id).await?;
-        let session = self.configure_session_toolset(&session_id, &loaded).await?;
+        let _ = self.configure_session_toolset(&session_id, &loaded).await?;
+        self.load_session_state_with_current_run_context(&session_id)
+            .await?;
+        let session = self.project_session_by_id(&session_id).await?;
         Ok(AgentApiOutcome::new(SessionConfigPutResponse { session }))
     }
 
@@ -1667,6 +1720,23 @@ impl AgentApiService for GatewayAgentApi {
         Ok(AgentApiOutcome::new(SessionCloseResponse { session }))
     }
 
+    async fn delete_session(
+        &self,
+        params: SessionDeleteParams,
+    ) -> Result<AgentApiOutcome<SessionDeleteResponse>, AgentApiError> {
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let record = self
+            .store
+            .delete_closed_session(&session_id)
+            .await
+            .map_err(map_session_store_error)?;
+        Ok(AgentApiOutcome::new(SessionDeleteResponse {
+            session: session_summary_view(record),
+        }))
+    }
+
     async fn compact_context(
         &self,
         params: ContextCompactParams,
@@ -1792,23 +1862,20 @@ impl AgentApiService for GatewayAgentApi {
         let (context_revision, outcomes) = if pending.is_empty() {
             (loaded.state.context.revision, BTreeMap::new())
         } else {
-            let baseline_failures = self
-                .query_status_optional(&session_id)
-                .await?
-                .map(|status| status.admission_failures.len())
-                .unwrap_or(0);
-            self.submit_core_commands(
-                &session_id,
-                pending
-                    .iter()
-                    .map(|(key, entry)| CoreAgentCommand::UpsertContext {
-                        key: key.clone(),
-                        entry: entry.clone(),
-                    })
-                    .collect(),
-            )
-            .await?;
-            self.wait_for_context_append_outcomes(&session_id, &pending, baseline_failures)
+            let correlations = self
+                .submit_correlated_context_commands(
+                    &session_id,
+                    pending
+                        .iter()
+                        .map(|(key, entry)| CoreAgentCommand::UpsertContext {
+                            expected_revision: None,
+                            key: key.clone(),
+                            entry: entry.clone(),
+                        })
+                        .collect(),
+                )
+                .await?;
+            self.wait_for_context_append_outcomes(&session_id, &pending, &correlations)
                 .await?
         };
         let mut response_results = Vec::with_capacity(ordered.len());
@@ -1917,20 +1984,19 @@ impl AgentApiService for GatewayAgentApi {
         let (context_revision, outcomes) = if pending.is_empty() {
             (loaded.state.context.revision, BTreeMap::new())
         } else {
-            let baseline_failures = self
-                .query_status_optional(&session_id)
-                .await?
-                .map(|status| status.admission_failures.len())
-                .unwrap_or(0);
-            self.submit_core_commands(
-                &session_id,
-                pending
-                    .iter()
-                    .map(|key| CoreAgentCommand::RemoveContext { key: key.clone() })
-                    .collect(),
-            )
-            .await?;
-            self.wait_for_context_keys_removed(&session_id, &pending, baseline_failures)
+            let correlations = self
+                .submit_correlated_context_commands(
+                    &session_id,
+                    pending
+                        .iter()
+                        .map(|key| CoreAgentCommand::RemoveContext {
+                            expected_revision: None,
+                            key: key.clone(),
+                        })
+                        .collect(),
+                )
+                .await?;
+            self.wait_for_context_keys_removed(&session_id, &pending, &correlations)
                 .await?
         };
         let results = keys
@@ -2177,6 +2243,7 @@ impl AgentApiService for GatewayAgentApi {
         self.submit_core_command(
             &session_id,
             CoreAgentCommand::UpsertContext {
+                expected_revision: None,
                 key: skill_activation_context_key(&skill_id),
                 entry,
             },
@@ -2236,6 +2303,7 @@ impl AgentApiService for GatewayAgentApi {
         self.submit_core_command(
             &session_id,
             CoreAgentCommand::RemoveContext {
+                expected_revision: None,
                 key: skill_activation_context_key(&skill_id),
             },
         )

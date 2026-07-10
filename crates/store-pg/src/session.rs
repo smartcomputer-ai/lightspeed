@@ -3,10 +3,11 @@ use engine::{
     session::{EventSeq, SessionId, SessionPosition, StoredSessionEntry, UncommittedStoredEvent},
     storage::{
         AppendSessionEvents, AppendSessionEventsResult, CreateClonedSession, CreateForkedSession,
-        CreateSession, ListSessionLinks, ListSessions, ReadSessionEvents, SessionLinkDirection,
-        SessionLinkRecord, SessionListCursor, SessionListPage, SessionPage, SessionRecord,
-        SessionStore, SessionStoreError, UpsertSessionLink, largest_safe_fork_seq,
-        validate_fork_point, validate_relationship,
+        CreateSession, ListSessionLinks, ListSessions, ReadSessionEvents, SessionLifecycleStatus,
+        SessionLinkDirection, SessionLinkRecord, SessionListCursor, SessionListPage, SessionPage,
+        SessionRecord, SessionStore, SessionStoreError, UpsertSessionLink,
+        apply_lifecycle_projection, largest_safe_fork_seq, lifecycle_at_fork, validate_fork_point,
+        validate_relationship,
     },
 };
 use sqlx::{Postgres, Row, Transaction};
@@ -23,6 +24,8 @@ use crate::{
 const SESSION_COLUMNS: &str = r#"
     session_id,
     display_name,
+    lifecycle_status,
+    closed_at_seq,
     head_seq,
     source_session_id,
     source_seq,
@@ -107,10 +110,16 @@ impl PgStore {
 
         if let Some(last) = committed.last() {
             record.updated_at_ms = last.observed_at_ms;
+            for entry in &committed {
+                apply_lifecycle_projection(&mut record, entry);
+            }
             sqlx::query(
                 r#"
                 UPDATE sessions
-                SET head_seq = $3, updated_at_ms = $4
+                SET head_seq = $3,
+                    updated_at_ms = $4,
+                    lifecycle_status = $5,
+                    closed_at_seq = $6
                 WHERE universe_id = $1 AND session_id = $2
                 "#,
             )
@@ -118,6 +127,11 @@ impl PgStore {
             .bind(request.session_id.as_str())
             .bind(event_seq_to_i64(last.position.seq)?)
             .bind(u64_to_i64(last.observed_at_ms, "updated_at_ms")?)
+            .bind(session_lifecycle_status_str(record.lifecycle_status))
+            .bind(optional_event_seq_to_i64(
+                record.closed_at_seq,
+                "closed_at_seq",
+            )?)
             .execute(&mut *tx)
             .await
             .map_err(|error| session_sql_error("update session head", error))?;
@@ -530,6 +544,66 @@ impl SessionStore for PgStore {
         session_record_from_row(&row)
     }
 
+    async fn delete_closed_session(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<SessionRecord, SessionStoreError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|error| session_sql_error("begin delete session transaction", error))?;
+        let record = lock_session(
+            &mut tx,
+            self.config.universe_id,
+            session_id,
+            "lock session for delete",
+        )
+        .await?;
+        if record.lifecycle_status != SessionLifecycleStatus::Closed {
+            return Err(SessionStoreError::SessionNotClosed {
+                session_id: session_id.clone(),
+                lifecycle_status: record.lifecycle_status,
+            });
+        }
+        let has_fork_child = sqlx::query_scalar::<_, bool>(
+            r#"
+            SELECT EXISTS (
+                SELECT 1
+                FROM sessions
+                WHERE universe_id = $1
+                  AND source_session_id = $2
+                  AND source_seq IS NOT NULL
+            )
+            "#,
+        )
+        .bind(self.config.universe_id)
+        .bind(session_id.as_str())
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|error| session_sql_error("check session fork children", error))?;
+        if has_fork_child {
+            return Err(SessionStoreError::SessionHasForkChildren {
+                session_id: session_id.clone(),
+            });
+        }
+        sqlx::query(
+            r#"
+            DELETE FROM sessions
+            WHERE universe_id = $1 AND session_id = $2
+            "#,
+        )
+        .bind(self.config.universe_id)
+        .bind(session_id.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| session_sql_error("delete session", error))?;
+        tx.commit()
+            .await
+            .map_err(|error| session_sql_error("commit delete session", error))?;
+        Ok(record)
+    }
+
     async fn create_cloned_session(
         &self,
         request: CreateClonedSession,
@@ -634,25 +708,28 @@ impl SessionStore for PgStore {
             .begin()
             .await
             .map_err(|error| session_sql_error("begin fork transaction", error))?;
-        lock_session(
+        let source = lock_session(
             &mut tx,
             self.config.universe_id,
             &request.source_session_id,
             "fork source",
         )
         .await?;
+        let (lifecycle_status, closed_at_seq) = lifecycle_at_fork(&source, request.source_seq);
         let query = format!(
             r#"
             INSERT INTO sessions (
                 universe_id,
                 session_id,
+                lifecycle_status,
+                closed_at_seq,
                 head_seq,
                 source_session_id,
                 source_seq,
                 created_at_ms,
                 updated_at_ms
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $6)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
             ON CONFLICT (universe_id, session_id) DO NOTHING
             RETURNING {SESSION_COLUMNS}
             "#,
@@ -660,6 +737,8 @@ impl SessionStore for PgStore {
         let row = sqlx::query(&query)
             .bind(self.config.universe_id)
             .bind(request.session_id.as_str())
+            .bind(session_lifecycle_status_str(lifecycle_status))
+            .bind(optional_event_seq_to_i64(closed_at_seq, "closed_at_seq")?)
             .bind(head_seq)
             .bind(request.source_session_id.as_str())
             .bind(u64_to_i64(source_seq_u64, "source_seq")?)
@@ -879,6 +958,14 @@ fn session_record_from_row(
     let display_name = row
         .try_get::<Option<String>, _>("display_name")
         .map_err(|error| session_sql_error("decode session display name", error))?;
+    let lifecycle_status = row
+        .try_get::<String, _>("lifecycle_status")
+        .map_err(|error| session_sql_error("decode session lifecycle status", error))
+        .and_then(|value| session_lifecycle_status_from_str(&value))?;
+    let closed_at_seq = row
+        .try_get::<Option<i64>, _>("closed_at_seq")
+        .map_err(|error| session_sql_error("decode closed_at_seq", error))
+        .and_then(optional_event_seq_from_i64)?;
     let head_seq = row
         .try_get::<Option<i64>, _>("head_seq")
         .map_err(|error| session_sql_error("decode session head", error))?;
@@ -913,12 +1000,42 @@ fn session_record_from_row(
     Ok(SessionRecord {
         session_id,
         display_name,
+        lifecycle_status,
+        closed_at_seq,
         head,
         source_session_id,
         source_seq,
         created_at_ms,
         updated_at_ms,
     })
+}
+
+fn session_lifecycle_status_str(status: SessionLifecycleStatus) -> &'static str {
+    match status {
+        SessionLifecycleStatus::New => "new",
+        SessionLifecycleStatus::Open => "open",
+        SessionLifecycleStatus::Closed => "closed",
+    }
+}
+
+fn session_lifecycle_status_from_str(
+    value: &str,
+) -> Result<SessionLifecycleStatus, SessionStoreError> {
+    match value {
+        "new" => Ok(SessionLifecycleStatus::New),
+        "open" => Ok(SessionLifecycleStatus::Open),
+        "closed" => Ok(SessionLifecycleStatus::Closed),
+        other => Err(SessionStoreError::Store {
+            message: format!("decode session lifecycle status: unknown value {other:?}"),
+        }),
+    }
+}
+
+fn optional_event_seq_to_i64(
+    seq: Option<EventSeq>,
+    field: &'static str,
+) -> Result<Option<i64>, SessionStoreError> {
+    seq.map(|seq| u64_to_i64(seq.as_u64(), field)).transpose()
 }
 
 fn optional_event_seq_from_i64(seq: Option<i64>) -> Result<Option<EventSeq>, SessionStoreError> {
@@ -1106,6 +1223,7 @@ async fn append_events_in_tx(
         .map_err(|error| session_sql_error("insert session event", error))?;
         record.head = Some(position);
         record.updated_at_ms = entry.observed_at_ms;
+        apply_lifecycle_projection(&mut record, &entry);
         committed.push(entry);
     }
 
@@ -1113,7 +1231,10 @@ async fn append_events_in_tx(
         sqlx::query(
             r#"
             UPDATE sessions
-            SET head_seq = $3, updated_at_ms = $4
+            SET head_seq = $3,
+                updated_at_ms = $4,
+                lifecycle_status = $5,
+                closed_at_seq = $6
             WHERE universe_id = $1 AND session_id = $2
             "#,
         )
@@ -1121,6 +1242,11 @@ async fn append_events_in_tx(
         .bind(record.session_id.as_str())
         .bind(event_seq_to_i64(last.position.seq)?)
         .bind(u64_to_i64(last.observed_at_ms, "updated_at_ms")?)
+        .bind(session_lifecycle_status_str(record.lifecycle_status))
+        .bind(optional_event_seq_to_i64(
+            record.closed_at_seq,
+            "closed_at_seq",
+        )?)
         .execute(&mut **tx)
         .await
         .map_err(|error| session_sql_error("update session head", error))?;

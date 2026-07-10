@@ -12,6 +12,6 @@ pub use assembler::{
 };
 pub use model::*;
 pub use vfs::{
-    MountedVfsPromptRoots, PromptVfsRootError, VfsPromptRootSpec,
+    MountedVfsPromptRoots, PromptVfsRootError, VfsPromptRootSpec, configured_vfs_prompt_root_specs,
     conventional_vfs_prompt_root_specs, resolve_mounted_vfs_prompt_roots,
 };

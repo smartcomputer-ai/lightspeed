@@ -41,6 +41,23 @@ fn live_client() -> Client {
 }
 
 #[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ANTHROPIC_API_KEY and network access"]
+async fn anthropic_messages_live_list_models() {
+    let client = live_client();
+
+    let models = client.list_models().await.expect("list Anthropic models");
+
+    assert!(
+        !models.is_empty(),
+        "expected at least one account-visible Anthropic model"
+    );
+    assert!(
+        models.iter().all(|model| !model.id.trim().is_empty()),
+        "every Anthropic model must have an id"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ANTHROPIC_API_KEY (costs real money)"]
 async fn anthropic_messages_live_create_text() {
     let client = live_client();

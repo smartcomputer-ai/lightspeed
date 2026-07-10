@@ -13,11 +13,8 @@ impl GatewayAgentApi {
             self.refresh_environment_projection_for_idle_session(session_id, &loaded.state)
                 .await?;
             let loaded = self.load_session_state(session_id).await?;
-            self.refresh_skill_catalog_for_idle_session(
-                session_id,
-                active_skill_catalog_ref(&loaded.state),
-            )
-            .await?;
+            self.refresh_skill_catalog_for_idle_session(session_id, &loaded.state)
+                .await?;
             return self.load_session_state(session_id).await;
         }
         Ok(loaded)
@@ -26,22 +23,22 @@ impl GatewayAgentApi {
     pub(super) async fn refresh_skill_catalog_for_idle_session(
         &self,
         session_id: &SessionId,
-        active_catalog_ref: Option<BlobRef>,
+        state: &engine::CoreAgentState,
     ) -> Result<(), AgentApiError> {
         let Some(command) = self
-            .skill_catalog_refresh_command(session_id, active_catalog_ref)
+            .skill_catalog_refresh_command(session_id, state)
             .await?
         else {
             return Ok(());
         };
         let target_catalog_ref = match &command {
-            CoreAgentCommand::UpsertContext { key, entry }
+            CoreAgentCommand::UpsertContext { key, entry, .. }
                 if key.as_str() == SKILL_CATALOG_CONTEXT_KEY
                     && matches!(entry.kind, ContextEntryKind::SkillCatalog) =>
             {
                 Some(entry.content_ref.clone())
             }
-            CoreAgentCommand::RemoveContext { key }
+            CoreAgentCommand::RemoveContext { key, .. }
                 if key.as_str() == SKILL_CATALOG_CONTEXT_KEY =>
             {
                 None
@@ -65,14 +62,25 @@ impl GatewayAgentApi {
     pub(super) async fn skill_catalog_refresh_command(
         &self,
         session_id: &SessionId,
-        active_catalog_ref: Option<BlobRef>,
+        state: &engine::CoreAgentState,
     ) -> Result<Option<CoreAgentCommand>, AgentApiError> {
+        let active_catalog_ref = active_skill_catalog_ref(state);
+        let skills_config = state
+            .lifecycle
+            .config
+            .as_ref()
+            .and_then(|config| config.features.vfs.as_ref())
+            .and_then(|vfs| vfs.skills.as_ref());
+        let Some(skills_config) = skills_config else {
+            return Ok(clear_skill_catalog_command(active_catalog_ref.as_ref()));
+        };
         let mounts = self
             .store
             .list_mounts(session_id)
             .await
             .map_err(map_vfs_catalog_error)?;
-        let specs = conventional_vfs_skill_root_specs(&mounts);
+        let specs = configured_vfs_skill_root_specs(&mounts, skills_config.roots.as_deref())
+            .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
         if specs.is_empty() {
             return Ok(clear_skill_catalog_command(active_catalog_ref.as_ref()));
         }
@@ -255,6 +263,7 @@ pub(super) fn clear_skill_catalog_command(
     active_catalog_ref: Option<&BlobRef>,
 ) -> Option<CoreAgentCommand> {
     active_catalog_ref.map(|_| CoreAgentCommand::RemoveContext {
+        expected_revision: None,
         key: ContextEntryKey::new(SKILL_CATALOG_CONTEXT_KEY),
     })
 }

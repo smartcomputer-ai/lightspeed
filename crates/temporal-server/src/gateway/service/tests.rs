@@ -12,6 +12,12 @@ fn admission_failure_mapping_uses_gateway_error_kinds() {
             .kind,
         AgentApiErrorKind::Rejected
     );
+    let mut revision_conflict = failure(AgentAdmissionFailureKind::RejectedCommand);
+    revision_conflict.rejection = Some(engine::CommandRejection::context_revision_conflict(1, 2));
+    assert_eq!(
+        map_admission_failure_to_api_error(&revision_conflict).kind,
+        AgentApiErrorKind::Conflict
+    );
     assert_eq!(
         map_admission_failure_to_api_error(&failure(
             AgentAdmissionFailureKind::UnsupportedAudioMime
@@ -1423,9 +1429,10 @@ async fn vfs_snapshot_commit_rejects_missing_file_blob_refs() {
 fn failure(kind: AgentAdmissionFailureKind) -> AgentAdmissionFailure {
     AgentAdmissionFailure {
         submission_id: Some(SubmissionId::new("submit_test")),
-        context_key: None,
+        correlation_token: None,
         kind,
         message: "admission failed".to_owned(),
+        rejection: None,
     }
 }
 

@@ -470,6 +470,7 @@ impl EvalRuntime {
         self.drive(
             session_id.clone(),
             CoreAgentCommand::UpsertContext {
+                expected_revision: None,
                 key: ContextEntryKey::new("instructions.000.eval"),
                 entry: instruction_context_input(self.instructions_ref.clone()),
             },

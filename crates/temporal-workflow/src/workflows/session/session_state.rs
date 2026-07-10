@@ -27,7 +27,7 @@ impl AgentSessionWorkflow {
                 promise_id: engine::PromiseId::new(signal.token),
                 resolution,
             },
-            context_key: None,
+            correlation_token: None,
         });
     }
 
@@ -46,7 +46,7 @@ impl AgentSessionWorkflow {
                 promise_id: engine::PromiseId::new(signal.promise_id),
                 resolution,
             },
-            context_key: None,
+            correlation_token: None,
         });
     }
 

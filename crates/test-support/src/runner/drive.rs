@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use engine::{
     BlobRef, ContextCompactionRequest, ContextCompactionResult, ContextCompactionStatus,
@@ -12,11 +12,11 @@ use engine::{
 use tools::{
     environment::projection::{EnvironmentProjectionInput, prepare_environment_projection_refresh},
     prompts::{
-        PromptAssemblyLimits, conventional_vfs_prompt_root_specs,
+        PromptAssemblyLimits, configured_vfs_prompt_root_specs,
         prepare_prompt_instructions_publication, resolve_mounted_vfs_prompt_roots,
     },
     skills::{
-        conventional_vfs_skill_root_specs, prepare_skill_catalog_publication,
+        configured_vfs_skill_root_specs, prepare_skill_catalog_publication,
         resolve_mounted_vfs_skill_roots,
     },
 };
@@ -28,6 +28,10 @@ use super::{
 use crate::RunnerQuiescence;
 
 const DEFAULT_READ_PAGE_SIZE: usize = 256;
+// Mirrors the hosted product fallback so prompt-refresh tests exercise the
+// same effective-context policy without making the substrate-neutral runner
+// depend on the Temporal workflow crate.
+const TEST_PRODUCT_DEFAULT_INSTRUCTIONS: &[u8] = b"You are Lightspeed, a concise personal assistant. Use available tools when useful, then answer plainly.";
 
 pub struct SessionRunner {
     stores: RunnerStores,
@@ -116,23 +120,38 @@ impl SessionRunner {
         session_id: &SessionId,
         state: &CoreAgentState,
     ) -> Result<Option<CoreAgentCommand>, RunnerError> {
-        let Some(workspace_store) = self.stores.vfs_workspace_store.as_ref() else {
-            return Ok(None);
-        };
-        let Some(mount_store) = self.stores.vfs_mount_store.as_ref() else {
-            return Ok(None);
-        };
-
-        let mounts = mount_store.list_mounts(session_id).await.map_err(|error| {
-            RunnerError::InvalidRequest {
-                message: format!("load VFS mounts for prompt instructions refresh: {error}"),
+        let prompt_config = state
+            .lifecycle
+            .config
+            .as_ref()
+            .and_then(|config| config.features.vfs.as_ref())
+            .and_then(|vfs| vfs.prompts.as_ref());
+        let mounts = if prompt_config.is_some() {
+            match self.stores.vfs_mount_store.as_ref() {
+                Some(mount_store) => {
+                    mount_store.list_mounts(session_id).await.map_err(|error| {
+                        RunnerError::InvalidRequest {
+                            message: format!(
+                                "load VFS mounts for prompt instructions refresh: {error}"
+                            ),
+                        }
+                    })?
+                }
+                None => Vec::new(),
             }
-        })?;
-        let specs = conventional_vfs_prompt_root_specs(&mounts);
-        if specs.is_empty() {
+        } else {
+            Vec::new()
+        };
+        let specs = match prompt_config {
+            Some(config) => configured_vfs_prompt_root_specs(&mounts, config.roots.as_deref())
+                .map_err(|error| RunnerError::InvalidRequest {
+                    message: format!("configure VFS prompt roots: {error}"),
+                })?,
+            None => Vec::new(),
+        };
+        let desired_source = if specs.is_empty() {
             let publication = prepare_prompt_instructions_publication(
                 self.stores.blobs.as_ref(),
-                state,
                 &[],
                 PromptAssemblyLimits::default(),
             )
@@ -140,36 +159,52 @@ impl SessionRunner {
             .map_err(|error| RunnerError::InvalidRequest {
                 message: format!("prepare prompt instructions publication: {error}"),
             })?;
-            return Ok(publication.command);
-        }
-
-        let resolved = resolve_mounted_vfs_prompt_roots(
-            self.stores.blobs.clone(),
-            workspace_store.clone(),
-            mounts,
-            specs,
-        )
-        .await
-        .map_err(|error| RunnerError::InvalidRequest {
-            message: format!("resolve VFS prompt roots: {error}"),
-        })?;
-        let inputs = resolved
-            .existing_directory_inputs()
+            publication.desired
+        } else {
+            let workspace_store = self.stores.vfs_workspace_store.as_ref().ok_or_else(|| {
+                RunnerError::InvalidRequest {
+                    message: "VFS prompt sourcing requires a workspace store".to_owned(),
+                }
+            })?;
+            let resolved = resolve_mounted_vfs_prompt_roots(
+                self.stores.blobs.clone(),
+                workspace_store.clone(),
+                mounts,
+                specs,
+            )
             .await
             .map_err(|error| RunnerError::InvalidRequest {
-                message: format!("filter VFS prompt roots: {error}"),
+                message: format!("resolve VFS prompt roots: {error}"),
             })?;
-        let publication = prepare_prompt_instructions_publication(
-            self.stores.blobs.as_ref(),
-            state,
-            &inputs,
-            PromptAssemblyLimits::default(),
-        )
-        .await
-        .map_err(|error| RunnerError::InvalidRequest {
-            message: format!("prepare prompt instructions publication: {error}"),
-        })?;
-        Ok(publication.command)
+            let inputs = resolved
+                .existing_directory_inputs()
+                .await
+                .map_err(|error| RunnerError::InvalidRequest {
+                    message: format!("filter VFS prompt roots: {error}"),
+                })?;
+            let publication = prepare_prompt_instructions_publication(
+                self.stores.blobs.as_ref(),
+                &inputs,
+                PromptAssemblyLimits::default(),
+            )
+            .await
+            .map_err(|error| RunnerError::InvalidRequest {
+                message: format!("prepare prompt instructions publication: {error}"),
+            })?;
+            publication.desired
+        };
+
+        let desired =
+            effective_prompt_instruction_inputs(self.stores.blobs.as_ref(), state, desired_source)
+                .await?;
+        if active_instruction_inputs(state) == desired {
+            return Ok(None);
+        }
+        Ok(Some(CoreAgentCommand::ReplaceContextPrefix {
+            expected_revision: Some(state.context.revision),
+            key_prefix: engine::ContextEntryKey::new("instructions"),
+            entries: desired,
+        }))
     }
 
     pub async fn drive_command(&self, request: DriveCommand) -> Result<DriveOutcome, RunnerError> {
@@ -264,19 +299,35 @@ impl SessionRunner {
         session_id: &SessionId,
         state: &CoreAgentState,
     ) -> Result<Vec<CoreAgentCommand>, RunnerError> {
-        let Some(mount_store) = self.stores.vfs_mount_store.as_ref() else {
-            return Ok(Vec::new());
-        };
-
-        let mounts = mount_store.list_mounts(session_id).await.map_err(|error| {
-            RunnerError::InvalidRequest {
-                message: format!("load VFS mounts for environment projection refresh: {error}"),
+        let features = state
+            .lifecycle
+            .config
+            .as_ref()
+            .map(|config| &config.features);
+        let vfs_catalog_enabled = features.is_some_and(|features| features.vfs.is_some());
+        let environment_catalog_enabled =
+            features.is_some_and(|features| features.environments.is_some());
+        let mounts = if vfs_catalog_enabled {
+            match self.stores.vfs_mount_store.as_ref() {
+                Some(mount_store) => {
+                    mount_store.list_mounts(session_id).await.map_err(|error| {
+                        RunnerError::InvalidRequest {
+                            message: format!(
+                                "load VFS mounts for environment projection refresh: {error}"
+                            ),
+                        }
+                    })?
+                }
+                None => Vec::new(),
             }
-        })?;
+        } else {
+            Vec::new()
+        };
         let refresh = prepare_environment_projection_refresh(
             self.stores.blobs.as_ref(),
             state,
-            EnvironmentProjectionInput::from_mounts(mounts),
+            EnvironmentProjectionInput::from_mounts(mounts)
+                .with_catalog_grants(vfs_catalog_enabled, environment_catalog_enabled),
         )
         .await
         .map_err(|error| RunnerError::InvalidRequest {
@@ -312,25 +363,42 @@ impl SessionRunner {
         session_id: &SessionId,
         state: &CoreAgentState,
     ) -> Result<Option<CoreAgentCommand>, RunnerError> {
-        let Some(workspace_store) = self.stores.vfs_workspace_store.as_ref() else {
-            return Ok(None);
+        let skills_config = state
+            .lifecycle
+            .config
+            .as_ref()
+            .and_then(|config| config.features.vfs.as_ref())
+            .and_then(|vfs| vfs.skills.as_ref());
+        let Some(skills_config) = skills_config else {
+            return Ok(clear_catalog_command(
+                active_skill_catalog_ref(state).as_ref(),
+            ));
         };
         let Some(mount_store) = self.stores.vfs_mount_store.as_ref() else {
-            return Ok(None);
+            return Ok(clear_catalog_command(
+                active_skill_catalog_ref(state).as_ref(),
+            ));
         };
-
         let mounts = mount_store.list_mounts(session_id).await.map_err(|error| {
             RunnerError::InvalidRequest {
                 message: format!("load VFS mounts for skill catalog refresh: {error}"),
             }
         })?;
-        let specs = conventional_vfs_skill_root_specs(&mounts);
+        let specs = configured_vfs_skill_root_specs(&mounts, skills_config.roots.as_deref())
+            .map_err(|error| RunnerError::InvalidRequest {
+                message: format!("configure VFS skill roots: {error}"),
+            })?;
         if specs.is_empty() {
             return Ok(clear_catalog_command(
                 active_skill_catalog_ref(state).as_ref(),
             ));
         }
 
+        let workspace_store = self.stores.vfs_workspace_store.as_ref().ok_or_else(|| {
+            RunnerError::InvalidRequest {
+                message: "VFS skill sourcing requires a workspace store".to_owned(),
+            }
+        })?;
         let resolved = resolve_mounted_vfs_skill_roots(
             self.stores.blobs.clone(),
             workspace_store.clone(),
@@ -524,8 +592,77 @@ fn should_refresh_run_context_before_admitting(
         && state.runs.queued.is_empty()
 }
 
+async fn effective_prompt_instruction_inputs(
+    blobs: &dyn BlobStore,
+    state: &CoreAgentState,
+    source_entries: BTreeMap<engine::ContextEntryKey, engine::ContextEntryInput>,
+) -> Result<BTreeMap<engine::ContextEntryKey, engine::ContextEntryInput>, RunnerError> {
+    let mut desired = active_instruction_inputs(state);
+    desired.retain(|key, _| {
+        !context_key_is_in_prefix(key, tools::prompts::PROMPT_INSTRUCTIONS_CONTEXT_KEY_PREFIX)
+    });
+    desired.extend(source_entries);
+    desired.remove(&engine::ContextEntryKey::new("instructions.000.default"));
+    if desired.is_empty() {
+        let content_ref = blobs
+            .put_bytes(TEST_PRODUCT_DEFAULT_INSTRUCTIONS.to_vec())
+            .await?;
+        desired.insert(
+            engine::ContextEntryKey::new("instructions.000.default"),
+            engine::ContextEntryInput {
+                kind: engine::ContextEntryKind::Instructions,
+                content_ref,
+                media_type: Some("text/plain".to_owned()),
+                preview: None,
+                provider_kind: None,
+                provider_item_id: None,
+                token_estimate: None,
+            },
+        );
+    }
+    Ok(desired)
+}
+
+fn active_instruction_inputs(
+    state: &CoreAgentState,
+) -> BTreeMap<engine::ContextEntryKey, engine::ContextEntryInput> {
+    state
+        .context
+        .entries
+        .iter()
+        .filter(|entry| matches!(entry.kind, engine::ContextEntryKind::Instructions))
+        .filter_map(|entry| {
+            let key = entry.key.clone()?;
+            if !context_key_is_in_prefix(&key, "instructions") {
+                return None;
+            }
+            Some((
+                key,
+                engine::ContextEntryInput {
+                    kind: entry.kind.clone(),
+                    content_ref: entry.content_ref.clone(),
+                    media_type: entry.media_type.clone(),
+                    preview: entry.preview.clone(),
+                    provider_kind: entry.provider_kind.clone(),
+                    provider_item_id: entry.provider_item_id.clone(),
+                    token_estimate: entry.token_estimate.clone(),
+                },
+            ))
+        })
+        .collect()
+}
+
+fn context_key_is_in_prefix(key: &engine::ContextEntryKey, prefix: &str) -> bool {
+    key.as_str() == prefix
+        || key
+            .as_str()
+            .strip_prefix(prefix)
+            .is_some_and(|suffix| suffix.starts_with('.'))
+}
+
 fn clear_catalog_command(active_catalog_ref: Option<&BlobRef>) -> Option<CoreAgentCommand> {
     active_catalog_ref.map(|_| CoreAgentCommand::RemoveContext {
+        expected_revision: None,
         key: engine::ContextEntryKey::new(SKILL_CATALOG_CONTEXT_KEY),
     })
 }
@@ -1080,6 +1217,16 @@ mod tests {
         }
     }
 
+    fn vfs_config(prompts: bool, skills: bool) -> SessionConfig {
+        let mut config = config();
+        config.features.vfs = Some(engine::VfsFeature {
+            prompts: prompts.then_some(engine::VfsPromptsConfig::default()),
+            skills: skills.then_some(engine::VfsSkillsConfig::default()),
+            ..engine::VfsFeature::default()
+        });
+        config
+    }
+
     fn standalone_compaction_config() -> SessionConfig {
         let mut config = config();
         config.context.compaction = Some(CompactionPolicy::ProviderStandalone {
@@ -1156,6 +1303,7 @@ mod tests {
                 session_id: session_id.clone(),
                 observed_at_ms: 20,
                 command: CoreAgentCommand::UpsertContext {
+                    expected_revision: None,
                     key: ContextEntryKey::new("client.native"),
                     entry: ContextEntryInput {
                         kind: ContextEntryKind::ProviderOpaque,
@@ -1235,7 +1383,9 @@ mod tests {
             .drive_command(DriveCommand {
                 session_id: session_id.clone(),
                 observed_at_ms: 10,
-                command: CoreAgentCommand::OpenSession { config: config() },
+                command: CoreAgentCommand::OpenSession {
+                    config: vfs_config(false, false),
+                },
                 max_steps: None,
             })
             .await
@@ -1263,23 +1413,14 @@ mod tests {
         assert_eq!(vfs_catalog.routes.len(), 1);
         assert_eq!(vfs_catalog.routes[0].path.as_str(), "/workspace");
 
-        let environment_entry = outcome
-            .state
-            .context
-            .entries
-            .iter()
-            .find(|entry| matches!(entry.kind, ContextEntryKind::EnvironmentCatalog))
-            .expect("environment catalog context entry");
-        let environment_catalog: tools::environment::projection::EnvironmentCatalogSnapshot =
-            serde_json::from_slice(
-                &blobs
-                    .read_bytes(&environment_entry.content_ref)
-                    .await
-                    .unwrap(),
-            )
-            .expect("decode environment catalog");
-        assert_eq!(environment_catalog.active_env_id, None);
-        assert!(environment_catalog.environments.is_empty());
+        assert!(
+            !outcome
+                .state
+                .context
+                .entries
+                .iter()
+                .any(|entry| matches!(entry.kind, ContextEntryKind::EnvironmentCatalog))
+        );
 
         let requests = llm.requests.lock().expect("requests lock");
         let planned = &requests[0].request.context.entries;
@@ -1289,7 +1430,7 @@ mod tests {
                 .any(|entry| matches!(entry.kind, ContextEntryKind::VfsCatalog))
         );
         assert!(
-            planned
+            !planned
                 .iter()
                 .any(|entry| matches!(entry.kind, ContextEntryKind::EnvironmentCatalog))
         );
@@ -1354,6 +1495,10 @@ mod tests {
         assert_eq!(outcome.state.lifecycle.config, Some(session_config));
         assert!(outcome.state.runs.active.is_none());
         assert_eq!(outcome.state.runs.completed.len(), 1);
+        assert!(!outcome.state.context.entries.iter().any(|entry| matches!(
+            entry.kind,
+            ContextEntryKind::VfsCatalog | ContextEntryKind::EnvironmentCatalog
+        )));
         assert_eq!(
             outcome
                 .emitted_entries
@@ -1415,7 +1560,9 @@ mod tests {
             .drive_command(DriveCommand {
                 session_id: session_id.clone(),
                 observed_at_ms: 10,
-                command: CoreAgentCommand::OpenSession { config: config() },
+                command: CoreAgentCommand::OpenSession {
+                    config: vfs_config(false, true),
+                },
                 max_steps: None,
             })
             .await
@@ -1520,7 +1667,9 @@ mod tests {
             .drive_command(DriveCommand {
                 session_id: session_id.clone(),
                 observed_at_ms: 10,
-                command: CoreAgentCommand::OpenSession { config: config() },
+                command: CoreAgentCommand::OpenSession {
+                    config: vfs_config(true, false),
+                },
                 max_steps: None,
             })
             .await
@@ -1575,7 +1724,7 @@ mod tests {
                     key_prefix,
                     entries,
                     ..
-                }) if key_prefix.as_str() == PROMPT_INSTRUCTIONS_CONTEXT_KEY_PREFIX
+                }) if key_prefix.as_str() == "instructions"
                     && entries.len() == 2
             )
         }));
@@ -1643,7 +1792,7 @@ mod tests {
                     key_prefix,
                     entries,
                     ..
-                }) if key_prefix.as_str() == PROMPT_INSTRUCTIONS_CONTEXT_KEY_PREFIX
+                }) if key_prefix.as_str() == "instructions"
                     && entries.len() == 1
             )
         }));
@@ -1657,6 +1806,73 @@ mod tests {
             );
             assert_prompts_precede_user_message(&requests[1]);
         }
+
+        let empty_snapshot =
+            create_inline_snapshot(blobs.as_ref(), CreateInlineSnapshotRequest::new(Vec::new()))
+                .await
+                .expect("create empty prompt snapshot");
+        let workspace = vfs
+            .read_workspace(&workspace_id)
+            .await
+            .expect("read workspace");
+        vfs.compare_and_set_head(CompareAndSetVfsWorkspaceHead {
+            workspace_id,
+            expected_revision: Some(workspace.revision),
+            display_name: None,
+            new_head_snapshot_ref: empty_snapshot.snapshot_ref,
+            new_head_totals: empty_snapshot.manifest.totals,
+            updated_at_ms: 50,
+        })
+        .await
+        .expect("clear workspace prompts");
+
+        let third_outcome = runner
+            .drive_command(DriveCommand {
+                session_id,
+                observed_at_ms: 60,
+                command: request_run_command(BlobRef::from_bytes(b"third input")),
+                max_steps: Some(64),
+            })
+            .await
+            .expect("drive third request");
+
+        assert!(tools::prompts::active_prompt_instruction_entries(&third_outcome.state).is_empty());
+        let default_entry = third_outcome
+            .state
+            .context
+            .entries
+            .iter()
+            .find(|entry| {
+                entry
+                    .key
+                    .as_ref()
+                    .is_some_and(|key| key.as_str() == "instructions.000.default")
+            })
+            .expect("restored default instructions");
+        assert!(matches!(default_entry.kind, ContextEntryKind::Instructions));
+        assert!(third_outcome.emitted_entries.iter().any(|entry| {
+            matches!(
+                &entry.event,
+                CoreAgentEvent::Context(engine::ContextEvent::KeyPrefixReplaced {
+                    key_prefix,
+                    entries,
+                    ..
+                }) if key_prefix.as_str() == "instructions"
+                    && entries.len() == 1
+                    && entries[0].key.as_ref().is_some_and(|key| {
+                        key.as_str() == "instructions.000.default"
+                    })
+            )
+        }));
+        let requests = llm.requests.lock().expect("requests lock");
+        assert_eq!(requests.len(), 3);
+        assert!(prompt_instruction_entries_in_request(&requests[2]).is_empty());
+        assert!(request_context_entries(&requests[2]).iter().any(|entry| {
+            entry
+                .key
+                .as_ref()
+                .is_some_and(|key| key.as_str() == "instructions.000.default")
+        }));
     }
 
     #[tokio::test(flavor = "current_thread")]

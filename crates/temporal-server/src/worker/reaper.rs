@@ -581,7 +581,7 @@ fn admissions(commands: Vec<CoreAgentCommand>) -> Vec<AgentAdmission> {
         .into_iter()
         .map(|command| AgentAdmission {
             command,
-            context_key: None,
+            correlation_token: None,
         })
         .collect()
 }
@@ -1047,6 +1047,8 @@ mod tests {
                         record: SessionRecord {
                             session_id,
                             display_name: None,
+                            lifecycle_status: engine::storage::SessionLifecycleStatus::New,
+                            closed_at_seq: None,
                             head: None,
                             source_session_id: None,
                             source_seq: None,

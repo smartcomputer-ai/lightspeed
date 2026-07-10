@@ -12,6 +12,7 @@ export const METHODS = [
   "session/config/put",
   "session/rename",
   "session/close",
+  "session/delete",
   "session/events/read",
   "session/context/append",
   "session/context/remove",
@@ -43,6 +44,7 @@ export const METHODS = [
   "environments/jobs/read",
   "environments/jobs/list",
   "environments/jobs/cancel",
+  "models/list",
   "profiles/create",
   "profiles/read",
   "profiles/list",
@@ -131,6 +133,10 @@ export interface MethodMap {
   "session/close": {
     params: Api.SessionCloseParams;
     result: Api.AgentApiOutcomeOfSessionCloseResponse;
+  };
+  "session/delete": {
+    params: Api.SessionDeleteParams;
+    result: Api.AgentApiOutcomeOfSessionDeleteResponse;
   };
   "session/events/read": {
     params: Api.SessionEventsReadParams;
@@ -255,6 +261,10 @@ export interface MethodMap {
   "environments/jobs/cancel": {
     params: Api.EnvironmentJobCancelParams;
     result: Api.AgentApiOutcomeOfEnvironmentJobCancelResponse;
+  };
+  "models/list": {
+    params: Api.ModelListParams;
+    result: Api.AgentApiOutcomeOfModelListResponse;
   };
   "profiles/create": {
     params: Api.ProfileCreateParams;
@@ -471,6 +481,9 @@ export const rpc = {
   sessionClose(client: RpcCaller, params: Api.SessionCloseParams): Promise<Api.AgentApiOutcomeOfSessionCloseResponse> {
     return client.call("session/close", params);
   },
+  sessionDelete(client: RpcCaller, params: Api.SessionDeleteParams): Promise<Api.AgentApiOutcomeOfSessionDeleteResponse> {
+    return client.call("session/delete", params);
+  },
   sessionEventsRead(client: RpcCaller, params: Api.SessionEventsReadParams): Promise<Api.AgentApiOutcomeOfSessionEventsReadResponse> {
     return client.call("session/events/read", params);
   },
@@ -563,6 +576,9 @@ export const rpc = {
   },
   environmentsJobsCancel(client: RpcCaller, params: Api.EnvironmentJobCancelParams): Promise<Api.AgentApiOutcomeOfEnvironmentJobCancelResponse> {
     return client.call("environments/jobs/cancel", params);
+  },
+  modelsList(client: RpcCaller, params: Api.ModelListParams): Promise<Api.AgentApiOutcomeOfModelListResponse> {
+    return client.call("models/list", params);
   },
   profilesCreate(client: RpcCaller, params: Api.ProfileCreateParams): Promise<Api.AgentApiOutcomeOfProfileCreateResponse> {
     return client.call("profiles/create", params);

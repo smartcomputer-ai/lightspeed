@@ -27,27 +27,53 @@ impl GatewayAgentApi {
         self.submit_core_commands(session_id, vec![command]).await
     }
 
-    /// Encodes commands and signals them as one admission batch. Context
-    /// upserts carry their key so admission failures can be attributed back
-    /// to the entry that caused them.
+    /// Encodes commands and signals them as one uncorrelated admission batch.
     pub(super) async fn submit_core_commands(
         &self,
         session_id: &SessionId,
         commands: Vec<CoreAgentCommand>,
     ) -> Result<(), AgentApiError> {
+        let admissions = commands
+            .into_iter()
+            .map(|command| AgentAdmission {
+                command,
+                correlation_token: None,
+            })
+            .collect();
+        self.signal_submit_admissions(session_id, admissions).await
+    }
+
+    /// Submit context commands with one transport-only correlation token per
+    /// command. The returned map lets request-local waiters associate an
+    /// asynchronous failure with the context key or prefix it belongs to.
+    pub(super) async fn submit_correlated_context_commands(
+        &self,
+        session_id: &SessionId,
+        commands: Vec<CoreAgentCommand>,
+    ) -> Result<BTreeMap<String, ContextEntryKey>, AgentApiError> {
+        let mut correlations = BTreeMap::new();
         let mut admissions = Vec::with_capacity(commands.len());
         for command in commands {
             let context_key = match &command {
                 CoreAgentCommand::UpsertContext { key, .. }
-                | CoreAgentCommand::RemoveContext { key } => Some(key.clone()),
-                _ => None,
+                | CoreAgentCommand::RemoveContext { key, .. } => key.clone(),
+                CoreAgentCommand::ReplaceContextPrefix { key_prefix, .. } => key_prefix.clone(),
+                _ => {
+                    return Err(AgentApiError::internal(
+                        "correlated context submission received a non-context command",
+                    ));
+                }
             };
+            let correlation_token = format!("admit_{}", uuid::Uuid::new_v4().simple());
+            correlations.insert(correlation_token.clone(), context_key);
             admissions.push(AgentAdmission {
                 command,
-                context_key,
+                correlation_token: Some(correlation_token),
             });
         }
-        self.signal_submit_admissions(session_id, admissions).await
+        self.signal_submit_admissions(session_id, admissions)
+            .await?;
+        Ok(correlations)
     }
 
     /// Signal an encoded admission batch to the session workflow. A raw
@@ -144,10 +170,10 @@ impl GatewayAgentApi {
         &self,
         session_id: &SessionId,
         expected: &[(ContextEntryKey, ContextEntryInput)],
-        baseline_failures: usize,
+        correlations: &BTreeMap<String, ContextEntryKey>,
     ) -> Result<u64, AgentApiError> {
         let (context_revision, outcomes) = self
-            .wait_for_context_append_outcomes(session_id, expected, baseline_failures)
+            .wait_for_context_append_outcomes(session_id, expected, correlations)
             .await?;
         for outcome in outcomes.values() {
             if let ContextAppendWaitOutcome::Failed { failure } = outcome {
@@ -161,12 +187,8 @@ impl GatewayAgentApi {
         &self,
         session_id: &SessionId,
         expected: &[(ContextEntryKey, ContextEntryInput)],
-        baseline_failures: usize,
+        correlations: &BTreeMap<String, ContextEntryKey>,
     ) -> Result<(u64, BTreeMap<ContextEntryKey, ContextAppendWaitOutcome>), AgentApiError> {
-        let expected_keys = expected
-            .iter()
-            .map(|(key, _)| key.clone())
-            .collect::<BTreeSet<_>>();
         let started = Instant::now();
         let mut outcomes = BTreeMap::new();
         loop {
@@ -176,17 +198,18 @@ impl GatewayAgentApi {
                 )));
             }
             if let Some(status) = self.query_status_optional(session_id).await? {
-                for failure in status.admission_failures.iter().skip(baseline_failures) {
-                    let Some(key) = failure.context_key.as_ref() else {
+                for failure in &status.admission_failures {
+                    let Some(token) = failure.correlation_token.as_ref() else {
                         continue;
                     };
-                    if expected_keys.contains(key) {
-                        outcomes.entry(key.clone()).or_insert_with(|| {
-                            ContextAppendWaitOutcome::Failed {
-                                failure: failure.clone(),
-                            }
-                        });
-                    }
+                    let Some(key) = correlations.get(token) else {
+                        continue;
+                    };
+                    outcomes.entry(key.clone()).or_insert_with(|| {
+                        ContextAppendWaitOutcome::Failed {
+                            failure: failure.clone(),
+                        }
+                    });
                 }
                 if let Some(error) = status.last_error {
                     return Err(AgentApiError::internal(format!(
@@ -229,7 +252,7 @@ impl GatewayAgentApi {
         &self,
         session_id: &SessionId,
         expected: &[ContextEntryKey],
-        baseline_failures: usize,
+        correlations: &BTreeMap<String, ContextEntryKey>,
     ) -> Result<
         (
             u64,
@@ -237,7 +260,6 @@ impl GatewayAgentApi {
         ),
         AgentApiError,
     > {
-        let expected_keys = expected.iter().cloned().collect::<BTreeSet<_>>();
         let started = Instant::now();
         let mut outcomes: BTreeMap<ContextEntryKey, Option<AgentAdmissionFailure>> =
             BTreeMap::new();
@@ -248,15 +270,16 @@ impl GatewayAgentApi {
                 )));
             }
             if let Some(status) = self.query_status_optional(session_id).await? {
-                for failure in status.admission_failures.iter().skip(baseline_failures) {
-                    let Some(key) = failure.context_key.as_ref() else {
+                for failure in &status.admission_failures {
+                    let Some(token) = failure.correlation_token.as_ref() else {
                         continue;
                     };
-                    if expected_keys.contains(key) {
-                        outcomes
-                            .entry(key.clone())
-                            .or_insert_with(|| Some(failure.clone()));
-                    }
+                    let Some(key) = correlations.get(token) else {
+                        continue;
+                    };
+                    outcomes
+                        .entry(key.clone())
+                        .or_insert_with(|| Some(failure.clone()));
                 }
                 if let Some(error) = status.last_error {
                     return Err(AgentApiError::internal(format!(

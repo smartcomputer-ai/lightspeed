@@ -1231,12 +1231,12 @@ fn invocation_result_to_call_result(result: ToolInvocationResult) -> ToolCallRes
 mod tests {
     use super::*;
     use crate::{
-        BlobRef, CommandRejectionKind, CompactionPolicy, ContextCompactionStatus,
-        ContextCompactionTrigger, ContextConfig, ContextEntry, ContextEntryId, ContextEntryInput,
-        ContextEntryKey, ContextEntryKind, ContextRemovalReason, ContextRewriteReason,
-        CoreAgentCommand, FunctionToolSpec, LlmGenerationFacts, ModelSelection,
-        OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, ObservedToolCall, ProviderApiKind, RunConfig,
-        RunFailureKind, RunRequestCommand, RunRequestSource, RunStatus,
+        BlobRef, CommandRejectionDetails, CommandRejectionKind, CompactionPolicy,
+        ContextCompactionStatus, ContextCompactionTrigger, ContextConfig, ContextEntry,
+        ContextEntryId, ContextEntryInput, ContextEntryKey, ContextEntryKind, ContextRemovalReason,
+        ContextRewriteReason, CoreAgentCommand, FunctionToolSpec, LlmGenerationFacts,
+        ModelSelection, OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, ObservedToolCall,
+        ProviderApiKind, RunConfig, RunFailureKind, RunRequestCommand, RunRequestSource, RunStatus,
         SKILL_ACTIVATION_PROVIDER_KIND_RUN, SKILL_CATALOG_CONTEXT_KEY, SessionConfig, SkillId,
         SubmitMessageCommand, TokenEstimate, TokenEstimateQuality, ToolBatchOutcome, ToolChoice,
         ToolEffect, ToolInvocationResult, ToolKind, ToolName, ToolParallelism, ToolSpec,
@@ -1655,6 +1655,7 @@ mod tests {
             let action = drive
                 .admit_command(
                     CoreAgentCommand::UpsertContext {
+                        expected_revision: None,
                         key: ContextEntryKey::new(format!("context.entry.{index:04}")),
                         entry: provider_opaque_input(BlobRef::from_bytes(
                             format!("context entry {index}").as_bytes(),
@@ -1825,6 +1826,7 @@ mod tests {
         let action = drive
             .admit_command(
                 CoreAgentCommand::UpsertContext {
+                    expected_revision: None,
                     key: key.clone(),
                     entry: provider_opaque_input(BlobRef::from_bytes(b"native")),
                 },
@@ -1841,6 +1843,67 @@ mod tests {
     }
 
     #[test]
+    fn stale_context_revision_rejects_all_direct_edits_with_structured_details() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        open_session(&mut drive);
+        let key = ContextEntryKey::new("client.native");
+        let input = provider_opaque_input(BlobRef::from_bytes(b"native"));
+
+        let action = drive
+            .admit_command(
+                CoreAgentCommand::UpsertContext {
+                    expected_revision: None,
+                    key: key.clone(),
+                    entry: input.clone(),
+                },
+                20,
+            )
+            .expect("initial context edit");
+        commit_action(&mut drive, action);
+        assert_eq!(drive.state().context.revision, 1);
+
+        let replacement = std::collections::BTreeMap::from([(key.clone(), input.clone())]);
+        let commands = [
+            CoreAgentCommand::UpsertContext {
+                expected_revision: Some(0),
+                key: key.clone(),
+                entry: input,
+            },
+            CoreAgentCommand::ReplaceContextPrefix {
+                expected_revision: Some(0),
+                key_prefix: ContextEntryKey::new("client"),
+                entries: replacement,
+            },
+            CoreAgentCommand::RemoveContext {
+                expected_revision: Some(0),
+                key,
+            },
+        ];
+
+        for command in commands {
+            let error = drive
+                .admit_command(command, 30)
+                .expect_err("stale context edit must be rejected");
+            let CoreAgentDriveError::Command(crate::CommandError::Rejected(rejection)) = error
+            else {
+                panic!("expected rejected command");
+            };
+            assert_eq!(rejection.kind, CommandRejectionKind::RevisionConflict);
+            assert_eq!(
+                rejection.details,
+                Some(CommandRejectionDetails::ContextRevisionConflict {
+                    expected: 0,
+                    actual: 1,
+                })
+            );
+        }
+
+        assert_eq!(drive.state().context.revision, 1);
+        assert_eq!(drive.state().context.entries.len(), 1);
+    }
+
+    #[test]
     fn upsert_context_rejects_reserved_run_key_prefix() {
         let session_id = SessionId::new("session-a");
         let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
@@ -1849,6 +1912,7 @@ mod tests {
         let error = drive
             .admit_command(
                 CoreAgentCommand::UpsertContext {
+                    expected_revision: None,
                     key: ContextEntryKey::new("run.1.input.0"),
                     entry: message_input(ContextMessageRole::User, BlobRef::from_bytes(b"bad")),
                 },
@@ -1872,6 +1936,7 @@ mod tests {
         let error = drive
             .admit_command(
                 CoreAgentCommand::RemoveContext {
+                    expected_revision: None,
                     key: ContextEntryKey::new("run.1.input.0"),
                 },
                 20,
@@ -1895,6 +1960,7 @@ mod tests {
         let upsert = drive
             .admit_command(
                 CoreAgentCommand::UpsertContext {
+                    expected_revision: None,
                     key: key.clone(),
                     entry: message_input(ContextMessageRole::User, BlobRef::from_bytes(b"hello")),
                 },
@@ -1937,6 +2003,7 @@ mod tests {
         let action = drive
             .admit_command(
                 CoreAgentCommand::UpsertContext {
+                    expected_revision: None,
                     key: key.clone(),
                     entry: instruction_input(BlobRef::from_bytes(b"base instructions")),
                 },
@@ -1966,6 +2033,7 @@ mod tests {
             let action = drive
                 .admit_command(
                     CoreAgentCommand::UpsertContext {
+                        expected_revision: None,
                         key: ContextEntryKey::new(key),
                         entry: instruction_input(BlobRef::from_bytes(content)),
                     },
@@ -1991,6 +2059,7 @@ mod tests {
         let action = drive
             .admit_command(
                 CoreAgentCommand::ReplaceContextPrefix {
+                    expected_revision: None,
                     key_prefix: ContextEntryKey::new("instructions.100.prompts"),
                     entries,
                 },
@@ -2040,6 +2109,7 @@ mod tests {
         let error = drive
             .admit_command(
                 CoreAgentCommand::ReplaceContextPrefix {
+                    expected_revision: None,
                     key_prefix: ContextEntryKey::new("instructions.100.prompts"),
                     entries,
                 },
@@ -2063,6 +2133,7 @@ mod tests {
         let error = drive
             .admit_command(
                 CoreAgentCommand::UpsertContext {
+                    expected_revision: None,
                     key: ContextEntryKey::new("client.instructions"),
                     entry: instruction_input(BlobRef::from_bytes(b"base instructions")),
                 },
@@ -2091,6 +2162,7 @@ mod tests {
         let action = drive
             .admit_command(
                 CoreAgentCommand::UpsertContext {
+                    expected_revision: None,
                     key: ContextEntryKey::new("channel.room.batch-1"),
                     entry: message_input(ContextMessageRole::User, content_ref.clone()),
                 },
@@ -2114,6 +2186,7 @@ mod tests {
         let replay = drive
             .admit_command(
                 CoreAgentCommand::UpsertContext {
+                    expected_revision: None,
                     key: ContextEntryKey::new("channel.room.batch-1"),
                     entry: message_input(ContextMessageRole::User, content_ref),
                 },
@@ -2137,6 +2210,7 @@ mod tests {
         let error = drive
             .admit_command(
                 CoreAgentCommand::UpsertContext {
+                    expected_revision: None,
                     key: ContextEntryKey::new("client.message"),
                     entry: message_input(
                         ContextMessageRole::Assistant,
@@ -2171,6 +2245,7 @@ mod tests {
             let action = drive
                 .admit_command(
                     CoreAgentCommand::UpsertContext {
+                        expected_revision: None,
                         key: ContextEntryKey::new(key),
                         entry: instruction_input(content_ref),
                     },
@@ -2399,6 +2474,7 @@ mod tests {
         let upsert = drive
             .admit_command(
                 CoreAgentCommand::UpsertContext {
+                    expected_revision: None,
                     key: ContextEntryKey::new("client.native"),
                     entry: provider_opaque_input(context_ref.clone()),
                 },
@@ -2484,6 +2560,7 @@ mod tests {
         let upsert = drive
             .admit_command(
                 CoreAgentCommand::UpsertContext {
+                    expected_revision: None,
                     key: ContextEntryKey::new("client.native"),
                     entry: provider_opaque_input(BlobRef::from_bytes(b"native context")),
                 },
@@ -2544,6 +2621,7 @@ mod tests {
         let upsert = drive
             .admit_command(
                 CoreAgentCommand::UpsertContext {
+                    expected_revision: None,
                     key: ContextEntryKey::new("client.native"),
                     entry: provider_opaque_input(BlobRef::from_bytes(b"native context")),
                 },
@@ -2576,6 +2654,7 @@ mod tests {
         let edit_error = drive
             .admit_command(
                 CoreAgentCommand::UpsertContext {
+                    expected_revision: None,
                     key: ContextEntryKey::new("client.native.2"),
                     entry: provider_opaque_input(BlobRef::from_bytes(b"changed context")),
                 },
@@ -2600,6 +2679,7 @@ mod tests {
             let upsert = drive
                 .admit_command(
                     CoreAgentCommand::UpsertContext {
+                        expected_revision: None,
                         key: ContextEntryKey::new(format!("client.native.{index}")),
                         entry: provider_opaque_input_with_tokens(
                             BlobRef::from_bytes(format!("native {index}").as_bytes()),
@@ -2657,6 +2737,7 @@ mod tests {
         let instructions = drive
             .admit_command(
                 CoreAgentCommand::UpsertContext {
+                    expected_revision: None,
                     key: ContextEntryKey::new("instructions.100.base"),
                     entry: instruction_input(BlobRef::from_bytes(b"base instructions")),
                 },
@@ -2667,6 +2748,7 @@ mod tests {
         let context = drive
             .admit_command(
                 CoreAgentCommand::UpsertContext {
+                    expected_revision: None,
                     key: ContextEntryKey::new("client.native"),
                     entry: provider_opaque_input_with_tokens(
                         BlobRef::from_bytes(b"native context"),
@@ -2777,6 +2859,7 @@ mod tests {
         let error = drive
             .admit_command(
                 CoreAgentCommand::RemoveContext {
+                    expected_revision: None,
                     key: ContextEntryKey::new("client.note"),
                 },
                 20,
@@ -3074,6 +3157,7 @@ mod tests {
         let action = drive
             .admit_command(
                 CoreAgentCommand::UpsertContext {
+                    expected_revision: None,
                     key: skill_activation_context_key(&skill_id),
                     entry: skill_activation_input(skill_id.clone(), context_ref.clone(), None),
                 },
@@ -3108,6 +3192,7 @@ mod tests {
         let error = drive
             .admit_command(
                 CoreAgentCommand::UpsertContext {
+                    expected_revision: None,
                     key: skill_activation_context_key(&SkillId::new("skill-1")),
                     entry: skill_activation_input(
                         SkillId::new("skill-2"),
@@ -3136,6 +3221,7 @@ mod tests {
         let set_catalog = drive
             .admit_command(
                 CoreAgentCommand::UpsertContext {
+                    expected_revision: None,
                     key: ContextEntryKey::new(SKILL_CATALOG_CONTEXT_KEY),
                     entry: skill_catalog_input(catalog_ref.clone()),
                 },
@@ -3149,6 +3235,7 @@ mod tests {
         let set_activations = drive
             .admit_command(
                 CoreAgentCommand::UpsertContext {
+                    expected_revision: None,
                     key: skill_activation_context_key(&skill_id),
                     entry: skill_activation_input(skill_id.clone(), activation_ref.clone(), None),
                 },
@@ -3190,6 +3277,7 @@ mod tests {
         let set_activations = drive
             .admit_command(
                 CoreAgentCommand::UpsertContext {
+                    expected_revision: None,
                     key: skill_activation_context_key(&skill_id),
                     entry: skill_activation_input(
                         skill_id,

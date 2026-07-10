@@ -18,7 +18,8 @@ pub use blobs::{
 pub use session::{
     AppendSessionEvents, AppendSessionEventsResult, CreateClonedSession, CreateForkedSession,
     CreateSession, InMemorySessionStore, ListSessionLinks, ListSessions, ReadSessionEvents,
-    SessionLinkDirection, SessionLinkRecord, SessionListCursor, SessionListPage, SessionPage,
-    SessionRecord, SessionStore, SessionStoreError, UpsertSessionLink, largest_safe_fork_seq,
+    SessionLifecycleStatus, SessionLinkDirection, SessionLinkRecord, SessionListCursor,
+    SessionListPage, SessionPage, SessionRecord, SessionStore, SessionStoreError,
+    UpsertSessionLink, apply_lifecycle_projection, largest_safe_fork_seq, lifecycle_at_fork,
     validate_fork_point, validate_relationship,
 };

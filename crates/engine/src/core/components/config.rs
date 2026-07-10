@@ -61,7 +61,7 @@ pub struct GenerationConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_output_tokens: Option<u32>,
     /// Reasoning effort tier as a provider-native string (e.g. "none",
-    /// "high", "xhigh", "ultra"). The engine carries it opaquely; the LLM
+    /// "high", "xhigh", "max"). The engine carries it opaquely; the LLM
     /// runtime validates it against the provider and materializes the
     /// request params. Never stored as provider JSON.
     #[serde(default, skip_serializing_if = "Option::is_none")]

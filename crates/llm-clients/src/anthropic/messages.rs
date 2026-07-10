@@ -95,6 +95,7 @@ pub struct Client {
     http: HttpClient,
     messages_url: Url,
     count_tokens_url: Url,
+    models_url: Url,
     /// Configured `x-api-key` value; requests may override it with
     /// per-request auth, and fail before I/O when neither exists.
     auth: Option<HeaderValue>,
@@ -108,6 +109,7 @@ impl Client {
         let base_url = normalize_base_url(&config.base_url)?;
         let messages_url = join_url(&base_url, "messages")?;
         let count_tokens_url = join_url(&base_url, "messages/count_tokens")?;
+        let models_url = join_url(&base_url, "models")?;
         let auth = config
             .api_key
             .as_deref()
@@ -134,6 +136,7 @@ impl Client {
             http: HttpClient::with_headers(config.http, headers)?,
             messages_url,
             count_tokens_url,
+            models_url,
             auth,
             beta_headers: config.beta_headers,
         })
@@ -195,6 +198,62 @@ impl Client {
         request: CreateMessageRequest,
     ) -> Result<ApiResponse<Message>, LlmApiError> {
         self.create_with_auth(request, None).await
+    }
+
+    /// List every account-visible Anthropic model. Anthropic paginates this
+    /// endpoint, so pagination is consumed here rather than exposed through
+    /// Lightspeed's `models/list` API.
+    pub async fn list_models(&self) -> Result<Vec<ModelInfo>, LlmApiError> {
+        self.list_models_with_auth(None).await
+    }
+
+    /// Like [`Self::list_models`], with an API-key or OAuth bearer override.
+    pub async fn list_models_with_auth(
+        &self,
+        auth: Option<crate::RequestAuth<'_>>,
+    ) -> Result<Vec<ModelInfo>, LlmApiError> {
+        let mut after_id = None;
+        let mut models = Vec::new();
+        loop {
+            let page = self
+                .list_models_page_with_auth(after_id.as_deref(), auth)
+                .await?;
+            models.extend(page.data);
+            if !page.has_more {
+                return Ok(models);
+            }
+            after_id = page.last_id;
+            if after_id.is_none() {
+                return Err(
+                    DecodeError::new("Anthropic model list has_more=true without last_id").into(),
+                );
+            }
+        }
+    }
+
+    async fn list_models_page_with_auth(
+        &self,
+        after_id: Option<&str>,
+        auth: Option<crate::RequestAuth<'_>>,
+    ) -> Result<ModelListPage, LlmApiError> {
+        let mut url = self.models_url.clone();
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("limit", "1000");
+            if let Some(after_id) = after_id {
+                query.append_pair("after_id", after_id);
+            }
+        }
+        let builder = self.http.request(Method::GET, url);
+        let response = self
+            .apply_auth(builder, auth)?
+            .send()
+            .await
+            .map_err(map_reqwest_error)?;
+        let status = response.status();
+        let headers = HeaderSnapshot::from_headermap(response.headers());
+        let body = response.text().await.map_err(map_reqwest_error)?;
+        Ok(parse_json_response(status, headers, body, "Anthropic model list")?.parsed)
     }
 
     pub async fn create_with_auth(
@@ -267,6 +326,60 @@ fn api_key_header_value(api_key: &str) -> Result<HeaderValue, LlmApiError> {
     })?;
     value.set_sensitive(true);
     Ok(value)
+}
+
+/// Anthropic `GET /v1/models` page.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ModelListPage {
+    #[serde(default)]
+    pub data: Vec<ModelInfo>,
+    #[serde(default)]
+    pub first_id: Option<String>,
+    #[serde(default)]
+    pub has_more: bool,
+    #[serde(default)]
+    pub last_id: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ModelInfo {
+    pub id: String,
+    #[serde(default)]
+    pub capabilities: Option<ModelCapabilities>,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub max_input_tokens: Option<u64>,
+    #[serde(default)]
+    pub max_tokens: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ModelCapabilities {
+    #[serde(default)]
+    pub effort: Option<EffortCapability>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct EffortCapability {
+    #[serde(default)]
+    pub low: Option<CapabilitySupport>,
+    #[serde(default)]
+    pub medium: Option<CapabilitySupport>,
+    #[serde(default)]
+    pub high: Option<CapabilitySupport>,
+    #[serde(default)]
+    pub max: Option<CapabilitySupport>,
+    #[serde(default)]
+    pub xhigh: Option<CapabilitySupport>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilitySupport {
+    #[serde(default)]
+    pub supported: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1081,6 +1194,40 @@ mod tests {
             tools[0].input.and_then(|input| input.get("city")),
             Some(&json!("Zurich"))
         );
+    }
+
+    #[test]
+    fn model_list_parses_capabilities_and_cursor() {
+        let page: ModelListPage = serde_json::from_value(json!({
+            "data": [{
+                "id": "claude-test",
+                "display_name": "Claude Test",
+                "max_input_tokens": 200000,
+                "max_tokens": 8192,
+                "capabilities": {
+                    "effort": {
+                        "low": { "supported": true },
+                        "medium": { "supported": false },
+                        "max": { "supported": true }
+                    }
+                }
+            }],
+            "first_id": "claude-test",
+            "last_id": "claude-test",
+            "has_more": true
+        }))
+        .expect("model list page");
+
+        assert!(page.has_more);
+        assert_eq!(page.last_id.as_deref(), Some("claude-test"));
+        let effort = page.data[0]
+            .capabilities
+            .as_ref()
+            .and_then(|capabilities| capabilities.effort.as_ref())
+            .expect("effort capability");
+        assert!(effort.low.as_ref().is_some_and(|item| item.supported));
+        assert!(effort.max.as_ref().is_some_and(|item| item.supported));
+        assert!(effort.medium.as_ref().is_some_and(|item| !item.supported));
     }
 
     #[test]

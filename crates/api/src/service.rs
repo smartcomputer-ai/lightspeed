@@ -7,6 +7,11 @@ pub trait AgentApiService: Send + Sync {
         params: InitializeParams,
     ) -> Result<AgentApiOutcome<InitializeResponse>, AgentApiError>;
 
+    async fn list_models(
+        &self,
+        params: ModelListParams,
+    ) -> Result<AgentApiOutcome<ModelListResponse>, AgentApiError>;
+
     async fn start_session(
         &self,
         params: SessionStartParams,
@@ -71,6 +76,11 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: SessionCloseParams,
     ) -> Result<AgentApiOutcome<SessionCloseResponse>, AgentApiError>;
+
+    async fn delete_session(
+        &self,
+        params: SessionDeleteParams,
+    ) -> Result<AgentApiOutcome<SessionDeleteResponse>, AgentApiError>;
 
     async fn compact_context(
         &self,

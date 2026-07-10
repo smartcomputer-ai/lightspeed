@@ -82,6 +82,9 @@ pub enum PromptVfsRootError {
     #[error("duplicate VFS prompt root id {root_id}")]
     DuplicateRootId { root_id: String },
 
+    #[error("invalid configured VFS prompt root {root}: {message}")]
+    InvalidConfiguredRoot { root: String, message: String },
+
     #[error("VFS prompt root {root_id} at {root_path} is not under a mounted VFS path")]
     UnmountedRoot { root_id: String, root_path: VfsPath },
 
@@ -142,6 +145,30 @@ pub fn conventional_vfs_prompt_root_specs(mounts: &[VfsMountRecord]) -> Vec<VfsP
         }
     }
     specs
+}
+
+pub fn configured_vfs_prompt_root_specs(
+    mounts: &[VfsMountRecord],
+    roots: Option<&[String]>,
+) -> Result<Vec<VfsPromptRootSpec>, PromptVfsRootError> {
+    let Some(roots) = roots else {
+        return Ok(conventional_vfs_prompt_root_specs(mounts));
+    };
+    roots
+        .iter()
+        .map(|root| {
+            let path = VfsPath::parse(root).map_err(|error| {
+                PromptVfsRootError::InvalidConfiguredRoot {
+                    root: root.clone(),
+                    message: error.to_string(),
+                }
+            })?;
+            Ok(VfsPromptRootSpec::new(
+                root_id_for_vfs_path("config", &path),
+                path,
+            ))
+        })
+        .collect()
 }
 
 fn push_spec(
@@ -380,6 +407,23 @@ mod tests {
                 "/workspace/.lightspeed/prompts",
                 "/workspace/.agents/prompts"
             ]
+        );
+    }
+
+    #[test]
+    fn configured_prompt_roots_replace_conventional_roots() {
+        let roots = configured_vfs_prompt_root_specs(
+            &[],
+            Some(&["/custom/prompts".to_owned(), "/shared/prompts".to_owned()]),
+        )
+        .expect("configured roots");
+
+        assert_eq!(
+            roots
+                .iter()
+                .map(|root| root.root_path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["/custom/prompts", "/shared/prompts"]
         );
     }
 

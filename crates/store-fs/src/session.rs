@@ -9,7 +9,8 @@ use engine::{
     session::{EventSeq, SessionId, SessionPosition, StoredSessionEntry},
     storage::{
         AppendSessionEvents, AppendSessionEventsResult, CreateSession, ReadSessionEvents,
-        SessionPage, SessionRecord, SessionStore, SessionStoreError,
+        SessionLifecycleStatus, SessionPage, SessionRecord, SessionStore, SessionStoreError,
+        apply_lifecycle_projection,
     },
 };
 use tokio::{fs, io::AsyncWriteExt, sync::Mutex};
@@ -150,6 +151,8 @@ impl SessionStore for FsSessionStore {
         let record = SessionRecord {
             session_id: request.session_id.clone(),
             display_name: request.display_name,
+            lifecycle_status: SessionLifecycleStatus::New,
+            closed_at_seq: None,
             head: None,
             source_session_id: None,
             source_seq: None,
@@ -234,6 +237,9 @@ impl SessionStore for FsSessionStore {
             record.updated_at_ms = committed
                 .last()
                 .map_or(record.updated_at_ms, |entry| entry.observed_at_ms);
+            for entry in &committed {
+                apply_lifecycle_projection(&mut record, entry);
+            }
             let record_path = self.record_path(&request.session_id);
             write_session_record(&record_path, &record).await?;
         }
@@ -293,6 +299,11 @@ impl SessionStore for FsSessionStore {
 }
 
 fn reconcile_record(mut record: SessionRecord, entries: &[StoredSessionEntry]) -> SessionRecord {
+    record.lifecycle_status = SessionLifecycleStatus::New;
+    record.closed_at_seq = None;
+    for entry in entries {
+        apply_lifecycle_projection(&mut record, entry);
+    }
     if let Some(last) = entries.last() {
         record.head = Some(last.position.clone());
         record.updated_at_ms = last.observed_at_ms;

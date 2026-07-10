@@ -23,11 +23,8 @@ impl GatewayAgentApi {
             .await?;
 
         let loaded = self.load_session_state(session_id).await?;
-        self.refresh_skill_catalog_for_idle_session(
-            session_id,
-            active_skill_catalog_ref(&loaded.state),
-        )
-        .await?;
+        self.refresh_skill_catalog_for_idle_session(session_id, &loaded.state)
+            .await?;
 
         self.load_session_state(session_id).await
     }
@@ -37,59 +34,54 @@ impl GatewayAgentApi {
         session_id: &SessionId,
         state: &engine::CoreAgentState,
     ) -> Result<(), AgentApiError> {
-        let Some(command) = self
-            .prompt_instructions_refresh_command(session_id, state)
-            .await?
-        else {
-            return Ok(());
-        };
-        let target_prompt_refs = match &command {
-            CoreAgentCommand::ReplaceContextPrefix {
-                key_prefix,
-                entries,
-            } if key_prefix.as_str() == tools::prompts::PROMPT_INSTRUCTIONS_CONTEXT_KEY_PREFIX => {
-                entries
-                    .iter()
-                    .map(|(key, entry)| (key.clone(), entry.content_ref.clone()))
-                    .collect::<Vec<_>>()
-            }
-            _ => {
-                return Err(AgentApiError::internal(
-                    "prompt refresh produced non-prompt context command",
-                ));
-            }
-        };
-        let baseline_failures = self
-            .query_status_optional(session_id)
-            .await?
-            .map(|status| status.admission_failures.len())
-            .unwrap_or(0);
-        self.submit_core_command(session_id, command).await?;
-        self.wait_for_prompt_instructions(session_id, target_prompt_refs, baseline_failures)
-            .await
+        let desired = self
+            .prompt_instruction_source_map(session_id, state)
+            .await?;
+        self.reconcile_managed_instructions(
+            session_id,
+            state,
+            tools::prompts::PROMPT_INSTRUCTIONS_CONTEXT_KEY_PREFIX,
+            desired,
+        )
+        .await?;
+        Ok(())
     }
 
-    pub(super) async fn prompt_instructions_refresh_command(
+    pub(super) async fn prompt_instruction_source_map(
         &self,
         session_id: &SessionId,
         state: &engine::CoreAgentState,
-    ) -> Result<Option<CoreAgentCommand>, AgentApiError> {
-        let mounts = self
-            .store
-            .list_mounts(session_id)
-            .await
-            .map_err(map_vfs_catalog_error)?;
-        let specs = tools::prompts::conventional_vfs_prompt_root_specs(&mounts);
+    ) -> Result<BTreeMap<ContextEntryKey, ContextEntryInput>, AgentApiError> {
+        let prompts_config = state
+            .lifecycle
+            .config
+            .as_ref()
+            .and_then(|config| config.features.vfs.as_ref())
+            .and_then(|vfs| vfs.prompts.as_ref());
+        let mounts = if prompts_config.is_some() {
+            self.store
+                .list_mounts(session_id)
+                .await
+                .map_err(map_vfs_catalog_error)?
+        } else {
+            Vec::new()
+        };
+        let specs = match prompts_config {
+            Some(config) => {
+                tools::prompts::configured_vfs_prompt_root_specs(&mounts, config.roots.as_deref())
+                    .map_err(|error| AgentApiError::invalid_request(error.to_string()))?
+            }
+            None => Vec::new(),
+        };
         if specs.is_empty() {
             let publication = tools::prompts::prepare_prompt_instructions_publication(
                 self.store.as_ref(),
-                state,
                 &[],
                 tools::prompts::PromptAssemblyLimits::default(),
             )
             .await
             .map_err(|error| AgentApiError::internal(error.to_string()))?;
-            return Ok(publication.command);
+            return Ok(publication.desired);
         }
 
         let blobs: Arc<dyn BlobStore> = self.store.clone();
@@ -104,57 +96,13 @@ impl GatewayAgentApi {
             .map_err(|error| AgentApiError::internal(error.to_string()))?;
         let publication = tools::prompts::prepare_prompt_instructions_publication(
             self.store.as_ref(),
-            state,
             &inputs,
             tools::prompts::PromptAssemblyLimits::default(),
         )
         .await
         .map_err(|error| AgentApiError::internal(error.to_string()))?;
-        Ok(publication.command)
+        Ok(publication.desired)
     }
-
-    pub(super) async fn wait_for_prompt_instructions(
-        &self,
-        session_id: &SessionId,
-        target_prompt_refs: Vec<(ContextEntryKey, BlobRef)>,
-        baseline_failures: usize,
-    ) -> Result<(), AgentApiError> {
-        let started = Instant::now();
-        loop {
-            if started.elapsed() > self.operation_timeout {
-                return Err(AgentApiError::internal(format!(
-                    "timed out waiting for prompt instructions update: {session_id}"
-                )));
-            }
-            if let Some(status) = self.query_status_optional(session_id).await? {
-                if status.admission_failures.len() > baseline_failures {
-                    if let Some(failure) = status.admission_failures.last() {
-                        return Err(map_admission_failure_to_api_error(failure));
-                    }
-                }
-                if let Some(error) = status.last_error {
-                    return Err(AgentApiError::internal(format!(
-                        "agent workflow reported error: {error}"
-                    )));
-                }
-            }
-            let loaded = self.load_session_state(session_id).await?;
-            if sorted_prompt_refs(tools::prompts::active_prompt_instruction_refs(
-                &loaded.state,
-            )) == sorted_prompt_refs(target_prompt_refs.clone())
-            {
-                return Ok(());
-            }
-            tokio::time::sleep(self.poll_interval).await;
-        }
-    }
-}
-
-fn sorted_prompt_refs(
-    mut refs: Vec<(ContextEntryKey, BlobRef)>,
-) -> Vec<(ContextEntryKey, BlobRef)> {
-    refs.sort_by(|left, right| left.0.cmp(&right.0));
-    refs
 }
 
 #[cfg(test)]

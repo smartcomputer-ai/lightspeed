@@ -94,6 +94,9 @@ pub enum SkillVfsRootError {
     #[error("duplicate VFS skill root id {root_id}")]
     DuplicateRootId { root_id: String },
 
+    #[error("invalid configured VFS skill root {root}: {message}")]
+    InvalidConfiguredRoot { root: String, message: String },
+
     #[error("VFS skill root {root_id} at {root_path} is not under a mounted VFS path")]
     UnmountedRoot { root_id: String, root_path: VfsPath },
 
@@ -161,6 +164,40 @@ pub fn conventional_vfs_skill_root_specs(mounts: &[VfsMountRecord]) -> Vec<VfsSk
         }
     }
     specs
+}
+
+pub fn configured_vfs_skill_root_specs(
+    mounts: &[VfsMountRecord],
+    roots: Option<&[String]>,
+) -> Result<Vec<VfsSkillRootSpec>, SkillVfsRootError> {
+    let Some(roots) = roots else {
+        return Ok(conventional_vfs_skill_root_specs(mounts));
+    };
+    roots
+        .iter()
+        .map(|root| {
+            let path =
+                VfsPath::parse(root).map_err(|error| SkillVfsRootError::InvalidConfiguredRoot {
+                    root: root.clone(),
+                    message: error.to_string(),
+                })?;
+            let trust = if path.as_str() == "/skills/system" {
+                SkillTrustLevel::System
+            } else if mount_for_root(mounts, &path)
+                .is_some_and(|mount| matches!(mount.source, VfsMountSource::Workspace { .. }))
+            {
+                SkillTrustLevel::Project
+            } else {
+                SkillTrustLevel::User
+            };
+            Ok(VfsSkillRootSpec::new(
+                root_id_for_vfs_path("config", &path),
+                path,
+                trust,
+                SkillScope::Global,
+            ))
+        })
+        .collect()
 }
 
 fn push_spec(
@@ -484,6 +521,20 @@ mod tests {
                 root_path: VfsPath::parse("/skills/system").unwrap(),
             })
         );
+    }
+
+    #[test]
+    fn configured_skill_roots_replace_conventional_roots() {
+        let roots = configured_vfs_skill_root_specs(
+            &[],
+            Some(&["/skills/system".to_owned(), "/custom/skills".to_owned()]),
+        )
+        .expect("configured roots");
+
+        assert_eq!(roots[0].root_path.as_str(), "/skills/system");
+        assert_eq!(roots[0].trust, SkillTrustLevel::System);
+        assert_eq!(roots[1].root_path.as_str(), "/custom/skills");
+        assert_eq!(roots[1].trust, SkillTrustLevel::User);
     }
 
     fn skill_file(path: &str, name: &str, description: &str) -> InlineFile {

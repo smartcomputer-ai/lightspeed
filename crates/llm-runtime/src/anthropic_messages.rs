@@ -1138,7 +1138,7 @@ mod tests {
     async fn materialize_create_request_derives_thinking_from_reasoning_effort() {
         let blobs = InMemoryBlobStore::new();
         let mut request = intent_request(Vec::new());
-        request.reasoning_effort = Some("ultra".to_string());
+        request.reasoning_effort = Some("max".to_string());
 
         let materialized = materialize_create_request(&blobs, &request)
             .await
@@ -1146,7 +1146,7 @@ mod tests {
         let value = serde_json::to_value(materialized).expect("json");
 
         assert_eq!(value["thinking"], json!({ "type": "adaptive" }));
-        assert_eq!(value["output_config"], json!({ "effort": "ultra" }));
+        assert_eq!(value["output_config"], json!({ "effort": "max" }));
     }
 
     #[tokio::test(flavor = "current_thread")]

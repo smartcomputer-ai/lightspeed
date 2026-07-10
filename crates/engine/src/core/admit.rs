@@ -266,7 +266,11 @@ pub fn admit_command(
                 })),
             )])
         }
-        CoreAgentCommand::UpsertContext { key, entry } => {
+        CoreAgentCommand::UpsertContext {
+            expected_revision,
+            key,
+            entry,
+        } => {
             require_open(state)?;
             require_no_pending_compaction(
                 state,
@@ -274,6 +278,7 @@ pub fn admit_command(
             )?;
             crate::core::components::context::validate_external_context_edit(&key, &entry)
                 .map_err(command_rejection_from_domain)?;
+            validate_expected_context_revision(state, expected_revision)?;
             if crate::core::components::context::context_upsert_is_noop(state, &key, &entry) {
                 return Ok(Vec::new());
             }
@@ -291,6 +296,7 @@ pub fn admit_command(
             )])
         }
         CoreAgentCommand::ReplaceContextPrefix {
+            expected_revision,
             key_prefix,
             entries,
         } => {
@@ -304,6 +310,7 @@ pub fn admit_command(
                 &entries,
             )
             .map_err(command_rejection_from_domain)?;
+            validate_expected_context_revision(state, expected_revision)?;
             if crate::core::components::context::context_prefix_replacement_is_noop(
                 state,
                 &key_prefix,
@@ -328,7 +335,10 @@ pub fn admit_command(
                 }),
             )])
         }
-        CoreAgentCommand::RemoveContext { key } => {
+        CoreAgentCommand::RemoveContext {
+            expected_revision,
+            key,
+        } => {
             require_open(state)?;
             require_no_pending_compaction(
                 state,
@@ -336,6 +346,7 @@ pub fn admit_command(
             )?;
             crate::core::components::context::validate_external_context_key(&key)
                 .map_err(command_rejection_from_domain)?;
+            validate_expected_context_revision(state, expected_revision)?;
             crate::core::components::context::validate_context_key_exists(state, &key)
                 .map_err(unknown_reference_rejection_from_domain)?;
             Ok(vec![CoreAgentEventProposal::new(
@@ -644,6 +655,21 @@ fn validate_expected_tool_revision(
                     expected_revision, actual_revision
                 ),
             );
+        }
+    }
+    Ok(())
+}
+
+fn validate_expected_context_revision(
+    state: &CoreAgentState,
+    expected_revision: Option<u64>,
+) -> Result<(), CommandError> {
+    if let Some(expected) = expected_revision {
+        let actual = state.context.revision;
+        if expected != actual {
+            return Err(CommandError::Rejected(
+                CommandRejection::context_revision_conflict(expected, actual),
+            ));
         }
     }
     Ok(())

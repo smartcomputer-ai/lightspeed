@@ -22,17 +22,19 @@ pub(super) async fn admit_and_append_command(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     drive: &mut CoreAgentDrive,
     command: CoreAgentCommand,
-    context_key: Option<ContextEntryKey>,
+    correlation_token: Option<String>,
 ) -> anyhow::Result<CommandAdmissionResult> {
     let submission_id = command_submission_id(&command);
     let action = match drive.admit_command(command, workflow_time_ms(ctx)) {
         Ok(action) => action,
         Err(CoreAgentDriveError::Command(CommandError::Rejected(rejection))) => {
+            let message = rejection.to_string();
             return Ok(CommandAdmissionResult::Rejected(AgentAdmissionFailure {
                 submission_id,
-                context_key,
+                correlation_token,
                 kind: AgentAdmissionFailureKind::RejectedCommand,
-                message: rejection.to_string(),
+                message,
+                rejection: Some(rejection),
             }));
         }
         Err(error) => return Err(anyhow::anyhow!("{error}")),
@@ -250,7 +252,7 @@ async fn queue_detached_promise_followups(
                     submission_id: Some(submission_id),
                     input,
                 }),
-                context_key: None,
+                correlation_token: None,
             });
         });
     }

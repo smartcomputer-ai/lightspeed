@@ -113,6 +113,22 @@
       "scope": "universe"
     },
     {
+      "method": "session/delete",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/SessionDeleteParams"
+        },
+        "type": "SessionDeleteParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfSessionDeleteResponse"
+        },
+        "type": "AgentApiOutcome<SessionDeleteResponse>"
+      },
+      "scope": "universe"
+    },
+    {
       "method": "session/events/read",
       "params": {
         "schema": {
@@ -605,6 +621,22 @@
           "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentJobCancelResponse"
         },
         "type": "AgentApiOutcome<EnvironmentJobCancelResponse>"
+      },
+      "scope": "universe"
+    },
+    {
+      "method": "models/list",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/ModelListParams"
+        },
+        "type": "ModelListParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfModelListResponse"
+        },
+        "type": "AgentApiOutcome<ModelListResponse>"
       },
       "scope": "universe"
     },

@@ -43,6 +43,28 @@ fn live_client() -> Client {
     Client::new(config).expect("OpenAI Responses client")
 }
 
+#[tokio::test]
+#[ignore = "requires OPENAI_API_KEY and network access"]
+async fn openai_responses_live_list_models() {
+    let client = live_client();
+
+    let models = client.list_models().await.expect("list OpenAI models");
+
+    assert_eq!(models.status, 200);
+    assert!(
+        !models.parsed.data.is_empty(),
+        "expected at least one account-visible OpenAI model"
+    );
+    assert!(
+        models
+            .parsed
+            .data
+            .iter()
+            .all(|model| !model.id.trim().is_empty()),
+        "every OpenAI model must have an id"
+    );
+}
+
 fn message_item(role: MessageRole, content: impl Into<String>) -> ResponseInputItem {
     ResponseInputItem::Message(InputMessage {
         role,
