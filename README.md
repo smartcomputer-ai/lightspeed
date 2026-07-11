@@ -71,6 +71,10 @@ What constitutes an "agent harness" is a rapidly expanding set of table-stakes f
 - [x] **CLI** to connect to running agent sessions
 - [x] **Messaging bridges**: WhatsApp and Telegram today; media and group chats included, more channels coming
 
+The generated [JSON-RPC API reference](interop/contract/api-reference.md) is
+derived from the same Rust manifest and schemas that drive OpenRPC, the
+TypeScript client, and Configurator MCP tool descriptions.
+
 ## Design
 At the heart of every agent is a carefully engineered state machine that manages what goes into the context window of the LLM.
 

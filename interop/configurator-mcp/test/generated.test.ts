@@ -27,6 +27,8 @@ describe("generated universe tools", () => {
 
   it("emits self-contained object input schemas", () => {
     for (const tool of GENERATED_TOOLS) {
+      expect(tool.summary.trim(), `${tool.name} summary`).not.toBe("");
+      expect(tool.description.trim(), `${tool.name} description`).not.toBe("");
       expect(tool.inputSchema.type, tool.name).toBe("object");
       const definitions = isRecord(tool.inputSchema.definitions)
         ? tool.inputSchema.definitions
@@ -37,6 +39,13 @@ describe("generated universe tools", () => {
         expect(definitions[reference.slice(prefix.length)], `${tool.name}: ${reference}`).toBeDefined();
       }
     }
+  });
+
+  it("carries operational method documentation into MCP descriptors", () => {
+    expect(GENERATED_TOOLS.find((tool) => tool.method === "auth/grants/read")).toMatchObject({
+      summary: "Read authentication grant metadata",
+      description: expect.stringContaining("token values are never returned"),
+    });
   });
 });
 

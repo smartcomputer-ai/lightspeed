@@ -84,7 +84,7 @@ export function createToolRegistry(
 function toMcpTool(descriptor: GeneratedToolDescriptor): Tool {
   return {
     name: descriptor.name,
-    description: `Calls Lightspeed ${descriptor.method} (${descriptor.paramsType} -> ${descriptor.resultType}).`,
+    description: `${descriptor.summary}. ${descriptor.description}`,
     inputSchema: descriptor.inputSchema as Tool["inputSchema"],
   };
 }

@@ -13,6 +13,13 @@ after generation showed that repeating the `AgentApiOutcome` notification
 closure made `tools/list` several megabytes; complete outcomes are still
 returned as structured content and JSON text.
 
+Documentation follow-up implemented 2026-07-11: every universe and operator
+method now carries a compact summary and operational description in the Rust
+dispatch manifest. The exporter propagates them to `methods.json`, OpenRPC, and
+the generated Markdown API reference; the TypeScript client exposes
+`METHOD_INFO` plus JSDoc; Configurator MCP uses the same text for model-facing
+tool descriptions.
+
 ## Goal
 
 Expose a generated, explicitly configurable subset of the universe-scoped
@@ -365,16 +372,17 @@ cd ../configurator-mcp && npm run generate
 
 ### Descriptions and safety metadata
 
-The current method manifest contains scope and schemas, but not human-oriented
-descriptions or MCP annotations such as `readOnlyHint`, `destructiveHint`, and
-`idempotentHint`.
+The Rust method manifest is the canonical source for a concise summary and an
+operational description. Descriptions emphasize lifecycle, concurrency,
+idempotency, capability prerequisites, and secret-handling facts that are not
+obvious from field names; field-level detail remains on the Rust DTOs and flows
+through JSON Schema. The MCP generator uses this canonical prose rather than
+type-name boilerplate.
 
-P99 does not add that metadata. Generated first-cut descriptions may state the
-exact underlying Lightspeed method and params/result type. Safety annotations
-are non-enforcing client hints and are deferred together with surface profiles
-and approval policy. Their later addition must enrich the canonical method
-manifest or a complete, drift-tested overlay; it must not alter which methods
-P99 dispatches.
+Structured MCP annotations such as `readOnlyHint`, `destructiveHint`, and
+`idempotentHint` remain deferred. They are non-enforcing client hints and should
+later enrich the canonical Rust method manifest without changing dispatch or
+the committed method filter.
 
 ## Results and errors
 

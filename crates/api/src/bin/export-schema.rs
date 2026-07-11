@@ -23,4 +23,7 @@ fn main() {
         fs::write(&path, text).expect("write artifact");
         println!("wrote {}", path.display());
     }
+    let reference_path = out_dir.join("api-reference.md");
+    fs::write(&reference_path, exported.api_reference).expect("write API reference");
+    println!("wrote {}", reference_path.display());
 }

@@ -26,6 +26,16 @@ fn committed(name: &str) -> Value {
     serde_json::from_str(&text).expect("committed artifact parses as JSON")
 }
 
+fn committed_text(name: &str) -> String {
+    let path = schemas_dir().join(name);
+    fs::read_to_string(&path).unwrap_or_else(|error| {
+        panic!(
+            "missing committed artifact {}: {error}; run `cargo run -p api --bin export-schema`",
+            path.display()
+        )
+    })
+}
+
 fn assert_validates(bundle: &Value, definition: &str, instance: &Value) {
     let schema = json!({
         "$schema": "http://json-schema.org/draft-07/schema#",
@@ -106,4 +116,9 @@ fn committed_schema_artifacts_are_current() {
             "interop/contract/{name} is stale; run `cargo run -p api --bin export-schema` and commit the result"
         );
     }
+    assert_eq!(
+        committed_text("api-reference.md"),
+        exported.api_reference,
+        "interop/contract/api-reference.md is stale; run `cargo run -p api --bin export-schema` and commit the result"
+    );
 }

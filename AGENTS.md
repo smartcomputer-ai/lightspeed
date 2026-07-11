@@ -83,6 +83,11 @@ under `interop/contract/` (`cargo test -p api` fails while they are stale):
 cargo run -p api --bin export-schema
 ```
 
+The export includes JSON Schema, the method manifest, OpenRPC, and the generated
+human reference at `interop/contract/api-reference.md`. Method-level summaries
+and descriptions belong in the Rust method manifest; parameter/field docs
+belong on the Rust wire DTOs so every generated consumer stays aligned.
+
 After changing the API contract, regenerate and verify both TypeScript
 consumers:
 

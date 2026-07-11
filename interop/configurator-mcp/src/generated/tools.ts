@@ -8,6 +8,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_start",
     "method": "session/start",
+    "summary": "Create or reopen a session",
+    "description": "Creates a session with optional config/profile setup. Retrying an existing session id returns that session; creation settings apply only when it is first created.",
     "paramsType": "SessionStartParams",
     "resultType": "AgentApiOutcome<SessionStartResponse>",
     "inputSchema": {
@@ -1162,6 +1164,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_read",
     "method": "session/read",
+    "summary": "Read a session",
+    "description": "Returns the current projected session, including sparse config and revisions, lifecycle/run state, active context, and derived tools.",
     "paramsType": "SessionReadParams",
     "resultType": "AgentApiOutcome<SessionReadResponse>",
     "inputSchema": {
@@ -1180,6 +1184,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_list",
     "method": "session/list",
+    "summary": "List sessions",
+    "description": "Returns a cursor-paginated summary list ordered by most recent update. Pages may shift while sessions are changing.",
     "paramsType": "SessionListParams",
     "resultType": "AgentApiOutcome<SessionListResponse>",
     "inputSchema": {
@@ -1207,6 +1213,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_config_put",
     "method": "session/config/put",
+    "summary": "Replace session configuration",
+    "description": "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked and an identical document is a no-op.",
     "paramsType": "SessionConfigPutParams",
     "resultType": "AgentApiOutcome<SessionConfigPutResponse>",
     "inputSchema": {
@@ -1985,6 +1993,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_rename",
     "method": "session/rename",
+    "summary": "Rename a session",
+    "description": "Sets the display name, or clears it when displayName is omitted.",
     "paramsType": "SessionRenameParams",
     "resultType": "AgentApiOutcome<SessionRenameResponse>",
     "inputSchema": {
@@ -2010,6 +2020,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_close",
     "method": "session/close",
+    "summary": "Close a session",
+    "description": "Closes an idle session and detaches its environment bindings. Force mode cancels active work, drops queued runs, and can recover a session whose workflow is unavailable.",
     "paramsType": "SessionCloseParams",
     "resultType": "AgentApiOutcome<SessionCloseResponse>",
     "inputSchema": {
@@ -2035,6 +2047,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_delete",
     "method": "session/delete",
+    "summary": "Delete a closed session",
+    "description": "Permanently removes session storage after the session has been closed; close active/open sessions first.",
     "paramsType": "SessionDeleteParams",
     "resultType": "AgentApiOutcome<SessionDeleteResponse>",
     "inputSchema": {
@@ -2053,6 +2067,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_events_read",
     "method": "session/events/read",
+    "summary": "Read the session event stream",
+    "description": "Reads events after a cursor and optionally long-polls when caught up. Continue from nextCursor/headCursor and inspect complete/gap rather than assuming an uninterrupted page.",
     "paramsType": "SessionEventsReadParams",
     "resultType": "AgentApiOutcome<SessionEventsReadResponse>",
     "inputSchema": {
@@ -2113,6 +2129,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_context_append",
     "method": "session/context/append",
+    "summary": "Append keyed session context",
+    "description": "Admits a batch of context entries with per-entry results. Stable keys make same-content retries no-ops; media preprocessing can fail one entry without discarding successful entries.",
     "paramsType": "ContextAppendParams",
     "resultType": "AgentApiOutcome<ContextAppendResponse>",
     "inputSchema": {
@@ -2230,6 +2248,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_context_remove",
     "method": "session/context/remove",
+    "summary": "Remove keyed session context",
+    "description": "Removes active entries by stable key with per-key results. Missing keys are idempotent no-ops; runtime-reserved run keys cannot be removed.",
     "paramsType": "ContextRemoveParams",
     "resultType": "AgentApiOutcome<ContextRemoveResponse>",
     "inputSchema": {
@@ -2256,6 +2276,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_context_compact",
     "method": "session/context/compact",
+    "summary": "Compact session context",
+    "description": "Runs the configured compaction policy on an open idle session and waits for the resulting context revision.",
     "paramsType": "ContextCompactParams",
     "resultType": "AgentApiOutcome<ContextCompactResponse>",
     "inputSchema": {
@@ -2274,6 +2296,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_runs_start",
     "method": "session/runs/start",
+    "summary": "Start an agent run",
+    "description": "Accepts input or existing context keys and returns once the run is queued/accepted, not when it finishes. Supply submissionId for retry safety, then follow session events or reread the session.",
     "paramsType": "RunStartParams",
     "resultType": "AgentApiOutcome<RunStartResponse>",
     "inputSchema": {
@@ -2603,6 +2627,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_runs_cancel",
     "method": "session/runs/cancel",
+    "summary": "Cancel a run",
+    "description": "Requests cancellation of the named queued or active run and returns its current projected state; observe session events for terminal completion.",
     "paramsType": "RunCancelParams",
     "resultType": "AgentApiOutcome<RunCancelResponse>",
     "inputSchema": {
@@ -2625,6 +2651,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_skills_list",
     "method": "session/skills/list",
+    "summary": "List available session skills",
+    "description": "Refreshes the session's configured VFS skill catalog and reports which discovered skills are enabled and active. An absent catalog yields an empty result.",
     "paramsType": "SkillListParams",
     "resultType": "AgentApiOutcome<SkillListResponse>",
     "inputSchema": {
@@ -2643,6 +2671,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_skills_active",
     "method": "session/skills/active",
+    "summary": "List active session skills",
+    "description": "Returns skill instructions currently injected into context, including activation scope and source.",
     "paramsType": "SkillActiveParams",
     "resultType": "AgentApiOutcome<SkillActiveResponse>",
     "inputSchema": {
@@ -2661,6 +2691,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_skills_activate",
     "method": "session/skills/activate",
+    "summary": "Activate a session skill",
+    "description": "Loads an enabled skill from the current catalog and injects its instructions into an open idle session. Run-scoped activation is the default.",
     "paramsType": "SkillActivateParams",
     "resultType": "AgentApiOutcome<SkillActivateResponse>",
     "inputSchema": {
@@ -2700,6 +2732,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_skills_deactivate",
     "method": "session/skills/deactivate",
+    "summary": "Deactivate a session skill",
+    "description": "Removes an active skill's injected context from an open idle session; the skill must currently be active.",
     "paramsType": "SkillDeactivateParams",
     "resultType": "AgentApiOutcome<SkillDeactivateResponse>",
     "inputSchema": {
@@ -2722,6 +2756,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_profiles_apply",
     "method": "session/profiles/apply",
+    "summary": "Apply a profile to a session",
+    "description": "Applies a named or inline profile's config, instructions, mounts, and environment setup to an existing session; mutating profile sections require it to be open and idle. Pass current revisions to guard concurrent changes.",
     "paramsType": "ProfileApplyParams",
     "resultType": "AgentApiOutcome<ProfileApplyResponse>",
     "inputSchema": {
@@ -3870,6 +3906,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_mounts_put",
     "method": "session/mounts/put",
+    "summary": "Create or replace a session mount",
+    "description": "Binds a snapshot or workspace at a path on an open idle session that grants VFS. Workspace mounts follow that workspace's current head.",
     "paramsType": "VfsMountPutParams",
     "resultType": "AgentApiOutcome<VfsMountPutResponse>",
     "inputSchema": {
@@ -3945,6 +3983,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_mounts_list",
     "method": "session/mounts/list",
+    "summary": "List session mounts",
+    "description": "Returns the session's snapshot/workspace bindings and access modes.",
     "paramsType": "VfsMountListParams",
     "resultType": "AgentApiOutcome<VfsMountListResponse>",
     "inputSchema": {
@@ -3963,6 +4003,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_mounts_delete",
     "method": "session/mounts/delete",
+    "summary": "Delete a session mount",
+    "description": "Removes a binding from an open idle session without deleting its source snapshot or workspace.",
     "paramsType": "VfsMountDeleteParams",
     "resultType": "AgentApiOutcome<VfsMountDeleteResponse>",
     "inputSchema": {
@@ -3985,6 +4027,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_environments_read",
     "method": "session/environments/read",
+    "summary": "Read a session environment binding",
+    "description": "Returns one session-local environment alias joined with current instance/provider availability and activation state.",
     "paramsType": "SessionEnvironmentReadParams",
     "resultType": "AgentApiOutcome<SessionEnvironmentReadResponse>",
     "inputSchema": {
@@ -4007,6 +4051,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_environments_list",
     "method": "session/environments/list",
+    "summary": "List session environment bindings",
+    "description": "Returns all environment aliases attached to the session and identifies the active tool target, if any.",
     "paramsType": "SessionEnvironmentListParams",
     "resultType": "AgentApiOutcome<SessionEnvironmentListResponse>",
     "inputSchema": {
@@ -4025,6 +4071,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_environments_attach",
     "method": "session/environments/attach",
+    "summary": "Attach an environment to a session",
+    "description": "Binds an existing universe environment instance under a session-local alias, optionally activating it. The session must grant environments and allow the provider.",
     "paramsType": "SessionEnvironmentAttachParams",
     "resultType": "AgentApiOutcome<SessionEnvironmentAttachResponse>",
     "inputSchema": {
@@ -4107,6 +4155,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_environments_activate",
     "method": "session/environments/activate",
+    "summary": "Activate a session environment",
+    "description": "Selects an attached, available environment as the process/filesystem tool target while the session is idle.",
     "paramsType": "SessionEnvironmentActivateParams",
     "resultType": "AgentApiOutcome<SessionEnvironmentActivateResponse>",
     "inputSchema": {
@@ -4129,6 +4179,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_environments_deactivate",
     "method": "session/environments/deactivate",
+    "summary": "Deactivate the session environment",
+    "description": "Clears the active environment tool target without detaching any binding or closing the underlying instance.",
     "paramsType": "SessionEnvironmentDeactivateParams",
     "resultType": "AgentApiOutcome<SessionEnvironmentDeactivateResponse>",
     "inputSchema": {
@@ -4147,6 +4199,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_environments_detach",
     "method": "session/environments/detach",
+    "summary": "Detach a session environment",
+    "description": "Detaches the session-local binding; detaching the active target requires an idle session and deactivates it first. The universe instance and jobs remain independently owned.",
     "paramsType": "SessionEnvironmentDetachParams",
     "resultType": "AgentApiOutcome<SessionEnvironmentDetachResponse>",
     "inputSchema": {
@@ -4169,6 +4223,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_environments_credentials_bind",
     "method": "session/environments/credentials/bind",
+    "summary": "Bind a credential into an environment",
+    "description": "Maps an environment variable name to an existing grant/provider/direct-secret handle for one session binding. The response exposes only the source handle, never secret material.",
     "paramsType": "SessionEnvironmentCredentialBindParams",
     "resultType": "AgentApiOutcome<SessionEnvironmentCredentialBindResponse>",
     "inputSchema": {
@@ -4253,6 +4309,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_environments_credentials_list",
     "method": "session/environments/credentials/list",
+    "summary": "List environment credential bindings",
+    "description": "Returns variable names and credential source handles for a session environment; resolved secret values are never returned.",
     "paramsType": "SessionEnvironmentCredentialListParams",
     "resultType": "AgentApiOutcome<SessionEnvironmentCredentialListResponse>",
     "inputSchema": {
@@ -4275,6 +4333,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_environments_credentials_unbind",
     "method": "session/environments/credentials/unbind",
+    "summary": "Unbind an environment credential",
+    "description": "Removes one variable-to-credential mapping without deleting the underlying grant, provider credential, or secret.",
     "paramsType": "SessionEnvironmentCredentialUnbindParams",
     "resultType": "AgentApiOutcome<SessionEnvironmentCredentialUnbindResponse>",
     "inputSchema": {
@@ -4301,6 +4361,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_environments_create",
     "method": "environments/create",
+    "summary": "Provision an environment instance",
+    "description": "Asks a live provider with create capability to create a universe-owned environment instance. This does not attach the instance to any session.",
     "paramsType": "EnvironmentCreateParams",
     "resultType": "AgentApiOutcome<EnvironmentCreateResponse>",
     "inputSchema": {
@@ -4445,6 +4507,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_environments_read",
     "method": "environments/read",
+    "summary": "Read an environment instance",
+    "description": "Returns the universe resource with its provider identity, current observed lifecycle, connection, scope, and capabilities.",
     "paramsType": "EnvironmentReadParams",
     "resultType": "AgentApiOutcome<EnvironmentReadResponse>",
     "inputSchema": {
@@ -4463,6 +4527,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_environments_list",
     "method": "environments/list",
+    "summary": "List environment instances",
+    "description": "Lists universe-owned instances, optionally filtered by provider or observed target status.",
     "paramsType": "EnvironmentListParams",
     "resultType": "AgentApiOutcome<EnvironmentListResponse>",
     "inputSchema": {
@@ -4506,6 +4572,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_environments_close",
     "method": "environments/close",
+    "summary": "Close an environment instance",
+    "description": "Tears down the universe resource through its provider. Closing is rejected while session bindings or nonterminal jobs still occupy the instance.",
     "paramsType": "EnvironmentCloseParams",
     "resultType": "AgentApiOutcome<EnvironmentCloseResponse>",
     "inputSchema": {
@@ -4524,6 +4592,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_models_list",
     "method": "models/list",
+    "summary": "Discover available models",
+    "description": "Queries supported providers directly on every call and returns best-effort selectable routes. One provider failure does not discard successful results from others.",
     "paramsType": "ModelListParams",
     "resultType": "AgentApiOutcome<ModelListResponse>",
     "inputSchema": {
@@ -4541,6 +4611,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_profiles_create",
     "method": "profiles/create",
+    "summary": "Create an agent profile",
+    "description": "Creates a new universe-scoped reusable profile document; use profiles/put for create-or-replace revision semantics.",
     "paramsType": "ProfileCreateParams",
     "resultType": "AgentApiOutcome<ProfileCreateResponse>",
     "inputSchema": {
@@ -5639,6 +5711,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_profiles_read",
     "method": "profiles/read",
+    "summary": "Read an agent profile",
+    "description": "Returns the complete profile document and current revision.",
     "paramsType": "ProfileReadParams",
     "resultType": "AgentApiOutcome<ProfileReadResponse>",
     "inputSchema": {
@@ -5662,6 +5736,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_profiles_list",
     "method": "profiles/list",
+    "summary": "List agent profiles",
+    "description": "Returns lightweight summaries of universe-scoped reusable profiles.",
     "paramsType": "ProfileListParams",
     "resultType": "AgentApiOutcome<ProfileListResponse>",
     "inputSchema": {
@@ -5672,6 +5748,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_profiles_put",
     "method": "profiles/put",
+    "summary": "Create or replace an agent profile",
+    "description": "Stores the complete profile document. Use expectedRevision from profiles/read when replacing to prevent lost updates; absence writes unconditionally.",
     "paramsType": "ProfilePutParams",
     "resultType": "AgentApiOutcome<ProfilePutResponse>",
     "inputSchema": {
@@ -6779,6 +6857,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_profiles_delete",
     "method": "profiles/delete",
+    "summary": "Delete an agent profile",
+    "description": "Deletes the catalog document; sessions previously created or configured from it retain their materialized state.",
     "paramsType": "ProfileDeleteParams",
     "resultType": "AgentApiOutcome<ProfileDeleteResponse>",
     "inputSchema": {
@@ -6802,6 +6882,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_blobs_put",
     "method": "blobs/put",
+    "summary": "Store content-addressed blobs",
+    "description": "Decodes and stores a batch of base64 payloads, returning immutable content references in request order. Re-uploading identical bytes is naturally deduplicated.",
     "paramsType": "BlobPutParams",
     "resultType": "AgentApiOutcome<BlobPutResponse>",
     "inputSchema": {
@@ -6835,6 +6917,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_blobs_read",
     "method": "blobs/read",
+    "summary": "Read a content-addressed blob",
+    "description": "Returns the complete immutable blob as base64; large values count against gateway and MCP response limits.",
     "paramsType": "BlobReadParams",
     "resultType": "AgentApiOutcome<BlobReadResponse>",
     "inputSchema": {
@@ -6853,6 +6937,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_blobs_has",
     "method": "blobs/has",
+    "summary": "Check blob availability",
+    "description": "Checks a batch of content references without returning blob bodies, preserving request order.",
     "paramsType": "BlobHasParams",
     "resultType": "AgentApiOutcome<BlobHasResponse>",
     "inputSchema": {
@@ -6872,6 +6958,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_vfs_snapshots_commit",
     "method": "vfs/snapshots/commit",
+    "summary": "Commit a VFS snapshot",
+    "description": "Validates and stores an immutable filesystem manifest. Upload referenced file blobs first; the returned snapshot ref is content-addressed.",
     "paramsType": "VfsSnapshotCommitParams",
     "resultType": "AgentApiOutcome<VfsSnapshotCommitResponse>",
     "inputSchema": {
@@ -6888,6 +6976,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_vfs_snapshots_read",
     "method": "vfs/snapshots/read",
+    "summary": "Read a VFS snapshot",
+    "description": "Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs.",
     "paramsType": "VfsSnapshotReadParams",
     "resultType": "AgentApiOutcome<VfsSnapshotReadResponse>",
     "inputSchema": {
@@ -6906,6 +6996,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_vfs_workspaces_create",
     "method": "vfs/workspaces/create",
+    "summary": "Create a mutable VFS workspace",
+    "description": "Creates a universe workspace at an optional seed snapshot; absence starts from a server-created empty snapshot.",
     "paramsType": "VfsWorkspaceCreateParams",
     "resultType": "AgentApiOutcome<VfsWorkspaceCreateResponse>",
     "inputSchema": {
@@ -6937,6 +7029,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_vfs_workspaces_read",
     "method": "vfs/workspaces/read",
+    "summary": "Read a VFS workspace",
+    "description": "Returns workspace metadata, current head snapshot, and revision for safe updates.",
     "paramsType": "VfsWorkspaceReadParams",
     "resultType": "AgentApiOutcome<VfsWorkspaceReadResponse>",
     "inputSchema": {
@@ -6955,6 +7049,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_vfs_workspaces_list",
     "method": "vfs/workspaces/list",
+    "summary": "List VFS workspaces",
+    "description": "Lists mutable universe workspaces with head snapshots, sizes, and revisions.",
     "paramsType": "VfsWorkspaceListParams",
     "resultType": "AgentApiOutcome<VfsWorkspaceListResponse>",
     "inputSchema": {
@@ -6965,6 +7061,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_vfs_workspaces_update",
     "method": "vfs/workspaces/update",
+    "summary": "Update a VFS workspace",
+    "description": "Moves the workspace head to an existing snapshot and updates its display name. Pass expectedRevision from a read to prevent lost updates.",
     "paramsType": "VfsWorkspaceUpdateParams",
     "resultType": "AgentApiOutcome<VfsWorkspaceUpdateResponse>",
     "inputSchema": {
@@ -7001,6 +7099,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_vfs_workspaces_delete",
     "method": "vfs/workspaces/delete",
+    "summary": "Delete a VFS workspace",
+    "description": "Deletes the mutable workspace record; immutable snapshots and blobs remain content-addressed resources.",
     "paramsType": "VfsWorkspaceDeleteParams",
     "resultType": "AgentApiOutcome<VfsWorkspaceDeleteResponse>",
     "inputSchema": {
@@ -7019,6 +7119,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_mcp_servers_put",
     "method": "mcp/servers/put",
+    "summary": "Create or replace an MCP server record",
+    "description": "Stores the complete universe catalog document. Use expectedRevision when replacing; authenticated policies reference grants but never embed credentials.",
     "paramsType": "McpServerPutParams",
     "resultType": "AgentApiOutcome<McpServerPutResponse>",
     "inputSchema": {
@@ -7264,6 +7366,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_mcp_servers_read",
     "method": "mcp/servers/read",
+    "summary": "Read an MCP server record",
+    "description": "Returns one catalog document with defaults, auth policy, status, and revision; no credential value is exposed.",
     "paramsType": "McpServerReadParams",
     "resultType": "AgentApiOutcome<McpServerReadResponse>",
     "inputSchema": {
@@ -7282,6 +7386,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_mcp_servers_list",
     "method": "mcp/servers/list",
+    "summary": "List MCP server records",
+    "description": "Lists universe catalog entries, optionally filtered by lifecycle/configuration status.",
     "paramsType": "McpServerListParams",
     "resultType": "AgentApiOutcome<McpServerListResponse>",
     "inputSchema": {
@@ -7315,6 +7421,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_mcp_servers_delete",
     "method": "mcp/servers/delete",
+    "summary": "Delete an MCP server record",
+    "description": "Deletes the catalog document. Existing session configs that reference it are not silently rewritten and may need explicit reconfiguration.",
     "paramsType": "McpServerDeleteParams",
     "resultType": "AgentApiOutcome<McpServerDeleteResponse>",
     "inputSchema": {
@@ -7333,6 +7441,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_environments_providers_list",
     "method": "environments/providers/list",
+    "summary": "List environment providers",
+    "description": "Lists current provider presence with lease-derived online/stale/offline status, optionally filtered by status or kind.",
     "paramsType": "EnvironmentProviderListParams",
     "resultType": "AgentApiOutcome<EnvironmentProviderListResponse>",
     "inputSchema": {
@@ -7383,6 +7493,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_auth_grants_import",
     "method": "auth/grants/import",
+    "summary": "Import a static bearer grant",
+    "description": "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. The token can never be read back through the API.",
     "paramsType": "AuthGrantImportParams",
     "resultType": "AgentApiOutcome<AuthGrantImportResponse>",
     "inputSchema": {
@@ -7445,6 +7557,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_auth_grants_read",
     "method": "auth/grants/read",
+    "summary": "Read authentication grant metadata",
+    "description": "Returns principal, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned.",
     "paramsType": "AuthGrantReadParams",
     "resultType": "AgentApiOutcome<AuthGrantReadResponse>",
     "inputSchema": {
@@ -7463,6 +7577,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_auth_grants_list",
     "method": "auth/grants/list",
+    "summary": "List authentication grants",
+    "description": "Lists non-secret grant metadata for the universe, optionally filtered by status.",
     "paramsType": "AuthGrantListParams",
     "resultType": "AgentApiOutcome<AuthGrantListResponse>",
     "inputSchema": {
@@ -7496,6 +7612,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_auth_grants_revoke",
     "method": "auth/grants/revoke",
+    "summary": "Revoke an authentication grant",
+    "description": "Marks the grant unusable by token consumers while retaining non-secret audit metadata.",
     "paramsType": "AuthGrantRevokeParams",
     "resultType": "AgentApiOutcome<AuthGrantRevokeResponse>",
     "inputSchema": {
@@ -7514,6 +7632,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_auth_clients_create",
     "method": "auth/clients/create",
+    "summary": "Register an OAuth client",
+    "description": "Stores provider endpoints and client identity; an optional plaintext client secret is encrypted and represented thereafter only by hasClientSecret.",
     "paramsType": "AuthClientCreateParams",
     "resultType": "AgentApiOutcome<AuthClientCreateResponse>",
     "inputSchema": {
@@ -7614,6 +7734,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_auth_clients_read",
     "method": "auth/clients/read",
+    "summary": "Read OAuth client metadata",
+    "description": "Returns endpoints, public client identity, defaults, and secret-presence state; the client secret is never returned.",
     "paramsType": "AuthClientReadParams",
     "resultType": "AgentApiOutcome<AuthClientReadResponse>",
     "inputSchema": {
@@ -7632,6 +7754,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_auth_clients_list",
     "method": "auth/clients/list",
+    "summary": "List OAuth clients",
+    "description": "Lists non-secret OAuth client registrations in the universe.",
     "paramsType": "AuthClientListParams",
     "resultType": "AgentApiOutcome<AuthClientListResponse>",
     "inputSchema": {
@@ -7642,6 +7766,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_auth_clients_delete",
     "method": "auth/clients/delete",
+    "summary": "Delete an OAuth client",
+    "description": "Deletes the client registration and its stored client secret; grants already created from it remain separate records.",
     "paramsType": "AuthClientDeleteParams",
     "resultType": "AgentApiOutcome<AuthClientDeleteResponse>",
     "inputSchema": {
@@ -7660,6 +7786,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_auth_flows_start",
     "method": "auth/flows/start",
+    "summary": "Start an OAuth authorization flow",
+    "description": "Creates a short-lived PKCE flow and returns a browser authorization URL containing one-time state. Treat the URL as sensitive and poll auth/flows/read for completion.",
     "paramsType": "AuthFlowStartParams",
     "resultType": "AgentApiOutcome<AuthFlowStartResponse>",
     "inputSchema": {
@@ -7693,6 +7821,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_auth_flows_read",
     "method": "auth/flows/read",
+    "summary": "Read OAuth flow status",
+    "description": "Polls a flow's pending/completed/failed/expired state and returns the resulting grant id when authorization succeeds; no token value is exposed.",
     "paramsType": "AuthFlowStatusParams",
     "resultType": "AgentApiOutcome<AuthFlowStatusResponse>",
     "inputSchema": {
@@ -7711,6 +7841,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_auth_providers_create",
     "method": "auth/providers/create",
+    "summary": "Register an authentication provider",
+    "description": "Creates a model or GitHub credential source. Plaintext API keys/private keys are encrypted on receipt and later represented only by configuration plus hasCredential.",
     "paramsType": "AuthProviderCreateParams",
     "resultType": "AgentApiOutcome<AuthProviderCreateResponse>",
     "inputSchema": {
@@ -7812,6 +7944,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_auth_providers_read",
     "method": "auth/providers/read",
+    "summary": "Read authentication provider metadata",
+    "description": "Returns provider kind, non-secret configuration, credential-presence state, and status; stored credentials are never returned.",
     "paramsType": "AuthProviderReadParams",
     "resultType": "AgentApiOutcome<AuthProviderReadResponse>",
     "inputSchema": {
@@ -7830,6 +7964,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_auth_providers_list",
     "method": "auth/providers/list",
+    "summary": "List authentication providers",
+    "description": "Lists non-secret model/GitHub provider registrations for the universe.",
     "paramsType": "AuthProviderListParams",
     "resultType": "AgentApiOutcome<AuthProviderListResponse>",
     "inputSchema": {
@@ -7840,6 +7976,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_auth_providers_delete",
     "method": "auth/providers/delete",
+    "summary": "Delete an authentication provider",
+    "description": "Deletes the provider registration and its directly stored credential; separately stored grants remain independent records.",
     "paramsType": "AuthProviderDeleteParams",
     "resultType": "AgentApiOutcome<AuthProviderDeleteResponse>",
     "inputSchema": {
@@ -7858,6 +7996,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_auth_github_installations_list",
     "method": "auth/github/installations/list",
+    "summary": "List GitHub App installations",
+    "description": "Uses the registered GitHub App provider credential to query accessible installations and returns account/permission metadata without tokens.",
     "paramsType": "AuthGitHubInstallationListParams",
     "resultType": "AgentApiOutcome<AuthGitHubInstallationListResponse>",
     "inputSchema": {
@@ -7876,6 +8016,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_auth_github_installations_grant",
     "method": "auth/github/installations/grant",
+    "summary": "Grant access to a GitHub App installation",
+    "description": "Creates or refreshes a universe auth grant for one accessible installation. The installation token is brokered internally and never returned.",
     "paramsType": "AuthGitHubInstallationGrantParams",
     "resultType": "AgentApiOutcome<AuthGitHubInstallationGrantResponse>",
     "inputSchema": {

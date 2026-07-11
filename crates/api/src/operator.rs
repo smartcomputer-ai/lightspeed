@@ -166,7 +166,8 @@ pub trait OperatorApiService: Send + Sync {
 }
 
 macro_rules! operator_api_methods {
-    ($($method_const:ident => $service_fn:ident($params:ty) -> $response:ty),+ $(,)?) => {
+    ($($method_const:ident => $service_fn:ident($params:ty) -> $response:ty =>
+        [$summary:expr, $description:expr]),+ $(,)?) => {
         pub async fn dispatch_operator_json_rpc(
             service: &dyn OperatorApiService,
             request: JsonRpcRequest,
@@ -192,6 +193,8 @@ macro_rules! operator_api_methods {
                     MethodSpec {
                         method: $method_const,
                         scope: MethodScope::Operator,
+                        summary: $summary,
+                        description: $description,
                         params_type: stringify!($params),
                         result_type: concat!("AgentApiOutcome<", stringify!($response), ">"),
                         register_schemas: |generator| MethodSchemas {
@@ -206,9 +209,14 @@ macro_rules! operator_api_methods {
 }
 
 operator_api_methods! {
-    METHOD_OPERATOR_UNIVERSES_CREATE => create_universe(OperatorUniverseCreateParams) -> OperatorUniverseCreateResponse,
-    METHOD_OPERATOR_UNIVERSES_LIST => list_universes(OperatorUniverseListParams) -> OperatorUniverseListResponse,
-    METHOD_OPERATOR_UNIVERSES_READ => read_universe(OperatorUniverseReadParams) -> OperatorUniverseReadResponse,
-    METHOD_OPERATOR_UNIVERSES_DELETE => delete_universe(OperatorUniverseDeleteParams) -> OperatorUniverseDeleteResponse,
-    METHOD_OPERATOR_OUTBOX_READ => read_outbox(OperatorOutboxReadParams) -> OperatorOutboxReadResponse,
+    METHOD_OPERATOR_UNIVERSES_CREATE => create_universe(OperatorUniverseCreateParams) -> OperatorUniverseCreateResponse =>
+        ["Create a universe", "Creates the deployment tenant boundary for an explicit UUID. The operation is idempotent and reports whether a new universe was created."],
+    METHOD_OPERATOR_UNIVERSES_LIST => list_universes(OperatorUniverseListParams) -> OperatorUniverseListResponse =>
+        ["List universes", "Returns deployment-wide universe summaries with approximate live aggregate counts and last session activity."],
+    METHOD_OPERATOR_UNIVERSES_READ => read_universe(OperatorUniverseReadParams) -> OperatorUniverseReadResponse =>
+        ["Read a universe", "Returns one deployment tenant summary with aggregate session, workspace, profile, and blob usage."],
+    METHOD_OPERATOR_UNIVERSES_DELETE => delete_universe(OperatorUniverseDeleteParams) -> OperatorUniverseDeleteResponse =>
+        ["Purge a universe", "Permanently terminates live session workflows, deletes external blob objects, and cascades universe data. The purge is resumable/idempotent after partial failure."],
+    METHOD_OPERATOR_OUTBOX_READ => read_outbox(OperatorOutboxReadParams) -> OperatorOutboxReadResponse =>
+        ["Read the deployment outbox", "Cursor-reads or long-polls pending messages across all universes. Entries identify their universe; acknowledge each through universe-scoped outbox/ack."],
 }

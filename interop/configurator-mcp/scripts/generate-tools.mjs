@@ -14,6 +14,14 @@ const bundle = JSON.parse(await readFile(schemaPath, "utf8"));
 const filter = JSON.parse(await readFile(filterPath, "utf8"));
 const definitions = bundle.definitions ?? {};
 const universeMethods = (manifest.methods ?? []).filter((entry) => entry.scope === "universe");
+for (const entry of universeMethods) {
+  if (typeof entry.summary !== "string" || entry.summary.trim().length === 0) {
+    throw new Error(`method ${entry.method} is missing summary documentation`);
+  }
+  if (typeof entry.description !== "string" || entry.description.trim().length === 0) {
+    throw new Error(`method ${entry.method} is missing description documentation`);
+  }
+}
 const excludeMethods = validateFilter(filter, universeMethods);
 const methods = universeMethods.filter((entry) => !excludeMethods.has(entry.method));
 
@@ -28,6 +36,8 @@ const tools = methods.map((entry) => {
   return {
     name,
     method: entry.method,
+    summary: entry.summary,
+    description: entry.description,
     paramsType: entry.params.type,
     resultType: entry.result.type,
     inputSchema: standaloneSchema(entry.params.schema, entry.method, "params"),

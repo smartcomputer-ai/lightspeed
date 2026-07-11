@@ -93,6 +93,439 @@ export const METHODS = [
   "operator/outbox/read",
 ] as const;
 
+export const METHOD_INFO = {
+  "initialize": {
+    scope: "universe",
+    summary: "Inspect the Lightspeed protocol",
+    description: "Returns protocol version, server identity, and supported capabilities without changing universe state.",
+  },
+  "session/start": {
+    scope: "universe",
+    summary: "Create or reopen a session",
+    description: "Creates a session with optional config/profile setup. Retrying an existing session id returns that session; creation settings apply only when it is first created.",
+  },
+  "session/read": {
+    scope: "universe",
+    summary: "Read a session",
+    description: "Returns the current projected session, including sparse config and revisions, lifecycle/run state, active context, and derived tools.",
+  },
+  "session/list": {
+    scope: "universe",
+    summary: "List sessions",
+    description: "Returns a cursor-paginated summary list ordered by most recent update. Pages may shift while sessions are changing.",
+  },
+  "session/config/put": {
+    scope: "universe",
+    summary: "Replace session configuration",
+    description: "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked and an identical document is a no-op.",
+  },
+  "session/rename": {
+    scope: "universe",
+    summary: "Rename a session",
+    description: "Sets the display name, or clears it when displayName is omitted.",
+  },
+  "session/close": {
+    scope: "universe",
+    summary: "Close a session",
+    description: "Closes an idle session and detaches its environment bindings. Force mode cancels active work, drops queued runs, and can recover a session whose workflow is unavailable.",
+  },
+  "session/delete": {
+    scope: "universe",
+    summary: "Delete a closed session",
+    description: "Permanently removes session storage after the session has been closed; close active/open sessions first.",
+  },
+  "session/events/read": {
+    scope: "universe",
+    summary: "Read the session event stream",
+    description: "Reads events after a cursor and optionally long-polls when caught up. Continue from nextCursor/headCursor and inspect complete/gap rather than assuming an uninterrupted page.",
+  },
+  "session/context/append": {
+    scope: "universe",
+    summary: "Append keyed session context",
+    description: "Admits a batch of context entries with per-entry results. Stable keys make same-content retries no-ops; media preprocessing can fail one entry without discarding successful entries.",
+  },
+  "session/context/remove": {
+    scope: "universe",
+    summary: "Remove keyed session context",
+    description: "Removes active entries by stable key with per-key results. Missing keys are idempotent no-ops; runtime-reserved run keys cannot be removed.",
+  },
+  "session/context/compact": {
+    scope: "universe",
+    summary: "Compact session context",
+    description: "Runs the configured compaction policy on an open idle session and waits for the resulting context revision.",
+  },
+  "session/runs/start": {
+    scope: "universe",
+    summary: "Start an agent run",
+    description: "Accepts input or existing context keys and returns once the run is queued/accepted, not when it finishes. Supply submissionId for retry safety, then follow session events or reread the session.",
+  },
+  "session/runs/cancel": {
+    scope: "universe",
+    summary: "Cancel a run",
+    description: "Requests cancellation of the named queued or active run and returns its current projected state; observe session events for terminal completion.",
+  },
+  "session/skills/list": {
+    scope: "universe",
+    summary: "List available session skills",
+    description: "Refreshes the session's configured VFS skill catalog and reports which discovered skills are enabled and active. An absent catalog yields an empty result.",
+  },
+  "session/skills/active": {
+    scope: "universe",
+    summary: "List active session skills",
+    description: "Returns skill instructions currently injected into context, including activation scope and source.",
+  },
+  "session/skills/activate": {
+    scope: "universe",
+    summary: "Activate a session skill",
+    description: "Loads an enabled skill from the current catalog and injects its instructions into an open idle session. Run-scoped activation is the default.",
+  },
+  "session/skills/deactivate": {
+    scope: "universe",
+    summary: "Deactivate a session skill",
+    description: "Removes an active skill's injected context from an open idle session; the skill must currently be active.",
+  },
+  "session/profiles/apply": {
+    scope: "universe",
+    summary: "Apply a profile to a session",
+    description: "Applies a named or inline profile's config, instructions, mounts, and environment setup to an existing session; mutating profile sections require it to be open and idle. Pass current revisions to guard concurrent changes.",
+  },
+  "session/mounts/put": {
+    scope: "universe",
+    summary: "Create or replace a session mount",
+    description: "Binds a snapshot or workspace at a path on an open idle session that grants VFS. Workspace mounts follow that workspace's current head.",
+  },
+  "session/mounts/list": {
+    scope: "universe",
+    summary: "List session mounts",
+    description: "Returns the session's snapshot/workspace bindings and access modes.",
+  },
+  "session/mounts/delete": {
+    scope: "universe",
+    summary: "Delete a session mount",
+    description: "Removes a binding from an open idle session without deleting its source snapshot or workspace.",
+  },
+  "session/environments/read": {
+    scope: "universe",
+    summary: "Read a session environment binding",
+    description: "Returns one session-local environment alias joined with current instance/provider availability and activation state.",
+  },
+  "session/environments/list": {
+    scope: "universe",
+    summary: "List session environment bindings",
+    description: "Returns all environment aliases attached to the session and identifies the active tool target, if any.",
+  },
+  "session/environments/attach": {
+    scope: "universe",
+    summary: "Attach an environment to a session",
+    description: "Binds an existing universe environment instance under a session-local alias, optionally activating it. The session must grant environments and allow the provider.",
+  },
+  "session/environments/activate": {
+    scope: "universe",
+    summary: "Activate a session environment",
+    description: "Selects an attached, available environment as the process/filesystem tool target while the session is idle.",
+  },
+  "session/environments/deactivate": {
+    scope: "universe",
+    summary: "Deactivate the session environment",
+    description: "Clears the active environment tool target without detaching any binding or closing the underlying instance.",
+  },
+  "session/environments/detach": {
+    scope: "universe",
+    summary: "Detach a session environment",
+    description: "Detaches the session-local binding; detaching the active target requires an idle session and deactivates it first. The universe instance and jobs remain independently owned.",
+  },
+  "session/environments/credentials/bind": {
+    scope: "universe",
+    summary: "Bind a credential into an environment",
+    description: "Maps an environment variable name to an existing grant/provider/direct-secret handle for one session binding. The response exposes only the source handle, never secret material.",
+  },
+  "session/environments/credentials/list": {
+    scope: "universe",
+    summary: "List environment credential bindings",
+    description: "Returns variable names and credential source handles for a session environment; resolved secret values are never returned.",
+  },
+  "session/environments/credentials/unbind": {
+    scope: "universe",
+    summary: "Unbind an environment credential",
+    description: "Removes one variable-to-credential mapping without deleting the underlying grant, provider credential, or secret.",
+  },
+  "environments/create": {
+    scope: "universe",
+    summary: "Provision an environment instance",
+    description: "Asks a live provider with create capability to create a universe-owned environment instance. This does not attach the instance to any session.",
+  },
+  "environments/read": {
+    scope: "universe",
+    summary: "Read an environment instance",
+    description: "Returns the universe resource with its provider identity, current observed lifecycle, connection, scope, and capabilities.",
+  },
+  "environments/list": {
+    scope: "universe",
+    summary: "List environment instances",
+    description: "Lists universe-owned instances, optionally filtered by provider or observed target status.",
+  },
+  "environments/close": {
+    scope: "universe",
+    summary: "Close an environment instance",
+    description: "Tears down the universe resource through its provider. Closing is rejected while session bindings or nonterminal jobs still occupy the instance.",
+  },
+  "environments/jobs/create": {
+    scope: "universe",
+    summary: "Create environment jobs",
+    description: "Starts a dependency-aware job group on one environment instance. requestId is the retry identity; jobs are owned by the instance rather than a session.",
+  },
+  "environments/jobs/read": {
+    scope: "universe",
+    summary: "Read environment jobs",
+    description: "Reads selected job handles with bounded output, optional sequence continuation, and optional artifacts; use returned status/sequence data for polling.",
+  },
+  "environments/jobs/list": {
+    scope: "universe",
+    summary: "List environment jobs",
+    description: "Lists durable job records across the universe, optionally narrowed to an instance or job group.",
+  },
+  "environments/jobs/cancel": {
+    scope: "universe",
+    summary: "Cancel environment jobs",
+    description: "Requests cancellation for selected jobs, optionally including dependents. Force is provider-specific escalation; inspect each per-job result.",
+  },
+  "models/list": {
+    scope: "universe",
+    summary: "Discover available models",
+    description: "Queries supported providers directly on every call and returns best-effort selectable routes. One provider failure does not discard successful results from others.",
+  },
+  "profiles/create": {
+    scope: "universe",
+    summary: "Create an agent profile",
+    description: "Creates a new universe-scoped reusable profile document; use profiles/put for create-or-replace revision semantics.",
+  },
+  "profiles/read": {
+    scope: "universe",
+    summary: "Read an agent profile",
+    description: "Returns the complete profile document and current revision.",
+  },
+  "profiles/list": {
+    scope: "universe",
+    summary: "List agent profiles",
+    description: "Returns lightweight summaries of universe-scoped reusable profiles.",
+  },
+  "profiles/put": {
+    scope: "universe",
+    summary: "Create or replace an agent profile",
+    description: "Stores the complete profile document. Use expectedRevision from profiles/read when replacing to prevent lost updates; absence writes unconditionally.",
+  },
+  "profiles/delete": {
+    scope: "universe",
+    summary: "Delete an agent profile",
+    description: "Deletes the catalog document; sessions previously created or configured from it retain their materialized state.",
+  },
+  "blobs/put": {
+    scope: "universe",
+    summary: "Store content-addressed blobs",
+    description: "Decodes and stores a batch of base64 payloads, returning immutable content references in request order. Re-uploading identical bytes is naturally deduplicated.",
+  },
+  "blobs/read": {
+    scope: "universe",
+    summary: "Read a content-addressed blob",
+    description: "Returns the complete immutable blob as base64; large values count against gateway and MCP response limits.",
+  },
+  "blobs/has": {
+    scope: "universe",
+    summary: "Check blob availability",
+    description: "Checks a batch of content references without returning blob bodies, preserving request order.",
+  },
+  "vfs/snapshots/commit": {
+    scope: "universe",
+    summary: "Commit a VFS snapshot",
+    description: "Validates and stores an immutable filesystem manifest. Upload referenced file blobs first; the returned snapshot ref is content-addressed.",
+  },
+  "vfs/snapshots/read": {
+    scope: "universe",
+    summary: "Read a VFS snapshot",
+    description: "Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs.",
+  },
+  "vfs/workspaces/create": {
+    scope: "universe",
+    summary: "Create a mutable VFS workspace",
+    description: "Creates a universe workspace at an optional seed snapshot; absence starts from a server-created empty snapshot.",
+  },
+  "vfs/workspaces/read": {
+    scope: "universe",
+    summary: "Read a VFS workspace",
+    description: "Returns workspace metadata, current head snapshot, and revision for safe updates.",
+  },
+  "vfs/workspaces/list": {
+    scope: "universe",
+    summary: "List VFS workspaces",
+    description: "Lists mutable universe workspaces with head snapshots, sizes, and revisions.",
+  },
+  "vfs/workspaces/update": {
+    scope: "universe",
+    summary: "Update a VFS workspace",
+    description: "Moves the workspace head to an existing snapshot and updates its display name. Pass expectedRevision from a read to prevent lost updates.",
+  },
+  "vfs/workspaces/delete": {
+    scope: "universe",
+    summary: "Delete a VFS workspace",
+    description: "Deletes the mutable workspace record; immutable snapshots and blobs remain content-addressed resources.",
+  },
+  "mcp/servers/put": {
+    scope: "universe",
+    summary: "Create or replace an MCP server record",
+    description: "Stores the complete universe catalog document. Use expectedRevision when replacing; authenticated policies reference grants but never embed credentials.",
+  },
+  "mcp/servers/read": {
+    scope: "universe",
+    summary: "Read an MCP server record",
+    description: "Returns one catalog document with defaults, auth policy, status, and revision; no credential value is exposed.",
+  },
+  "mcp/servers/list": {
+    scope: "universe",
+    summary: "List MCP server records",
+    description: "Lists universe catalog entries, optionally filtered by lifecycle/configuration status.",
+  },
+  "mcp/servers/delete": {
+    scope: "universe",
+    summary: "Delete an MCP server record",
+    description: "Deletes the catalog document. Existing session configs that reference it are not silently rewritten and may need explicit reconfiguration.",
+  },
+  "environments/providers/register": {
+    scope: "universe",
+    summary: "Register environment provider presence",
+    description: "Publishes a controller endpoint, capabilities, implementation identity, and liveness lease. Intended for trusted provider/bridge infrastructure, not ordinary configuration clients.",
+  },
+  "environments/providers/heartbeat": {
+    scope: "universe",
+    summary: "Refresh environment provider presence",
+    description: "Renews a provider lease and records its complete observed target descriptors. Omitted provided targets may become unknown; intended for provider infrastructure.",
+  },
+  "environments/providers/unregister": {
+    scope: "universe",
+    summary: "Unregister environment provider presence",
+    description: "Marks provider presence offline without deleting its durable environment instance records.",
+  },
+  "environments/providers/list": {
+    scope: "universe",
+    summary: "List environment providers",
+    description: "Lists current provider presence with lease-derived online/stale/offline status, optionally filtered by status or kind.",
+  },
+  "auth/grants/import": {
+    scope: "universe",
+    summary: "Import a static bearer grant",
+    description: "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. The token can never be read back through the API.",
+  },
+  "auth/grants/read": {
+    scope: "universe",
+    summary: "Read authentication grant metadata",
+    description: "Returns principal, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned.",
+  },
+  "auth/grants/list": {
+    scope: "universe",
+    summary: "List authentication grants",
+    description: "Lists non-secret grant metadata for the universe, optionally filtered by status.",
+  },
+  "auth/grants/revoke": {
+    scope: "universe",
+    summary: "Revoke an authentication grant",
+    description: "Marks the grant unusable by token consumers while retaining non-secret audit metadata.",
+  },
+  "auth/clients/create": {
+    scope: "universe",
+    summary: "Register an OAuth client",
+    description: "Stores provider endpoints and client identity; an optional plaintext client secret is encrypted and represented thereafter only by hasClientSecret.",
+  },
+  "auth/clients/read": {
+    scope: "universe",
+    summary: "Read OAuth client metadata",
+    description: "Returns endpoints, public client identity, defaults, and secret-presence state; the client secret is never returned.",
+  },
+  "auth/clients/list": {
+    scope: "universe",
+    summary: "List OAuth clients",
+    description: "Lists non-secret OAuth client registrations in the universe.",
+  },
+  "auth/clients/delete": {
+    scope: "universe",
+    summary: "Delete an OAuth client",
+    description: "Deletes the client registration and its stored client secret; grants already created from it remain separate records.",
+  },
+  "auth/flows/start": {
+    scope: "universe",
+    summary: "Start an OAuth authorization flow",
+    description: "Creates a short-lived PKCE flow and returns a browser authorization URL containing one-time state. Treat the URL as sensitive and poll auth/flows/read for completion.",
+  },
+  "auth/flows/read": {
+    scope: "universe",
+    summary: "Read OAuth flow status",
+    description: "Polls a flow's pending/completed/failed/expired state and returns the resulting grant id when authorization succeeds; no token value is exposed.",
+  },
+  "auth/providers/create": {
+    scope: "universe",
+    summary: "Register an authentication provider",
+    description: "Creates a model or GitHub credential source. Plaintext API keys/private keys are encrypted on receipt and later represented only by configuration plus hasCredential.",
+  },
+  "auth/providers/read": {
+    scope: "universe",
+    summary: "Read authentication provider metadata",
+    description: "Returns provider kind, non-secret configuration, credential-presence state, and status; stored credentials are never returned.",
+  },
+  "auth/providers/list": {
+    scope: "universe",
+    summary: "List authentication providers",
+    description: "Lists non-secret model/GitHub provider registrations for the universe.",
+  },
+  "auth/providers/delete": {
+    scope: "universe",
+    summary: "Delete an authentication provider",
+    description: "Deletes the provider registration and its directly stored credential; separately stored grants remain independent records.",
+  },
+  "auth/github/installations/list": {
+    scope: "universe",
+    summary: "List GitHub App installations",
+    description: "Uses the registered GitHub App provider credential to query accessible installations and returns account/permission metadata without tokens.",
+  },
+  "auth/github/installations/grant": {
+    scope: "universe",
+    summary: "Grant access to a GitHub App installation",
+    description: "Creates or refreshes a universe auth grant for one accessible installation. The installation token is brokered internally and never returned.",
+  },
+  "outbox/read": {
+    scope: "universe",
+    summary: "Read pending outbound messages",
+    description: "Cursor-reads or long-polls the universe delivery outbox. Advance with nextAfter, but only outbox/ack marks individual entries delivered or failed.",
+  },
+  "outbox/ack": {
+    scope: "universe",
+    summary: "Acknowledge outbound delivery",
+    description: "Records delivered or failed delivery for one outbox entry and updates attempt/status state. Intended for messaging delivery workers.",
+  },
+  "operator/universes/create": {
+    scope: "operator",
+    summary: "Create a universe",
+    description: "Creates the deployment tenant boundary for an explicit UUID. The operation is idempotent and reports whether a new universe was created.",
+  },
+  "operator/universes/list": {
+    scope: "operator",
+    summary: "List universes",
+    description: "Returns deployment-wide universe summaries with approximate live aggregate counts and last session activity.",
+  },
+  "operator/universes/read": {
+    scope: "operator",
+    summary: "Read a universe",
+    description: "Returns one deployment tenant summary with aggregate session, workspace, profile, and blob usage.",
+  },
+  "operator/universes/delete": {
+    scope: "operator",
+    summary: "Purge a universe",
+    description: "Permanently terminates live session workflows, deletes external blob objects, and cascades universe data. The purge is resumable/idempotent after partial failure.",
+  },
+  "operator/outbox/read": {
+    scope: "operator",
+    summary: "Read the deployment outbox",
+    description: "Cursor-reads or long-polls pending messages across all universes. Entries identify their universe; acknowledge each through universe-scoped outbox/ack.",
+  },
+} as const;
+
 export const NOTIFICATIONS = [
   "session/started",
   "session/status/changed",
@@ -106,346 +539,776 @@ export type Method = (typeof METHODS)[number];
 export type NotificationMethod = (typeof NOTIFICATIONS)[number];
 
 export interface MethodMap {
+  /**
+   * Inspect the Lightspeed protocol
+   *
+   * Returns protocol version, server identity, and supported capabilities without changing universe state.
+   */
   "initialize": {
     params: Api.InitializeParams;
     result: Api.AgentApiOutcomeOfInitializeResponse;
   };
+  /**
+   * Create or reopen a session
+   *
+   * Creates a session with optional config/profile setup. Retrying an existing session id returns that session; creation settings apply only when it is first created.
+   */
   "session/start": {
     params: Api.SessionStartParams;
     result: Api.AgentApiOutcomeOfSessionStartResponse;
   };
+  /**
+   * Read a session
+   *
+   * Returns the current projected session, including sparse config and revisions, lifecycle/run state, active context, and derived tools.
+   */
   "session/read": {
     params: Api.SessionReadParams;
     result: Api.AgentApiOutcomeOfSessionReadResponse;
   };
+  /**
+   * List sessions
+   *
+   * Returns a cursor-paginated summary list ordered by most recent update. Pages may shift while sessions are changing.
+   */
   "session/list": {
     params: Api.SessionListParams;
     result: Api.AgentApiOutcomeOfSessionListResponse;
   };
+  /**
+   * Replace session configuration
+   *
+   * Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked and an identical document is a no-op.
+   */
   "session/config/put": {
     params: Api.SessionConfigPutParams;
     result: Api.AgentApiOutcomeOfSessionConfigPutResponse;
   };
+  /**
+   * Rename a session
+   *
+   * Sets the display name, or clears it when displayName is omitted.
+   */
   "session/rename": {
     params: Api.SessionRenameParams;
     result: Api.AgentApiOutcomeOfSessionRenameResponse;
   };
+  /**
+   * Close a session
+   *
+   * Closes an idle session and detaches its environment bindings. Force mode cancels active work, drops queued runs, and can recover a session whose workflow is unavailable.
+   */
   "session/close": {
     params: Api.SessionCloseParams;
     result: Api.AgentApiOutcomeOfSessionCloseResponse;
   };
+  /**
+   * Delete a closed session
+   *
+   * Permanently removes session storage after the session has been closed; close active/open sessions first.
+   */
   "session/delete": {
     params: Api.SessionDeleteParams;
     result: Api.AgentApiOutcomeOfSessionDeleteResponse;
   };
+  /**
+   * Read the session event stream
+   *
+   * Reads events after a cursor and optionally long-polls when caught up. Continue from nextCursor/headCursor and inspect complete/gap rather than assuming an uninterrupted page.
+   */
   "session/events/read": {
     params: Api.SessionEventsReadParams;
     result: Api.AgentApiOutcomeOfSessionEventsReadResponse;
   };
+  /**
+   * Append keyed session context
+   *
+   * Admits a batch of context entries with per-entry results. Stable keys make same-content retries no-ops; media preprocessing can fail one entry without discarding successful entries.
+   */
   "session/context/append": {
     params: Api.ContextAppendParams;
     result: Api.AgentApiOutcomeOfContextAppendResponse;
   };
+  /**
+   * Remove keyed session context
+   *
+   * Removes active entries by stable key with per-key results. Missing keys are idempotent no-ops; runtime-reserved run keys cannot be removed.
+   */
   "session/context/remove": {
     params: Api.ContextRemoveParams;
     result: Api.AgentApiOutcomeOfContextRemoveResponse;
   };
+  /**
+   * Compact session context
+   *
+   * Runs the configured compaction policy on an open idle session and waits for the resulting context revision.
+   */
   "session/context/compact": {
     params: Api.ContextCompactParams;
     result: Api.AgentApiOutcomeOfContextCompactResponse;
   };
+  /**
+   * Start an agent run
+   *
+   * Accepts input or existing context keys and returns once the run is queued/accepted, not when it finishes. Supply submissionId for retry safety, then follow session events or reread the session.
+   */
   "session/runs/start": {
     params: Api.RunStartParams;
     result: Api.AgentApiOutcomeOfRunStartResponse;
   };
+  /**
+   * Cancel a run
+   *
+   * Requests cancellation of the named queued or active run and returns its current projected state; observe session events for terminal completion.
+   */
   "session/runs/cancel": {
     params: Api.RunCancelParams;
     result: Api.AgentApiOutcomeOfRunCancelResponse;
   };
+  /**
+   * List available session skills
+   *
+   * Refreshes the session's configured VFS skill catalog and reports which discovered skills are enabled and active. An absent catalog yields an empty result.
+   */
   "session/skills/list": {
     params: Api.SkillListParams;
     result: Api.AgentApiOutcomeOfSkillListResponse;
   };
+  /**
+   * List active session skills
+   *
+   * Returns skill instructions currently injected into context, including activation scope and source.
+   */
   "session/skills/active": {
     params: Api.SkillActiveParams;
     result: Api.AgentApiOutcomeOfSkillActiveResponse;
   };
+  /**
+   * Activate a session skill
+   *
+   * Loads an enabled skill from the current catalog and injects its instructions into an open idle session. Run-scoped activation is the default.
+   */
   "session/skills/activate": {
     params: Api.SkillActivateParams;
     result: Api.AgentApiOutcomeOfSkillActivateResponse;
   };
+  /**
+   * Deactivate a session skill
+   *
+   * Removes an active skill's injected context from an open idle session; the skill must currently be active.
+   */
   "session/skills/deactivate": {
     params: Api.SkillDeactivateParams;
     result: Api.AgentApiOutcomeOfSkillDeactivateResponse;
   };
+  /**
+   * Apply a profile to a session
+   *
+   * Applies a named or inline profile's config, instructions, mounts, and environment setup to an existing session; mutating profile sections require it to be open and idle. Pass current revisions to guard concurrent changes.
+   */
   "session/profiles/apply": {
     params: Api.ProfileApplyParams;
     result: Api.AgentApiOutcomeOfProfileApplyResponse;
   };
+  /**
+   * Create or replace a session mount
+   *
+   * Binds a snapshot or workspace at a path on an open idle session that grants VFS. Workspace mounts follow that workspace's current head.
+   */
   "session/mounts/put": {
     params: Api.VfsMountPutParams;
     result: Api.AgentApiOutcomeOfVfsMountPutResponse;
   };
+  /**
+   * List session mounts
+   *
+   * Returns the session's snapshot/workspace bindings and access modes.
+   */
   "session/mounts/list": {
     params: Api.VfsMountListParams;
     result: Api.AgentApiOutcomeOfVfsMountListResponse;
   };
+  /**
+   * Delete a session mount
+   *
+   * Removes a binding from an open idle session without deleting its source snapshot or workspace.
+   */
   "session/mounts/delete": {
     params: Api.VfsMountDeleteParams;
     result: Api.AgentApiOutcomeOfVfsMountDeleteResponse;
   };
+  /**
+   * Read a session environment binding
+   *
+   * Returns one session-local environment alias joined with current instance/provider availability and activation state.
+   */
   "session/environments/read": {
     params: Api.SessionEnvironmentReadParams;
     result: Api.AgentApiOutcomeOfSessionEnvironmentReadResponse;
   };
+  /**
+   * List session environment bindings
+   *
+   * Returns all environment aliases attached to the session and identifies the active tool target, if any.
+   */
   "session/environments/list": {
     params: Api.SessionEnvironmentListParams;
     result: Api.AgentApiOutcomeOfSessionEnvironmentListResponse;
   };
+  /**
+   * Attach an environment to a session
+   *
+   * Binds an existing universe environment instance under a session-local alias, optionally activating it. The session must grant environments and allow the provider.
+   */
   "session/environments/attach": {
     params: Api.SessionEnvironmentAttachParams;
     result: Api.AgentApiOutcomeOfSessionEnvironmentAttachResponse;
   };
+  /**
+   * Activate a session environment
+   *
+   * Selects an attached, available environment as the process/filesystem tool target while the session is idle.
+   */
   "session/environments/activate": {
     params: Api.SessionEnvironmentActivateParams;
     result: Api.AgentApiOutcomeOfSessionEnvironmentActivateResponse;
   };
+  /**
+   * Deactivate the session environment
+   *
+   * Clears the active environment tool target without detaching any binding or closing the underlying instance.
+   */
   "session/environments/deactivate": {
     params: Api.SessionEnvironmentDeactivateParams;
     result: Api.AgentApiOutcomeOfSessionEnvironmentDeactivateResponse;
   };
+  /**
+   * Detach a session environment
+   *
+   * Detaches the session-local binding; detaching the active target requires an idle session and deactivates it first. The universe instance and jobs remain independently owned.
+   */
   "session/environments/detach": {
     params: Api.SessionEnvironmentDetachParams;
     result: Api.AgentApiOutcomeOfSessionEnvironmentDetachResponse;
   };
+  /**
+   * Bind a credential into an environment
+   *
+   * Maps an environment variable name to an existing grant/provider/direct-secret handle for one session binding. The response exposes only the source handle, never secret material.
+   */
   "session/environments/credentials/bind": {
     params: Api.SessionEnvironmentCredentialBindParams;
     result: Api.AgentApiOutcomeOfSessionEnvironmentCredentialBindResponse;
   };
+  /**
+   * List environment credential bindings
+   *
+   * Returns variable names and credential source handles for a session environment; resolved secret values are never returned.
+   */
   "session/environments/credentials/list": {
     params: Api.SessionEnvironmentCredentialListParams;
     result: Api.AgentApiOutcomeOfSessionEnvironmentCredentialListResponse;
   };
+  /**
+   * Unbind an environment credential
+   *
+   * Removes one variable-to-credential mapping without deleting the underlying grant, provider credential, or secret.
+   */
   "session/environments/credentials/unbind": {
     params: Api.SessionEnvironmentCredentialUnbindParams;
     result: Api.AgentApiOutcomeOfSessionEnvironmentCredentialUnbindResponse;
   };
+  /**
+   * Provision an environment instance
+   *
+   * Asks a live provider with create capability to create a universe-owned environment instance. This does not attach the instance to any session.
+   */
   "environments/create": {
     params: Api.EnvironmentCreateParams;
     result: Api.AgentApiOutcomeOfEnvironmentCreateResponse;
   };
+  /**
+   * Read an environment instance
+   *
+   * Returns the universe resource with its provider identity, current observed lifecycle, connection, scope, and capabilities.
+   */
   "environments/read": {
     params: Api.EnvironmentReadParams;
     result: Api.AgentApiOutcomeOfEnvironmentReadResponse;
   };
+  /**
+   * List environment instances
+   *
+   * Lists universe-owned instances, optionally filtered by provider or observed target status.
+   */
   "environments/list": {
     params: Api.EnvironmentListParams;
     result: Api.AgentApiOutcomeOfEnvironmentListResponse;
   };
+  /**
+   * Close an environment instance
+   *
+   * Tears down the universe resource through its provider. Closing is rejected while session bindings or nonterminal jobs still occupy the instance.
+   */
   "environments/close": {
     params: Api.EnvironmentCloseParams;
     result: Api.AgentApiOutcomeOfEnvironmentCloseResponse;
   };
+  /**
+   * Create environment jobs
+   *
+   * Starts a dependency-aware job group on one environment instance. requestId is the retry identity; jobs are owned by the instance rather than a session.
+   */
   "environments/jobs/create": {
     params: Api.EnvironmentJobCreateParams;
     result: Api.AgentApiOutcomeOfEnvironmentJobCreateResponse;
   };
+  /**
+   * Read environment jobs
+   *
+   * Reads selected job handles with bounded output, optional sequence continuation, and optional artifacts; use returned status/sequence data for polling.
+   */
   "environments/jobs/read": {
     params: Api.EnvironmentJobReadParams;
     result: Api.AgentApiOutcomeOfEnvironmentJobReadResponse;
   };
+  /**
+   * List environment jobs
+   *
+   * Lists durable job records across the universe, optionally narrowed to an instance or job group.
+   */
   "environments/jobs/list": {
     params: Api.EnvironmentJobListParams;
     result: Api.AgentApiOutcomeOfEnvironmentJobListResponse;
   };
+  /**
+   * Cancel environment jobs
+   *
+   * Requests cancellation for selected jobs, optionally including dependents. Force is provider-specific escalation; inspect each per-job result.
+   */
   "environments/jobs/cancel": {
     params: Api.EnvironmentJobCancelParams;
     result: Api.AgentApiOutcomeOfEnvironmentJobCancelResponse;
   };
+  /**
+   * Discover available models
+   *
+   * Queries supported providers directly on every call and returns best-effort selectable routes. One provider failure does not discard successful results from others.
+   */
   "models/list": {
     params: Api.ModelListParams;
     result: Api.AgentApiOutcomeOfModelListResponse;
   };
+  /**
+   * Create an agent profile
+   *
+   * Creates a new universe-scoped reusable profile document; use profiles/put for create-or-replace revision semantics.
+   */
   "profiles/create": {
     params: Api.ProfileCreateParams;
     result: Api.AgentApiOutcomeOfProfileCreateResponse;
   };
+  /**
+   * Read an agent profile
+   *
+   * Returns the complete profile document and current revision.
+   */
   "profiles/read": {
     params: Api.ProfileReadParams;
     result: Api.AgentApiOutcomeOfProfileReadResponse;
   };
+  /**
+   * List agent profiles
+   *
+   * Returns lightweight summaries of universe-scoped reusable profiles.
+   */
   "profiles/list": {
     params: Api.ProfileListParams;
     result: Api.AgentApiOutcomeOfProfileListResponse;
   };
+  /**
+   * Create or replace an agent profile
+   *
+   * Stores the complete profile document. Use expectedRevision from profiles/read when replacing to prevent lost updates; absence writes unconditionally.
+   */
   "profiles/put": {
     params: Api.ProfilePutParams;
     result: Api.AgentApiOutcomeOfProfilePutResponse;
   };
+  /**
+   * Delete an agent profile
+   *
+   * Deletes the catalog document; sessions previously created or configured from it retain their materialized state.
+   */
   "profiles/delete": {
     params: Api.ProfileDeleteParams;
     result: Api.AgentApiOutcomeOfProfileDeleteResponse;
   };
+  /**
+   * Store content-addressed blobs
+   *
+   * Decodes and stores a batch of base64 payloads, returning immutable content references in request order. Re-uploading identical bytes is naturally deduplicated.
+   */
   "blobs/put": {
     params: Api.BlobPutParams;
     result: Api.AgentApiOutcomeOfBlobPutResponse;
   };
+  /**
+   * Read a content-addressed blob
+   *
+   * Returns the complete immutable blob as base64; large values count against gateway and MCP response limits.
+   */
   "blobs/read": {
     params: Api.BlobReadParams;
     result: Api.AgentApiOutcomeOfBlobReadResponse;
   };
+  /**
+   * Check blob availability
+   *
+   * Checks a batch of content references without returning blob bodies, preserving request order.
+   */
   "blobs/has": {
     params: Api.BlobHasParams;
     result: Api.AgentApiOutcomeOfBlobHasResponse;
   };
+  /**
+   * Commit a VFS snapshot
+   *
+   * Validates and stores an immutable filesystem manifest. Upload referenced file blobs first; the returned snapshot ref is content-addressed.
+   */
   "vfs/snapshots/commit": {
     params: Api.VfsSnapshotCommitParams;
     result: Api.AgentApiOutcomeOfVfsSnapshotCommitResponse;
   };
+  /**
+   * Read a VFS snapshot
+   *
+   * Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs.
+   */
   "vfs/snapshots/read": {
     params: Api.VfsSnapshotReadParams;
     result: Api.AgentApiOutcomeOfVfsSnapshotReadResponse;
   };
+  /**
+   * Create a mutable VFS workspace
+   *
+   * Creates a universe workspace at an optional seed snapshot; absence starts from a server-created empty snapshot.
+   */
   "vfs/workspaces/create": {
     params: Api.VfsWorkspaceCreateParams;
     result: Api.AgentApiOutcomeOfVfsWorkspaceCreateResponse;
   };
+  /**
+   * Read a VFS workspace
+   *
+   * Returns workspace metadata, current head snapshot, and revision for safe updates.
+   */
   "vfs/workspaces/read": {
     params: Api.VfsWorkspaceReadParams;
     result: Api.AgentApiOutcomeOfVfsWorkspaceReadResponse;
   };
+  /**
+   * List VFS workspaces
+   *
+   * Lists mutable universe workspaces with head snapshots, sizes, and revisions.
+   */
   "vfs/workspaces/list": {
     params: Api.VfsWorkspaceListParams;
     result: Api.AgentApiOutcomeOfVfsWorkspaceListResponse;
   };
+  /**
+   * Update a VFS workspace
+   *
+   * Moves the workspace head to an existing snapshot and updates its display name. Pass expectedRevision from a read to prevent lost updates.
+   */
   "vfs/workspaces/update": {
     params: Api.VfsWorkspaceUpdateParams;
     result: Api.AgentApiOutcomeOfVfsWorkspaceUpdateResponse;
   };
+  /**
+   * Delete a VFS workspace
+   *
+   * Deletes the mutable workspace record; immutable snapshots and blobs remain content-addressed resources.
+   */
   "vfs/workspaces/delete": {
     params: Api.VfsWorkspaceDeleteParams;
     result: Api.AgentApiOutcomeOfVfsWorkspaceDeleteResponse;
   };
+  /**
+   * Create or replace an MCP server record
+   *
+   * Stores the complete universe catalog document. Use expectedRevision when replacing; authenticated policies reference grants but never embed credentials.
+   */
   "mcp/servers/put": {
     params: Api.McpServerPutParams;
     result: Api.AgentApiOutcomeOfMcpServerPutResponse;
   };
+  /**
+   * Read an MCP server record
+   *
+   * Returns one catalog document with defaults, auth policy, status, and revision; no credential value is exposed.
+   */
   "mcp/servers/read": {
     params: Api.McpServerReadParams;
     result: Api.AgentApiOutcomeOfMcpServerReadResponse;
   };
+  /**
+   * List MCP server records
+   *
+   * Lists universe catalog entries, optionally filtered by lifecycle/configuration status.
+   */
   "mcp/servers/list": {
     params: Api.McpServerListParams;
     result: Api.AgentApiOutcomeOfMcpServerListResponse;
   };
+  /**
+   * Delete an MCP server record
+   *
+   * Deletes the catalog document. Existing session configs that reference it are not silently rewritten and may need explicit reconfiguration.
+   */
   "mcp/servers/delete": {
     params: Api.McpServerDeleteParams;
     result: Api.AgentApiOutcomeOfMcpServerDeleteResponse;
   };
+  /**
+   * Register environment provider presence
+   *
+   * Publishes a controller endpoint, capabilities, implementation identity, and liveness lease. Intended for trusted provider/bridge infrastructure, not ordinary configuration clients.
+   */
   "environments/providers/register": {
     params: Api.EnvironmentProviderRegisterParams;
     result: Api.AgentApiOutcomeOfEnvironmentProviderRegisterResponse;
   };
+  /**
+   * Refresh environment provider presence
+   *
+   * Renews a provider lease and records its complete observed target descriptors. Omitted provided targets may become unknown; intended for provider infrastructure.
+   */
   "environments/providers/heartbeat": {
     params: Api.EnvironmentProviderHeartbeatParams;
     result: Api.AgentApiOutcomeOfEnvironmentProviderHeartbeatResponse;
   };
+  /**
+   * Unregister environment provider presence
+   *
+   * Marks provider presence offline without deleting its durable environment instance records.
+   */
   "environments/providers/unregister": {
     params: Api.EnvironmentProviderUnregisterParams;
     result: Api.AgentApiOutcomeOfEnvironmentProviderUnregisterResponse;
   };
+  /**
+   * List environment providers
+   *
+   * Lists current provider presence with lease-derived online/stale/offline status, optionally filtered by status or kind.
+   */
   "environments/providers/list": {
     params: Api.EnvironmentProviderListParams;
     result: Api.AgentApiOutcomeOfEnvironmentProviderListResponse;
   };
+  /**
+   * Import a static bearer grant
+   *
+   * Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. The token can never be read back through the API.
+   */
   "auth/grants/import": {
     params: Api.AuthGrantImportParams;
     result: Api.AgentApiOutcomeOfAuthGrantImportResponse;
   };
+  /**
+   * Read authentication grant metadata
+   *
+   * Returns principal, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned.
+   */
   "auth/grants/read": {
     params: Api.AuthGrantReadParams;
     result: Api.AgentApiOutcomeOfAuthGrantReadResponse;
   };
+  /**
+   * List authentication grants
+   *
+   * Lists non-secret grant metadata for the universe, optionally filtered by status.
+   */
   "auth/grants/list": {
     params: Api.AuthGrantListParams;
     result: Api.AgentApiOutcomeOfAuthGrantListResponse;
   };
+  /**
+   * Revoke an authentication grant
+   *
+   * Marks the grant unusable by token consumers while retaining non-secret audit metadata.
+   */
   "auth/grants/revoke": {
     params: Api.AuthGrantRevokeParams;
     result: Api.AgentApiOutcomeOfAuthGrantRevokeResponse;
   };
+  /**
+   * Register an OAuth client
+   *
+   * Stores provider endpoints and client identity; an optional plaintext client secret is encrypted and represented thereafter only by hasClientSecret.
+   */
   "auth/clients/create": {
     params: Api.AuthClientCreateParams;
     result: Api.AgentApiOutcomeOfAuthClientCreateResponse;
   };
+  /**
+   * Read OAuth client metadata
+   *
+   * Returns endpoints, public client identity, defaults, and secret-presence state; the client secret is never returned.
+   */
   "auth/clients/read": {
     params: Api.AuthClientReadParams;
     result: Api.AgentApiOutcomeOfAuthClientReadResponse;
   };
+  /**
+   * List OAuth clients
+   *
+   * Lists non-secret OAuth client registrations in the universe.
+   */
   "auth/clients/list": {
     params: Api.AuthClientListParams;
     result: Api.AgentApiOutcomeOfAuthClientListResponse;
   };
+  /**
+   * Delete an OAuth client
+   *
+   * Deletes the client registration and its stored client secret; grants already created from it remain separate records.
+   */
   "auth/clients/delete": {
     params: Api.AuthClientDeleteParams;
     result: Api.AgentApiOutcomeOfAuthClientDeleteResponse;
   };
+  /**
+   * Start an OAuth authorization flow
+   *
+   * Creates a short-lived PKCE flow and returns a browser authorization URL containing one-time state. Treat the URL as sensitive and poll auth/flows/read for completion.
+   */
   "auth/flows/start": {
     params: Api.AuthFlowStartParams;
     result: Api.AgentApiOutcomeOfAuthFlowStartResponse;
   };
+  /**
+   * Read OAuth flow status
+   *
+   * Polls a flow's pending/completed/failed/expired state and returns the resulting grant id when authorization succeeds; no token value is exposed.
+   */
   "auth/flows/read": {
     params: Api.AuthFlowStatusParams;
     result: Api.AgentApiOutcomeOfAuthFlowStatusResponse;
   };
+  /**
+   * Register an authentication provider
+   *
+   * Creates a model or GitHub credential source. Plaintext API keys/private keys are encrypted on receipt and later represented only by configuration plus hasCredential.
+   */
   "auth/providers/create": {
     params: Api.AuthProviderCreateParams;
     result: Api.AgentApiOutcomeOfAuthProviderCreateResponse;
   };
+  /**
+   * Read authentication provider metadata
+   *
+   * Returns provider kind, non-secret configuration, credential-presence state, and status; stored credentials are never returned.
+   */
   "auth/providers/read": {
     params: Api.AuthProviderReadParams;
     result: Api.AgentApiOutcomeOfAuthProviderReadResponse;
   };
+  /**
+   * List authentication providers
+   *
+   * Lists non-secret model/GitHub provider registrations for the universe.
+   */
   "auth/providers/list": {
     params: Api.AuthProviderListParams;
     result: Api.AgentApiOutcomeOfAuthProviderListResponse;
   };
+  /**
+   * Delete an authentication provider
+   *
+   * Deletes the provider registration and its directly stored credential; separately stored grants remain independent records.
+   */
   "auth/providers/delete": {
     params: Api.AuthProviderDeleteParams;
     result: Api.AgentApiOutcomeOfAuthProviderDeleteResponse;
   };
+  /**
+   * List GitHub App installations
+   *
+   * Uses the registered GitHub App provider credential to query accessible installations and returns account/permission metadata without tokens.
+   */
   "auth/github/installations/list": {
     params: Api.AuthGitHubInstallationListParams;
     result: Api.AgentApiOutcomeOfAuthGitHubInstallationListResponse;
   };
+  /**
+   * Grant access to a GitHub App installation
+   *
+   * Creates or refreshes a universe auth grant for one accessible installation. The installation token is brokered internally and never returned.
+   */
   "auth/github/installations/grant": {
     params: Api.AuthGitHubInstallationGrantParams;
     result: Api.AgentApiOutcomeOfAuthGitHubInstallationGrantResponse;
   };
+  /**
+   * Read pending outbound messages
+   *
+   * Cursor-reads or long-polls the universe delivery outbox. Advance with nextAfter, but only outbox/ack marks individual entries delivered or failed.
+   */
   "outbox/read": {
     params: Api.OutboxReadParams;
     result: Api.AgentApiOutcomeOfOutboxReadResponse;
   };
+  /**
+   * Acknowledge outbound delivery
+   *
+   * Records delivered or failed delivery for one outbox entry and updates attempt/status state. Intended for messaging delivery workers.
+   */
   "outbox/ack": {
     params: Api.OutboxAckParams;
     result: Api.AgentApiOutcomeOfOutboxAckResponse;
   };
+  /**
+   * Create a universe
+   *
+   * Creates the deployment tenant boundary for an explicit UUID. The operation is idempotent and reports whether a new universe was created.
+   */
   "operator/universes/create": {
     params: Api.OperatorUniverseCreateParams;
     result: Api.AgentApiOutcomeOfOperatorUniverseCreateResponse;
   };
+  /**
+   * List universes
+   *
+   * Returns deployment-wide universe summaries with approximate live aggregate counts and last session activity.
+   */
   "operator/universes/list": {
     params: Api.OperatorUniverseListParams;
     result: Api.AgentApiOutcomeOfOperatorUniverseListResponse;
   };
+  /**
+   * Read a universe
+   *
+   * Returns one deployment tenant summary with aggregate session, workspace, profile, and blob usage.
+   */
   "operator/universes/read": {
     params: Api.OperatorUniverseReadParams;
     result: Api.AgentApiOutcomeOfOperatorUniverseReadResponse;
   };
+  /**
+   * Purge a universe
+   *
+   * Permanently terminates live session workflows, deletes external blob objects, and cascades universe data. The purge is resumable/idempotent after partial failure.
+   */
   "operator/universes/delete": {
     params: Api.OperatorUniverseDeleteParams;
     result: Api.AgentApiOutcomeOfOperatorUniverseDeleteResponse;
   };
+  /**
+   * Read the deployment outbox
+   *
+   * Cursor-reads or long-polls pending messages across all universes. Entries identify their universe; acknowledge each through universe-scoped outbox/ack.
+   */
   "operator/outbox/read": {
     params: Api.OperatorOutboxReadParams;
     result: Api.AgentApiOutcomeOfOperatorOutboxReadResponse;
@@ -460,261 +1323,691 @@ export interface RpcCaller {
 }
 
 export const rpc = {
+  /**
+   * Inspect the Lightspeed protocol
+   *
+   * Returns protocol version, server identity, and supported capabilities without changing universe state.
+   */
   initialize(client: RpcCaller, params: Api.InitializeParams): Promise<Api.AgentApiOutcomeOfInitializeResponse> {
     return client.call("initialize", params);
   },
+  /**
+   * Create or reopen a session
+   *
+   * Creates a session with optional config/profile setup. Retrying an existing session id returns that session; creation settings apply only when it is first created.
+   */
   sessionStart(client: RpcCaller, params: Api.SessionStartParams): Promise<Api.AgentApiOutcomeOfSessionStartResponse> {
     return client.call("session/start", params);
   },
+  /**
+   * Read a session
+   *
+   * Returns the current projected session, including sparse config and revisions, lifecycle/run state, active context, and derived tools.
+   */
   sessionRead(client: RpcCaller, params: Api.SessionReadParams): Promise<Api.AgentApiOutcomeOfSessionReadResponse> {
     return client.call("session/read", params);
   },
+  /**
+   * List sessions
+   *
+   * Returns a cursor-paginated summary list ordered by most recent update. Pages may shift while sessions are changing.
+   */
   sessionList(client: RpcCaller, params: Api.SessionListParams): Promise<Api.AgentApiOutcomeOfSessionListResponse> {
     return client.call("session/list", params);
   },
+  /**
+   * Replace session configuration
+   *
+   * Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked and an identical document is a no-op.
+   */
   sessionConfigPut(client: RpcCaller, params: Api.SessionConfigPutParams): Promise<Api.AgentApiOutcomeOfSessionConfigPutResponse> {
     return client.call("session/config/put", params);
   },
+  /**
+   * Rename a session
+   *
+   * Sets the display name, or clears it when displayName is omitted.
+   */
   sessionRename(client: RpcCaller, params: Api.SessionRenameParams): Promise<Api.AgentApiOutcomeOfSessionRenameResponse> {
     return client.call("session/rename", params);
   },
+  /**
+   * Close a session
+   *
+   * Closes an idle session and detaches its environment bindings. Force mode cancels active work, drops queued runs, and can recover a session whose workflow is unavailable.
+   */
   sessionClose(client: RpcCaller, params: Api.SessionCloseParams): Promise<Api.AgentApiOutcomeOfSessionCloseResponse> {
     return client.call("session/close", params);
   },
+  /**
+   * Delete a closed session
+   *
+   * Permanently removes session storage after the session has been closed; close active/open sessions first.
+   */
   sessionDelete(client: RpcCaller, params: Api.SessionDeleteParams): Promise<Api.AgentApiOutcomeOfSessionDeleteResponse> {
     return client.call("session/delete", params);
   },
+  /**
+   * Read the session event stream
+   *
+   * Reads events after a cursor and optionally long-polls when caught up. Continue from nextCursor/headCursor and inspect complete/gap rather than assuming an uninterrupted page.
+   */
   sessionEventsRead(client: RpcCaller, params: Api.SessionEventsReadParams): Promise<Api.AgentApiOutcomeOfSessionEventsReadResponse> {
     return client.call("session/events/read", params);
   },
+  /**
+   * Append keyed session context
+   *
+   * Admits a batch of context entries with per-entry results. Stable keys make same-content retries no-ops; media preprocessing can fail one entry without discarding successful entries.
+   */
   sessionContextAppend(client: RpcCaller, params: Api.ContextAppendParams): Promise<Api.AgentApiOutcomeOfContextAppendResponse> {
     return client.call("session/context/append", params);
   },
+  /**
+   * Remove keyed session context
+   *
+   * Removes active entries by stable key with per-key results. Missing keys are idempotent no-ops; runtime-reserved run keys cannot be removed.
+   */
   sessionContextRemove(client: RpcCaller, params: Api.ContextRemoveParams): Promise<Api.AgentApiOutcomeOfContextRemoveResponse> {
     return client.call("session/context/remove", params);
   },
+  /**
+   * Compact session context
+   *
+   * Runs the configured compaction policy on an open idle session and waits for the resulting context revision.
+   */
   sessionContextCompact(client: RpcCaller, params: Api.ContextCompactParams): Promise<Api.AgentApiOutcomeOfContextCompactResponse> {
     return client.call("session/context/compact", params);
   },
+  /**
+   * Start an agent run
+   *
+   * Accepts input or existing context keys and returns once the run is queued/accepted, not when it finishes. Supply submissionId for retry safety, then follow session events or reread the session.
+   */
   sessionRunsStart(client: RpcCaller, params: Api.RunStartParams): Promise<Api.AgentApiOutcomeOfRunStartResponse> {
     return client.call("session/runs/start", params);
   },
+  /**
+   * Cancel a run
+   *
+   * Requests cancellation of the named queued or active run and returns its current projected state; observe session events for terminal completion.
+   */
   sessionRunsCancel(client: RpcCaller, params: Api.RunCancelParams): Promise<Api.AgentApiOutcomeOfRunCancelResponse> {
     return client.call("session/runs/cancel", params);
   },
+  /**
+   * List available session skills
+   *
+   * Refreshes the session's configured VFS skill catalog and reports which discovered skills are enabled and active. An absent catalog yields an empty result.
+   */
   sessionSkillsList(client: RpcCaller, params: Api.SkillListParams): Promise<Api.AgentApiOutcomeOfSkillListResponse> {
     return client.call("session/skills/list", params);
   },
+  /**
+   * List active session skills
+   *
+   * Returns skill instructions currently injected into context, including activation scope and source.
+   */
   sessionSkillsActive(client: RpcCaller, params: Api.SkillActiveParams): Promise<Api.AgentApiOutcomeOfSkillActiveResponse> {
     return client.call("session/skills/active", params);
   },
+  /**
+   * Activate a session skill
+   *
+   * Loads an enabled skill from the current catalog and injects its instructions into an open idle session. Run-scoped activation is the default.
+   */
   sessionSkillsActivate(client: RpcCaller, params: Api.SkillActivateParams): Promise<Api.AgentApiOutcomeOfSkillActivateResponse> {
     return client.call("session/skills/activate", params);
   },
+  /**
+   * Deactivate a session skill
+   *
+   * Removes an active skill's injected context from an open idle session; the skill must currently be active.
+   */
   sessionSkillsDeactivate(client: RpcCaller, params: Api.SkillDeactivateParams): Promise<Api.AgentApiOutcomeOfSkillDeactivateResponse> {
     return client.call("session/skills/deactivate", params);
   },
+  /**
+   * Apply a profile to a session
+   *
+   * Applies a named or inline profile's config, instructions, mounts, and environment setup to an existing session; mutating profile sections require it to be open and idle. Pass current revisions to guard concurrent changes.
+   */
   sessionProfilesApply(client: RpcCaller, params: Api.ProfileApplyParams): Promise<Api.AgentApiOutcomeOfProfileApplyResponse> {
     return client.call("session/profiles/apply", params);
   },
+  /**
+   * Create or replace a session mount
+   *
+   * Binds a snapshot or workspace at a path on an open idle session that grants VFS. Workspace mounts follow that workspace's current head.
+   */
   sessionMountsPut(client: RpcCaller, params: Api.VfsMountPutParams): Promise<Api.AgentApiOutcomeOfVfsMountPutResponse> {
     return client.call("session/mounts/put", params);
   },
+  /**
+   * List session mounts
+   *
+   * Returns the session's snapshot/workspace bindings and access modes.
+   */
   sessionMountsList(client: RpcCaller, params: Api.VfsMountListParams): Promise<Api.AgentApiOutcomeOfVfsMountListResponse> {
     return client.call("session/mounts/list", params);
   },
+  /**
+   * Delete a session mount
+   *
+   * Removes a binding from an open idle session without deleting its source snapshot or workspace.
+   */
   sessionMountsDelete(client: RpcCaller, params: Api.VfsMountDeleteParams): Promise<Api.AgentApiOutcomeOfVfsMountDeleteResponse> {
     return client.call("session/mounts/delete", params);
   },
+  /**
+   * Read a session environment binding
+   *
+   * Returns one session-local environment alias joined with current instance/provider availability and activation state.
+   */
   sessionEnvironmentsRead(client: RpcCaller, params: Api.SessionEnvironmentReadParams): Promise<Api.AgentApiOutcomeOfSessionEnvironmentReadResponse> {
     return client.call("session/environments/read", params);
   },
+  /**
+   * List session environment bindings
+   *
+   * Returns all environment aliases attached to the session and identifies the active tool target, if any.
+   */
   sessionEnvironmentsList(client: RpcCaller, params: Api.SessionEnvironmentListParams): Promise<Api.AgentApiOutcomeOfSessionEnvironmentListResponse> {
     return client.call("session/environments/list", params);
   },
+  /**
+   * Attach an environment to a session
+   *
+   * Binds an existing universe environment instance under a session-local alias, optionally activating it. The session must grant environments and allow the provider.
+   */
   sessionEnvironmentsAttach(client: RpcCaller, params: Api.SessionEnvironmentAttachParams): Promise<Api.AgentApiOutcomeOfSessionEnvironmentAttachResponse> {
     return client.call("session/environments/attach", params);
   },
+  /**
+   * Activate a session environment
+   *
+   * Selects an attached, available environment as the process/filesystem tool target while the session is idle.
+   */
   sessionEnvironmentsActivate(client: RpcCaller, params: Api.SessionEnvironmentActivateParams): Promise<Api.AgentApiOutcomeOfSessionEnvironmentActivateResponse> {
     return client.call("session/environments/activate", params);
   },
+  /**
+   * Deactivate the session environment
+   *
+   * Clears the active environment tool target without detaching any binding or closing the underlying instance.
+   */
   sessionEnvironmentsDeactivate(client: RpcCaller, params: Api.SessionEnvironmentDeactivateParams): Promise<Api.AgentApiOutcomeOfSessionEnvironmentDeactivateResponse> {
     return client.call("session/environments/deactivate", params);
   },
+  /**
+   * Detach a session environment
+   *
+   * Detaches the session-local binding; detaching the active target requires an idle session and deactivates it first. The universe instance and jobs remain independently owned.
+   */
   sessionEnvironmentsDetach(client: RpcCaller, params: Api.SessionEnvironmentDetachParams): Promise<Api.AgentApiOutcomeOfSessionEnvironmentDetachResponse> {
     return client.call("session/environments/detach", params);
   },
+  /**
+   * Bind a credential into an environment
+   *
+   * Maps an environment variable name to an existing grant/provider/direct-secret handle for one session binding. The response exposes only the source handle, never secret material.
+   */
   sessionEnvironmentsCredentialsBind(client: RpcCaller, params: Api.SessionEnvironmentCredentialBindParams): Promise<Api.AgentApiOutcomeOfSessionEnvironmentCredentialBindResponse> {
     return client.call("session/environments/credentials/bind", params);
   },
+  /**
+   * List environment credential bindings
+   *
+   * Returns variable names and credential source handles for a session environment; resolved secret values are never returned.
+   */
   sessionEnvironmentsCredentialsList(client: RpcCaller, params: Api.SessionEnvironmentCredentialListParams): Promise<Api.AgentApiOutcomeOfSessionEnvironmentCredentialListResponse> {
     return client.call("session/environments/credentials/list", params);
   },
+  /**
+   * Unbind an environment credential
+   *
+   * Removes one variable-to-credential mapping without deleting the underlying grant, provider credential, or secret.
+   */
   sessionEnvironmentsCredentialsUnbind(client: RpcCaller, params: Api.SessionEnvironmentCredentialUnbindParams): Promise<Api.AgentApiOutcomeOfSessionEnvironmentCredentialUnbindResponse> {
     return client.call("session/environments/credentials/unbind", params);
   },
+  /**
+   * Provision an environment instance
+   *
+   * Asks a live provider with create capability to create a universe-owned environment instance. This does not attach the instance to any session.
+   */
   environmentsCreate(client: RpcCaller, params: Api.EnvironmentCreateParams): Promise<Api.AgentApiOutcomeOfEnvironmentCreateResponse> {
     return client.call("environments/create", params);
   },
+  /**
+   * Read an environment instance
+   *
+   * Returns the universe resource with its provider identity, current observed lifecycle, connection, scope, and capabilities.
+   */
   environmentsRead(client: RpcCaller, params: Api.EnvironmentReadParams): Promise<Api.AgentApiOutcomeOfEnvironmentReadResponse> {
     return client.call("environments/read", params);
   },
+  /**
+   * List environment instances
+   *
+   * Lists universe-owned instances, optionally filtered by provider or observed target status.
+   */
   environmentsList(client: RpcCaller, params: Api.EnvironmentListParams): Promise<Api.AgentApiOutcomeOfEnvironmentListResponse> {
     return client.call("environments/list", params);
   },
+  /**
+   * Close an environment instance
+   *
+   * Tears down the universe resource through its provider. Closing is rejected while session bindings or nonterminal jobs still occupy the instance.
+   */
   environmentsClose(client: RpcCaller, params: Api.EnvironmentCloseParams): Promise<Api.AgentApiOutcomeOfEnvironmentCloseResponse> {
     return client.call("environments/close", params);
   },
+  /**
+   * Create environment jobs
+   *
+   * Starts a dependency-aware job group on one environment instance. requestId is the retry identity; jobs are owned by the instance rather than a session.
+   */
   environmentsJobsCreate(client: RpcCaller, params: Api.EnvironmentJobCreateParams): Promise<Api.AgentApiOutcomeOfEnvironmentJobCreateResponse> {
     return client.call("environments/jobs/create", params);
   },
+  /**
+   * Read environment jobs
+   *
+   * Reads selected job handles with bounded output, optional sequence continuation, and optional artifacts; use returned status/sequence data for polling.
+   */
   environmentsJobsRead(client: RpcCaller, params: Api.EnvironmentJobReadParams): Promise<Api.AgentApiOutcomeOfEnvironmentJobReadResponse> {
     return client.call("environments/jobs/read", params);
   },
+  /**
+   * List environment jobs
+   *
+   * Lists durable job records across the universe, optionally narrowed to an instance or job group.
+   */
   environmentsJobsList(client: RpcCaller, params: Api.EnvironmentJobListParams): Promise<Api.AgentApiOutcomeOfEnvironmentJobListResponse> {
     return client.call("environments/jobs/list", params);
   },
+  /**
+   * Cancel environment jobs
+   *
+   * Requests cancellation for selected jobs, optionally including dependents. Force is provider-specific escalation; inspect each per-job result.
+   */
   environmentsJobsCancel(client: RpcCaller, params: Api.EnvironmentJobCancelParams): Promise<Api.AgentApiOutcomeOfEnvironmentJobCancelResponse> {
     return client.call("environments/jobs/cancel", params);
   },
+  /**
+   * Discover available models
+   *
+   * Queries supported providers directly on every call and returns best-effort selectable routes. One provider failure does not discard successful results from others.
+   */
   modelsList(client: RpcCaller, params: Api.ModelListParams): Promise<Api.AgentApiOutcomeOfModelListResponse> {
     return client.call("models/list", params);
   },
+  /**
+   * Create an agent profile
+   *
+   * Creates a new universe-scoped reusable profile document; use profiles/put for create-or-replace revision semantics.
+   */
   profilesCreate(client: RpcCaller, params: Api.ProfileCreateParams): Promise<Api.AgentApiOutcomeOfProfileCreateResponse> {
     return client.call("profiles/create", params);
   },
+  /**
+   * Read an agent profile
+   *
+   * Returns the complete profile document and current revision.
+   */
   profilesRead(client: RpcCaller, params: Api.ProfileReadParams): Promise<Api.AgentApiOutcomeOfProfileReadResponse> {
     return client.call("profiles/read", params);
   },
+  /**
+   * List agent profiles
+   *
+   * Returns lightweight summaries of universe-scoped reusable profiles.
+   */
   profilesList(client: RpcCaller, params: Api.ProfileListParams): Promise<Api.AgentApiOutcomeOfProfileListResponse> {
     return client.call("profiles/list", params);
   },
+  /**
+   * Create or replace an agent profile
+   *
+   * Stores the complete profile document. Use expectedRevision from profiles/read when replacing to prevent lost updates; absence writes unconditionally.
+   */
   profilesPut(client: RpcCaller, params: Api.ProfilePutParams): Promise<Api.AgentApiOutcomeOfProfilePutResponse> {
     return client.call("profiles/put", params);
   },
+  /**
+   * Delete an agent profile
+   *
+   * Deletes the catalog document; sessions previously created or configured from it retain their materialized state.
+   */
   profilesDelete(client: RpcCaller, params: Api.ProfileDeleteParams): Promise<Api.AgentApiOutcomeOfProfileDeleteResponse> {
     return client.call("profiles/delete", params);
   },
+  /**
+   * Store content-addressed blobs
+   *
+   * Decodes and stores a batch of base64 payloads, returning immutable content references in request order. Re-uploading identical bytes is naturally deduplicated.
+   */
   blobsPut(client: RpcCaller, params: Api.BlobPutParams): Promise<Api.AgentApiOutcomeOfBlobPutResponse> {
     return client.call("blobs/put", params);
   },
+  /**
+   * Read a content-addressed blob
+   *
+   * Returns the complete immutable blob as base64; large values count against gateway and MCP response limits.
+   */
   blobsRead(client: RpcCaller, params: Api.BlobReadParams): Promise<Api.AgentApiOutcomeOfBlobReadResponse> {
     return client.call("blobs/read", params);
   },
+  /**
+   * Check blob availability
+   *
+   * Checks a batch of content references without returning blob bodies, preserving request order.
+   */
   blobsHas(client: RpcCaller, params: Api.BlobHasParams): Promise<Api.AgentApiOutcomeOfBlobHasResponse> {
     return client.call("blobs/has", params);
   },
+  /**
+   * Commit a VFS snapshot
+   *
+   * Validates and stores an immutable filesystem manifest. Upload referenced file blobs first; the returned snapshot ref is content-addressed.
+   */
   vfsSnapshotsCommit(client: RpcCaller, params: Api.VfsSnapshotCommitParams): Promise<Api.AgentApiOutcomeOfVfsSnapshotCommitResponse> {
     return client.call("vfs/snapshots/commit", params);
   },
+  /**
+   * Read a VFS snapshot
+   *
+   * Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs.
+   */
   vfsSnapshotsRead(client: RpcCaller, params: Api.VfsSnapshotReadParams): Promise<Api.AgentApiOutcomeOfVfsSnapshotReadResponse> {
     return client.call("vfs/snapshots/read", params);
   },
+  /**
+   * Create a mutable VFS workspace
+   *
+   * Creates a universe workspace at an optional seed snapshot; absence starts from a server-created empty snapshot.
+   */
   vfsWorkspacesCreate(client: RpcCaller, params: Api.VfsWorkspaceCreateParams): Promise<Api.AgentApiOutcomeOfVfsWorkspaceCreateResponse> {
     return client.call("vfs/workspaces/create", params);
   },
+  /**
+   * Read a VFS workspace
+   *
+   * Returns workspace metadata, current head snapshot, and revision for safe updates.
+   */
   vfsWorkspacesRead(client: RpcCaller, params: Api.VfsWorkspaceReadParams): Promise<Api.AgentApiOutcomeOfVfsWorkspaceReadResponse> {
     return client.call("vfs/workspaces/read", params);
   },
+  /**
+   * List VFS workspaces
+   *
+   * Lists mutable universe workspaces with head snapshots, sizes, and revisions.
+   */
   vfsWorkspacesList(client: RpcCaller, params: Api.VfsWorkspaceListParams): Promise<Api.AgentApiOutcomeOfVfsWorkspaceListResponse> {
     return client.call("vfs/workspaces/list", params);
   },
+  /**
+   * Update a VFS workspace
+   *
+   * Moves the workspace head to an existing snapshot and updates its display name. Pass expectedRevision from a read to prevent lost updates.
+   */
   vfsWorkspacesUpdate(client: RpcCaller, params: Api.VfsWorkspaceUpdateParams): Promise<Api.AgentApiOutcomeOfVfsWorkspaceUpdateResponse> {
     return client.call("vfs/workspaces/update", params);
   },
+  /**
+   * Delete a VFS workspace
+   *
+   * Deletes the mutable workspace record; immutable snapshots and blobs remain content-addressed resources.
+   */
   vfsWorkspacesDelete(client: RpcCaller, params: Api.VfsWorkspaceDeleteParams): Promise<Api.AgentApiOutcomeOfVfsWorkspaceDeleteResponse> {
     return client.call("vfs/workspaces/delete", params);
   },
+  /**
+   * Create or replace an MCP server record
+   *
+   * Stores the complete universe catalog document. Use expectedRevision when replacing; authenticated policies reference grants but never embed credentials.
+   */
   mcpServersPut(client: RpcCaller, params: Api.McpServerPutParams): Promise<Api.AgentApiOutcomeOfMcpServerPutResponse> {
     return client.call("mcp/servers/put", params);
   },
+  /**
+   * Read an MCP server record
+   *
+   * Returns one catalog document with defaults, auth policy, status, and revision; no credential value is exposed.
+   */
   mcpServersRead(client: RpcCaller, params: Api.McpServerReadParams): Promise<Api.AgentApiOutcomeOfMcpServerReadResponse> {
     return client.call("mcp/servers/read", params);
   },
+  /**
+   * List MCP server records
+   *
+   * Lists universe catalog entries, optionally filtered by lifecycle/configuration status.
+   */
   mcpServersList(client: RpcCaller, params: Api.McpServerListParams): Promise<Api.AgentApiOutcomeOfMcpServerListResponse> {
     return client.call("mcp/servers/list", params);
   },
+  /**
+   * Delete an MCP server record
+   *
+   * Deletes the catalog document. Existing session configs that reference it are not silently rewritten and may need explicit reconfiguration.
+   */
   mcpServersDelete(client: RpcCaller, params: Api.McpServerDeleteParams): Promise<Api.AgentApiOutcomeOfMcpServerDeleteResponse> {
     return client.call("mcp/servers/delete", params);
   },
+  /**
+   * Register environment provider presence
+   *
+   * Publishes a controller endpoint, capabilities, implementation identity, and liveness lease. Intended for trusted provider/bridge infrastructure, not ordinary configuration clients.
+   */
   environmentsProvidersRegister(client: RpcCaller, params: Api.EnvironmentProviderRegisterParams): Promise<Api.AgentApiOutcomeOfEnvironmentProviderRegisterResponse> {
     return client.call("environments/providers/register", params);
   },
+  /**
+   * Refresh environment provider presence
+   *
+   * Renews a provider lease and records its complete observed target descriptors. Omitted provided targets may become unknown; intended for provider infrastructure.
+   */
   environmentsProvidersHeartbeat(client: RpcCaller, params: Api.EnvironmentProviderHeartbeatParams): Promise<Api.AgentApiOutcomeOfEnvironmentProviderHeartbeatResponse> {
     return client.call("environments/providers/heartbeat", params);
   },
+  /**
+   * Unregister environment provider presence
+   *
+   * Marks provider presence offline without deleting its durable environment instance records.
+   */
   environmentsProvidersUnregister(client: RpcCaller, params: Api.EnvironmentProviderUnregisterParams): Promise<Api.AgentApiOutcomeOfEnvironmentProviderUnregisterResponse> {
     return client.call("environments/providers/unregister", params);
   },
+  /**
+   * List environment providers
+   *
+   * Lists current provider presence with lease-derived online/stale/offline status, optionally filtered by status or kind.
+   */
   environmentsProvidersList(client: RpcCaller, params: Api.EnvironmentProviderListParams): Promise<Api.AgentApiOutcomeOfEnvironmentProviderListResponse> {
     return client.call("environments/providers/list", params);
   },
+  /**
+   * Import a static bearer grant
+   *
+   * Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. The token can never be read back through the API.
+   */
   authGrantsImport(client: RpcCaller, params: Api.AuthGrantImportParams): Promise<Api.AgentApiOutcomeOfAuthGrantImportResponse> {
     return client.call("auth/grants/import", params);
   },
+  /**
+   * Read authentication grant metadata
+   *
+   * Returns principal, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned.
+   */
   authGrantsRead(client: RpcCaller, params: Api.AuthGrantReadParams): Promise<Api.AgentApiOutcomeOfAuthGrantReadResponse> {
     return client.call("auth/grants/read", params);
   },
+  /**
+   * List authentication grants
+   *
+   * Lists non-secret grant metadata for the universe, optionally filtered by status.
+   */
   authGrantsList(client: RpcCaller, params: Api.AuthGrantListParams): Promise<Api.AgentApiOutcomeOfAuthGrantListResponse> {
     return client.call("auth/grants/list", params);
   },
+  /**
+   * Revoke an authentication grant
+   *
+   * Marks the grant unusable by token consumers while retaining non-secret audit metadata.
+   */
   authGrantsRevoke(client: RpcCaller, params: Api.AuthGrantRevokeParams): Promise<Api.AgentApiOutcomeOfAuthGrantRevokeResponse> {
     return client.call("auth/grants/revoke", params);
   },
+  /**
+   * Register an OAuth client
+   *
+   * Stores provider endpoints and client identity; an optional plaintext client secret is encrypted and represented thereafter only by hasClientSecret.
+   */
   authClientsCreate(client: RpcCaller, params: Api.AuthClientCreateParams): Promise<Api.AgentApiOutcomeOfAuthClientCreateResponse> {
     return client.call("auth/clients/create", params);
   },
+  /**
+   * Read OAuth client metadata
+   *
+   * Returns endpoints, public client identity, defaults, and secret-presence state; the client secret is never returned.
+   */
   authClientsRead(client: RpcCaller, params: Api.AuthClientReadParams): Promise<Api.AgentApiOutcomeOfAuthClientReadResponse> {
     return client.call("auth/clients/read", params);
   },
+  /**
+   * List OAuth clients
+   *
+   * Lists non-secret OAuth client registrations in the universe.
+   */
   authClientsList(client: RpcCaller, params: Api.AuthClientListParams): Promise<Api.AgentApiOutcomeOfAuthClientListResponse> {
     return client.call("auth/clients/list", params);
   },
+  /**
+   * Delete an OAuth client
+   *
+   * Deletes the client registration and its stored client secret; grants already created from it remain separate records.
+   */
   authClientsDelete(client: RpcCaller, params: Api.AuthClientDeleteParams): Promise<Api.AgentApiOutcomeOfAuthClientDeleteResponse> {
     return client.call("auth/clients/delete", params);
   },
+  /**
+   * Start an OAuth authorization flow
+   *
+   * Creates a short-lived PKCE flow and returns a browser authorization URL containing one-time state. Treat the URL as sensitive and poll auth/flows/read for completion.
+   */
   authFlowsStart(client: RpcCaller, params: Api.AuthFlowStartParams): Promise<Api.AgentApiOutcomeOfAuthFlowStartResponse> {
     return client.call("auth/flows/start", params);
   },
+  /**
+   * Read OAuth flow status
+   *
+   * Polls a flow's pending/completed/failed/expired state and returns the resulting grant id when authorization succeeds; no token value is exposed.
+   */
   authFlowsRead(client: RpcCaller, params: Api.AuthFlowStatusParams): Promise<Api.AgentApiOutcomeOfAuthFlowStatusResponse> {
     return client.call("auth/flows/read", params);
   },
+  /**
+   * Register an authentication provider
+   *
+   * Creates a model or GitHub credential source. Plaintext API keys/private keys are encrypted on receipt and later represented only by configuration plus hasCredential.
+   */
   authProvidersCreate(client: RpcCaller, params: Api.AuthProviderCreateParams): Promise<Api.AgentApiOutcomeOfAuthProviderCreateResponse> {
     return client.call("auth/providers/create", params);
   },
+  /**
+   * Read authentication provider metadata
+   *
+   * Returns provider kind, non-secret configuration, credential-presence state, and status; stored credentials are never returned.
+   */
   authProvidersRead(client: RpcCaller, params: Api.AuthProviderReadParams): Promise<Api.AgentApiOutcomeOfAuthProviderReadResponse> {
     return client.call("auth/providers/read", params);
   },
+  /**
+   * List authentication providers
+   *
+   * Lists non-secret model/GitHub provider registrations for the universe.
+   */
   authProvidersList(client: RpcCaller, params: Api.AuthProviderListParams): Promise<Api.AgentApiOutcomeOfAuthProviderListResponse> {
     return client.call("auth/providers/list", params);
   },
+  /**
+   * Delete an authentication provider
+   *
+   * Deletes the provider registration and its directly stored credential; separately stored grants remain independent records.
+   */
   authProvidersDelete(client: RpcCaller, params: Api.AuthProviderDeleteParams): Promise<Api.AgentApiOutcomeOfAuthProviderDeleteResponse> {
     return client.call("auth/providers/delete", params);
   },
+  /**
+   * List GitHub App installations
+   *
+   * Uses the registered GitHub App provider credential to query accessible installations and returns account/permission metadata without tokens.
+   */
   authGithubInstallationsList(client: RpcCaller, params: Api.AuthGitHubInstallationListParams): Promise<Api.AgentApiOutcomeOfAuthGitHubInstallationListResponse> {
     return client.call("auth/github/installations/list", params);
   },
+  /**
+   * Grant access to a GitHub App installation
+   *
+   * Creates or refreshes a universe auth grant for one accessible installation. The installation token is brokered internally and never returned.
+   */
   authGithubInstallationsGrant(client: RpcCaller, params: Api.AuthGitHubInstallationGrantParams): Promise<Api.AgentApiOutcomeOfAuthGitHubInstallationGrantResponse> {
     return client.call("auth/github/installations/grant", params);
   },
+  /**
+   * Read pending outbound messages
+   *
+   * Cursor-reads or long-polls the universe delivery outbox. Advance with nextAfter, but only outbox/ack marks individual entries delivered or failed.
+   */
   outboxRead(client: RpcCaller, params: Api.OutboxReadParams): Promise<Api.AgentApiOutcomeOfOutboxReadResponse> {
     return client.call("outbox/read", params);
   },
+  /**
+   * Acknowledge outbound delivery
+   *
+   * Records delivered or failed delivery for one outbox entry and updates attempt/status state. Intended for messaging delivery workers.
+   */
   outboxAck(client: RpcCaller, params: Api.OutboxAckParams): Promise<Api.AgentApiOutcomeOfOutboxAckResponse> {
     return client.call("outbox/ack", params);
   },
+  /**
+   * Create a universe
+   *
+   * Creates the deployment tenant boundary for an explicit UUID. The operation is idempotent and reports whether a new universe was created.
+   */
   operatorUniversesCreate(client: RpcCaller, params: Api.OperatorUniverseCreateParams): Promise<Api.AgentApiOutcomeOfOperatorUniverseCreateResponse> {
     return client.call("operator/universes/create", params);
   },
+  /**
+   * List universes
+   *
+   * Returns deployment-wide universe summaries with approximate live aggregate counts and last session activity.
+   */
   operatorUniversesList(client: RpcCaller, params: Api.OperatorUniverseListParams): Promise<Api.AgentApiOutcomeOfOperatorUniverseListResponse> {
     return client.call("operator/universes/list", params);
   },
+  /**
+   * Read a universe
+   *
+   * Returns one deployment tenant summary with aggregate session, workspace, profile, and blob usage.
+   */
   operatorUniversesRead(client: RpcCaller, params: Api.OperatorUniverseReadParams): Promise<Api.AgentApiOutcomeOfOperatorUniverseReadResponse> {
     return client.call("operator/universes/read", params);
   },
+  /**
+   * Purge a universe
+   *
+   * Permanently terminates live session workflows, deletes external blob objects, and cascades universe data. The purge is resumable/idempotent after partial failure.
+   */
   operatorUniversesDelete(client: RpcCaller, params: Api.OperatorUniverseDeleteParams): Promise<Api.AgentApiOutcomeOfOperatorUniverseDeleteResponse> {
     return client.call("operator/universes/delete", params);
   },
+  /**
+   * Read the deployment outbox
+   *
+   * Cursor-reads or long-polls pending messages across all universes. Entries identify their universe; acknowledge each through universe-scoped outbox/ack.
+   */
   operatorOutboxRead(client: RpcCaller, params: Api.OperatorOutboxReadParams): Promise<Api.AgentApiOutcomeOfOperatorOutboxReadResponse> {
     return client.call("operator/outbox/read", params);
   },

@@ -42,6 +42,11 @@ Raw calls return the full `AgentApiOutcome<...>` envelope, including any
 notifications. JSON-RPC failures throw `LightspeedRpcError` with `code`, `message`,
 `kind`, and raw `data` preserved.
 
+`METHOD_INFO` exposes the canonical Rust-authored scope, summary, and
+operational description for every method. The generated `rpc.*` helpers carry
+the same text as JSDoc, while parameter and result field documentation comes
+from the generated schema types.
+
 ## Regenerate
 
 ```bash

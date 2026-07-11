@@ -37,6 +37,15 @@ const manifest = JSON.parse(await readFile(methodsPath, "utf8"));
 const methods = manifest.methods ?? [];
 const notifications = manifest.notifications ?? [];
 
+for (const entry of methods) {
+  if (typeof entry.summary !== "string" || entry.summary.trim().length === 0) {
+    throw new Error(`method ${entry.method} is missing summary documentation`);
+  }
+  if (typeof entry.description !== "string" || entry.description.trim().length === 0) {
+    throw new Error(`method ${entry.method} is missing description documentation`);
+  }
+}
+
 const seenAliases = new Map();
 
 function typeNameFromRef(entry, method, side) {
@@ -71,6 +80,18 @@ function q(value) {
   return JSON.stringify(value);
 }
 
+function jsDoc(entry, indent = "") {
+  const summary = entry.summary.replaceAll("*/", "* /");
+  const description = entry.description.replaceAll("*/", "* /");
+  return [
+    `${indent}/**`,
+    `${indent} * ${summary}`,
+    `${indent} *`,
+    `${indent} * ${description}`,
+    `${indent} */`,
+  ];
+}
+
 const methodLines = [
   bannerComment.trimEnd(),
   'import type * as Api from "./types.js";',
@@ -78,6 +99,16 @@ const methodLines = [
   "export const METHODS = [",
   ...methods.map((entry) => `  ${q(entry.method)},`),
   "] as const;",
+  "",
+  "export const METHOD_INFO = {",
+  ...methods.flatMap((entry) => [
+    `  ${q(entry.method)}: {`,
+    `    scope: ${q(entry.scope)},`,
+    `    summary: ${q(entry.summary)},`,
+    `    description: ${q(entry.description)},`,
+    "  },",
+  ]),
+  "} as const;",
   "",
   "export const NOTIFICATIONS = [",
   ...notifications.map((method) => `  ${q(method)},`),
@@ -91,6 +122,7 @@ const methodLines = [
     const params = typeNameFromRef(entry.params, entry.method, "params");
     const result = typeNameFromRef(entry.result, entry.method, "result");
     return [
+      ...jsDoc(entry, "  "),
       `  ${q(entry.method)}: {`,
       `    params: Api.${params};`,
       `    result: Api.${result};`,
@@ -111,7 +143,7 @@ const methodLines = [
     const alias = methodAlias(entry.method);
     const params = typeNameFromRef(entry.params, entry.method, "params");
     const result = typeNameFromRef(entry.result, entry.method, "result");
-    return `  ${alias}(client: RpcCaller, params: Api.${params}): Promise<Api.${result}> {\n    return client.call(${q(entry.method)}, params);\n  },`;
+    return `${jsDoc(entry, "  ").join("\n")}\n  ${alias}(client: RpcCaller, params: Api.${params}): Promise<Api.${result}> {\n    return client.call(${q(entry.method)}, params);\n  },`;
   }),
   "} as const;",
   ""

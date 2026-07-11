@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   LightspeedClient,
   LightspeedRpcError,
+  METHOD_INFO,
   type EventCursor,
   type SessionEventView,
 } from "../src/index.js";
@@ -19,6 +20,15 @@ function decodeBody(init: RequestInit | undefined): Record<string, unknown> {
 }
 
 describe("LightspeedClient", () => {
+  it("ships canonical method documentation from the Rust manifest", () => {
+    expect(METHOD_INFO["session/config/put"]).toEqual({
+      scope: "universe",
+      summary: "Replace session configuration",
+      description:
+        "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked and an identical document is a no-op.",
+    });
+  });
+
   it("posts typed JSON-RPC calls and returns the result envelope", async () => {
     const requests: Array<{ url: string; body: Record<string, unknown>; headers: Headers }> = [];
     const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
