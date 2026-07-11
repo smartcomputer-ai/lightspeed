@@ -66,6 +66,8 @@ What constitutes an "agent harness" is a rapidly expanding set of table-stakes f
 
 **Interfaces**
 - [x] **Typed JSON-RPC API**: committed schema contract, generated TypeScript client
+- [x] **Configurator MCP**: the complete universe API as generated tools over
+  multi-tenant Streamable HTTP
 - [x] **CLI** to connect to running agent sessions
 - [x] **Messaging bridges**: WhatsApp and Telegram today; media and group chats included, more channels coming
 
@@ -266,6 +268,27 @@ The CLI and the messaging bridge send credentials from `LIGHTSPEED_API_KEY`
 (api-key mode) or `LIGHTSPEED_UNIVERSE` (trusted-header mode) automatically.
 See [docs/roadmap/p90-multi-tenancy.md](docs/roadmap/p90-multi-tenancy.md)
 for the design.
+
+### Configurator MCP
+
+`interop/configurator-mcp` exposes every universe-scoped JSON-RPC method as a
+generated MCP tool over stateless Streamable HTTP. It deliberately excludes
+deployment-level `operator/*` methods. Each MCP POST authenticates independently
+using the gateway's configured `single`, `trusted-header`, or `api-key` mode,
+so one Configurator deployment can safely mediate many universes.
+
+With the server running locally in the default single-universe mode:
+
+```bash
+cd interop/configurator-mcp
+npm install
+npm run build
+LIGHTSPEED_AUTH_MODE=single node dist/bin.js
+```
+
+The MCP endpoint defaults to `http://127.0.0.1:18081/mcp`; see
+`interop/configurator-mcp/README.md` for multi-tenant proxy and API-key
+configuration.
 
 ### Stop Or Reset Local Infra
 

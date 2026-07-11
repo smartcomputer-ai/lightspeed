@@ -18,7 +18,8 @@ Use these files as the index:
   management, CAS offloading, Temporal hosting), moved out of the README.
 - `docs/spec/01-agent-idea.md` — working design notes for the new agent direction.
 - `Cargo.toml` — workspace membership.
-- `interop/` — API contract artifacts and the private TypeScript client.
+- `interop/` — API contract artifacts, the private TypeScript client, and the
+  generated multi-universe Configurator MCP Streamable HTTP facade.
 - `local/` — local Docker stack, environment exports, and reset helpers.
 - `docs/roadmap/` — implementation plans and historical milestones.
 
@@ -80,6 +81,14 @@ under `interop/contract/` (`cargo test -p api` fails while they are stale):
 
 ```bash
 cargo run -p api --bin export-schema
+```
+
+After changing the API contract, regenerate and verify both TypeScript
+consumers:
+
+```bash
+cd interop/ts-client && npm install && npm run check
+cd ../configurator-mcp && npm install && npm run check
 ```
 
 CLI usage:
