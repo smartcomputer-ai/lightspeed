@@ -1,8 +1,13 @@
 # Lightspeed Configurator MCP
 
-Private Streamable HTTP MCP facade over every universe-scoped method in the
-Lightspeed JSON-RPC contract. Tools are generated from `../contract`; the five
-deployment-level `operator/*` methods are not exposed.
+Private Streamable HTTP MCP facade over a configurable generated subset of the
+universe-scoped Lightspeed JSON-RPC contract. Tools are generated from
+`../contract`; deployment-level `operator/*` methods can never be exposed.
+
+`tool-filter.json` contains the exact universe methods omitted from generation.
+The default surface excludes provider presence writes, environment jobs,
+outbox delivery, and the redundant Lightspeed handshake, leaving 71 tools.
+Edit that file and run `npm run generate` to tune the advertised surface.
 
 ## Run
 

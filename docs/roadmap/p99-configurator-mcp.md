@@ -3,8 +3,9 @@
 **Status:** Implemented 2026-07-11.
 
 Implemented as `interop/configurator-mcp`: a private Node/TypeScript package
-using the stable MCP SDK v1 Streamable HTTP transport, a generated 81-tool
-universe-only descriptor map with self-contained input schemas, request-scoped
+using the stable MCP SDK v1 Streamable HTTP transport, a generated universe-only
+descriptor map with self-contained input schemas, a committed exact-method
+filter (71 of the current 81 universe methods advertised), request-scoped
 single/trusted-header/API-key forwarding, upstream authentication probes,
 structured results/errors, host/origin checks, and real MCP-client integration
 tests over the HTTP edge. The optional output schemas were deliberately omitted
@@ -14,8 +15,9 @@ returned as structured content and JSON text.
 
 ## Goal
 
-Expose the complete universe-scoped Lightspeed TypeScript client surface as a
-remote MCP server over Streamable HTTP.
+Expose a generated, explicitly configurable subset of the universe-scoped
+Lightspeed TypeScript client surface as a remote MCP server over Streamable
+HTTP.
 
 The Configurator MCP is a protocol facade over the existing JSON-RPC gateway,
 not a second control plane. It derives MCP tools from the committed API
@@ -30,10 +32,10 @@ Lightspeed call. A Configurator process is universe-pinned only when its
 upstream Lightspeed gateway runs in `single` auth mode, which is primarily a
 local/test topology.
 
-The first cut deliberately exposes every universe method. It does not add
-read-only/configuration/all profiles, method allow-lists, approval policy, or
-tool-safety overlays. The five deployment-scoped `operator/*` methods are never
-part of this server.
+The first cut uses one committed exact-method exclusion list at generation
+time. It does not add runtime read-only/configuration/all profiles, per-client
+filtering, approval policy, or tool-safety overlays. The five deployment-scoped
+`operator/*` methods are never eligible for this server.
 
 ## Product shape
 
@@ -75,10 +77,10 @@ truth. At proposal time it contains 86 methods:
 - 5 with `scope: "operator"`.
 
 The generated TypeScript client currently includes both scope classes because
-it represents the complete HTTP JSON-RPC contract. P99 generates MCP tools only
-for manifest entries whose scope is `universe`. This includes the Lightspeed
-`initialize` method; its MCP tool name is namespaced and does not conflict with
-MCP protocol initialization.
+it represents the complete HTTP JSON-RPC contract. P99 first selects manifest
+entries whose scope is `universe`, then removes the exact method names in
+`interop/configurator-mcp/tool-filter.json`. The implemented default excludes
+10 methods and advertises 71 tools.
 
 The exclusion is semantic, not only a `tools/list` filter:
 
@@ -92,6 +94,26 @@ The exclusion is semantic, not only a `tools/list` filter:
 This rule is unchanged in `single` mode. A Configurator never becomes a
 deployment operator merely because the upstream gateway would accept an
 operator call.
+
+### Committed method filter
+
+`tool-filter.json` is the tunable generation input. It contains one
+`excludeMethods` array of exact universe method names. Generation fails for an
+unknown/non-universe name, duplicate, empty value, or unknown config key so a
+stale or misspelled exclusion cannot silently change the surface.
+
+The implemented defaults exclude:
+
+- `initialize` — the Configurator already uses the handshake internally;
+- `environments/providers/register|heartbeat|unregister` — provider/bridge
+  presence writers, while retaining `environments/providers/list` for
+  visibility;
+- `environments/jobs/create|read|list|cancel` — environment execution rather
+  than configuration;
+- `outbox/read|ack` — messaging delivery-worker operations.
+
+This is a build/deployment-wide surface, not caller authorization. Editing the
+file and regenerating changes `tools/list` for every client of that artifact.
 
 ## Package placement
 
@@ -300,9 +322,9 @@ MCP request was authenticated but the requested Lightspeed operation failed.
 
 `interop/contract/methods.json` and `interop/contract/api.schema.json` remain
 the only sources of wire truth. Extend generation rather than hand-maintaining
-81 adapters.
+the advertised adapters.
 
-For each universe method, generate:
+For each universe method remaining after the committed filter, generate:
 
 - a deterministic MCP-safe tool name, for example
   `session/config/put` -> `lightspeed_session_config_put`;
@@ -324,7 +346,7 @@ usable outside the bundle. The generator should compute the transitive
 definition closure for each method and embed only the reachable definitions,
 or fully dereference the schema when this can be done without breaking
 recursive types. It must not attach the entire Lightspeed schema bundle to all
-81 tools.
+advertised tools.
 
 Prefer the MCP SDK's low-level tool request handlers if its high-level API
 would require a lossy JSON Schema -> Zod reconstruction. The Rust-exported
@@ -440,8 +462,8 @@ the multi-universe modes.
    with host/origin validation and abort-aware request handling.
 3. Generate the closed tool descriptor map from the committed manifest and
    schema bundle; commit it and add a currency check.
-4. Expose all 81 universe tools and no operator tool, initially against a mock
-   `RpcCaller`.
+4. Apply the committed exact-method filter, expose the resulting universe tools
+   and no operator tool, initially against a mock `RpcCaller`.
 
 ### Slice 2: Request auth and upstream forwarding
 
@@ -470,7 +492,8 @@ the multi-universe modes.
 - [x] A remote MCP client can initialize and list tools over Streamable HTTP;
   no stdio transport is present.
 - [x] `tools/list` advertises exactly the current universe-scoped manifest
-  entries (81 at proposal time), with valid self-contained input schemas.
+  entries minus `tool-filter.json` (71 of 81 at implementation time), with
+  valid self-contained input schemas.
 - [x] No operator method is generated, advertised, or dispatchable.
 - [x] Every generated tool forwards its exact method name and params through
   `LightspeedClient` and returns the complete `AgentApiOutcome`.
@@ -499,8 +522,8 @@ the multi-universe modes.
 - No stdio or legacy HTTP+SSE transport.
 - No stateful MCP sessions, resumability, notification stream, or distributed
   session routing.
-- No read-only/configuration/all profiles, tool allow/deny lists, or per-client
-  surface filtering.
+- No runtime read-only/configuration/all profiles, caller-specific allow/deny
+  lists, or dynamic surface filtering; only the committed generation filter.
 - No method safety annotations, human approval flow, or integration with the
   later MCP approval roadmap item.
 - No standards-based MCP OAuth protected resource in the first cut.

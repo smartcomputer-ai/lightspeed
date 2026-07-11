@@ -25,7 +25,7 @@ describe("Streamable HTTP configurator", () => {
 
     await client.connect(transport as Parameters<typeof client.connect>[0]);
     const listed = await client.listTools();
-    expect(listed.tools).toHaveLength(81);
+    expect(listed.tools).toHaveLength(71);
     expect(listed.tools.some((tool) => tool.name.startsWith("lightspeed_operator_"))).toBe(false);
     await expect(
       client.callTool({ name: "lightspeed_operator_universes_list", arguments: {} }),

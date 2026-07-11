@@ -6,12 +6,16 @@ const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".
 const interopDir = path.resolve(packageDir, "..");
 const manifestPath = path.join(interopDir, "contract", "methods.json");
 const schemaPath = path.join(interopDir, "contract", "api.schema.json");
+const filterPath = path.join(packageDir, "tool-filter.json");
 const outputPath = path.join(packageDir, "src", "generated", "tools.ts");
 
 const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
 const bundle = JSON.parse(await readFile(schemaPath, "utf8"));
+const filter = JSON.parse(await readFile(filterPath, "utf8"));
 const definitions = bundle.definitions ?? {};
-const methods = (manifest.methods ?? []).filter((entry) => entry.scope === "universe");
+const universeMethods = (manifest.methods ?? []).filter((entry) => entry.scope === "universe");
+const excludeMethods = validateFilter(filter, universeMethods);
+const methods = universeMethods.filter((entry) => !excludeMethods.has(entry.method));
 
 const seenNames = new Map();
 const tools = methods.map((entry) => {
@@ -49,6 +53,38 @@ const banner = [
 
 await mkdir(path.dirname(outputPath), { recursive: true });
 await writeFile(outputPath, banner);
+
+function validateFilter(value, universeEntries) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("tool-filter.json must contain one JSON object");
+  }
+  const keys = Object.keys(value);
+  if (keys.some((key) => key !== "excludeMethods")) {
+    const unknownKeys = keys.filter((key) => key !== "excludeMethods");
+    throw new Error(`tool-filter.json has unknown keys: ${unknownKeys.join(", ")}`);
+  }
+  if (!Array.isArray(value.excludeMethods)) {
+    throw new Error("tool-filter.json excludeMethods must be an array");
+  }
+  const excluded = new Set();
+  for (const method of value.excludeMethods) {
+    if (typeof method !== "string" || method.length === 0) {
+      throw new Error("tool-filter.json excludeMethods entries must be non-empty strings");
+    }
+    if (excluded.has(method)) {
+      throw new Error(`tool-filter.json contains duplicate method: ${method}`);
+    }
+    excluded.add(method);
+  }
+  const universeNames = new Set(universeEntries.map((entry) => entry.method));
+  const unknown = [...excluded].filter((method) => !universeNames.has(method));
+  if (unknown.length > 0) {
+    throw new Error(
+      `tool-filter.json excludes unknown or non-universe methods: ${unknown.join(", ")}`,
+    );
+  }
+  return excluded;
+}
 
 function toolName(method) {
   return `lightspeed_${method.replaceAll(/[^A-Za-z0-9_-]/g, "_")}`;

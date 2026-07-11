@@ -54,9 +54,9 @@
 
 ## MCP
 - [x] [P99](p99-configurator-mcp.md) — multi-universe Configurator MCP over
-  stateless Streamable HTTP, generated from the complete universe-scoped
-  TypeScript client contract with request-scoped gateway authentication and
-  no operator methods
+  stateless Streamable HTTP, generated from a configurable subset of the
+  universe-scoped TypeScript client contract with request-scoped gateway
+  authentication and no operator methods
 - [ ] Support MCP tunnels to model providers
 
 ## Framework/SDK

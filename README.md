@@ -66,7 +66,7 @@ What constitutes an "agent harness" is a rapidly expanding set of table-stakes f
 
 **Interfaces**
 - [x] **Typed JSON-RPC API**: committed schema contract, generated TypeScript client
-- [x] **Configurator MCP**: the complete universe API as generated tools over
+- [x] **Configurator MCP**: a configurable universe API surface as generated tools over
   multi-tenant Streamable HTTP
 - [x] **CLI** to connect to running agent sessions
 - [x] **Messaging bridges**: WhatsApp and Telegram today; media and group chats included, more channels coming
@@ -271,11 +271,13 @@ for the design.
 
 ### Configurator MCP
 
-`interop/configurator-mcp` exposes every universe-scoped JSON-RPC method as a
-generated MCP tool over stateless Streamable HTTP. It deliberately excludes
-deployment-level `operator/*` methods. Each MCP POST authenticates independently
-using the gateway's configured `single`, `trusted-header`, or `api-key` mode,
-so one Configurator deployment can safely mediate many universes.
+`interop/configurator-mcp` exposes a generated, configurable subset of the
+universe-scoped JSON-RPC methods as MCP tools over stateless Streamable HTTP.
+Its committed `tool-filter.json` tunes the advertised surface; deployment-level
+`operator/*` methods are categorically ineligible. Each MCP POST authenticates
+independently using the gateway's configured `single`, `trusted-header`, or
+`api-key` mode, so one Configurator deployment can safely mediate many
+universes.
 
 With the server running locally in the default single-universe mode:
 

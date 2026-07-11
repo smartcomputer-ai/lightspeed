@@ -12,6 +12,7 @@
   "files": [
     "dist",
     "src/generated/tools.ts",
+    "tool-filter.json",
     "README.md"
   ],
   "engines": {

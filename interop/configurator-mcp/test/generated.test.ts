@@ -2,12 +2,26 @@ import { describe, expect, it } from "vitest";
 import { GENERATED_TOOLS } from "../src/generated/tools.js";
 
 describe("generated universe tools", () => {
-  it("contains all 81 universe methods and no operator methods", () => {
-    expect(GENERATED_TOOLS).toHaveLength(81);
-    expect(new Set(GENERATED_TOOLS.map((tool) => tool.name)).size).toBe(81);
+  it("contains the configured 71-method surface and no operator methods", () => {
+    expect(GENERATED_TOOLS).toHaveLength(71);
+    expect(new Set(GENERATED_TOOLS.map((tool) => tool.name)).size).toBe(71);
     expect(GENERATED_TOOLS.some((tool) => tool.method.startsWith("operator/"))).toBe(false);
     expect(GENERATED_TOOLS.find((tool) => tool.method === "session/config/put")?.name).toBe(
       "lightspeed_session_config_put",
+    );
+    expect(GENERATED_TOOLS.map((tool) => tool.method)).not.toEqual(
+      expect.arrayContaining([
+        "initialize",
+        "environments/providers/register",
+        "environments/providers/heartbeat",
+        "environments/providers/unregister",
+        "environments/jobs/create",
+        "environments/jobs/read",
+        "environments/jobs/list",
+        "environments/jobs/cancel",
+        "outbox/read",
+        "outbox/ack",
+      ]),
     );
   });
 
