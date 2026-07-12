@@ -741,6 +741,57 @@
         ],
         "type": "object"
       },
+      "AgentApiOutcomeOfOperatorApiKeyCreateResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/OperatorApiKeyCreateResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfOperatorApiKeyListResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/OperatorApiKeyListResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfOperatorApiKeyRevokeResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/OperatorApiKeyRevokeResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
       "AgentApiOutcomeOfOperatorOutboxReadResponse": {
         "properties": {
           "notifications": {
@@ -5684,6 +5735,136 @@
           "tokenEndpointAuthMethod",
           "createdAtMs",
           "updatedAtMs"
+        ],
+        "type": "object"
+      },
+      "OperatorApiKeyCreateParams": {
+        "properties": {
+          "displayName": {
+            "description": "Human-readable purpose shown in key-management interfaces.",
+            "type": "string"
+          },
+          "principal": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PrincipalRefView"
+              }
+            ],
+            "description": "Audit principal applied to grants and flows created through this key.\nThis does not grant platform/operator authority."
+          },
+          "universeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "universeId",
+          "displayName",
+          "principal"
+        ],
+        "type": "object"
+      },
+      "OperatorApiKeyCreateResponse": {
+        "description": "A newly minted key. `secret` is returned only by create and cannot be\nrecovered later. Its custom `Debug` implementation redacts the DTO before\nJSON-RPC serialization; the serialized response payload remains sensitive\nand must not be logged.",
+        "properties": {
+          "apiKey": {
+            "$ref": "#/components/schemas/OperatorApiKeyView"
+          },
+          "secret": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "apiKey",
+          "secret"
+        ],
+        "type": "object"
+      },
+      "OperatorApiKeyListParams": {
+        "properties": {
+          "universeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "universeId"
+        ],
+        "type": "object"
+      },
+      "OperatorApiKeyListResponse": {
+        "properties": {
+          "apiKeys": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/OperatorApiKeyView"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "OperatorApiKeyRevokeParams": {
+        "properties": {
+          "keyPrefix": {
+            "type": "string"
+          },
+          "universeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "universeId",
+          "keyPrefix"
+        ],
+        "type": "object"
+      },
+      "OperatorApiKeyRevokeResponse": {
+        "properties": {
+          "apiKey": {
+            "$ref": "#/components/schemas/OperatorApiKeyView"
+          }
+        },
+        "required": [
+          "apiKey"
+        ],
+        "type": "object"
+      },
+      "OperatorApiKeyView": {
+        "description": "Non-secret API-key metadata. The owning universe is supplied by every\nrequest and intentionally omitted from entries so list responses cannot\nbecome a deployment-wide tenant catalog by accident.",
+        "properties": {
+          "createdAtMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "displayName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "keyPrefix": {
+            "type": "string"
+          },
+          "lastUsedAtMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "revokedAtMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "keyPrefix",
+          "createdAtMs"
         ],
         "type": "object"
       },
@@ -12732,6 +12913,69 @@
         }
       },
       "summary": "Purge a universe"
+    },
+    {
+      "description": "Mints an inbound gateway key for one existing universe. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification.",
+      "name": "operator/api-keys/create",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/OperatorApiKeyCreateParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorApiKeyCreateResponse"
+        }
+      },
+      "summary": "Create a universe API key"
+    },
+    {
+      "description": "Returns only non-secret key metadata for the requested universe, including revocation and last-use timestamps. Plaintext secrets are never stored or returned.",
+      "name": "operator/api-keys/list",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/OperatorApiKeyListParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorApiKeyListResponse"
+        }
+      },
+      "summary": "List universe API keys"
+    },
+    {
+      "description": "Immediately and idempotently revokes the matching key only when it belongs to the requested universe. Unknown and foreign-universe prefixes return not found.",
+      "name": "operator/api-keys/revoke",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/OperatorApiKeyRevokeParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorApiKeyRevokeResponse"
+        }
+      },
+      "summary": "Revoke a universe API key"
     },
     {
       "description": "Cursor-reads or long-polls pending messages across all universes. Entries identify their universe; acknowledge each through universe-scoped outbox/ack.",

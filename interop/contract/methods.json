@@ -1531,6 +1531,60 @@
       "summary": "Purge a universe"
     },
     {
+      "description": "Mints an inbound gateway key for one existing universe. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification.",
+      "method": "operator/api-keys/create",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/OperatorApiKeyCreateParams"
+        },
+        "type": "OperatorApiKeyCreateParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfOperatorApiKeyCreateResponse"
+        },
+        "type": "AgentApiOutcome<OperatorApiKeyCreateResponse>"
+      },
+      "scope": "operator",
+      "summary": "Create a universe API key"
+    },
+    {
+      "description": "Returns only non-secret key metadata for the requested universe, including revocation and last-use timestamps. Plaintext secrets are never stored or returned.",
+      "method": "operator/api-keys/list",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/OperatorApiKeyListParams"
+        },
+        "type": "OperatorApiKeyListParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfOperatorApiKeyListResponse"
+        },
+        "type": "AgentApiOutcome<OperatorApiKeyListResponse>"
+      },
+      "scope": "operator",
+      "summary": "List universe API keys"
+    },
+    {
+      "description": "Immediately and idempotently revokes the matching key only when it belongs to the requested universe. Unknown and foreign-universe prefixes return not found.",
+      "method": "operator/api-keys/revoke",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/OperatorApiKeyRevokeParams"
+        },
+        "type": "OperatorApiKeyRevokeParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfOperatorApiKeyRevokeResponse"
+        },
+        "type": "AgentApiOutcome<OperatorApiKeyRevokeResponse>"
+      },
+      "scope": "operator",
+      "summary": "Revoke a universe API key"
+    },
+    {
       "description": "Cursor-reads or long-polls pending messages across all universes. Entries identify their universe; acknowledge each through universe-scoped outbox/ack.",
       "method": "operator/outbox/read",
       "params": {

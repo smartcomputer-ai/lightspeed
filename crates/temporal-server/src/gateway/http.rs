@@ -8,8 +8,8 @@ use auth::{ApiKeyStore, PrincipalKind, PrincipalRef, api_key_hash};
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, Query, State},
-    http::{HeaderMap, StatusCode},
-    response::Html,
+    http::{HeaderMap, HeaderValue, StatusCode, header},
+    response::{Html, IntoResponse, Response},
     routing::{get, post},
 };
 use serde::Deserialize;
@@ -385,25 +385,35 @@ async fn rpc(
     State(state): State<Arc<GatewayState>>,
     headers: HeaderMap,
     Json(request): Json<JsonRpcRequest>,
-) -> Json<JsonRpcResponse> {
+) -> Response {
     // Operator methods branch before universe resolution: they address the
     // deployment and never resolve a universe.
     if is_operator_method(&request.method) {
         let operator = match state.operator_for_request(&headers) {
             Ok(operator) => operator,
             Err(error) => {
-                return Json(JsonRpcResponse::failure(request.id, error.into()));
+                return no_store_json_rpc(JsonRpcResponse::failure(request.id, error.into()));
             }
         };
-        return Json(dispatch_operator_json_rpc(operator.as_ref(), request).await);
+        return no_store_json_rpc(dispatch_operator_json_rpc(operator.as_ref(), request).await);
     }
     let (api, caller) = match state.api_for_request(&headers).await {
         Ok(resolved) => resolved,
         Err(error) => {
-            return Json(JsonRpcResponse::failure(request.id, error.into()));
+            return no_store_json_rpc(JsonRpcResponse::failure(request.id, error.into()));
         }
     };
-    Json(principal::with_request_principal(caller, dispatch_json_rpc(api.as_ref(), request)).await)
+    no_store_json_rpc(
+        principal::with_request_principal(caller, dispatch_json_rpc(api.as_ref(), request)).await,
+    )
+}
+
+fn no_store_json_rpc(response: JsonRpcResponse) -> Response {
+    let mut response = Json(response).into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
 }
 
 /// Query parameters of the OAuth authorization callback (RFC 6749 §4.1.2).
@@ -530,6 +540,18 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(UNIVERSE_HEADER, value.parse().expect("header value"));
         headers
+    }
+
+    #[test]
+    fn json_rpc_responses_disable_caching() {
+        let response = no_store_json_rpc(JsonRpcResponse::success(
+            api::RequestId::Number(1),
+            serde_json::json!({ "secret": "sensitive" }),
+        ));
+        assert_eq!(
+            response.headers().get(header::CACHE_CONTROL),
+            Some(&HeaderValue::from_static("no-store"))
+        );
     }
 
     #[test]

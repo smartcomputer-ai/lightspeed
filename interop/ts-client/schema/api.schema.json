@@ -741,6 +741,57 @@
       ],
       "type": "object"
     },
+    "AgentApiOutcomeOfOperatorApiKeyCreateResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/OperatorApiKeyCreateResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfOperatorApiKeyListResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/OperatorApiKeyListResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfOperatorApiKeyRevokeResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/OperatorApiKeyRevokeResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
     "AgentApiOutcomeOfOperatorOutboxReadResponse": {
       "properties": {
         "notifications": {
@@ -5684,6 +5735,136 @@
         "tokenEndpointAuthMethod",
         "createdAtMs",
         "updatedAtMs"
+      ],
+      "type": "object"
+    },
+    "OperatorApiKeyCreateParams": {
+      "properties": {
+        "displayName": {
+          "description": "Human-readable purpose shown in key-management interfaces.",
+          "type": "string"
+        },
+        "principal": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/PrincipalRefView"
+            }
+          ],
+          "description": "Audit principal applied to grants and flows created through this key.\nThis does not grant platform/operator authority."
+        },
+        "universeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "universeId",
+        "displayName",
+        "principal"
+      ],
+      "type": "object"
+    },
+    "OperatorApiKeyCreateResponse": {
+      "description": "A newly minted key. `secret` is returned only by create and cannot be\nrecovered later. Its custom `Debug` implementation redacts the DTO before\nJSON-RPC serialization; the serialized response payload remains sensitive\nand must not be logged.",
+      "properties": {
+        "apiKey": {
+          "$ref": "#/definitions/OperatorApiKeyView"
+        },
+        "secret": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "apiKey",
+        "secret"
+      ],
+      "type": "object"
+    },
+    "OperatorApiKeyListParams": {
+      "properties": {
+        "universeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "universeId"
+      ],
+      "type": "object"
+    },
+    "OperatorApiKeyListResponse": {
+      "properties": {
+        "apiKeys": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/OperatorApiKeyView"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "OperatorApiKeyRevokeParams": {
+      "properties": {
+        "keyPrefix": {
+          "type": "string"
+        },
+        "universeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "universeId",
+        "keyPrefix"
+      ],
+      "type": "object"
+    },
+    "OperatorApiKeyRevokeResponse": {
+      "properties": {
+        "apiKey": {
+          "$ref": "#/definitions/OperatorApiKeyView"
+        }
+      },
+      "required": [
+        "apiKey"
+      ],
+      "type": "object"
+    },
+    "OperatorApiKeyView": {
+      "description": "Non-secret API-key metadata. The owning universe is supplied by every\nrequest and intentionally omitted from entries so list responses cannot\nbecome a deployment-wide tenant catalog by accident.",
+      "properties": {
+        "createdAtMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "keyPrefix": {
+          "type": "string"
+        },
+        "lastUsedAtMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "revokedAtMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "keyPrefix",
+        "createdAtMs"
       ],
       "type": "object"
     },

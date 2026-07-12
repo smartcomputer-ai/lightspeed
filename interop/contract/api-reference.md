@@ -772,6 +772,33 @@ Permanently terminates live session workflows, deletes external blob objects, an
 - Params: `OperatorUniverseDeleteParams`
 - Result: `AgentApiOutcome<OperatorUniverseDeleteResponse>`
 
+### `operator/api-keys/create`
+
+**Create a universe API key**
+
+Mints an inbound gateway key for one existing universe. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification.
+
+- Params: `OperatorApiKeyCreateParams`
+- Result: `AgentApiOutcome<OperatorApiKeyCreateResponse>`
+
+### `operator/api-keys/list`
+
+**List universe API keys**
+
+Returns only non-secret key metadata for the requested universe, including revocation and last-use timestamps. Plaintext secrets are never stored or returned.
+
+- Params: `OperatorApiKeyListParams`
+- Result: `AgentApiOutcome<OperatorApiKeyListResponse>`
+
+### `operator/api-keys/revoke`
+
+**Revoke a universe API key**
+
+Immediately and idempotently revokes the matching key only when it belongs to the requested universe. Unknown and foreign-universe prefixes return not found.
+
+- Params: `OperatorApiKeyRevokeParams`
+- Result: `AgentApiOutcome<OperatorApiKeyRevokeResponse>`
+
 ### `operator/outbox/read`
 
 **Read the deployment outbox**

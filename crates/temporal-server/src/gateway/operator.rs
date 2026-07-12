@@ -15,13 +15,16 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use api::{
-    AgentApiError, AgentApiOutcome, OperatorApiService, OperatorOutboundMessageView,
-    OperatorOutboxReadParams, OperatorOutboxReadResponse, OperatorUniverseCreateParams,
-    OperatorUniverseCreateResponse, OperatorUniverseDeleteParams, OperatorUniverseDeleteResponse,
-    OperatorUniverseListParams, OperatorUniverseListResponse, OperatorUniverseReadParams,
-    OperatorUniverseReadResponse, OperatorUniverseView,
+    AgentApiError, AgentApiOutcome, OperatorApiKeyCreateParams, OperatorApiKeyCreateResponse,
+    OperatorApiKeyListParams, OperatorApiKeyListResponse, OperatorApiKeyRevokeParams,
+    OperatorApiKeyRevokeResponse, OperatorApiKeyView, OperatorApiService,
+    OperatorOutboundMessageView, OperatorOutboxReadParams, OperatorOutboxReadResponse,
+    OperatorUniverseCreateParams, OperatorUniverseCreateResponse, OperatorUniverseDeleteParams,
+    OperatorUniverseDeleteResponse, OperatorUniverseListParams, OperatorUniverseListResponse,
+    OperatorUniverseReadParams, OperatorUniverseReadResponse, OperatorUniverseView,
 };
 use async_trait::async_trait;
+use auth::ApiKeyStore as _;
 use engine::SessionId;
 use object_store::ObjectStoreExt as _;
 use object_store::path::Path as ObjectPath;
@@ -63,6 +66,19 @@ impl GatewayOperatorApi {
             .await
             .map_err(map_store_error)?;
         Ok(stats.map(universe_view))
+    }
+
+    async fn require_universe(&self, universe_id: Uuid) -> Result<(), AgentApiError> {
+        if store_pg::universe_exists(self.pool(), universe_id)
+            .await
+            .map_err(map_store_error)?
+        {
+            Ok(())
+        } else {
+            Err(AgentApiError::not_found(format!(
+                "unknown universe: {universe_id}"
+            )))
+        }
     }
 
     /// Terminate the session's live workflow. `NotFound` covers both "never
@@ -217,6 +233,101 @@ impl OperatorApiService for GatewayOperatorApi {
         }))
     }
 
+    async fn create_api_key(
+        &self,
+        params: OperatorApiKeyCreateParams,
+    ) -> Result<AgentApiOutcome<OperatorApiKeyCreateResponse>, AgentApiError> {
+        let universe_id = parse_universe_id(&params.universe_id)?;
+        self.require_universe(universe_id).await?;
+        let display_name = params.display_name.trim();
+        if display_name.is_empty() {
+            return Err(AgentApiError::invalid_request(
+                "api key displayName must not be empty",
+            ));
+        }
+        let principal = auth::PrincipalRef {
+            kind: match params.principal.kind {
+                api::PrincipalKind::User => auth::PrincipalKind::User,
+                api::PrincipalKind::ServiceAccount => auth::PrincipalKind::ServiceAccount,
+                api::PrincipalKind::UniverseDefault => auth::PrincipalKind::UniverseDefault,
+            },
+            id: params.principal.id,
+        };
+        principal
+            .validate()
+            .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
+        let store = store_pg::PgApiKeyStore::new(self.pool().clone());
+        for _ in 0..3 {
+            let minted = auth::mint_api_key(
+                universe_id,
+                principal.clone(),
+                Some(display_name.to_owned()),
+                current_time_ms()?,
+            );
+            match store
+                .create_api_key(auth::CreateApiKey {
+                    key_hash: minted.key_hash,
+                    record: minted.record.clone(),
+                })
+                .await
+            {
+                Ok(()) => {
+                    return Ok(AgentApiOutcome::new(OperatorApiKeyCreateResponse {
+                        api_key: api_key_view(minted.record),
+                        secret: minted.secret.expose().to_owned(),
+                    }));
+                }
+                // A display-prefix collision is rare and entirely
+                // server-generated, so retry instead of burdening callers.
+                Err(auth::ApiKeyError::AlreadyExists { .. }) => continue,
+                Err(error) => return Err(map_api_key_error(error)),
+            }
+        }
+        Err(AgentApiError::internal(
+            "could not allocate a unique api key prefix",
+        ))
+    }
+
+    async fn list_api_keys(
+        &self,
+        params: OperatorApiKeyListParams,
+    ) -> Result<AgentApiOutcome<OperatorApiKeyListResponse>, AgentApiError> {
+        let universe_id = parse_universe_id(&params.universe_id)?;
+        self.require_universe(universe_id).await?;
+        let api_keys = store_pg::PgApiKeyStore::new(self.pool().clone())
+            .list_api_keys_for_universe(universe_id)
+            .await
+            .map_err(map_api_key_error)?
+            .into_iter()
+            .map(api_key_view)
+            .collect();
+        Ok(AgentApiOutcome::new(OperatorApiKeyListResponse {
+            api_keys,
+        }))
+    }
+
+    async fn revoke_api_key(
+        &self,
+        params: OperatorApiKeyRevokeParams,
+    ) -> Result<AgentApiOutcome<OperatorApiKeyRevokeResponse>, AgentApiError> {
+        let universe_id = parse_universe_id(&params.universe_id)?;
+        self.require_universe(universe_id).await?;
+        let key_prefix = params.key_prefix.trim();
+        if key_prefix.is_empty() {
+            return Err(AgentApiError::invalid_request(
+                "api key keyPrefix must not be empty",
+            ));
+        }
+        let record = store_pg::PgApiKeyStore::new(self.pool().clone())
+            .revoke_api_key_for_universe(universe_id, key_prefix, current_time_ms()?)
+            .await
+            .map_err(map_api_key_error)?
+            .ok_or_else(|| AgentApiError::not_found("unknown api key prefix"))?;
+        Ok(AgentApiOutcome::new(OperatorApiKeyRevokeResponse {
+            api_key: api_key_view(record),
+        }))
+    }
+
     async fn read_outbox(
         &self,
         params: OperatorOutboxReadParams,
@@ -269,6 +380,34 @@ fn universe_view(stats: store_pg::UniverseStats) -> OperatorUniverseView {
         workspaces: stats.workspaces,
         profiles: stats.profiles,
         blob_bytes: stats.blob_bytes,
+    }
+}
+
+fn api_key_view(record: auth::ApiKeyRecord) -> OperatorApiKeyView {
+    OperatorApiKeyView {
+        key_prefix: record.key_prefix,
+        display_name: record.display_name,
+        created_at_ms: record.created_at_ms,
+        revoked_at_ms: record.revoked_at_ms,
+        last_used_at_ms: record.last_used_at_ms,
+    }
+}
+
+fn current_time_ms() -> Result<u64, AgentApiError> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .map_err(|error| {
+            AgentApiError::internal(format!("system clock before unix epoch: {error}"))
+        })
+}
+
+fn map_api_key_error(error: auth::ApiKeyError) -> AgentApiError {
+    match error {
+        auth::ApiKeyError::AlreadyExists { .. } => {
+            AgentApiError::internal("generated api key prefix collision")
+        }
+        auth::ApiKeyError::Store { message } => AgentApiError::internal(message),
     }
 }
 

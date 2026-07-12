@@ -3114,6 +3114,28 @@ async fn temporal_live_api_key_mode_scopes_requests() -> anyhow::Result<()> {
             "invalid api key"
         );
 
+        // API-key-authenticated tenants can never mint more keys. Operator
+        // dispatch is rejected by auth mode before the bearer can select a
+        // universe.
+        let response = call(
+            Some(secret_a.clone()),
+            rpc(
+                "operator/api-keys/create",
+                serde_json::json!({
+                    "universeId": universe_a,
+                    "displayName": "must not mint",
+                    "principal": { "kind": "serviceAccount", "id": "blocked" }
+                }),
+            ),
+        )
+        .await?;
+        assert_eq!(
+            response["error"]["message"]
+                .as_str()
+                .expect("operator rejection message"),
+            "operator methods are not available to api-key callers"
+        );
+
         // Tenant headers are rejected in api-key mode.
         let response: serde_json::Value = http
             .post(&gateway_url)

@@ -2523,6 +2523,72 @@ export interface ModelProviderDiscoveryView {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfOperatorApiKeyCreateResponse".
+ */
+export interface AgentApiOutcomeOfOperatorApiKeyCreateResponse {
+  notifications?: AgentNotification[];
+  result: OperatorApiKeyCreateResponse;
+}
+/**
+ * A newly minted key. `secret` is returned only by create and cannot be
+ * recovered later. Its custom `Debug` implementation redacts the DTO before
+ * JSON-RPC serialization; the serialized response payload remains sensitive
+ * and must not be logged.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorApiKeyCreateResponse".
+ */
+export interface OperatorApiKeyCreateResponse {
+  apiKey: OperatorApiKeyView;
+  secret: string;
+}
+/**
+ * Non-secret API-key metadata. The owning universe is supplied by every
+ * request and intentionally omitted from entries so list responses cannot
+ * become a deployment-wide tenant catalog by accident.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorApiKeyView".
+ */
+export interface OperatorApiKeyView {
+  createdAtMs: number;
+  displayName?: string | null;
+  keyPrefix: string;
+  lastUsedAtMs?: number | null;
+  revokedAtMs?: number | null;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfOperatorApiKeyListResponse".
+ */
+export interface AgentApiOutcomeOfOperatorApiKeyListResponse {
+  notifications?: AgentNotification[];
+  result: OperatorApiKeyListResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorApiKeyListResponse".
+ */
+export interface OperatorApiKeyListResponse {
+  apiKeys?: OperatorApiKeyView[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfOperatorApiKeyRevokeResponse".
+ */
+export interface AgentApiOutcomeOfOperatorApiKeyRevokeResponse {
+  notifications?: AgentNotification[];
+  result: OperatorApiKeyRevokeResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorApiKeyRevokeResponse".
+ */
+export interface OperatorApiKeyRevokeResponse {
+  apiKey: OperatorApiKeyView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfOperatorOutboxReadResponse".
  */
 export interface AgentApiOutcomeOfOperatorOutboxReadResponse {
@@ -4031,6 +4097,37 @@ export interface ModelListParams {
    * It is an ID policy, not a provider capability claim.
    */
   selectableOnly?: boolean;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorApiKeyCreateParams".
+ */
+export interface OperatorApiKeyCreateParams {
+  /**
+   * Human-readable purpose shown in key-management interfaces.
+   */
+  displayName: string;
+  /**
+   * Audit principal applied to grants and flows created through this key.
+   * This does not grant platform/operator authority.
+   */
+  principal: PrincipalRefView;
+  universeId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorApiKeyListParams".
+ */
+export interface OperatorApiKeyListParams {
+  universeId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "OperatorApiKeyRevokeParams".
+ */
+export interface OperatorApiKeyRevokeParams {
+  keyPrefix: string;
+  universeId: string;
 }
 /**
  * Multiplexed outbox read: one long-poll serves every universe of the

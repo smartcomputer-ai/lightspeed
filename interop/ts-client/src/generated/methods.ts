@@ -90,6 +90,9 @@ export const METHODS = [
   "operator/universes/list",
   "operator/universes/read",
   "operator/universes/delete",
+  "operator/api-keys/create",
+  "operator/api-keys/list",
+  "operator/api-keys/revoke",
   "operator/outbox/read",
 ] as const;
 
@@ -518,6 +521,21 @@ export const METHOD_INFO = {
     scope: "operator",
     summary: "Purge a universe",
     description: "Permanently terminates live session workflows, deletes external blob objects, and cascades universe data. The purge is resumable/idempotent after partial failure.",
+  },
+  "operator/api-keys/create": {
+    scope: "operator",
+    summary: "Create a universe API key",
+    description: "Mints an inbound gateway key for one existing universe. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification.",
+  },
+  "operator/api-keys/list": {
+    scope: "operator",
+    summary: "List universe API keys",
+    description: "Returns only non-secret key metadata for the requested universe, including revocation and last-use timestamps. Plaintext secrets are never stored or returned.",
+  },
+  "operator/api-keys/revoke": {
+    scope: "operator",
+    summary: "Revoke a universe API key",
+    description: "Immediately and idempotently revokes the matching key only when it belongs to the requested universe. Unknown and foreign-universe prefixes return not found.",
   },
   "operator/outbox/read": {
     scope: "operator",
@@ -1305,6 +1323,33 @@ export interface MethodMap {
     result: Api.AgentApiOutcomeOfOperatorUniverseDeleteResponse;
   };
   /**
+   * Create a universe API key
+   *
+   * Mints an inbound gateway key for one existing universe. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification.
+   */
+  "operator/api-keys/create": {
+    params: Api.OperatorApiKeyCreateParams;
+    result: Api.AgentApiOutcomeOfOperatorApiKeyCreateResponse;
+  };
+  /**
+   * List universe API keys
+   *
+   * Returns only non-secret key metadata for the requested universe, including revocation and last-use timestamps. Plaintext secrets are never stored or returned.
+   */
+  "operator/api-keys/list": {
+    params: Api.OperatorApiKeyListParams;
+    result: Api.AgentApiOutcomeOfOperatorApiKeyListResponse;
+  };
+  /**
+   * Revoke a universe API key
+   *
+   * Immediately and idempotently revokes the matching key only when it belongs to the requested universe. Unknown and foreign-universe prefixes return not found.
+   */
+  "operator/api-keys/revoke": {
+    params: Api.OperatorApiKeyRevokeParams;
+    result: Api.AgentApiOutcomeOfOperatorApiKeyRevokeResponse;
+  };
+  /**
    * Read the deployment outbox
    *
    * Cursor-reads or long-polls pending messages across all universes. Entries identify their universe; acknowledge each through universe-scoped outbox/ack.
@@ -2002,6 +2047,30 @@ export const rpc = {
    */
   operatorUniversesDelete(client: RpcCaller, params: Api.OperatorUniverseDeleteParams): Promise<Api.AgentApiOutcomeOfOperatorUniverseDeleteResponse> {
     return client.call("operator/universes/delete", params);
+  },
+  /**
+   * Create a universe API key
+   *
+   * Mints an inbound gateway key for one existing universe. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification.
+   */
+  operatorApiKeysCreate(client: RpcCaller, params: Api.OperatorApiKeyCreateParams): Promise<Api.AgentApiOutcomeOfOperatorApiKeyCreateResponse> {
+    return client.call("operator/api-keys/create", params);
+  },
+  /**
+   * List universe API keys
+   *
+   * Returns only non-secret key metadata for the requested universe, including revocation and last-use timestamps. Plaintext secrets are never stored or returned.
+   */
+  operatorApiKeysList(client: RpcCaller, params: Api.OperatorApiKeyListParams): Promise<Api.AgentApiOutcomeOfOperatorApiKeyListResponse> {
+    return client.call("operator/api-keys/list", params);
+  },
+  /**
+   * Revoke a universe API key
+   *
+   * Immediately and idempotently revokes the matching key only when it belongs to the requested universe. Unknown and foreign-universe prefixes return not found.
+   */
+  operatorApiKeysRevoke(client: RpcCaller, params: Api.OperatorApiKeyRevokeParams): Promise<Api.AgentApiOutcomeOfOperatorApiKeyRevokeResponse> {
+    return client.call("operator/api-keys/revoke", params);
   },
   /**
    * Read the deployment outbox

@@ -254,9 +254,12 @@ per request based on `LIGHTSPEED_AUTH_MODE`:
 
 Deployment-level administration is exposed as operator-scoped JSON-RPC
 methods on the same `/rpc` endpoint (`operator/universes/create|list|read|
-delete`), callable in `trusted-header` and `single` modes only. Deleting a
-universe terminates its live session workflows, sweeps its externally stored
-blobs, and cascades every universe-scoped row.
+delete` and `operator/api-keys/create|list|revoke`), callable in
+`trusted-header` and `single` modes only. API-key management is explicitly
+universe-scoped; create returns the plaintext secret once, while list and
+revoke return only metadata. Deleting a universe terminates its live session
+workflows, sweeps its externally stored blobs, and cascades every
+universe-scoped row.
 
 Manage universes and keys with the server binary (the key secret prints
 exactly once):

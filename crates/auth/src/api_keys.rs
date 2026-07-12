@@ -130,6 +130,14 @@ pub trait ApiKeyStore: Send + Sync {
 
     async fn list_api_keys(&self) -> Result<Vec<ApiKeyRecord>, ApiKeyError>;
 
+    /// List keys belonging to exactly one universe. Management APIs should
+    /// use this scoped operation rather than loading the deployment-wide
+    /// catalog and filtering in application code.
+    async fn list_api_keys_for_universe(
+        &self,
+        universe_id: Uuid,
+    ) -> Result<Vec<ApiKeyRecord>, ApiKeyError>;
+
     /// Revoke by display prefix. Returns `false` when no such key exists.
     /// Idempotent: revoking an already-revoked key returns `true` without
     /// moving the original revocation time.
@@ -138,6 +146,16 @@ pub trait ApiKeyStore: Send + Sync {
         key_prefix: &str,
         revoked_at_ms: u64,
     ) -> Result<bool, ApiKeyError>;
+
+    /// Revoke a key only when both its display prefix and owning universe
+    /// match. Returns the resulting record, or `None` for unknown and
+    /// foreign-universe prefixes.
+    async fn revoke_api_key_for_universe(
+        &self,
+        universe_id: Uuid,
+        key_prefix: &str,
+        revoked_at_ms: u64,
+    ) -> Result<Option<ApiKeyRecord>, ApiKeyError>;
 }
 
 #[cfg(test)]

@@ -18,6 +18,9 @@ pub const METHOD_OPERATOR_UNIVERSES_CREATE: &str = "operator/universes/create";
 pub const METHOD_OPERATOR_UNIVERSES_LIST: &str = "operator/universes/list";
 pub const METHOD_OPERATOR_UNIVERSES_READ: &str = "operator/universes/read";
 pub const METHOD_OPERATOR_UNIVERSES_DELETE: &str = "operator/universes/delete";
+pub const METHOD_OPERATOR_API_KEYS_CREATE: &str = "operator/api-keys/create";
+pub const METHOD_OPERATOR_API_KEYS_LIST: &str = "operator/api-keys/list";
+pub const METHOD_OPERATOR_API_KEYS_REVOKE: &str = "operator/api-keys/revoke";
 pub const METHOD_OPERATOR_OUTBOX_READ: &str = "operator/outbox/read";
 
 pub fn is_operator_method(method: &str) -> bool {
@@ -99,6 +102,80 @@ pub struct OperatorUniverseDeleteResponse {
     pub blob_objects_deleted: u64,
 }
 
+/// Non-secret API-key metadata. The owning universe is supplied by every
+/// request and intentionally omitted from entries so list responses cannot
+/// become a deployment-wide tenant catalog by accident.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OperatorApiKeyView {
+    pub key_prefix: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    pub created_at_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revoked_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_used_at_ms: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OperatorApiKeyCreateParams {
+    pub universe_id: String,
+    /// Human-readable purpose shown in key-management interfaces.
+    pub display_name: String,
+    /// Audit principal applied to grants and flows created through this key.
+    /// This does not grant platform/operator authority.
+    pub principal: PrincipalRefView,
+}
+
+/// A newly minted key. `secret` is returned only by create and cannot be
+/// recovered later. Its custom `Debug` implementation redacts the DTO before
+/// JSON-RPC serialization; the serialized response payload remains sensitive
+/// and must not be logged.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OperatorApiKeyCreateResponse {
+    pub api_key: OperatorApiKeyView,
+    pub secret: String,
+}
+
+impl fmt::Debug for OperatorApiKeyCreateResponse {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OperatorApiKeyCreateResponse")
+            .field("api_key", &self.api_key)
+            .field("secret", &"<redacted>")
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OperatorApiKeyListParams {
+    pub universe_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OperatorApiKeyListResponse {
+    #[serde(default)]
+    pub api_keys: Vec<OperatorApiKeyView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OperatorApiKeyRevokeParams {
+    pub universe_id: String,
+    pub key_prefix: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OperatorApiKeyRevokeResponse {
+    pub api_key: OperatorApiKeyView,
+}
+
 /// Multiplexed outbox read: one long-poll serves every universe of the
 /// deployment, replacing one `outbox/read` tailer per universe. `seq` is a
 /// deployment-global cursor (the outbox sequence is one identity column
@@ -159,6 +236,21 @@ pub trait OperatorApiService: Send + Sync {
         params: OperatorUniverseDeleteParams,
     ) -> Result<AgentApiOutcome<OperatorUniverseDeleteResponse>, AgentApiError>;
 
+    async fn create_api_key(
+        &self,
+        params: OperatorApiKeyCreateParams,
+    ) -> Result<AgentApiOutcome<OperatorApiKeyCreateResponse>, AgentApiError>;
+
+    async fn list_api_keys(
+        &self,
+        params: OperatorApiKeyListParams,
+    ) -> Result<AgentApiOutcome<OperatorApiKeyListResponse>, AgentApiError>;
+
+    async fn revoke_api_key(
+        &self,
+        params: OperatorApiKeyRevokeParams,
+    ) -> Result<AgentApiOutcome<OperatorApiKeyRevokeResponse>, AgentApiError>;
+
     async fn read_outbox(
         &self,
         params: OperatorOutboxReadParams,
@@ -217,6 +309,12 @@ operator_api_methods! {
         ["Read a universe", "Returns one deployment tenant summary with aggregate session, workspace, profile, and blob usage."],
     METHOD_OPERATOR_UNIVERSES_DELETE => delete_universe(OperatorUniverseDeleteParams) -> OperatorUniverseDeleteResponse =>
         ["Purge a universe", "Permanently terminates live session workflows, deletes external blob objects, and cascades universe data. The purge is resumable/idempotent after partial failure."],
+    METHOD_OPERATOR_API_KEYS_CREATE => create_api_key(OperatorApiKeyCreateParams) -> OperatorApiKeyCreateResponse =>
+        ["Create a universe API key", "Mints an inbound gateway key for one existing universe. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification."],
+    METHOD_OPERATOR_API_KEYS_LIST => list_api_keys(OperatorApiKeyListParams) -> OperatorApiKeyListResponse =>
+        ["List universe API keys", "Returns only non-secret key metadata for the requested universe, including revocation and last-use timestamps. Plaintext secrets are never stored or returned."],
+    METHOD_OPERATOR_API_KEYS_REVOKE => revoke_api_key(OperatorApiKeyRevokeParams) -> OperatorApiKeyRevokeResponse =>
+        ["Revoke a universe API key", "Immediately and idempotently revokes the matching key only when it belongs to the requested universe. Unknown and foreign-universe prefixes return not found."],
     METHOD_OPERATOR_OUTBOX_READ => read_outbox(OperatorOutboxReadParams) -> OperatorOutboxReadResponse =>
         ["Read the deployment outbox", "Cursor-reads or long-polls pending messages across all universes. Entries identify their universe; acknowledge each through universe-scoped outbox/ack."],
 }
