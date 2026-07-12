@@ -1,12 +1,12 @@
 //! Machine-readable export of the JSON-RPC wire contract.
 //!
-//! Renders three artifacts from the method manifest and the schemars-derived
-//! types: a draft-07 JSON Schema bundle of every wire type, a method manifest
-//! document, and an OpenRPC document for docs tooling. The committed copies
+//! Renders four artifacts from the method manifest and the schemars-derived
+//! types: a draft-07 JSON Schema bundle of every wire type, a documented method
+//! manifest, an OpenRPC document, and a compact Markdown API reference. The committed copies
 //! under `interop/contract/` are kept current by `schema_artifacts` integration tests;
 //! regenerate them with `cargo run -p api --bin export-schema`.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, fmt::Write as _};
 
 use schemars::generate::SchemaSettings;
 use serde_json::{Value, json};
@@ -34,6 +34,9 @@ pub struct ExportedSchemas {
     /// OpenRPC document assembled from the two; for docs tooling only, no
     /// downstream codegen may depend on it.
     pub openrpc: Value,
+    /// Compact generated human reference using the same canonical method
+    /// documentation as the machine-readable artifacts.
+    pub api_reference: String,
 }
 
 pub fn export_schemas() -> ExportedSchemas {
@@ -41,22 +44,43 @@ pub fn export_schemas() -> ExportedSchemas {
 
     let mut methods = Vec::new();
     let mut openrpc_methods = Vec::new();
+    let mut api_reference = String::from(
+        "# Lightspeed JSON-RPC API Reference\n\n\
+         Generated from the Rust API method manifest. Parameter and result field details live in \
+         `api.schema.json` and `openrpc.json`; this reference focuses on operation semantics.\n",
+    );
+    let mut reference_scope = None;
     for spec in full_method_manifest() {
+        if reference_scope != Some(spec.scope) {
+            reference_scope = Some(spec.scope);
+            let title = match spec.scope {
+                crate::MethodScope::Universe => "Universe methods",
+                crate::MethodScope::Operator => "Operator methods",
+            };
+            write!(api_reference, "\n## {title}\n\n").expect("write string");
+        }
+        write!(
+            api_reference,
+            "### `{}`\n\n**{}**\n\n{}\n\n- Params: `{}`\n- Result: `{}`\n\n",
+            spec.method, spec.summary, spec.description, spec.params_type, spec.result_type
+        )
+        .expect("write string");
         let schemas = (spec.register_schemas)(&mut generator);
         let params_schema = serde_json::to_value(&schemas.params).expect("schema serializes");
         let result_schema = serde_json::to_value(&schemas.result).expect("schema serializes");
         methods.push(json!({
             "method": spec.method,
             "scope": spec.scope.as_str(),
+            "summary": spec.summary,
+            "description": spec.description,
             "params": { "type": spec.params_type, "schema": params_schema },
             "result": { "type": spec.result_type, "schema": result_schema },
         }));
         openrpc_methods.push(json!({
             "name": spec.method,
             "paramStructure": "by-name",
-            "description":
-                "Single-object params: the request `params` member is one JSON object \
-                 described by this descriptor's schema.",
+            "summary": spec.summary,
+            "description": spec.description,
             "params": [{
                 "name": "params",
                 "required": true,
@@ -112,6 +136,7 @@ pub fn export_schemas() -> ExportedSchemas {
         schema_bundle,
         methods: methods_doc,
         openrpc,
+        api_reference,
     }
 }
 
@@ -150,14 +175,60 @@ mod tests {
         methods.sort_unstable();
         methods.dedup();
         assert_eq!(methods.len(), total, "duplicate method in manifest");
-        assert_eq!(total, 86);
+        assert_eq!(total, 89);
         assert_eq!(
             manifest
                 .iter()
                 .filter(|spec| spec.scope == crate::MethodScope::Operator)
                 .count(),
-            5
+            8
         );
+    }
+
+    #[test]
+    fn method_manifest_has_compact_operational_documentation() {
+        for spec in full_method_manifest() {
+            assert_eq!(spec.summary, spec.summary.trim(), "{} summary", spec.method);
+            assert_eq!(
+                spec.description,
+                spec.description.trim(),
+                "{} description",
+                spec.method
+            );
+            assert!(!spec.summary.is_empty(), "{} has no summary", spec.method);
+            assert!(
+                !spec.description.is_empty(),
+                "{} has no description",
+                spec.method
+            );
+            assert!(
+                spec.summary.len() <= 80,
+                "{} summary is too long: {} bytes",
+                spec.method,
+                spec.summary.len()
+            );
+            assert!(
+                spec.description.len() <= 360,
+                "{} description is too long: {} bytes",
+                spec.method,
+                spec.description.len()
+            );
+        }
+    }
+
+    #[test]
+    fn exported_method_docs_match_openrpc() {
+        let exported = export_schemas();
+        let methods = exported.methods["methods"].as_array().expect("methods");
+        let openrpc = exported.openrpc["methods"]
+            .as_array()
+            .expect("openrpc methods");
+        assert_eq!(methods.len(), openrpc.len());
+        for (method, openrpc) in methods.iter().zip(openrpc) {
+            assert_eq!(method["method"], openrpc["name"]);
+            assert_eq!(method["summary"], openrpc["summary"]);
+            assert_eq!(method["description"], openrpc["description"]);
+        }
     }
 
     #[test]

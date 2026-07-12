@@ -2744,6 +2744,16 @@ fn test_operator_universe(universe_id: &str) -> OperatorUniverseView {
     }
 }
 
+fn test_operator_api_key(key_prefix: &str) -> OperatorApiKeyView {
+    OperatorApiKeyView {
+        key_prefix: key_prefix.to_owned(),
+        display_name: Some("coding agent".to_owned()),
+        created_at_ms: 10,
+        revoked_at_ms: None,
+        last_used_at_ms: Some(20),
+    }
+}
+
 #[async_trait]
 impl OperatorApiService for TestOperatorService {
     async fn create_universe(
@@ -2782,6 +2792,36 @@ impl OperatorApiService for TestOperatorService {
             universe_id: params.universe_id,
             workflows_terminated: 2,
             blob_objects_deleted: 5,
+        }))
+    }
+
+    async fn create_api_key(
+        &self,
+        _params: OperatorApiKeyCreateParams,
+    ) -> Result<AgentApiOutcome<OperatorApiKeyCreateResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(OperatorApiKeyCreateResponse {
+            api_key: test_operator_api_key("lsk_ab12cd34"),
+            secret: "lsk_one_time_secret".to_owned(),
+        }))
+    }
+
+    async fn list_api_keys(
+        &self,
+        _params: OperatorApiKeyListParams,
+    ) -> Result<AgentApiOutcome<OperatorApiKeyListResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(OperatorApiKeyListResponse {
+            api_keys: vec![test_operator_api_key("lsk_ab12cd34")],
+        }))
+    }
+
+    async fn revoke_api_key(
+        &self,
+        _params: OperatorApiKeyRevokeParams,
+    ) -> Result<AgentApiOutcome<OperatorApiKeyRevokeResponse>, AgentApiError> {
+        let mut api_key = test_operator_api_key("lsk_ab12cd34");
+        api_key.revoked_at_ms = Some(30);
+        Ok(AgentApiOutcome::new(OperatorApiKeyRevokeResponse {
+            api_key,
         }))
     }
 
@@ -2856,6 +2896,66 @@ async fn dispatch_operator_json_rpc_routes_universe_lifecycle() {
     let result = delete.result.expect("result");
     assert_eq!(result["result"]["workflowsTerminated"], json!(2));
     assert_eq!(result["result"]["blobObjectsDeleted"], json!(5));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn dispatch_operator_json_rpc_routes_scoped_api_key_management() {
+    let universe_id = "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f";
+    let create = dispatch_operator_json_rpc(
+        &TestOperatorService,
+        JsonRpcRequest {
+            id: RequestId::Number(1),
+            method: METHOD_OPERATOR_API_KEYS_CREATE.to_owned(),
+            params: Some(json!({
+                "universeId": universe_id,
+                "displayName": "coding agent",
+                "principal": { "kind": "serviceAccount", "id": "agent-1" }
+            })),
+        },
+    )
+    .await;
+    let result = create.result.expect("create result");
+    assert_eq!(result["result"]["apiKey"]["keyPrefix"], "lsk_ab12cd34");
+    assert_eq!(result["result"]["secret"], "lsk_one_time_secret");
+
+    let list = dispatch_operator_json_rpc(
+        &TestOperatorService,
+        JsonRpcRequest {
+            id: RequestId::Number(2),
+            method: METHOD_OPERATOR_API_KEYS_LIST.to_owned(),
+            params: Some(json!({ "universeId": universe_id })),
+        },
+    )
+    .await;
+    let result = list.result.expect("list result");
+    assert_eq!(result["result"]["apiKeys"].as_array().unwrap().len(), 1);
+    assert!(result["result"]["apiKeys"][0].get("secret").is_none());
+
+    let revoke = dispatch_operator_json_rpc(
+        &TestOperatorService,
+        JsonRpcRequest {
+            id: RequestId::Number(3),
+            method: METHOD_OPERATOR_API_KEYS_REVOKE.to_owned(),
+            params: Some(json!({
+                "universeId": universe_id,
+                "keyPrefix": "lsk_ab12cd34"
+            })),
+        },
+    )
+    .await;
+    let result = revoke.result.expect("revoke result");
+    assert_eq!(result["result"]["apiKey"]["revokedAtMs"], 30);
+}
+
+#[test]
+fn operator_api_key_create_response_redacts_secret_in_debug_output() {
+    let response = OperatorApiKeyCreateResponse {
+        api_key: test_operator_api_key("lsk_ab12cd34"),
+        secret: "lsk_one_time_secret".to_owned(),
+    };
+    let debug = format!("{response:?}");
+    assert!(debug.contains("<redacted>"));
+    assert!(!debug.contains("lsk_one_time_secret"));
 }
 
 #[tokio::test(flavor = "current_thread")]

@@ -2,6 +2,14 @@
 
 **Status**
 - Proposed 2026-07-03.
+- Update 2026-07-12: operator-scoped API-key management shipped as
+  `operator/api-keys/create|list|revoke`. Every operation requires an explicit
+  universe id; list and revoke are universe-filtered in SQL, create verifies
+  the universe exists, and foreign-universe prefixes are indistinguishable
+  from unknown prefixes. Create returns the plaintext secret exactly once;
+  list/revoke expose metadata only. The existing operator authorization gate
+  keeps all three methods unavailable in `api-key` mode, and their operator
+  scope keeps them out of the Configurator MCP tool catalog.
 - Update 2026-07-05: the operator-scoped deployment API shipped
   (`operator/universes/create|list|read|delete` on `/rpc`, dispatched by the
   `operator/` method prefix before universe resolution; trusted-header and
@@ -238,8 +246,9 @@ is a deployment-selected resolution mode at the HTTP edge
    covers the plain "no auth, universe supplied in headers" deployment.
 3. **`api-key`** — minimal built-in for directly exposed deployments. A
    deployment-level table maps hashed keys to `(universe_id, principal)`.
-   Key provisioning is out-of-band initially (SQL or a small server
-   subcommand); no self-serve key management API in this item.
+   Key provisioning was initially out-of-band through the server subcommand;
+   the later operator API follow-up exposes scoped create/list/revoke for
+   trusted management servers.
 
 JWT/OIDC validation (JWKS, issuer, claim-to-universe mapping) is a natural
 fourth mode but is deferred until someone needs it; `trusted-header` already
@@ -355,7 +364,9 @@ credentials:
 - Per-universe Temporal namespaces or task queues; quotas, rate limits,
   billing, noisy-neighbor controls.
 - Multi-tenant `store-fs`.
-- Self-serve API key management surface.
+- End-user authorization for self-service API key management. Lightspeed
+  exposes the trusted operator primitive; the calling product must enforce
+  universe owner/admin membership before invoking it.
 
 ## Testing Requirements
 

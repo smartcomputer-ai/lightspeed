@@ -19,15 +19,15 @@ use engine::{
     },
 };
 use environments::{
-    CreateJobHandle, CreateSessionEnvironmentBinding, EnvironmentId,
-    EnvironmentProviderCapabilities, EnvironmentProviderHeartbeat, EnvironmentProviderId,
-    EnvironmentProviderKind, EnvironmentProviderStatus, EnvironmentProviderStore,
-    EnvironmentTargetStore, HostControllerConnectionSpec, JobHandleStore, ListEnvironmentProviders,
-    ListEnvironmentTargets, ListJobHandles, RegisterEnvironmentProvider,
-    SessionEnvironmentBindingStatus, SessionEnvironmentBindingStore,
-    SessionEnvironmentCapabilities, SessionEnvironmentFsRoute, SessionEnvironmentFsRouteAccess,
-    SessionEnvironmentKind, UpdateEnvironmentProviderStatus, UpdateEnvironmentTargetStatus,
-    UpdateSessionEnvironmentBindingStatus, UpsertEnvironmentTargetRecord,
+    CreateJobHandle, EnvironmentId, EnvironmentInstanceId, EnvironmentInstanceOrigin,
+    EnvironmentInstanceStore, EnvironmentJobGroupId, EnvironmentProviderCapabilities,
+    EnvironmentProviderHeartbeat, EnvironmentProviderId, EnvironmentProviderKind,
+    EnvironmentProviderStatus, EnvironmentProviderStore, HostControllerConnectionSpec,
+    JobHandleStore, ListEnvironmentInstances, ListEnvironmentProviders, ListJobHandles,
+    ObserveEnvironmentInstance, PutSessionEnvironmentBinding, RegisterEnvironmentProvider,
+    ReserveEnvironmentJobGroup, SessionEnvironmentBindingState, SessionEnvironmentBindingStore,
+    SessionEnvironmentFsRoute, SessionEnvironmentFsRouteAccess, UpdateEnvironmentInstanceStatus,
+    UpdateEnvironmentProviderStatus, UpdateSessionEnvironmentBindingState,
 };
 use host_protocol::{
     control::targets::HostTargetStatus,
@@ -283,82 +283,6 @@ async fn pg_live_clone_copies_resources_and_links_sessions() {
         .await
         .expect("put snapshot mount");
 
-    let provider_id = EnvironmentProviderId::new("bridge-graph");
-    let target_id = HostTargetId::new("host-graph");
-    let env_id = EnvironmentId::new("local");
-    store
-        .register_provider(RegisterEnvironmentProvider {
-            provider_id: provider_id.clone(),
-            provider_kind: EnvironmentProviderKind::Bridge,
-            display_name: Some("Graph bridge".to_owned()),
-            controller_connection: HostControllerConnectionSpec::new(
-                "ws://127.0.0.1:9000/controller",
-                HostTransport::WebSocket,
-            ),
-            capabilities: EnvironmentProviderCapabilities {
-                list_targets: true,
-                attach_target: true,
-                get_target: true,
-                ..EnvironmentProviderCapabilities::default()
-            },
-            implementation: ImplementationInfo {
-                name: "test-bridge".to_owned(),
-                version: Some("1.0.0".to_owned()),
-            },
-            lease_ttl_ms: 30_000,
-            metadata: Default::default(),
-            observed_at_ms: 14,
-        })
-        .await
-        .expect("register provider");
-    store
-        .upsert_target(UpsertEnvironmentTargetRecord {
-            provider_id: provider_id.clone(),
-            target_id: target_id.clone(),
-            display_name: Some("Graph host".to_owned()),
-            status: HostTargetStatus::Ready,
-            scope: HostScope::Default,
-            capabilities: HostCapabilities::filesystem(true, true).with_process(),
-            default_cwd: Some(HostPath::new("/workspace").expect("cwd")),
-            metadata: Default::default(),
-            observed_at_ms: 15,
-        })
-        .await
-        .expect("upsert target");
-    store
-        .create_binding(CreateSessionEnvironmentBinding {
-            session_id: source_id.clone(),
-            env_id: env_id.clone(),
-            provider_id: provider_id.clone(),
-            target_id: target_id.clone(),
-            kind: SessionEnvironmentKind::AttachedHost,
-            status: SessionEnvironmentBindingStatus::Ready,
-            capabilities: SessionEnvironmentCapabilities {
-                fs_read: true,
-                fs_write: true,
-                process_exec: true,
-                process_stdin: true,
-                network: false,
-                persistent: true,
-                ..SessionEnvironmentCapabilities::default()
-            },
-            connection: HostConnectionSpec {
-                target_id: target_id.clone(),
-                endpoint: "ws://127.0.0.1:9001/data".to_owned(),
-                transport: HostTransport::WebSocket,
-                scope: HostScope::Session {
-                    session_id: source_id.as_str().to_owned(),
-                },
-                default_cwd: Some(HostPath::new("/workspace").expect("cwd")),
-                capabilities: HostCapabilities::filesystem(true, true).with_process(),
-            },
-            cwd: Some(HostPath::new("/workspace").expect("cwd")),
-            fs_routes: Vec::new(),
-            created_at_ms: 16,
-        })
-        .await
-        .expect("create binding");
-
     let clone = store
         .create_cloned_session(CreateClonedSession {
             source_session_id: source_id.clone(),
@@ -394,15 +318,6 @@ async fn pg_live_clone_copies_resources_and_links_sessions() {
         VfsMountSource::Snapshot { snapshot_ref: reference } if reference == &snapshot_ref
     )));
 
-    let clone_bindings = store
-        .list_bindings_for_session(&clone_id)
-        .await
-        .expect("list clone bindings");
-    assert_eq!(clone_bindings.len(), 1);
-    assert_eq!(clone_bindings[0].session_id, clone_id);
-    assert_eq!(clone_bindings[0].provider_id, provider_id);
-    assert_eq!(clone_bindings[0].target_id, target_id);
-
     let workspace_count: i64 =
         sqlx::query_scalar("SELECT count(*) FROM vfs_workspaces WHERE universe_id = $1")
             .bind(store.config().universe_id)
@@ -410,14 +325,6 @@ async fn pg_live_clone_copies_resources_and_links_sessions() {
             .await
             .expect("count workspaces");
     assert_eq!(workspace_count, 1);
-    let provider_count: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM environment_providers WHERE universe_id = $1")
-            .bind(store.config().universe_id)
-            .fetch_one(store.pool())
-            .await
-            .expect("count providers");
-    assert_eq!(provider_count, 1);
-
     let link = store
         .upsert_link(UpsertSessionLink {
             from_session_id: clone_id.clone(),
@@ -1277,10 +1184,11 @@ async fn pg_live_mcp_crud_and_universe_isolation() {
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires local/up.sh or compatible Postgres + MinIO env"]
-async fn pg_live_environments_crud_and_session_bindings() {
+async fn pg_live_environment_instances_bindings_and_jobs() {
     let store = live_store("environments", 1024).await;
     let provider_id = EnvironmentProviderId::new("bridge-local");
     let target_id = HostTargetId::new("local-host");
+    let instance_id = EnvironmentInstanceId::new("instance-local");
     let session_id = SessionId::new("session-env");
     let env_id = EnvironmentId::new("local");
 
@@ -1295,7 +1203,6 @@ async fn pg_live_environments_crud_and_session_bindings() {
             ),
             capabilities: EnvironmentProviderCapabilities {
                 list_targets: true,
-                attach_target: true,
                 get_target: true,
                 ..EnvironmentProviderCapabilities::default()
             },
@@ -1333,14 +1240,24 @@ async fn pg_live_environments_crud_and_session_bindings() {
         vec![heartbeat.clone()]
     );
 
-    let target = store
-        .upsert_target(UpsertEnvironmentTargetRecord {
+    let instance = store
+        .observe_instance(ObserveEnvironmentInstance {
+            instance_id: instance_id.clone(),
             provider_id: provider_id.clone(),
-            target_id: target_id.clone(),
+            provider_target_id: target_id.clone(),
+            origin: EnvironmentInstanceOrigin::Provided,
             display_name: Some("Local host".to_owned()),
             status: HostTargetStatus::Ready,
             scope: HostScope::Default,
             capabilities: HostCapabilities::filesystem(true, true).with_process(),
+            connection: HostConnectionSpec {
+                target_id: target_id.clone(),
+                endpoint: "ws://127.0.0.1:9001/data".to_owned(),
+                transport: HostTransport::WebSocket,
+                scope: HostScope::Default,
+                default_cwd: Some(HostPath::new("/workspace").expect("cwd")),
+                capabilities: HostCapabilities::filesystem(true, true).with_process(),
+            },
             default_cwd: Some(HostPath::new("/workspace").expect("cwd")),
             metadata: Default::default(),
             observed_at_ms: 30,
@@ -1349,13 +1266,14 @@ async fn pg_live_environments_crud_and_session_bindings() {
         .expect("upsert target");
     assert_eq!(
         store
-            .list_targets(ListEnvironmentTargets {
+            .list_instances(ListEnvironmentInstances {
                 provider_id: Some(provider_id.clone()),
                 status: Some(HostTargetStatus::Ready),
+                origin: Some(EnvironmentInstanceOrigin::Provided),
             })
             .await
-            .expect("list targets"),
-        vec![target.clone()]
+            .expect("list instances"),
+        vec![instance.clone()]
     );
 
     store
@@ -1368,32 +1286,10 @@ async fn pg_live_environments_crud_and_session_bindings() {
         .expect("create session");
 
     let binding = store
-        .create_binding(CreateSessionEnvironmentBinding {
+        .put_binding(PutSessionEnvironmentBinding {
             session_id: session_id.clone(),
             env_id: env_id.clone(),
-            provider_id: provider_id.clone(),
-            target_id: target_id.clone(),
-            kind: SessionEnvironmentKind::AttachedHost,
-            status: SessionEnvironmentBindingStatus::Ready,
-            capabilities: SessionEnvironmentCapabilities {
-                fs_read: true,
-                fs_write: true,
-                process_exec: true,
-                process_stdin: true,
-                network: false,
-                persistent: true,
-                ..SessionEnvironmentCapabilities::default()
-            },
-            connection: HostConnectionSpec {
-                target_id: target_id.clone(),
-                endpoint: "ws://127.0.0.1:9001/data".to_owned(),
-                transport: HostTransport::WebSocket,
-                scope: HostScope::Session {
-                    session_id: session_id.as_str().to_owned(),
-                },
-                default_cwd: Some(HostPath::new("/workspace").expect("cwd")),
-                capabilities: HostCapabilities::filesystem(true, true).with_process(),
-            },
+            instance_id: instance_id.clone(),
             cwd: Some(HostPath::new("/workspace").expect("cwd")),
             fs_routes: vec![SessionEnvironmentFsRoute {
                 path: HostPath::new("/workspace").expect("route"),
@@ -1401,10 +1297,10 @@ async fn pg_live_environments_crud_and_session_bindings() {
                 access: SessionEnvironmentFsRouteAccess::ReadWrite,
                 same_state_as_active_env: Some(env_id.clone()),
             }],
-            created_at_ms: 40,
+            updated_at_ms: 40,
         })
         .await
-        .expect("create binding");
+        .expect("put binding");
     assert_eq!(
         store
             .list_bindings_for_session(&session_id)
@@ -1413,15 +1309,26 @@ async fn pg_live_environments_crud_and_session_bindings() {
         vec![binding.clone()]
     );
 
+    let job_group_id = EnvironmentJobGroupId::new("group-1");
+    let job_group = store
+        .reserve_job_group(ReserveEnvironmentJobGroup {
+            instance_id: instance_id.clone(),
+            job_group_id: job_group_id.clone(),
+            request_id: "request-1".to_owned(),
+            start_request_hash: "hash-1".to_owned(),
+            created_at_ms: 44,
+        })
+        .await
+        .expect("reserve job group");
+    assert_eq!(job_group.instance_id, instance_id);
+
     let job_handle = CreateJobHandle {
-        session_id: session_id.clone(),
-        env_id: env_id.clone(),
-        provider_id: provider_id.clone(),
-        target_id: target_id.clone(),
-        namespace: session_id.as_str().to_owned(),
+        instance_id: instance_id.clone(),
+        job_group_id: job_group_id.clone(),
         job_id: JobId::new("job-1"),
         name: Some("checkout".to_owned()),
         queue_key: Some("repo".to_owned()),
+        created_by_session_id: Some(session_id.clone()),
         created_by_run_id: Some(RunId::new(1)),
         created_by_turn_id: Some(TurnId::new(2)),
         created_by_tool_call_id: Some(ToolCallId::new("call_1")),
@@ -1443,8 +1350,9 @@ async fn pg_live_environments_crud_and_session_bindings() {
 
     let listed_jobs = store
         .list_job_handles(ListJobHandles {
-            session_id: session_id.clone(),
-            env_id: Some(env_id.clone()),
+            instance_id: Some(instance_id.clone()),
+            job_group_id: Some(job_group_id),
+            created_by_session_id: Some(session_id.clone()),
             limit: Some(10),
         })
         .await
@@ -1452,33 +1360,32 @@ async fn pg_live_environments_crud_and_session_bindings() {
     assert_eq!(listed_jobs, created_jobs);
 
     let read_job = store
-        .read_job_handle(&session_id, &env_id, &JobId::new("job-1"))
+        .read_job_handle(&instance_id, &JobId::new("job-1"))
         .await
         .expect("read job handle");
-    assert_eq!(read_job.namespace, session_id.as_str());
+    assert_eq!(read_job.created_by_session_id.as_ref(), Some(&session_id));
     assert_eq!(read_job.queue_key.as_deref(), Some("repo"));
     assert_eq!(read_job.start_request_hash, "hash-1");
 
-    let degraded = store
-        .update_binding_status(UpdateSessionEnvironmentBindingStatus {
+    let detached = store
+        .update_binding_state(UpdateSessionEnvironmentBindingState {
             session_id: session_id.clone(),
             env_id: env_id.clone(),
-            status: SessionEnvironmentBindingStatus::Degraded,
+            state: SessionEnvironmentBindingState::Detached,
             updated_at_ms: 50,
         })
         .await
-        .expect("degrade binding");
-    assert_eq!(degraded.status, SessionEnvironmentBindingStatus::Degraded);
+        .expect("detach binding");
+    assert_eq!(detached.state, SessionEnvironmentBindingState::Detached);
 
     let stopped = store
-        .update_target_status(UpdateEnvironmentTargetStatus {
-            provider_id: provider_id.clone(),
-            target_id: target_id.clone(),
+        .update_instance_status(UpdateEnvironmentInstanceStatus {
+            instance_id: instance_id.clone(),
             status: HostTargetStatus::Stopped,
             observed_at_ms: 60,
         })
         .await
-        .expect("stop target");
+        .expect("stop instance");
     assert_eq!(stopped.status, HostTargetStatus::Stopped);
 
     let offline = store
@@ -1495,12 +1402,15 @@ async fn pg_live_environments_crud_and_session_bindings() {
         .delete_binding(&session_id, &env_id)
         .await
         .expect("delete binding");
-    assert_eq!(deleted, degraded);
-    let deleted_provider = store
-        .delete_provider(&provider_id)
-        .await
-        .expect("delete provider");
-    assert_eq!(deleted_provider.status, EnvironmentProviderStatus::Offline);
+    assert_eq!(deleted, detached);
+    assert_eq!(
+        store
+            .read_provider(&provider_id)
+            .await
+            .expect("read offline provider")
+            .status,
+        EnvironmentProviderStatus::Offline
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]

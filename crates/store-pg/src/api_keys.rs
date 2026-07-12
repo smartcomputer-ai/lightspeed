@@ -91,6 +91,26 @@ impl ApiKeyStore for PgApiKeyStore {
         rows.into_iter().map(api_key_record_from_row).collect()
     }
 
+    async fn list_api_keys_for_universe(
+        &self,
+        universe_id: Uuid,
+    ) -> Result<Vec<ApiKeyRecord>, ApiKeyError> {
+        let rows = sqlx::query(
+            r#"
+            SELECT key_prefix, universe_id, principal_kind, principal_id,
+                   display_name, created_at_ms, revoked_at_ms, last_used_at_ms
+            FROM api_keys
+            WHERE universe_id = $1
+            ORDER BY created_at_ms, key_prefix
+            "#,
+        )
+        .bind(universe_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        rows.into_iter().map(api_key_record_from_row).collect()
+    }
+
     async fn revoke_api_key(
         &self,
         key_prefix: &str,
@@ -109,6 +129,30 @@ impl ApiKeyStore for PgApiKeyStore {
         .await
         .map_err(map_sqlx_error)?;
         Ok(result.rows_affected() > 0)
+    }
+
+    async fn revoke_api_key_for_universe(
+        &self,
+        universe_id: Uuid,
+        key_prefix: &str,
+        revoked_at_ms: u64,
+    ) -> Result<Option<ApiKeyRecord>, ApiKeyError> {
+        let row = sqlx::query(
+            r#"
+            UPDATE api_keys
+            SET revoked_at_ms = COALESCE(revoked_at_ms, $3)
+            WHERE universe_id = $1 AND key_prefix = $2
+            RETURNING key_prefix, universe_id, principal_kind, principal_id,
+                      display_name, created_at_ms, revoked_at_ms, last_used_at_ms
+            "#,
+        )
+        .bind(universe_id)
+        .bind(key_prefix)
+        .bind(ms_to_i64(revoked_at_ms)?)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        row.map(api_key_record_from_row).transpose()
     }
 }
 

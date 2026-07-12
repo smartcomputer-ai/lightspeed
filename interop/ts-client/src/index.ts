@@ -16,6 +16,7 @@ export type {
 } from "./client.js";
 export {
   METHODS,
+  METHOD_INFO,
   NOTIFICATIONS,
   rpc,
 } from "./generated/methods.js";

@@ -741,6 +741,57 @@
         ],
         "type": "object"
       },
+      "AgentApiOutcomeOfOperatorApiKeyCreateResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/OperatorApiKeyCreateResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfOperatorApiKeyListResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/OperatorApiKeyListResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfOperatorApiKeyRevokeResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/OperatorApiKeyRevokeResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
       "AgentApiOutcomeOfOperatorOutboxReadResponse": {
         "properties": {
           "notifications": {
@@ -5684,6 +5735,136 @@
           "tokenEndpointAuthMethod",
           "createdAtMs",
           "updatedAtMs"
+        ],
+        "type": "object"
+      },
+      "OperatorApiKeyCreateParams": {
+        "properties": {
+          "displayName": {
+            "description": "Human-readable purpose shown in key-management interfaces.",
+            "type": "string"
+          },
+          "principal": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PrincipalRefView"
+              }
+            ],
+            "description": "Audit principal applied to grants and flows created through this key.\nThis does not grant platform/operator authority."
+          },
+          "universeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "universeId",
+          "displayName",
+          "principal"
+        ],
+        "type": "object"
+      },
+      "OperatorApiKeyCreateResponse": {
+        "description": "A newly minted key. `secret` is returned only by create and cannot be\nrecovered later. Its custom `Debug` implementation redacts the DTO before\nJSON-RPC serialization; the serialized response payload remains sensitive\nand must not be logged.",
+        "properties": {
+          "apiKey": {
+            "$ref": "#/components/schemas/OperatorApiKeyView"
+          },
+          "secret": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "apiKey",
+          "secret"
+        ],
+        "type": "object"
+      },
+      "OperatorApiKeyListParams": {
+        "properties": {
+          "universeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "universeId"
+        ],
+        "type": "object"
+      },
+      "OperatorApiKeyListResponse": {
+        "properties": {
+          "apiKeys": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/OperatorApiKeyView"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "OperatorApiKeyRevokeParams": {
+        "properties": {
+          "keyPrefix": {
+            "type": "string"
+          },
+          "universeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "universeId",
+          "keyPrefix"
+        ],
+        "type": "object"
+      },
+      "OperatorApiKeyRevokeResponse": {
+        "properties": {
+          "apiKey": {
+            "$ref": "#/components/schemas/OperatorApiKeyView"
+          }
+        },
+        "required": [
+          "apiKey"
+        ],
+        "type": "object"
+      },
+      "OperatorApiKeyView": {
+        "description": "Non-secret API-key metadata. The owning universe is supplied by every\nrequest and intentionally omitted from entries so list responses cannot\nbecome a deployment-wide tenant catalog by accident.",
+        "properties": {
+          "createdAtMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "displayName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "keyPrefix": {
+            "type": "string"
+          },
+          "lastUsedAtMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "revokedAtMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "keyPrefix",
+          "createdAtMs"
         ],
         "type": "object"
       },
@@ -10949,7 +11130,7 @@
   },
   "methods": [
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Returns protocol version, server identity, and supported capabilities without changing universe state.",
       "name": "initialize",
       "paramStructure": "by-name",
       "params": [
@@ -10966,10 +11147,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfInitializeResponse"
         }
-      }
+      },
+      "summary": "Inspect the Lightspeed protocol"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Creates a session with optional config/profile setup. Retrying an existing session id returns that session; creation settings apply only when it is first created.",
       "name": "session/start",
       "paramStructure": "by-name",
       "params": [
@@ -10986,10 +11168,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfSessionStartResponse"
         }
-      }
+      },
+      "summary": "Create or reopen a session"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Returns the current projected session, including sparse config and revisions, lifecycle/run state, active context, and derived tools.",
       "name": "session/read",
       "paramStructure": "by-name",
       "params": [
@@ -11006,10 +11189,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfSessionReadResponse"
         }
-      }
+      },
+      "summary": "Read a session"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Returns a cursor-paginated summary list ordered by most recent update. Pages may shift while sessions are changing.",
       "name": "session/list",
       "paramStructure": "by-name",
       "params": [
@@ -11026,10 +11210,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfSessionListResponse"
         }
-      }
+      },
+      "summary": "List sessions"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked and an identical document is a no-op.",
       "name": "session/config/put",
       "paramStructure": "by-name",
       "params": [
@@ -11046,10 +11231,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfSessionConfigPutResponse"
         }
-      }
+      },
+      "summary": "Replace session configuration"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Sets the display name, or clears it when displayName is omitted.",
       "name": "session/rename",
       "paramStructure": "by-name",
       "params": [
@@ -11066,10 +11252,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfSessionRenameResponse"
         }
-      }
+      },
+      "summary": "Rename a session"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Closes an idle session and detaches its environment bindings. Force mode cancels active work, drops queued runs, and can recover a session whose workflow is unavailable.",
       "name": "session/close",
       "paramStructure": "by-name",
       "params": [
@@ -11086,10 +11273,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfSessionCloseResponse"
         }
-      }
+      },
+      "summary": "Close a session"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Permanently removes session storage after the session has been closed; close active/open sessions first.",
       "name": "session/delete",
       "paramStructure": "by-name",
       "params": [
@@ -11106,10 +11294,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfSessionDeleteResponse"
         }
-      }
+      },
+      "summary": "Delete a closed session"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Reads events after a cursor and optionally long-polls when caught up. Continue from nextCursor/headCursor and inspect complete/gap rather than assuming an uninterrupted page.",
       "name": "session/events/read",
       "paramStructure": "by-name",
       "params": [
@@ -11126,10 +11315,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfSessionEventsReadResponse"
         }
-      }
+      },
+      "summary": "Read the session event stream"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Admits a batch of context entries with per-entry results. Stable keys make same-content retries no-ops; media preprocessing can fail one entry without discarding successful entries.",
       "name": "session/context/append",
       "paramStructure": "by-name",
       "params": [
@@ -11146,10 +11336,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfContextAppendResponse"
         }
-      }
+      },
+      "summary": "Append keyed session context"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Removes active entries by stable key with per-key results. Missing keys are idempotent no-ops; runtime-reserved run keys cannot be removed.",
       "name": "session/context/remove",
       "paramStructure": "by-name",
       "params": [
@@ -11166,10 +11357,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfContextRemoveResponse"
         }
-      }
+      },
+      "summary": "Remove keyed session context"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Runs the configured compaction policy on an open idle session and waits for the resulting context revision.",
       "name": "session/context/compact",
       "paramStructure": "by-name",
       "params": [
@@ -11186,10 +11378,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfContextCompactResponse"
         }
-      }
+      },
+      "summary": "Compact session context"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Accepts input or existing context keys and returns once the run is queued/accepted, not when it finishes. Supply submissionId for retry safety, then follow session events or reread the session.",
       "name": "session/runs/start",
       "paramStructure": "by-name",
       "params": [
@@ -11206,10 +11399,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfRunStartResponse"
         }
-      }
+      },
+      "summary": "Start an agent run"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Requests cancellation of the named queued or active run and returns its current projected state; observe session events for terminal completion.",
       "name": "session/runs/cancel",
       "paramStructure": "by-name",
       "params": [
@@ -11226,10 +11420,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfRunCancelResponse"
         }
-      }
+      },
+      "summary": "Cancel a run"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Refreshes the session's configured VFS skill catalog and reports which discovered skills are enabled and active. An absent catalog yields an empty result.",
       "name": "session/skills/list",
       "paramStructure": "by-name",
       "params": [
@@ -11246,10 +11441,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfSkillListResponse"
         }
-      }
+      },
+      "summary": "List available session skills"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Returns skill instructions currently injected into context, including activation scope and source.",
       "name": "session/skills/active",
       "paramStructure": "by-name",
       "params": [
@@ -11266,10 +11462,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfSkillActiveResponse"
         }
-      }
+      },
+      "summary": "List active session skills"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Loads an enabled skill from the current catalog and injects its instructions into an open idle session. Run-scoped activation is the default.",
       "name": "session/skills/activate",
       "paramStructure": "by-name",
       "params": [
@@ -11286,10 +11483,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfSkillActivateResponse"
         }
-      }
+      },
+      "summary": "Activate a session skill"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Removes an active skill's injected context from an open idle session; the skill must currently be active.",
       "name": "session/skills/deactivate",
       "paramStructure": "by-name",
       "params": [
@@ -11306,10 +11504,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfSkillDeactivateResponse"
         }
-      }
+      },
+      "summary": "Deactivate a session skill"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Applies a named or inline profile's config, instructions, mounts, and environment setup to an existing session; mutating profile sections require it to be open and idle. Pass current revisions to guard concurrent changes.",
       "name": "session/profiles/apply",
       "paramStructure": "by-name",
       "params": [
@@ -11326,10 +11525,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfProfileApplyResponse"
         }
-      }
+      },
+      "summary": "Apply a profile to a session"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Binds a snapshot or workspace at a path on an open idle session that grants VFS. Workspace mounts follow that workspace's current head.",
       "name": "session/mounts/put",
       "paramStructure": "by-name",
       "params": [
@@ -11346,10 +11546,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfVfsMountPutResponse"
         }
-      }
+      },
+      "summary": "Create or replace a session mount"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Returns the session's snapshot/workspace bindings and access modes.",
       "name": "session/mounts/list",
       "paramStructure": "by-name",
       "params": [
@@ -11366,10 +11567,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfVfsMountListResponse"
         }
-      }
+      },
+      "summary": "List session mounts"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Removes a binding from an open idle session without deleting its source snapshot or workspace.",
       "name": "session/mounts/delete",
       "paramStructure": "by-name",
       "params": [
@@ -11386,10 +11588,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfVfsMountDeleteResponse"
         }
-      }
+      },
+      "summary": "Delete a session mount"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Returns one session-local environment alias joined with current instance/provider availability and activation state.",
       "name": "session/environments/read",
       "paramStructure": "by-name",
       "params": [
@@ -11406,10 +11609,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfSessionEnvironmentReadResponse"
         }
-      }
+      },
+      "summary": "Read a session environment binding"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Returns all environment aliases attached to the session and identifies the active tool target, if any.",
       "name": "session/environments/list",
       "paramStructure": "by-name",
       "params": [
@@ -11426,10 +11630,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfSessionEnvironmentListResponse"
         }
-      }
+      },
+      "summary": "List session environment bindings"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Binds an existing universe environment instance under a session-local alias, optionally activating it. The session must grant environments and allow the provider.",
       "name": "session/environments/attach",
       "paramStructure": "by-name",
       "params": [
@@ -11446,10 +11651,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfSessionEnvironmentAttachResponse"
         }
-      }
+      },
+      "summary": "Attach an environment to a session"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Selects an attached, available environment as the process/filesystem tool target while the session is idle.",
       "name": "session/environments/activate",
       "paramStructure": "by-name",
       "params": [
@@ -11466,10 +11672,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfSessionEnvironmentActivateResponse"
         }
-      }
+      },
+      "summary": "Activate a session environment"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Clears the active environment tool target without detaching any binding or closing the underlying instance.",
       "name": "session/environments/deactivate",
       "paramStructure": "by-name",
       "params": [
@@ -11486,10 +11693,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfSessionEnvironmentDeactivateResponse"
         }
-      }
+      },
+      "summary": "Deactivate the session environment"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Detaches the session-local binding; detaching the active target requires an idle session and deactivates it first. The universe instance and jobs remain independently owned.",
       "name": "session/environments/detach",
       "paramStructure": "by-name",
       "params": [
@@ -11506,10 +11714,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfSessionEnvironmentDetachResponse"
         }
-      }
+      },
+      "summary": "Detach a session environment"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Maps an environment variable name to an existing grant/provider/direct-secret handle for one session binding. The response exposes only the source handle, never secret material.",
       "name": "session/environments/credentials/bind",
       "paramStructure": "by-name",
       "params": [
@@ -11526,10 +11735,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfSessionEnvironmentCredentialBindResponse"
         }
-      }
+      },
+      "summary": "Bind a credential into an environment"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Returns variable names and credential source handles for a session environment; resolved secret values are never returned.",
       "name": "session/environments/credentials/list",
       "paramStructure": "by-name",
       "params": [
@@ -11546,10 +11756,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfSessionEnvironmentCredentialListResponse"
         }
-      }
+      },
+      "summary": "List environment credential bindings"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Removes one variable-to-credential mapping without deleting the underlying grant, provider credential, or secret.",
       "name": "session/environments/credentials/unbind",
       "paramStructure": "by-name",
       "params": [
@@ -11566,10 +11777,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfSessionEnvironmentCredentialUnbindResponse"
         }
-      }
+      },
+      "summary": "Unbind an environment credential"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Asks a live provider with create capability to create a universe-owned environment instance. This does not attach the instance to any session.",
       "name": "environments/create",
       "paramStructure": "by-name",
       "params": [
@@ -11586,10 +11798,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentCreateResponse"
         }
-      }
+      },
+      "summary": "Provision an environment instance"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Returns the universe resource with its provider identity, current observed lifecycle, connection, scope, and capabilities.",
       "name": "environments/read",
       "paramStructure": "by-name",
       "params": [
@@ -11606,10 +11819,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentReadResponse"
         }
-      }
+      },
+      "summary": "Read an environment instance"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Lists universe-owned instances, optionally filtered by provider or observed target status.",
       "name": "environments/list",
       "paramStructure": "by-name",
       "params": [
@@ -11626,10 +11840,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentListResponse"
         }
-      }
+      },
+      "summary": "List environment instances"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Tears down the universe resource through its provider. Closing is rejected while session bindings or nonterminal jobs still occupy the instance.",
       "name": "environments/close",
       "paramStructure": "by-name",
       "params": [
@@ -11646,10 +11861,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentCloseResponse"
         }
-      }
+      },
+      "summary": "Close an environment instance"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Starts a dependency-aware job group on one environment instance. requestId is the retry identity; jobs are owned by the instance rather than a session.",
       "name": "environments/jobs/create",
       "paramStructure": "by-name",
       "params": [
@@ -11666,10 +11882,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentJobCreateResponse"
         }
-      }
+      },
+      "summary": "Create environment jobs"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Reads selected job handles with bounded output, optional sequence continuation, and optional artifacts; use returned status/sequence data for polling.",
       "name": "environments/jobs/read",
       "paramStructure": "by-name",
       "params": [
@@ -11686,10 +11903,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentJobReadResponse"
         }
-      }
+      },
+      "summary": "Read environment jobs"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Lists durable job records across the universe, optionally narrowed to an instance or job group.",
       "name": "environments/jobs/list",
       "paramStructure": "by-name",
       "params": [
@@ -11706,10 +11924,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentJobListResponse"
         }
-      }
+      },
+      "summary": "List environment jobs"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Requests cancellation for selected jobs, optionally including dependents. Force is provider-specific escalation; inspect each per-job result.",
       "name": "environments/jobs/cancel",
       "paramStructure": "by-name",
       "params": [
@@ -11726,10 +11945,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentJobCancelResponse"
         }
-      }
+      },
+      "summary": "Cancel environment jobs"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Queries supported providers directly on every call and returns best-effort selectable routes. One provider failure does not discard successful results from others.",
       "name": "models/list",
       "paramStructure": "by-name",
       "params": [
@@ -11746,10 +11966,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfModelListResponse"
         }
-      }
+      },
+      "summary": "Discover available models"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Creates a new universe-scoped reusable profile document; use profiles/put for create-or-replace revision semantics.",
       "name": "profiles/create",
       "paramStructure": "by-name",
       "params": [
@@ -11766,10 +11987,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfProfileCreateResponse"
         }
-      }
+      },
+      "summary": "Create an agent profile"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Returns the complete profile document and current revision.",
       "name": "profiles/read",
       "paramStructure": "by-name",
       "params": [
@@ -11786,10 +12008,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfProfileReadResponse"
         }
-      }
+      },
+      "summary": "Read an agent profile"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Returns lightweight summaries of universe-scoped reusable profiles.",
       "name": "profiles/list",
       "paramStructure": "by-name",
       "params": [
@@ -11806,10 +12029,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfProfileListResponse"
         }
-      }
+      },
+      "summary": "List agent profiles"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Stores the complete profile document. Use expectedRevision from profiles/read when replacing to prevent lost updates; absence writes unconditionally.",
       "name": "profiles/put",
       "paramStructure": "by-name",
       "params": [
@@ -11826,10 +12050,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfProfilePutResponse"
         }
-      }
+      },
+      "summary": "Create or replace an agent profile"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Deletes the catalog document; sessions previously created or configured from it retain their materialized state.",
       "name": "profiles/delete",
       "paramStructure": "by-name",
       "params": [
@@ -11846,10 +12071,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfProfileDeleteResponse"
         }
-      }
+      },
+      "summary": "Delete an agent profile"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Decodes and stores a batch of base64 payloads, returning immutable content references in request order. Re-uploading identical bytes is naturally deduplicated.",
       "name": "blobs/put",
       "paramStructure": "by-name",
       "params": [
@@ -11866,10 +12092,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfBlobPutResponse"
         }
-      }
+      },
+      "summary": "Store content-addressed blobs"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Returns the complete immutable blob as base64; large values count against gateway and MCP response limits.",
       "name": "blobs/read",
       "paramStructure": "by-name",
       "params": [
@@ -11886,10 +12113,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfBlobReadResponse"
         }
-      }
+      },
+      "summary": "Read a content-addressed blob"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Checks a batch of content references without returning blob bodies, preserving request order.",
       "name": "blobs/has",
       "paramStructure": "by-name",
       "params": [
@@ -11906,10 +12134,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfBlobHasResponse"
         }
-      }
+      },
+      "summary": "Check blob availability"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Validates and stores an immutable filesystem manifest. Upload referenced file blobs first; the returned snapshot ref is content-addressed.",
       "name": "vfs/snapshots/commit",
       "paramStructure": "by-name",
       "params": [
@@ -11926,10 +12155,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfVfsSnapshotCommitResponse"
         }
-      }
+      },
+      "summary": "Commit a VFS snapshot"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs.",
       "name": "vfs/snapshots/read",
       "paramStructure": "by-name",
       "params": [
@@ -11946,10 +12176,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfVfsSnapshotReadResponse"
         }
-      }
+      },
+      "summary": "Read a VFS snapshot"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Creates a universe workspace at an optional seed snapshot; absence starts from a server-created empty snapshot.",
       "name": "vfs/workspaces/create",
       "paramStructure": "by-name",
       "params": [
@@ -11966,10 +12197,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfVfsWorkspaceCreateResponse"
         }
-      }
+      },
+      "summary": "Create a mutable VFS workspace"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Returns workspace metadata, current head snapshot, and revision for safe updates.",
       "name": "vfs/workspaces/read",
       "paramStructure": "by-name",
       "params": [
@@ -11986,10 +12218,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfVfsWorkspaceReadResponse"
         }
-      }
+      },
+      "summary": "Read a VFS workspace"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Lists mutable universe workspaces with head snapshots, sizes, and revisions.",
       "name": "vfs/workspaces/list",
       "paramStructure": "by-name",
       "params": [
@@ -12006,10 +12239,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfVfsWorkspaceListResponse"
         }
-      }
+      },
+      "summary": "List VFS workspaces"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Moves the workspace head to an existing snapshot and updates its display name. Pass expectedRevision from a read to prevent lost updates.",
       "name": "vfs/workspaces/update",
       "paramStructure": "by-name",
       "params": [
@@ -12026,10 +12260,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfVfsWorkspaceUpdateResponse"
         }
-      }
+      },
+      "summary": "Update a VFS workspace"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Deletes the mutable workspace record; immutable snapshots and blobs remain content-addressed resources.",
       "name": "vfs/workspaces/delete",
       "paramStructure": "by-name",
       "params": [
@@ -12046,10 +12281,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfVfsWorkspaceDeleteResponse"
         }
-      }
+      },
+      "summary": "Delete a VFS workspace"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Stores the complete universe catalog document. Use expectedRevision when replacing; authenticated policies reference grants but never embed credentials.",
       "name": "mcp/servers/put",
       "paramStructure": "by-name",
       "params": [
@@ -12066,10 +12302,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfMcpServerPutResponse"
         }
-      }
+      },
+      "summary": "Create or replace an MCP server record"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Returns one catalog document with defaults, auth policy, status, and revision; no credential value is exposed.",
       "name": "mcp/servers/read",
       "paramStructure": "by-name",
       "params": [
@@ -12086,10 +12323,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfMcpServerReadResponse"
         }
-      }
+      },
+      "summary": "Read an MCP server record"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Lists universe catalog entries, optionally filtered by lifecycle/configuration status.",
       "name": "mcp/servers/list",
       "paramStructure": "by-name",
       "params": [
@@ -12106,10 +12344,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfMcpServerListResponse"
         }
-      }
+      },
+      "summary": "List MCP server records"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Deletes the catalog document. Existing session configs that reference it are not silently rewritten and may need explicit reconfiguration.",
       "name": "mcp/servers/delete",
       "paramStructure": "by-name",
       "params": [
@@ -12126,10 +12365,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfMcpServerDeleteResponse"
         }
-      }
+      },
+      "summary": "Delete an MCP server record"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Publishes a controller endpoint, capabilities, implementation identity, and liveness lease. Intended for trusted provider/bridge infrastructure, not ordinary configuration clients.",
       "name": "environments/providers/register",
       "paramStructure": "by-name",
       "params": [
@@ -12146,10 +12386,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentProviderRegisterResponse"
         }
-      }
+      },
+      "summary": "Register environment provider presence"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Renews a provider lease and records its complete observed target descriptors. Omitted provided targets may become unknown; intended for provider infrastructure.",
       "name": "environments/providers/heartbeat",
       "paramStructure": "by-name",
       "params": [
@@ -12166,10 +12407,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentProviderHeartbeatResponse"
         }
-      }
+      },
+      "summary": "Refresh environment provider presence"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Marks provider presence offline without deleting its durable environment instance records.",
       "name": "environments/providers/unregister",
       "paramStructure": "by-name",
       "params": [
@@ -12186,10 +12428,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentProviderUnregisterResponse"
         }
-      }
+      },
+      "summary": "Unregister environment provider presence"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Lists current provider presence with lease-derived online/stale/offline status, optionally filtered by status or kind.",
       "name": "environments/providers/list",
       "paramStructure": "by-name",
       "params": [
@@ -12206,10 +12449,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentProviderListResponse"
         }
-      }
+      },
+      "summary": "List environment providers"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. The token can never be read back through the API.",
       "name": "auth/grants/import",
       "paramStructure": "by-name",
       "params": [
@@ -12226,10 +12470,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthGrantImportResponse"
         }
-      }
+      },
+      "summary": "Import a static bearer grant"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Returns principal, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned.",
       "name": "auth/grants/read",
       "paramStructure": "by-name",
       "params": [
@@ -12246,10 +12491,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthGrantReadResponse"
         }
-      }
+      },
+      "summary": "Read authentication grant metadata"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Lists non-secret grant metadata for the universe, optionally filtered by status.",
       "name": "auth/grants/list",
       "paramStructure": "by-name",
       "params": [
@@ -12266,10 +12512,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthGrantListResponse"
         }
-      }
+      },
+      "summary": "List authentication grants"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Marks the grant unusable by token consumers while retaining non-secret audit metadata.",
       "name": "auth/grants/revoke",
       "paramStructure": "by-name",
       "params": [
@@ -12286,10 +12533,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthGrantRevokeResponse"
         }
-      }
+      },
+      "summary": "Revoke an authentication grant"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Stores provider endpoints and client identity; an optional plaintext client secret is encrypted and represented thereafter only by hasClientSecret.",
       "name": "auth/clients/create",
       "paramStructure": "by-name",
       "params": [
@@ -12306,10 +12554,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthClientCreateResponse"
         }
-      }
+      },
+      "summary": "Register an OAuth client"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Returns endpoints, public client identity, defaults, and secret-presence state; the client secret is never returned.",
       "name": "auth/clients/read",
       "paramStructure": "by-name",
       "params": [
@@ -12326,10 +12575,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthClientReadResponse"
         }
-      }
+      },
+      "summary": "Read OAuth client metadata"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Lists non-secret OAuth client registrations in the universe.",
       "name": "auth/clients/list",
       "paramStructure": "by-name",
       "params": [
@@ -12346,10 +12596,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthClientListResponse"
         }
-      }
+      },
+      "summary": "List OAuth clients"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Deletes the client registration and its stored client secret; grants already created from it remain separate records.",
       "name": "auth/clients/delete",
       "paramStructure": "by-name",
       "params": [
@@ -12366,10 +12617,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthClientDeleteResponse"
         }
-      }
+      },
+      "summary": "Delete an OAuth client"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Creates a short-lived PKCE flow and returns a browser authorization URL containing one-time state. Treat the URL as sensitive and poll auth/flows/read for completion.",
       "name": "auth/flows/start",
       "paramStructure": "by-name",
       "params": [
@@ -12386,10 +12638,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthFlowStartResponse"
         }
-      }
+      },
+      "summary": "Start an OAuth authorization flow"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Polls a flow's pending/completed/failed/expired state and returns the resulting grant id when authorization succeeds; no token value is exposed.",
       "name": "auth/flows/read",
       "paramStructure": "by-name",
       "params": [
@@ -12406,10 +12659,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthFlowStatusResponse"
         }
-      }
+      },
+      "summary": "Read OAuth flow status"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Creates a model or GitHub credential source. Plaintext API keys/private keys are encrypted on receipt and later represented only by configuration plus hasCredential.",
       "name": "auth/providers/create",
       "paramStructure": "by-name",
       "params": [
@@ -12426,10 +12680,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthProviderCreateResponse"
         }
-      }
+      },
+      "summary": "Register an authentication provider"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Returns provider kind, non-secret configuration, credential-presence state, and status; stored credentials are never returned.",
       "name": "auth/providers/read",
       "paramStructure": "by-name",
       "params": [
@@ -12446,10 +12701,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthProviderReadResponse"
         }
-      }
+      },
+      "summary": "Read authentication provider metadata"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Lists non-secret model/GitHub provider registrations for the universe.",
       "name": "auth/providers/list",
       "paramStructure": "by-name",
       "params": [
@@ -12466,10 +12722,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthProviderListResponse"
         }
-      }
+      },
+      "summary": "List authentication providers"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Deletes the provider registration and its directly stored credential; separately stored grants remain independent records.",
       "name": "auth/providers/delete",
       "paramStructure": "by-name",
       "params": [
@@ -12486,10 +12743,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthProviderDeleteResponse"
         }
-      }
+      },
+      "summary": "Delete an authentication provider"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Uses the registered GitHub App provider credential to query accessible installations and returns account/permission metadata without tokens.",
       "name": "auth/github/installations/list",
       "paramStructure": "by-name",
       "params": [
@@ -12506,10 +12764,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthGitHubInstallationListResponse"
         }
-      }
+      },
+      "summary": "List GitHub App installations"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Creates or refreshes a universe auth grant for one accessible installation. The installation token is brokered internally and never returned.",
       "name": "auth/github/installations/grant",
       "paramStructure": "by-name",
       "params": [
@@ -12526,10 +12785,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthGitHubInstallationGrantResponse"
         }
-      }
+      },
+      "summary": "Grant access to a GitHub App installation"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Cursor-reads or long-polls the universe delivery outbox. Advance with nextAfter, but only outbox/ack marks individual entries delivered or failed.",
       "name": "outbox/read",
       "paramStructure": "by-name",
       "params": [
@@ -12546,10 +12806,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfOutboxReadResponse"
         }
-      }
+      },
+      "summary": "Read pending outbound messages"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Records delivered or failed delivery for one outbox entry and updates attempt/status state. Intended for messaging delivery workers.",
       "name": "outbox/ack",
       "paramStructure": "by-name",
       "params": [
@@ -12566,10 +12827,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfOutboxAckResponse"
         }
-      }
+      },
+      "summary": "Acknowledge outbound delivery"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Creates the deployment tenant boundary for an explicit UUID. The operation is idempotent and reports whether a new universe was created.",
       "name": "operator/universes/create",
       "paramStructure": "by-name",
       "params": [
@@ -12586,10 +12848,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorUniverseCreateResponse"
         }
-      }
+      },
+      "summary": "Create a universe"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Returns deployment-wide universe summaries with approximate live aggregate counts and last session activity.",
       "name": "operator/universes/list",
       "paramStructure": "by-name",
       "params": [
@@ -12606,10 +12869,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorUniverseListResponse"
         }
-      }
+      },
+      "summary": "List universes"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Returns one deployment tenant summary with aggregate session, workspace, profile, and blob usage.",
       "name": "operator/universes/read",
       "paramStructure": "by-name",
       "params": [
@@ -12626,10 +12890,11 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorUniverseReadResponse"
         }
-      }
+      },
+      "summary": "Read a universe"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Permanently terminates live session workflows, deletes external blob objects, and cascades universe data. The purge is resumable/idempotent after partial failure.",
       "name": "operator/universes/delete",
       "paramStructure": "by-name",
       "params": [
@@ -12646,10 +12911,74 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorUniverseDeleteResponse"
         }
-      }
+      },
+      "summary": "Purge a universe"
     },
     {
-      "description": "Single-object params: the request `params` member is one JSON object described by this descriptor's schema.",
+      "description": "Mints an inbound gateway key for one existing universe. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification.",
+      "name": "operator/api-keys/create",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/OperatorApiKeyCreateParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorApiKeyCreateResponse"
+        }
+      },
+      "summary": "Create a universe API key"
+    },
+    {
+      "description": "Returns only non-secret key metadata for the requested universe, including revocation and last-use timestamps. Plaintext secrets are never stored or returned.",
+      "name": "operator/api-keys/list",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/OperatorApiKeyListParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorApiKeyListResponse"
+        }
+      },
+      "summary": "List universe API keys"
+    },
+    {
+      "description": "Immediately and idempotently revokes the matching key only when it belongs to the requested universe. Unknown and foreign-universe prefixes return not found.",
+      "name": "operator/api-keys/revoke",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/OperatorApiKeyRevokeParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorApiKeyRevokeResponse"
+        }
+      },
+      "summary": "Revoke a universe API key"
+    },
+    {
+      "description": "Cursor-reads or long-polls pending messages across all universes. Entries identify their universe; acknowledge each through universe-scoped outbox/ack.",
       "name": "operator/outbox/read",
       "paramStructure": "by-name",
       "params": [
@@ -12666,7 +12995,8 @@
         "schema": {
           "$ref": "#/components/schemas/AgentApiOutcomeOfOperatorOutboxReadResponse"
         }
-      }
+      },
+      "summary": "Read the deployment outbox"
     }
   ],
   "openrpc": "1.3.2"

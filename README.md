@@ -66,8 +66,14 @@ What constitutes an "agent harness" is a rapidly expanding set of table-stakes f
 
 **Interfaces**
 - [x] **Typed JSON-RPC API**: committed schema contract, generated TypeScript client
+- [x] **Configurator MCP**: a configurable universe API surface as generated tools over
+  multi-tenant Streamable HTTP
 - [x] **CLI** to connect to running agent sessions
 - [x] **Messaging bridges**: WhatsApp and Telegram today; media and group chats included, more channels coming
+
+The generated [JSON-RPC API reference](interop/contract/api-reference.md) is
+derived from the same Rust manifest and schemas that drive OpenRPC, the
+TypeScript client, and Configurator MCP tool descriptions.
 
 ## Design
 At the heart of every agent is a carefully engineered state machine that manages what goes into the context window of the LLM.
@@ -248,9 +254,12 @@ per request based on `LIGHTSPEED_AUTH_MODE`:
 
 Deployment-level administration is exposed as operator-scoped JSON-RPC
 methods on the same `/rpc` endpoint (`operator/universes/create|list|read|
-delete`), callable in `trusted-header` and `single` modes only. Deleting a
-universe terminates its live session workflows, sweeps its externally stored
-blobs, and cascades every universe-scoped row.
+delete` and `operator/api-keys/create|list|revoke`), callable in
+`trusted-header` and `single` modes only. API-key management is explicitly
+universe-scoped; create returns the plaintext secret once, while list and
+revoke return only metadata. Deleting a universe terminates its live session
+workflows, sweeps its externally stored blobs, and cascades every
+universe-scoped row.
 
 Manage universes and keys with the server binary (the key secret prints
 exactly once):
@@ -266,6 +275,29 @@ The CLI and the messaging bridge send credentials from `LIGHTSPEED_API_KEY`
 (api-key mode) or `LIGHTSPEED_UNIVERSE` (trusted-header mode) automatically.
 See [docs/roadmap/p90-multi-tenancy.md](docs/roadmap/p90-multi-tenancy.md)
 for the design.
+
+### Configurator MCP
+
+`interop/configurator-mcp` exposes a generated, configurable subset of the
+universe-scoped JSON-RPC methods as MCP tools over stateless Streamable HTTP.
+Its committed `tool-filter.json` tunes the advertised surface; deployment-level
+`operator/*` methods are categorically ineligible. Each MCP POST authenticates
+independently using the gateway's configured `single`, `trusted-header`, or
+`api-key` mode, so one Configurator deployment can safely mediate many
+universes.
+
+With the server running locally in the default single-universe mode:
+
+```bash
+cd interop/configurator-mcp
+npm install
+npm run build
+LIGHTSPEED_AUTH_MODE=single node dist/bin.js
+```
+
+The MCP endpoint defaults to `http://127.0.0.1:18081/mcp`; see
+`interop/configurator-mcp/README.md` for multi-tenant proxy and API-key
+configuration.
 
 ### Stop Or Reset Local Infra
 
