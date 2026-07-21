@@ -1,5 +1,11 @@
 # Lightspeed Roadmap
 
+## Work
+- [ ] [P100](p100-durable-work-workflow.md) — first-class durable Work with
+  Temporal-owned state, one managed session/run attempt, generic run-terminal
+  workflow notification, point read/cancel APIs, and no Work database in the
+  initial cut
+
 ## Core
 - [x] [P91](p91-core-agent-structure-cleanup.md) — cleanup of CoreAgent structures: delete the SDK-era open-kernel layer, commit to a closed event vocabulary and core FSM
 - [x] [P95](p95-config-redesign.md) — config redesign: full-document puts with expected revisions, feature-oriented capability config (secure by default), feature versioning, derived toolset; removes patch semantics and the unused `session/messages/submit` RPC surface
