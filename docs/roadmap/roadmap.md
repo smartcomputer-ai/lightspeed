@@ -3,7 +3,7 @@
 ## Core
 - [x] [P91](p91-core-agent-structure-cleanup.md) — cleanup of CoreAgent structures: delete the SDK-era open-kernel layer, commit to a closed event vocabulary and core FSM
 - [x] [P95](p95-config-redesign.md) — config redesign: full-document puts with expected revisions, feature-oriented capability config (secure by default), feature versioning, derived toolset; removes patch semantics and the unused `session/messages/submit` RPC surface
-- [ ] [P98](p98-context-revisions-and-instruction-reconciliation.md) — optional context-edit revision guards and atomic effective-instruction reconciliation, with the product default active only as a true fallback
+- [x] [P98](p98-context-revisions-and-instruction-reconciliation.md) — optional context-edit revision guards and atomic effective-instruction reconciliation, with the product default active only as a true fallback
 - [ ] optimize: we're rading all session events to get latest state, this will get expensve in the future
 
 ## Fleet (sub-agents)
@@ -13,8 +13,7 @@
 - [x] [Appendix: Fleet one-off child lifecycle](appendix-fleet-one-off-lifecycle.md) — `agent_spawn.lifecycle.close_on_terminal` for ephemeral delegation sessions
 - [x] agent profiles
 - [x] start new sessions with profiles and ad-hoc profiles
-- [ ] [P92](p92-unified-suspension.md) — unified suspension: promises + one `await`, cancellation-as-resolution, watchdogs, force-close, mailbox unification; motivated by the 2026-07-06 stuck-`cancelling` incident
-- [ ] [P93](p93-fleet-safety.md) — fleet safety layer on P92: capability tiers (incl. send-only `worker`), attenuation, spawn budgets, topology limits, tree observability
+- [x] [P92](p92-unified-suspension.md) — unified suspension: promises + one `await`, cancellation-as-resolution, watchdogs, force-close, mailbox unification; motivated by the 2026-07-06 stuck-`cancelling` incident
 
 ## Provider Integrations
 - [x] [P97](p97-model-discovery.md) — direct provider model discovery for
@@ -58,6 +57,7 @@
   universe-scoped TypeScript client contract with request-scoped gateway
   authentication and no operator methods
 - [ ] Support MCP tunnels to model providers
+- [ ] MCP orchestration by Lightspeed
 
 ## Framework/SDK
 - [ ] Temporal service design: ensure ls can be used as a Temporal service by other workflows
